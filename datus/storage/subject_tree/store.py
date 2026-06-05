@@ -81,9 +81,10 @@ class SubjectTreeStore:
         """Initialize SubjectTreeStore.
 
         Args:
-            project: Project identifier used by the underlying RDB backend for
-                isolation. Must be non-empty; the backend rejects empty
-                identifiers.
+            project: Backend storage namespace used by the underlying RDB
+                backend for isolation. Must be non-empty; the backend rejects
+                empty identifiers. Datasource-scoped KB callers pass
+                ``datasource_storage_namespace(...)`` here.
 
         Reads ``table_prefix``, ``extra_fields``, and ``scope_indices`` from
         the storage registry defaults (set via ``configure_storage_defaults()``).
@@ -676,7 +677,8 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
     ):
         # ``project`` is injected by the storage registry; pop it before forwarding
         # so BaseEmbeddingStore (which has a strict signature) doesn't reject it.
-        # Falls back to the active path_manager for callers that bypass the registry.
+        # Direct low-level constructors are test/backward-compatible paths and
+        # use a reserved subject-tree namespace instead of the bare project.
         project = kwargs.pop("project", None)
 
         super().__init__(
@@ -693,9 +695,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         from datus.storage.registry import get_subject_tree_store
 
         if not project:
+            from datus.storage.scope import safe_storage_namespace_token
             from datus.utils.path_manager import get_path_manager
 
-            project = get_path_manager().project_name
+            base_project = safe_storage_namespace_token(get_path_manager().project_name, fallback="project")
+            project = f"{base_project}__direct_subject_tree"
 
         self.subject_tree = get_subject_tree_store(project=project)
 

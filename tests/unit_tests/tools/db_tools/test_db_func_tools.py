@@ -456,6 +456,26 @@ class TestDBFuncTool:
             catalog_name="", database_name="test_db", schema_name="test_schema", table_name="users"
         )
 
+    def test_describe_table_reuses_cached_result(self, db_func_tool, mock_connector):
+        """Repeated describe_table calls for the same coordinate should not hit the connector again."""
+        first = db_func_tool.describe_table(table_name="users")
+        second = db_func_tool.describe_table(table_name="users")
+
+        assert first.success == 1
+        assert second.success == 1
+        assert first.result == second.result
+        mock_connector.get_schema.assert_called_once()
+
+    def test_execute_ddl_success_clears_describe_table_cache(self, db_func_tool, mock_connector):
+        db_func_tool.describe_table(table_name="users")
+        assert db_func_tool._describe_table_cache
+        mock_connector.execute_ddl.return_value = FuncToolResult(result={"ok": True})
+
+        result = db_func_tool.execute_ddl("ALTER TABLE users ADD COLUMN status TEXT")
+
+        assert result.success == 1
+        assert db_func_tool._describe_table_cache == {}
+
     def test_describe_table_scope_validation(self, mock_connector):
         """describe_table should block tables outside scoped set."""
         tool = DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders"})

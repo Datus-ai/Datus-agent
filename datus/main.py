@@ -227,7 +227,10 @@ def create_parser() -> argparse.ArgumentParser:
         "--pool_size",
         type=int,
         default=4,
-        help="Number of threads to initialize bootstrap-kb, default is 4",
+        help=(
+            "Bootstrap concurrency/batch size, default is 4. For metrics, this controls "
+            "SQL queries per gen_metrics batch."
+        ),
     )
     bootstrap_parser.add_argument(
         "--success_story",

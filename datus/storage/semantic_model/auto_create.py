@@ -6,6 +6,7 @@
 
 import asyncio
 from collections import defaultdict
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set
 
 from datus.configuration.agent_config import AgentConfig
@@ -34,7 +35,7 @@ def extract_tables_from_sql_list(
     from datus.utils.sql_utils import extract_table_names
 
     all_tables = set()
-    dialect = agent_config.db_type
+    dialect = agent_config_dialect(agent_config)
 
     for sql in sql_list:
         if sql and sql.strip():
@@ -88,7 +89,7 @@ def extract_table_sql_evidence(
     from datus.utils.sql_utils import extract_table_names
 
     evidence_by_key: dict[str, list[str]] = defaultdict(list)
-    dialect = agent_config.db_type
+    dialect = agent_config_dialect(agent_config)
 
     for idx, record in enumerate(records, 1):
         sql = str(record.get("sql") or "").strip()
@@ -121,11 +122,11 @@ def _lookup_sql_evidence(table: str, sql_evidence_by_table: Optional[dict[str, l
     return []
 
 
-def _agent_config_dialect(agent_config: AgentConfig) -> str:
+def agent_config_dialect(agent_config: AgentConfig) -> str:
     raw = getattr(agent_config, "db_type", "")
     raw = getattr(raw, "value", raw)
     if isinstance(raw, str) and raw:
-        return raw
+        return _normalize_dialect(raw)
 
     try:
         db_config = agent_config.current_db_config()
@@ -133,13 +134,20 @@ def _agent_config_dialect(agent_config: AgentConfig) -> str:
         return ""
     raw = getattr(db_config, "type", "")
     raw = getattr(raw, "value", raw)
-    return raw if isinstance(raw, str) else ""
+    return _normalize_dialect(raw) if isinstance(raw, str) else ""
+
+
+def _normalize_dialect(raw: str) -> str:
+    dialect = raw.strip().lower()
+    if dialect == "postgres":
+        return "postgresql"
+    return dialect
 
 
 def _resolved_table_target(table: str, agent_config: AgentConfig, current_db_config: object) -> dict[str, str]:
     from datus.utils.sql_utils import parse_table_name_parts
 
-    dialect = _agent_config_dialect(agent_config)
+    dialect = agent_config_dialect(agent_config)
     parsed = parse_table_name_parts(table, dialect=dialect or "snowflake")
     table_name = parsed.get("table_name") or str(table).split(".")[-1]
 
@@ -208,6 +216,24 @@ def find_missing_semantic_models(
 
             # Exact match on table name (case insensitive)
             exists = any(obj.get("name", "").lower() == table_name.lower() for obj in result)
+            if exists and not _semantic_model_yaml_exists(table_name, agent_config):
+                logger.info("Semantic model store has table %s but YAML file is missing; recreating", table_name)
+                try:
+                    current_db_config = agent_config.current_db_config()
+                    target = _resolved_table_target(table_fq_name, agent_config, current_db_config)
+                    semantic_rag.delete_semantic_model_for_table(
+                        table_name=target["table_name"],
+                        catalog_name=target["catalog_name"],
+                        database_name=target["database_name"],
+                        schema_name=target["schema_name"],
+                    )
+                except Exception as delete_error:
+                    logger.warning(
+                        "Failed to delete stale semantic model objects for %s: %s",
+                        table_name,
+                        delete_error,
+                    )
+                exists = False
 
             if not exists:
                 missing.append(table_fq_name)
@@ -216,6 +242,28 @@ def find_missing_semantic_models(
             missing.append(table_fq_name)
 
     return missing
+
+
+def _semantic_model_yaml_exists(table_name: str, agent_config: AgentConfig) -> bool:
+    """Return False only when the expected datasource YAML path is known and absent."""
+
+    try:
+        path_manager = getattr(agent_config, "path_manager", None)
+        if path_manager is None or not hasattr(path_manager, "semantic_model_path"):
+            return True
+        datasource = str(getattr(agent_config, "current_datasource", "") or "").strip()
+        base_path = path_manager.semantic_model_path(datasource)
+        if not isinstance(base_path, (str, Path)):
+            return True
+        semantic_dir = Path(base_path)
+    except Exception as exc:
+        logger.debug("Could not resolve semantic model YAML path for %s: %s", table_name, exc)
+        return True
+
+    safe_table_name = str(table_name or "").strip()
+    if not safe_table_name:
+        return True
+    return any((semantic_dir / f"{safe_table_name}{suffix}").exists() for suffix in (".yml", ".yaml"))
 
 
 async def create_semantic_model_for_table(
@@ -305,11 +353,106 @@ async def create_semantic_model_for_table(
         return False, str(e)
 
 
+def _format_batch_semantic_model_prompt(
+    tables: Sequence[str],
+    agent_config: AgentConfig,
+    current_db_config: object,
+    sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
+) -> str:
+    table_targets = []
+    for idx, table in enumerate(tables, 1):
+        table_targets.append(
+            f"Table {idx}: {table}\n{_format_table_target_for_prompt(table, agent_config, current_db_config)}"
+        )
+
+    user_message = (
+        "Generate semantic models for the following related tables in one workflow.\n\n"
+        "Target table coordinates:\n\n"
+        + "\n\n".join(table_targets)
+        + "\n\nWhen calling database tools, pass the namespace fields separately exactly as shown above; "
+        "do not collapse a schema name into the database argument.\n"
+        "Write all required semantic model files before validation, then validate and publish them together."
+    )
+
+    evidence_sections = []
+    for table in tables:
+        evidence = _lookup_sql_evidence(table, sql_evidence_by_table)
+        if evidence:
+            evidence_sections.append(f"Evidence for {table}:\n" + "\n\n".join(evidence))
+    if evidence_sections:
+        user_message += (
+            "\n\nSuccess-story SQL evidence grouped by table. Use these queries as primary modeling evidence, "
+            "preserving joins that derive business dimensions or real time columns:\n\n"
+            + "\n\n".join(evidence_sections)
+        )
+
+    return user_message
+
+
+async def create_semantic_models_for_tables_batch(
+    tables: List[str],
+    agent_config: AgentConfig,
+    emit: Optional[Callable] = None,
+    sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
+) -> tuple[bool, str]:
+    """Create multiple semantic models with one agent run."""
+    if not tables:
+        return True, ""
+
+    from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+    from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+    try:
+        current_db_config = agent_config.current_db_config()
+        user_message = _format_batch_semantic_model_prompt(
+            tables,
+            agent_config,
+            current_db_config,
+            sql_evidence_by_table=sql_evidence_by_table,
+        )
+    except Exception as e:
+        error = f"Error preparing batch semantic model input: {e}"
+        logger.error(error, exc_info=True)
+        return False, error
+
+    semantic_input = SemanticNodeInput(
+        user_message=user_message,
+        catalog=getattr(current_db_config, "catalog", "") or "",
+        database=getattr(current_db_config, "database", "") or "",
+        db_schema=getattr(current_db_config, "schema", "") or "",
+    )
+
+    semantic_node = GenSemanticModelAgenticNode(
+        agent_config=agent_config,
+        execution_mode="workflow",
+    )
+    semantic_node.input = semantic_input
+
+    action_history_manager = ActionHistoryManager()
+    try:
+        terminal_error = None
+        async for action in semantic_node.execute_stream(action_history_manager):
+            if emit:
+                emit(action)
+            action_type = getattr(action, "action_type", "")
+            if action.status == ActionStatus.FAILED and action_type == "error":
+                terminal_error = action.messages or "Semantic model generation failed"
+                logger.error(terminal_error)
+                continue
+        if terminal_error:
+            return False, terminal_error
+        return True, ""
+    except Exception as e:
+        logger.error(f"Error creating semantic models for tables {tables}: {e}", exc_info=True)
+        return False, str(e)
+
+
 async def create_semantic_models_for_tables(
     tables: List[str],
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
     sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
+    batch_mode: bool = False,
 ) -> tuple[List[str], List[tuple[str, str]]]:
     """
     Create semantic models for the specified tables, processing each table
@@ -321,6 +464,8 @@ async def create_semantic_models_for_tables(
         emit: Optional progress callback
         sql_evidence_by_table: Optional mapping of table lookup key to
             success-story SQL evidence.
+        batch_mode: When True, try one multi-table agent run first and fall
+            back to per-table generation for any table still missing.
 
     Returns:
         (succeeded_tables, failed_tables) where failed_tables is a list of
@@ -331,8 +476,37 @@ async def create_semantic_models_for_tables(
 
     succeeded: List[str] = []
     failed: List[tuple[str, str]] = []
+    fallback_tables = list(tables)
 
-    for table in tables:
+    if batch_mode and len(tables) > 1:
+        logger.info("Creating semantic models for %d tables in one batch: %s", len(tables), tables)
+        batch_success, batch_error = await create_semantic_models_for_tables_batch(
+            tables,
+            agent_config,
+            emit,
+            sql_evidence_by_table=sql_evidence_by_table,
+        )
+        if batch_success:
+            still_missing = set(find_missing_semantic_models(set(tables), agent_config))
+            succeeded = [table for table in tables if table not in still_missing]
+            fallback_tables = [table for table in tables if table in still_missing]
+            if succeeded:
+                logger.info("Batch-created semantic models for: %s", succeeded)
+            if not fallback_tables:
+                return succeeded, []
+            logger.warning(
+                "Batch semantic model generation completed but %d table(s) are still missing; "
+                "falling back to per-table generation for: %s",
+                len(fallback_tables),
+                fallback_tables,
+            )
+        else:
+            logger.warning(
+                "Batch semantic model generation failed; falling back to per-table generation: %s",
+                batch_error,
+            )
+
+    for table in fallback_tables:
         logger.info(f"Creating semantic model for table: {table}")
         sql_evidence = _lookup_sql_evidence(table, sql_evidence_by_table)
         if sql_evidence:
@@ -362,6 +536,7 @@ def create_semantic_models_for_tables_sync(
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
     sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
+    batch_mode: bool = False,
 ) -> tuple[List[str], List[tuple[str, str]]]:
     """
     Synchronous wrapper for create_semantic_models_for_tables.
@@ -369,9 +544,12 @@ def create_semantic_models_for_tables_sync(
     Returns:
         (succeeded_tables, failed_tables)
     """
-    if sql_evidence_by_table is None:
-        return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit))
-    return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit, sql_evidence_by_table))
+    kwargs = {}
+    if sql_evidence_by_table is not None:
+        kwargs["sql_evidence_by_table"] = sql_evidence_by_table
+    if batch_mode:
+        kwargs["batch_mode"] = True
+    return asyncio.run(create_semantic_models_for_tables(tables, agent_config, emit, **kwargs))
 
 
 async def ensure_semantic_models_exist(
@@ -379,6 +557,7 @@ async def ensure_semantic_models_exist(
     agent_config: AgentConfig,
     emit: Optional[Callable] = None,
     sql_evidence_by_table: Optional[dict[str, list[str]]] = None,
+    batch_mode: bool = False,
 ) -> tuple[bool, str, List[str]]:
     """
     Check and create missing semantic models. Processes each table independently
@@ -390,6 +569,8 @@ async def ensure_semantic_models_exist(
         emit: Optional progress callback
         sql_evidence_by_table: Optional mapping of table lookup key to
             success-story SQL evidence.
+        batch_mode: When True, create missing models with one multi-table
+            agent run when possible, then fall back per table for misses.
 
     Returns:
         (success, error_message, created_tables) — success is True when at
@@ -404,15 +585,17 @@ async def ensure_semantic_models_exist(
 
     logger.info(f"Found {len(missing_tables)} tables without semantic models: {missing_tables}")
 
+    create_kwargs = {}
     if sql_evidence_by_table is not None:
-        succeeded, failed = await create_semantic_models_for_tables(
-            missing_tables,
-            agent_config,
-            emit,
-            sql_evidence_by_table=sql_evidence_by_table,
-        )
-    else:
-        succeeded, failed = await create_semantic_models_for_tables(missing_tables, agent_config, emit)
+        create_kwargs["sql_evidence_by_table"] = sql_evidence_by_table
+    if batch_mode:
+        create_kwargs["batch_mode"] = True
+    succeeded, failed = await create_semantic_models_for_tables(
+        missing_tables,
+        agent_config,
+        emit,
+        **create_kwargs,
+    )
 
     if succeeded:
         logger.info(f"Successfully created semantic models for: {succeeded}")

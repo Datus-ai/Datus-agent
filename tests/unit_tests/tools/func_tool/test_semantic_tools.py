@@ -48,7 +48,11 @@ class TestGenerationEvidence:
         evidence.record_metric_dry_run(["revenue", "cost"], result)
 
         assert evidence.metric_dry_run_passed is True
-        assert evidence.metric_sqls == {"__query_metrics_dry_run__": "SELECT 1"}
+        assert evidence.metric_sqls == {
+            "__query_metrics_dry_run__": "SELECT 1",
+            "revenue": "SELECT 1",
+            "cost": "SELECT 1",
+        }
         assert evidence.has_metric_dry_run(["revenue", "cost"]) is True
 
     def test_dry_run_success_without_sql_metadata_records_coverage(self):
@@ -82,6 +86,101 @@ class TestGenerationEvidence:
         evidence.record_metric_dry_run(["revenue_total"], result, dimensions=["customer__segment_name"])
 
         assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is True
+
+    def test_queryability_contract_rewrites_metric_alias_to_canonical_name(self):
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["new_ip_activity_count"],
+                    "dimension_hints": ["activity_date"],
+                }
+            ],
+            metric_aliases={"new_ip_activity_count": "new_and_ip_activity_count"},
+        )
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence.record_metric_dry_run(
+            ["new_and_ip_activity_count"],
+            result,
+            dimensions=["activity_date"],
+        )
+
+        assert evidence.metric_queryability_contracts[0]["metric_hints"] == ["new_and_ip_activity_count"]
+        assert evidence.metric_queryability_contracts[0]["metric_alias_rewrites"] == {
+            "new_ip_activity_count": "new_and_ip_activity_count"
+        }
+        assert evidence.has_required_queryability_dry_runs(["new_and_ip_activity_count"]) is True
+
+    def test_queryability_contract_accepts_metric_time_grain_dimension(self):
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["activity_count"],
+                    "dimension_hints": ["start_month"],
+                    "time_group_hints": [
+                        {
+                            "alias": "start_month",
+                            "base_expr": "start_date",
+                            "grain": "month",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        evidence.record_metric_dry_run(
+            ["activity_count"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT DATE_FORMAT(start_date, '%Y-%m-01') AS metric_time__month, "
+                            "COUNT(DISTINCT ac_code) AS activity_count FROM activity GROUP BY "
+                            "DATE_FORMAT(start_date, '%Y-%m-01')"
+                        )
+                    }
+                },
+            ),
+            dimensions=["metric_time__month"],
+        )
+
+        assert evidence.metric_dry_run_queries[0]["time_granularity"] == "month"
+        assert evidence.has_required_queryability_dry_runs(["activity_count"]) is True
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["activity_count"],
+                    "dimension_hints": ["start_month"],
+                    "time_group_hints": [{"alias": "start_month", "base_expr": "start_date", "grain": "month"}],
+                }
+            ]
+        )
+        evidence.record_metric_dry_run(
+            ["activity_count"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT DATE_FORMAT(start_date, '%Y-%m-01') AS metric_time__month, "
+                            "COUNT(DISTINCT ac_code) AS activity_count FROM activity GROUP BY "
+                            "DATE_FORMAT(start_date, '%Y-%m-01')"
+                        )
+                    }
+                },
+            ),
+            time_granularity="month",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["activity_count"]) is True
 
     def test_queryability_contract_accepts_split_grouped_dry_runs_for_source_metrics(self):
         contract = {
@@ -715,7 +814,7 @@ class TestNormalizeNull:
 
     @pytest.mark.parametrize(
         "value",
-        [None, "null", "None", "NULL", "Null", "NONE", "none", "", "  ", "\t"],
+        [None, "null", "None", "NULL", "Null", "NONE", "none", "", "  ", "\t", "-"],
     )
     def test_null_variants_return_none(self, value):
         assert normalize_null(value) is None
@@ -1042,6 +1141,7 @@ class TestQueryMetricsCompression:
                 "metrics": ["revenue"],
                 "dimensions": ["customer_segment"],
                 "time_granularity": "month",
+                "time_granularity_explicit": True,
                 "sql": "SELECT SUM(revenue) AS revenue FROM orders",
             }
         ]

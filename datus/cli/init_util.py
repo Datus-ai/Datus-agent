@@ -92,14 +92,6 @@ def init_metrics(
         console = Console(log_path=False)
     try:
         if build_model == "overwrite":
-            from datus.storage.backend_holder import create_vector_connection
-
-            db = create_vector_connection(agent_config.project_name)
-            try:
-                db.drop_table("metrics", ignore_missing=True)
-                logger.info("Dropped existing metrics table")
-            finally:
-                db.close()
             agent_config.save_storage_config("metric")
 
         # Create StreamOutputManager
@@ -194,19 +186,11 @@ def init_semantic_model(
 
     try:
         if build_mode == "overwrite":
-            from datus.storage.backend_holder import create_vector_connection
-
-            db = create_vector_connection(agent_config.project_name)
-            try:
-                db.drop_table("semantic_model", ignore_missing=True)
-                logger.info("Dropped existing semantic_model table")
-            finally:
-                db.close()
             # Clear the datasource-scoped semantic_models directory (YAML files).
             semantic_yaml_dir = agent_config.path_manager.semantic_model_path(agent_config.current_datasource)
             if semantic_yaml_dir.exists() and not safe_rmtree(
                 semantic_yaml_dir,
-                f"project semantic YAML directory (shared by all databases in {agent_config.project_name!r})",
+                f"semantic YAML directory for datasource {agent_config.current_datasource!r}",
                 force=force,
             ):
                 console.print("[yellow]Cancelled by user[/yellow]")

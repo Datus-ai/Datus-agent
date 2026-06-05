@@ -11,8 +11,8 @@ from agents import Tool
 from datus_storage_base.conditions import And, eq
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricRAG
-from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.metric.store import MetricRAG, metric_definition_conflict, normalize_metric_name
+from datus.storage.semantic_model.store import SemanticModelRAG, _identifier_variants, _normalized_identifier
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
@@ -35,6 +35,8 @@ class GenerationTools:
         self.generation_evidence = generation_evidence or GenerationEvidence()
         self.metric_rag = MetricRAG(agent_config)
         self.semantic_rag = SemanticModelRAG(agent_config)
+        self._semantic_object_exists_cache: Dict[tuple[str, str, str], FuncToolResult] = {}
+        self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
 
     def available_tools(self) -> List[Tool]:
         """
@@ -73,18 +75,27 @@ class GenerationTools:
             dict: Check results containing existence status and details.
         """
         try:
+            cache_key = (
+                str(kind or "").strip().lower(),
+                str(object_name or "").strip().lower(),
+                str(table_context or "").strip().lower(),
+            )
+            cached = self._semantic_object_exists_cache.get(cache_key)
+            if cached is not None:
+                logger.debug("check_semantic_object_exists cache hit: %s", cache_key)
+                return cached.model_copy(deep=True)
+
             # Extract the final segment as target name (e.g., "public.orders" -> "orders")
-            target_name = object_name.split(".")[-1].lower()
+            target_name = object_name.split(".")[-1].strip('`"[]').lower()
 
             found_object = None
 
             if kind == "table":
-                # Exact match for table using SQL WHERE condition
-                storage = self.semantic_rag.storage
-                where = And([eq("kind", "table"), eq("name", target_name)])
-                results = storage.search_all(where=where, select_fields=["id", "name", "kind"])
-                if results:
-                    found_object = results[0]
+                table_index = self._get_semantic_table_object_index()
+                for candidate in _identifier_variants(object_name):
+                    found_object = table_index.get(candidate) or table_index.get(_normalized_identifier(candidate))
+                    if found_object:
+                        break
             elif kind == "metric":
                 # Exact match for metric using SQL WHERE condition
                 storage = self.metric_rag.storage
@@ -120,7 +131,7 @@ class GenerationTools:
                         break
 
             if found_object:
-                return FuncToolResult(
+                result = FuncToolResult(
                     result={
                         "exists": True,
                         "id": found_object.get("id"),
@@ -129,8 +140,12 @@ class GenerationTools:
                         "message": f"Object '{object_name}' ({kind}) already exists.",
                     }
                 )
+                self._semantic_object_exists_cache[cache_key] = result.model_copy(deep=True)
+                return result
 
-            return FuncToolResult(result={"exists": False, "message": f"No {kind} found for '{object_name}'"})
+            result = FuncToolResult(result={"exists": False, "message": f"No {kind} found for '{object_name}'"})
+            self._semantic_object_exists_cache[cache_key] = result.model_copy(deep=True)
+            return result
 
         except Exception as e:
             logger.error(f"Error checking semantic object existence: {e}")
@@ -146,6 +161,35 @@ class GenerationTools:
     ) -> FuncToolResult:
         """Legacy wrapper for checking table existence."""
         return self.check_semantic_object_exists(table_name, kind="table")
+
+    def _get_semantic_table_object_index(self) -> Dict[str, Dict[str, object]]:
+        """Load table semantic objects once and index all identifier variants."""
+
+        if self._semantic_table_object_index is not None:
+            return self._semantic_table_object_index
+
+        storage = self.semantic_rag.storage
+        select_fields = ["id", "name", "kind", "table_name", "fq_name"]
+        rows = storage.search_all(where=And([eq("kind", "table")]), select_fields=select_fields)
+        if hasattr(rows, "to_pylist"):
+            rows = rows.to_pylist()
+        index: Dict[str, Dict[str, object]] = {}
+        for obj in rows if isinstance(rows, list) else []:
+            if not isinstance(obj, dict):
+                continue
+            for field in ("name", "table_name", "fq_name"):
+                value = str(obj.get(field) or "").strip()
+                if not value:
+                    continue
+                for variant in _identifier_variants(value):
+                    if variant:
+                        index.setdefault(variant, obj)
+                    normalized = _normalized_identifier(variant)
+                    if normalized:
+                        index.setdefault(normalized, obj)
+
+        self._semantic_table_object_index = index
+        return index
 
     def end_semantic_model_generation(self, semantic_model_files: List[str]) -> FuncToolResult:
         """
@@ -179,6 +223,8 @@ class GenerationTools:
             logger.info(
                 f"Semantic model generation completed for {len(semantic_model_files)} files: {semantic_model_files}"
             )
+            self._semantic_object_exists_cache.clear()
+            self._semantic_table_object_index = None
 
             return FuncToolResult(
                 result={
@@ -322,12 +368,25 @@ class GenerationTools:
                     },
                 )
             metric_names = self._extract_metric_names_from_file(abs_metric)
-            if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
+            metric_definitions = self._extract_metric_definitions_from_file(abs_metric)
+            conflict_error = self._validate_metric_name_conflicts(metric_definitions)
+            if conflict_error:
+                return FuncToolResult(
+                    success=0,
+                    error=conflict_error,
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
+            required_metric_names = self._metric_names_requiring_dry_run(metric_names, metric_definitions, metric_sqls)
+            if required_metric_names and not self.generation_evidence.has_metric_dry_run(required_metric_names):
                 return FuncToolResult(
                     success=0,
                     error=(
                         "query_metrics(dry_run=True) must pass for generated metric(s): "
-                        f"{', '.join(metric_names)}. Run a dry-run query for these metric names, "
+                        f"{', '.join(required_metric_names)}. Run a dry-run query for these metric names, "
                         "fix any issues, and retry end_metric_generation."
                     ),
                     result={
@@ -336,8 +395,10 @@ class GenerationTools:
                         "metric_sqls": metric_sqls,
                     },
                 )
-            if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
-                missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
+            if required_metric_names and not self.generation_evidence.has_required_queryability_dry_runs(
+                required_metric_names
+            ):
+                missing_contracts = self.generation_evidence.missing_queryability_contracts(required_metric_names)
                 contract_summary = summarize_queryability_contracts(missing_contracts)
                 return FuncToolResult(
                     success=0,
@@ -372,6 +433,8 @@ class GenerationTools:
             self.generation_evidence.mark_kb_sync("metric")
             if sync_result.get("semantic_synced"):
                 self.generation_evidence.mark_kb_sync("semantic")
+            self._semantic_object_exists_cache.clear()
+            self._semantic_table_object_index = None
 
             return FuncToolResult(
                 result={
@@ -409,6 +472,8 @@ class GenerationTools:
                 "(separated by `---`)."
             )
         saw_metric_block = False
+        seen_names: Dict[str, str] = {}
+        saw_named_metric = False
         for doc in docs:
             if isinstance(doc, dict) and "metric" in doc:
                 saw_metric_block = True
@@ -416,7 +481,18 @@ class GenerationTools:
                 if isinstance(metric, dict):
                     name = metric.get("name")
                     if isinstance(name, str) and name.strip():
-                        return None
+                        saw_named_metric = True
+                        metric_name = name.strip()
+                        normalized = normalize_metric_name(metric_name)
+                        if normalized in seen_names:
+                            return (
+                                f"Metric file {metric_file!r} declares duplicate metric.name '{metric_name}'. "
+                                "Metric names must be unique within a datasource; merge identical definitions "
+                                "or choose a more specific business name."
+                            )
+                        seen_names[normalized] = metric_name
+        if saw_named_metric:
+            return None
         if saw_metric_block:
             return (
                 f"Metric file {metric_file!r} contains `metric:` YAML blocks, "
@@ -452,6 +528,173 @@ class GenerationTools:
             if isinstance(name, str) and name:
                 names.append(name)
         return names
+
+    @staticmethod
+    def _extract_metric_definitions_from_file(metric_file: str) -> List[Dict[str, object]]:
+        """Return lightweight metric definitions for pre-sync conflict checks."""
+        try:
+            with open(metric_file, "r", encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+        except (OSError, yaml.YAMLError):
+            return []
+
+        definitions: List[Dict[str, object]] = []
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            metric = doc.get("metric")
+            if not isinstance(metric, dict):
+                continue
+            name = metric.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            metric_type = str(metric.get("type") or "").strip()
+            type_params = metric.get("type_params") if isinstance(metric.get("type_params"), dict) else {}
+            measure_expr = ""
+            base_measures: List[str] = []
+
+            if metric_type == "measure_proxy":
+                measure = type_params.get("measure")
+                if isinstance(measure, str):
+                    measure_expr = measure
+                    base_measures.append(measure)
+                elif isinstance(measure, dict):
+                    measure_name = measure.get("name")
+                    if isinstance(measure_name, str) and measure_name.strip():
+                        measure_expr = measure_name
+                        base_measures.append(measure_name)
+            elif metric_type == "ratio":
+                for key in ("numerator", "denominator"):
+                    ref = type_params.get(key)
+                    if isinstance(ref, str) and ref.strip():
+                        base_measures.append(ref)
+                    elif isinstance(ref, dict):
+                        ref_name = ref.get("name")
+                        if isinstance(ref_name, str) and ref_name.strip():
+                            base_measures.append(ref_name)
+            elif metric_type in {"expr", "cumulative"}:
+                for ref in type_params.get("measures") or []:
+                    if isinstance(ref, str) and ref.strip():
+                        base_measures.append(ref)
+                    elif isinstance(ref, dict):
+                        ref_name = ref.get("name")
+                        if isinstance(ref_name, str) and ref_name.strip():
+                            base_measures.append(ref_name)
+                if metric_type == "expr" and type_params.get("expr"):
+                    measure_expr = str(type_params["expr"])
+            elif metric_type == "derived":
+                for ref in type_params.get("metrics") or []:
+                    if isinstance(ref, str) and ref.strip():
+                        base_measures.append(ref)
+                    elif isinstance(ref, dict):
+                        ref_name = ref.get("name")
+                        if isinstance(ref_name, str) and ref_name.strip():
+                            base_measures.append(ref_name)
+                if type_params.get("expr"):
+                    measure_expr = str(type_params["expr"])
+
+            definitions.append(
+                {
+                    "name": name.strip(),
+                    "metric_type": metric_type,
+                    "measure_expr": measure_expr,
+                    "base_measures": base_measures,
+                }
+            )
+        return definitions
+
+    def _metric_names_requiring_dry_run(
+        self,
+        metric_names: List[str],
+        metric_definitions: List[Dict[str, object]],
+        metric_sqls: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
+        """Return the subset of a metric file that must be dry-run before publish.
+
+        Batch generation often appends new metrics to an existing metrics YAML file.
+        Requiring every historical metric in that file to be re-dry-run makes later
+        batches slower and brittle. We still require all new metric names, and any
+        metric name that the current run produced SQL evidence for.
+        """
+        if not metric_names:
+            return []
+
+        by_normalized_name = {normalize_metric_name(name): name for name in metric_names if normalize_metric_name(name)}
+        required = set()
+        for name in metric_sqls or {}:
+            normalized = normalize_metric_name(name)
+            if normalized and not normalized.startswith("__") and normalized in by_normalized_name:
+                required.add(normalized)
+        for name in self.generation_evidence.metric_dry_run_metrics:
+            normalized = normalize_metric_name(name)
+            if normalized in by_normalized_name:
+                required.add(normalized)
+
+        existing_names = self._existing_metric_names()
+        if existing_names is None:
+            return metric_names
+        for definition in metric_definitions:
+            normalized = normalize_metric_name(definition.get("name"))
+            if normalized and normalized not in existing_names:
+                required.add(normalized)
+
+        if not required:
+            return []
+        return [name for normalized, name in by_normalized_name.items() if normalized in required]
+
+    def _existing_metric_names(self) -> Optional[set[str]]:
+        try:
+            rows = self.metric_rag.search_all_metrics(select_fields=["name"])
+        except Exception as exc:
+            logger.warning("Failed to load existing metric names before publish dry-run gating: %s", exc)
+            return None
+        if not isinstance(rows, list):
+            return None
+        names = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized = normalize_metric_name(row.get("name"))
+            if normalized:
+                names.add(normalized)
+        return names
+
+    def _validate_metric_name_conflicts(self, metric_definitions: List[Dict[str, object]]) -> Optional[str]:
+        if not metric_definitions:
+            return None
+
+        existing_by_name: Dict[str, List[Dict[str, object]]] = {}
+        try:
+            rows = self.metric_rag.search_all_metrics(
+                select_fields=["id", "name", "semantic_model_name", "metric_type", "measure_expr", "base_measures"]
+            )
+        except Exception as exc:
+            logger.warning("Failed to check existing metric name conflicts before sync: %s", exc)
+            return None
+        if not isinstance(rows, list):
+            return None
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            normalized = normalize_metric_name(row.get("name"))
+            if normalized:
+                existing_by_name.setdefault(normalized, []).append(row)
+
+        for incoming in metric_definitions:
+            normalized = normalize_metric_name(incoming.get("name"))
+            if not normalized:
+                continue
+            for existing in existing_by_name.get(normalized, []):
+                conflict_field = metric_definition_conflict(existing, incoming)
+                if conflict_field:
+                    return (
+                        f"Metric name conflict within this datasource for '{incoming.get('name')}': "
+                        f"existing metric id '{existing.get('id')}' has a different '{conflict_field}'. "
+                        "Metric names must be unique within a datasource; choose a more specific name "
+                        "or update the existing metric explicitly."
+                    )
+        return None
 
     def _sync_metric_to_db(
         self,

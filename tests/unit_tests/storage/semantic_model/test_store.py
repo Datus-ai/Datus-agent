@@ -902,6 +902,58 @@ class TestSemanticModelRAGTruncate:
         assert sem_rag.get_size() == 0
 
 
+class TestSemanticModelRAGDeleteSemanticModelForTable:
+    """Tests for table-scoped semantic model deletion."""
+
+    def test_delete_semantic_model_for_table_deletes_table_and_children(self, sem_rag):
+        orders = _make_table_object("orders", catalog_name="default", database_name="sales", schema_name="public")
+        orders["id"] = "table:sales.public.orders"
+        amount = _make_column_object(
+            "orders",
+            "amount",
+            catalog_name="default",
+            database_name="sales",
+            schema_name="public",
+            is_measure=True,
+            agg="SUM",
+        )
+        amount["id"] = "column:sales.public.orders.amount"
+        customers = _make_table_object("customers", catalog_name="default", database_name="sales", schema_name="public")
+        customers["id"] = "table:sales.public.customers"
+
+        sem_rag.store_batch([orders, amount, customers])
+
+        deleted = sem_rag.delete_semantic_model_for_table(
+            table_name="orders",
+            catalog_name="default",
+            database_name="sales",
+            schema_name="public",
+        )
+
+        rows = sem_rag.storage.search_all(select_fields=["id"])
+        assert deleted == 2
+        assert {row["id"] for row in rows} == {"table:sales.public.customers"}
+
+    def test_delete_semantic_model_for_table_respects_hierarchy(self, sem_rag):
+        sales_orders = _make_table_object("orders", catalog_name="default", database_name="sales", schema_name="public")
+        sales_orders["id"] = "table:sales.public.orders"
+        ops_orders = _make_table_object("orders", catalog_name="default", database_name="ops", schema_name="public")
+        ops_orders["id"] = "table:ops.public.orders"
+
+        sem_rag.store_batch([sales_orders, ops_orders])
+
+        deleted = sem_rag.delete_semantic_model_for_table(
+            table_name="orders",
+            catalog_name="default",
+            database_name="sales",
+            schema_name="public",
+        )
+
+        rows = sem_rag.storage.search_all(select_fields=["id"])
+        assert deleted == 1
+        assert {row["id"] for row in rows} == {"table:ops.public.orders"}
+
+
 # ============================================================
 # SemanticModelRAG.create_indices
 # ============================================================

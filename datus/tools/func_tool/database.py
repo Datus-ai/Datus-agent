@@ -146,6 +146,7 @@ class DBFuncTool:
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
+        self._describe_table_cache: Dict[tuple[str, str, str, str, str], FuncToolResult] = {}
 
         self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
         self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
@@ -977,6 +978,18 @@ class DBFuncTool:
                 database=database,
                 schema=schema_name,
             )
+            source = datasource or self._default_datasource or ""
+            cache_key = (
+                str(source),
+                coordinate.catalog,
+                coordinate.database,
+                coordinate.schema,
+                coordinate.table,
+            )
+            cached = self._describe_table_cache.get(cache_key)
+            if cached is not None:
+                logger.debug("describe_table cache hit: %s", cache_key)
+                return cached.model_copy(deep=True)
 
             if not self._table_matches_scope(coordinate):
                 error_msg = f"Table '{table_name}' is outside the scoped context."
@@ -1067,7 +1080,9 @@ class DBFuncTool:
                     logger.warning(f"Failed to get semantic model for {table_name}: {e}")
 
             logger.info(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
-            return FuncToolResult(result=result_data)
+            result = FuncToolResult(result=result_data)
+            self._describe_table_cache[cache_key] = result.model_copy(deep=True)
+            return result
 
         except Exception as e:
             import traceback
@@ -1273,6 +1288,7 @@ class DBFuncTool:
         try:
             result = connector.execute_ddl(cleaned)
             if result.success:
+                self._describe_table_cache.clear()
                 # Commit to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(connector, "connection") and hasattr(connector.connection, "commit"):
                     connector.connection.commit()

@@ -4,10 +4,10 @@
 
 """Global backend singleton — manages RDB and vector backend instances.
 
-Backends are stateless with respect to project: ``initialize()`` only carries
-backend-wide configuration (data_dir, isolation), while the active project
-identifier is passed at ``connect()`` time by the ``create_*`` helpers. This
-lets one backend instance serve many projects.
+Backends are stateless with respect to storage namespace: ``initialize()`` only
+carries backend-wide configuration (data_dir, isolation), while the active
+namespace is passed at ``connect()`` time by the ``create_*`` helpers. This lets
+one backend instance serve many namespaces.
 """
 
 import threading
@@ -38,8 +38,8 @@ def init_backends(
 ) -> None:
     """Initialize storage backends from configuration.
 
-    Should be called once during application startup. The per-call project
-    identifier is not stored here — it is passed to ``create_rdb_for_store``
+    Should be called once during application startup. The per-call storage
+    namespace is not stored here — it is passed to ``create_rdb_for_store``
     / ``create_vector_connection`` at lookup time.
 
     Args:
@@ -122,15 +122,15 @@ def get_isolation_type() -> str:
 
 
 def create_rdb_for_store(store_db_name: str, project: str) -> RdbDatabase:
-    """Create an RDB database handle for *store_db_name* scoped to *project*.
+    """Create an RDB database handle for *store_db_name* scoped to a namespace.
 
     The backend singleton is reused; ``connect()`` produces a per-store,
-    per-project database handle. ``project`` is a path component (PHYSICAL
-    isolation) and must be non-empty.
+    per-namespace database handle. ``project`` is the legacy parameter name for
+    that namespace and must be non-empty.
 
     Args:
         store_db_name: Logical store name (e.g. ``"subject_tree"``).
-        project: Project identifier; must be non-empty.
+        project: Backend storage namespace; must be non-empty.
 
     Raises:
         DatusException: when ``project`` is empty.
@@ -145,12 +145,11 @@ def create_rdb_for_store(store_db_name: str, project: str) -> RdbDatabase:
 
 
 def create_vector_connection(project: str) -> VectorDatabase:
-    """Create a vector db connection scoped to *project*.
+    """Create a vector db connection scoped to a backend namespace.
 
     Args:
-        project: Project identifier passed to the backend's ``connect()``
-            first argument; the backend uses it as a path component for
-            per-project isolation. Must be non-empty.
+        project: Legacy parameter name for the namespace passed to the
+            backend's ``connect()`` first argument. Must be non-empty.
 
     Raises:
         DatusException: when ``project`` is empty.

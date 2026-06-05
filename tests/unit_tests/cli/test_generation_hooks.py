@@ -25,6 +25,7 @@ import pytest
 from datus.cli.generation_hooks import (
     GenerationCancelledException,
     GenerationHooks,
+    _normalize_metric_subject_path,
     normalize_kb_relative_path,
     resolve_kb_sandbox_path,
 )
@@ -92,6 +93,36 @@ class TestGenerationHooksInit:
     def test_init_no_config(self, broker):
         h = GenerationHooks(broker=broker)
         assert h.agent_config is None
+
+    def test_normalizes_generic_metric_subject_root_to_datasource(self, agent_config):
+        assert _normalize_metric_subject_path(agent_config, ["Metrics", "orders"], "orders") == [
+            "test_ns",
+            "orders",
+        ]
+
+    def test_normalizes_generic_metric_subject_root_with_datasource_tail(self, agent_config):
+        assert _normalize_metric_subject_path(agent_config, ["Metrics", "test_ns", "orders"], "orders") == [
+            "test_ns",
+            "orders",
+        ]
+
+    def test_collapses_duplicate_datasource_metric_subject_root(self, agent_config):
+        assert _normalize_metric_subject_path(agent_config, ["test_ns", "test_ns", "orders"], "orders") == [
+            "test_ns",
+            "orders",
+        ]
+
+    def test_keeps_business_metric_subject_root(self, agent_config):
+        assert _normalize_metric_subject_path(agent_config, ["finance", "orders"], "orders") == [
+            "finance",
+            "orders",
+        ]
+
+    def test_keeps_uncategorized_business_metric_subject_root(self, agent_config):
+        assert _normalize_metric_subject_path(agent_config, ["Uncategorized", "orders"], "orders") == [
+            "Uncategorized",
+            "orders",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1247,6 +1278,24 @@ class TestParseSubjectTreeFromTags:
         assert result == ["Finance", "Revenue"]
 
 
+class TestDefaultMetricSubjectPath:
+    def test_uses_current_datasource(self):
+        from datus.cli.generation_hooks import _default_metric_subject_path
+
+        config = MagicMock()
+        config.current_datasource = "ac_manage"
+
+        assert _default_metric_subject_path(config, "orders") == ["ac_manage", "orders"]
+
+    def test_keeps_project_fallback_without_datasource(self):
+        from datus.cli.generation_hooks import _default_metric_subject_path
+
+        config = MagicMock()
+        config.current_datasource = ""
+
+        assert _default_metric_subject_path(config, "orders") == ["Metrics", "orders"]
+
+
 # ---------------------------------------------------------------------------
 # Tests: _sync_semantic_to_db — boolean coercion
 # ---------------------------------------------------------------------------
@@ -1372,7 +1421,7 @@ class TestSyncSemanticToDbBooleanCoercion:
 
 
 class TestSyncSemanticToDbMetricReferenceNormalization:
-    def test_metric_id_includes_subject_path_to_avoid_same_name_collision(self, agent_config, tmp_path):
+    def test_metric_name_is_datasource_local_and_subject_path_is_classification(self, agent_config, tmp_path):
         yaml_file = tmp_path / "metrics.yml"
         yaml_file.write_text(
             """
@@ -1418,10 +1467,9 @@ metric:
             )
 
         assert result["success"], f"Sync failed: {result.get('error')}"
-        assert len(captured_metric) == 2
-        assert captured_metric[0]["id"] == "metric:Commerce/Orders/Average_Order_Value.average_gross_order_value"
-        assert captured_metric[1]["id"] == "metric:Finance/Orders/Average_Order_Value.average_gross_order_value"
-        assert captured_metric[0]["id"] != captured_metric[1]["id"]
+        assert len(captured_metric) == 1
+        assert captured_metric[0]["id"] == "metric:average_gross_order_value"
+        assert captured_metric[0]["subject_path"] == ["Finance", "Orders", "Average_Order_Value"]
 
     def test_measure_proxy_nested_measure_is_stored_as_string(self, agent_config, tmp_path):
         yaml_file = tmp_path / "metrics.yml"

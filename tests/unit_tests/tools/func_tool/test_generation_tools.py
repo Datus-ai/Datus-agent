@@ -89,6 +89,19 @@ class TestCheckSemanticObjectExists:
         assert result.success == 1
         assert result.result["exists"] is False
 
+    def test_check_semantic_object_exists_reuses_cached_result(self, generation_tools):
+        mock_storage = Mock()
+        generation_tools.metric_rag.storage = mock_storage
+        mock_storage.search_all.return_value = [{"id": "m1", "name": "revenue"}]
+
+        with patch("datus.tools.func_tool.generation_tools.eq"):
+            first = generation_tools.check_semantic_object_exists("revenue", kind="metric")
+            second = generation_tools.check_semantic_object_exists("revenue", kind="metric")
+
+        assert first.success == 1
+        assert second.result == first.result
+        mock_storage.search_all.assert_called_once()
+
     def test_column_found_with_table_context(self, generation_tools):
         mock_storage = Mock()
         generation_tools.semantic_rag.storage = mock_storage
@@ -343,6 +356,7 @@ class TestEndMetricGenerationPreflight:
     def test_accepts_file_with_metric_block(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
+        generation_tools.metric_rag.search_all_metrics.return_value = []
         good = tmp_path / "semantic_models" / "good_metric.yml"
         good.parent.mkdir(parents=True, exist_ok=True)
         good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
@@ -353,9 +367,50 @@ class TestEndMetricGenerationPreflight:
             result = generation_tools.end_metric_generation(metric_file=str(good))
         assert result.success == 1
 
+    def test_only_new_metrics_in_cumulative_file_require_dry_run(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("new_order_count")
+        generation_tools.metric_rag.search_all_metrics.return_value = [
+            {
+                "id": "metric:old_revenue",
+                "name": "old_revenue",
+                "metric_type": "measure_proxy",
+                "measure_expr": "old_revenue",
+                "base_measures": ["old_revenue"],
+                "semantic_model_name": "orders",
+            }
+        ]
+        metric_file = tmp_path / "semantic_models" / "orders_metrics.yml"
+        metric_file.parent.mkdir(parents=True, exist_ok=True)
+        metric_file.write_text(
+            "metric:\n"
+            "  name: old_revenue\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: old_revenue\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_order_count\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_order_count\n"
+        )
+
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}),
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(metric_file),
+                metric_sqls_json=json.dumps({"new_order_count": "SELECT 1"}),
+            )
+
+        assert result.success == 1
+
     def test_rejects_missing_grouped_queryability_dry_run(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
+        generation_tools.metric_rag.search_all_metrics.return_value = []
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
@@ -380,6 +435,7 @@ class TestEndMetricGenerationPreflight:
 
     def test_accepts_grouped_queryability_dry_run(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
+        generation_tools.metric_rag.search_all_metrics.return_value = []
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
@@ -406,6 +462,7 @@ class TestEndMetricGenerationPreflight:
 
     def test_rejects_metric_not_covered_by_dry_run(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
+        generation_tools.metric_rag.search_all_metrics.return_value = []
         good = tmp_path / "semantic_models" / "good_metric.yml"
         good.parent.mkdir(parents=True, exist_ok=True)
         good.write_text("metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
@@ -416,6 +473,35 @@ class TestEndMetricGenerationPreflight:
             result = generation_tools.end_metric_generation(metric_file=str(good))
         assert result.success == 0
         assert "revenue_total" in result.error
+        sync_mock.assert_not_called()
+
+    def test_rejects_existing_metric_name_conflict_before_sync(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue_total")
+        generation_tools.metric_rag.search_all_metrics.return_value = [
+            {
+                "id": "metric:revenue_total",
+                "name": "revenue_total",
+                "metric_type": "measure_proxy",
+                "measure_expr": "gross_revenue",
+                "base_measures": ["gross_revenue"],
+                "semantic_model_name": "orders",
+            }
+        ]
+        conflicting = tmp_path / "semantic_models" / "conflicting_metric.yml"
+        conflicting.parent.mkdir(parents=True, exist_ok=True)
+        conflicting.write_text(
+            "metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: net_revenue\n"
+        )
+
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(conflicting))
+
+        assert result.success == 0
+        assert "Metric name conflict within this datasource" in result.error
         sync_mock.assert_not_called()
 
     def test_rejects_out_of_sandbox_metric_path_before_reading(self, generation_tools, tmp_path):
@@ -480,6 +566,15 @@ class TestValidateMetricFileHasBlocks:
         f = tmp_path / "multi.yml"
         f.write_text("metric:\n  name: a\n  type: measure_proxy\n---\nmetric:\n  name: b\n  type: measure_proxy\n")
         assert GenerationTools._validate_metric_file_has_blocks(str(f)) is None
+
+    def test_returns_error_for_duplicate_metric_names(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        f = tmp_path / "duplicates.yml"
+        f.write_text("metric:\n  name: revenue\n---\nmetric:\n  name: Revenue\n")
+        msg = GenerationTools._validate_metric_file_has_blocks(str(f))
+        assert msg is not None
+        assert "duplicate metric.name" in msg
 
     def test_data_source_only_is_rejected(self, tmp_path):
         """A file with only `data_source:` (no `metric:`) is not a metric file."""

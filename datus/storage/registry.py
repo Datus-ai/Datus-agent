@@ -3,11 +3,12 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Storage registry with per-project LRU cache.
+Storage registry with per-namespace LRU cache.
 
-Each (factory, project) pair gets its own storage instance with an isolated
-VectorDatabase connection. Project isolation is PHYSICAL: each project gets
-its own directory under ``{data_dir}/{project}/``.
+Each (factory, namespace) pair gets its own storage instance with an isolated
+VectorDatabase connection. The public argument is still named ``project`` for
+backward compatibility, but datasource-bound stores pass a datasource-scoped
+storage namespace here.
 """
 
 from __future__ import annotations
@@ -65,7 +66,7 @@ def get_storage_defaults() -> Dict[str, Any]:
 
 @lru_cache(maxsize=128)
 def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, project: str) -> BaseEmbeddingStore:
-    """LRU-cached storage creation, keyed by (factory, embedding model, project)."""
+    """LRU-cached storage creation, keyed by (factory, embedding model, namespace)."""
     from datus.storage.backend_holder import create_vector_connection
     from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
 
@@ -89,11 +90,11 @@ def get_storage(
     embedding_model_conf_name: str,
     project: str,
 ) -> BaseEmbeddingStore:
-    """Return a storage instance scoped to *project*.
+    """Return a storage instance scoped to a backend namespace.
 
-    Project isolation is PHYSICAL: each project gets a per-project directory
-    under ``{data_dir}/{project}/``. ``project`` must be non-empty and is
-    forwarded to the backend ``connect()`` call.
+    The argument is named ``project`` for API compatibility, but callers may
+    pass either a project namespace or a datasource-scoped namespace. It must be
+    non-empty and is forwarded to the backend ``connect()`` call.
 
     Uses an LRU cache (maxsize=128) so that inactive projects are evicted.
     Global defaults set via ``configure_storage_defaults()`` are
@@ -113,7 +114,7 @@ def _get_subject_tree_cached(project: str) -> "SubjectTreeStore":
 
 
 def get_subject_tree_store(project: str) -> "SubjectTreeStore":
-    """Return a SubjectTreeStore instance (LRU-cached per project)."""
+    """Return a SubjectTreeStore instance (LRU-cached per backend namespace)."""
     return _get_subject_tree_cached(project)
 
 
@@ -121,6 +122,7 @@ def preload_all_storages(
     project: str,
     data_dir: str = "",
     config: Optional[StorageBackendConfig] = None,
+    datasource: Optional[str] = None,
     **defaults: Any,
 ) -> None:
     """One-stop initialization: backends + defaults + all storage singletons.
@@ -129,13 +131,15 @@ def preload_all_storages(
     eager loading of every storage singleton into a single call.
 
     Args:
-        project: Project identifier for per-project isolation, forwarded
-            to every storage factory.  Must be non-empty.
+        project: Workspace project name. Must be non-empty.
         data_dir: Root data directory for file-based backends (e.g.
             ``~/.datus/data``).  Passed to ``init_backends()``.
         config: Storage backend configuration. Controls which RDB
             (sqlite/postgresql) and vector (lance) backends are used.
             Defaults to sqlite + lance if omitted.
+        datasource: Optional datasource to preload datasource-scoped KB stores.
+            When omitted, datasource-scoped stores are left lazy to avoid
+            creating project-scope tables that runtime RAG wrappers never use.
         **defaults: Deployment-level defaults forwarded to
             ``configure_storage_defaults()`` and then to every
             storage constructor (e.g. ``table_prefix="tb_"``).
@@ -168,21 +172,34 @@ def preload_all_storages(
     if defaults:
         configure_storage_defaults(**defaults)
 
-    # 3. Eagerly create all storage singletons
+    if not datasource:
+        logger.info("Storage backends initialized; datasource-scoped stores will be created lazily")
+        return
+
+    from types import SimpleNamespace
+
+    from datus.storage.scope import datasource_storage_namespace
+
+    storage_namespace = datasource_storage_namespace(
+        SimpleNamespace(project_name=project, current_datasource=datasource),
+        datasource,
+    )
+
+    # 3. Eagerly create datasource-scoped storage singletons
     from datus.storage.ext_knowledge.store import ExtKnowledgeStore
     from datus.storage.metric.store import MetricStorage
     from datus.storage.reference_sql.store import ReferenceSqlStorage
     from datus.storage.schema_metadata.store import SchemaStorage, SchemaValueStorage
     from datus.storage.semantic_model.store import SemanticModelStorage
 
-    get_storage(SchemaStorage, "database", project=project)
-    get_storage(SchemaValueStorage, "database", project=project)
-    get_storage(SemanticModelStorage, "semantic_model", project=project)
-    get_storage(MetricStorage, "metric", project=project)
-    get_storage(ReferenceSqlStorage, "reference_sql", project=project)
-    get_storage(ExtKnowledgeStore, "ext_knowledge", project=project)
-    get_subject_tree_store(project=project)
-    logger.info("All storage singletons pre-loaded")
+    get_storage(SchemaStorage, "database", project=storage_namespace)
+    get_storage(SchemaValueStorage, "database", project=storage_namespace)
+    get_storage(SemanticModelStorage, "semantic_model", project=storage_namespace)
+    get_storage(MetricStorage, "metric", project=storage_namespace)
+    get_storage(ReferenceSqlStorage, "reference_sql", project=storage_namespace)
+    get_storage(ExtKnowledgeStore, "ext_knowledge", project=storage_namespace)
+    get_subject_tree_store(project=storage_namespace)
+    logger.info("Datasource-scoped storage singletons pre-loaded for datasource=%s", datasource)
 
 
 def clear_storage_registry() -> None:

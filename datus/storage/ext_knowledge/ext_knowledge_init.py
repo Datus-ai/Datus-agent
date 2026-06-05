@@ -193,8 +193,8 @@ async def init_success_story_knowledge_async(
         from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
 
         logger.info(
-            "[overwrite] Wiping ext_knowledge store for project '%s' before re-population",
-            agent_config.project_name,
+            "[overwrite] Wiping ext_knowledge store for datasource '%s' before re-population",
+            agent_config.current_datasource,
         )
         ExtKnowledgeRAG(agent_config).truncate()
     elif build_mode == "incremental":

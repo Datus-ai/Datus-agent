@@ -339,6 +339,7 @@ def _classify_subject_paths(
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
         from datus.storage.registry import get_subject_tree_store
+        from datus.storage.scope import datasource_storage_namespace
         from datus.utils.reference_paths import split_reference_path
     except ImportError:
         logger.warning(
@@ -356,7 +357,7 @@ def _classify_subject_paths(
         return buckets
 
     try:
-        subject_tree = get_subject_tree_store(project=agent_config.project_name)
+        subject_tree = get_subject_tree_store(project=datasource_storage_namespace(agent_config, ds))
         metric_storage = MetricRAG(agent_config, datasource_id=ds).storage
         sql_storage = ReferenceSqlRAG(agent_config, datasource_id=ds).reference_sql_storage
         knowledge_storage = ExtKnowledgeRAG(agent_config, datasource_id=ds).store

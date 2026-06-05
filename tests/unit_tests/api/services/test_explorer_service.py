@@ -44,6 +44,31 @@ class TestExplorerServiceInit:
         svc = ExplorerService(agent_config=real_agent_config)
         assert isinstance(svc.subject_tree_store, SubjectTreeStore)
 
+    @pytest.mark.asyncio
+    async def test_init_without_datasource_does_not_raise(self, real_agent_config):
+        """Explorer can be constructed before a workflow binds a datasource."""
+        real_agent_config.current_datasource = ""
+
+        svc = ExplorerService(agent_config=real_agent_config)
+
+        assert svc.datasource_id == ""
+        assert svc.subject_tree_store is None
+        result = await svc.get_subject_list()
+        assert result.success is True
+        assert result.data.subjects == []
+
+    @pytest.mark.asyncio
+    async def test_unbound_service_rebinds_when_datasource_becomes_available(self, real_agent_config):
+        original_datasource = real_agent_config.current_datasource
+        real_agent_config.current_datasource = ""
+        svc = ExplorerService(agent_config=real_agent_config)
+
+        real_agent_config.current_datasource = original_datasource
+        result = await svc.create_directory(CreateDirectoryInput(subject_path=["late_bound"]))
+
+        assert result.success is True
+        assert svc.datasource_id == original_datasource
+
 
 @pytest.mark.asyncio
 class TestExplorerServiceGetSubjectList:

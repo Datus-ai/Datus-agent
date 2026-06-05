@@ -358,8 +358,8 @@ async def stream_reference_sql(
 
     if build_mode == "overwrite":
         logger.info(
-            "[overwrite] Wiping reference_sql store for project '%s' before re-population",
-            agent_config.project_name,
+            "[overwrite] Wiping reference_sql store for datasource '%s' before re-population",
+            agent_config.current_datasource,
         )
         storage.truncate()
         yield message_action("Reference SQL: cleared existing entries (overwrite mode).")
@@ -553,17 +553,15 @@ async def stream_metrics(
     *,
     datasource: str,
     success_story: str,
-    pool_size: int = 3,  # noqa: ARG001 - reserved; the underlying batch is single-LLM-call
+    pool_size: int = 5,
     build_mode: str = "incremental",
     subject_tree: Optional[List[str]] = None,
 ) -> AsyncGenerator[ActionHistory, None]:
     """Wrap :class:`GenMetricsAgenticNode` invocation as a ``gen_metrics`` task group.
 
-    ``pool_size`` is accepted for form parity with other tabs but the
-    underlying ``init_success_story_metrics_async`` invokes the LLM once
-    per CSV (single batch), so it is not currently consumed.
+    For metrics, ``pool_size`` controls SQL queries per generation batch. The
+    name is kept for CLI/TUI parity with other bootstrap components.
     """
-    del pool_size  # explicit parity; unused
     if not datasource:
         yield message_action("Metrics: --datasource is required, skipping.", status=ActionStatus.FAILED)
         return
@@ -583,6 +581,7 @@ async def stream_metrics(
             emit=emit,
             build_mode=build_mode,
             action_callback=on_action,
+            batch_size=max(1, int(pool_size)),
         )
 
     async def _inner(_mgr):

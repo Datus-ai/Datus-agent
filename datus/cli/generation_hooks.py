@@ -9,7 +9,7 @@ import asyncio
 import json
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 from agents.lifecycle import AgentHooks
@@ -17,15 +17,63 @@ from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricRAG, build_metric_id
+from datus.storage.metric.store import MetricRAG, build_metric_id, metric_definition_conflict, normalize_metric_name
+from datus.storage.metric.subject_path import (
+    default_metric_subject_path,
+    normalize_metric_subject_path,
+)
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.table_identity import build_semantic_table_identity
 from datus.tools.db_tools import connector_registry
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _deduplicate_metric_objects_by_name(metric_objects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep metric names datasource-local and reject conflicting duplicate definitions."""
+
+    deduplicated: list[dict[str, Any]] = []
+    index_by_name: dict[str, int] = {}
+    for metric in metric_objects:
+        normalized = normalize_metric_name(metric.get("name"))
+        if not normalized:
+            continue
+        existing_index = index_by_name.get(normalized)
+        if existing_index is None:
+            index_by_name[normalized] = len(deduplicated)
+            deduplicated.append(metric)
+            continue
+
+        existing = deduplicated[existing_index]
+        conflict_field = metric_definition_conflict(existing, metric)
+        if conflict_field:
+            raise ValueError(
+                f"Metric name conflict within datasource for '{metric.get('name')}': "
+                f"field '{conflict_field}' differs in the same sync batch. "
+                "Metric names must be unique within a datasource."
+            )
+        deduplicated[existing_index] = metric
+    return deduplicated
+
+
+def _default_metric_subject_path(agent_config: AgentConfig, table_name: str) -> list[str]:
+    datasource = str(getattr(agent_config, "current_datasource", "") or "").strip()
+    return default_metric_subject_path(datasource, table_name)
+
+
+def _normalize_metric_subject_path(
+    agent_config: AgentConfig,
+    subject_path: Optional[list[str]],
+    table_name: str,
+) -> list[str]:
+    if not subject_path:
+        return _default_metric_subject_path(agent_config, table_name)
+    datasource = str(getattr(agent_config, "current_datasource", "") or "").strip()
+    return normalize_metric_subject_path(subject_path, datasource=datasource, table_name=table_name)
 
 
 class GenerationCancelledException(Exception):
@@ -967,6 +1015,7 @@ class GenerationHooks(AgentHooks):
 
             current_db_config = agent_config.current_db_config()
             table_name = ""
+            table_identity = ""
 
             # Get database hierarchy info
             # Prioritize explicitly passed parameters, then fallback to current db config
@@ -1018,15 +1067,22 @@ class GenerationHooks(AgentHooks):
                 if not connector_registry.support_schema(agent_config.db_type):
                     schema_name = ""
 
-                # Build fully qualified name (excluding empty parts)
-                fq_parts = [p for p in [catalog_name, database_name, schema_name, table_name] if p]
-                table_fq_name = ".".join(fq_parts)
+                table_identity = build_semantic_table_identity(
+                    {
+                        "catalog_name": catalog_name,
+                        "database_name": database_name,
+                        "schema_name": schema_name,
+                        "table_name": table_name,
+                    },
+                    agent_config.db_type,
+                )
+                table_fq_name = table_identity
 
             # 2. Create and store semantic objects (table/columns) only when requested
             if data_source and include_semantic_objects:
                 # --- A. Table Object ---
                 table_obj = {
-                    "id": f"table:{table_name}",
+                    "id": f"table:{table_identity}",
                     "kind": "table",
                     "name": table_name,
                     "fq_name": table_fq_name,
@@ -1056,7 +1112,7 @@ class GenerationHooks(AgentHooks):
                     "entity": "",
                 }
                 semantic_objects.append(table_obj)
-                synced_items.append(f"table:{table_name}")
+                synced_items.append(f"table:{table_identity}")
 
                 # --- B. Column Objects (Measures & Dimensions & Identifiers) ---
 
@@ -1078,7 +1134,7 @@ class GenerationHooks(AgentHooks):
                         time_granularity = type_params.get("time_granularity", "")
 
                     col_obj = {
-                        "id": f"column:{table_name}.{col_name}",
+                        "id": f"column:{table_identity}.{col_name}",
                         "kind": "column",
                         "name": col_name,
                         "fq_name": f"{table_fq_name}.{col_name}",
@@ -1146,9 +1202,7 @@ class GenerationHooks(AgentHooks):
                         if parsed_path:
                             subject_path = parsed_path
 
-                    # If no subject_path found, use default path with semantic_model_name
-                    if not subject_path:
-                        subject_path = ["Metrics", table_name if table_name else "Unknown"]
+                    subject_path = _normalize_metric_subject_path(agent_config, subject_path, table_name)
 
                     # Extract type_params for measure_expr, base_measures
                     type_params = metric.get("type_params", {})
@@ -1299,6 +1353,9 @@ class GenerationHooks(AgentHooks):
                     }
                     metric_objects.append(metric_obj)
                     synced_items.append(f"metric:{m_name}")
+
+            if metric_objects:
+                metric_objects = _deduplicate_metric_objects_by_name(metric_objects)
 
             # Store all objects using upsert (update if id exists, insert if not)
             all_objects = semantic_objects + metric_objects

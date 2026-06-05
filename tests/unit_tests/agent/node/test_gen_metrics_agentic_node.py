@@ -61,6 +61,7 @@ class TestGenMetricsAgenticNodeInit:
     def test_metrics_has_tools(self, real_agent_config, mock_llm_create):
         """Test that the node has filesystem and generation tools."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
         node = GenMetricsAgenticNode(
             agent_config=real_agent_config,
@@ -78,6 +79,7 @@ class TestGenMetricsAgenticNodeInit:
 
         # Tool instances should be initialized
         assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
+        assert isinstance(node.filesystem_func_tool, MetricFilesystemFuncTool)
         assert isinstance(node.generation_tools, GenerationTools)
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
@@ -123,6 +125,35 @@ class TestGenMetricsAgenticNodeInit:
         assert "check_semantic_object_exists" in semantic_names
         assert "db_tools" in mapping
         assert "filesystem_tools" in mapping
+
+    def test_metric_aliases_from_precomputed_candidate_plan(self):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        user_message = """
+        Query 1:
+        SELECT COUNT(*) AS new_ip_activity_count FROM activity GROUP BY dt
+
+        ## Precomputed Metric Candidate Plan JSON
+        Use this plan.
+        {"metric_aliases":[{"source_alias":"new_ip_activity_count","candidate_name":"new_ip_activity_count","canonical_name":"new_and_ip_activity_count","source_sql_name":"sql_1"}]}
+        """
+
+        assert GenMetricsAgenticNode._metric_aliases_from_user_message(user_message) == {
+            "new_ip_activity_count": "new_and_ip_activity_count"
+        }
+
+    def test_blocked_queryability_sources_from_candidate_plan(self):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        user_message = """
+        Query 1:
+        SELECT request_name, COUNT(*) AS activity_count FROM activity GROUP BY request_name HAVING COUNT(*) > 1
+
+        ## Precomputed Metric Candidate Plan JSON
+        {"source_classifications":[{"source_sql_name":"sql_1","classification":"metric_plus_derived_datasource"}]}
+        """
+
+        assert GenMetricsAgenticNode._blocked_queryability_sources_from_user_message(user_message) == {"sql_1"}
 
 
 # ---------------------------------------------------------------------------

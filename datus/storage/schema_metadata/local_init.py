@@ -45,8 +45,8 @@ async def init_local_schema_async(
         agent_config: Agent configuration
         db_manager: Database manager
         build_mode: "overwrite" wipes the schema+value tables for the
-            entire project (across ALL datasources sharing this project)
-            before re-populating with the current ``--datasource``;
+            current datasource storage namespace before re-populating with the
+            current ``--datasource``;
             "incremental" leaves existing rows in place.
         table_type: Which object types to initialise
         init_catalog_name: Optional catalog filter
@@ -56,8 +56,8 @@ async def init_local_schema_async(
     """
     if build_mode == "overwrite":
         logger.info(
-            "[overwrite] Wiping schema metadata store for project '%s' before re-population",
-            agent_config.project_name,
+            "[overwrite] Wiping schema metadata store for datasource '%s' before re-population",
+            agent_config.current_datasource,
         )
         table_lineage_store.truncate()
 

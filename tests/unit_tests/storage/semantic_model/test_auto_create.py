@@ -176,6 +176,34 @@ class TestFindMissingSemanticModels:
         assert result == []
 
     @patch("datus.storage.semantic_model.store.SemanticModelRAG")
+    def test_store_hit_but_yaml_missing_is_missing(self, MockRAG, tmp_path):
+        """A stale store row should not suppress YAML regeneration."""
+        from datus.storage.semantic_model.auto_create import find_missing_semantic_models
+
+        semantic_dir = tmp_path / "subject" / "semantic_models" / "ac_manage"
+        semantic_dir.mkdir(parents=True)
+        config = MagicMock()
+        config.db_type = "starrocks"
+        config.current_datasource = "ac_manage"
+        config.path_manager.semantic_model_path.return_value = semantic_dir
+        config.current_db_config.return_value.catalog = "default_catalog"
+        config.current_db_config.return_value.database = "ac_manage"
+        config.current_db_config.return_value.schema = ""
+        mock_rag = MagicMock()
+        MockRAG.return_value = mock_rag
+        mock_rag.storage.search_objects.return_value = [{"name": "users"}]
+
+        result = find_missing_semantic_models({"users"}, config)
+
+        assert result == ["users"]
+        mock_rag.delete_semantic_model_for_table.assert_called_once_with(
+            table_name="users",
+            catalog_name="default_catalog",
+            database_name="ac_manage",
+            schema_name="",
+        )
+
+    @patch("datus.storage.semantic_model.store.SemanticModelRAG")
     def test_missing_models_detected(self, MockRAG):
         """When semantic models are missing, should return those table names."""
         from datus.storage.semantic_model.auto_create import find_missing_semantic_models
@@ -676,6 +704,62 @@ class TestCreateSemanticModelsForTables:
         assert succeeded == ["catalog_sales", "date_dim"]
         assert failed == []
         assert calls == {"catalog_sales": ["catalog SQL"], "date_dim": ["date SQL"]}
+
+    @pytest.mark.asyncio
+    async def test_batch_mode_uses_one_agent_when_all_models_created(self, monkeypatch):
+        """Batch mode returns after one multi-table generation when all tables now exist."""
+        from datus.storage.semantic_model import auto_create
+
+        batch_calls = []
+
+        async def mock_batch(tables, config, emit=None, sql_evidence_by_table=None):
+            batch_calls.append(list(tables))
+            return True, ""
+
+        async def mock_single(table, config, emit=None, related_tables=None, sql_evidence=None):
+            raise AssertionError("single-table fallback should not run")
+
+        monkeypatch.setattr(auto_create, "create_semantic_models_for_tables_batch", mock_batch)
+        monkeypatch.setattr(auto_create, "find_missing_semantic_models", lambda tables, config: [])
+        monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
+
+        succeeded, failed = await auto_create.create_semantic_models_for_tables(
+            ["users", "orders"],
+            MagicMock(),
+            batch_mode=True,
+        )
+
+        assert batch_calls == [["users", "orders"]]
+        assert succeeded == ["users", "orders"]
+        assert failed == []
+
+    @pytest.mark.asyncio
+    async def test_batch_mode_falls_back_only_for_remaining_missing_models(self, monkeypatch):
+        """Batch mode keeps created models and falls back per table only for misses."""
+        from datus.storage.semantic_model import auto_create
+
+        single_calls = []
+
+        async def mock_batch(tables, config, emit=None, sql_evidence_by_table=None):
+            return True, ""
+
+        async def mock_single(table, config, emit=None, related_tables=None, sql_evidence=None):
+            single_calls.append(table)
+            return True, ""
+
+        monkeypatch.setattr(auto_create, "create_semantic_models_for_tables_batch", mock_batch)
+        monkeypatch.setattr(auto_create, "find_missing_semantic_models", lambda tables, config: ["orders"])
+        monkeypatch.setattr(auto_create, "create_semantic_model_for_table", mock_single)
+
+        succeeded, failed = await auto_create.create_semantic_models_for_tables(
+            ["users", "orders"],
+            MagicMock(),
+            batch_mode=True,
+        )
+
+        assert single_calls == ["orders"]
+        assert succeeded == ["users", "orders"]
+        assert failed == []
 
 
 # ---------------------------------------------------------------------------
