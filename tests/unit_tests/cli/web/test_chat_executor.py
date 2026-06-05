@@ -4,8 +4,12 @@
 
 """Unit tests for datus/cli/web/chat_executor.py — ChatExecutor."""
 
+import asyncio
+from unittest.mock import MagicMock
+
 import pytest
 
+from datus.cli.web import chat_executor
 from datus.cli.web.chat_executor import ChatExecutor
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -193,3 +197,193 @@ class TestChatExecutorExtractSqlAndResponse:
         executor = ChatExecutor()
         sql, response = executor.extract_sql_and_response([action], None)
         assert response == "42"
+
+
+class _FakeInterruptController:
+    def __init__(self):
+        self._interrupted = False
+
+    @property
+    def is_interrupted(self):
+        return self._interrupted
+
+    def interrupt(self):
+        self._interrupted = True
+
+
+class _FakeNode:
+    def __init__(self, actions=None, *, never_complete=False):
+        self.actions = actions or []
+        self.never_complete = never_complete
+        self.interrupt_controller = _FakeInterruptController()
+        self.interaction_broker = None
+        self.closed = False
+        self.input = None
+
+    async def execute_stream_with_interactions(self, _actions):
+        try:
+            for action in self.actions:
+                yield action
+            if self.never_complete:
+                await asyncio.sleep(3600)
+        finally:
+            self.closed = True
+
+
+class _BackgroundTaskNode(_FakeNode):
+    def __init__(self, actions=None, *, never_complete=False):
+        super().__init__(actions, never_complete=never_complete)
+        self.background_cancelled = False
+
+    async def _background(self):
+        try:
+            await asyncio.sleep(3600)
+        finally:
+            self.background_cancelled = True
+
+    async def execute_stream_with_interactions(self, actions):
+        asyncio.create_task(self._background())
+        async for action in super().execute_stream_with_interactions(actions):
+            yield action
+
+
+class _FakeChatCommands:
+    def __init__(self, node):
+        self.current_node = node
+
+    def _should_create_new_node(self, _current_subagent):
+        return False
+
+    def create_node_input(self, *_args, **_kwargs):
+        return object(), None
+
+
+class _FakeCli:
+    def __init__(self, node):
+        self.chat_commands = _FakeChatCommands(node)
+        self.at_completer = MagicMock()
+        self.at_completer.parse_at_context.return_value = ([], [], [], None)
+        self.actions = []
+
+
+@pytest.mark.ci
+class TestChatExecutorExecuteChatStream:
+    """Test stream safety guards without real LLM calls."""
+
+    def test_max_actions_interrupts_before_yielding_extra_action(self):
+        first_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="thinking",
+            messages="first",
+        )
+        extra_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="extra",
+        )
+        node = _FakeNode([first_action, extra_action])
+
+        results = list(
+            ChatExecutor().execute_chat_stream("hello", _FakeCli(node), max_actions=1, stream_idle_timeout=1)
+        )
+
+        assert first_action in results
+        assert extra_action not in results
+        assert any(isinstance(item, str) and "stopped after 1 actions" in item for item in results)
+        assert node.interrupt_controller.is_interrupted is True
+        assert node.closed is True
+
+    def test_idle_timeout_interrupts_and_closes_stream(self):
+        node = _FakeNode(never_complete=True)
+
+        results = list(
+            ChatExecutor().execute_chat_stream("hello", _FakeCli(node), max_actions=10, stream_idle_timeout=0.01)
+        )
+
+        assert any(isinstance(item, str) and "timed out after" in item for item in results)
+        assert node.interrupt_controller.is_interrupted is True
+        assert node.closed is True
+
+    def test_zero_idle_timeout_uses_plain_next_action(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="done",
+        )
+        node = _FakeNode([action])
+
+        results = list(
+            ChatExecutor().execute_chat_stream("hello", _FakeCli(node), max_actions=10, stream_idle_timeout=0)
+        )
+
+        assert results == [action]
+        assert node.closed is True
+
+    def test_stream_can_finish_exactly_at_max_actions(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="done",
+        )
+        node = _FakeNode([action])
+
+        results = list(
+            ChatExecutor().execute_chat_stream("hello", _FakeCli(node), max_actions=1, stream_idle_timeout=1)
+        )
+
+        assert results == [action]
+        assert node.interrupt_controller.is_interrupted is False
+        assert node.closed is True
+
+    def test_cleanup_cancels_pending_loop_tasks(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="response",
+            messages="done",
+        )
+        extra_action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="thinking",
+            messages="extra",
+        )
+        node = _BackgroundTaskNode([action, extra_action])
+
+        list(ChatExecutor().execute_chat_stream("hello", _FakeCli(node), max_actions=1, stream_idle_timeout=1))
+
+        assert node.closed is True
+        assert node.background_cancelled is True
+
+
+@pytest.mark.ci
+class TestChatExecutorStreamConfig:
+    def test_positive_float_env_parses_default_invalid_and_non_positive(self, monkeypatch):
+        monkeypatch.delenv("DATUS_TEST_FLOAT", raising=False)
+        assert chat_executor._positive_float_env("DATUS_TEST_FLOAT", 1.5) == 1.5
+
+        monkeypatch.setenv("DATUS_TEST_FLOAT", "2.5")
+        assert chat_executor._positive_float_env("DATUS_TEST_FLOAT", 1.5) == 2.5
+
+        monkeypatch.setenv("DATUS_TEST_FLOAT", "invalid")
+        assert chat_executor._positive_float_env("DATUS_TEST_FLOAT", 1.5) == 1.5
+
+        monkeypatch.setenv("DATUS_TEST_FLOAT", "0")
+        assert chat_executor._positive_float_env("DATUS_TEST_FLOAT", 1.5) == 1.5
+
+    def test_positive_int_env_parses_default_invalid_and_non_positive(self, monkeypatch):
+        monkeypatch.delenv("DATUS_TEST_INT", raising=False)
+        assert chat_executor._positive_int_env("DATUS_TEST_INT", 7) == 7
+
+        monkeypatch.setenv("DATUS_TEST_INT", "9")
+        assert chat_executor._positive_int_env("DATUS_TEST_INT", 7) == 9
+
+        monkeypatch.setenv("DATUS_TEST_INT", "invalid")
+        assert chat_executor._positive_int_env("DATUS_TEST_INT", 7) == 7
+
+        monkeypatch.setenv("DATUS_TEST_INT", "0")
+        assert chat_executor._positive_int_env("DATUS_TEST_INT", 7) == 7
