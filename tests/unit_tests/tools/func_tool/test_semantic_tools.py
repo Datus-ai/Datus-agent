@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from datus.tools.func_tool import metric_queryability
 from datus.tools.func_tool.base import FuncToolResult, normalize_null
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_queryability import extract_metric_queryability_contracts
@@ -82,6 +83,50 @@ class TestGenerationEvidence:
 
         assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is True
 
+    def test_queryability_contract_accepts_split_grouped_dry_runs_for_source_metrics(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["discounted_revenue", "shipped_quantity"],
+            "dimension_hints": ["return_flag"],
+            "dimension_expr_hints": [
+                {
+                    "alias": "return_flag",
+                    "expr": "L_RETURNFLAG",
+                    "column": "L_RETURNFLAG",
+                }
+            ],
+        }
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(["discounted_revenue"], result, dimensions=["l_returnflag"])
+        evidence.record_metric_dry_run(["shipped_quantity"], result, dimensions=["l_returnflag"])
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue", "shipped_quantity"]) is True
+
+    def test_queryability_contract_rejects_split_dry_runs_when_one_metric_lacks_dimensions(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["discounted_revenue", "shipped_quantity"],
+            "dimension_hints": ["return_flag"],
+            "dimension_expr_hints": [
+                {
+                    "alias": "return_flag",
+                    "expr": "L_RETURNFLAG",
+                    "column": "L_RETURNFLAG",
+                }
+            ],
+        }
+        result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(["discounted_revenue"], result, dimensions=["l_returnflag"])
+        evidence.record_metric_dry_run(["shipped_quantity"], result)
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue", "shipped_quantity"]) is False
+
     def test_queryability_contract_rejects_partial_dimension_token_match(self):
         evidence = GenerationEvidence()
         evidence.set_metric_queryability_contracts(
@@ -101,6 +146,109 @@ class TestGenerationEvidence:
         )
 
         assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is False
+
+    def test_queryability_contract_accepts_dimension_alias_with_base_column_dimension(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["shipped_revenue"],
+            "dimension_hints": ["supplier_nation"],
+            "dimension_expr_hints": [
+                {
+                    "alias": "supplier_nation",
+                    "expr": "n.n_name",
+                    "column": "n_name",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["shipped_revenue"],
+            FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
+            dimensions=["n_name"],
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["shipped_revenue"]) is True
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["shipped_revenue"],
+            FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
+            dimensions=["nation_name"],
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["shipped_revenue"]) is False
+
+    def test_queryability_contract_accepts_dimension_alias_from_dry_run_sql_expression(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["shipped_revenue"],
+            "dimension_hints": ["supplier_nation"],
+            "dimension_expr_hints": [
+                {
+                    "alias": "supplier_nation",
+                    "expr": "n.n_name",
+                    "column": "n_name",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["shipped_revenue"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT n.n_name AS nation_name, SUM(l.l_extendedprice) AS shipped_revenue "
+                            "FROM lineitem l JOIN nation n ON l.nation_key = n.n_nationkey GROUP BY n.n_name"
+                        )
+                    }
+                },
+            ),
+            dimensions=["nation_name"],
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["shipped_revenue"]) is True
+
+    def test_queryability_contract_rejects_dimension_expression_only_in_join_condition(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["shipped_revenue"],
+            "dimension_hints": ["supplier_nation"],
+            "dimension_expr_hints": [
+                {
+                    "alias": "supplier_nation",
+                    "expr": "n.n_name",
+                    "column": "n_name",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["shipped_revenue"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT s.s_name AS supplier_name, SUM(l.l_extendedprice) AS shipped_revenue "
+                            "FROM lineitem l JOIN supplier s ON l.l_suppkey = s.s_suppkey "
+                            "JOIN nation n ON s.s_comment = n.n_name GROUP BY s.s_name"
+                        )
+                    }
+                },
+            ),
+            dimensions=["supplier_name"],
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["shipped_revenue"]) is False
 
     def test_queryability_contract_time_hint_requires_metric_time_dimension_and_grain(self):
         result = FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}})
@@ -152,6 +300,174 @@ class TestGenerationEvidence:
 
         assert evidence.has_required_queryability_dry_runs(["order_count"]) is True
 
+    def test_queryability_contract_accepts_date_trunc_alias_with_base_time_dimension(self):
+        result = FuncToolResult(
+            success=1,
+            result={
+                "metadata": {
+                    "sql": (
+                        "SELECT metric_time__month, SUM(discounted_revenue) AS discounted_revenue "
+                        "FROM (SELECT DATE_TRUNC('month', L_SHIPDATE) AS metric_time__month, "
+                        "L_EXTENDEDPRICE * (1 - L_DISCOUNT) AS discounted_revenue FROM lineitem) "
+                        "GROUP BY metric_time__month"
+                    )
+                }
+            },
+        )
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["discounted_revenue", "shipped_quantity"],
+            "dimension_hints": ["ship_month"],
+            "time_group_hints": [
+                {
+                    "alias": "ship_month",
+                    "base_expr": "L_SHIPDATE",
+                    "grain": "month",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["discounted_revenue", "shipped_quantity"],
+            result,
+            dimensions=["l_shipdate"],
+            time_granularity="month",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue", "shipped_quantity"]) is True
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["discounted_revenue", "shipped_quantity"],
+            result,
+            dimensions=["l_shipdate"],
+            time_granularity="day",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue", "shipped_quantity"]) is False
+
+    def test_queryability_contract_rejects_time_alias_without_base_time_evidence(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["discounted_revenue"],
+            "dimension_hints": ["ship_month"],
+            "time_group_hints": [
+                {
+                    "alias": "ship_month",
+                    "base_expr": "L_SHIPDATE",
+                    "grain": "month",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["discounted_revenue"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT ship_month, SUM(discounted_revenue) AS discounted_revenue "
+                            "FROM metrics GROUP BY ship_month"
+                        )
+                    }
+                },
+            ),
+            dimensions=["ship_month"],
+            time_granularity="month",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue"]) is False
+
+    def test_queryability_contract_accepts_metric_time_dimension_only_when_sql_uses_source_time_column(self):
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["discounted_revenue"],
+            "dimension_hints": ["ship_month"],
+            "time_group_hints": [
+                {
+                    "alias": "ship_month",
+                    "base_expr": "L_SHIPDATE",
+                    "grain": "month",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["discounted_revenue"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT metric_time__month, SUM(discounted_revenue) AS discounted_revenue "
+                            "FROM (SELECT DATE_TRUNC('month', lineitem.L_SHIPDATE) AS metric_time__month, "
+                            "L_EXTENDEDPRICE AS discounted_revenue FROM lineitem) GROUP BY metric_time__month"
+                        )
+                    }
+                },
+            ),
+            dimensions=["metric_time__month"],
+            time_granularity="month",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue"]) is True
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["discounted_revenue"],
+            FuncToolResult(
+                success=1,
+                result={
+                    "metadata": {
+                        "sql": (
+                            "SELECT metric_time__month, SUM(discounted_revenue) AS discounted_revenue "
+                            "FROM (SELECT DATE_TRUNC('month', O_ORDERDATE) AS metric_time__month, "
+                            "O_TOTALPRICE AS discounted_revenue FROM orders) GROUP BY metric_time__month"
+                        )
+                    }
+                },
+            ),
+            dimensions=["metric_time__month"],
+            time_granularity="month",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["discounted_revenue"]) is False
+
+    def test_queryability_contract_accepts_generic_date_trunc_alias_with_unqualified_time_dimension(self):
+        result = FuncToolResult(success=1, result={"metadata": {}})
+        contract = {
+            "source": "sql_1",
+            "metric_hints": ["revenue"],
+            "dimension_hints": ["created_week"],
+            "time_group_hints": [
+                {
+                    "alias": "created_week",
+                    "base_expr": "o.created_at",
+                    "grain": "week",
+                }
+            ],
+        }
+
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts([contract])
+        evidence.record_metric_dry_run(
+            ["revenue"],
+            result,
+            dimensions=["created_at"],
+            time_granularity="week",
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["revenue"]) is True
+
     def test_extracts_grouped_metric_queryability_contract_from_sql(self):
         contracts = extract_metric_queryability_contracts(
             """
@@ -168,6 +484,13 @@ class TestGenerationEvidence:
             {
                 "source": "sql_1",
                 "dimension_hints": ["supplier_nation"],
+                "dimension_expr_hints": [
+                    {
+                        "alias": "supplier_nation",
+                        "expr": "n.n_name",
+                        "column": "n_name",
+                    }
+                ],
                 "metric_hints": ["shipped_revenue"],
                 "sql": (
                     "SELECT n.n_name AS supplier_nation, SUM(l.l_extendedprice) AS shipped_revenue\n"
@@ -194,6 +517,13 @@ class TestGenerationEvidence:
             {
                 "source": "sql_1",
                 "dimension_hints": ["customer_segment"],
+                "dimension_expr_hints": [
+                    {
+                        "alias": "customer_segment",
+                        "expr": "customer_segment",
+                        "column": "customer_segment",
+                    }
+                ],
                 "metric_hints": ["revenue_total"],
                 "sql": (
                     "SELECT customer_segment, SUM(revenue) AS revenue_total\n"
@@ -202,6 +532,69 @@ class TestGenerationEvidence:
                 ),
             }
         ]
+
+    def test_parse_sql_candidates_attempts_advertised_dialects(self, monkeypatch):
+        import sqlglot
+
+        calls = []
+
+        class FakeParsed:
+            def __init__(self, read_dialect):
+                self.read_dialect = read_dialect
+
+            def sql(self, dialect=None):
+                return f"SELECT {self.read_dialect or 'default'}"
+
+        def fake_parse_one(sql, read=None):
+            calls.append(read)
+            return FakeParsed(read)
+
+        monkeypatch.setattr(sqlglot, "parse_one", fake_parse_one)
+
+        list(metric_queryability._parse_sql_candidates("SELECT 1"))
+
+        assert {"mysql", "postgres", "sqlite", "starrocks"}.issubset(set(calls))
+        assert calls.count("postgres") >= 2
+        assert None in calls
+
+    def test_extracts_contracts_from_multiple_labeled_sql_blocks_without_semicolons(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            Analyze the following SQL queries and extract core metrics:
+
+            Query 1:
+            Question: q1
+            SQL:
+            SELECT a AS x, SUM(b) AS m FROM t GROUP BY a
+
+            ---
+
+            Query 2:
+            Question: q2
+            SQL:
+            SELECT c AS y, SUM(d) AS n FROM u GROUP BY c
+            """
+        )
+
+        assert len(contracts) == 2
+        assert contracts[0]["dimension_hints"] == ["x"]
+        assert contracts[0]["metric_hints"] == ["m"]
+        assert contracts[1]["dimension_hints"] == ["y"]
+        assert contracts[1]["metric_hints"] == ["n"]
+
+    def test_extracts_contracts_from_success_story_csv_text(self):
+        contracts = extract_metric_queryability_contracts(
+            """question,sql
+"q1","SELECT a AS x, SUM(b) AS m FROM t GROUP BY a"
+"q2","SELECT c AS y, SUM(d) AS n FROM u GROUP BY c"
+"""
+        )
+
+        assert len(contracts) == 2
+        assert contracts[0]["dimension_hints"] == ["x"]
+        assert contracts[0]["metric_hints"] == ["m"]
+        assert contracts[1]["dimension_hints"] == ["y"]
+        assert contracts[1]["metric_hints"] == ["n"]
 
     def test_extracts_contract_from_final_select_not_grouped_cte(self):
         contracts = extract_metric_queryability_contracts(
@@ -220,8 +613,87 @@ class TestGenerationEvidence:
         assert len(contracts) == 1
         assert contracts[0]["source"] == "sql_1"
         assert contracts[0]["dimension_hints"] == ["customer_segment"]
+        assert contracts[0]["dimension_expr_hints"] == [
+            {
+                "alias": "customer_segment",
+                "expr": "customer_segment",
+                "column": "customer_segment",
+            }
+        ]
         assert contracts[0]["metric_hints"] == ["revenue_total"]
         assert contracts[0]["sql"].startswith("WITH daily AS")
+
+    def test_extracts_date_trunc_grouped_metric_queryability_contract(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            SQL:
+            SELECT DATE_TRUNC('MONTH', L_SHIPDATE) AS ship_month,
+                   SUM(L_EXTENDEDPRICE * (1 - L_DISCOUNT)) AS discounted_revenue,
+                   SUM(L_QUANTITY) AS shipped_quantity
+            FROM LINEITEM
+            GROUP BY 1;
+            """
+        )
+
+        assert len(contracts) == 1
+        assert contracts[0]["dimension_hints"] == ["ship_month"]
+        assert contracts[0]["metric_hints"] == ["discounted_revenue", "shipped_quantity"]
+        assert contracts[0]["time_group_hints"] == [
+            {
+                "alias": "ship_month",
+                "base_expr": "L_SHIPDATE",
+                "grain": "month",
+            }
+        ]
+
+    def test_extracts_generic_date_trunc_group_by_alias_and_expression_contracts(self):
+        contracts = extract_metric_queryability_contracts(
+            """
+            SELECT DATE_TRUNC('WEEK', o.created_at) AS created_week,
+                   SUM(o.amount) AS revenue
+            FROM orders o
+            GROUP BY created_week;
+
+            SELECT DATE_TRUNC('QUARTER', events.event_ts) AS event_quarter,
+                   COUNT(*) AS event_count
+            FROM events
+            GROUP BY DATE_TRUNC('QUARTER', events.event_ts);
+
+            SELECT DATE_TRUNC(created_at, MONTH) AS created_month,
+                   SUM(amount) AS order_revenue
+            FROM orders
+            GROUP BY created_month;
+            """
+        )
+
+        assert len(contracts) == 3
+        assert contracts[0]["dimension_hints"] == ["created_week"]
+        assert contracts[0]["metric_hints"] == ["revenue"]
+        assert contracts[0]["time_group_hints"] == [
+            {
+                "alias": "created_week",
+                "base_expr": "o.created_at",
+                "grain": "week",
+            }
+        ]
+        assert contracts[1]["dimension_hints"] == ["event_quarter"]
+        assert contracts[1]["metric_hints"] == ["event_count"]
+        assert contracts[1]["time_group_hints"] == [
+            {
+                "alias": "event_quarter",
+                "base_expr": "events.event_ts",
+                "grain": "quarter",
+            }
+        ]
+        assert contracts[2]["dimension_hints"] == ["created_month"]
+        assert contracts[2]["metric_hints"] == ["order_revenue"]
+        assert contracts[2]["time_group_hints"] == [
+            {
+                "alias": "created_month",
+                "base_expr": "created_at",
+                "grain": "month",
+            }
+        ]
 
     def test_ignores_nested_group_when_final_select_is_ungrouped(self):
         contracts = extract_metric_queryability_contracts(
@@ -570,6 +1042,7 @@ class TestQueryMetricsCompression:
                 "metrics": ["revenue"],
                 "dimensions": ["customer_segment"],
                 "time_granularity": "month",
+                "sql": "SELECT SUM(revenue) AS revenue FROM orders",
             }
         ]
         assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}

@@ -146,7 +146,7 @@ Skip any metric that already exists — do NOT update or overwrite.
 
 1. **Write files**: Use `write_file` to save metric YAML (and semantic model if newly created)
 2. **Validate (MUST PASS)**: Use `validate_semantic` — if validation fails, fix errors with `edit_file` and retry until it **passes**. Do NOT proceed to Step 6 until validation passes.
-3. **Dry-run SQL**: Use `query_metrics(metrics=["metric_name"], dry_run=True)` to generate SQL. If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query. Use `get_dimensions` to find the exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
+3. **Dry-run SQL**: Use `query_metrics(metrics=["metric_name"], dry_run=True)` to generate SQL. If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query. For a source SQL with multiple output metrics, either dry-run all corresponding generated metrics together with the same grouped dimensions/time grain, or dry-run each generated metric separately with those same grouped arguments. Use `get_dimensions` to find the exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
 
 Collect each generated SQL into `metric_sqls_json`.
 
@@ -366,7 +366,7 @@ metric:
 4. **COUNT requires `expr: "1"`**: Never use `expr: {column}` with `agg: COUNT`
 5. **Primary time dimension correctness**: Every metric data_source needs one primary `type: TIME` dimension when a reliable DATE/TIME/TIMESTAMP column or expression exists. Do not force a primary TIME dimension from numeric surrogate keys; use a `sql_query` join to a date dimension or an explicit date conversion first.
 6. **Validate**: Always validate before completing
-7. **Generate SQL**: Use `query_metrics(dry_run=True)` to get SQL for each metric
+7. **Generate SQL**: Use `query_metrics(dry_run=True)` to get SQL for each metric; for grouped source SQL, include matching dimensions/time grain in dry-runs before syncing
 8. **Complete**: You MUST call `end_metric_generation` with `metric_sqls_json` after validation and dry-run pass; final JSON `metric_file` is only a last-resort fallback
 9. **YAML String Quoting**: ALWAYS wrap `description` values in double quotes. Escape special characters: `"` → `\"`, `\` → `\\`
 10. **Snapshot data**: Use `non_additive_dimension` for balance/inventory/point-in-time measures
