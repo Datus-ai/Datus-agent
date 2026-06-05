@@ -135,3 +135,97 @@ def test_repo_coverage_map_is_valid():
 
     assert errors == []
     assert len(flows) >= 20
+
+
+def _docs_coverage_fixture(tmp_path: Path, *, nav_pages: list[str]) -> None:
+    """Materialize a tiny mkdocs.yml + docs tree under tmp_path for drift tests."""
+    docs_dir = tmp_path / "docs"
+    nav_entries = []
+    for page in nav_pages:
+        target = docs_dir / page
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# page\n", encoding="utf-8")
+        nav_entries.append({page.split("/")[-1]: page})
+    (tmp_path / "mkdocs.yml").write_text(yaml.safe_dump({"nav": nav_entries}), encoding="utf-8")
+
+
+def _docs_coverage_map(*, flow_docs: list[str], exclude: list[dict]) -> dict:
+    return {
+        "source": {"docs_navigation": "mkdocs.yml"},
+        "docs_coverage_policy": {"exclude": exclude},
+        "flow_groups": {"onboarding": {"flows": [{"id": "onboarding.quickstart", "docs": flow_docs}]}},
+    }
+
+
+def _flows(coverage_map: dict):
+    return validate_coverage_map.iter_flows(coverage_map, [])
+
+
+def test_docs_coverage_drift_unowned_nav_page_is_reported(tmp_path):
+    _docs_coverage_fixture(tmp_path, nav_pages=["a.md", "b.md"])
+    coverage_map = _docs_coverage_map(flow_docs=["docs/a.md"], exclude=[])
+
+    errors: list[str] = []
+    validate_coverage_map.validate_docs_coverage(tmp_path, coverage_map, _flows(coverage_map), errors)
+
+    assert any("docs/b.md is in mkdocs nav but no flow references it" in error for error in errors)
+    assert not any("docs/a.md" in error for error in errors)
+
+
+def test_docs_coverage_exclude_suppresses_drift(tmp_path):
+    _docs_coverage_fixture(tmp_path, nav_pages=["a.md", "b.md"])
+    coverage_map = _docs_coverage_map(
+        flow_docs=["docs/a.md"],
+        exclude=[{"path": "docs/b.md", "reason": "Section overview, not a flow."}],
+    )
+
+    errors: list[str] = []
+    validate_coverage_map.validate_docs_coverage(tmp_path, coverage_map, _flows(coverage_map), errors)
+
+    assert errors == []
+
+
+def test_docs_coverage_flow_reference_suppresses_drift(tmp_path):
+    _docs_coverage_fixture(tmp_path, nav_pages=["a.md", "b.md"])
+    coverage_map = _docs_coverage_map(flow_docs=["docs/a.md", "docs/b.md"], exclude=[])
+
+    errors: list[str] = []
+    validate_coverage_map.validate_docs_coverage(tmp_path, coverage_map, _flows(coverage_map), errors)
+
+    assert errors == []
+
+
+def test_docs_coverage_stale_exclude_is_reported(tmp_path):
+    _docs_coverage_fixture(tmp_path, nav_pages=["a.md"])
+    coverage_map = _docs_coverage_map(
+        flow_docs=["docs/a.md"],
+        exclude=[{"path": "docs/gone.md", "reason": "no longer documented"}],
+    )
+
+    errors: list[str] = []
+    validate_coverage_map.validate_docs_coverage(tmp_path, coverage_map, _flows(coverage_map), errors)
+
+    assert errors == ["docs_coverage_policy.exclude: stale entry not in mkdocs nav: docs/gone.md"]
+
+
+def test_docs_coverage_exclude_requires_reason(tmp_path):
+    _docs_coverage_fixture(tmp_path, nav_pages=["a.md", "b.md"])
+    coverage_map = _docs_coverage_map(flow_docs=["docs/a.md"], exclude=[{"path": "docs/b.md"}])
+
+    errors: list[str] = []
+    validate_coverage_map.validate_docs_coverage(tmp_path, coverage_map, _flows(coverage_map), errors)
+
+    assert any("reason: required rationale is missing" in error for error in errors)
+
+
+def test_docs_coverage_is_opt_in_without_policy(tmp_path):
+    _docs_coverage_fixture(tmp_path, nav_pages=["a.md", "b.md"])
+    coverage_map = {
+        "source": {"docs_navigation": "mkdocs.yml"},
+        "flow_groups": {"onboarding": {"flows": [{"id": "onboarding.quickstart", "docs": ["docs/a.md"]}]}},
+    }
+
+    errors: list[str] = []
+    validate_coverage_map.validate_docs_coverage(tmp_path, coverage_map, [], errors)
+
+    assert errors == []

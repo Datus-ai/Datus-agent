@@ -14,6 +14,25 @@ layers:
   weekly_benchmark:
     description: Quality and retrieval signal for benchmarked product scenarios.
 gap_issue: https://github.com/Datus-ai/Datus-agent/issues/910
+docs_coverage_policy:
+  description: >
+    Every page in the mkdocs nav must either be referenced by a flow's docs: list
+    or be excluded here with a rationale. validate_coverage_map.py fails when a nav
+    page is neither, so new documented user-facing surfaces cannot be added without
+    a conscious coverage decision.
+  exclude:
+    - path: docs/index.md
+      reason: Documentation site landing page, not a user-facing flow.
+    - path: docs/develop/README.md
+      reason: Contributor/development guide, not a product flow.
+    - path: docs/release_notes.md
+      reason: Release notes, not a user-facing flow.
+    - path: docs/configuration/introduction.md
+      reason: Configuration section overview, not a discrete flow.
+    - path: docs/knowledge_base/introduction.md
+      reason: Knowledge base section overview, not a discrete flow.
+    - path: docs/metricflow/introduction.md
+      reason: MetricFlow section overview; the semantic layer flow owns the concrete pages.
 flow_groups:
   onboarding:
     description: First-run and documented bootstrap flows.
@@ -149,6 +168,8 @@ flow_groups:
           - docs/cli/model_command.md
           - docs/cli/language_command.md
           - docs/cli/effort_command.md
+          - docs/cli/plan_mode.md
+          - docs/configuration/compact.md
         entrypoints:
           - "CLI: datus"
           - "CLI slash commands: /model, /language, /effort"
@@ -472,6 +493,7 @@ flow_groups:
           - docs/knowledge_base/ext_knowledge.md
           - docs/subagent/gen_semantic_model.md
           - docs/subagent/gen_metrics.md
+          - docs/configuration/semantic_layer.md
         entrypoints:
           - CLI bootstrap
           - Gen semantic model subagent
@@ -641,6 +663,7 @@ flow_groups:
           - docs/subagent/gen_table.md
           - docs/subagent/gen_visual_report.md
           - docs/subagent/gen_visual_dashboard.md
+          - docs/configuration/schedulers.md
         entrypoints:
           - Gen dashboard subagent
           - Scheduler subagent

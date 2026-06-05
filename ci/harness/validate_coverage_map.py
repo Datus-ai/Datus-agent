@@ -246,6 +246,111 @@ def validate_flow(repo_root: Path, flow_ref: FlowRef, errors: list[str]) -> None
         errors.append(f"{flow_id}: quality-sensitive flow must have benchmark coverage or an explicit gap issue")
 
 
+class _NavLoader(yaml.SafeLoader):
+    """YAML loader that tolerates mkdocs custom tags (e.g. ``!ENV``, emoji)."""
+
+
+# mkdocs.yml carries Python/emoji and ``!ENV`` tags outside the ``nav`` tree.
+# We only need the nav strings, so ignore every custom tag rather than fail.
+_NavLoader.add_multi_constructor("", lambda loader, tag_suffix, node: None)
+
+
+def collect_nav_pages(node: Any, pages: set[str]) -> None:
+    """Recursively collect ``docs/``-relative ``.md`` page paths from an mkdocs nav tree."""
+    if isinstance(node, str):
+        if node.endswith(".md"):
+            pages.add(f"docs/{node}")
+    elif isinstance(node, list):
+        for item in node:
+            collect_nav_pages(item, pages)
+    elif isinstance(node, dict):
+        for value in node.values():
+            collect_nav_pages(value, pages)
+
+
+def load_nav_pages(repo_root: Path, nav_path: str, errors: list[str]) -> set[str]:
+    """Parse the mkdocs nav file and return the set of documented page paths.
+
+    Paths are normalized to be ``docs/``-prefixed so they match the flow ``docs:``
+    convention used elsewhere in the coverage map.
+    """
+    full_path = repo_root / nav_path
+    if not full_path.exists():
+        errors.append(f"docs_coverage: navigation file does not exist: {nav_path}")
+        return set()
+    try:
+        config = yaml.load(full_path.read_text(encoding="utf-8"), Loader=_NavLoader)  # noqa: S506 - custom safe loader.
+    except yaml.YAMLError as exc:
+        errors.append(f"docs_coverage: failed to parse navigation file {nav_path}: {exc}")
+        return set()
+    pages: set[str] = set()
+    collect_nav_pages((config or {}).get("nav", []), pages)
+    return pages
+
+
+def validate_docs_coverage(
+    repo_root: Path,
+    coverage_map: dict[str, Any],
+    flows: list[FlowRef],
+    errors: list[str],
+) -> None:
+    """Fail when a documented nav page is neither owned by a flow nor explicitly excluded.
+
+    This closes the drift between ``mkdocs.yml`` and the coverage map: a new
+    documented user-facing page must either be referenced by some flow's ``docs:``
+    list or be listed under ``docs_coverage_policy.exclude`` with a rationale.
+
+    Enforcement is opt-in via the presence of a ``docs_coverage_policy`` block, so
+    synthetic/minimal maps without the policy are unaffected.
+    """
+    if "docs_coverage_policy" not in coverage_map:
+        return
+
+    source = coverage_map.get("source")
+    nav_path = source.get("docs_navigation") if isinstance(source, dict) else None
+    if not isinstance(nav_path, str):
+        return  # source.docs_navigation is validated separately.
+
+    nav_pages = load_nav_pages(repo_root, nav_path, errors)
+    if not nav_pages:
+        return
+
+    referenced = {doc for flow_ref in flows for doc in (flow_ref.flow.get("docs") or []) if isinstance(doc, str)}
+
+    policy = coverage_map.get("docs_coverage_policy") or {}
+    if not isinstance(policy, dict):
+        errors.append("docs_coverage_policy: must be a mapping")
+        policy = {}
+    raw_excludes = policy.get("exclude") or []
+    if not isinstance(raw_excludes, list):
+        errors.append("docs_coverage_policy.exclude: must be a list")
+        raw_excludes = []
+
+    excluded: set[str] = set()
+    for index, entry in enumerate(raw_excludes):
+        if not isinstance(entry, dict):
+            errors.append(f"docs_coverage_policy.exclude[{index}]: must be a mapping with path and reason")
+            continue
+        path = entry.get("path")
+        reason = entry.get("reason")
+        if not isinstance(path, str) or not path:
+            errors.append(f"docs_coverage_policy.exclude[{index}].path: required non-empty string is missing")
+            continue
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"docs_coverage_policy.exclude[{path}].reason: required rationale is missing")
+        if path not in nav_pages:
+            errors.append(f"docs_coverage_policy.exclude: stale entry not in mkdocs nav: {path}")
+        if path in referenced:
+            errors.append(f"docs_coverage_policy.exclude: redundant entry already owned by a flow: {path}")
+        excluded.add(path)
+
+    for page in sorted(nav_pages - referenced - excluded):
+        errors.append(
+            f"docs_coverage: {page} is in mkdocs nav but no flow references it and it is not in "
+            "docs_coverage_policy.exclude (add it to a flow's docs: list or exclude it with a rationale)"
+        )
+
+
 def validate_coverage_map(
     repo_root: Path,
     coverage_map: dict[str, Any],
@@ -288,6 +393,8 @@ def validate_coverage_map(
             errors.append(f"{flow_ref.flow_id}: duplicate flow id")
         seen_ids.add(flow_ref.flow_id)
         validate_flow(repo_root, flow_ref, errors)
+
+    validate_docs_coverage(repo_root, coverage_map, flows, errors)
 
     if check_github_issues:
         issue_refs = sorted(
