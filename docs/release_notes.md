@@ -2,6 +2,24 @@
 
 ## 0.3
 
+### 0.3.3
+
+**New Features**
+
+- **Automatic Session Compaction** - Long conversations now clean up context automatically, reducing interruptions when the context fills up. As a conversation grows, older tool-call records are archived to disk while the active task stays in context; near the limit (about 90%), Datus summarizes the session and keeps the run moving. The `/compact` command also shows progress and a summary panel, with full history persisted for restore and review. [#871](https://github.com/Datus-ai/Datus-agent/pull/871) [#919](https://github.com/Datus-ai/Datus-agent/pull/919) [#933](https://github.com/Datus-ai/Datus-agent/pull/933) [docs](configuration/compact.md)
+- **Live Token Usage** - Model responses now show newly used and cumulative tokens as they stream, while the status bar tracks current context usage and total capacity. Usage history is saved with the session for restore, cost review, and context audits. [#920](https://github.com/Datus-ai/Datus-agent/pull/920)
+
+**Enhancements**
+
+- **Snowflake Key-Pair Authentication** - Snowflake setups with MFA can now use RSA key-pair authentication instead of passwords. Configure `private_key_file`, optional `private_key_file_pwd`, and `role`; the same credentials are used for SQL execution and MetricFlow metric generation, validation, and querying, with credentials redacted from logs. [#926](https://github.com/Datus-ai/Datus-agent/pull/926) [datus-db-adapters#66](https://github.com/Datus-ai/datus-db-adapters/pull/66) [datus-db-adapters#67](https://github.com/Datus-ai/datus-db-adapters/pull/67) [datus-semantic-adapter#25](https://github.com/Datus-ai/datus-semantic-adapter/pull/25) [docs](configuration/datasources.md)
+- **Offline Embedding Fallback** - Datus no longer stalls on embedding model downloads in offline, intranet, or Hugging Face-blocked environments. Context search and `@` reference autocomplete temporarily degrade with diagnostics for the model name, cache path, environment variables, and fix steps; database tools and normal chat continue to work. The docs also cover pre-caching models or using an OpenAI-compatible embedding service for offline deployments. [#870](https://github.com/Datus-ai/Datus-agent/pull/870)
+- **Codex Prompt Cache Optimization** - When using the ChatGPT subscription-backed Codex backend, multi-step runs can now reuse prompt cache like the official client, reducing wait time and token cost. [#918](https://github.com/Datus-ai/Datus-agent/pull/918)
+- **Multi-Turn `datus -p` and `--resume`** - Print mode can now restore and continue a specific session. Use `datus -p '...' --resume <session_id>` to continue from the command line; REPL and API chat also support `--resume` for existing sessions. [#914](https://github.com/Datus-ai/Datus-agent/pull/914)
+
+**Bug Fixes**
+
+- **Custom Ask Subagents Honor Tool Whitelists** - `ask_report` / `ask_dashboard` now only see tools allowed by the subagent's `tools` whitelist. Unauthorized database, bash, and skill tools are no longer exposed to the model, and prompts no longer include the full chat tool directory, reducing unauthorized-tool and context-pollution risk. [#877](https://github.com/Datus-ai/Datus-agent/pull/877) [#878](https://github.com/Datus-ai/Datus-agent/pull/878) [#881](https://github.com/Datus-ai/Datus-agent/pull/881)
+
 ### 0.3.2
 
 **New Features**
@@ -353,4 +371,3 @@ skipped
 **Datus-cli**
 
 - Enhanced !reason and !gen_semantic_model commands for a more agentic and intuitive experience.
-
