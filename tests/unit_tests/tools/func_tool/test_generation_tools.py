@@ -11,6 +11,14 @@ import pytest
 from datus.tools.func_tool.base import FuncToolResult
 
 
+class FakeRows:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def to_pylist(self):
+        return list(self._rows)
+
+
 @pytest.fixture
 def mock_agent_config():
     return Mock()
@@ -71,6 +79,31 @@ class TestCheckSemanticObjectExists:
         mock_storage = Mock()
         generation_tools.metric_rag.storage = mock_storage
         mock_storage.search_all.return_value = [{"id": "m1", "name": "revenue"}]
+
+        with patch("datus.tools.func_tool.generation_tools.eq"):
+            result = generation_tools.check_semantic_object_exists("revenue", kind="metric")
+
+        assert result.success == 1
+        assert result.result["exists"] is True
+
+    def test_kind_is_normalized_for_control_flow_and_cache(self, generation_tools):
+        mock_storage = Mock()
+        generation_tools.semantic_rag.storage = mock_storage
+        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
+            first = generation_tools.check_semantic_object_exists("orders", kind="Table")
+            second = generation_tools.check_semantic_object_exists("orders", kind="table")
+
+        assert first.success == 1
+        assert first.result["exists"] is True
+        assert second.result == first.result
+        mock_storage.search_all.assert_called_once()
+
+    def test_metric_found_with_arrow_like_rows(self, generation_tools):
+        mock_storage = Mock()
+        generation_tools.metric_rag.storage = mock_storage
+        mock_storage.search_all.return_value = FakeRows([{"id": "m1", "name": "revenue"}])
 
         with patch("datus.tools.func_tool.generation_tools.eq"):
             result = generation_tools.check_semantic_object_exists("revenue", kind="metric")
@@ -733,3 +766,39 @@ class TestGenerateSqlSummaryId:
             result = generation_tools.generate_sql_summary_id("SELECT 1")
         assert result.success == 0
         assert "hash error" in result.error
+
+
+class TestMetricPreflightRows:
+    def test_existing_metric_names_accepts_arrow_like_rows(self, generation_tools):
+        generation_tools.metric_rag.search_all_metrics.return_value = FakeRows([{"name": "revenue"}])
+
+        assert generation_tools._existing_metric_names() == {"revenue"}
+
+    def test_validate_metric_name_conflicts_accepts_arrow_like_rows(self, generation_tools):
+        generation_tools.metric_rag.search_all_metrics.return_value = FakeRows(
+            [
+                {
+                    "id": "metric:revenue",
+                    "name": "revenue",
+                    "semantic_model_name": "orders",
+                    "metric_type": "measure_proxy",
+                    "measure_expr": "revenue",
+                    "base_measures": ["revenue"],
+                }
+            ]
+        )
+
+        error = generation_tools._validate_metric_name_conflicts(
+            [
+                {
+                    "name": "revenue",
+                    "semantic_model_name": "orders",
+                    "metric_type": "ratio",
+                    "measure_expr": "revenue / orders",
+                    "base_measures": ["revenue", "orders"],
+                }
+            ]
+        )
+
+        assert error is not None
+        assert "Metric name conflict" in error

@@ -4,7 +4,8 @@
 
 # -*- coding: utf-8 -*-
 import os
-from typing import Dict, List, Optional
+from collections.abc import Iterable
+from typing import Any, Dict, List, Optional
 
 import yaml
 from agents import Tool
@@ -20,6 +21,36 @@ from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
+
+
+def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
+    """Normalize storage row containers to a list of dictionaries."""
+
+    if rows is None:
+        return []
+    if hasattr(rows, "to_pylist"):
+        rows = rows.to_pylist()
+    if isinstance(rows, dict):
+        return [rows]
+    if isinstance(rows, list):
+        iterable: Iterable[Any] = rows
+    elif isinstance(rows, tuple):
+        iterable = rows
+    elif isinstance(rows, Iterable) and not isinstance(rows, (str, bytes)):
+        iterable = rows
+    else:
+        return []
+    return [row for row in iterable if isinstance(row, dict)]
+
+
+def _is_supported_row_container(rows: Any) -> bool:
+    if rows is None:
+        return True
+    if hasattr(rows, "to_pylist"):
+        return True
+    if isinstance(rows, (dict, list, tuple)):
+        return True
+    return isinstance(rows, Iterable) and not isinstance(rows, (str, bytes))
 
 
 class GenerationTools:
@@ -75,8 +106,9 @@ class GenerationTools:
             dict: Check results containing existence status and details.
         """
         try:
+            normalized_kind = str(kind or "").strip().lower()
             cache_key = (
-                str(kind or "").strip().lower(),
+                normalized_kind,
                 str(object_name or "").strip().lower(),
                 str(table_context or "").strip().lower(),
             )
@@ -90,17 +122,17 @@ class GenerationTools:
 
             found_object = None
 
-            if kind == "table":
+            if normalized_kind == "table":
                 table_index = self._get_semantic_table_object_index()
                 for candidate in _identifier_variants(object_name):
                     found_object = table_index.get(candidate) or table_index.get(_normalized_identifier(candidate))
                     if found_object:
                         break
-            elif kind == "metric":
+            elif normalized_kind == "metric":
                 # Exact match for metric using SQL WHERE condition
                 storage = self.metric_rag.storage
                 where = eq("name", target_name)
-                results = storage.search_all(where=where, select_fields=["id", "name"])
+                results = _rows_to_dicts(storage.search_all(where=where, select_fields=["id", "name"]))
                 if results:
                     found_object = results[0]
             else:
@@ -108,7 +140,7 @@ class GenerationTools:
                 storage = self.semantic_rag.storage
                 results = storage.search_objects(
                     query_text=object_name,
-                    kinds=[kind],
+                    kinds=[normalized_kind],
                     table_name=table_context if table_context else None,
                     top_n=5,
                 )
@@ -119,7 +151,7 @@ class GenerationTools:
                 elif "." in object_name:
                     target_table = object_name.rsplit(".", 1)[0].lower()
 
-                for obj in results:
+                for obj in _rows_to_dicts(results):
                     name_match = obj.get("name", "").lower() == target_name
                     if target_table:
                         table_match = obj.get("table_name", "").lower() == target_table
@@ -136,14 +168,16 @@ class GenerationTools:
                         "exists": True,
                         "id": found_object.get("id"),
                         "name": found_object.get("name"),
-                        "kind": found_object.get("kind") or kind,
-                        "message": f"Object '{object_name}' ({kind}) already exists.",
+                        "kind": found_object.get("kind") or normalized_kind,
+                        "message": f"Object '{object_name}' ({normalized_kind}) already exists.",
                     }
                 )
                 self._semantic_object_exists_cache[cache_key] = result.model_copy(deep=True)
                 return result
 
-            result = FuncToolResult(result={"exists": False, "message": f"No {kind} found for '{object_name}'"})
+            result = FuncToolResult(
+                result={"exists": False, "message": f"No {normalized_kind} found for '{object_name}'"}
+            )
             self._semantic_object_exists_cache[cache_key] = result.model_copy(deep=True)
             return result
 
@@ -171,12 +205,8 @@ class GenerationTools:
         storage = self.semantic_rag.storage
         select_fields = ["id", "name", "kind", "table_name", "fq_name"]
         rows = storage.search_all(where=And([eq("kind", "table")]), select_fields=select_fields)
-        if hasattr(rows, "to_pylist"):
-            rows = rows.to_pylist()
         index: Dict[str, Dict[str, object]] = {}
-        for obj in rows if isinstance(rows, list) else []:
-            if not isinstance(obj, dict):
-                continue
+        for obj in _rows_to_dicts(rows):
             for field in ("name", "table_name", "fq_name"):
                 value = str(obj.get(field) or "").strip()
                 if not value:
@@ -648,12 +678,11 @@ class GenerationTools:
         except Exception as exc:
             logger.warning("Failed to load existing metric names before publish dry-run gating: %s", exc)
             return None
-        if not isinstance(rows, list):
+        if not _is_supported_row_container(rows):
             return None
+        normalized_rows = _rows_to_dicts(rows)
         names = set()
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
+        for row in normalized_rows:
             normalized = normalize_metric_name(row.get("name"))
             if normalized:
                 names.add(normalized)
@@ -671,12 +700,11 @@ class GenerationTools:
         except Exception as exc:
             logger.warning("Failed to check existing metric name conflicts before sync: %s", exc)
             return None
-        if not isinstance(rows, list):
+        if not _is_supported_row_container(rows):
             return None
+        normalized_rows = _rows_to_dicts(rows)
 
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
+        for row in normalized_rows:
             normalized = normalize_metric_name(row.get("name"))
             if normalized:
                 existing_by_name.setdefault(normalized, []).append(row)

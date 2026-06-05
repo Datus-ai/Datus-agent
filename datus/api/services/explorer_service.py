@@ -41,6 +41,7 @@ class ExplorerService:
         """
         self.agent_config = agent_config
         self.datasource_id = ""
+        self.storage_namespace = ""
         self._storage_init_error = ""
         self.metric_rag = None
         self.reference_sql_rag = None
@@ -50,18 +51,29 @@ class ExplorerService:
         self._bind_storage_if_available()
         logger.info("ExplorerService initialized")
 
-    def _bind_storage_if_available(self) -> bool:
-        if self.datasource_id:
-            return True
+    def _clear_storage_binding(self, error: str = "") -> None:
+        self.datasource_id = ""
+        self.storage_namespace = ""
+        self.metric_rag = None
+        self.reference_sql_rag = None
+        self.knowledge_rag = None
+        self.semantic_model_rag = None
+        self.subject_tree_store = None
+        self._storage_init_error = error
 
+    def _bind_storage_if_available(self) -> bool:
         from datus.storage.scope import resolve_datasource_scope
+        from datus.utils.exceptions import DatusException
 
         try:
             datasource_id, storage_namespace = resolve_datasource_scope(self.agent_config)
-        except ValueError as exc:
-            self._storage_init_error = str(exc)
+        except DatusException as exc:
+            self._clear_storage_binding(str(exc))
             logger.warning("ExplorerService storage is unavailable without datasource: %s", exc)
             return False
+
+        if self.datasource_id == datasource_id and self.storage_namespace == storage_namespace:
+            return True
 
         from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
@@ -70,6 +82,7 @@ class ExplorerService:
         from datus.storage.semantic_model.store import SemanticModelRAG
 
         self.datasource_id = datasource_id
+        self.storage_namespace = storage_namespace
         self.metric_rag = MetricRAG(self.agent_config, datasource_id=self.datasource_id)
         self.reference_sql_rag = ReferenceSqlRAG(self.agent_config, datasource_id=self.datasource_id)
         self.knowledge_rag = ExtKnowledgeRAG(self.agent_config, datasource_id=self.datasource_id)

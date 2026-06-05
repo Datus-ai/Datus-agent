@@ -85,6 +85,31 @@ data_source:
         assert "Refusing to overwrite measure 'order_count'" in result.error
         assert target.read_text(encoding="utf-8") == original
 
+    def test_write_file_rejects_semantic_merge_without_incoming_data_source(self, tmp_path):
+        project = tmp_path / "project"
+        target = project / "subject" / "semantic_models" / "ac_manage" / "orders.yml"
+        target.parent.mkdir(parents=True)
+        original = """
+data_source:
+  name: orders
+  sql_table: ac_manage.orders
+""".lstrip()
+        target.write_text(original, encoding="utf-8")
+        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="gen_metrics")
+
+        result = tool.write_file(
+            "subject/semantic_models/ac_manage/orders.yml",
+            """
+metric:
+  name: order_count
+  type: measure_proxy
+""".lstrip(),
+        )
+
+        assert result.success == 0
+        assert "without a data_source document" in result.error
+        assert target.read_text(encoding="utf-8") == original
+
     def test_write_file_merges_existing_metric_file(self, tmp_path):
         project = tmp_path / "project"
         target = project / "subject" / "semantic_models" / "ac_manage" / "metrics" / "orders_metrics.yml"
@@ -184,6 +209,32 @@ metric:
 
         assert result.success == 0
         assert "Refusing to overwrite metric 'order_count'" in result.error
+        assert target.read_text(encoding="utf-8") == original
+
+    def test_write_file_rejects_metric_merge_without_incoming_metric(self, tmp_path):
+        project = tmp_path / "project"
+        target = project / "subject" / "semantic_models" / "ac_manage" / "metrics" / "orders_metrics.yml"
+        target.parent.mkdir(parents=True)
+        original = """
+metric:
+  name: order_count
+  type: measure_proxy
+  type_params:
+    measure: order_count
+""".lstrip()
+        target.write_text(original, encoding="utf-8")
+        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="gen_metrics")
+
+        result = tool.write_file(
+            "subject/semantic_models/ac_manage/metrics/orders_metrics.yml",
+            """
+data_source:
+  name: orders
+""".lstrip(),
+        )
+
+        assert result.success == 0
+        assert "without metric documents" in result.error
         assert target.read_text(encoding="utf-8") == original
 
     def test_write_file_strict_external_path_is_rejected_before_merge(self, tmp_path, monkeypatch):
@@ -369,3 +420,27 @@ metric:
         assert result.success == 1
         docs = list(yaml.safe_load_all(target.read_text(encoding="utf-8")))
         assert docs[0]["metric"]["locked_metadata"]["tags"][1] == "subject_tree: ac_manage/orders"
+
+    def test_edit_file_restores_original_when_yaml_postprocess_fails(self, tmp_path):
+        project = tmp_path / "project"
+        target = project / "subject" / "semantic_models" / "ac_manage" / "metrics" / "orders_metrics.yml"
+        target.parent.mkdir(parents=True)
+        original = """
+metric:
+  name: order_count
+  type: measure_proxy
+  type_params:
+    measure: order_count
+""".lstrip()
+        target.write_text(original, encoding="utf-8")
+        tool = MetricFilesystemFuncTool(root_path=str(project), current_node="gen_metrics")
+
+        result = tool.edit_file(
+            "subject/semantic_models/ac_manage/metrics/orders_metrics.yml",
+            "measure: order_count",
+            "measure: [",
+        )
+
+        assert result.success == 0
+        assert "invalid edited YAML" in result.error
+        assert target.read_text(encoding="utf-8") == original

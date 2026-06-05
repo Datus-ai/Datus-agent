@@ -495,8 +495,12 @@ class TestUpdateSemanticModel:
         assert all("ignored_schema" not in entry_id for entry_id, _ in calls)
 
     def test_build_semantic_table_identity_requires_db_type(self):
-        with pytest.raises(ValueError, match="db_type is required"):
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        with pytest.raises(DatusException) as exc:
             build_semantic_table_identity({"table_name": "orders"}, "")
+        assert exc.value.code == ErrorCode.STORAGE_INVALID_ARGUMENT
+        assert "db_type is required" in str(exc.value)
 
     def test_update_semantic_model_description_value_error_handled(self):
         """DatusException from update_entry for table is caught and does not raise."""

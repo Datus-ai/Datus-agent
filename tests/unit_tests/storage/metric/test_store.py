@@ -228,6 +228,30 @@ class TestBatchUpsertMetricsValidation:
         assert rows[0]["id"] == build_metric_id([], "test_metric_1")
         assert rows[0]["name"] == "test_metric_1"
 
+    def test_batch_upsert_metrics_keeps_legacy_duplicate_when_upsert_fails(
+        self, metric_storage: MetricStorage, monkeypatch
+    ):
+        legacy = _make_metric(1, subject_path=["Finance", "Revenue"])
+        legacy["id"] = "metric:Finance/Revenue.test_metric_1"
+        canonical = _make_metric(1, subject_path=["Sales", "Revenue"])
+
+        legacy_row = dict(legacy)
+        legacy_row["subject_node_id"] = metric_storage.subject_tree.find_or_create_path(legacy["subject_path"])
+        legacy_row.pop("subject_path", None)
+        metric_storage.store_batch([legacy_row])
+
+        def fail_upsert(*_args, **_kwargs):
+            raise RuntimeError("upsert failed")
+
+        monkeypatch.setattr(metric_storage, "batch_upsert", fail_upsert)
+
+        with pytest.raises(RuntimeError, match="upsert failed"):
+            metric_storage.batch_upsert_metrics([canonical])
+
+        rows = metric_storage.search_all_metrics(select_fields=["id", "name"])
+        assert len(rows) == 1
+        assert rows[0]["id"] == "metric:Finance/Revenue.test_metric_1"
+
 
 # ---------------------------------------------------------------------------
 # YAML deletion logic in delete_metric

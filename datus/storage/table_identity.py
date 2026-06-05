@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def _dialect_value(db_type: Any) -> str:
@@ -23,7 +24,10 @@ def build_semantic_table_identity(values: Mapping[str, Any], db_type: Any) -> st
     table_name = str(values.get("table_name") or "").strip()
     dialect = _dialect_value(db_type)
     if not dialect:
-        raise ValueError("db_type is required to build semantic table identity")
+        raise DatusException(
+            ErrorCode.STORAGE_INVALID_ARGUMENT,
+            message_args={"error_message": "db_type is required to build semantic table identity"},
+        )
 
     sqlite_value = _dialect_value(DBType.SQLITE)
     parts = [

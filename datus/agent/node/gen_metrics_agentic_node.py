@@ -572,9 +572,6 @@ class GenMetricsAgenticNode(AgenticNode):
                 continue
             blocked_sources.update(cls._source_name_set(item.get("source_sql_name")))
 
-        if blocked_sources:
-            return blocked_sources
-
         for item in candidate_plan.get("blocked_direct_metric_candidates") or []:
             if isinstance(item, dict):
                 blocked_sources.update(cls._source_name_set(item.get("source_sql_name")))

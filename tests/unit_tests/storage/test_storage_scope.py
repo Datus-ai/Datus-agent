@@ -15,6 +15,7 @@ from datus.storage.scope import (
     project_storage_namespace,
     safe_storage_namespace_token,
 )
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def test_safe_storage_namespace_token_normalizes_and_hashes_unsafe_values():
@@ -42,8 +43,10 @@ def test_datasource_namespace_combines_project_and_datasource():
 def test_datasource_namespace_without_datasource_raises():
     cfg = SimpleNamespace(project_name="workspace", current_datasource="")
 
-    with pytest.raises(ValueError, match="datasource is required"):
+    with pytest.raises(DatusException) as exc:
         datasource_storage_namespace(cfg)
+    assert exc.value.code == ErrorCode.STORAGE_INVALID_ARGUMENT
+    assert "datasource is required" in str(exc.value)
 
 
 def test_storage_scope_classification_documents_kb_and_project_stores():

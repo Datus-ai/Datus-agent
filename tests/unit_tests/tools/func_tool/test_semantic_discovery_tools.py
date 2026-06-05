@@ -990,3 +990,6 @@ class TestAnalyzeMetricCandidatesFromHistory:
             and "DATE_TRUNC('WEEK'" in item["expression"]
             for item in time_evidence
         )
+        literal_values = {item.get("value") for item in result.result["literal_mappings"]}
+        assert "MONTH" not in literal_values
+        assert "WEEK" not in literal_values

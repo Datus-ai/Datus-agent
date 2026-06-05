@@ -20,6 +20,8 @@ import hashlib
 import re
 from typing import TYPE_CHECKING, Optional
 
+from datus.utils.exceptions import DatusException, ErrorCode
+
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
 
@@ -95,7 +97,10 @@ def resolve_datasource_id(agent_config: "AgentConfig", datasource: Optional[str]
     datasource_name = datasource if datasource is not None else getattr(agent_config, "current_datasource", "")
     datasource_id = str(datasource_name or "").strip()
     if not datasource_id:
-        raise ValueError("datasource is required for datasource-scoped storage")
+        raise DatusException(
+            ErrorCode.STORAGE_INVALID_ARGUMENT,
+            message_args={"error_message": "datasource is required for datasource-scoped storage"},
+        )
     return datasource_id
 
 

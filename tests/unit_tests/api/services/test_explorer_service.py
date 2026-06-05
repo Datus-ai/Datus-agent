@@ -69,6 +69,28 @@ class TestExplorerServiceInit:
         assert result.success is True
         assert svc.datasource_id == original_datasource
 
+    async def test_bound_service_rebinds_when_datasource_changes(self, real_agent_config):
+        svc = ExplorerService(agent_config=real_agent_config)
+        first_namespace = svc.storage_namespace
+
+        real_agent_config.current_datasource = "another_datasource"
+        await svc.get_subject_list()
+
+        assert svc.datasource_id == "another_datasource"
+        assert svc.storage_namespace != first_namespace
+
+    async def test_bound_service_unbinds_when_datasource_is_cleared(self, real_agent_config):
+        svc = ExplorerService(agent_config=real_agent_config)
+        assert svc.datasource_id
+
+        real_agent_config.current_datasource = ""
+        result = await svc.get_subject_list()
+
+        assert result.success is True
+        assert result.data.subjects == []
+        assert svc.datasource_id == ""
+        assert svc.subject_tree_store is None
+
 
 @pytest.mark.asyncio
 class TestExplorerServiceGetSubjectList:

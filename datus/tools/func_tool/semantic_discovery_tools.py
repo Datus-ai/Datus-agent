@@ -953,6 +953,8 @@ class SemanticDiscoveryTools:
         for node in expr.walk():
             if not isinstance(node, exp.Literal):
                 continue
+            if not self._is_business_literal_node(node):
+                continue
             item = {
                 "source_sql_name": source_name,
                 "clause": clause,
@@ -966,6 +968,46 @@ class SemanticDiscoveryTools:
                 item["alias"] = alias
             mappings.append(item)
         return mappings
+
+    @staticmethod
+    def _is_business_literal_node(node: Any) -> bool:
+        """Return true for literals that represent business values, not function syntax."""
+        from sqlglot import expressions as exp
+
+        comparison_classes = tuple(
+            cls
+            for cls in (
+                getattr(exp, "EQ", None),
+                getattr(exp, "NEQ", None),
+                getattr(exp, "GT", None),
+                getattr(exp, "GTE", None),
+                getattr(exp, "LT", None),
+                getattr(exp, "LTE", None),
+                getattr(exp, "In", None),
+                getattr(exp, "Between", None),
+                getattr(exp, "Like", None),
+                getattr(exp, "ILike", None),
+                getattr(exp, "RegexpLike", None),
+            )
+            if cls is not None
+        )
+
+        parent = getattr(node, "parent", None)
+        child = node
+        while parent is not None:
+            if isinstance(parent, exp.Func):
+                return False
+            if isinstance(parent, comparison_classes):
+                return True
+            if isinstance(parent, exp.If) and getattr(child, "arg_key", "") == "true":
+                return True
+            if isinstance(parent, exp.Case) and getattr(child, "arg_key", "") == "default":
+                return True
+            if isinstance(parent, (exp.Select, exp.Where, exp.Having)):
+                return False
+            child = parent
+            parent = getattr(parent, "parent", None)
+        return False
 
     def _time_grain_from_projection(self, projection: Any, source_name: str) -> Optional[Dict[str, Any]]:
         """Return time-dimension evidence from projected date expressions."""

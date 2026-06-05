@@ -155,6 +155,22 @@ class TestGenMetricsAgenticNodeInit:
 
         assert GenMetricsAgenticNode._blocked_queryability_sources_from_user_message(user_message) == {"sql_1"}
 
+    def test_blocked_queryability_sources_merges_classification_and_blocked_candidates(self):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        candidate_plan = {
+            "source_classifications": [
+                {"source_sql_name": "sql_1", "classification": "metric_plus_derived_datasource"}
+            ],
+            "blocked_direct_metric_candidates": [{"source_sql_name": "sql_2, sql_3"}],
+        }
+
+        assert GenMetricsAgenticNode._blocked_queryability_sources_from_candidate_plan(candidate_plan) == {
+            "sql_1",
+            "sql_2",
+            "sql_3",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Execution Tests

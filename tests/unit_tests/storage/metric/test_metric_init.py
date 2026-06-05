@@ -13,6 +13,7 @@ from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
+    _all_candidate_metrics_satisfied,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _source_provenance_from_row,
@@ -1278,16 +1279,23 @@ class TestBatchSplitting:
         rows = [{"question": "revenue", "sql": "SELECT SUM(revenue) AS total_revenue FROM orders"}]
         candidate_plan = {
             "available": True,
-            "direct_metric_candidates": [{"name": "total_revenue", "source_sql_name": "sql_1"}],
+            "direct_metric_candidates": [
+                {
+                    "name": "total_revenue",
+                    "source_sql_name": "sql_1",
+                    "metric_type": "measure_proxy",
+                    "base_measures": [{"name": "total_revenue"}],
+                }
+            ],
             "derived_metric_candidates": [],
-            "metric_candidates": [{"name": "total_revenue", "source_sql_name": "sql_1"}],
+            "metric_candidates": [],
         }
 
         with (
             patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
             patch(
                 "datus.storage.metric.metric_init._build_existing_metric_catalog",
-                return_value=[{"name": "total_revenue", "type": "measure_proxy"}],
+                return_value=[{"name": "total_revenue", "type": "measure_proxy", "base_measures": ["total_revenue"]}],
             ) as catalog_builder,
             patch(
                 "datus.storage.metric.metric_init._build_candidate_plan", return_value=candidate_plan
@@ -1308,3 +1316,30 @@ class TestBatchSplitting:
         catalog_builder.assert_called_once_with(mock_config)
         plan_builder.assert_called_once()
         node_factory.assert_not_called()
+
+    def test_candidate_metrics_satisfied_requires_definition_match(self):
+        candidate_plan = {
+            "direct_metric_candidates": [
+                {
+                    "name": "total_revenue",
+                    "metric_type": "measure_proxy",
+                    "base_measures": [{"name": "total_revenue"}],
+                }
+            ]
+        }
+
+        assert (
+            _all_candidate_metrics_satisfied(
+                candidate_plan,
+                [{"name": "total_revenue", "type": "measure_proxy", "base_measures": ["total_revenue"]}],
+            )
+            is True
+        )
+        assert (
+            _all_candidate_metrics_satisfied(
+                candidate_plan,
+                [{"name": "total_revenue", "type": "ratio", "base_measures": ["total_revenue"]}],
+            )
+            is False
+        )
+        assert _all_candidate_metrics_satisfied({"direct_metric_candidates": [{"name": "total_revenue"}]}, []) is False

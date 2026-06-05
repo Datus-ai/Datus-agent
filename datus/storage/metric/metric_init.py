@@ -384,14 +384,110 @@ def _candidate_metric_names(candidate_plan: dict[str, Any]) -> list[str]:
     return names
 
 
+def _candidate_metric_items(candidate_plan: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates_by_name: dict[str, dict[str, Any]] = {}
+    ordered_names: list[str] = []
+    seen: set[str] = set()
+    for key in ("direct_metric_candidates", "derived_metric_candidates", "metric_candidates"):
+        for candidate in candidate_plan.get(key) or []:
+            if not isinstance(candidate, dict):
+                continue
+            name = str(candidate.get("name") or "").strip()
+            normalized = _normalize_metric_name(name)
+            if not normalized:
+                continue
+            if normalized not in seen:
+                seen.add(normalized)
+                ordered_names.append(normalized)
+                candidates_by_name[normalized] = candidate
+                continue
+            if not _candidate_has_definition_evidence(
+                candidates_by_name[normalized]
+            ) and _candidate_has_definition_evidence(candidate):
+                candidates_by_name[normalized] = candidate
+    return [candidates_by_name[name] for name in ordered_names]
+
+
+def _normalized_scalar(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalized_metric_type(value: Any) -> str:
+    metric_type = _normalized_scalar(value)
+    return "measure_proxy" if metric_type == "simple" else metric_type
+
+
+def _normalized_measure_names(value: Any) -> set[str]:
+    names: set[str] = set()
+    if not isinstance(value, list):
+        return names
+    for item in value:
+        if isinstance(item, str):
+            name = item
+        elif isinstance(item, dict):
+            name = item.get("name") or item.get("measure") or item.get("expr")
+        else:
+            continue
+        normalized = _normalize_metric_name(name)
+        if normalized:
+            names.add(normalized)
+    return names
+
+
+def _candidate_has_definition_evidence(candidate: dict[str, Any]) -> bool:
+    return any(
+        candidate.get(field)
+        for field in (
+            "metric_type",
+            "type",
+            "semantic_model",
+            "semantic_model_name",
+            "base_measures",
+            "referenced_metrics",
+        )
+    )
+
+
+def _candidate_matches_existing_metric(candidate: dict[str, Any], existing: dict[str, Any]) -> bool:
+    if not _candidate_has_definition_evidence(candidate):
+        return False
+
+    candidate_type = _normalized_metric_type(candidate.get("metric_type") or candidate.get("type"))
+    existing_type = _normalized_metric_type(existing.get("type") or existing.get("metric_type"))
+    if candidate_type and existing_type and candidate_type != existing_type:
+        return False
+
+    candidate_semantic_model = _normalized_scalar(
+        candidate.get("semantic_model_name") or candidate.get("semantic_model")
+    )
+    existing_semantic_model = _normalized_scalar(existing.get("semantic_model_name") or existing.get("semantic_model"))
+    if candidate_semantic_model and existing_semantic_model and candidate_semantic_model != existing_semantic_model:
+        return False
+
+    candidate_measures = _normalized_measure_names(candidate.get("base_measures"))
+    if not candidate_measures and candidate.get("referenced_metrics"):
+        candidate_measures = _normalized_measure_names(candidate.get("referenced_metrics"))
+    existing_measures = _normalized_measure_names(existing.get("base_measures"))
+    if candidate_measures and existing_measures and candidate_measures != existing_measures:
+        return False
+
+    return True
+
+
 def _all_candidate_metrics_satisfied(
     candidate_plan: dict[str, Any], existing_metric_catalog: list[dict[str, Any]]
 ) -> bool:
-    candidate_names = _candidate_metric_names(candidate_plan)
-    if not candidate_names:
+    candidates = _candidate_metric_items(candidate_plan)
+    if not candidates:
         return False
-    existing_names = {_normalize_metric_name(item.get("name")) for item in existing_metric_catalog if item.get("name")}
-    return all(_normalize_metric_name(name) in existing_names for name in candidate_names)
+    existing_by_name = {
+        _normalize_metric_name(item.get("name")): item for item in existing_metric_catalog if item.get("name")
+    }
+    for candidate in candidates:
+        existing = existing_by_name.get(_normalize_metric_name(candidate.get("name")))
+        if not existing or not _candidate_matches_existing_metric(candidate, existing):
+            return False
+    return True
 
 
 async def _generate_metrics_batch(

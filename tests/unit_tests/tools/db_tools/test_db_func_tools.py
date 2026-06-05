@@ -476,6 +476,29 @@ class TestDBFuncTool:
         assert result.success == 1
         assert db_func_tool._describe_table_cache == {}
 
+    def test_describe_table_cache_tracks_semantic_model_fingerprint(self, db_func_tool, mock_connector):
+        db_func_tool.has_semantic_models = True
+        db_func_tool._semantic_storage = Mock()
+        db_func_tool._semantic_storage.search_all.side_effect = [
+            [{"id": "table:orders", "updated_at": "2026-01-01 00:00:00"}],
+            [{"id": "table:orders", "updated_at": "2026-01-02 00:00:00"}],
+        ]
+        db_func_tool._get_semantic_model = Mock(
+            side_effect=[
+                {"semantic_model_name": "orders", "description": "old", "dimensions": []},
+                {"semantic_model_name": "orders", "description": "new", "dimensions": []},
+            ]
+        )
+
+        first = db_func_tool.describe_table(table_name="orders")
+        second = db_func_tool.describe_table(table_name="orders")
+
+        assert first.success == 1
+        assert second.success == 1
+        assert first.result["table"]["description"] == "old"
+        assert second.result["table"]["description"] == "new"
+        assert mock_connector.get_schema.call_count == 2
+
     def test_describe_table_scope_validation(self, mock_connector):
         """describe_table should block tables outside scoped set."""
         tool = DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders"})

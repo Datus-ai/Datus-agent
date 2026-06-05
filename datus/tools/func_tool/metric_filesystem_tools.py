@@ -75,17 +75,36 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         return None
 
     def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:  # type: ignore[override]
+        resolved = self._classify(path)
+        policy_error = self._reject_write_policy(resolved)
+        if policy_error is not None:
+            return policy_error
+        target_path = resolved.resolved
+        original_content: Optional[str] = None
+        should_restore = self._is_semantic_yaml_path(target_path) and target_path.exists() and target_path.is_file()
+        if should_restore:
+            try:
+                original_content = target_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Cannot read YAML file before edit: {exc}")
+
         result = super().edit_file(path, old_string, new_string)
         if not result.success:
             return result
 
-        resolved = self._classify(path)
-        target_path = resolved.resolved
         if not self._is_semantic_yaml_path(target_path) or not target_path.exists():
             return result
 
         postprocess_result = self._postprocess_yaml_file(target_path)
         if not postprocess_result.success:
+            if original_content is not None:
+                try:
+                    target_path.write_text(original_content, encoding="utf-8")
+                except OSError as exc:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"{postprocess_result.error}; additionally failed to restore original file: {exc}",
+                    )
             return postprocess_result
         return result
 
@@ -99,6 +118,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         if not preprocess_result.success:
             return preprocess_result
         normalized_content = str(preprocess_result.result or "")
+
+        try:
+            list(yaml.safe_load_all(normalized_content))
+        except yaml.YAMLError as exc:
+            return FuncToolResult(success=0, error=f"Cannot normalize invalid edited YAML file: {exc}")
 
         if self._is_metric_file_path(target_path):
             normalize_result = self._normalize_metric_subject_tree_tags(target_path, normalized_content)
@@ -199,8 +223,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
         existing_idx, existing_doc, existing_ds = self._find_data_source_doc(existing_docs)
         _, incoming_doc, incoming_ds = self._find_data_source_doc(incoming_docs)
-        if existing_ds is None or incoming_ds is None:
-            return FuncToolResult(result=incoming_content)
+        if existing_ds is None:
+            return FuncToolResult(
+                success=0,
+                error="Cannot merge existing semantic model YAML without a data_source document.",
+            )
+        if incoming_ds is None:
+            return FuncToolResult(
+                success=0,
+                error="Cannot merge semantic model YAML update without a data_source document.",
+            )
 
         merged_ds, error = self._merge_data_sources(existing_ds, incoming_ds)
         if error:
@@ -272,6 +304,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             name = normalize_metric_name(metric.get("name") if metric else "")
             if name and metric is not None:
                 existing_by_name[name] = (idx, metric)
+        if not existing_by_name:
+            return FuncToolResult(
+                success=0,
+                error="Cannot merge existing metric YAML without metric documents.",
+            )
 
         saw_incoming_metric = False
         for incoming_doc in incoming_docs:
@@ -305,7 +342,10 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             existing_by_name[incoming_name] = (existing_idx, merged_metric)
 
         if not saw_incoming_metric:
-            return FuncToolResult(result=incoming_content)
+            return FuncToolResult(
+                success=0,
+                error="Cannot merge metric YAML update without metric documents.",
+            )
 
         merged_content = yaml.safe_dump_all(existing_docs, allow_unicode=True, sort_keys=False)
         return self._normalize_metric_subject_tree_tags(target_path, merged_content)

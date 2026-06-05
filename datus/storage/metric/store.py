@@ -139,9 +139,11 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         if not metrics:
             return
 
-        prepared = self._prepare_metrics_for_write(metrics, check_existing=True)
+        prepared, stale_duplicate_ids = self._prepare_metrics_for_write(metrics, check_existing=True)
         if prepared:
             self.batch_upsert(prepared, on_column="id")
+        if stale_duplicate_ids:
+            self._delete_rows(in_("id", stale_duplicate_ids))
 
     def batch_upsert_metrics(self, metrics: List[Dict[str, Any]]) -> None:
         """Upsert multiple metrics (update if id exists, insert if not).
@@ -155,15 +157,17 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         if not metrics:
             return
 
-        prepared = self._prepare_metrics_for_write(metrics, check_existing=True)
+        prepared, stale_duplicate_ids = self._prepare_metrics_for_write(metrics, check_existing=True)
         if prepared:
             self.batch_upsert(prepared, on_column="id")
+        if stale_duplicate_ids:
+            self._delete_rows(in_("id", stale_duplicate_ids))
 
     def _prepare_metrics_for_write(
         self,
         metrics: List[Dict[str, Any]],
         check_existing: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple[List[Dict[str, Any]], List[str]]:
         prepared: List[Dict[str, Any]] = []
         index_by_name: Dict[str, int] = {}
 
@@ -197,12 +201,13 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             index_by_name[normalized_name] = len(prepared)
             prepared.append(updated)
 
+        stale_duplicate_ids: List[str] = []
         if check_existing and prepared:
-            self._reject_existing_metric_name_conflicts(prepared)
+            stale_duplicate_ids = self._find_stale_existing_metric_ids(prepared)
 
-        return prepared
+        return prepared, stale_duplicate_ids
 
-    def _reject_existing_metric_name_conflicts(self, metrics: List[Dict[str, Any]]) -> None:
+    def _find_stale_existing_metric_ids(self, metrics: List[Dict[str, Any]]) -> List[str]:
         names = {normalize_metric_name(metric.get("name")) for metric in metrics}
         fields = ["id", "name", *_METRIC_DEFINITION_FIELDS]
         existing_rows = self._search_all(select_fields=fields).to_pylist()
@@ -223,8 +228,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             if existing.get("id") and existing.get("id") != incoming.get("id"):
                 stale_duplicate_ids.append(str(existing["id"]))
 
-        if stale_duplicate_ids:
-            self._delete_rows(in_("id", stale_duplicate_ids))
+        return stale_duplicate_ids
 
     def _search_metrics_internal(
         self,
