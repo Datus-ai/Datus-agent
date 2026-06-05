@@ -170,6 +170,25 @@ class TestAskMetricsAgenticNode:
         assert "metric_1" in prompt
         assert "metric_2" not in prompt
 
+    def test_invalid_subject_tree_prompt_limit_uses_default(self, real_agent_config, mock_llm_create):
+        tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
+
+        text_node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_config={"subject_tree_prompt_limit": "invalid"},
+            node_name="custom_metric_agent",
+        )
+        bool_node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_config={"subject_tree_prompt_limit": True},
+            node_name="another_metric_agent",
+        )
+
+        assert text_node.subject_tree_prompt_limit == text_node.SUBJECT_TREE_PROMPT_LIMIT
+        assert bool_node.subject_tree_prompt_limit == bool_node.SUBJECT_TREE_PROMPT_LIMIT
+
     def test_tools_follow_custom_configuration(self, real_agent_config, mock_llm_create):
         tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
 
@@ -184,6 +203,45 @@ class TestAskMetricsAgenticNode:
         )
 
         assert [tool.name for tool in node.tools] == ["search_metrics", "query_metrics"]
+
+    def test_tools_config_accepts_list_and_invalid_config_falls_back(self, real_agent_config, mock_llm_create):
+        tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
+
+        list_node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_config={"tools": ["semantic_tools.query_metrics", "context_search_tools.search_metrics"]},
+            node_name="custom_metric_agent",
+        )
+        invalid_node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_config={"tools": {"semantic_tools": ["query_metrics"]}},
+            node_name="another_metric_agent",
+        )
+
+        assert [tool.name for tool in list_node.tools] == ["query_metrics", "search_metrics"]
+        assert [tool.name for tool in invalid_node.tools] == [
+            "search_metrics",
+            "get_metrics",
+            "list_metrics",
+            "get_dimensions",
+            "query_metrics",
+            "attribution_analyze",
+        ]
+
+    def test_unsupported_tool_patterns_are_ignored(self, real_agent_config, mock_llm_create):
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["revenue"]}}},
+            node_config={"tools": "unknown_tools.*"},
+            node_name="custom_metric_agent",
+        )
+
+        node.semantic_tools = object()
+        node._setup_specific_tool_method("semantic_tools", "missing_method")
+
+        assert node.tools == []
 
     def test_custom_configuration_can_add_tools_outside_default_surface(
         self,
@@ -215,6 +273,52 @@ class TestAskMetricsAgenticNode:
         mapping = node._tool_category_map()
         assert [tool.name for tool in mapping["db_tools"]] == ["read_query"]
         assert [tool.name for tool in mapping["date_parsing_tools"]] == ["parse_temporal_expressions"]
+
+    def test_setup_tools_handles_context_search_failure(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        semantic_tools = _semantic_tools(adapter=True)
+        with (
+            patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", side_effect=RuntimeError("rag down")),
+            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=semantic_tools),
+            patch("datus.agent.node.ask_metrics_agentic_node.trans_to_function_tool", side_effect=_fake_function_tool),
+        ):
+            node = AskMetricsAgenticNode(
+                node_id="ask_metrics_test",
+                description="Ask metrics",
+                node_type=NodeType.TYPE_ASK_METRICS,
+                agent_config=real_agent_config,
+                node_name="ask_metrics",
+            )
+
+        assert node.context_search_tools is None
+        assert node.subject_tree_mode == "none"
+        assert [tool.name for tool in node.tools] == [
+            "list_metrics",
+            "get_dimensions",
+            "query_metrics",
+            "attribution_analyze",
+        ]
+
+    def test_setup_tools_handles_semantic_setup_failure(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        context_tools = _context_tools({"Sales": {"Orders": {"metrics": ["revenue"]}}})
+        with (
+            patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", return_value=context_tools),
+            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", side_effect=RuntimeError("bad adapter")),
+            patch("datus.agent.node.ask_metrics_agentic_node.trans_to_function_tool", side_effect=_fake_function_tool),
+        ):
+            node = AskMetricsAgenticNode(
+                node_id="ask_metrics_test",
+                description="Ask metrics",
+                node_type=NodeType.TYPE_ASK_METRICS,
+                agent_config=real_agent_config,
+                node_name="ask_metrics",
+            )
+
+        assert node.startup_error == "Semantic adapter unavailable: bad adapter"
+        assert node.tools == []
 
     def test_configured_list_subject_tree_only_exposed_for_partial_tree(self, real_agent_config, mock_llm_create):
         small_tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
@@ -315,6 +419,22 @@ class TestAskMetricsAgenticNode:
 
         assert result.execution_stats["tools_used"] == ["get_dimensions", "query_metrics"]
 
+    def test_success_result_uses_last_output_fallback_and_stringifies(self, real_agent_config, mock_llm_create):
+        from datus.schemas.action_history import ActionHistoryManager
+
+        node, _, _ = _make_node(real_agent_config, tree={})
+
+        result = node._build_success_result(
+            Mock(
+                response_content="",
+                last_successful_output={"response": {"value": 10}},
+                action_history_manager=ActionHistoryManager(),
+            )
+        )
+
+        assert result.response == "{'value': 10}"
+        assert result.markdown_report == "{'value': 10}"
+
     def test_tool_category_map_is_narrow(self, real_agent_config, mock_llm_create):
         tree = {"Sales": {"metrics": ["revenue"]}}
         node, _, _ = _make_node(real_agent_config, tree=tree)
@@ -330,3 +450,8 @@ class TestAskMetricsAgenticNode:
             "search_metrics",
             "get_metrics",
         }
+
+    def test_extract_subject_tree_ignores_non_dict_nodes(self):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        assert AskMetricsAgenticNode._extract_subject_tree_metric_entries(["not", "a", "tree"]) == []

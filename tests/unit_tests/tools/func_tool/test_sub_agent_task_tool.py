@@ -236,6 +236,12 @@ class TestResolveNodeType:
         assert NODE_CLASS_MAP["gen_visual_report"] == NodeType.TYPE_GEN_VISUAL_REPORT
         assert "gen_visual_report" in BUILTIN_SUBAGENT_DESCRIPTIONS
 
+    def test_ask_metrics_resolves(self, task_tool):
+        node_type, node_name = task_tool._resolve_node_type("ask_metrics")
+
+        assert node_type == NodeType.TYPE_ASK_METRICS
+        assert node_name == "ask_metrics"
+
     def test_gen_visual_report_constructs_and_builds_input(self, task_tool, tmp_path):
         """Mirror of ``test_gen_visual_dashboard_constructs_and_builds_input``
         for the report subagent — ``_create_builtin_node`` + the
@@ -572,6 +578,17 @@ class TestBuildNodeInput:
         assert result.user_message == "Show all users"
         assert result.database == "test_db"
 
+    def test_ask_metrics_node_input(self, task_tool):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        mock_node = Mock(spec=AskMetricsAgenticNode)
+        result = task_tool._build_node_input(mock_node, "Show revenue by month")
+
+        assert isinstance(result, AskMetricsNodeInput)
+        assert result.user_message == "Show revenue by month"
+        assert result.database == "test_db"
+
 
 # ── _convert_to_func_result ───────────────────────────────────────
 
@@ -612,6 +629,19 @@ class TestConvertToFuncResult:
         result = task_tool._convert_to_func_result(output)
         assert result.success == 1
         assert result.result["response"] == "Some content"
+
+    def test_markdown_report_result(self, task_tool):
+        output = {"response": "Metric answer", "markdown_report": "## Metric answer", "tokens_used": 25}
+
+        result = task_tool._convert_to_func_result(output, session_id="ask-metrics-session")
+
+        assert result.success == 1
+        assert result.result == {
+            "response": "Metric answer",
+            "markdown_report": "## Metric answer",
+            "tokens_used": 25,
+            "session_id": "ask-metrics-session",
+        }
 
     def test_visual_dashboard_result_preserves_documented_fields(self, task_tool):
         """``GenVisualDashboardNodeResult.model_dump()`` carries
@@ -1363,6 +1393,11 @@ class TestResolveNodeTypeBuiltIn:
         assert node_type == NodeType.TYPE_GEN_TABLE
         assert node_name == "gen_table"
 
+    def test_ask_metrics(self, task_tool):
+        node_type, node_name = task_tool._resolve_node_type("ask_metrics")
+        assert node_type == NodeType.TYPE_ASK_METRICS
+        assert node_name == "ask_metrics"
+
 
 # ── Built-in subagent: _create_builtin_node ────────────────────────
 
@@ -1622,6 +1657,17 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "Create wide table from orders and customers")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "Create wide table from orders and customers"
+        assert result.database == "test_db"
+
+    def test_ask_metrics_node_input(self, task_tool):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        mock_node = Mock(spec=AskMetricsAgenticNode)
+        result = task_tool._build_node_input(mock_node, "Show active users")
+
+        assert isinstance(result, AskMetricsNodeInput)
+        assert result.user_message == "Show active users"
         assert result.database == "test_db"
 
 

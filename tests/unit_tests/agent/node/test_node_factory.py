@@ -10,7 +10,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datus.agent.node.node import Node
 from datus.agent.node.node_factory import _resolve_node_class_type, create_interactive_node, create_node_input
+from datus.configuration.node_type import NodeType
+from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput, AskMetricsNodeResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -289,6 +292,78 @@ class TestCreateInteractiveNode:
         config = _mock_agent_config()
         create_interactive_node("explore", config, execution_mode="workflow")
         assert mock_init.call_args[1]["execution_mode"] == "workflow"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Node / NodeType ask_metrics wiring
+# ---------------------------------------------------------------------------
+
+
+class TestNodeAskMetricsWiring:
+    @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
+    def test_new_instance_routes_ask_metrics(self, mock_init):
+        config = _mock_agent_config()
+
+        node = Node.new_instance(
+            node_id="metric_node",
+            description="metric QA",
+            node_type=NodeType.TYPE_ASK_METRICS,
+            input_data=None,
+            agent_config=config,
+            tools=[],
+            node_name="custom_metric_agent",
+            is_subagent=True,
+            session_id="session-1",
+        )
+
+        assert node.__class__.__name__ == "AskMetricsAgenticNode"
+        mock_init.assert_called_once()
+        call_args = mock_init.call_args.args
+        call_kwargs = mock_init.call_args.kwargs
+        assert call_args[:7] == (
+            "metric_node",
+            "metric QA",
+            NodeType.TYPE_ASK_METRICS,
+            None,
+            config,
+            [],
+            "custom_metric_agent",
+        )
+        assert call_kwargs["execution_mode"] == "workflow"
+        assert call_kwargs["is_subagent"] is True
+        assert call_kwargs["session_id"] == "session-1"
+
+    @patch("datus.agent.node.ask_metrics_agentic_node.AskMetricsAgenticNode.__init__", return_value=None)
+    def test_from_dict_converts_ask_metrics_input_and_result(self, mock_init):
+        config = _mock_agent_config()
+        node = Node.from_dict(
+            {
+                "id": "metric_node",
+                "description": "metric QA",
+                "type": NodeType.TYPE_ASK_METRICS,
+                "input": {"user_message": "What was revenue last month?", "database": "warehouse"},
+                "status": "completed",
+                "result": {"success": True, "response": "Revenue was 10.", "markdown_report": "Revenue was 10."},
+                "start_time": None,
+                "end_time": None,
+                "dependencies": [],
+                "metadata": {},
+            },
+            agent_config=config,
+        )
+
+        init_input = mock_init.call_args.args[3]
+        assert isinstance(init_input, AskMetricsNodeInput)
+        assert init_input.user_message == "What was revenue last month?"
+        assert init_input.database == "warehouse"
+        assert isinstance(node.result, AskMetricsNodeResult)
+        assert node.result.response == "Revenue was 10."
+
+    def test_node_type_input_uses_ask_metrics_model(self):
+        result = NodeType.type_input(NodeType.TYPE_ASK_METRICS, {"user_message": "Show revenue"})
+
+        assert isinstance(result, AskMetricsNodeInput)
+        assert result.user_message == "Show revenue"
 
 
 # ---------------------------------------------------------------------------
