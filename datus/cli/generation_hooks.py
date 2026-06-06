@@ -1220,12 +1220,32 @@ class GenerationHooks(AgentHooks):
                     )
                 return rows[0]
 
-            def _lookup_measure_context(base_measure_names: list[str]) -> Optional[dict[str, Any]]:
+            def _measure_coordinate(row: dict[str, Any]) -> tuple[str, str, str, str]:
+                return (
+                    str(row.get("catalog_name") or ""),
+                    str(row.get("database_name") or ""),
+                    str(row.get("schema_name") or ""),
+                    str(row.get("table_name") or row.get("semantic_model_name") or ""),
+                )
+
+            def _measure_context_label(row: dict[str, Any]) -> str:
+                return ".".join(part for part in _measure_coordinate(row) if part)
+
+            def _common_context_value(rows: list[dict[str, Any]], field: str, default: str = "") -> str:
+                values = {str(row.get(field) or "") for row in rows}
+                return values.pop() if len(values) == 1 else default
+
+            def _lookup_measure_contexts(base_measure_names: list[str]) -> list[dict[str, Any]]:
+                contexts: list[dict[str, Any]] = []
+                seen_coordinates: set[tuple[str, str, str, str]] = set()
                 for measure_name in base_measure_names:
                     row = _lookup_measure_row(measure_name)
                     if row:
-                        return row
-                return None
+                        coordinate = _measure_coordinate(row)
+                        if coordinate not in seen_coordinates:
+                            seen_coordinates.add(coordinate)
+                            contexts.append(row)
+                return contexts
 
             # 3. Process Metrics (Standard Metrics) - These go to MetricStorage
             if include_metrics:
@@ -1330,31 +1350,49 @@ class GenerationHooks(AgentHooks):
                     metric_database_name = database_name
                     metric_schema_name = schema_name
 
-                    measure_context = _lookup_measure_context(base_measures) if base_measures else None
-                    if measure_context:
-                        metric_table_name = measure_context.get("table_name") or measure_context.get(
-                            "semantic_model_name", ""
-                        )
-                        metric_catalog_name = measure_context.get("catalog_name", metric_catalog_name)
-                        metric_database_name = measure_context.get("database_name", metric_database_name)
-                        metric_schema_name = measure_context.get("schema_name", metric_schema_name)
-                        if metric_table_name:
+                    measure_contexts = _lookup_measure_contexts(base_measures) if base_measures else []
+                    if measure_contexts:
+                        if len(measure_contexts) == 1:
+                            measure_context = measure_contexts[0]
+                            metric_table_name = measure_context.get("table_name") or measure_context.get(
+                                "semantic_model_name", ""
+                            )
+                        else:
+                            metric_table_name = ",".join(
+                                _measure_context_label(context) for context in measure_contexts
+                            )
+                        metric_catalog_name = _common_context_value(measure_contexts, "catalog_name")
+                        metric_database_name = _common_context_value(measure_contexts, "database_name")
+                        metric_schema_name = _common_context_value(measure_contexts, "schema_name")
+                        seen_dimensions: set[str] = set()
+                        seen_entities: set[str] = set()
+                        for measure_context in measure_contexts:
+                            context_table_name = measure_context.get("table_name") or measure_context.get(
+                                "semantic_model_name", ""
+                            )
+                            if not context_table_name:
+                                continue
                             sm_result = semantic_rag.get_semantic_model(
-                                table_name=metric_table_name,
+                                catalog_name=measure_context.get("catalog_name", ""),
+                                database_name=measure_context.get("database_name", ""),
+                                schema_name=measure_context.get("schema_name", ""),
+                                table_name=context_table_name,
                                 select_fields=["dimensions", "identifiers"],
                             )
                             if sm_result:
                                 for dim in sm_result.get("dimensions", []):
                                     dim_name = dim.get("name")
-                                    if dim_name:
+                                    if dim_name and dim_name not in seen_dimensions:
+                                        seen_dimensions.add(dim_name)
                                         dimensions.append(dim_name)
                                 for ident in sm_result.get("identifiers", []):
                                     ident_name = ident.get("name")
-                                    if ident_name:
+                                    if ident_name and ident_name not in seen_entities:
+                                        seen_entities.add(ident_name)
                                         entities.append(ident_name)
                                 logger.debug(
                                     f"Retrieved dims/ents from KB for metric {m_name} "
-                                    f"(table: {metric_table_name}): {len(dimensions)} dims, "
+                                    f"(table: {context_table_name}): {len(dimensions)} dims, "
                                     f"{len(entities)} ents"
                                 )
                     elif data_source and (not base_measures or data_source_measure_names.intersection(base_measures)):

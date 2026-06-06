@@ -1550,7 +1550,9 @@ metric:
         def _search_measures(where=None, select_fields=None):
             return rows_by_measure.get(_measure_name_from_condition(where), [])
 
-        def _semantic_model_for_table(table_name=None, select_fields=None):
+        def _semantic_model_for_table(
+            catalog_name="", database_name="", schema_name="", table_name=None, select_fields=None
+        ):
             if table_name == "LINEITEM":
                 return {
                     "dimensions": [{"name": "ship_date"}],
@@ -1592,6 +1594,114 @@ metric:
         assert captured_by_name["order_count"]["schema_name"] == "TPCH_SF1"
         assert captured_by_name["order_count"]["dimensions"] == ["order_date"]
         assert captured_by_name["order_count"]["entities"] == ["customer_key"]
+        mock_semantic_rag.get_semantic_model.assert_any_call(
+            catalog_name="",
+            database_name="SNOWFLAKE_SAMPLE_DATA",
+            schema_name="TPCH_SF1",
+            table_name="ORDERS",
+            select_fields=["dimensions", "identifiers"],
+        )
+
+    def test_multi_measure_metric_keeps_all_measure_contexts(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "metrics.yml"
+        yaml_file.write_text(
+            """
+metric:
+  name: revenue_per_order
+  description: "Discounted revenue per order."
+  type: ratio
+  type_params:
+    numerator: discounted_revenue
+    denominator: order_count
+""",
+            encoding="utf-8",
+        )
+
+        captured_metric = []
+        mock_semantic_rag = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.upsert_batch = lambda objects: captured_metric.extend(objects)
+
+        rows_by_measure = {
+            "discounted_revenue": [
+                {
+                    "name": "discounted_revenue",
+                    "table_name": "LINEITEM",
+                    "semantic_model_name": "LINEITEM",
+                    "catalog_name": "",
+                    "database_name": "SNOWFLAKE_SAMPLE_DATA",
+                    "schema_name": "TPCH_SF1",
+                }
+            ],
+            "order_count": [
+                {
+                    "name": "order_count",
+                    "table_name": "ORDERS",
+                    "semantic_model_name": "ORDERS",
+                    "catalog_name": "",
+                    "database_name": "SNOWFLAKE_SAMPLE_DATA",
+                    "schema_name": "TPCH_SF1",
+                }
+            ],
+        }
+
+        def _measure_name_from_condition(where):
+            for node in getattr(where, "nodes", []):
+                if getattr(node, "field", "") == "name":
+                    return getattr(node, "value", "")
+            return ""
+
+        def _search_measures(where=None, select_fields=None):
+            return rows_by_measure.get(_measure_name_from_condition(where), [])
+
+        def _semantic_model_for_table(
+            catalog_name="", database_name="", schema_name="", table_name=None, select_fields=None
+        ):
+            if table_name == "LINEITEM":
+                assert database_name == "SNOWFLAKE_SAMPLE_DATA"
+                assert schema_name == "TPCH_SF1"
+                return {
+                    "dimensions": [{"name": "ship_date"}],
+                    "identifiers": [{"name": "order_key"}],
+                }
+            if table_name == "ORDERS":
+                assert database_name == "SNOWFLAKE_SAMPLE_DATA"
+                assert schema_name == "TPCH_SF1"
+                return {
+                    "dimensions": [{"name": "order_date"}],
+                    "identifiers": [{"name": "customer_key"}],
+                }
+            return {}
+
+        mock_semantic_rag.storage._search_all.side_effect = _search_measures
+        mock_semantic_rag.get_semantic_model.side_effect = _semantic_model_for_table
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "SNOWFLAKE_SAMPLE_DATA"
+        db_config.schema = "TPCH_SF1"
+        agent_config.current_db_config.return_value = db_config
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        assert len(captured_metric) == 1
+        metric = captured_metric[0]
+        assert metric["semantic_model_name"] == (
+            "SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.LINEITEM,SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.ORDERS"
+        )
+        assert metric["database_name"] == "SNOWFLAKE_SAMPLE_DATA"
+        assert metric["schema_name"] == "TPCH_SF1"
+        assert metric["dimensions"] == ["ship_date", "order_date"]
+        assert metric["entities"] == ["order_key", "customer_key"]
 
 
 # ---------------------------------------------------------------------------
