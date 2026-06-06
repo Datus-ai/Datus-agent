@@ -1,71 +1,16 @@
 import pytest
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricRAG, build_metric_id
-from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.tools.func_tool.context_search import ContextSearchTools
 
 pytestmark = pytest.mark.nightly
-
-
-def _nightly_metric_items():
-    subject_path = ["california_schools"]
-    name = "school_count"
-    return [
-        {
-            "id": build_metric_id(subject_path, name),
-            "subject_path": subject_path,
-            "semantic_model_name": "nightly_school",
-            "name": name,
-            "description": "Count schools in the California schools dataset, including county-level school analysis.",
-            "metric_type": "simple",
-            "measure_expr": "COUNT(*)",
-            "base_measures": ["school_count"],
-            "dimensions": ["county", "charter"],
-            "entities": [],
-            "catalog_name": "",
-            "database_name": "",
-            "schema_name": "",
-            "sql": "SELECT COUNT(*) AS school_count FROM schools",
-            "yaml_path": "tests/data/metrics/nightly_school_count.yml",
-        }
-    ]
-
-
-def _nightly_reference_sql_items():
-    return [
-        {
-            "id": "nightly_ref_sql_school_fresno_charter",
-            "subject_path": ["california_schools"],
-            "name": "fresno_charter_schools",
-            "sql": ("SELECT COUNT(*) AS school_count FROM schools WHERE County = 'Fresno' AND Charter = 1"),
-            "comment": "Deterministic reference SQL seed for context search nightly tests.",
-            "summary": "Count charter schools in Fresno county from the California schools dataset.",
-            "search_text": "school schools Fresno charter California county reference SQL",
-            "filepath": "tests/data/reference_sql/nightly_ref_sql_school_fresno_charter.sql",
-            "tags": "nightly,school,reference_sql",
-        }
-    ]
-
-
-@pytest.fixture(scope="module")
-def seeded_context_data(agent_config: AgentConfig):
-    metric_store = MetricRAG(agent_config)
-    metric_store.upsert_batch(_nightly_metric_items())
-    metric_store.after_init()
-
-    reference_sql_store = ReferenceSqlRAG(agent_config)
-    reference_sql_store.upsert_batch(_nightly_reference_sql_items())
-    reference_sql_store.after_init()
-
-    return metric_store, reference_sql_store
 
 
 class TestContextSearchTools:
     """N11-13 to N11-16: ContextSearchTools with bird_school configuration."""
 
     @pytest.fixture
-    def ctx_tools(self, agent_config: AgentConfig, seeded_context_data):
+    def ctx_tools(self, agent_config: AgentConfig):
         return ContextSearchTools(agent_config)
 
     def test_search_metrics(self, ctx_tools):
