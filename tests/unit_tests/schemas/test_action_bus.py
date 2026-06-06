@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""CI-level tests for ActionBus – put / has_pending / close / merge / _fetch."""
+"""CI-level tests for ActionBus – put / has_pending / close / merge (fan-in)."""
 
 import asyncio
 from typing import AsyncGenerator
@@ -28,13 +28,6 @@ def _action(action_type: str = "test", role: ActionRole = ActionRole.TOOL) -> Ac
 async def _agen(*items: ActionHistory) -> AsyncGenerator[ActionHistory, None]:
     """Simple async generator that yields the given items."""
     for item in items:
-        yield item
-
-
-async def _slow_agen(*items: ActionHistory, delay: float = 0.05) -> AsyncGenerator[ActionHistory, None]:
-    """Async generator that yields items with a delay between each."""
-    for item in items:
-        await asyncio.sleep(delay)
         yield item
 
 
@@ -209,17 +202,33 @@ class TestMergeTermination:
 @pytest.mark.ci
 class TestMergeOrdering:
     @pytest.mark.asyncio
-    async def test_bus_queue_prioritized_over_primary(self):
-        """When both bus and primary are ready, bus is yielded first."""
+    async def test_injected_actions_preserve_fifo_order(self):
+        """Injected actions are yielded in the order they were put()."""
         bus = ActionBus()
-        bus_a = _action("bus_first")
-        primary_a = _action("primary_second")
-        bus.put(bus_a)
+        bus.put(_action("first"))
+        bus.put(_action("second"))
+        bus.put(_action("third"))
 
-        results = await _collect(bus.merge(_slow_agen(primary_a, delay=0.01)))
-        # bus_first should appear before primary_second
+        results = await _collect(bus.merge(_agen(_action("primary"))))
         types = [r.action_type for r in results]
-        assert types.index("bus_first") < types.index("primary_second")
+        # FIFO among injected actions (no cross-stream priority reordering)
+        assert types.index("first") < types.index("second") < types.index("third")
+        assert "primary" in types
+
+    @pytest.mark.asyncio
+    async def test_injected_before_primary_yielded_first(self):
+        """Actions put() before merge starts arrive before later primary output."""
+        bus = ActionBus()
+        bus.put(_action("injected"))
+
+        async def _primary() -> AsyncGenerator[ActionHistory, None]:
+            # Yield only after a tick so the pre-queued item is drained first.
+            await asyncio.sleep(0.01)
+            yield _action("primary_late")
+
+        results = await _collect(bus.merge(_primary()))
+        types = [r.action_type for r in results]
+        assert types.index("injected") < types.index("primary_late")
 
 
 # ── close / sentinel ─────────────────────────────────────────────
@@ -252,20 +261,32 @@ class TestClose:
         assert bus._queue.qsize() == 1
 
     @pytest.mark.asyncio
-    async def test_fetch_stops_on_sentinel(self):
-        """_fetch() terminates when the sentinel is dequeued."""
+    async def test_put_after_primary_exhausts_is_ignored(self):
+        """Once primary exhausts, the bus auto-closes and late put() is dropped."""
         bus = ActionBus()
-        q = bus._ensure_queue()
-        a1 = _action("before_sentinel")
-        q.put_nowait(a1)
-        q.put_nowait(ActionBus._STOP)
 
-        results = []
-        async for item in bus._fetch(q):
-            results.append(item)
+        async def _primary() -> AsyncGenerator[ActionHistory, None]:
+            yield _action("p")
+            # primary exhausts here → merge() calls close()
 
-        assert len(results) == 1
-        assert results[0].action_type == "before_sentinel"
+        results = await _collect(bus.merge(_primary()))
+        # After merge, the bus is closed; a late put() must be ignored.
+        bus.put(_action("too_late"))
+        types = [r.action_type for r in results]
+        assert "p" in types
+        assert "too_late" not in types
+
+    @pytest.mark.asyncio
+    async def test_primary_error_propagates(self):
+        """An exception raised by the primary stream surfaces to the consumer."""
+        bus = ActionBus()
+
+        async def _boom() -> AsyncGenerator[ActionHistory, None]:
+            yield _action("before_error")
+            raise ValueError("primary blew up")
+
+        with pytest.raises(ValueError, match="primary blew up"):
+            await _collect(bus.merge(_boom()))
 
 
 # ── merge: on_primary_done callback ──────────────────────────────

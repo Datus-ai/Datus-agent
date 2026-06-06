@@ -9,13 +9,22 @@ Tools call ``bus.put(action)`` to inject sub-actions (e.g. explorer
 sub-agent tool calls).  The node calls ``bus.merge(primary, *secondaries)``
 to yield everything in one stream for the CLI / web UI.
 
-Lifecycle follows the owning ``AgenticNode``.
+Implementation is a classic fan-in: one shared ``asyncio.Queue`` plus one
+pump task per stream, all feeding the same queue.  ``put()`` writes directly
+into that queue, so injected actions interleave with primary/secondary
+actions in FIFO (real arrival) order.  Downstream consumers re-group actions
+by ``parent_action_id`` / ``depth``, so no cross-stream priority ordering is
+needed.
+
+Lifecycle follows the owning ``AgenticNode``.  ``put()`` must be called from
+the event-loop thread that runs ``merge()`` (e.g. inside an ``async``
+function); a mismatch is logged as a warning.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator, Callable, Dict, List, Optional, Set
+from typing import AsyncGenerator, Callable, List, Optional, Tuple
 
 from datus.schemas.action_history import ActionHistory
 from datus.utils.loggings import get_logger
@@ -24,88 +33,70 @@ logger = get_logger(__name__)
 
 
 class ActionBus:
-    """Single-channel action bus with N-stream merge.
+    """Single-channel action bus with N-stream fan-in merge.
 
-    * **put(action)** – push for tool sub-actions (must be called from
-      the event-loop thread, e.g. inside an ``async`` function).
-    * **merge(primary, \\*secondaries)** – async generator that yields
-      actions from the primary stream, all secondary streams, *and*
-      the internal queue, interleaved via ``asyncio.wait``.
-    * **close()** – place a sentinel in the queue so ``_fetch()`` terminates
-      naturally.  Called automatically when the primary stream exhausts.
+    * **put(action)** – push for tool sub-actions (must be called from the
+      event-loop thread that runs ``merge()``).
+    * **merge(primary, \\*secondaries)** – async generator that yields actions
+      from the primary stream, all secondary streams, *and* anything injected
+      via ``put()``, interleaved in FIFO order through one shared queue.
+    * **close()** – place a sentinel in the queue so the injection channel
+      terminates.  Called automatically when the primary stream exhausts.
     """
 
-    _STOP = object()  # sentinel value
+    _STOP = object()  # injection-channel sentinel (enqueued by close())
+    _DONE = object()  # per-stream sentinel (enqueued when a pump exhausts)
 
     def __init__(self) -> None:
         # Lazy init so that __init__ can run before an event loop exists.
-        # The queue is (re-)created for the current event loop on each
-        # merge() call so that the ActionBus survives across different loops
-        # (e.g. successive asyncio.run / run_until_complete calls).
+        # The queue is (re-)created on the loop that runs merge(); ``_loop``
+        # is tracked only to warn on cross-loop misuse of put().
         self._queue: Optional[asyncio.Queue] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._closed: bool = False
-        self._bound_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def reset(self) -> None:
         """Drop all pending items and reset state for a new execution.
 
         Must be called at the start of each top-level execution to prevent
-        leftover queued items from a previous (possibly interrupted) run
-        from being replayed via ``_rebind_queue()``.
+        leftover queued items from a previous (possibly interrupted) run from
+        being replayed.
         """
         self._queue = None
+        self._loop = None
         self._closed = False
-        self._bound_loop = None
+
+    @staticmethod
+    def _running_loop() -> Optional[asyncio.AbstractEventLoop]:
+        try:
+            return asyncio.get_running_loop()
+        except RuntimeError:
+            return None
 
     def _ensure_queue(self) -> asyncio.Queue:
-        """Return the internal queue, rebinding if the event loop has changed."""
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            current_loop = None
-
-        if self._queue is not None and current_loop is not None and current_loop is not self._bound_loop:
-            # Event loop changed — rebind the queue to avoid RuntimeError
-            self._queue = self._rebind_queue()
-
+        """Return the shared queue, lazily creating it on the current loop."""
         if self._queue is None:
             self._queue = asyncio.Queue()
-            self._bound_loop = current_loop
-        return self._queue
-
-    def _rebind_queue(self) -> asyncio.Queue:
-        """Re-create the internal queue for the *current* event loop.
-
-        Transfers any items that were put() before merge() started.
-        This is necessary because asyncio.Queue is bound to the loop
-        where it was first used; if the ActionBus is reused across
-        different loops (e.g. successive CLI commands) the old queue
-        becomes invalid.
-        """
-        old = self._queue
-        self._queue = asyncio.Queue()
-        try:
-            self._bound_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            self._bound_loop = None
-        if old is not None:
-            while True:
-                try:
-                    item = old.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if item is self._STOP:
-                    continue
-                self._queue.put_nowait(item)
+            self._loop = self._running_loop()
         return self._queue
 
     # -- push side ----------------------------------------------------------
 
     def put(self, action: ActionHistory) -> None:
-        """Inject an action (non-blocking, must be called from the event-loop thread)."""
+        """Inject an action (non-blocking, must run on the event-loop thread)."""
         if self._closed:
             logger.warning("ActionBus.put() called after close()")
             return
+        current = self._running_loop()
+        if self._loop is not None and current is not None and current is not self._loop:
+            # The shared queue's getter futures are bound to merge()'s loop;
+            # waking them from another loop is unsafe.  Surface the misuse
+            # instead of silently rebinding (which would strand the action on
+            # an orphaned queue that merge() never reads).
+            logger.warning(
+                "ActionBus.put() called from a different event loop than merge(); "
+                "action may not be delivered — put() must run on the event-loop thread"
+            )
         self._ensure_queue().put_nowait(action)
 
     @property
@@ -113,7 +104,7 @@ class ActionBus:
         return self._queue is not None and not self._queue.empty()
 
     def close(self) -> None:
-        """Place a sentinel in the queue so ``_fetch()`` terminates naturally.
+        """Enqueue a sentinel so the injection channel terminates.
 
         Idempotent – calling close() more than once is a no-op.
         """
@@ -130,167 +121,91 @@ class ActionBus:
         *secondaries: AsyncGenerator[ActionHistory, None],
         on_primary_done: Optional[Callable[[], None]] = None,
     ) -> AsyncGenerator[ActionHistory, None]:
-        """Merge *primary* + *secondaries* + internal queue.
+        """Merge *primary* + *secondaries* + injected actions into one stream.
 
-        Terminates when all streams are exhausted (including the internal
-        queue, which is closed via sentinel when primary exhausts).
+        Each stream is drained by its own pump task into a single shared queue;
+        the main loop yields whatever arrives, in FIFO order.  Terminates once
+        every pump has exhausted and the injection channel is closed.
 
         Args:
             primary: The main action stream.
             *secondaries: Additional action streams (e.g. interaction broker).
-            on_primary_done: Optional callback invoked when the primary stream
-                exhausts.  Typically used to close secondary streams so they
-                also terminate naturally.
+            on_primary_done: Optional callback invoked exactly once when the
+                primary stream exhausts (or errors).  Typically closes the
+                secondary streams so they terminate naturally
+                (e.g. ``on_primary_done=broker.close``).
         """
-
-        _EXHAUSTED = object()
-
-        # Reset closed state for a new merge cycle.
+        # Reuse a queue holding actions put() before merge() started; otherwise
+        # create one bound to the current loop.
+        q = self._ensure_queue()
+        self._loop = self._running_loop()
         self._closed = False
 
-        # (Re-)create the queue for the current event loop, transferring
-        # any items that were put() before merge() was called.
-        q = self._rebind_queue()
-
-        # Build named stream map – _bus_queue first so injected actions
-        # are always yielded before primary/secondary when ready simultaneously.
-        stream_order: List[str] = ["_bus_queue", "primary"]
-        streams: Dict[str, AsyncGenerator[ActionHistory, None]] = {
-            "_bus_queue": self._fetch(q),
-            "primary": primary,
-        }
+        streams: List[Tuple[str, AsyncGenerator[ActionHistory, None], bool]] = [("primary", primary, True)]
         for idx, sec in enumerate(secondaries):
-            name = f"secondary_{idx}"
-            stream_order.append(name)
-            streams[name] = sec
+            streams.append((f"secondary_{idx}", sec, False))
 
-        iters = {name: s.__aiter__() for name, s in streams.items()}
-        tasks: Dict[str, asyncio.Task] = {}
-        exhausted: Set[str] = set()
+        # One _DONE per pump stream + one _STOP from close() (primary exhaust).
+        expected = len(streams) + 1
+        primary_error: Optional[BaseException] = None
 
-        async def _safe_anext(it):  # type: ignore[no-untyped-def]
+        async def pump(name: str, gen: AsyncGenerator[ActionHistory, None], is_primary: bool) -> None:
+            nonlocal primary_error
+            cancelled = False
             try:
-                return await it.__anext__()
-            except StopAsyncIteration:
-                return _EXHAUSTED
-
-        def _on_stream_exhausted(name: str) -> None:
-            """Handle side-effects when a stream exhausts."""
-            exhausted.add(name)
-            logger.debug("ActionBus: stream exhausted", stream=name)
-            if name == "primary":
-                self.close()
-                if on_primary_done is not None:
-                    on_primary_done()
-
-        def _drain_done() -> list:
-            """Pop and return results from all already-done tasks in stream_order."""
-            results = []
-            for name in stream_order:
-                if name not in tasks or not tasks[name].done():
-                    continue
-                task = tasks.pop(name)
-                result = task.result()
-                if result is _EXHAUSTED:
-                    _on_stream_exhausted(name)
+                async for action in gen:
+                    q.put_nowait(action)
+            except asyncio.CancelledError:
+                cancelled = True
+                raise
+            except Exception as exc:  # noqa: BLE001
+                if is_primary:
+                    primary_error = exc
                 else:
-                    results.append((name, result))
-            return results
+                    logger.error("ActionBus secondary stream error: %s", name, exc_info=True)
+            finally:
+                # Skip primary-done side effects on cancellation (abnormal
+                # teardown), but always emit the per-stream sentinel.
+                if is_primary and not cancelled:
+                    if on_primary_done is not None:
+                        try:
+                            on_primary_done()
+                        except Exception:  # noqa: BLE001
+                            logger.debug("ActionBus on_primary_done raised", exc_info=True)
+                    self.close()  # enqueues _STOP (idempotent)
+                q.put_nowait(self._DONE)
 
+        tasks = [
+            asyncio.create_task(pump(name, gen, is_primary), name=f"action_bus:{name}")
+            for name, gen, is_primary in streams
+        ]
+
+        seen = 0
         try:
-            while True:
-                # Create tasks for non-exhausted streams without active tasks
-                for name, it in iters.items():
-                    if name not in exhausted and name not in tasks:
-                        tasks[name] = asyncio.create_task(
-                            _safe_anext(it),
-                            name=name,
-                        )
-
-                if not tasks:
-                    break
-
-                # Process already-done tasks in stream_order
-                for name, result in _drain_done():
-                    _at = getattr(result, "action_type", "?")
-                    _role = getattr(result, "role", "?")
-                    _depth = getattr(result, "depth", "?")
-                    logger.debug(
-                        "ActionBus.merge yield (already-done)",
-                        stream=name,
-                        action_type=_at,
-                        role=str(_role),
-                        depth=_depth,
-                    )
-                    yield result
-
-                active_tasks = {n: t for n, t in tasks.items() if not t.done()}
-                if not active_tasks:
+            while seen < expected:
+                item = await q.get()
+                if item is self._STOP or item is self._DONE:
+                    seen += 1
                     continue
-
-                done, _ = await asyncio.wait(
-                    active_tasks.values(),
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                done_names = {t.get_name() for t in done}
-
-                for name in stream_order:
-                    if name not in done_names:
-                        continue
-                    task = tasks.pop(name)
-                    result = task.result()
-
-                    if result is _EXHAUSTED:
-                        _on_stream_exhausted(name)
-                    else:
-                        _at = getattr(result, "action_type", "?")
-                        _role = getattr(result, "role", "?")
-                        _depth = getattr(result, "depth", "?")
-                        logger.debug(
-                            "ActionBus.merge yield",
-                            stream=name,
-                            action_type=_at,
-                            role=str(_role),
-                            depth=_depth,
-                        )
-                        yield result
-
-            # Drain remaining done tasks after the loop exits normally
-            for name, result in _drain_done():
-                _at = getattr(result, "action_type", "?")
-                _role = getattr(result, "role", "?")
-                _depth = getattr(result, "depth", "?")
                 logger.debug(
-                    "ActionBus.merge yield (post-loop drain)",
-                    stream=name,
-                    action_type=_at,
-                    role=str(_role),
-                    depth=_depth,
+                    "ActionBus.merge yield",
+                    action_type=getattr(item, "action_type", "?"),
+                    role=str(getattr(item, "role", "?")),
+                    depth=getattr(item, "depth", "?"),
                 )
-                yield result
-
+                yield item
+            if primary_error is not None:
+                raise primary_error
         finally:
-            # Only cleanup here — no yielding to avoid RuntimeError
-            # when async generator is closed via aclose() or GC.
-            for task in tasks.values():
+            # Cleanup only — no yielding here to avoid RuntimeError when the
+            # async generator is closed via aclose() or GC.
+            for task in tasks:
                 if not task.done():
                     task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-
-    # -- internal -----------------------------------------------------------
-
-    async def _fetch(self, q: asyncio.Queue) -> AsyncGenerator[ActionHistory, None]:
-        """Drain the internal queue as an async generator.
-
-        Blocks on ``q.get()`` and terminates when the sentinel ``_STOP``
-        is dequeued.  FIFO ordering guarantees all items enqueued before
-        the sentinel are yielded first.
-        """
-        while True:
-            item = await q.get()
-            if item is self._STOP:
-                return
-            yield item
+            for task in tasks:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:  # noqa: BLE001
+                    logger.debug("ActionBus pump task error during cleanup", exc_info=True)
