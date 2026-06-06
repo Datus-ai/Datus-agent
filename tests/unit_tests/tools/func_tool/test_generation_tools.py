@@ -605,7 +605,7 @@ class TestValidateMetricFileHasBlocks:
         f = tmp_path / "duplicates.yml"
         f.write_text("metric:\n  name: revenue\n---\nmetric:\n  name: Revenue\n")
         msg = GenerationTools._validate_metric_file_has_blocks(str(f))
-        assert msg is not None
+        assert isinstance(msg, str)
         assert "duplicate metric.name" in msg
 
     def test_data_source_only_is_rejected(self, tmp_path):
@@ -615,7 +615,8 @@ class TestValidateMetricFileHasBlocks:
         f = tmp_path / "ds.yml"
         f.write_text("data_source:\n  name: orders\n")
         msg = GenerationTools._validate_metric_file_has_blocks(str(f))
-        assert msg is not None and "no `metric:` YAML blocks" in msg
+        assert isinstance(msg, str)
+        assert "no `metric:` YAML blocks" in msg
 
 
 class TestSyncMetricToDb:
@@ -790,5 +791,5 @@ class TestMetricPreflightRows:
             ]
         )
 
-        assert error is not None
+        assert isinstance(error, str)
         assert "Metric name conflict" in error

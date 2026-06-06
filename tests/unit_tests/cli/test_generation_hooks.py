@@ -18,7 +18,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -1658,15 +1658,11 @@ metric:
             catalog_name="", database_name="", schema_name="", table_name=None, select_fields=None
         ):
             if table_name == "LINEITEM":
-                assert database_name == "SNOWFLAKE_SAMPLE_DATA"
-                assert schema_name == "TPCH_SF1"
                 return {
                     "dimensions": [{"name": "ship_date"}],
                     "identifiers": [{"name": "order_key"}],
                 }
             if table_name == "ORDERS":
-                assert database_name == "SNOWFLAKE_SAMPLE_DATA"
-                assert schema_name == "TPCH_SF1"
                 return {
                     "dimensions": [{"name": "order_date"}],
                     "identifiers": [{"name": "customer_key"}],
@@ -1702,6 +1698,22 @@ metric:
         assert metric["schema_name"] == "TPCH_SF1"
         assert metric["dimensions"] == ["ship_date", "order_date"]
         assert metric["entities"] == ["order_key", "customer_key"]
+        assert mock_semantic_rag.get_semantic_model.call_args_list == [
+            call(
+                catalog_name="",
+                database_name="SNOWFLAKE_SAMPLE_DATA",
+                schema_name="TPCH_SF1",
+                table_name="LINEITEM",
+                select_fields=["dimensions", "identifiers"],
+            ),
+            call(
+                catalog_name="",
+                database_name="SNOWFLAKE_SAMPLE_DATA",
+                schema_name="TPCH_SF1",
+                table_name="ORDERS",
+                select_fields=["dimensions", "identifiers"],
+            ),
+        ]
 
 
 # ---------------------------------------------------------------------------
