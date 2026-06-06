@@ -61,7 +61,7 @@ def _make_sql_task() -> SqlTask:
 class TestWorkflowGraphAssembly:
     """Deterministic: the runner builds the expected multi-node gen_sql_agentic graph."""
 
-    def test_gen_sql_agentic_plan_is_multi_node(self, nightly_agent_config):
+    def test_gen_sql_agentic_plan_is_multi_node(self, nightly_agent_config) -> None:
         runner = WorkflowRunner(
             args=_make_args(),
             agent_config=nightly_agent_config,
@@ -97,7 +97,7 @@ class TestWorkflowOrchestrationRealLLM:
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(300)
-    async def test_gen_sql_agentic_workflow_completes(self, nightly_agent_config):
+    async def test_gen_sql_agentic_workflow_completes(self, nightly_agent_config) -> None:
         """N924-WF: run a multi-node gen_sql_agentic workflow end-to-end with a real LLM."""
         runner = WorkflowRunner(
             args=_make_args(max_steps=20),
