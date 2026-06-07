@@ -344,3 +344,86 @@ class TestOnPrimaryDone:
         action_types = [r.action_type for r in results]
         assert "primary" in action_types
         assert "sec_1" in action_types
+
+
+# ── put: cross-loop misuse ───────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestPutCrossLoop:
+    @pytest.mark.asyncio
+    async def test_put_from_different_loop_warns(self):
+        """put() from a loop other than merge()'s logs a warning but still enqueues."""
+        bus = ActionBus()
+        bus._ensure_queue()  # binds the queue/_loop to the current (test) loop
+        other_loop = asyncio.new_event_loop()
+        try:
+            # Simulate merge() having bound to a *different* loop than the
+            # caller of put() is currently running on.
+            bus._loop = other_loop
+            bus.put(_action("cross_loop"))
+            # The action is still enqueued (warning only, no drop).
+            assert bus.has_pending
+        finally:
+            other_loop.close()
+
+
+# ── merge: secondary errors & callback failures ──────────────────
+
+
+@pytest.mark.ci
+class TestMergeErrorHandling:
+    @pytest.mark.asyncio
+    async def test_secondary_stream_error_is_swallowed(self):
+        """A secondary stream raising does not abort merge; primary still finishes."""
+        bus = ActionBus()
+
+        async def bad_secondary() -> AsyncGenerator[ActionHistory, None]:
+            yield _action("sec_ok")
+            raise RuntimeError("secondary boom")
+
+        results = await _collect(bus.merge(_agen(_action("p")), bad_secondary()))
+        types = [r.action_type for r in results]
+        assert "p" in types
+        assert "sec_ok" in types
+
+    @pytest.mark.asyncio
+    async def test_on_primary_done_exception_is_swallowed(self):
+        """An exception from on_primary_done does not break merge()."""
+        bus = ActionBus()
+
+        def boom():
+            raise RuntimeError("callback boom")
+
+        results = await _collect(bus.merge(_agen(_action("p")), on_primary_done=boom))
+        assert len(results) == 1
+        assert results[0].action_type == "p"
+
+
+# ── merge: cleanup cancels running pumps ─────────────────────────
+
+
+@pytest.mark.ci
+class TestMergeCleanup:
+    @pytest.mark.asyncio
+    async def test_aclose_cancels_running_pump_tasks(self):
+        """Closing the merge generator early cancels still-running pump tasks."""
+        bus = ActionBus()
+
+        async def primary() -> AsyncGenerator[ActionHistory, None]:
+            yield _action("p")
+            # Stay alive so the primary pump is still running at aclose() time.
+            await asyncio.sleep(5)
+
+        async def blocking_secondary() -> AsyncGenerator[ActionHistory, None]:
+            # Never produces and never returns until cancelled.
+            await asyncio.Event().wait()
+            yield _action("never")  # pragma: no cover
+
+        gen = bus.merge(primary(), blocking_secondary())
+        first = await gen.__anext__()
+        assert first.action_type == "p"
+
+        # aclose() runs the finally block, which cancels the pending pump tasks
+        # (both primary's sleep and the blocking secondary) and awaits them.
+        await gen.aclose()

@@ -136,6 +136,106 @@ class TestChatExecutorFormatAction:
 
 
 @pytest.mark.ci
+class TestChatExecutorStream:
+    """Test execute_chat_stream."""
+
+    def test_no_config_yields_error(self):
+        executor = ChatExecutor()
+        results = list(executor.execute_chat_stream("hi", cli=None))
+        assert results == ["Error: Please load configuration first!"]
+
+    def test_stream_yields_actions_and_stores_last(self):
+        """Driving the async generator yields non-PROCESSING actions and stores them."""
+        from unittest.mock import MagicMock
+
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="done")
+
+        class _FakeNode:
+            def __init__(self):
+                self.input = None
+                self.interaction_broker = None
+
+            async def execute_stream_with_interactions(self, actions):
+                yield action
+
+        node = _FakeNode()
+        cli = MagicMock()
+        cli.at_completer.parse_at_context.return_value = ([], [], [], None)
+        cli.chat_commands._should_create_new_node.return_value = True
+        cli.chat_commands._create_new_node.return_value = node
+        cli.chat_commands.create_node_input.return_value = ({"q": "x"}, None)
+        cli.actions = []
+
+        executor = ChatExecutor()
+        results = list(executor.execute_chat_stream("hello", cli))
+
+        assert action in results
+        assert executor.last_actions == [action]
+
+    def test_stream_skips_tool_processing_actions(self):
+        """TOOL + PROCESSING actions are filtered out of the stream."""
+        from unittest.mock import MagicMock
+
+        tool_processing = _make_action(ActionRole.TOOL, ActionStatus.PROCESSING)
+        final = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="ok")
+
+        class _FakeNode:
+            def __init__(self):
+                self.input = None
+                self.interaction_broker = None
+
+            async def execute_stream_with_interactions(self, actions):
+                yield tool_processing
+                yield final
+
+        node = _FakeNode()
+        cli = MagicMock()
+        cli.at_completer.parse_at_context.return_value = ([], [], [], None)
+        cli.chat_commands._should_create_new_node.return_value = False
+        cli.chat_commands.current_node = node
+        cli.chat_commands.create_node_input.return_value = ({"q": "x"}, None)
+        cli.actions = []
+
+        executor = ChatExecutor()
+        results = list(executor.execute_chat_stream("hello", cli))
+
+        assert tool_processing not in results
+        assert final in results
+
+    def test_stream_breaks_on_interrupt(self):
+        """An interrupted node stops the stream before yielding."""
+        from unittest.mock import MagicMock
+
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="late")
+
+        class _Interrupt:
+            is_interrupted = True
+
+        class _FakeNode:
+            def __init__(self):
+                self.input = None
+                self.interaction_broker = None
+                self.interrupt_controller = _Interrupt()
+
+            async def execute_stream_with_interactions(self, actions):
+                yield action
+
+        node = _FakeNode()
+        cli = MagicMock()
+        cli.at_completer.parse_at_context.return_value = ([], [], [], None)
+        cli.chat_commands._should_create_new_node.return_value = True
+        cli.chat_commands._create_new_node.return_value = node
+        cli.chat_commands.create_node_input.return_value = ({"q": "x"}, None)
+        cli.actions = []
+
+        executor = ChatExecutor()
+        results = list(executor.execute_chat_stream("hello", cli))
+
+        # The interrupt is checked before the first __anext__, so nothing yields.
+        assert results == []
+
+
+@pytest.mark.ci
 class TestChatExecutorExtractSqlAndResponse:
     """Test extract_sql_and_response."""
 
