@@ -275,6 +275,8 @@ class TestClose:
         types = [r.action_type for r in results]
         assert "p" in types
         assert "too_late" not in types
+        # Validate the drop actually happened: the late put() left nothing queued.
+        assert not bus.has_pending
 
     @pytest.mark.asyncio
     async def test_primary_error_propagates(self):
@@ -287,6 +289,25 @@ class TestClose:
 
         with pytest.raises(ValueError, match="primary blew up"):
             await _collect(bus.merge(_boom()))
+
+    @pytest.mark.asyncio
+    async def test_primary_error_fails_fast_with_hanging_secondary(self):
+        """A primary error propagates even if a secondary never terminates."""
+        bus = ActionBus()
+
+        async def _boom() -> AsyncGenerator[ActionHistory, None]:
+            yield _action("before_error")
+            raise ValueError("primary blew up")
+
+        async def _never_ending() -> AsyncGenerator[ActionHistory, None]:
+            # Never produces and never returns until cancelled by cleanup.
+            await asyncio.Event().wait()
+            yield _action("never")  # pragma: no cover
+
+        # Without fail-fast this would hang forever waiting on the secondary;
+        # the primary error must surface promptly instead.
+        with pytest.raises(ValueError, match="primary blew up"):
+            await _collect(bus.merge(_boom(), _never_ending()))
 
 
 # ── merge: on_primary_done callback ──────────────────────────────

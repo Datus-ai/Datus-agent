@@ -60,7 +60,8 @@ class TestComputePaneWidth:
 class TestReflowForSidebar:
     def _build_cli(self, width: int = 100) -> DatusCLI:
         cli = _bare_cli()
-        buffer = mock.MagicMock()
+        buffer = mock.MagicMock(spec=["write", "flush", "isatty", "clear"])
+        buffer.isatty.return_value = False
         cli._tui_output_buffer = buffer
         cli.console = Console(file=buffer, width=width, force_terminal=True)
         cli.tui_app = mock.MagicMock()

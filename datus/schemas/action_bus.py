@@ -88,14 +88,17 @@ class ActionBus:
             logger.warning("ActionBus.put() called after close()")
             return
         current = self._running_loop()
-        if self._loop is not None and current is not None and current is not self._loop:
+        if self._loop is not None and current is not self._loop:
             # The shared queue's getter futures are bound to merge()'s loop;
-            # waking them from another loop is unsafe.  Surface the misuse
-            # instead of silently rebinding (which would strand the action on
-            # an orphaned queue that merge() never reads).
+            # waking them from another loop — or from a thread with no running
+            # loop at all (current is None) — is unsafe.  Surface the misuse
+            # instead of silently enqueueing onto a queue whose waiters merge()
+            # never reads.  We intentionally do not reschedule cross-loop here:
+            # by design every put() runs on merge()'s loop (see module docstring).
             logger.warning(
-                "ActionBus.put() called from a different event loop than merge(); "
-                "action may not be delivered — put() must run on the event-loop thread"
+                "ActionBus.put() called from a different event loop than merge() "
+                "(or from a thread with no running loop); action may not be "
+                "delivered — put() must run on the event-loop thread"
             )
         self._ensure_queue().put_nowait(action)
 
@@ -184,7 +187,16 @@ class ActionBus:
         try:
             while seen < expected:
                 item = await q.get()
-                if item is self._STOP or item is self._DONE:
+                if item is self._STOP:
+                    # _STOP is enqueued only by the primary pump's completion
+                    # (via close()).  If the primary errored, fail fast and
+                    # raise immediately instead of waiting for secondaries that
+                    # may never terminate — the finally block cancels them.
+                    seen += 1
+                    if primary_error is not None:
+                        break
+                    continue
+                if item is self._DONE:
                     seen += 1
                     continue
                 logger.debug(

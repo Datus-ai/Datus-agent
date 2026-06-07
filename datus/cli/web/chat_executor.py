@@ -68,24 +68,24 @@ class ChatExecutor:
 
                 async def run_stream():
                     """Wrapper to iterate the async generator to completion"""
-                    try:
-                        async for action in current_node.execute_stream_with_interactions(cli.actions):
-                            if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
-                                continue
+                    # ``async for`` handles the iterator's StopAsyncIteration
+                    # internally, so no except clause is needed here; the manual
+                    # __anext__() driver below catches StopAsyncIteration instead.
+                    async for action in current_node.execute_stream_with_interactions(cli.actions):
+                        if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
+                            continue
 
-                            # Auto-submit default choice for PROCESSING interactions (Web mode)
-                            if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
-                                broker = current_node.interaction_broker
-                                if broker:
-                                    await auto_submit_interaction(broker, action)
-                                continue  # Don't yield PROCESSING to UI
+                        # Auto-submit default choice for PROCESSING interactions (Web mode)
+                        if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
+                            broker = current_node.interaction_broker
+                            if broker:
+                                await auto_submit_interaction(broker, action)
+                            continue  # Don't yield PROCESSING to UI
 
-                            # SUCCESS interactions are yielded for UI rendering
-                            incremental_actions.append(action)
-                            yield action
-                        self.last_actions = incremental_actions
-                    except StopAsyncIteration:
-                        pass
+                        # SUCCESS interactions are yielded for UI rendering
+                        incremental_actions.append(action)
+                        yield action
+                    self.last_actions = incremental_actions
 
                 async_gen = run_stream()
                 while True:
