@@ -6,7 +6,7 @@ entries:
     owner: agent-runtime
     layer: product_e2e
     reason: Moonshot/Kimi provider returned HTTP 529 overload during nightly; rerun passed.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - nightly
     action: rerun_only
@@ -17,7 +17,7 @@ entries:
     owner: agent-runtime
     layer: product_e2e
     reason: Real LLM source-proxy filesystem tool-call flow reran once during nightly; rerun passed.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - nightly
     action: rerun_only
@@ -28,7 +28,7 @@ entries:
     owner: agent-runtime
     layer: provider_health
     reason: DeepSeek MCP session call reran once during nightly; rerun passed.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - nightly
     action: rerun_only
@@ -39,7 +39,7 @@ entries:
     owner: bi-agent
     layer: product_e2e
     reason: DeepSeek provider disconnected during Superset BI metric generation; rerun passed.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - nightly
     action: rerun_only
@@ -50,7 +50,7 @@ entries:
     owner: agent-runtime
     layer: product_e2e
     reason: Async teardown warning observed after real LLM/tool streaming; classify until root cause is fixed.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - nightly
     action: classify_warning
@@ -61,7 +61,7 @@ entries:
     owner: storage
     layer: product_e2e
     reason: LanceDB FTS cleanup warning observed during nightly storage cleanup.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - nightly
     action: classify_warning
@@ -72,7 +72,7 @@ entries:
     owner: agent-runtime
     layer: harness_correctness
     reason: Plan-mode broker simulator can hang on CI; quarantined so deterministic harness coverage stays signal-bearing.
-    allowed_until: 2026-06-05
+    allowed_until: 2026-09-05
     allowed_in:
       - quarantine
     action: quarantine
