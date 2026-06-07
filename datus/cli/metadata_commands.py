@@ -39,8 +39,12 @@ class MetadataCommands:
             db_config = self.cli.agent_config.datasource_configs[datasource]
             result = []
             show_uri = False
-            if getattr(db_config, "path_pattern", ""):
-                # Multi-database file datasource: one database per matched file.
+            db_type = getattr(db_config, "type", "")
+            is_file_based = bool(getattr(db_config, "path_pattern", "")) or db_type in (DBType.SQLITE, DBType.DUCKDB)
+            if is_file_based:
+                # File datasource: one database per matched file (glob), or the single
+                # configured file. Enumerate from config rather than the connector, whose
+                # SQLite/DuckDB ``get_databases`` only reports the internal ``main`` schema.
                 show_uri = True
                 uris = self.cli.db_manager.get_db_uris(datasource)
                 for db_name in self.cli.agent_config.list_databases(datasource):

@@ -116,14 +116,19 @@ class TestDBFuncToolIntegrationReal:
 class TestSqliteMultiConnector:
     @pytest.fixture
     def agent_config(self):
-        """Load acceptance config using a valid current database."""
+        """Load acceptance config for the multi-database ``bird_sqlite`` datasource.
+
+        ``bird_sqlite`` is a single datasource backed by a glob ``path_pattern``;
+        its matched files (``california_schools``, ``card_games``, ...) are its
+        databases, routed by ``(datasource, database)``.
+        """
         from tests.conftest import load_acceptance_config
 
-        return load_acceptance_config(datasource="california_schools", home="tests")
+        return load_acceptance_config(datasource="bird_sqlite", home="tests")
 
     @pytest.fixture
     def db_tool(self, agent_config):
-        """Create DBFuncTool for SSB SQLite database."""
+        """Create DBFuncTool for the bird_sqlite multi-database datasource."""
         from datus.tools.func_tool.database import db_function_tool_instance_multi
 
         return db_function_tool_instance_multi(agent_config)
@@ -134,23 +139,25 @@ class TestSqliteMultiConnector:
         """Test that multi-connector mode initializes correctly."""
 
         assert db_tool._db_manager is not None
-        assert db_tool._default_datasource == "california_schools"
+        assert db_tool._default_datasource == "bird_sqlite"
         assert db_tool._connector_cache_size > 1
 
     def test_database(self, db_tool):
+        # A glob datasource enumerates its matched files as databases.
         result = db_tool.list_databases()
         assert result.success == 1
         available_names = set(result.result)
-        assert "main" in available_names
+        assert {"california_schools", "card_games"}.issubset(available_names)
 
     def test_tables(self, db_tool):
-        result = db_tool.list_tables(datasource="california_schools")
+        # Route within the single datasource by database (the glob-matched file).
+        result = db_tool.list_tables(database="california_schools")
         assert result.success == 1
         assert len(result.result) > 1
         table_names = set([item["name"] for item in result.result])
         assert {"frpm", "satscores", "schools"}.issubset(table_names)
 
-        result = db_tool.list_tables(datasource="card_games")
+        result = db_tool.list_tables(database="card_games")
         assert result.success == 1
         assert len(result.result) > 1
         table_names = set([item["name"] for item in result.result])
