@@ -1,7 +1,7 @@
 """Unit tests for db_manager.py — gen_uri, _resolve_connection_context, helpers, and DBManager."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from datus_db_core import BaseSqlConnector, DatusDbException
@@ -308,6 +308,31 @@ class TestDBManager:
         uris = mgr.get_db_uris("ns")
         assert uris["ns"] == "sqlite:///test.db"
 
+    def test_get_conn_rebuilds_after_close(self):
+        configs = {"ns": _cfg(type="sqlite", uri="sqlite:///test.db")}
+        mgr = DBManager(configs)
+        with patch.object(mgr, "_build_conn", side_effect=lambda cfg: MagicMock()) as build:
+            first = mgr.get_conn("ns")
+            assert mgr.get_conn("ns") is first  # cached
+            mgr.close()
+            rebuilt = mgr.get_conn("ns")  # must not return the closed (popped) connector
+            assert rebuilt is not first
+            assert build.call_count == 2
+
+    def test_get_connections_returns_map_for_glob(self, tmp_path):
+        # A glob datasource exposes one connector per matched file, keyed by file/db name.
+        from datus.configuration.agent_config import DbConfig
+
+        (tmp_path / "a.sqlite").touch()
+        (tmp_path / "b.sqlite").touch()
+        pattern = str(tmp_path / "*.sqlite")
+        configs = {"ns": DbConfig(type=DBType.SQLITE, path_pattern=pattern)}
+        mgr = DBManager(configs)
+        with patch.object(mgr, "_build_conn", side_effect=lambda cfg: MagicMock()):
+            connections = mgr.get_connections("ns")
+        assert isinstance(connections, dict)
+        assert set(connections.keys()) == {"a", "b"}
+
     def test_duckdb_config_includes_extra_runtime_options(self):
         mgr = DBManager({})
         cfg = _cfg(
@@ -356,8 +381,9 @@ class TestDBManager:
 
         first.close.assert_called_once()
         second.close.assert_called_once()
-        assert mgr._conn_dict["analytics"]["raw"] is None
-        assert mgr._conn_dict["mart"]["main"] is None
+        # Closed connectors are evicted (not left as None) so a later get_conn() rebuilds them.
+        assert "raw" not in mgr._conn_dict["analytics"]
+        assert "main" not in mgr._conn_dict["mart"]
 
 
 # ---------------------------------------------------------------------------
@@ -492,16 +518,20 @@ class TestDbManagerInstanceCaching:
     """db_manager_instance (CLI mode) caches by datasource keys; the per-database
     dimension lives inside DBManager.get_conn(datasource, database)."""
 
+    _previous_factory = None
+
     def setup_method(self):
         # Ensure CLI mode (no factory) and a clean cache for deterministic keys.
         from datus.tools.db_tools import db_manager as dm
 
+        self._previous_factory = dm._factory
         set_db_manager_factory(None)
         dm._cli_cache.clear()
 
     def teardown_method(self):
         from datus.tools.db_tools import db_manager as dm
 
+        set_db_manager_factory(self._previous_factory)
         dm._cli_cache.clear()
 
     def test_same_datasource_set_reuses_instance(self):

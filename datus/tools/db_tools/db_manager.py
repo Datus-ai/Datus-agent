@@ -205,8 +205,14 @@ class DBManager:
         """
         return self._init_connection(datasource, database)
 
-    def get_connections(self, datasource: str = "") -> BaseSqlConnector:
-        return self._init_connection(datasource, "")
+    def get_connections(self, datasource: str = "") -> Dict[str, BaseSqlConnector]:
+        """Connectors for every database served by ``datasource``, keyed by database name.
+
+        A glob (``path_pattern``) datasource yields one connector per matched file; a server
+        datasource yields its single configured database. Callers that probe health or list
+        databases must iterate the map so multi-database datasources aren't reduced to one.
+        """
+        return {db_name: self._init_connection(datasource, db_name) for db_name in self.get_db_uris(datasource)}
 
     def first_conn(self, datasource: str) -> BaseSqlConnector:
         return self._init_connection(datasource, "")
@@ -252,8 +258,9 @@ class DBManager:
     def _init_connection(self, datasource: str, database: str) -> BaseSqlConnector:
         db_name, db_config = self._resolve_db_config(datasource, database)
         group = self._conn_dict.setdefault(datasource, {})
-        if db_name in group:
-            return group[db_name]
+        cached = group.get(db_name)
+        if cached is not None:
+            return cached
         conn = self._build_conn(db_config)
         group[db_name] = conn
         return conn
@@ -356,7 +363,7 @@ class DBManager:
                 except Exception as e:
                     logger.warning(f"Error closing connection {datasource}.{db_name}: {str(e)}")
                 finally:
-                    group[db_name] = None
+                    group.pop(db_name, None)
 
     def __enter__(self):
         """Context manager entry point."""

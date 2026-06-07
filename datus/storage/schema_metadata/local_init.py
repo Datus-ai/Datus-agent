@@ -107,7 +107,15 @@ def init_local_schema(
     ds = agent_config.current_datasource
     db_config = agent_config.datasource_configs[ds]
     # A datasource may serve multiple databases (e.g. a glob path_pattern → one per file).
-    databases = agent_config.list_databases(ds) or [getattr(db_config, "database", "")]
+    databases = agent_config.list_databases(ds)
+    if not databases:
+        default_database = getattr(db_config, "database", "")
+        databases = [default_database] if default_database else []
+    if not databases:
+        logger.info(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
+        table_lineage_store.after_init()
+        event_helper.task_completed(total_items=0, completed_items=0)
+        return
     logger.info(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
     for database in databases:
         if init_database_name and init_database_name != database:
@@ -130,7 +138,7 @@ def init_local_schema(
                 db_config,
                 db_manager,
                 database_name=database,
-                schema_name=init_database_name,
+                schema_name="",
                 table_type=table_type,
                 build_mode=build_mode,
                 event_helper=event_helper,

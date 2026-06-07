@@ -73,8 +73,9 @@ def test_detect_toxicology_db(tmp_path):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
 
-    pattern = "~/benchmark/bird/dev_20240627/dev_databases/**/*.sqlite"
-    # full_pattern = str(tmp_path / pattern)
+    # Glob against the temp tree (not "~/...") so the test is hermetic and never
+    # depends on a real BIRD dataset under the developer's home directory.
+    pattern = str(tmp_path / "benchmark/bird/dev_20240627/dev_databases/**/*.sqlite")
     results = get_files_from_glob_pattern(pattern, DBType.SQLITE)
 
     toxicology_files = [r for r in results if r["name"] == "toxicology" and r["uri"].endswith("toxicology.sqlite")]
@@ -82,4 +83,6 @@ def test_detect_toxicology_db(tmp_path):
     assert len(toxicology_files) == 1, "1 toxicology database should be detected"
 
     assert toxicology_files[0]["name"] == "toxicology"
-    assert toxicology_files[0]["datasource"] == "toxicology"
+    # For a wildcard directory pattern the datasource is the parent directory name,
+    # which is "medical" for medical/toxicology.sqlite.
+    assert toxicology_files[0]["datasource"] == "medical"

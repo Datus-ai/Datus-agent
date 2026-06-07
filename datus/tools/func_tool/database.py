@@ -207,7 +207,11 @@ class DBFuncTool:
 
         try:
             connector = self._db_manager.get_conn(ds, db)
-        except (KeyError, ValueError, DatusException) as e:
+        except DatusException:
+            # Preserve database-level routing errors (e.g. invalid database name with the
+            # list of available databases) so ``/database`` failures stay diagnosable.
+            raise
+        except (KeyError, ValueError) as e:
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 message=f"Datasource '{ds}' is not configured. Available datasources: {', '.join(self._datasources)}.",
@@ -839,7 +843,9 @@ class DBFuncTool:
             except Exception:
                 cfg = None
             if cfg is not None and getattr(cfg, "path_pattern", ""):
-                return FuncToolResult(result=self.agent_config.list_databases(source))
+                databases = self.agent_config.list_databases(source)
+                filtered = [db for db in databases if self._database_matches_scope(catalog, db)]
+                return FuncToolResult(result=filtered)
         try:
             connector = self._get_connector(source)
             databases = connector.get_databases(catalog, include_sys=include_sys)

@@ -93,7 +93,9 @@ class CliContext:
         last_context = self.get_last_sql_context()
         return last_context.sql_query if last_context else None
 
-    def update_database_context(self, db_name: str = None, catalog: str = None, schema: str = None):
+    def update_database_context(
+        self, db_name: Optional[str] = None, catalog: Optional[str] = None, schema: Optional[str] = None
+    ) -> None:
         """Update current database context."""
         if db_name is not None:
             self.current_db_name = db_name

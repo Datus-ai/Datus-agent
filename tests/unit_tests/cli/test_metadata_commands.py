@@ -20,7 +20,11 @@ from datus.utils.constants import DBType
 # ---------------------------------------------------------------------------
 
 
-def _make_db_config(db_type=DBType.SQLITE, database="mydb.db", uri="sqlite:///mydb.db"):
+def _make_db_config(
+    db_type: DBType | str = DBType.SQLITE,
+    database: str = "mydb.db",
+    uri: str = "sqlite:///mydb.db",
+) -> MagicMock:
     cfg = MagicMock()
     cfg.type = db_type
     cfg.database = database

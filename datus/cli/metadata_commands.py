@@ -100,8 +100,13 @@ class MetadataCommands:
 
         datasource = self.cli.agent_config.current_datasource
         db_config = self.cli.agent_config.datasource_configs[datasource]
-        # File datasources: the target must be one of the datasource's files.
-        if getattr(db_config, "path_pattern", "") and new_db not in self.cli.agent_config.list_databases(datasource):
+        # File datasources (glob path_pattern or a single embedded SQLite/DuckDB file): the
+        # target must be one of the datasource's configured databases.
+        is_file_based = bool(getattr(db_config, "path_pattern", "")) or getattr(db_config, "type", "") in (
+            DBType.SQLITE,
+            DBType.DUCKDB,
+        )
+        if is_file_based and new_db not in self.cli.agent_config.list_databases(datasource):
             print_warning(self.cli.console, f"No corresponding database was found: {new_db}")
             return
         try:
@@ -111,8 +116,8 @@ class MetadataCommands:
             print_error(self.cli.console, str(e))
             return
         self.cli.cli_context.update_database_context(db_name=self.cli.db_connector.database_name)
+        # ``reset_session()`` already refreshes the chat node tools, so don't rebuild them twice.
         self.cli.reset_session()
-        self.cli.chat_commands.update_chat_node_tools()
         print_success(self.cli.console, f"Database switched to: {new_db}")
 
     def cmd_tables(self, args: str):
