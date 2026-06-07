@@ -29,18 +29,14 @@ logger = get_logger(__name__)
 class SemanticStorageManager:
     """Manages sync between semantic adapters and unified storage."""
 
-    def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
+    def __init__(self, agent_config: AgentConfig):
         """
         Initialize storage manager.
 
         Args:
             agent_config: Agent configuration
-            datasource_id: Explicit datasource scope for all synced stores
         """
-        from datus.storage.scope import resolve_datasource_scope
-
         self.agent_config = agent_config
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
         self.semantic_model_store: Optional[SemanticModelStorage] = None
         self.metric_store: Optional[MetricStorage] = None
         self.subject_tree_store: Optional[SubjectTreeStore] = None
@@ -50,7 +46,7 @@ class SemanticStorageManager:
         if self.semantic_model_store is None:
             from datus.storage.semantic_model.store import SemanticModelRAG
 
-            rag = SemanticModelRAG(self.agent_config, datasource_id=self.datasource_id)
+            rag = SemanticModelRAG(self.agent_config)
             self.semantic_model_store = rag.storage
         return self.semantic_model_store
 
@@ -59,7 +55,7 @@ class SemanticStorageManager:
         if self.metric_store is None:
             from datus.storage.metric.store import MetricRAG
 
-            rag = MetricRAG(self.agent_config, datasource_id=self.datasource_id)
+            rag = MetricRAG(self.agent_config)
             self.metric_store = rag.storage
         return self.metric_store
 
@@ -68,7 +64,7 @@ class SemanticStorageManager:
         if self.subject_tree_store is None:
             from datus.storage.registry import get_subject_tree_store
 
-            self.subject_tree_store = get_subject_tree_store(project=self.storage_namespace)
+            self.subject_tree_store = get_subject_tree_store(project=self.agent_config.project_name)
         return self.subject_tree_store
 
     def store_semantic_model(

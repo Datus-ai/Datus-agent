@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from datus.storage.embedding_models import get_metric_embedding_model
-from datus.storage.metric.store import MetricStorage, build_metric_id
+from datus.storage.metric.store import MetricStorage
 
 
 @pytest.fixture
@@ -137,26 +137,6 @@ class TestBatchStoreMetricsValidation:
         with pytest.raises(ValueError, match="subject_path is required"):
             metric_storage.batch_store_metrics([bad_metric])
 
-    def test_batch_store_metrics_normalizes_id_from_metric_name(self, metric_storage: MetricStorage):
-        metric = _make_metric(1)
-        metric["id"] = "metric:wrong_id"
-
-        metric_storage.batch_store_metrics([metric])
-
-        rows = metric_storage.search_all_metrics(select_fields=["id", "name"])
-        assert len(rows) == 1
-        assert rows[0]["id"] == build_metric_id([], "test_metric_1")
-        assert rows[0]["name"] == "test_metric_1"
-
-    def test_batch_store_metrics_rejects_same_batch_name_conflict(self, metric_storage: MetricStorage):
-        first = _make_metric(1, subject_path=["Finance"])
-        second = _make_metric(2, subject_path=["Sales"])
-        second["name"] = first["name"]
-        second["measure_expr"] = "SUM(other_col)"
-
-        with pytest.raises(ValueError, match="Metric name conflict within datasource"):
-            metric_storage.batch_store_metrics([first, second])
-
 
 # ---------------------------------------------------------------------------
 # batch_upsert_metrics validation
@@ -182,75 +162,6 @@ class TestBatchUpsertMetricsValidation:
         }
         with pytest.raises(ValueError, match="subject_path is required"):
             metric_storage.batch_upsert_metrics([bad_metric])
-
-    def test_batch_upsert_metrics_allows_same_definition_update(self, metric_storage: MetricStorage):
-        original = _make_metric(1, subject_path=["Finance", "Revenue"])
-        updated = _make_metric(1, subject_path=["Sales", "Revenue"])
-        updated["description"] = "Updated display text"
-
-        metric_storage.batch_upsert_metrics([original])
-        metric_storage.batch_upsert_metrics([updated])
-
-        rows = metric_storage.search_all_metrics(select_fields=["id", "name", "description"])
-        assert len(rows) == 1
-        assert rows[0]["id"] == build_metric_id([], "test_metric_1")
-        assert rows[0]["description"] == "Updated display text"
-        assert rows[0]["subject_path"] == ["Sales", "Revenue"]
-
-    def test_batch_upsert_metrics_rejects_existing_name_conflict(self, metric_storage: MetricStorage):
-        original = _make_metric(1, subject_path=["Finance", "Revenue"])
-        conflicting = _make_metric(2, subject_path=["Sales", "Revenue"])
-        conflicting["name"] = original["name"]
-        conflicting["measure_expr"] = "SUM(net_revenue)"
-
-        metric_storage.batch_upsert_metrics([original])
-
-        with pytest.raises(ValueError, match="existing metric id"):
-            metric_storage.batch_upsert_metrics([conflicting])
-
-        rows = metric_storage.search_all_metrics(select_fields=["name", "measure_expr"])
-        assert len(rows) == 1
-        assert rows[0]["measure_expr"] == original["measure_expr"]
-
-    def test_batch_upsert_metrics_removes_same_definition_legacy_duplicate(self, metric_storage: MetricStorage):
-        legacy = _make_metric(1, subject_path=["Finance", "Revenue"])
-        legacy["id"] = "metric:Finance/Revenue.test_metric_1"
-        canonical = _make_metric(1, subject_path=["Sales", "Revenue"])
-
-        legacy_row = dict(legacy)
-        legacy_row["subject_node_id"] = metric_storage.subject_tree.find_or_create_path(legacy["subject_path"])
-        legacy_row.pop("subject_path", None)
-        metric_storage.store_batch([legacy_row])
-        metric_storage.batch_upsert_metrics([canonical])
-
-        rows = metric_storage.search_all_metrics(select_fields=["id", "name"])
-        assert len(rows) == 1
-        assert rows[0]["id"] == build_metric_id([], "test_metric_1")
-        assert rows[0]["name"] == "test_metric_1"
-
-    def test_batch_upsert_metrics_keeps_legacy_duplicate_when_upsert_fails(
-        self, metric_storage: MetricStorage, monkeypatch
-    ):
-        legacy = _make_metric(1, subject_path=["Finance", "Revenue"])
-        legacy["id"] = "metric:Finance/Revenue.test_metric_1"
-        canonical = _make_metric(1, subject_path=["Sales", "Revenue"])
-
-        legacy_row = dict(legacy)
-        legacy_row["subject_node_id"] = metric_storage.subject_tree.find_or_create_path(legacy["subject_path"])
-        legacy_row.pop("subject_path", None)
-        metric_storage.store_batch([legacy_row])
-
-        def fail_upsert(*_args, **_kwargs):
-            raise RuntimeError("upsert failed")
-
-        monkeypatch.setattr(metric_storage, "batch_upsert", fail_upsert)
-
-        with pytest.raises(RuntimeError, match="upsert failed"):
-            metric_storage.batch_upsert_metrics([canonical])
-
-        rows = metric_storage.search_all_metrics(select_fields=["id", "name"])
-        assert len(rows) == 1
-        assert rows[0]["id"] == "metric:Finance/Revenue.test_metric_1"
 
 
 # ---------------------------------------------------------------------------

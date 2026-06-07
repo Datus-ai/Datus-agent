@@ -240,11 +240,10 @@ class SchemaWithValueRAG:
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
-        from datus.storage.scope import resolve_datasource_scope
 
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
-        self.schema_store = get_storage(SchemaStorage, "database", project=self.storage_namespace)
-        self.value_store = get_storage(SchemaValueStorage, "database", project=self.storage_namespace)
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self.schema_store = get_storage(SchemaStorage, "database", project=agent_config.project_name)
+        self.value_store = get_storage(SchemaValueStorage, "database", project=agent_config.project_name)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.schema_store, "tables")
 
     def _sub_agent_conditions(self) -> list:

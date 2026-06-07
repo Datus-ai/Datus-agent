@@ -52,17 +52,6 @@ class TestGetMultipleTablesDDL:
         assert result.success == 1
         assert len(result.result) == 2
 
-    def test_reuses_cached_ddl_result(self):
-        db_tool = _make_db_tool()
-        db_tool.get_table_ddl.return_value = FuncToolResult(success=1, result={"definition": "CREATE TABLE t (id INT)"})
-        tools = _make_tools(db_tool)
-
-        first = tools.get_multiple_tables_ddl(["orders"])
-        second = tools.get_multiple_tables_ddl(["orders"])
-
-        assert first.result == second.result
-        db_tool.get_table_ddl.assert_called_once()
-
     def test_partial_failure(self):
         db_tool = _make_db_tool()
 
@@ -506,12 +495,8 @@ class TestAnalyzeMetricCandidatesFromHistory:
         result = tools.analyze_metric_candidates_from_history(
             sql_queries=["SELECT revenue / ad_spend AS roas FROM metric_table"],
             existing_metric_catalog_json=(
-                '[{"name": "revenue", "type": "measure_proxy", "subject_path": "finance", '
-                '"base_measures": ["total_revenue"], "dimensions": ["dt"], "entities": ["account_id"], '
-                '"semantic_model": "orders"}, '
-                '{"name": "ad_spend", "type": "measure_proxy", "subject_path": "finance", '
-                '"base_measures": ["total_ad_spend"], "dimensions": ["dt"], "entities": ["account_id"], '
-                '"semantic_model": "ads"}]'
+                '[{"name": "revenue", "type": "measure_proxy", "subject_path": "finance"}, '
+                '{"name": "ad_spend", "type": "measure_proxy", "subject_path": "finance"}]'
             ),
         )
 
@@ -521,24 +506,8 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert result.result["direct_metric_candidates"] == []
         assert result.result["derived_metric_candidates"] == [candidate]
         assert candidate["referenced_metrics"] == [
-            {
-                "name": "ad_spend",
-                "type": "measure_proxy",
-                "subject_path": "finance",
-                "base_measures": ["total_ad_spend"],
-                "dimensions": ["dt"],
-                "entities": ["account_id"],
-                "semantic_model": "ads",
-            },
-            {
-                "name": "revenue",
-                "type": "measure_proxy",
-                "subject_path": "finance",
-                "base_measures": ["total_revenue"],
-                "dimensions": ["dt"],
-                "entities": ["account_id"],
-                "semantic_model": "orders",
-            },
+            {"name": "ad_spend", "type": "measure_proxy", "subject_path": "finance"},
+            {"name": "revenue", "type": "measure_proxy", "subject_path": "finance"},
         ]
 
     def test_existing_metric_passthrough_is_identity_reference_not_derived_candidate(self):
@@ -631,27 +600,6 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidates[0]["name"] == "revenue"
         assert candidates[0]["source_count"] == 2
 
-    def test_same_formula_with_different_aliases_is_merged_with_alias_mapping(self):
-        tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
-            sql_queries=[
-                "SELECT COUNT(DISTINCT ip) AS new_and_ip_activity_count FROM activity WHERE ac_tag = '1,5'",
-                "SELECT COUNT(DISTINCT ip) AS new_ip_activity_count FROM activity WHERE ac_tag = '1,5'",
-            ]
-        )
-
-        candidates = result.result["metric_candidates"]
-        assert len(candidates) == 1
-        assert candidates[0]["name"] == "new_and_ip_activity_count"
-        assert candidates[0]["source_count"] == 2
-        assert candidates[0]["candidate_names"] == ["new_and_ip_activity_count", "new_ip_activity_count"]
-        assert {
-            "source_alias": "new_ip_activity_count",
-            "candidate_name": "new_ip_activity_count",
-            "canonical_name": "new_and_ip_activity_count",
-            "source_sql_name": "sql_2",
-        } in result.result["metric_aliases"]
-
     def test_same_alias_with_different_formulas_are_not_merged(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
@@ -725,19 +673,6 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidate["name_source"] == "expression_fallback"
         assert candidate["name"] == "count_distinct_user_id"
 
-    def test_low_information_ascii_alias_requires_business_name_translation(self):
-        tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
-            sql_queries=["SELECT COUNT(DISTINCT user_id) AS co_0 FROM orders"]
-        )
-
-        candidate = result.result["metric_candidates"][0]
-        assert candidate["source_alias"] == "co_0"
-        assert candidate["requires_name_translation"] is True
-        assert candidate["name_translation_reason"] == "source alias looks like a generated short prefix plus ordinal"
-        assert candidate["name_source"] == "expression_fallback"
-        assert candidate["name"] == "count_distinct_user_id"
-
     def test_ranked_window_blocks_direct_metric_and_recommends_datasource(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
@@ -791,51 +726,6 @@ class TestAnalyzeMetricCandidatesFromHistory:
                 "reason": "post-aggregation constraint must be preserved as a query filter or later derived data source",
             }
         ]
-
-    def test_having_blocks_direct_metric_and_recommends_post_aggregation_datasource(self):
-        tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
-            sql_queries=[
-                """
-                SELECT store_id, SUM(amount) AS high_revenue
-                FROM orders
-                WHERE status = 'paid'
-                GROUP BY store_id
-                HAVING SUM(amount) >= 100
-                """
-            ]
-        )
-
-        assert result.result["query_classification"] == "metric_plus_derived_datasource"
-        assert result.result["direct_metric_candidates"] == []
-        assert result.result["blocked_direct_metric_candidates"][0]["name"] == "high_revenue"
-        assert (
-            result.result["blocked_direct_metric_candidates"][0]["block_reason"]
-            == "post-aggregation filtering must be preserved in a derived data source before defining metrics"
-        )
-        recommendation = result.result["derived_datasource_recommendations"][0]
-        assert recommendation["recommendation_type"] == "post_aggregation"
-        assert recommendation["post_aggregation_constraints"] == ["SUM(amount) >= 100"]
-        assert recommendation["generated_columns"] == ["store_id", "high_revenue"]
-        assert result.result["modeling_plan"][0]["recommendation_type"] == "post_aggregation"
-        assert {
-            "source_sql_name": "sql_1",
-            "clause": "WHERE",
-            "value": "paid",
-            "expression": "'paid'",
-            "predicate": "status = 'paid'",
-            "literal_type": "string",
-            "preservation_rule": "preserve literal values verbatim; only MetricFlow object names may be normalized",
-        } in result.result["literal_mappings"]
-        assert {
-            "source_sql_name": "sql_1",
-            "clause": "HAVING",
-            "value": "100",
-            "expression": "100",
-            "predicate": "SUM(amount) >= 100",
-            "literal_type": "numeric",
-            "preservation_rule": "preserve literal values verbatim; only MetricFlow object names may be normalized",
-        } in result.result["literal_mappings"]
 
     def test_inline_ranked_subquery_blocks_direct_metric_and_recommends_datasource(self):
         tools = _make_tools()
@@ -990,6 +880,3 @@ class TestAnalyzeMetricCandidatesFromHistory:
             and "DATE_TRUNC('WEEK'" in item["expression"]
             for item in time_evidence
         )
-        literal_values = {item.get("value") for item in result.result["literal_mappings"]}
-        assert "MONTH" not in literal_values
-        assert "WEEK" not in literal_values

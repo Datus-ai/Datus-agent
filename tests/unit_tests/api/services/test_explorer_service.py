@@ -44,59 +44,6 @@ class TestExplorerServiceInit:
         svc = ExplorerService(agent_config=real_agent_config)
         assert isinstance(svc.subject_tree_store, SubjectTreeStore)
 
-    @pytest.mark.asyncio
-    async def test_init_without_datasource_does_not_raise(self, real_agent_config):
-        """Explorer can be constructed before a workflow binds a datasource."""
-        real_agent_config.current_datasource = ""
-
-        svc = ExplorerService(agent_config=real_agent_config)
-
-        assert svc.datasource_id == ""
-        assert svc.subject_tree_store is None
-        result = await svc.get_subject_list()
-        assert result.success is True
-        assert result.data.subjects == []
-
-    @pytest.mark.asyncio
-    async def test_unbound_service_rebinds_when_datasource_becomes_available(self, real_agent_config):
-        original_datasource = real_agent_config.current_datasource
-        real_agent_config.current_datasource = ""
-        svc = ExplorerService(agent_config=real_agent_config)
-
-        real_agent_config.current_datasource = original_datasource
-        result = await svc.create_directory(CreateDirectoryInput(subject_path=["late_bound"]))
-
-        assert result.success is True
-        assert svc.datasource_id == original_datasource
-
-    @pytest.mark.asyncio
-    async def test_bound_service_rebinds_when_datasource_changes(self, real_agent_config):
-        svc = ExplorerService(agent_config=real_agent_config)
-        first_namespace = svc.storage_namespace
-
-        original_datasource = real_agent_config.current_datasource
-        real_agent_config.services.datasources["another_datasource"] = real_agent_config.services.datasources[
-            original_datasource
-        ]
-        real_agent_config.current_datasource = "another_datasource"
-        await svc.get_subject_list()
-
-        assert svc.datasource_id == "another_datasource"
-        assert svc.storage_namespace != first_namespace
-
-    @pytest.mark.asyncio
-    async def test_bound_service_unbinds_when_datasource_is_cleared(self, real_agent_config):
-        svc = ExplorerService(agent_config=real_agent_config)
-        assert svc.datasource_id
-
-        real_agent_config.current_datasource = ""
-        result = await svc.get_subject_list()
-
-        assert result.success is True
-        assert result.data.subjects == []
-        assert svc.datasource_id == ""
-        assert svc.subject_tree_store is None
-
 
 @pytest.mark.asyncio
 class TestExplorerServiceGetSubjectList:

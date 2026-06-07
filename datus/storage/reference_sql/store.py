@@ -438,12 +438,13 @@ class ReferenceSqlRAG:
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
-        from datus.storage.scope import resolve_datasource_scope
 
         self.agent_config = agent_config
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
         self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
-        self.reference_sql_storage = get_storage(ReferenceSqlStorage, "reference_sql", project=self.storage_namespace)
+        self.reference_sql_storage = get_storage(
+            ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
+        )
         self._sub_agent_filter = _build_sub_agent_filter(
             agent_config, sub_agent_name, self.reference_sql_storage, "sqls"
         )

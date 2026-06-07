@@ -13,8 +13,6 @@ from datus.tools.semantic_tools.storage_sync import SemanticStorageManager
 
 def _make_manager():
     mock_config = MagicMock()
-    mock_config.project_name = "test_project"
-    mock_config.current_datasource = "test_datasource"
     return SemanticStorageManager(agent_config=mock_config)
 
 
@@ -36,24 +34,11 @@ def _make_metric(name="revenue", path=None, description="Total revenue"):
 class TestSemanticStorageManagerInit:
     def test_init_sets_agent_config(self):
         mock_config = MagicMock()
-        mock_config.project_name = "test_project"
-        mock_config.current_datasource = "test_datasource"
         manager = SemanticStorageManager(agent_config=mock_config)
         assert manager.agent_config is mock_config
-        assert manager.datasource_id == "test_datasource"
         assert manager.semantic_model_store is None
         assert manager.metric_store is None
         assert manager.subject_tree_store is None
-
-    def test_init_accepts_explicit_datasource_id(self):
-        mock_config = MagicMock()
-        mock_config.project_name = "test_project"
-        mock_config.current_datasource = "wrong_datasource"
-
-        manager = SemanticStorageManager(agent_config=mock_config, datasource_id="target_datasource")
-
-        assert manager.datasource_id == "target_datasource"
-        assert manager.storage_namespace == "test_project__ds__target_datasource"
 
 
 class TestEnsureSemanticModelStore:
@@ -70,7 +55,6 @@ class TestEnsureSemanticModelStore:
 
         assert store is mock_expected_store
         assert manager.semantic_model_store is mock_expected_store
-        mock_rag_class.assert_called_once_with(manager.agent_config, datasource_id="test_datasource")
 
     def test_returns_existing_store_on_second_call(self):
         manager = _make_manager()
@@ -95,7 +79,6 @@ class TestEnsureMetricStore:
 
         assert store is mock_expected_store
         assert manager.metric_store is mock_expected_store
-        mock_rag_class.assert_called_once_with(manager.agent_config, datasource_id="test_datasource")
 
     def test_returns_existing_store_on_second_call(self):
         manager = _make_manager()
@@ -110,11 +93,10 @@ class TestEnsureSubjectTreeStore:
         manager = _make_manager()
         mock_store = MagicMock()
 
-        with patch("datus.storage.registry.get_subject_tree_store", return_value=mock_store) as mock_get_tree:
+        with patch("datus.storage.registry.get_subject_tree_store", return_value=mock_store):
             store = manager._ensure_subject_tree_store()
 
         assert store is mock_store
-        mock_get_tree.assert_called_once_with(project="test_project__ds__test_datasource")
 
     def test_returns_existing_on_second_call(self):
         manager = _make_manager()
@@ -390,14 +372,14 @@ class TestStoreMetric:
         stored = mock_store.batch_store_metrics.call_args[0][0]
         assert stored[0]["subject_path"] == ["Finance", "Q1"]
 
-    def test_metric_id_is_independent_of_subject_path(self):
+    def test_metric_id_includes_subject_path(self):
         manager = _make_manager()
         mock_store = MagicMock()
         with patch.object(manager, "_ensure_metric_store", return_value=mock_store):
             manager.store_metric({"name": "revenue"}, subject_path=["Finance", "Revenue"])
 
         stored = mock_store.batch_store_metrics.call_args[0][0]
-        assert stored[0]["id"] == "metric:revenue"
+        assert "Finance/Revenue.revenue" in stored[0]["id"]
 
     def test_metric_type_defaults_to_simple(self):
         manager = _make_manager()

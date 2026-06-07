@@ -11,9 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.registry import get_storage
-from datus.storage.scope import resolve_datasource_scope
 from datus.storage.semantic_model.store import SemanticModelStorage
-from datus.storage.table_identity import build_semantic_table_identity
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -27,9 +25,9 @@ class CatalogUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
         self.semantic_model_storage = get_storage(
-            SemanticModelStorage, "semantic_model", project=self.storage_namespace
+            SemanticModelStorage, "semantic_model", project=agent_config.project_name
         )
 
     def _parse_json_field(self, value: Any) -> Optional[List[Dict[str, Any]]]:
@@ -46,18 +44,13 @@ class CatalogUpdater:
                 return None
         return None
 
-    def _table_identity(self, values: Dict[str, Any]) -> str:
-        agent_config = getattr(self, "_agent_config", None)
-        return build_semantic_table_identity(values, getattr(agent_config, "db_type", None))
-
     def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
         table_name = old_values.get("table_name", "")
         semantic_model_name = old_values.get("semantic_model_name", "")
-        table_identity = self._table_identity(old_values)
 
         # 1. Update table-level record (description)
         if "description" in update_values:
-            entry_id = f"table:{table_identity}"
+            entry_id = f"table:{table_name}"
             try:
                 self.semantic_model_storage.update_entry(entry_id, {"description": update_values["description"]})
             except DatusException as e:
@@ -76,7 +69,6 @@ class CatalogUpdater:
             update_values.get("dimensions"),
             "is_dimension",
             {"description", "expr", "column_type", "is_partition", "time_granularity"},
-            table_identity=table_identity,
         )
         self._update_columns(
             table_name,
@@ -85,7 +77,6 @@ class CatalogUpdater:
             update_values.get("measures"),
             "is_measure",
             {"description", "expr", "agg", "create_metric", "agg_time_dimension"},
-            table_identity=table_identity,
         )
         self._update_columns(
             table_name,
@@ -94,7 +85,6 @@ class CatalogUpdater:
             update_values.get("identifiers"),
             "is_entity_key",
             {"description", "expr", "column_type", "entity"},
-            table_identity=table_identity,
         )
 
     def _update_columns(
@@ -105,7 +95,6 @@ class CatalogUpdater:
         new_columns: Any,
         kind_field: str,
         allowed_fields: set,
-        table_identity: str = "",
     ):
         """Update column-level records by matching old and new values."""
         old_list = self._parse_json_field(old_columns) or []
@@ -134,7 +123,7 @@ class CatalogUpdater:
             if not changed:
                 continue
 
-            entry_id = f"column:{table_identity or table_name}.{col_name}"
+            entry_id = f"column:{table_name}.{col_name}"
             try:
                 self.semantic_model_storage.update_entry(entry_id, changed)
             except DatusException as e:

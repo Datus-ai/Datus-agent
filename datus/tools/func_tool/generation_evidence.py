@@ -53,11 +53,9 @@ class GenerationEvidence:
     metric_dry_run_queries: List[Dict[str, Any]] = field(default_factory=list)
     metric_sqls: Dict[str, str] = field(default_factory=dict)
     metric_queryability_contracts: List[Dict[str, Any]] = field(default_factory=list)
-    metric_aliases: Dict[str, str] = field(default_factory=dict)
     semantic_kb_sync_passed: bool = False
     metric_kb_sync_passed: bool = False
     generic_kb_sync_passed: bool = False
-    storage_revision: int = 0
 
     @property
     def kb_sync_passed(self) -> bool:
@@ -69,33 +67,12 @@ class GenerationEvidence:
         if _result_success(result) and valid:
             self.validation_passed = True
 
-    def set_metric_queryability_contracts(
-        self,
-        contracts: Optional[Iterable[Dict[str, Any]]],
-        metric_aliases: Optional[Dict[str, str]] = None,
-    ) -> None:
-        self.metric_aliases = _normalized_metric_alias_map(metric_aliases or {})
-        self.metric_queryability_contracts = []
-        for contract in contracts or []:
-            if not isinstance(contract, dict) or not (
-                contract.get("dimension_hints") or contract.get("time_group_hints")
-            ):
-                continue
-            normalized_contract = dict(contract)
-            metric_hints = []
-            alias_rewrites = {}
-            for hint in contract.get("metric_hints") or []:
-                if not isinstance(hint, str) or not hint.strip():
-                    continue
-                canonical = _canonical_metric_hint(hint, self.metric_aliases)
-                metric_hints.append(canonical)
-                if canonical != hint:
-                    alias_rewrites[hint] = canonical
-            if metric_hints:
-                normalized_contract["metric_hints"] = _deduplicate_preserve_order(metric_hints)
-            if alias_rewrites:
-                normalized_contract["metric_alias_rewrites"] = alias_rewrites
-            self.metric_queryability_contracts.append(normalized_contract)
+    def set_metric_queryability_contracts(self, contracts: Optional[Iterable[Dict[str, Any]]]) -> None:
+        self.metric_queryability_contracts = [
+            contract
+            for contract in (contracts or [])
+            if isinstance(contract, dict) and (contract.get("dimension_hints") or contract.get("time_group_hints"))
+        ]
 
     def record_metric_dry_run(
         self,
@@ -113,15 +90,10 @@ class GenerationEvidence:
         metrics_list = [m for m in metric_candidates if isinstance(m, str) and m]
         self.metric_dry_run_metrics.update(metrics_list)
         dimensions_list = [d for d in dimension_candidates if isinstance(d, str) and d]
-        explicit_time_granularity = isinstance(time_granularity, str) and bool(_normalize_time_grain(time_granularity))
-        normalized_time_granularity = (
-            time_granularity if explicit_time_granularity else _time_grain_from_dimensions(dimensions_list)
-        )
         dry_run_query = {
             "metrics": metrics_list,
             "dimensions": dimensions_list,
-            "time_granularity": normalized_time_granularity,
-            "time_granularity_explicit": explicit_time_granularity,
+            "time_granularity": time_granularity if isinstance(time_granularity, str) else None,
         }
         self.metric_dry_run_queries.append(dry_run_query)
         metadata = _metadata_from_result(result)
@@ -148,8 +120,6 @@ class GenerationEvidence:
                 self.metric_sqls[metrics_list[0]] = sql
             else:
                 self.metric_sqls["__query_metrics_dry_run__"] = sql
-                for metric_name in metrics_list:
-                    self.metric_sqls.setdefault(metric_name, sql)
 
     def has_metric_dry_run(self, metric_names: Optional[Iterable[str]] = None) -> bool:
         names = {m for m in (metric_names or []) if isinstance(m, str) and m}
@@ -214,7 +184,6 @@ class GenerationEvidence:
             if (
                 _looks_time_dimension(hint)
                 and time_granularity
-                and dry_run.get("time_granularity_explicit") is True
                 and any(_is_metric_time_dimension(dimension) for dimension in dimensions)
             ):
                 continue
@@ -228,7 +197,6 @@ class GenerationEvidence:
             self.semantic_kb_sync_passed = True
         else:
             self.generic_kb_sync_passed = True
-        self.storage_revision += 1
 
 
 _GENERIC_DIMENSION_TOKENS = {"id", "key", "name", "dim", "dimension", "value"}
@@ -255,35 +223,6 @@ def _name_tokens(value: str) -> Set[str]:
 
 def _normalize_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
-
-
-def _deduplicate_preserve_order(values: Iterable[str]) -> List[str]:
-    result: List[str] = []
-    seen: Set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        result.append(value)
-    return result
-
-
-def _normalized_metric_alias_map(metric_aliases: Dict[str, str]) -> Dict[str, str]:
-    normalized: Dict[str, str] = {}
-    for alias, canonical in metric_aliases.items():
-        if not isinstance(alias, str) or not isinstance(canonical, str):
-            continue
-        alias = alias.strip()
-        canonical = canonical.strip()
-        if not alias or not canonical:
-            continue
-        normalized[alias] = canonical
-        normalized[_normalize_name(alias)] = canonical
-    return normalized
-
-
-def _canonical_metric_hint(hint: str, metric_aliases: Dict[str, str]) -> str:
-    return metric_aliases.get(hint) or metric_aliases.get(_normalize_name(hint)) or hint
 
 
 def _semantic_tokens(value: str) -> Set[str]:
@@ -368,23 +307,16 @@ def _dimension_matches_expr_hint(dimension: str, expr_hint: Dict[str, str]) -> b
 
 def _dry_run_satisfies_time_group(dry_run: Dict[str, Any], time_hint: Dict[str, str]) -> bool:
     grain = _normalize_time_grain(time_hint.get("grain", ""))
-    dimensions = [d for d in dry_run.get("dimensions", []) if isinstance(d, str)]
-    dry_run_grain = _normalize_time_grain(dry_run.get("time_granularity")) or _time_grain_from_dimensions(dimensions)
+    dry_run_grain = _normalize_time_grain(dry_run.get("time_granularity"))
     if not grain or dry_run_grain != grain:
         return False
 
+    dimensions = [d for d in dry_run.get("dimensions", []) if isinstance(d, str)]
     base_expr = time_hint.get("base_expr", "")
     if base_expr and any(_time_base_dimension_matches(dimension, base_expr) for dimension in dimensions):
         return True
 
     sql = dry_run.get("sql", "")
-    if (
-        isinstance(sql, str)
-        and base_expr
-        and _sql_contains_base_expr_text(sql, base_expr)
-        and (not dimensions or any(_is_metric_time_dimension(dimension) for dimension in dimensions))
-    ):
-        return True
     if not isinstance(sql, str) or not _sql_contains_time_group(sql, base_expr, grain):
         return False
     return True
@@ -393,22 +325,6 @@ def _dry_run_satisfies_time_group(dry_run: Dict[str, Any], time_hint: Dict[str, 
 def _normalize_time_grain(value: Any) -> str:
     text = str(value or "").strip().strip("'\"").lower()
     return text if text in _TIME_GRAINS else ""
-
-
-def _time_grain_from_dimensions(dimensions: Iterable[str]) -> Optional[str]:
-    for dimension in dimensions:
-        grain = _dimension_time_grain(dimension)
-        if grain:
-            return grain
-    return None
-
-
-def _dimension_time_grain(dimension: str) -> str:
-    text = str(dimension or "").strip().lower()
-    if "__" not in text:
-        return ""
-    grain = re.sub(r"[^a-z0-9]+", "", text.rsplit("__", 1)[-1])
-    return grain if grain in _TIME_GRAINS else ""
 
 
 def _time_base_dimension_matches(dimension: str, base_expr: str) -> bool:
@@ -433,18 +349,6 @@ def _sql_contains_time_group(sql: str, base_expr: str, grain: str) -> bool:
             if _time_trunc_expression_matches(expr, normalized_base, grain):
                 return True
     return False
-
-
-def _sql_contains_base_expr_text(sql: str, base_expr: str) -> bool:
-    normalized_sql = _normalize_sql_text(sql)
-    normalized_base = _normalize_sql_text(base_expr)
-    if normalized_base and normalized_base in normalized_sql:
-        return True
-    leaf = _last_identifier(base_expr)
-    normalized_leaf = _normalize_sql_text(leaf)
-    return bool(
-        normalized_leaf and re.search(rf"(?<![a-z0-9_]){re.escape(normalized_leaf)}(?![a-z0-9_])", normalized_sql)
-    )
 
 
 def _sql_contains_expression(sql: str, expression: str) -> bool:

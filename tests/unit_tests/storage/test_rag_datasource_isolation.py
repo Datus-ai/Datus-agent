@@ -2,13 +2,28 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Tests for datasource-scoped RAG storage namespaces."""
+"""Tests for RAG classes in PHYSICAL isolation mode.
+
+In Storage 3.0, datasource_id isolation is handled at the backend level:
+- PHYSICAL mode (CLI default): each datasource gets its own directory via
+  init_backends(datasource=...).  All RAG instances within one process share
+  the same storage — isolation is per-process, not per-RAG.
+- LOGICAL mode (SaaS): backend auto-injects datasource_id column for
+  within-process multi-tenant filtering.
+
+LOGICAL isolation is tested at the LanceDB backend level in
+tests/unit_tests/storage/vector/test_lance_backend.py
+(TestLanceVectorTableLogicalIsolation).
+
+This file tests that RAG classes work correctly in PHYSICAL mode
+(single shared storage, no cross-datasource filtering).
+"""
 
 from typing import Any, Dict
 
 import pyarrow as pa
 
-from datus.storage.metric.store import MetricRAG, build_metric_id
+from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 
 # ---------------------------------------------------------------------------
@@ -63,7 +78,11 @@ def _make_metric(suffix: str = "a") -> Dict[str, Any]:
 
 
 class TestRAGPhysicalModeSharedStorage:
-    """RAGs can store and retrieve data inside one datasource namespace."""
+    """In PHYSICAL mode, all RAG instances share the same storage.
+
+    This verifies that store_batch/search_all work correctly when
+    multiple RAGs use the same underlying storage.
+    """
 
     def test_semantic_model_store_and_search(self, real_agent_config):
         """SemanticModelRAG can store and retrieve data."""
@@ -103,115 +122,3 @@ class TestRAGPhysicalModeSharedStorage:
         # Upsert same id — should not increase count
         rag.upsert_batch([m])
         assert rag.get_metrics_size() == initial_size
-
-
-class TestDatasourceScopedNamespaces:
-    """Datasource-bound KB stores must not share project-level storage."""
-
-    def _add_datasource_alias(self, agent_config, datasource: str) -> None:
-        agent_config.services.datasources[datasource] = agent_config.services.datasources[
-            agent_config.current_datasource
-        ]
-
-    def test_namespace_helper_sanitizes_project_and_datasource(self, real_agent_config):
-        from datus.storage.scope import datasource_storage_namespace
-
-        self._add_datasource_alias(real_agent_config, "Sales DB/2026")
-        namespace = datasource_storage_namespace(real_agent_config, "Sales DB/2026")
-
-        assert "__ds__" in namespace
-        assert "/" not in namespace
-        assert " " not in namespace
-        assert "-" not in namespace
-
-    def test_metric_id_does_not_depend_on_subject_path(self):
-        assert build_metric_id(["Finance"], "total_revenue") == build_metric_id(["Sales"], "total_revenue")
-
-    def test_rag_wrappers_use_datasource_scoped_namespace(self, real_agent_config):
-        from datus.storage.scope import datasource_storage_namespace, project_storage_namespace
-
-        expected_namespace = datasource_storage_namespace(real_agent_config)
-        project_namespace = project_storage_namespace(real_agent_config)
-
-        metric_rag = MetricRAG(real_agent_config)
-        semantic_rag = SemanticModelRAG(real_agent_config)
-
-        assert metric_rag.storage_namespace == expected_namespace
-        assert semantic_rag.storage_namespace == expected_namespace
-        assert metric_rag.storage_namespace != project_namespace
-        assert semantic_rag.storage_namespace != project_namespace
-
-    def test_metric_storage_isolated_by_datasource(self, real_agent_config):
-        ds_a = real_agent_config.current_datasource
-        ds_b = "other_datasource"
-        self._add_datasource_alias(real_agent_config, ds_b)
-
-        rag_a = MetricRAG(real_agent_config)
-        rag_a.store_batch([_make_metric("a")])
-        assert rag_a.get_metrics_size() == 1
-        assert rag_a.storage.get_subject_tree_flat() == ["Finance", "Finance/Revenue"]
-
-        real_agent_config.current_datasource = ds_b
-        rag_b = MetricRAG(real_agent_config)
-        assert rag_b.search_all_metrics() == []
-        assert rag_b.storage.get_subject_tree_flat() == []
-
-        rag_b.store_batch([_make_metric("b")])
-        assert rag_b.get_metrics_size() == 1
-
-        real_agent_config.current_datasource = ds_a
-        rag_a_again = MetricRAG(real_agent_config)
-        assert [row["name"] for row in rag_a_again.search_all_metrics()] == ["total_revenue_a"]
-        rag_a_again.truncate()
-        assert rag_a_again.search_all_metrics() == []
-
-        real_agent_config.current_datasource = ds_b
-        assert [row["name"] for row in MetricRAG(real_agent_config).search_all_metrics()] == ["total_revenue_b"]
-
-    def test_same_metric_name_can_exist_in_different_datasources(self, real_agent_config):
-        ds_a = real_agent_config.current_datasource
-        ds_b = "same_metric_other_datasource"
-        self._add_datasource_alias(real_agent_config, ds_b)
-
-        metric_a = _make_metric("a")
-        metric_a["name"] = "total_revenue"
-        metric_a["id"] = build_metric_id(metric_a["subject_path"], metric_a["name"])
-        metric_a["measure_expr"] = "SUM(revenue_a)"
-        metric_a["base_measures"] = ["revenue_a"]
-        metric_b = _make_metric("b")
-        metric_b["name"] = "total_revenue"
-        metric_b["id"] = build_metric_id(metric_b["subject_path"], metric_b["name"])
-        metric_b["measure_expr"] = "SUM(net_revenue)"
-        metric_b["base_measures"] = ["net_revenue"]
-
-        MetricRAG(real_agent_config).store_batch([metric_a])
-
-        real_agent_config.current_datasource = ds_b
-        MetricRAG(real_agent_config).store_batch([metric_b])
-
-        assert [row["measure_expr"] for row in MetricRAG(real_agent_config).search_all_metrics()] == [
-            "SUM(net_revenue)"
-        ]
-
-        real_agent_config.current_datasource = ds_a
-        assert [row["measure_expr"] for row in MetricRAG(real_agent_config).search_all_metrics()] == ["SUM(revenue_a)"]
-
-    def test_semantic_model_storage_isolated_by_datasource(self, real_agent_config):
-        ds_a = real_agent_config.current_datasource
-        ds_b = "semantic_other_datasource"
-        self._add_datasource_alias(real_agent_config, ds_b)
-
-        rag_a = SemanticModelRAG(real_agent_config)
-        rag_a.store_batch([_make_table_object("a")])
-        assert [row["table_name"] for row in rag_a.search_all()] == ["orders_a"]
-
-        real_agent_config.current_datasource = ds_b
-        rag_b = SemanticModelRAG(real_agent_config)
-        assert rag_b.search_all() == []
-        rag_b.store_batch([_make_table_object("b")])
-
-        real_agent_config.current_datasource = ds_a
-        assert [row["table_name"] for row in SemanticModelRAG(real_agent_config).search_all()] == ["orders_a"]
-
-        real_agent_config.current_datasource = ds_b
-        assert [row["table_name"] for row in SemanticModelRAG(real_agent_config).search_all()] == ["orders_b"]

@@ -10,7 +10,6 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
-import json
 from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -139,37 +138,6 @@ class GenMetricsAgenticNode(AgenticNode):
             self._setup_ask_user_tool()
 
         logger.info(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
-
-    def _make_filesystem_tool(self, **kwargs):
-        from datus.configuration.inherited_memory_overrides import get_inherited_memory
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
-
-        root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
-        datus_home = kwargs.pop("datus_home", None)
-        if datus_home is None and self.agent_config is not None:
-            path_manager = getattr(self.agent_config, "path_manager", None)
-            if path_manager is not None:
-                try:
-                    datus_home = str(path_manager.datus_home)
-                except Exception:
-                    datus_home = None
-        strict = kwargs.pop("strict", None)
-        if strict is None:
-            strict = self._resolve_filesystem_strict()
-        current_node = kwargs.pop("current_node", None) or self.get_node_name()
-        inherited_memory_node = kwargs.pop("inherited_memory_node", None)
-        if inherited_memory_node is None:
-            inherited_memory_node = get_inherited_memory(current_node)
-        session_data_dir = kwargs.pop("session_data_dir", None) or self._resolve_session_data_dir()
-        return MetricFilesystemFuncTool(
-            root_path=root_path,
-            current_node=current_node,
-            datus_home=datus_home,
-            strict=strict,
-            inherited_memory_node=inherited_memory_node,
-            session_data_dir=session_data_dir,
-            **kwargs,
-        )
 
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
@@ -424,7 +392,7 @@ class GenMetricsAgenticNode(AgenticNode):
             else:
                 response_content = str(ctx.last_successful_output)
 
-        semantic_model_files, metric_file, status, extracted_output = self._extract_metric_and_output_from_response(
+        semantic_model_file, metric_file, status, extracted_output = self._extract_metric_and_output_from_response(
             {"content": response_content}
         )
         if extracted_output:
@@ -434,7 +402,7 @@ class GenMetricsAgenticNode(AgenticNode):
             response_content = str(response_content) if response_content else ""
 
         self._finalize_metric_generation(
-            semantic_model_files=semantic_model_files,
+            semantic_model_file=semantic_model_file,
             metric_file=metric_file,
             status=status,
         )
@@ -478,114 +446,12 @@ class GenMetricsAgenticNode(AgenticNode):
     def _set_metric_queryability_contracts_from_input(self, user_input: Optional[SemanticNodeInput]) -> None:
         if not user_input:
             return
-        user_message = getattr(user_input, "user_message", "") or ""
-        contracts = extract_metric_queryability_contracts(user_message)
-        candidate_plan = self._extract_precomputed_candidate_plan(user_message)
-        metric_aliases = self._metric_aliases_from_candidate_plan(candidate_plan)
-        blocked_sources = self._blocked_queryability_sources_from_candidate_plan(candidate_plan)
-        if blocked_sources:
-            contracts = [
-                contract
-                for contract in contracts
-                if not (self._source_name_set(contract.get("source")) & blocked_sources)
-            ]
-        self.generation_evidence.set_metric_queryability_contracts(contracts, metric_aliases=metric_aliases)
-
-    @classmethod
-    def _metric_aliases_from_user_message(cls, user_message: str) -> Dict[str, str]:
-        plan = cls._extract_precomputed_candidate_plan(user_message)
-        return cls._metric_aliases_from_candidate_plan(plan)
-
-    @classmethod
-    def _blocked_queryability_sources_from_user_message(cls, user_message: str) -> set[str]:
-        plan = cls._extract_precomputed_candidate_plan(user_message)
-        return cls._blocked_queryability_sources_from_candidate_plan(plan)
-
-    @staticmethod
-    def _extract_precomputed_candidate_plan(user_message: str) -> Dict[str, Any]:
-        marker = "## Precomputed Metric Candidate Plan JSON"
-        if marker not in user_message:
-            return {}
-        section = user_message.split(marker, 1)[1]
-        next_heading = section.find("\n\n## ")
-        if next_heading >= 0:
-            section = section[:next_heading]
-        json_start = min((idx for idx in (section.find("{"), section.find("[")) if idx >= 0), default=-1)
-        if json_start < 0:
-            return {}
-        payload = section[json_start:].strip()
-        try:
-            loaded = json.loads(payload)
-        except (TypeError, json.JSONDecodeError):
-            logger.debug("Failed to parse precomputed metric candidate plan JSON from gen_metrics prompt")
-            return {}
-        return loaded if isinstance(loaded, dict) else {}
-
-    @staticmethod
-    def _metric_aliases_from_candidate_plan(candidate_plan: Dict[str, Any]) -> Dict[str, str]:
-        aliases: Dict[str, str] = {}
-
-        def add(alias: Any, canonical: Any) -> None:
-            if not isinstance(alias, str) or not isinstance(canonical, str):
-                return
-            alias = alias.strip()
-            canonical = canonical.strip()
-            if alias and canonical and alias != canonical:
-                aliases[alias] = canonical
-
-        for item in candidate_plan.get("metric_aliases") or []:
-            if not isinstance(item, dict):
-                continue
-            canonical = item.get("canonical_name") or item.get("name")
-            add(item.get("source_alias"), canonical)
-            add(item.get("candidate_name"), canonical)
-
-        for key in (
-            "direct_metric_candidates",
-            "derived_metric_candidates",
-            "metric_candidates",
-            "identity_metric_references",
-        ):
-            for candidate in candidate_plan.get(key) or []:
-                if not isinstance(candidate, dict):
-                    continue
-                canonical = candidate.get("name")
-                add(candidate.get("source_alias"), canonical)
-                for source_alias in candidate.get("source_aliases") or []:
-                    add(source_alias, canonical)
-                for candidate_name in candidate.get("candidate_names") or []:
-                    add(candidate_name, canonical)
-                for mapping in candidate.get("source_alias_mappings") or []:
-                    if not isinstance(mapping, dict):
-                        continue
-                    add(mapping.get("source_alias"), canonical)
-                    add(mapping.get("candidate_name"), canonical)
-        return aliases
-
-    @classmethod
-    def _blocked_queryability_sources_from_candidate_plan(cls, candidate_plan: Dict[str, Any]) -> set[str]:
-        blocked_sources: set[str] = set()
-        for item in candidate_plan.get("source_classifications") or []:
-            if not isinstance(item, dict):
-                continue
-            if item.get("classification") != "metric_plus_derived_datasource":
-                continue
-            blocked_sources.update(cls._source_name_set(item.get("source_sql_name")))
-
-        for item in candidate_plan.get("blocked_direct_metric_candidates") or []:
-            if isinstance(item, dict):
-                blocked_sources.update(cls._source_name_set(item.get("source_sql_name")))
-        return blocked_sources
-
-    @staticmethod
-    def _source_name_set(value: Any) -> set[str]:
-        if not isinstance(value, str):
-            return set()
-        return {part.strip() for part in value.split(",") if part.strip()}
+        contracts = extract_metric_queryability_contracts(getattr(user_input, "user_message", "") or "")
+        self.generation_evidence.set_metric_queryability_contracts(contracts)
 
     def _finalize_metric_generation(
         self,
-        semantic_model_files: Optional[List[str]],
+        semantic_model_file: Optional[str],
         metric_file: Optional[str],
         status: Optional[str],
     ) -> None:
@@ -627,36 +493,26 @@ class GenMetricsAgenticNode(AgenticNode):
                 )
 
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
-        abs_semantic_model_files = [
-            self._resolve_metric_artifact_path(semantic_model_file, "semantic")
-            for semantic_model_file in (semantic_model_files or [])
-            if semantic_model_file
-        ]
+        abs_semantic_model_file = (
+            self._resolve_metric_artifact_path(semantic_model_file, "semantic") if semantic_model_file else ""
+        )
         preflight_error = self.generation_tools._validate_metric_file_has_blocks(abs_metric_file)
         if preflight_error:
             raise RuntimeError(preflight_error)
 
         metric_names = self.generation_tools._extract_metric_names_from_file(abs_metric_file)
-        metric_definitions = self.generation_tools._extract_metric_definitions_from_file(abs_metric_file)
-        required_metric_names = self.generation_tools._metric_names_requiring_dry_run(
-            metric_names,
-            metric_definitions,
-            self.generation_evidence.metric_sqls,
-        )
-        if required_metric_names and not self.generation_evidence.has_metric_dry_run(required_metric_names):
+        if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
             if not getattr(self, "semantic_tools", None):
                 raise RuntimeError("Metric generation produced a metric_file, but query_metrics is unavailable.")
-            dry_run_result = self.semantic_tools.query_metrics(metrics=required_metric_names, dry_run=True)
-            self.generation_evidence.record_metric_dry_run(required_metric_names, dry_run_result)
+            dry_run_result = self.semantic_tools.query_metrics(metrics=metric_names, dry_run=True)
+            self.generation_evidence.record_metric_dry_run(metric_names, dry_run_result)
             if not self._tool_succeeded(dry_run_result):
                 raise RuntimeError(
                     "query_metrics(dry_run=True) failed for generated metric(s) "
-                    f"{', '.join(required_metric_names)}: {self._tool_error(dry_run_result)}"
+                    f"{', '.join(metric_names)}: {self._tool_error(dry_run_result)}"
                 )
-        if required_metric_names and not self.generation_evidence.has_required_queryability_dry_runs(
-            required_metric_names
-        ):
-            missing_contracts = self.generation_evidence.missing_queryability_contracts(required_metric_names)
+        if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
+            missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions before "
@@ -667,7 +523,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         publish_result = self.generation_tools.end_metric_generation(
             metric_file=abs_metric_file,
-            semantic_model_files=abs_semantic_model_files,
+            semantic_model_file=abs_semantic_model_file,
         )
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"Metric KB sync failed: {self._tool_error(publish_result)}")
@@ -675,12 +531,12 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _extract_metric_and_output_from_response(
         self, output: dict
-    ) -> tuple[Optional[List[str]], Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
-        Extract semantic model files, metric file, status and formatted output from model response.
+        Extract semantic model file, metric file, status and formatted output from model response.
 
         Per prompt template requirements, LLM should return JSON format:
-        {"semantic_model_files": ["path.yml"], "metric_file": "path.yml",
+        {"semantic_model_file": "path.yml", "metric_file": "path.yml",
          "status": "generated" | "skipped", "output": "markdown text"}
 
         ``status`` is optional for backward compatibility; absent values are treated as ``"generated"``.
@@ -689,7 +545,7 @@ class GenMetricsAgenticNode(AgenticNode):
             output: Output dictionary from model generation
 
         Returns:
-            Tuple of (semantic_model_files, metric_file, status, output_string).
+            Tuple of (semantic_model_file, metric_file, status, output_string), each Optional[str].
         """
         try:
             from datus.utils.json_utils import strip_json_str
@@ -700,22 +556,17 @@ class GenMetricsAgenticNode(AgenticNode):
             # Case 1: content is already a dict (most common)
             if isinstance(content, dict):
                 output_text = content.get("output")
-                semantic_model_files = content.get("semantic_model_files")
+                semantic_model_file = content.get("semantic_model_file")
                 metric_file = content.get("metric_file")
                 status = content.get("status")
                 normalized_status = status.strip().lower() if isinstance(status, str) else None
 
                 if (metric_file and isinstance(metric_file, str)) or normalized_status:
                     logger.debug(
-                        f"Extracted from dict: semantic_model_files={semantic_model_files}, "
+                        f"Extracted from dict: semantic_model_file={semantic_model_file}, "
                         f"metric_file={metric_file}, status={normalized_status}"
                     )
-                    return (
-                        semantic_model_files if isinstance(semantic_model_files, list) else [],
-                        metric_file,
-                        normalized_status,
-                        output_text,
-                    )
+                    return semantic_model_file, metric_file, normalized_status, output_text
 
                 logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
@@ -730,7 +581,7 @@ class GenMetricsAgenticNode(AgenticNode):
                         parsed = json_repair.loads(cleaned_json)
                         if isinstance(parsed, dict):
                             output_text = parsed.get("output")
-                            semantic_model_files = parsed.get("semantic_model_files")
+                            semantic_model_file = parsed.get("semantic_model_file")
                             metric_file = parsed.get("metric_file")
                             status = parsed.get("status")
                             normalized_status = status.strip().lower() if isinstance(status, str) else None
@@ -738,15 +589,10 @@ class GenMetricsAgenticNode(AgenticNode):
                             if (metric_file and isinstance(metric_file, str)) or normalized_status:
                                 logger.debug(
                                     f"Extracted from JSON string: "
-                                    f"semantic_model_files={semantic_model_files}, "
+                                    f"semantic_model_file={semantic_model_file}, "
                                     f"metric_file={metric_file}, status={normalized_status}"
                                 )
-                                return (
-                                    semantic_model_files if isinstance(semantic_model_files, list) else [],
-                                    metric_file,
-                                    normalized_status,
-                                    output_text,
-                                )
+                                return semantic_model_file, metric_file, normalized_status, output_text
 
                             logger.warning(f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}")
                     except Exception as e:

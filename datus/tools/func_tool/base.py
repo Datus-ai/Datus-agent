@@ -16,14 +16,14 @@ logger = get_logger(__name__)
 
 
 def normalize_null(value):
-    """Convert string 'null', 'None', empty, or placeholder values to None for LLM compatibility.
+    """Convert string 'null', 'None', empty, or whitespace-only values to None for LLM compatibility.
 
-    LLMs sometimes output the string 'null' / 'None' / '' / '-' instead of JSON null.
+    LLMs sometimes output the string 'null' / 'None' / '' instead of JSON null.
     This function normalizes such values to Python None.
     """
     if value is None:
         return None
-    if isinstance(value, str) and value.strip().lower() in ("null", "none", "", "-"):
+    if isinstance(value, str) and value.strip().lower() in ("null", "none", ""):
         return None
     return value
 

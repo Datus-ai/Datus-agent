@@ -61,7 +61,6 @@ class TestGenMetricsAgenticNodeInit:
     def test_metrics_has_tools(self, real_agent_config, mock_llm_create):
         """Test that the node has filesystem and generation tools."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
         node = GenMetricsAgenticNode(
             agent_config=real_agent_config,
@@ -79,7 +78,6 @@ class TestGenMetricsAgenticNodeInit:
 
         # Tool instances should be initialized
         assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
-        assert isinstance(node.filesystem_func_tool, MetricFilesystemFuncTool)
         assert isinstance(node.generation_tools, GenerationTools)
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
@@ -125,51 +123,6 @@ class TestGenMetricsAgenticNodeInit:
         assert "check_semantic_object_exists" in semantic_names
         assert "db_tools" in mapping
         assert "filesystem_tools" in mapping
-
-    def test_metric_aliases_from_precomputed_candidate_plan(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        user_message = """
-        Query 1:
-        SELECT COUNT(*) AS new_ip_activity_count FROM activity GROUP BY dt
-
-        ## Precomputed Metric Candidate Plan JSON
-        Use this plan.
-        {"metric_aliases":[{"source_alias":"new_ip_activity_count","candidate_name":"new_ip_activity_count","canonical_name":"new_and_ip_activity_count","source_sql_name":"sql_1"}]}
-        """
-
-        assert GenMetricsAgenticNode._metric_aliases_from_user_message(user_message) == {
-            "new_ip_activity_count": "new_and_ip_activity_count"
-        }
-
-    def test_blocked_queryability_sources_from_candidate_plan(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        user_message = """
-        Query 1:
-        SELECT request_name, COUNT(*) AS activity_count FROM activity GROUP BY request_name HAVING COUNT(*) > 1
-
-        ## Precomputed Metric Candidate Plan JSON
-        {"source_classifications":[{"source_sql_name":"sql_1","classification":"metric_plus_derived_datasource"}]}
-        """
-
-        assert GenMetricsAgenticNode._blocked_queryability_sources_from_user_message(user_message) == {"sql_1"}
-
-    def test_blocked_queryability_sources_merges_classification_and_blocked_candidates(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        candidate_plan = {
-            "source_classifications": [
-                {"source_sql_name": "sql_1", "classification": "metric_plus_derived_datasource"}
-            ],
-            "blocked_direct_metric_candidates": [{"source_sql_name": "sql_2, sql_3"}],
-        }
-
-        assert GenMetricsAgenticNode._blocked_queryability_sources_from_candidate_plan(candidate_plan) == {
-            "sql_1",
-            "sql_2",
-            "sql_3",
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -566,14 +519,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_files": ["model.yml"],
+                "semantic_model_file": "model.yml",
                 "metric_file": "revenue_metrics.yml",
                 "output": "Generated successfully",
             }
         }
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "revenue_metrics.yml"
-        assert sem_models == ["model.yml"]
+        assert sem_model == "model.yml"
         assert status is None
         assert out == "Generated successfully"
 
@@ -581,15 +534,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         content = json.dumps(
             {
-                "semantic_model_files": ["model.yml"],
+                "semantic_model_file": "model.yml",
                 "metric_file": "sales_metrics.yml",
                 "output": "Done",
             }
         )
         output = {"content": content}
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "sales_metrics.yml"
-        assert sem_models == ["model.yml"]
         assert status is None
         assert out == "Done"
 
@@ -597,14 +549,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_files": ["model.yml"],
+                "semantic_model_file": "model.yml",
                 "metric_file": None,
                 "status": "skipped",
                 "output": "All requested metrics already exist; skipped per Step 4.",
             }
         }
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_models == ["model.yml"]
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_model == "model.yml"
         assert metric_file is None
         assert status == "skipped"
         assert out.startswith("All requested metrics already exist")
@@ -613,14 +565,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_files": ["model.yml"],
+                "semantic_model_file": "model.yml",
                 "metric_file": None,
                 "status": "generated",
                 "output": "Generated successfully.",
             }
         }
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_models == ["model.yml"]
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_model == "model.yml"
         assert metric_file is None
         assert status == "generated"
         assert out == "Generated successfully."
@@ -629,14 +581,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         output = {
             "content": {
-                "semantic_model_files": ["model.yml"],
+                "semantic_model_file": "model.yml",
                 "metric_file": None,
                 "status": "done",
                 "output": "Done.",
             }
         }
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_models == ["model.yml"]
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_model == "model.yml"
         assert metric_file is None
         assert status == "done"
         assert out == "Done."
@@ -645,15 +597,14 @@ class TestExtractMetricAndOutputFromResponse:
         node = _make_node(real_agent_config, mock_llm_create)
         content = json.dumps(
             {
-                "semantic_model_files": ["model.yml"],
+                "semantic_model_file": "model.yml",
                 "metric_file": None,
                 "status": "skipped",
                 "output": "Skipped: metric already exists.",
             }
         )
         output = {"content": content}
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_models == ["model.yml"]
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
         assert status == "skipped"
         assert out == "Skipped: metric already exists."
@@ -661,26 +612,24 @@ class TestExtractMetricAndOutputFromResponse:
     def test_returns_none_quad_on_empty_content(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": ""}
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
-        assert sem_models is None
+        assert sem_model is None
         assert status is None
         assert out is None
 
     def test_returns_none_quad_on_dict_missing_metric_file(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": {"some_key": "some_value"}}
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
-        assert sem_models is None
         assert status is None
 
     def test_returns_none_quad_on_invalid_json(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
         output = {"content": "not json at all !!!"}
-        sem_models, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file is None
-        assert sem_models is None
         assert status is None
 
 
@@ -862,7 +811,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_files": [reported_semantic_path],
+                            "semantic_model_file": reported_semantic_path,
                             "metric_file": reported_metric_path,
                             "status": "generated",
                             "output": "Generated metrics.",
@@ -901,7 +850,7 @@ class TestExecuteStreamGenMetricsError:
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["orders_total"], dry_run=True)
         node.generation_tools.end_metric_generation.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
+            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
         )
 
     def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
@@ -935,7 +884,7 @@ class TestExecuteStreamGenMetricsError:
         node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
         with pytest.raises(DatusException, match="source SQL group-by dimensions"):
-            node._finalize_metric_generation([reported_semantic_path], reported_metric_path, "generated")
+            node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
 
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["revenue_total"], dry_run=True)
         node.generation_tools.end_metric_generation.assert_not_called()
@@ -971,11 +920,11 @@ class TestExecuteStreamGenMetricsError:
         )
         node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
-        node._finalize_metric_generation([reported_semantic_path], reported_metric_path, "generated")
+        node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
 
         node.generation_tools.end_metric_generation.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
+            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
         )
 
     @pytest.mark.asyncio
@@ -997,7 +946,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_files": [],
+                            "semantic_model_file": None,
                             "metric_file": str(outside),
                             "status": "generated",
                             "output": "Generated metrics.",
@@ -1055,7 +1004,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_files": ["orders.yml"],
+                            "semantic_model_file": "orders.yml",
                             "metric_file": None,
                             "status": "skipped",
                             "output": "All requested metrics already exist; nothing generated.",
@@ -1089,7 +1038,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_files": ["orders.yml"],
+                            "semantic_model_file": "orders.yml",
                             "metric_file": "orders_metrics.yml",
                             "status": "skipped",
                             "output": "Metric already exists; reused existing definition.",
@@ -1124,7 +1073,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_files": ["orders.yml"],
+                            "semantic_model_file": "orders.yml",
                             "metric_file": None,
                             "status": "generated",
                             "output": "Generated metrics.",
@@ -1161,7 +1110,7 @@ class TestExecuteStreamGenMetricsError:
                 build_simple_response(
                     json.dumps(
                         {
-                            "semantic_model_files": ["orders.yml"],
+                            "semantic_model_file": "orders.yml",
                             "metric_file": None,
                             "status": "done",
                             "output": "Done.",
@@ -1211,14 +1160,13 @@ class TestGenMetricsNonInteractiveBridge:
 
     def test_workflow_mode_compose_hooks_is_non_interactive(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-        from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         # Workflow mode may now compose CompositeHooks (permission + compact)
         # because multi-turn history is enabled for all modes. Validate the
         # permission gate via ``node.permission_hooks`` instead of the bundle.
         hooks = node._compose_hooks()
-        assert isinstance(hooks, CompositeHooks)
-        assert isinstance(node.permission_hooks, PermissionHooks)
+        assert hooks is not None
+        assert node.permission_hooks is not None
         assert node.permission_hooks.non_interactive is True
         assert node.permission_manager.active_profile == "dangerous"

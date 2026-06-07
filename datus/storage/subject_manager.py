@@ -16,7 +16,6 @@ from datus.storage.ext_knowledge import ExtKnowledgeStore
 from datus.storage.metric import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.registry import get_storage
-from datus.storage.scope import resolve_datasource_scope
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -27,13 +26,13 @@ class SubjectUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
-        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric", project=self.storage_namespace)
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric", project=agent_config.project_name)
         self.reference_sql_storage: ReferenceSqlStorage = get_storage(
-            ReferenceSqlStorage, "reference_sql", project=self.storage_namespace
+            ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
         )
         self.ext_knowledge_storage: ExtKnowledgeStore = get_storage(
-            ExtKnowledgeStore, "ext_knowledge", project=self.storage_namespace
+            ExtKnowledgeStore, "ext_knowledge", project=agent_config.project_name
         )
 
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):

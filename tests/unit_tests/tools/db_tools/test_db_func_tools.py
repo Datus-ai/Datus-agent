@@ -456,49 +456,6 @@ class TestDBFuncTool:
             catalog_name="", database_name="test_db", schema_name="test_schema", table_name="users"
         )
 
-    def test_describe_table_reuses_cached_result(self, db_func_tool, mock_connector):
-        """Repeated describe_table calls for the same coordinate should not hit the connector again."""
-        first = db_func_tool.describe_table(table_name="users")
-        second = db_func_tool.describe_table(table_name="users")
-
-        assert first.success == 1
-        assert second.success == 1
-        assert first.result == second.result
-        mock_connector.get_schema.assert_called_once()
-
-    def test_execute_ddl_success_clears_describe_table_cache(self, db_func_tool, mock_connector):
-        db_func_tool.describe_table(table_name="users")
-        assert db_func_tool._describe_table_cache
-        mock_connector.execute_ddl.return_value = FuncToolResult(result={"ok": True})
-
-        result = db_func_tool.execute_ddl("ALTER TABLE users ADD COLUMN status TEXT")
-
-        assert result.success == 1
-        assert db_func_tool._describe_table_cache == {}
-
-    def test_describe_table_cache_tracks_semantic_model_fingerprint(self, db_func_tool, mock_connector):
-        db_func_tool.has_semantic_models = True
-        db_func_tool._semantic_storage = Mock()
-        db_func_tool._semantic_storage.search_all.side_effect = [
-            [{"id": "table:orders", "updated_at": "2026-01-01 00:00:00"}],
-            [{"id": "table:orders", "updated_at": "2026-01-02 00:00:00"}],
-        ]
-        db_func_tool._get_semantic_model = Mock(
-            side_effect=[
-                {"semantic_model_name": "orders", "description": "old", "dimensions": []},
-                {"semantic_model_name": "orders", "description": "new", "dimensions": []},
-            ]
-        )
-
-        first = db_func_tool.describe_table(table_name="orders")
-        second = db_func_tool.describe_table(table_name="orders")
-
-        assert first.success == 1
-        assert second.success == 1
-        assert first.result["table"]["description"] == "old"
-        assert second.result["table"]["description"] == "new"
-        assert mock_connector.get_schema.call_count == 2
-
     def test_describe_table_scope_validation(self, mock_connector):
         """describe_table should block tables outside scoped set."""
         tool = DBFuncTool(mock_connector, scoped_tables={"db1.schema1.orders"})

@@ -19,47 +19,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _strip_identifier_quotes(value: str) -> str:
-    value = value.strip()
-    while len(value) >= 2 and (
-        (value[0] == value[-1] and value[0] in {'"', "'", "`"}) or (value[0] == "[" and value[-1] == "]")
-    ):
-        value = value[1:-1].strip()
-    return value
-
-
-def _identifier_variants(value: str) -> List[str]:
-    """Return common exact-match variants for SQL identifiers."""
-
-    if not value:
-        return []
-    raw = _strip_identifier_quotes(value)
-    parts = [_strip_identifier_quotes(part) for part in raw.split(".") if part.strip()]
-    candidates = [raw]
-    if parts:
-        candidates.append(parts[-1])
-        candidates.append(".".join(parts))
-
-    expanded: List[str] = []
-    for candidate in candidates:
-        if not candidate:
-            continue
-        expanded.extend([candidate, candidate.lower(), candidate.upper()])
-
-    seen = set()
-    result: List[str] = []
-    for candidate in expanded:
-        if candidate not in seen:
-            seen.add(candidate)
-            result.append(candidate)
-    return result
-
-
-def _normalized_identifier(value: str) -> str:
-    parts = [_strip_identifier_quotes(part) for part in str(value or "").split(".") if part.strip()]
-    return ".".join(parts).lower()
-
-
 class SemanticModelStorage(BaseEmbeddingStore):
     """Storage for field-level semantic objects (tables, columns) - excluding metrics."""
 
@@ -311,11 +270,10 @@ class SemanticModelRAG:
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
-        from datus.storage.scope import resolve_datasource_scope
 
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
         self.storage: SemanticModelStorage = get_storage(
-            SemanticModelStorage, "semantic_model", project=self.storage_namespace
+            SemanticModelStorage, "semantic_model", project=agent_config.project_name
         )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
 
@@ -329,93 +287,6 @@ class SemanticModelRAG:
     def truncate(self) -> None:
         """Delete all semantic model data for this datasource."""
         self.storage.truncate_scoped()
-
-    def delete_semantic_model_for_table(
-        self,
-        table_name: str,
-        catalog_name: str = "",
-        database_name: str = "",
-        schema_name: str = "",
-    ) -> int:
-        """Delete table and child semantic objects for one stored table coordinate.
-
-        The delete path first resolves the stored table row, then deletes rows
-        by that row's persisted catalog/database/schema/table fields. This keeps
-        the deletion aligned with the original sync path, including dialect
-        defaults such as an injected catalog.
-        """
-        if not table_name:
-            logger.warning("delete_semantic_model_for_table called without table_name")
-            return 0
-
-        base_conds = self._sub_agent_conditions()
-        table_rows = self.storage._search_all(
-            where=And([eq("kind", "table")] + base_conds),
-            select_fields=["name", "fq_name", "catalog_name", "database_name", "schema_name", "table_name"],
-        ).to_pylist()
-
-        target_norms = {_normalized_identifier(candidate) for candidate in _identifier_variants(table_name)}
-        candidates = [
-            row
-            for row in table_rows
-            if target_norms
-            & {
-                _normalized_identifier(row.get("name", "")),
-                _normalized_identifier(row.get("fq_name", "")),
-                _normalized_identifier(row.get("table_name", "")),
-            }
-        ]
-
-        def _matches_hierarchy(row: Dict[str, Any]) -> bool:
-            checks = (
-                ("catalog_name", catalog_name),
-                ("database_name", database_name),
-                ("schema_name", schema_name),
-            )
-            return all(
-                not expected or _normalized_identifier(row.get(field, "")) == _normalized_identifier(expected)
-                for field, expected in checks
-            )
-
-        matched_rows = [row for row in candidates if _matches_hierarchy(row)]
-        if not matched_rows and not any((catalog_name, database_name, schema_name)):
-            matched_rows = candidates
-
-        identities = {
-            (
-                row.get("catalog_name") or "",
-                row.get("database_name") or "",
-                row.get("schema_name") or "",
-                row.get("table_name") or row.get("name") or table_name,
-            )
-            for row in matched_rows
-        }
-        if not identities:
-            return 0
-        if len(identities) > 1 and not any((catalog_name, database_name, schema_name)):
-            logger.warning(
-                "Refusing broad semantic model delete for %s because multiple stored table coordinates matched",
-                table_name,
-            )
-            return 0
-
-        deleted_count = 0
-        for catalog, database, schema, stored_table in identities:
-            conditions = [
-                eq("table_name", stored_table),
-                eq("catalog_name", catalog),
-                eq("database_name", database),
-                eq("schema_name", schema),
-            ] + base_conds
-            where = And(conditions)
-            count = self.storage._count_rows(where=where)
-            if count:
-                self.storage._delete_rows(where)
-                deleted_count += count
-
-        if deleted_count:
-            logger.info("Deleted %d stale semantic object(s) for table %s", deleted_count, table_name)
-        return deleted_count
 
     def get_semantic_model(
         self,
@@ -432,61 +303,34 @@ class SemanticModelRAG:
 
         base_conds = self._sub_agent_conditions()
 
-        def _hierarchy_conds() -> List:
-            conditions = []
-            if catalog_name:
-                conditions.append(eq("catalog_name", catalog_name))
-            if database_name:
-                conditions.append(eq("database_name", database_name))
-            if schema_name:
-                conditions.append(eq("schema_name", schema_name))
-            return conditions
+        # Build filter conditions
+        table_conds = [eq("kind", "table"), eq("table_name", table_name)] + base_conds
+        if catalog_name:
+            table_conds.append(eq("catalog_name", catalog_name))
+        if database_name:
+            table_conds.append(eq("database_name", database_name))
+        if schema_name:
+            table_conds.append(eq("schema_name", schema_name))
 
-        def _search_exact(field: str, value: str, include_hierarchy: bool = True) -> List[Dict[str, Any]]:
-            conditions = [eq("kind", "table"), eq(field, value)] + base_conds
-            if include_hierarchy:
-                conditions.extend(_hierarchy_conds())
-            return self.storage._search_all(where=And(conditions)).to_pylist()
+        table_objs = self.storage._search_all(where=And(table_conds)).to_pylist()
 
-        table_objs: List[Dict[str, Any]] = []
-        table_candidates = _identifier_variants(table_name)
-        fq_candidate_values = []
-        explicit_fq = ".".join(part for part in [catalog_name, database_name, schema_name, table_name] if part)
-        if explicit_fq:
-            fq_candidate_values.extend(_identifier_variants(explicit_fq))
-        fq_candidate_values.extend(candidate for candidate in _identifier_variants(table_name) if "." in candidate)
-
-        for candidate in table_candidates:
-            table_objs = _search_exact("table_name", candidate, include_hierarchy=True)
-            if table_objs:
-                break
-        if not table_objs:
-            for candidate in fq_candidate_values:
-                table_objs = _search_exact("fq_name", candidate, include_hierarchy=False)
-                if table_objs:
-                    break
-
-        # Fallback 1: broad exact match without hierarchy filters.
+        # Fallback 1: broad match
         if not table_objs and (catalog_name or database_name or schema_name):
             logger.debug(f"Semantic model not found for {table_name} with full filters, trying broad match.")
-            for candidate in table_candidates:
-                table_objs = _search_exact("table_name", candidate, include_hierarchy=False)
-                if table_objs:
-                    break
+            broad_conds = [
+                eq("kind", "table"),
+                eq("table_name", table_name),
+            ] + base_conds
+            table_objs = self.storage._search_all(where=And(broad_conds)).to_pylist()
 
-        # Fallback 2: normalized Python-side match for quoted/FQN/case variants.
+        # Fallback 2: case-insensitive
         if not table_objs:
-            target_norms = {_normalized_identifier(candidate) for candidate in table_candidates + fq_candidate_values}
-            all_tables = self.storage._search_all(where=And([eq("kind", "table")] + base_conds)).to_pylist()
-            for obj in all_tables:
-                obj_norms = {
-                    _normalized_identifier(obj.get("table_name", "")),
-                    _normalized_identifier(obj.get("name", "")),
-                    _normalized_identifier(obj.get("fq_name", "")),
-                }
-                if target_norms & obj_norms:
-                    table_objs = [obj]
-                    break
+            if table_name.lower() != table_name:
+                lower_conds = [
+                    eq("kind", "table"),
+                    eq("table_name", table_name.lower()),
+                ] + base_conds
+                table_objs = self.storage._search_all(where=And(lower_conds)).to_pylist()
 
         if not table_objs:
             return None

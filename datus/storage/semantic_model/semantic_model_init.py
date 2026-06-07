@@ -98,8 +98,8 @@ async def init_success_story_semantic_model_async(
         from datus.storage.semantic_model.store import SemanticModelRAG
 
         logger.info(
-            "[overwrite] Wiping semantic_model store for datasource '%s' before re-population",
-            agent_config.current_datasource,
+            "[overwrite] Wiping semantic_model store for project '%s' before re-population",
+            agent_config.project_name,
         )
         SemanticModelRAG(agent_config).truncate()
 

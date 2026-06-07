@@ -193,7 +193,6 @@ async def test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_hel
         emit,
         build_mode,
         action_callback,
-        batch_size,
     ):
         calls.append(
             (
@@ -202,7 +201,6 @@ async def test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_hel
                 success_story,
                 tuple(subject_tree or ()),
                 build_mode,
-                batch_size,
             )
         )
         action_callback(_action("metrics artifact persisted", action_type="metrics_saved"))
@@ -240,7 +238,7 @@ async def test_bootstrap_semantic_model_and_metrics_streams_orchestrate_fake_hel
 
     assert calls == [
         ("semantic", "local", "/tmp/story.csv", "overwrite"),
-        ("metrics", "local", "/tmp/story.csv", ("Sales", "Orders"), "incremental", 5),
+        ("metrics", "local", "/tmp/story.csv", ("Sales", "Orders"), "incremental"),
     ]
     assert any(action.action_type == "semantic_model_saved" for action in semantic_actions)
     assert any(action.action_type == "metrics_saved" for action in metrics_actions)

@@ -146,33 +146,11 @@ class DBFuncTool:
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
-        self._describe_table_cache: Dict[tuple[str, str, str, str, str, str], FuncToolResult] = {}
 
         self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
         self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
 
         self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
-
-    def _semantic_model_cache_token(self) -> str:
-        """Return a small fingerprint for semantic enrichment used by describe_table."""
-
-        if not self.has_semantic_models or not self._semantic_storage:
-            return ""
-        try:
-            rows = self._semantic_storage.search_all(select_fields=["id", "updated_at"])
-        except Exception as exc:
-            logger.debug("Failed to fingerprint semantic model cache state: %s", exc)
-            return "semantic:unknown"
-        latest = ""
-        count = 0
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            count += 1
-            updated_at = str(row.get("updated_at") or "")
-            if updated_at > latest:
-                latest = updated_at
-        return f"semantic:{count}:{latest}"
 
     def _init_single_db_connector(self, connector: BaseSqlConnector):
         # Legacy single connector mode
@@ -999,19 +977,6 @@ class DBFuncTool:
                 database=database,
                 schema=schema_name,
             )
-            source = datasource or self._default_datasource or ""
-            cache_key = (
-                str(source),
-                coordinate.catalog,
-                coordinate.database,
-                coordinate.schema,
-                coordinate.table,
-                self._semantic_model_cache_token(),
-            )
-            cached = self._describe_table_cache.get(cache_key)
-            if cached is not None:
-                logger.debug("describe_table cache hit: %s", cache_key)
-                return cached.model_copy(deep=True)
 
             if not self._table_matches_scope(coordinate):
                 error_msg = f"Table '{table_name}' is outside the scoped context."
@@ -1102,9 +1067,7 @@ class DBFuncTool:
                     logger.warning(f"Failed to get semantic model for {table_name}: {e}")
 
             logger.info(f"describe_table succeeded for {table_name}, returning {len(columns)} columns")
-            result = FuncToolResult(result=result_data)
-            self._describe_table_cache[cache_key] = result.model_copy(deep=True)
-            return result
+            return FuncToolResult(result=result_data)
 
         except Exception as e:
             import traceback
@@ -1310,7 +1273,6 @@ class DBFuncTool:
         try:
             result = connector.execute_ddl(cleaned)
             if result.success:
-                self._describe_table_cache.clear()
                 # Commit to release locks (critical for SQLAlchemy-based connectors)
                 if hasattr(connector, "connection") and hasattr(connector.connection, "commit"):
                     connector.connection.commit()

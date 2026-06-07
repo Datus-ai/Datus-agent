@@ -47,8 +47,8 @@ class StorageBase:
             db: Optional pre-created VectorDatabase connection.
                 If provided, it is used directly instead of opening a new
                 connection bound to the active project. Stores that need
-                a composite backend namespace (e.g. ``DocumentStore``) pass
-                their own ``db`` built from the desired namespace.
+                a composite-project scope (e.g. ``DocumentStore``) pass
+                their own ``db`` built from the desired project.
         """
         if db is not None:
             self.db: VectorDatabase = db
@@ -245,36 +245,12 @@ class BaseEmbeddingStore(StorageBase):
     def truncate_scoped(self) -> None:
         """Delete all rows visible to the current connection.
 
-        Physical isolation gives each namespace its own table/database, so a
-        scoped truncate can drop the table. Logical isolation shares tables
-        across namespaces and only supports ``delete(None)`` when the backend
-        explicitly declares that it injects the current datasource filter.
+        With PHYSICAL-only isolation this is equivalent to ``truncate()``
+        (drops the whole table); the method is retained as a stable alias
+        for call sites that previously relied on row-scoped deletion under
+        LOGICAL isolation.
         """
-        from datus.storage.backend_holder import get_isolation_type
-
-        if get_isolation_type() != "logical":
-            self.truncate()
-            return
-
-        with self._table_lock:
-            table = self._open_existing_table_for_read()
-            if table is None:
-                return
-            if not getattr(table, "supports_logical_scoped_delete_all", False):
-                raise DatusException(
-                    ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
-                    message_args={
-                        "operation": "truncate_scoped",
-                        "table_name": self.table_name,
-                        "error_message": (
-                            "logical isolation requires a vector table that declares "
-                            "supports_logical_scoped_delete_all=True"
-                        ),
-                    },
-                )
-            table.delete(None)
-            self._shared.table = None
-            self._shared.initialized = False
+        self.truncate()
 
     def _ensure_table(self, schema: Optional[pa.Schema] = None):
         if self.db.table_exists(self.table_name):

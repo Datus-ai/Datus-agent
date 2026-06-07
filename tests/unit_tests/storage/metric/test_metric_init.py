@@ -13,7 +13,6 @@ from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
-    _all_candidate_metrics_satisfied,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _source_provenance_from_row,
@@ -507,14 +506,13 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
             )
 
         assert success is True
-        assert rag_factory.call_count == 2
-        rag_factory.assert_any_call(mock_config)
+        rag_factory.assert_called_once_with(mock_config)
         fake_rag_instance.truncate.assert_called_once_with()
         mock_exists.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_incremental_does_not_call_truncate(self):
-        """build_mode='incremental' must not call truncate or whole-store exists probe."""
+        """build_mode='incremental' must not call truncate; it consults exists_metrics instead."""
         from unittest.mock import patch
 
         import pandas as pd
@@ -563,7 +561,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
 
         assert success is True
         fake_rag_instance.truncate.assert_not_called()
-        mock_exists.assert_not_called()
+        mock_exists.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -674,7 +672,7 @@ class TestMetricProvenanceHelpers:
 @pytest.mark.ci
 class TestDefaultMetricsBatchSize:
     def test_default_batch_size(self):
-        assert DEFAULT_METRICS_BATCH_SIZE == 5
+        assert DEFAULT_METRICS_BATCH_SIZE == 1
 
 
 # ---------------------------------------------------------------------------
@@ -897,55 +895,6 @@ class TestGenerateMetricsBatch:
         assert ok is False
         assert "connection lost" in err
 
-    @pytest.mark.asyncio
-    async def test_prompt_includes_precomputed_catalog_and_candidate_plan(self):
-        from unittest.mock import patch
-
-        from datus.schemas.action_history import ActionStatus
-        from datus.schemas.batch_events import BatchEventHelper
-
-        captured = {}
-
-        class MockNode:
-            def __init__(self, *args, **kwargs):
-                self.input = None
-
-            async def execute_stream(self, _ahm):
-                captured["message"] = self.input.user_message
-                action = MagicMock()
-                action.status = ActionStatus.SUCCESS
-                action.action_type = "gen_metrics_response"
-                action.output = {"metrics": ["revenue"]}
-                action.messages = "ok"
-                yield action
-
-        mock_config = MagicMock()
-        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
-        mock_pm = MagicMock()
-        mock_pm.get_latest_version.return_value = "1.0"
-
-        with (
-            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
-            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
-        ):
-            ok, err, _ = await _generate_metrics_batch(
-                ["Query 1:\nQuestion: q?\nSQL:\nSELECT SUM(revenue) AS revenue FROM orders"],
-                0,
-                mock_config,
-                None,
-                None,
-                BatchEventHelper("test", None),
-                None,
-                candidate_plan_json='{"direct_metric_candidates":[{"name":"revenue"}]}',
-                existing_metric_catalog_json='[{"name":"orders"}]',
-            )
-
-        assert ok is True
-        assert err == ""
-        assert "Existing Metric Catalog JSON" in captured["message"]
-        assert "Precomputed Metric Candidate Plan JSON" in captured["message"]
-        assert "do not call analyze_metric_candidates_from_history again" in captured["message"]
-
 
 # ---------------------------------------------------------------------------
 # init_success_story_metrics_async — batch splitting & partial failure
@@ -1026,121 +975,6 @@ class TestBatchSplitting:
         assert ok is True
         assert err == ""
         assert len(result["metrics"]) == 3
-
-    @pytest.mark.asyncio
-    async def test_refreshes_existing_metric_catalog_between_batches(self):
-        from unittest.mock import patch
-
-        import pandas as pd
-
-        from datus.schemas.action_history import ActionStatus
-        from datus.storage.metric.metric_init import init_success_story_metrics_async
-
-        captured_messages = []
-        call_count = {"n": 0}
-
-        class MockNode:
-            def __init__(self, *args, **kwargs):
-                self.input = None
-
-            async def execute_stream(self, _ahm):
-                captured_messages.append(self.input.user_message)
-                batch_idx = call_count["n"]
-                call_count["n"] += 1
-                action = MagicMock()
-                action.status = ActionStatus.SUCCESS
-                action.action_type = "gen_metrics_response"
-                action.output = {"metrics": [f"m{batch_idx}"]}
-                action.messages = "ok"
-                yield action
-
-        catalog_snapshots = [
-            [],
-            [{"name": "first_metric"}],
-            [{"name": "first_metric"}, {"name": "second_metric"}],
-        ]
-
-        def fake_catalog(_agent_config):
-            if catalog_snapshots:
-                return catalog_snapshots.pop(0)
-            return [{"name": "first_metric"}, {"name": "second_metric"}]
-
-        def fake_candidate_plan(_sql_entries, _catalog_json, _agent_config):
-            return {"available": True, "direct_metric_candidates": [], "metric_candidates": []}
-
-        mock_config = MagicMock()
-        mock_config.project_name = "test"
-        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
-        mock_pm = MagicMock()
-        mock_pm.get_latest_version.return_value = "1.0"
-        rows = [
-            {"question": "q1", "sql": "SELECT COUNT(*) AS first_metric FROM orders"},
-            {"question": "q2", "sql": "SELECT COUNT(*) AS second_metric FROM orders"},
-        ]
-
-        with (
-            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
-            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
-            patch("datus.storage.metric.metric_init._build_existing_metric_catalog", side_effect=fake_catalog),
-            patch("datus.storage.metric.metric_init._build_candidate_plan", side_effect=fake_candidate_plan),
-            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
-            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
-            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
-        ):
-            ok, err, result = await init_success_story_metrics_async(
-                agent_config=mock_config,
-                success_story="dummy.csv",
-                batch_size=1,
-            )
-
-        assert ok is True
-        assert err == ""
-        assert result["metrics"] == ["m0", "m1"]
-        assert len(captured_messages) == 2
-        assert '"first_metric"' in captured_messages[1]
-
-    @pytest.mark.asyncio
-    async def test_metrics_bootstrap_uses_batch_semantic_model_creation(self):
-        """Metrics bootstrap asks semantic model auto-create to batch missing tables."""
-        from unittest.mock import AsyncMock, patch
-
-        import pandas as pd
-
-        from datus.storage.metric.metric_init import init_success_story_metrics_async
-
-        MockNode = self._make_node_factory()
-
-        mock_config = MagicMock()
-        mock_config.project_name = "test"
-        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
-        mock_prompt_manager = MagicMock()
-        mock_prompt_manager.get_latest_version.return_value = "1.0"
-        ensure_semantic = AsyncMock(return_value=(True, "", ["orders", "customers"]))
-
-        rows = [{"question": "revenue", "sql": "SELECT SUM(amount) FROM orders"}]
-
-        with (
-            patch(
-                "datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value={"orders", "customers"}
-            ),
-            patch("datus.storage.metric.metric_init.extract_table_sql_evidence", return_value={"orders": ["sql"]}),
-            patch("datus.storage.metric.metric_init.ensure_semantic_models_exist", ensure_semantic),
-            patch("datus.storage.metric.metric_init._build_existing_metric_catalog", return_value=[]),
-            patch("datus.storage.metric.metric_init._build_candidate_plan", return_value={"available": False}),
-            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_prompt_manager),
-            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", MockNode),
-            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
-        ):
-            ok, err, result = await init_success_story_metrics_async(
-                agent_config=mock_config,
-                success_story="dummy.csv",
-            )
-
-        assert ok is True
-        assert err == ""
-        assert result["metrics"] == ["m0"]
-        ensure_semantic.assert_awaited_once()
-        assert ensure_semantic.await_args.kwargs["batch_mode"] is True
 
     @pytest.mark.asyncio
     async def test_partial_batch_failure_continues(self):
@@ -1262,84 +1096,3 @@ class TestBatchSplitting:
         sig = inspect.signature(init_success_story_metrics)
         assert "batch_size" in sig.parameters
         assert sig.parameters["batch_size"].default == DEFAULT_METRICS_BATCH_SIZE
-
-    @pytest.mark.asyncio
-    async def test_incremental_skips_batch_when_candidates_already_exist(self):
-        """A fully satisfied candidate plan skips gen_metrics without creating an agent node."""
-        from unittest.mock import patch
-
-        import pandas as pd
-
-        from datus.storage.metric.metric_init import init_success_story_metrics_async
-
-        mock_config = MagicMock()
-        mock_config.project_name = "test"
-        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
-
-        rows = [{"question": "revenue", "sql": "SELECT SUM(revenue) AS total_revenue FROM orders"}]
-        candidate_plan = {
-            "available": True,
-            "direct_metric_candidates": [
-                {
-                    "name": "total_revenue",
-                    "source_sql_name": "sql_1",
-                    "metric_type": "measure_proxy",
-                    "base_measures": [{"name": "total_revenue"}],
-                }
-            ],
-            "derived_metric_candidates": [],
-            "metric_candidates": [],
-        }
-
-        with (
-            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list", return_value=[]),
-            patch(
-                "datus.storage.metric.metric_init._build_existing_metric_catalog",
-                return_value=[{"name": "total_revenue", "type": "measure_proxy", "base_measures": ["total_revenue"]}],
-            ) as catalog_builder,
-            patch(
-                "datus.storage.metric.metric_init._build_candidate_plan", return_value=candidate_plan
-            ) as plan_builder,
-            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode") as node_factory,
-            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
-        ):
-            ok, err, result = await init_success_story_metrics_async(
-                agent_config=mock_config,
-                success_story="dummy.csv",
-                build_mode="incremental",
-            )
-
-        assert ok is True
-        assert err == ""
-        assert result["skipped_batches"] == 1
-        assert result["skipped_metric_candidates"] == ["total_revenue"]
-        catalog_builder.assert_called_once_with(mock_config)
-        plan_builder.assert_called_once()
-        node_factory.assert_not_called()
-
-    def test_candidate_metrics_satisfied_requires_definition_match(self):
-        candidate_plan = {
-            "direct_metric_candidates": [
-                {
-                    "name": "total_revenue",
-                    "metric_type": "measure_proxy",
-                    "base_measures": [{"name": "total_revenue"}],
-                }
-            ]
-        }
-
-        assert (
-            _all_candidate_metrics_satisfied(
-                candidate_plan,
-                [{"name": "total_revenue", "type": "measure_proxy", "base_measures": ["total_revenue"]}],
-            )
-            is True
-        )
-        assert (
-            _all_candidate_metrics_satisfied(
-                candidate_plan,
-                [{"name": "total_revenue", "type": "ratio", "base_measures": ["total_revenue"]}],
-            )
-            is False
-        )
-        assert _all_candidate_metrics_satisfied({"direct_metric_candidates": [{"name": "total_revenue"}]}, []) is False

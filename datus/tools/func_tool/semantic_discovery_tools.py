@@ -10,7 +10,6 @@ including table relationships, column usage evidence, and metric candidates
 mined from historical SQL.
 """
 
-import json
 from typing import Any, Dict, List, Optional
 
 from agents import Tool
@@ -42,7 +41,6 @@ class SemanticDiscoveryTools:
         self.db_tool = db_tool
         self.agent_config = db_tool.agent_config
         self.sub_agent_name = db_tool.sub_agent_name
-        self._result_cache: dict[tuple[str, str], FuncToolResult] = {}
 
     @classmethod
     def _aggregate_classes(cls):
@@ -68,22 +66,6 @@ class SemanticDiscoveryTools:
         for bound_method in methods_to_convert:
             bound_tools.append(trans_to_function_tool(bound_method))
         return bound_tools
-
-    @staticmethod
-    def _cache_key(tool_name: str, payload: dict[str, Any]) -> tuple[str, str]:
-        return (tool_name, json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
-
-    def _get_cached_result(self, tool_name: str, payload: dict[str, Any]) -> Optional[FuncToolResult]:
-        cached = self._result_cache.get(self._cache_key(tool_name, payload))
-        if cached is not None:
-            logger.debug("%s cache hit", tool_name)
-            return cached.model_copy(deep=True)
-        return None
-
-    def _cache_success(self, tool_name: str, payload: dict[str, Any], result: FuncToolResult) -> FuncToolResult:
-        if result.success in (1, True):
-            self._result_cache[self._cache_key(tool_name, payload)] = result.model_copy(deep=True)
-        return result
 
     def analyze_table_relationships(
         self,
@@ -128,15 +110,6 @@ class SemanticDiscoveryTools:
                 "summary": "Found 3 relationships across 3 tables"
             }
         """
-        cache_payload = {
-            "tables": tables,
-            "catalog": catalog,
-            "database": database,
-            "schema_name": schema_name,
-            "sample_sql_queries": sample_sql_queries,
-        }
-        if cached := self._get_cached_result("analyze_table_relationships", cache_payload):
-            return cached
         try:
             relationships = []
 
@@ -156,15 +129,11 @@ class SemanticDiscoveryTools:
             # Deduplicate and sort by confidence
             deduplicated = self._deduplicate_relationships(relationships)
 
-            return self._cache_success(
-                "analyze_table_relationships",
-                cache_payload,
-                FuncToolResult(
-                    result={
-                        "relationships": deduplicated,
-                        "summary": f"Found {len(deduplicated)} relationships across {len(tables)} tables",
-                    }
-                ),
+            return FuncToolResult(
+                result={
+                    "relationships": deduplicated,
+                    "summary": f"Found {len(deduplicated)} relationships across {len(tables)} tables",
+                }
             )
 
         except Exception as e:
@@ -195,14 +164,6 @@ class SemanticDiscoveryTools:
                 {"table_name": "customers", "definition": "CREATE TABLE ...", ...}
             ]
         """
-        cache_payload = {
-            "tables": tables,
-            "catalog": catalog,
-            "database": database,
-            "schema_name": schema_name,
-        }
-        if cached := self._get_cached_result("get_multiple_tables_ddl", cache_payload):
-            return cached
         try:
             results = []
             for table in tables:
@@ -212,7 +173,7 @@ class SemanticDiscoveryTools:
                 else:
                     results.append({"table_name": table, "error": ddl_result.error})
 
-            return self._cache_success("get_multiple_tables_ddl", cache_payload, FuncToolResult(result=results))
+            return FuncToolResult(result=results)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -266,16 +227,6 @@ class SemanticDiscoveryTools:
                 "summary": "Analyzed 2 columns from 50 SQL queries"
             }
         """
-        cache_payload = {
-            "table_name": table_name,
-            "columns": columns,
-            "catalog": catalog,
-            "database": database,
-            "schema_name": schema_name,
-            "sample_sql_queries": sample_sql_queries,
-        }
-        if cached := self._get_cached_result("analyze_column_usage_patterns", cache_payload):
-            return cached
         try:
             if not self.agent_config:
                 return FuncToolResult(
@@ -430,15 +381,11 @@ class SemanticDiscoveryTools:
 
             logger.info(f"Analyzed {len(result_patterns)} columns with usage patterns")
 
-            return self._cache_success(
-                "analyze_column_usage_patterns",
-                cache_payload,
-                FuncToolResult(
-                    result={
-                        "column_patterns": result_patterns,
-                        "summary": f"Analyzed {len(result_patterns)} columns from {len(search_results)} SQL queries",
-                    }
-                ),
+            return FuncToolResult(
+                result={
+                    "column_patterns": result_patterns,
+                    "summary": f"Analyzed {len(result_patterns)} columns from {len(search_results)} SQL queries",
+                }
             )
 
         except Exception as e:
@@ -482,16 +429,6 @@ class SemanticDiscoveryTools:
             derived_metric_candidates, base_measures, identity_metric_references,
             non_metric_evidence, parse_errors, and summary.
         """
-        cache_payload = {
-            "sql_queries": sql_queries,
-            "sql_entries_json": sql_entries_json,
-            "query_text": query_text,
-            "tables": tables,
-            "sample_sql_queries": sample_sql_queries,
-            "existing_metric_catalog_json": existing_metric_catalog_json,
-        }
-        if cached := self._get_cached_result("analyze_metric_candidates_from_history", cache_payload):
-            return cached
         try:
             entries = self._load_metric_mining_entries(
                 sql_queries, sql_entries_json, query_text, tables, sample_sql_queries
@@ -526,9 +463,8 @@ class SemanticDiscoveryTools:
                 entry_has_non_metric_evidence = False
                 entry_has_metric_evidence = False
                 modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
-                modeling_recommendations = modeling_analysis["derived_datasource_recommendations"]
-                if modeling_recommendations:
-                    derived_datasource_recommendations.extend(modeling_recommendations)
+                if modeling_analysis["derived_datasource_recommendations"]:
+                    derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
                 preservation_evidence = self._extract_semantic_preservation_evidence(
                     parsed_expressions,
                     source_name,
@@ -584,7 +520,7 @@ class SemanticDiscoveryTools:
                 classification = self._classify_source_query(
                     has_candidates=bool(entry_candidates),
                     has_non_metric_evidence=entry_has_non_metric_evidence,
-                    derived_datasource_recommendations=modeling_recommendations,
+                    derived_datasource_recommendations=modeling_analysis["derived_datasource_recommendations"],
                 )
                 source_classifications.append(
                     {
@@ -596,7 +532,9 @@ class SemanticDiscoveryTools:
                 if classification == "metric_plus_derived_datasource":
                     for candidate in entry_candidates:
                         blocked = dict(candidate)
-                        blocked["block_reason"] = self._blocked_direct_metric_reason(modeling_recommendations)
+                        blocked["block_reason"] = (
+                            "aggregation over ranked/windowed result; create the recommended derived data source first"
+                        )
                         blocked_direct_metric_candidates.append(blocked)
 
             candidates = sorted(
@@ -616,36 +554,31 @@ class SemanticDiscoveryTools:
                 and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
             ]
             modeling_plan = self._build_modeling_plan(derived_datasource_recommendations)
-            return self._cache_success(
-                "analyze_metric_candidates_from_history",
-                cache_payload,
-                FuncToolResult(
-                    result={
-                        "metric_candidates": candidates,
-                        "direct_metric_candidates": direct_candidates,
-                        "derived_metric_candidates": derived_candidates,
-                        "base_measures": measures,
-                        "non_metric_evidence": non_metric_evidence,
-                        "identity_metric_references": identity_metric_references,
-                        "parse_errors": parse_errors,
-                        "query_classification": self._overall_query_classification(
-                            source_classifications=source_classifications,
-                            parse_errors=parse_errors,
-                        ),
-                        "source_classifications": source_classifications,
-                        "derived_datasource_recommendations": derived_datasource_recommendations,
-                        "blocked_direct_metric_candidates": blocked_direct_metric_candidates,
-                        "metric_aliases": self._metric_aliases_for_candidates(candidates),
-                        "literal_mappings": literal_mappings,
-                        "time_grain_evidence": time_grain_evidence,
-                        "post_aggregation_constraints": post_aggregation_constraints,
-                        "modeling_plan": modeling_plan,
-                        "summary": (
-                            f"Found {len(candidates)} metric candidates and {len(measures)} base measures "
-                            f"from {len(entries)} SQL queries"
-                        ),
-                    }
-                ),
+            return FuncToolResult(
+                result={
+                    "metric_candidates": candidates,
+                    "direct_metric_candidates": direct_candidates,
+                    "derived_metric_candidates": derived_candidates,
+                    "base_measures": measures,
+                    "non_metric_evidence": non_metric_evidence,
+                    "identity_metric_references": identity_metric_references,
+                    "parse_errors": parse_errors,
+                    "query_classification": self._overall_query_classification(
+                        source_classifications=source_classifications,
+                        parse_errors=parse_errors,
+                    ),
+                    "source_classifications": source_classifications,
+                    "derived_datasource_recommendations": derived_datasource_recommendations,
+                    "blocked_direct_metric_candidates": blocked_direct_metric_candidates,
+                    "literal_mappings": literal_mappings,
+                    "time_grain_evidence": time_grain_evidence,
+                    "post_aggregation_constraints": post_aggregation_constraints,
+                    "modeling_plan": modeling_plan,
+                    "summary": (
+                        f"Found {len(candidates)} metric candidates and {len(measures)} base measures "
+                        f"from {len(entries)} SQL queries"
+                    ),
+                }
             )
         except Exception as e:
             logger.exception("Error analyzing metric candidates from history")
@@ -668,15 +601,6 @@ class SemanticDiscoveryTools:
             return "cohort_or_dataset_only"
         return "manual_review_required"
 
-    def _blocked_direct_metric_reason(self, recommendations: List[Dict[str, Any]]) -> str:
-        """Explain why a candidate should not be emitted as a direct metric."""
-        recommendation_types = {rec.get("recommendation_type", "ranked_window") for rec in recommendations}
-        if "post_aggregation" in recommendation_types:
-            return "post-aggregation filtering must be preserved in a derived data source before defining metrics"
-        if "ranked_window" in recommendation_types:
-            return "aggregation over ranked/windowed result; create the recommended derived data source first"
-        return "complex SQL should be modeled as a derived data source before defining direct metrics"
-
     def _overall_query_classification(
         self,
         source_classifications: List[Dict[str, Any]],
@@ -698,43 +622,12 @@ class SemanticDiscoveryTools:
         """Build high-level modeling steps for complex SQL patterns."""
         plans = []
         for rec in recommendations:
-            recommendation_type = rec.get("recommendation_type", "ranked_window")
-            if recommendation_type == "post_aggregation":
-                plans.append(
-                    {
-                        "source_sql_name": rec.get("source_sql_name", ""),
-                        "classification": "metric_plus_derived_datasource",
-                        "recommendation_type": recommendation_type,
-                        "steps": [
-                            {
-                                "step": "create_derived_datasource",
-                                "description": (
-                                    "Create a sql_query data source or materialized view that preserves the "
-                                    "post-aggregation filter before MetricFlow metrics are defined."
-                                ),
-                                "datasource": rec.get("name", ""),
-                                "post_aggregation_constraints": rec.get("post_aggregation_constraints", []),
-                                "source_query": rec.get("source_query", ""),
-                            },
-                            {
-                                "step": "define_final_metric",
-                                "description": (
-                                    "Define metrics over the derived data source output columns instead of pushing "
-                                    "the HAVING predicate into a base measure."
-                                ),
-                                "generated_columns": rec.get("generated_columns", []),
-                            },
-                        ],
-                    }
-                )
-                continue
             rank_alias = rec.get("rank_alias") or "rank_value"
             rank_filter = rec.get("rank_filters") or []
             plans.append(
                 {
                     "source_sql_name": rec.get("source_sql_name", ""),
                     "classification": "metric_plus_derived_datasource",
-                    "recommendation_type": recommendation_type,
                     "steps": [
                         {
                             "step": "define_base_metrics",
@@ -767,9 +660,7 @@ class SemanticDiscoveryTools:
         recommendations: List[Dict[str, Any]] = []
         for parsed in parsed_expressions:
             cte_projection_map = self._cte_projection_map(parsed)
-            named_select_ids = set()
             for cte_name, select in self._iter_cte_selects(parsed):
-                named_select_ids.add(id(select))
                 recommendations.extend(
                     self._ranked_datasource_recommendations(
                         source_name=source_name,
@@ -779,19 +670,7 @@ class SemanticDiscoveryTools:
                         cte_projection_map=cte_projection_map,
                     )
                 )
-                recommendation = self._post_aggregation_datasource_recommendation(
-                    source_name=source_name,
-                    select_name=cte_name,
-                    select=select,
-                )
-                if recommendation:
-                    self._append_unique(
-                        recommendations,
-                        recommendation,
-                        ["source_sql_name", "name", "recommendation_type", "source_query"],
-                    )
             for subquery_name, select in self._iter_inline_subquery_selects(parsed):
-                named_select_ids.add(id(select))
                 recommendations.extend(
                     self._ranked_datasource_recommendations(
                         source_name=source_name,
@@ -801,36 +680,10 @@ class SemanticDiscoveryTools:
                         cte_projection_map=cte_projection_map,
                     )
                 )
-                recommendation = self._post_aggregation_datasource_recommendation(
-                    source_name=source_name,
-                    select_name=subquery_name,
-                    select=select,
-                )
-                if recommendation:
-                    self._append_unique(
-                        recommendations,
-                        recommendation,
-                        ["source_sql_name", "name", "recommendation_type", "source_query"],
-                    )
-            for select in self._iter_selects(parsed):
-                if id(select) in named_select_ids:
-                    continue
-                recommendation = self._post_aggregation_datasource_recommendation(
-                    source_name=source_name,
-                    select_name=f"{source_name}_post_aggregation",
-                    select=select,
-                )
-                if recommendation:
-                    self._append_unique(
-                        recommendations,
-                        recommendation,
-                        ["source_sql_name", "name", "recommendation_type", "source_query"],
-                    )
 
         reason = ""
         if recommendations:
-            reasons = sorted({rec.get("reason", "") for rec in recommendations if rec.get("reason")})
-            reason = "; ".join(reasons) or "complex SQL should be modeled as a derived data source first"
+            reason = "rank/window output is filtered or aggregated downstream; model it as a derived data source first"
         return {
             "derived_datasource_recommendations": recommendations,
             "classification_reason": reason,
@@ -852,12 +705,6 @@ class SemanticDiscoveryTools:
                     literal_mapping = self._literal_mapping_from_projection(projection, source_name)
                     if literal_mapping:
                         self._append_unique(literal_mappings, literal_mapping, ["source_sql_name", "alias", "value"])
-                    for item in self._literal_mappings_from_projection_expression(projection, source_name):
-                        self._append_unique(
-                            literal_mappings,
-                            item,
-                            ["source_sql_name", "clause", "value", "predicate"],
-                        )
 
                     time_projection = self._time_grain_from_projection(projection, source_name)
                     if time_projection:
@@ -870,12 +717,6 @@ class SemanticDiscoveryTools:
                 where = select.args.get("where")
                 predicate = getattr(where, "this", None)
                 if predicate is not None:
-                    for item in self._literal_mappings_from_expression(predicate, source_name, "WHERE"):
-                        self._append_unique(
-                            literal_mappings,
-                            item,
-                            ["source_sql_name", "clause", "value", "predicate"],
-                        )
                     for item in self._time_grain_from_filter(predicate, source_name):
                         self._append_unique(
                             time_grain_evidence,
@@ -886,12 +727,6 @@ class SemanticDiscoveryTools:
                 having = select.args.get("having")
                 having_predicate = getattr(having, "this", None)
                 if having_predicate is not None:
-                    for item in self._literal_mappings_from_expression(having_predicate, source_name, "HAVING"):
-                        self._append_unique(
-                            literal_mappings,
-                            item,
-                            ["source_sql_name", "clause", "value", "predicate"],
-                        )
                     post_aggregation = {
                         "source_sql_name": source_name,
                         "constraint": having_predicate.sql(),
@@ -927,87 +762,6 @@ class SemanticDiscoveryTools:
             "projection": projection.sql(),
             "preservation_rule": "preserve literal values verbatim; only MetricFlow object names may be normalized",
         }
-
-    def _literal_mappings_from_projection_expression(self, projection: Any, source_name: str) -> List[Dict[str, Any]]:
-        """Return literal evidence from CASE projections without treating function arguments as business literals."""
-        from sqlglot import expressions as exp
-
-        expr = projection.this if isinstance(projection, exp.Alias) else projection
-        if not list(expr.find_all(exp.Case)):
-            return []
-        alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
-        return self._literal_mappings_from_expression(expr, source_name, "SELECT", alias=alias or "")
-
-    def _literal_mappings_from_expression(
-        self,
-        expr: Any,
-        source_name: str,
-        clause: str,
-        alias: str = "",
-    ) -> List[Dict[str, Any]]:
-        """Return literal evidence that must remain stable in SQL modeling."""
-        from sqlglot import expressions as exp
-
-        mappings = []
-        predicate_sql = expr.sql()
-        for node in expr.walk():
-            if not isinstance(node, exp.Literal):
-                continue
-            if not self._is_business_literal_node(node):
-                continue
-            item = {
-                "source_sql_name": source_name,
-                "clause": clause,
-                "value": str(node.this),
-                "expression": node.sql(),
-                "predicate": predicate_sql,
-                "literal_type": "string" if node.is_string else "numeric",
-                "preservation_rule": "preserve literal values verbatim; only MetricFlow object names may be normalized",
-            }
-            if alias:
-                item["alias"] = alias
-            mappings.append(item)
-        return mappings
-
-    @staticmethod
-    def _is_business_literal_node(node: Any) -> bool:
-        """Return true for literals that represent business values, not function syntax."""
-        from sqlglot import expressions as exp
-
-        comparison_classes = tuple(
-            cls
-            for cls in (
-                getattr(exp, "EQ", None),
-                getattr(exp, "NEQ", None),
-                getattr(exp, "GT", None),
-                getattr(exp, "GTE", None),
-                getattr(exp, "LT", None),
-                getattr(exp, "LTE", None),
-                getattr(exp, "In", None),
-                getattr(exp, "Between", None),
-                getattr(exp, "Like", None),
-                getattr(exp, "ILike", None),
-                getattr(exp, "RegexpLike", None),
-            )
-            if cls is not None
-        )
-
-        parent = getattr(node, "parent", None)
-        child = node
-        while parent is not None:
-            if isinstance(parent, exp.Func):
-                return False
-            if isinstance(parent, comparison_classes):
-                return True
-            if isinstance(parent, exp.If) and getattr(child, "arg_key", "") == "true":
-                return True
-            if isinstance(parent, exp.Case) and getattr(child, "arg_key", "") == "default":
-                return True
-            if isinstance(parent, (exp.Select, exp.Where, exp.Having)):
-                return False
-            child = parent
-            parent = getattr(parent, "parent", None)
-        return False
 
     def _time_grain_from_projection(self, projection: Any, source_name: str) -> Optional[Dict[str, Any]]:
         """Return time-dimension evidence from projected date expressions."""
@@ -1217,7 +971,6 @@ class SemanticDiscoveryTools:
                     {
                         "source_sql_name": source_name,
                         "name": cte_name,
-                        "recommendation_type": "ranked_window",
                         "source_cte": cte_name,
                         "reason": "rank-like window output is filtered downstream",
                         "rank_alias": self._safe_name(rank_alias),
@@ -1236,38 +989,6 @@ class SemanticDiscoveryTools:
                     }
                 )
         return recommendations
-
-    def _post_aggregation_datasource_recommendation(
-        self,
-        source_name: str,
-        select_name: str,
-        select: Any,
-    ) -> Optional[Dict[str, Any]]:
-        """Recommend a derived data source when HAVING filters aggregate results."""
-        having = select.args.get("having")
-        predicate = getattr(having, "this", None)
-        if predicate is None:
-            return None
-
-        aggregate_classes = self._aggregate_classes()
-        has_aggregate_output = any(list(projection.find_all(*aggregate_classes)) for projection in select.expressions)
-        has_aggregate_predicate = bool(list(predicate.find_all(*aggregate_classes)))
-        if not has_aggregate_output and not has_aggregate_predicate:
-            return None
-
-        return {
-            "source_sql_name": source_name,
-            "name": self._safe_name(select_name or f"{source_name}_post_aggregation"),
-            "recommendation_type": "post_aggregation",
-            "reason": "HAVING/post-aggregation constraint filters aggregated rows",
-            "post_aggregation_constraints": [predicate.sql()],
-            "generated_columns": [
-                self._safe_name(projection.alias or projection.alias_or_name)
-                for projection in select.expressions
-                if (projection.alias or projection.alias_or_name)
-            ],
-            "source_query": select.sql(),
-        }
 
     def _is_rank_like_window(self, window: Any) -> bool:
         """Return true for ranking windows that should become derived data sources."""
@@ -1486,26 +1207,12 @@ class SemanticDiscoveryTools:
             if not name:
                 continue
             normalized_name = self._normalize_identifier(name)
-            catalog_item = {
+            catalog[normalized_name] = {
                 "name": name,
                 "type": item.get("type") or item.get("metric_type") or "",
                 "description": item.get("description") or "",
                 "subject_path": item.get("subject_path") or item.get("path") or "",
             }
-            for field in (
-                "base_measures",
-                "dimensions",
-                "entities",
-                "semantic_model",
-                "semantic_model_name",
-                "measures",
-                "query_grain",
-                "unit",
-                "format",
-            ):
-                if item.get(field):
-                    catalog_item[field] = item[field]
-            catalog[normalized_name] = catalog_item
         return catalog
 
     def _parse_sql(self, sql_text: str):
@@ -1591,8 +1298,7 @@ class SemanticDiscoveryTools:
 
         score_reasons = []
         confidence = "medium"
-        name_translation_reason = self._name_translation_reason(alias)
-        requires_name_translation = bool(name_translation_reason)
+        requires_name_translation = self._requires_name_translation(alias)
         if alias:
             score_reasons.append("final SELECT alias provides metric name evidence")
             if requires_name_translation:
@@ -1615,7 +1321,6 @@ class SemanticDiscoveryTools:
             "expression": expr.sql(),
             "source_alias": alias or "",
             "requires_name_translation": requires_name_translation,
-            "name_translation_reason": name_translation_reason,
             "name_source": "expression_fallback"
             if requires_name_translation
             else ("source_alias" if alias else "expression"),
@@ -1683,19 +1388,6 @@ class SemanticDiscoveryTools:
                 "description": metric.get("description", ""),
                 "subject_path": metric.get("subject_path", ""),
             }
-            for field in (
-                "base_measures",
-                "dimensions",
-                "entities",
-                "semantic_model",
-                "semantic_model_name",
-                "measures",
-                "query_grain",
-                "unit",
-                "format",
-            ):
-                if metric.get(field):
-                    item[field] = metric[field]
             items.append({key: value for key, value in item.items() if value})
         return items
 
@@ -1729,27 +1421,16 @@ class SemanticDiscoveryTools:
             "filter": "",
             "source_alias": alias or "",
             "requires_name_translation": self._requires_name_translation(alias),
-            "name_translation_reason": self._name_translation_reason(alias),
             "source_count": 1,
         }
 
     def _merge_metric_candidate(self, candidates: Dict[str, Dict[str, Any]], candidate: Dict[str, Any]) -> None:
-        """Merge metric candidates with the same type and formula while retaining alias evidence."""
-        self._initialize_metric_candidate_aliases(candidate)
+        """Merge metric candidates with the same normalized name, type, and formula."""
         key = self._metric_candidate_merge_key(candidate)
         existing = candidates.get(key)
         if not existing:
             candidates[key] = candidate
             return
-
-        if self._candidate_name_is_better(candidate, existing):
-            previous_name = existing.get("name", "")
-            existing["name"] = candidate.get("name", previous_name)
-            existing["name_source"] = candidate.get("name_source", existing.get("name_source", ""))
-            existing["requires_name_translation"] = candidate.get("requires_name_translation", False)
-            existing["name_translation_reason"] = candidate.get("name_translation_reason", "")
-            if previous_name:
-                self._append_unique_value(existing, "candidate_names", previous_name)
 
         existing["source_count"] += 1
         existing["source_sql_name"] = ", ".join(
@@ -1757,24 +1438,16 @@ class SemanticDiscoveryTools:
         )
         for field in ("dimensions", "filters", "tables", "score_reasons"):
             existing[field] = sorted(set(existing.get(field, []) + candidate.get(field, [])))
-        for field in ("source_aliases", "candidate_names"):
-            for value in candidate.get(field, []):
-                self._append_unique_value(existing, field, value)
-        for alias_mapping in candidate.get("source_alias_mappings", []):
-            self._append_unique(
-                existing["source_alias_mappings"],
-                alias_mapping,
-                ["source_alias", "candidate_name", "source_sql_name"],
-            )
         for measure in candidate.get("base_measures", []):
-            self._append_unique(existing["base_measures"], measure, ["agg", "expr", "filter"])
+            self._append_unique(existing["base_measures"], measure, ["name", "agg", "expr", "filter"])
         for metric in candidate.get("referenced_metrics", []):
             self._append_unique(existing["referenced_metrics"], metric, ["name", "type", "subject_path"])
 
     def _metric_candidate_merge_key(self, candidate: Dict[str, Any]) -> str:
-        """Build a stable candidate identity without letting aliases split identical formulas."""
+        """Build a stable candidate identity without collapsing distinct formulas."""
         return "::".join(
             [
+                candidate.get("name", ""),
                 candidate.get("metric_type", ""),
                 self._metric_candidate_formula_signature(candidate),
             ]
@@ -1784,79 +1457,17 @@ class SemanticDiscoveryTools:
         """Return a deterministic signature for a metric expression and its measures."""
         measure_parts = []
         for measure in candidate.get("base_measures", []):
-            measure_parts.append("|".join(str(measure.get(field, "")) for field in ("agg", "expr", "filter")))
-        filter_part = "&&".join(sorted(str(filter_expr) for filter_expr in candidate.get("filters", []) if filter_expr))
-        return "||".join([candidate.get("expression", ""), filter_part, *sorted(measure_parts)])
+            measure_parts.append("|".join(str(measure.get(field, "")) for field in ("name", "agg", "expr", "filter")))
+        return "||".join([candidate.get("expression", ""), *sorted(measure_parts)])
 
     def _merge_base_measure(self, measures: Dict[str, Dict[str, Any]], measure: Dict[str, Any]) -> None:
         """Merge repeated base measure evidence."""
-        key = f"{measure['agg']}::{measure['expr']}::{measure.get('filter', '')}"
+        key = f"{measure['name']}::{measure['agg']}::{measure['expr']}::{measure.get('filter', '')}"
         existing = measures.get(key)
         if not existing:
             measures[key] = dict(measure)
             return
         existing["source_count"] += 1
-
-    def _initialize_metric_candidate_aliases(self, candidate: Dict[str, Any]) -> None:
-        """Attach source alias/name evidence used by later bootstrap batches."""
-        source_alias = str(candidate.get("source_alias") or "").strip()
-        candidate_name = str(candidate.get("name") or "").strip()
-        source_sql_name = str(candidate.get("source_sql_name") or "").strip()
-        candidate.setdefault("source_aliases", [])
-        candidate.setdefault("candidate_names", [])
-        candidate.setdefault("source_alias_mappings", [])
-        if source_alias:
-            self._append_unique_value(candidate, "source_aliases", source_alias)
-        if candidate_name:
-            self._append_unique_value(candidate, "candidate_names", candidate_name)
-        if source_alias or candidate_name:
-            self._append_unique(
-                candidate["source_alias_mappings"],
-                {
-                    "source_alias": source_alias,
-                    "candidate_name": candidate_name,
-                    "source_sql_name": source_sql_name,
-                    "requires_name_translation": bool(candidate.get("requires_name_translation")),
-                },
-                ["source_alias", "candidate_name", "source_sql_name"],
-            )
-
-    def _candidate_name_is_better(self, candidate: Dict[str, Any], existing: Dict[str, Any]) -> bool:
-        """Prefer business aliases over generated fallbacks when formula evidence is identical."""
-        existing_requires_translation = bool(existing.get("requires_name_translation"))
-        candidate_requires_translation = bool(candidate.get("requires_name_translation"))
-        if existing_requires_translation and not candidate_requires_translation:
-            return True
-        return False
-
-    def _metric_aliases_for_candidates(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Return source alias -> canonical metric name mappings for queryability checks."""
-        aliases: List[Dict[str, Any]] = []
-        for candidate in candidates:
-            canonical_name = str(candidate.get("name") or "").strip()
-            if not canonical_name:
-                continue
-            for mapping in candidate.get("source_alias_mappings", []):
-                if not isinstance(mapping, dict):
-                    continue
-                source_alias = str(mapping.get("source_alias") or "").strip()
-                candidate_name = str(mapping.get("candidate_name") or "").strip()
-                source_sql_name = str(mapping.get("source_sql_name") or "").strip()
-                if not source_alias and not candidate_name:
-                    continue
-                if source_alias == canonical_name and candidate_name == canonical_name:
-                    continue
-                self._append_unique(
-                    aliases,
-                    {
-                        "source_alias": source_alias,
-                        "candidate_name": candidate_name,
-                        "canonical_name": canonical_name,
-                        "source_sql_name": source_sql_name,
-                    },
-                    ["source_alias", "candidate_name", "canonical_name", "source_sql_name"],
-                )
-        return aliases
 
     def _extract_join_relationships_from_sql(
         self, sql_text: str, tables_lower_map: Dict[str, str]
@@ -1943,7 +1554,7 @@ class SemanticDiscoveryTools:
         """Convert a SQL alias/expression into a MetricFlow-compatible snake_case name."""
         import re
 
-        value = str(raw or "").strip().strip('"`[]').lower()
+        value = raw.strip().strip('"`[]').lower()
         value = re.sub(r"[^a-z0-9]+", "_", value).strip("_")
         if not value:
             value = "metric_candidate"
@@ -1959,7 +1570,7 @@ class SemanticDiscoveryTools:
         `source_alias` plus SQL/question context to choose the final business
         metric name.
         """
-        if alias and not self._requires_name_translation(alias):
+        if alias:
             alias_name = self._safe_name(alias)
             if alias_name != "metric_candidate":
                 return alias_name
@@ -1967,35 +1578,9 @@ class SemanticDiscoveryTools:
 
     def _requires_name_translation(self, alias: str) -> bool:
         """Return true when the original SQL alias should be named by the LLM."""
-        return bool(self._name_translation_reason(alias))
-
-    def _name_translation_reason(self, alias: str) -> str:
-        """Explain why a SQL alias is only technical evidence, not a final metric name."""
-        import re
-
         if not alias:
-            return ""
-        raw_alias = str(alias).strip().strip('"`[]')
-        safe_alias = self._safe_name(raw_alias)
-        if safe_alias == "metric_candidate":
-            return "source alias contains no MetricFlow-safe name tokens"
-        if raw_alias and raw_alias[0].isdigit():
-            return "source alias starts with a digit and needs a MetricFlow-safe business name"
-
-        tokens = [token for token in safe_alias.split("_") if token]
-        has_numeric_token = any(token.isdigit() for token in tokens)
-        alpha_tokens = [token for token in tokens if token.isalpha()]
-        compact_alias = safe_alias.replace("_", "")
-        short_prefix_with_ordinal = (
-            has_numeric_token
-            and len(alpha_tokens) <= 1
-            and sum(len(token) for token in alpha_tokens) <= 4
-            and bool(alpha_tokens)
-        )
-        compact_short_prefix_with_ordinal = bool(re.fullmatch(r"[a-z]{1,4}\d+", compact_alias))
-        if short_prefix_with_ordinal or compact_short_prefix_with_ordinal:
-            return "source alias looks like a generated short prefix plus ordinal"
-        return ""
+            return False
+        return self._safe_name(alias) == "metric_candidate"
 
     def _name_from_expression(self, expr: Any) -> str:
         """Derive a deterministic MetricFlow-safe name from a SQL expression."""
@@ -2044,14 +1629,6 @@ class SemanticDiscoveryTools:
         if all(tuple(existing.get(field) for field in key_fields) != key for existing in items):
             items.append(dict(item))
 
-    def _append_unique_value(self, item: Dict[str, Any], field: str, value: str) -> None:
-        """Append a scalar string to a list field once."""
-        if not value:
-            return
-        values = item.setdefault(field, [])
-        if value not in values:
-            values.append(value)
-
     def _is_blocked_direct_candidate(
         self,
         candidate: Dict[str, Any],
@@ -2060,7 +1637,9 @@ class SemanticDiscoveryTools:
         """Return true if any source merged into the candidate requires derived modeling first."""
         candidate_sources = self._source_sql_name_set(candidate.get("source_sql_name", ""))
         for blocked in blocked_candidates:
-            if blocked.get("metric_type") != candidate.get("metric_type"):
+            if blocked.get("name") != candidate.get("name") or blocked.get("metric_type") != candidate.get(
+                "metric_type"
+            ):
                 continue
             if self._metric_candidate_formula_signature(blocked) != self._metric_candidate_formula_signature(candidate):
                 continue

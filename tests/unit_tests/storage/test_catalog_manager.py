@@ -5,12 +5,8 @@
 """Tests for datus/storage/catalog_manager.py — CatalogUpdater pure logic methods."""
 
 import json
-from types import SimpleNamespace
-
-import pytest
 
 from datus.storage.catalog_manager import CatalogUpdater
-from datus.storage.table_identity import build_semantic_table_identity
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
@@ -120,7 +116,6 @@ class TestUpdateColumnsFieldMapping:
         obj = object.__new__(CatalogUpdater)
         obj.datasource_id = "test_datasource"
         obj.semantic_model_storage = fake_storage
-        obj._agent_config = SimpleNamespace(db_type="sqlite")
         return obj
 
     def test_type_to_column_type_mapping_detects_change(self):
@@ -238,7 +233,6 @@ class TestUpdateColumnsMethod:
         """Create a bare CatalogUpdater for pure method tests."""
         obj = object.__new__(CatalogUpdater)
         obj.datasource_id = "test_datasource"
-        obj._agent_config = SimpleNamespace(db_type="sqlite")
         return obj
 
     def test_update_columns_skips_items_without_name(self):
@@ -423,7 +417,6 @@ class TestUpdateSemanticModel:
         """Create a bare CatalogUpdater for tests."""
         obj = object.__new__(CatalogUpdater)
         obj.datasource_id = "test_datasource"
-        obj._agent_config = SimpleNamespace(db_type="sqlite")
         return obj
 
     def test_update_semantic_model_description(self):
@@ -469,38 +462,6 @@ class TestUpdateSemanticModel:
         updater.update_semantic_model(old_values, update_values)
 
         assert any(entry_id == "table:orders" for entry_id, _ in calls)
-
-    def test_update_semantic_model_schema_less_dialect_omits_schema_from_identity(self):
-        updater = self._make_updater()
-        updater._agent_config = SimpleNamespace(db_type="starrocks")
-        calls = []
-
-        class FakeStorage:
-            def update_entry(self, entry_id, values):
-                calls.append((entry_id, values))
-
-        updater.semantic_model_storage = FakeStorage()
-
-        updater.update_semantic_model(
-            {
-                "database_name": "analytics",
-                "schema_name": "ignored_schema",
-                "table_name": "orders",
-                "semantic_model_name": "orders",
-            },
-            {"description": "Updated description"},
-        )
-
-        assert any(entry_id == "table:analytics.orders" for entry_id, _ in calls)
-        assert all("ignored_schema" not in entry_id for entry_id, _ in calls)
-
-    def test_build_semantic_table_identity_requires_db_type(self):
-        from datus.utils.exceptions import DatusException, ErrorCode
-
-        with pytest.raises(DatusException) as exc:
-            build_semantic_table_identity({"table_name": "orders"}, "")
-        assert exc.value.code == ErrorCode.STORAGE_INVALID_ARGUMENT
-        assert "db_type is required" in str(exc.value)
 
     def test_update_semantic_model_description_value_error_handled(self):
         """DatusException from update_entry for table is caught and does not raise."""

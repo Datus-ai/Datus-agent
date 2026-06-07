@@ -40,40 +40,8 @@ class ExplorerService:
             agent_config: Agent configuration object
         """
         self.agent_config = agent_config
-        self.datasource_id = ""
-        self.storage_namespace = ""
-        self._storage_init_error = ""
-        self.metric_rag = None
-        self.reference_sql_rag = None
-        self.knowledge_rag = None
-        self.semantic_model_rag = None
-        self.subject_tree_store = None
-        self._bind_storage_if_available()
+        self.datasource_id = agent_config.current_datasource
         logger.info("ExplorerService initialized")
-
-    def _clear_storage_binding(self, error: str = "") -> None:
-        self.datasource_id = ""
-        self.storage_namespace = ""
-        self.metric_rag = None
-        self.reference_sql_rag = None
-        self.knowledge_rag = None
-        self.semantic_model_rag = None
-        self.subject_tree_store = None
-        self._storage_init_error = error
-
-    def _bind_storage_if_available(self) -> bool:
-        from datus.storage.scope import resolve_datasource_scope
-        from datus.utils.exceptions import DatusException
-
-        try:
-            datasource_id, storage_namespace = resolve_datasource_scope(self.agent_config)
-        except DatusException as exc:
-            self._clear_storage_binding(str(exc))
-            logger.warning("ExplorerService storage is unavailable without datasource: %s", exc)
-            return False
-
-        if self.datasource_id == datasource_id and self.storage_namespace == storage_namespace:
-            return True
 
         from datus.storage.ext_knowledge.store import ExtKnowledgeRAG
         from datus.storage.metric.store import MetricRAG
@@ -81,19 +49,11 @@ class ExplorerService:
         from datus.storage.registry import get_subject_tree_store
         from datus.storage.semantic_model.store import SemanticModelRAG
 
-        self.datasource_id = datasource_id
-        self.storage_namespace = storage_namespace
-        self.metric_rag = MetricRAG(self.agent_config, datasource_id=self.datasource_id)
-        self.reference_sql_rag = ReferenceSqlRAG(self.agent_config, datasource_id=self.datasource_id)
-        self.knowledge_rag = ExtKnowledgeRAG(self.agent_config, datasource_id=self.datasource_id)
-        self.semantic_model_rag = SemanticModelRAG(self.agent_config, datasource_id=self.datasource_id)
-        self.subject_tree_store = get_subject_tree_store(project=storage_namespace)
-        self._storage_init_error = ""
-        return True
-
-    def _require_datasource_bound(self) -> None:
-        if not self._bind_storage_if_available():
-            raise RuntimeError(self._storage_init_error or "datasource is required for explorer storage operations")
+        self.metric_rag = MetricRAG(agent_config, datasource_id=self.datasource_id)
+        self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
+        self.knowledge_rag = ExtKnowledgeRAG(agent_config, datasource_id=self.datasource_id)
+        self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
+        self.subject_tree_store = get_subject_tree_store(project=agent_config.project_name)
 
     def _gen_reference_sql_id(self, sql: str) -> str:
         """Generate a stable identifier for reference SQL entries."""
@@ -261,10 +221,6 @@ class ExplorerService:
 
             from datus.api.models.explorer_models import SubjectNodeType
 
-            if not self._bind_storage_if_available() or self.subject_tree_store is None:
-                logger.warning("Explorer subject list requested before datasource is bound; returning empty list")
-                return Result[SubjectListData](success=True, data=SubjectListData(subjects=[]))
-
             # Get tree structure from subject tree store
             tree_structure = self.subject_tree_store.get_tree_structure()
 
@@ -377,7 +333,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Creating directory at path: {request.subject_path}")
-            self._require_datasource_bound()
 
             # Use SubjectTreeStore to create or find the directory path
             # The last element in subject_path is the new directory name
@@ -417,7 +372,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Creating reference SQL '{request.name}' at path: {request.subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
 
             if not request.subject_path or not request.name:
@@ -473,7 +427,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Renaming {request.type} from {request.subject_path} to {request.new_subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
             from datus.api.models.explorer_models import SubjectNodeType
 
@@ -599,7 +552,6 @@ class ExplorerService:
             from datus.api.models.config_models import ErrorCode
 
             logger.info(f"Getting metric at path: {subject_path}")
-            self._require_datasource_bound()
 
             if not subject_path or len(subject_path) < 1:
                 return Result[MetricInfo](
@@ -663,7 +615,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Getting reference SQL at path: {subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
 
             if not subject_path or len(subject_path) < 1:
@@ -738,7 +689,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Editing reference SQL at path: {request.subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
 
             if not request.subject_path or len(request.subject_path) < 1:
@@ -815,7 +765,6 @@ class ExplorerService:
             from datus.cli.generation_hooks import GenerationHooks
 
             logger.info(f"Creating metric at parent path: {request.subject_path}")
-            self._require_datasource_bound()
 
             # subject_path is the parent directory
             parent_path = request.subject_path if request.subject_path else []
@@ -959,7 +908,6 @@ class ExplorerService:
             from datus.cli.generation_hooks import GenerationHooks
 
             logger.info(f"Editing metric at path: {request.subject_path}")
-            self._require_datasource_bound()
 
             if not request.subject_path or len(request.subject_path) < 1:
                 return Result[dict](
@@ -1105,7 +1053,6 @@ class ExplorerService:
             from datus.api.models.config_models import ErrorCode
 
             logger.info(f"Editing semantic model entry: {request.entry_id}")
-            self._require_datasource_bound()
 
             if not request.entry_id:
                 return Result[dict](
@@ -1150,7 +1097,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Creating knowledge '{request.name}' at path: {request.subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
 
             if not request.subject_path or not request.name:
@@ -1210,7 +1156,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Getting knowledge at path: {subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
 
             if not subject_path or len(subject_path) < 1:
@@ -1284,7 +1229,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Editing knowledge at path: {request.subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
 
             if not request.subject_path or len(request.subject_path) < 2:
@@ -1350,7 +1294,6 @@ class ExplorerService:
         """
         try:
             logger.info(f"Deleting {request.type} at path: {request.subject_path}")
-            self._require_datasource_bound()
             from datus.api.models.config_models import ErrorCode
             from datus.api.models.explorer_models import SubjectNodeType
 

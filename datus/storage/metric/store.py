@@ -17,51 +17,11 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-METRIC_ID_PREFIX = "metric:"
-_METRIC_DEFINITION_FIELDS = ("semantic_model_name", "metric_type", "measure_expr", "base_measures")
-
-
-def normalize_metric_name(value: Any) -> str:
-    """Return the datasource-local business key used for metric names."""
-
-    return str(value or "").strip().lower()
-
 
 def build_metric_id(subject_path: List[str], name: str) -> str:
-    """Build the stable business key for a metric.
-
-    ``subject_path`` is kept in the signature for existing call sites, but the
-    metric identity must not change when the metric is moved in the subject tree.
-    Datasource isolation is handled by the storage namespace.
-    """
-
-    metric_name = str(name or "").strip()
-    if not metric_name:
-        raise ValueError("metric name is required")
-    return f"{METRIC_ID_PREFIX}{metric_name}"
-
-
-def _normalize_definition_value(value: Any) -> Any:
-    if value is None:
-        return ""
-    if isinstance(value, (list, tuple, set)):
-        return tuple(sorted(str(item).strip() for item in value if str(item).strip()))
-    return str(value).strip()
-
-
-def metric_definition_conflict(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Optional[str]:
-    """Return the first conflicting core definition field, if any.
-
-    Empty values are treated as unknowns so legacy rows can be completed without
-    blocking a safe upsert.
-    """
-
-    for field in _METRIC_DEFINITION_FIELDS:
-        existing_value = _normalize_definition_value(existing.get(field))
-        incoming_value = _normalize_definition_value(incoming.get(field))
-        if existing_value and incoming_value and existing_value != incoming_value:
-            return field
-    return None
+    """Build the stable business key for a metric."""
+    subject_path_str = "/".join(subject_path)
+    return f"metric:{subject_path_str}.{name}"
 
 
 class MetricStorage(BaseSubjectEmbeddingStore):
@@ -79,7 +39,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                 base_schema_columns()  # Provides: name, subject_id, created_at
                 + [
                     # -- Identity & Basic Info --
-                    pa.field("id", pa.string()),  # Datasource-local ID: "metric:dau"
+                    pa.field("id", pa.string()),  # Unique ID: "metric:Metrics/orders.dau"
                     pa.field("semantic_model_name", pa.string()),  # Source semantic model
                     # -- Retrieval Fields --
                     pa.field("description", pa.string()),  # For LLM reading (RAG) and vector search
@@ -123,11 +83,6 @@ class MetricStorage(BaseSubjectEmbeddingStore):
     def batch_store_metrics(self, metrics: List[Dict[str, Any]]) -> None:
         """Store multiple metrics in the database efficiently.
 
-        Existing legacy rows whose id embedded a subject path are reconciled by
-        metric name before upsert: same definitions are removed in favor of the
-        datasource-local id, and conflicting definitions raise instead of
-        creating duplicate business keys.
-
         Args:
             metrics: List of dictionaries containing metric data with required fields:
                 - subject_path: List[str] - Subject hierarchy path for each metric (e.g., ['Finance', 'Revenue', 'Q1'])
@@ -139,11 +94,14 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         if not metrics:
             return
 
-        prepared, stale_duplicate_ids = self._prepare_metrics_for_write(metrics, check_existing=True)
-        if prepared:
-            self.batch_upsert(prepared, on_column="id")
-        if stale_duplicate_ids:
-            self._delete_rows(in_("id", stale_duplicate_ids))
+        # Validate all metrics have required subject_path
+        for metric in metrics:
+            subject_path = metric.get("subject_path")
+            if not subject_path:
+                raise ValueError("subject_path is required in metric data")
+
+        # Use base class batch_store method
+        self.batch_store(metrics)
 
     def batch_upsert_metrics(self, metrics: List[Dict[str, Any]]) -> None:
         """Upsert multiple metrics (update if id exists, insert if not).
@@ -151,84 +109,20 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         Args:
             metrics: List of dictionaries containing metric data with required fields:
                 - subject_path: List[str] - Subject hierarchy path for each metric
-                - id: str - Unique identifier for the metric (e.g., "metric:dau")
+                - id: str - Unique identifier for the metric (e.g., "metric:Metrics/orders.dau")
                 - Other fields same as batch_store_metrics
         """
         if not metrics:
             return
 
-        prepared, stale_duplicate_ids = self._prepare_metrics_for_write(metrics, check_existing=True)
-        if prepared:
-            self.batch_upsert(prepared, on_column="id")
-        if stale_duplicate_ids:
-            self._delete_rows(in_("id", stale_duplicate_ids))
-
-    def _prepare_metrics_for_write(
-        self,
-        metrics: List[Dict[str, Any]],
-        check_existing: bool = False,
-    ) -> tuple[List[Dict[str, Any]], List[str]]:
-        prepared: List[Dict[str, Any]] = []
-        index_by_name: Dict[str, int] = {}
-
+        # Validate all metrics have required subject_path
         for metric in metrics:
             subject_path = metric.get("subject_path")
             if not subject_path:
                 raise ValueError("subject_path is required in metric data")
 
-            name = str(metric.get("name") or "").strip()
-            if not name:
-                raise ValueError("metric name is required in metric data")
-
-            normalized_name = normalize_metric_name(name)
-            updated = dict(metric)
-            updated["name"] = name
-            updated["id"] = build_metric_id(subject_path, name)
-
-            existing_index = index_by_name.get(normalized_name)
-            if existing_index is not None:
-                existing_metric = prepared[existing_index]
-                conflict_field = metric_definition_conflict(existing_metric, updated)
-                if conflict_field:
-                    raise ValueError(
-                        f"Metric name conflict within datasource for '{name}': "
-                        f"field '{conflict_field}' differs in the same write batch. "
-                        "Metric names must be unique within a datasource."
-                    )
-                prepared[existing_index] = updated
-                continue
-
-            index_by_name[normalized_name] = len(prepared)
-            prepared.append(updated)
-
-        stale_duplicate_ids: List[str] = []
-        if check_existing and prepared:
-            stale_duplicate_ids = self._find_stale_existing_metric_ids(prepared)
-
-        return prepared, stale_duplicate_ids
-
-    def _find_stale_existing_metric_ids(self, metrics: List[Dict[str, Any]]) -> List[str]:
-        names = {normalize_metric_name(metric.get("name")) for metric in metrics}
-        fields = ["id", "name", *_METRIC_DEFINITION_FIELDS]
-        existing_rows = self._search_all(select_fields=fields).to_pylist()
-
-        stale_duplicate_ids: List[str] = []
-        for existing in existing_rows:
-            existing_name = normalize_metric_name(existing.get("name"))
-            if existing_name not in names:
-                continue
-            incoming = next(metric for metric in metrics if normalize_metric_name(metric.get("name")) == existing_name)
-            conflict_field = metric_definition_conflict(existing, incoming)
-            if conflict_field:
-                raise ValueError(
-                    f"Metric name conflict within datasource for '{incoming['name']}': "
-                    f"existing metric id '{existing.get('id')}' has a different '{conflict_field}'. "
-                    "Choose a more specific metric name or update the existing metric explicitly."
-                )
-            if existing.get("id") and existing.get("id") != incoming.get("id"):
-                stale_duplicate_ids.append(str(existing["id"]))
-
-        return stale_duplicate_ids
+        # Use base class batch_upsert method
+        self.batch_upsert(metrics, on_column="id")
 
     def _search_metrics_internal(
         self,
@@ -610,12 +504,11 @@ class MetricRAG:
     ):
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
-        from datus.storage.scope import resolve_datasource_scope
 
         self.agent_config = agent_config
-        self.datasource_id, self.storage_namespace = resolve_datasource_scope(agent_config, datasource_id)
+        self.datasource_id = datasource_id or agent_config.current_datasource or ""
         self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
-        self.storage: MetricStorage = get_storage(MetricStorage, "metric", project=self.storage_namespace)
+        self.storage: MetricStorage = get_storage(MetricStorage, "metric", project=agent_config.project_name)
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "metrics")
 
     def _sub_agent_conditions(self) -> List:

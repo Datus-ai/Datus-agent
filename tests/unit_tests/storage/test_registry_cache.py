@@ -23,7 +23,7 @@ class _FakeEmbeddingModel:
 
 
 class TestGetStorageLRUCache:
-    """Tests for per-namespace LRU caching in get_storage()."""
+    """Tests for per-project LRU caching in get_storage()."""
 
     def test_same_project_returns_cached(self, reset_global_singletons):
         """get_storage with same factory+project returns the same instance."""
@@ -85,12 +85,11 @@ class TestGetStorageLRUCache:
             clear_storage_registry()
             assert _get_storage_cached.cache_info().currsize == 0
 
-    def test_subject_store_binds_subject_tree_by_requested_namespace(self, reset_global_singletons):
-        """Subject stores created via get_storage() bind the requested namespace's subject tree."""
+    def test_subject_store_binds_subject_tree_by_requested_project(self, reset_global_singletons):
+        """Subject stores created via get_storage() bind the requested project's subject tree."""
         from datus.storage.metric.store import MetricStorage
         from datus.storage.registry import get_storage
 
-        namespace = "my_project__ds__sales"
         project_tree = MagicMock(name="project_tree")
 
         with (
@@ -99,45 +98,29 @@ class TestGetStorageLRUCache:
             patch("datus.storage.backend_holder.get_vector_backend") as mock_backend,
         ):
             mock_backend.return_value = MagicMock()
-            store = get_storage(MetricStorage, "metric", project=namespace)
+            store = get_storage(MetricStorage, "metric", project="my_project")
 
         assert store.subject_tree is project_tree
-        assert call(namespace) in mock_tree.call_args_list
+        assert call("my_project") in mock_tree.call_args_list
 
 
 class TestPreloadAllStorages:
     """Tests for preload_all_storages() with project."""
 
-    def test_preload_without_datasource_does_not_create_datasource_scoped_stores(self, reset_global_singletons):
-        """preload_all_storages does not warm datasource-scoped stores at project scope."""
+    def test_preload_forwards_project(self, reset_global_singletons):
+        """preload_all_storages forwards project to both init_backends and get_storage."""
         from datus.storage.registry import preload_all_storages
 
         with (
             patch("datus.storage.registry.get_storage") as mock_get_storage,
             patch("datus.storage.backend_holder.init_backends") as mock_init,
-            patch("datus.storage.registry.get_subject_tree_store") as mock_subject_tree,
+            patch("datus.storage.registry.get_subject_tree_store"),
         ):
             preload_all_storages(data_dir="/tmp/test", project="my_project")
             mock_init.assert_called_once_with(config=None, data_dir="/tmp/test")
-            mock_get_storage.assert_not_called()
-            mock_subject_tree.assert_not_called()
-
-    def test_preload_with_datasource_forwards_datasource_namespace(self, reset_global_singletons):
-        """preload_all_storages warms datasource-scoped stores only under datasource namespace."""
-        from datus.storage.registry import preload_all_storages
-
-        with (
-            patch("datus.storage.registry.get_storage") as mock_get_storage,
-            patch("datus.storage.backend_holder.init_backends"),
-            patch("datus.storage.registry.get_subject_tree_store") as mock_subject_tree,
-        ):
-            preload_all_storages(data_dir="/tmp/test", project="my_project", datasource="sales db")
-
-        assert mock_get_storage.call_args_list
-        for call_args in mock_get_storage.call_args_list:
-            assert call_args.kwargs.get("project").startswith("my_project__ds__sales_db_")
-        mock_subject_tree.assert_called_once()
-        assert mock_subject_tree.call_args.kwargs.get("project").startswith("my_project__ds__sales_db_")
+            # All get_storage calls receive project as a kwarg.
+            for call_args in mock_get_storage.call_args_list:
+                assert call_args.kwargs.get("project") == "my_project"
 
     def test_preload_applies_defaults(self, reset_global_singletons):
         """preload_all_storages applies deployment defaults."""
@@ -156,8 +139,8 @@ class TestPreloadAllStorages:
 class TestBackendHolderConfigPropagation:
     """Tests for config propagation in backend_holder.
 
-    Backends are stateless w.r.t. namespace: ``initialize()`` only carries
-    backend-wide settings (``data_dir``, ``isolation``). The namespace
+    Backends are stateless w.r.t. project: ``initialize()`` only carries
+    backend-wide settings (``data_dir``, ``isolation``). The project
     identifier is passed to ``connect()`` via ``create_*`` helpers, not
     injected into backend config.
     """

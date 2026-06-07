@@ -17,16 +17,11 @@ Guide the user through metric generation using natural language business descrip
 
 ## Phase 0: Discovery — Scan Existing Assets
 
-If the user prompt already includes `Existing Metric Catalog JSON`, treat it as the Phase 0 catalog loaded by the bootstrap host. Do not call `list_metrics()` just to rediscover existing metrics. Otherwise, before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Build an existing metric catalog JSON array with each metric's exact `name`, `type`, `description` when available, `subject_path` when available, and structured compatibility fields such as base measures, dimensions, entities, and semantic model when available. Use this throughout the remaining phases to:
+Before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Build an existing metric catalog JSON array with each metric's exact `name`, `type`, `description` when available, and `subject_path` when available. Use this throughout the remaining phases to:
 - **Skip redundant work** — don't recreate metrics that already exist
 - **Reuse existing measures** — reference measures from existing models instead of creating duplicates
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
 - **Enable derived/ratio metrics** — know which metrics can serve as building blocks for more complex definitions
-
-Metric names are datasource-local business keys. Within the current datasource, every persisted `metric.name` must be unique; `subject_tree` is only a display/classification path and must not be used to create a second metric with the same name. If a proposed name already exists:
-- Reuse or skip it when it has the same business definition.
-- In interactive mode, ask the user before replacing or renaming a conflicting definition.
-- In batch/bootstrap mode, infer a more specific English snake_case business name from the SQL/question/table context when the same name would mean a different calculation.
 
 Only inspect and edit semantic model YAML files under the current datasource directory shown in the system prompt, such as `subject/semantic_models/<current_datasource>/...`. Do not reuse or sync YAML files from sibling datasource directories; those files are outside the active MetricFlow adapter scope.
 
@@ -76,7 +71,7 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 
 **Step 1-batch-b: Mine metric candidates from SQL ASTs**
 
-If the user prompt already includes `Precomputed Metric Candidate Plan JSON`, use that as the result of batch metric candidate mining for the current SQL batch. Do not call `analyze_metric_candidates_from_history` again unless the supplied JSON is malformed or clearly insufficient. Otherwise, call `analyze_metric_candidates_from_history` with all parsed SQL queries and `existing_metric_catalog_json` from Phase 0. Use its output to preserve final business metric expressions and their dependencies:
+Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `existing_metric_catalog_json` from Phase 0. Use its output to preserve final business metric expressions and their dependencies:
 
 1. **Preserve final output metrics** — SQL aliases and final SELECT expressions are the primary metric candidates.
 2. **Keep base measures as dependencies** — base measures support the final metric but do not replace it.
@@ -88,10 +83,9 @@ If the user prompt already includes `Precomputed Metric Candidate Plan JSON`, us
 8. **Preserve SQL time grain** — if `time_grain_evidence` is present, expose an equivalent time dimension in any derived data source. Do not replace a projected date such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt` with raw `create_time` as the primary time dimension.
    Define `type: TIME` only for physical DATE/TIME/TIMESTAMP columns or SQL expressions / `sql_query` aliases guaranteed to return DATE/TIME/TIMESTAMP values. Numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys must be identifiers or categorical dimensions unless converted to a real date.
 9. **Preserve post-aggregation constraints** — if `post_aggregation_constraints` is present, keep each HAVING/post-aggregation condition as a query constraint, metric usage note, or later derived data source. Do not silently drop it or push it into a base measure.
-10. **Cross-reference with Phase 0** — remove any candidate that already exists in the knowledge base with the same definition; rename candidates whose name collides with a different existing definition.
+10. **Cross-reference with Phase 0** — remove any candidate that already exists in the knowledge base.
 11. **Separate derived metrics** — treat `derived_metric_candidates` as second-stage metrics over existing metrics. Do not mix them into base semantic model or measure generation.
 12. **Ignore passthrough references** — entries in `identity_metric_references` show existing metrics selected without new business formula; do not generate new metrics for them.
-13. **Honor alias mappings** — when the plan includes `metric_aliases` or `source_alias_mappings`, use the `canonical_name` as the generated/reused metric name. Do not generate a second metric just because another SQL uses a different alias for the same formula.
 
 **Step 1-batch-c: Business metric principle**
 
@@ -206,22 +200,20 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
 - Metric file: `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`
 
 Bare filenames are silently normalized by the host, but the prefixed form is preferred for clarity. Absolute paths are also tolerated.
-Do not read, edit, or pass `metric_file` / `semantic_model_files` paths from another datasource directory such as `subject/semantic_models/other_datasource/...`.
+Do not read, edit, or pass `metric_file` / `semantic_model_file` paths from another datasource directory such as `subject/semantic_models/other_datasource/...`.
 
 1. **Check existing**: Call `check_semantic_object_exists(name="{metric_name}", kind="metric")` for each metric confirmed in Phase 1. If it already exists, inform the user and skip it.
 
-2. **Update semantic model safely**: When a semantic model YAML already exists, read it first and preserve all existing identifiers, measures, dimensions, `sql_table`, and `sql_query`. Add only missing measures/dimensions needed by the new metric. Never rewrite an existing semantic model with a smaller subset of columns.
-
-3. **Write metric YAML**: Use `write_file` to save each metric definition to `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`. If the metrics YAML already exists, read it first and preserve all existing `metric:` entries; append only missing new metrics. Do not rewrite the file with a smaller subset, and do not delete existing metric YAML entries just because they already exist in the KB catalog.
+2. **Write metric YAML**: Use `write_file` to save each metric definition to `subject/semantic_models/<current_datasource>/metrics/{table_name}_metrics.yml`.
    - For `measure_proxy`, keep `type_params.measure` as a string measure name.
    - For filtered metrics, add a dedicated conditional measure to the semantic model first, then reference that measure from the metric YAML.
    - Each generated metric must be an explicit named top-level `metric:` YAML document. Do not emit unnamed `metric:` blocks or wrap metrics inside another object.
 
-4. **Validate (MUST PASS)**: Call `validate_semantic` to check the metric YAML.
+3. **Validate (MUST PASS)**: Call `validate_semantic` to check the metric YAML.
    - If validation fails, fix errors with `edit_file` and retry until it **passes**.
    - **Do NOT proceed to Phase 4 until validation passes.** No exceptions.
 
-5. **Dry-run SQL**: Call `query_metrics(metrics=["{metric_name}"], dry_run=True)` to generate the SQL.
+4. **Dry-run SQL**: Call `query_metrics(metrics=["{metric_name}"], dry_run=True)` to generate the SQL.
    - If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query.
    - Use `get_dimensions` to find exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
    - Collect the SQL into a dict: `{"{metric_name}": "SELECT ..."}`
@@ -230,8 +222,7 @@ Do not read, edit, or pass `metric_file` / `semantic_model_files` paths from ano
 
 After all generated metrics have passed validation and dry-run:
 - Collect all generated metrics and their dry-run SQLs into `metric_sqls_json`
-- You MUST call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
-- `semantic_model_files` must include every semantic model file newly created or updated for this batch. If one metric file contains metrics backed by multiple tables, include all affected semantic model files.
+- You MUST call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
 - Do not rely on the final JSON host fallback. The host fallback is only a last-resort guard when the tool call was accidentally missed.
 - If no metrics were generated, do NOT call `end_metric_generation`
 
@@ -247,13 +238,11 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 
 4. **Check before creating**: ALWAYS call `check_semantic_object_exists(name="{metric_name}", kind="metric")` before writing a new metric. If the metric already exists, skip it.
 
-5. **Do not use subject path to disambiguate metric names**: `revenue` under `Finance` and `revenue` under `Sales` are still the same datasource-local metric name. If the calculations differ, choose clearer names such as `finance_revenue` and `sales_revenue`.
+5. **Verify names after validation**: After `validate_semantic` succeeds and the adapter reloads, call `list_metrics` to see the exact metric names available. Use these exact names when calling `query_metrics`.
 
-6. **Verify names after validation**: After `validate_semantic` succeeds and the adapter reloads, call `list_metrics` to see the exact metric names available. Use these exact names when calling `query_metrics`.
+6. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, expr, derived, or cumulative — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
 
-7. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, expr, derived, or cumulative — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
-
-8. **Derived metrics are second-stage**: Generate non-derived metrics first, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
+7. **Derived metrics are second-stage**: Generate non-derived metrics first, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
 
 ## Important Rules
 

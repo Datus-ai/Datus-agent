@@ -4,16 +4,15 @@
 
 # -*- coding: utf-8 -*-
 import os
-from collections.abc import Iterable
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 from agents import Tool
 from datus_storage_base.conditions import And, eq
 
 from datus.configuration.agent_config import AgentConfig
-from datus.storage.metric.store import MetricRAG, metric_definition_conflict, normalize_metric_name
-from datus.storage.semantic_model.store import SemanticModelRAG, _identifier_variants, _normalized_identifier
+from datus.storage.metric.store import MetricRAG
+from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
@@ -21,36 +20,6 @@ from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
-
-
-def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
-    """Normalize storage row containers to a list of dictionaries."""
-
-    if rows is None:
-        return []
-    if hasattr(rows, "to_pylist"):
-        rows = rows.to_pylist()
-    if isinstance(rows, dict):
-        return [rows]
-    if isinstance(rows, list):
-        iterable: Iterable[Any] = rows
-    elif isinstance(rows, tuple):
-        iterable = rows
-    elif isinstance(rows, Iterable) and not isinstance(rows, (str, bytes)):
-        iterable = rows
-    else:
-        return []
-    return [row for row in iterable if isinstance(row, dict)]
-
-
-def _is_supported_row_container(rows: Any) -> bool:
-    if rows is None:
-        return True
-    if hasattr(rows, "to_pylist"):
-        return True
-    if isinstance(rows, (dict, list, tuple)):
-        return True
-    return isinstance(rows, Iterable) and not isinstance(rows, (str, bytes))
 
 
 class GenerationTools:
@@ -66,8 +35,6 @@ class GenerationTools:
         self.generation_evidence = generation_evidence or GenerationEvidence()
         self.metric_rag = MetricRAG(agent_config)
         self.semantic_rag = SemanticModelRAG(agent_config)
-        self._semantic_object_exists_cache: Dict[tuple[str, str, str], FuncToolResult] = {}
-        self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
 
     def available_tools(self) -> List[Tool]:
         """
@@ -106,33 +73,23 @@ class GenerationTools:
             dict: Check results containing existence status and details.
         """
         try:
-            normalized_kind = str(kind or "").strip().lower()
-            cache_key = (
-                normalized_kind,
-                str(object_name or "").strip().lower(),
-                str(table_context or "").strip().lower(),
-            )
-            cached = self._semantic_object_exists_cache.get(cache_key)
-            if cached is not None:
-                logger.debug("check_semantic_object_exists cache hit: %s", cache_key)
-                return cached.model_copy(deep=True)
-
             # Extract the final segment as target name (e.g., "public.orders" -> "orders")
-            target_name = object_name.split(".")[-1].strip('`"[]').lower()
+            target_name = object_name.split(".")[-1].lower()
 
             found_object = None
 
-            if normalized_kind == "table":
-                table_index = self._get_semantic_table_object_index()
-                for candidate in _identifier_variants(object_name):
-                    found_object = table_index.get(candidate) or table_index.get(_normalized_identifier(candidate))
-                    if found_object:
-                        break
-            elif normalized_kind == "metric":
+            if kind == "table":
+                # Exact match for table using SQL WHERE condition
+                storage = self.semantic_rag.storage
+                where = And([eq("kind", "table"), eq("name", target_name)])
+                results = storage.search_all(where=where, select_fields=["id", "name", "kind"])
+                if results:
+                    found_object = results[0]
+            elif kind == "metric":
                 # Exact match for metric using SQL WHERE condition
                 storage = self.metric_rag.storage
                 where = eq("name", target_name)
-                results = _rows_to_dicts(storage.search_all(where=where, select_fields=["id", "name"]))
+                results = storage.search_all(where=where, select_fields=["id", "name"])
                 if results:
                     found_object = results[0]
             else:
@@ -140,7 +97,7 @@ class GenerationTools:
                 storage = self.semantic_rag.storage
                 results = storage.search_objects(
                     query_text=object_name,
-                    kinds=[normalized_kind],
+                    kinds=[kind],
                     table_name=table_context if table_context else None,
                     top_n=5,
                 )
@@ -151,7 +108,7 @@ class GenerationTools:
                 elif "." in object_name:
                     target_table = object_name.rsplit(".", 1)[0].lower()
 
-                for obj in _rows_to_dicts(results):
+                for obj in results:
                     name_match = obj.get("name", "").lower() == target_name
                     if target_table:
                         table_match = obj.get("table_name", "").lower() == target_table
@@ -163,23 +120,17 @@ class GenerationTools:
                         break
 
             if found_object:
-                result = FuncToolResult(
+                return FuncToolResult(
                     result={
                         "exists": True,
                         "id": found_object.get("id"),
                         "name": found_object.get("name"),
-                        "kind": found_object.get("kind") or normalized_kind,
-                        "message": f"Object '{object_name}' ({normalized_kind}) already exists.",
+                        "kind": found_object.get("kind") or kind,
+                        "message": f"Object '{object_name}' ({kind}) already exists.",
                     }
                 )
-                self._semantic_object_exists_cache[cache_key] = result.model_copy(deep=True)
-                return result
 
-            result = FuncToolResult(
-                result={"exists": False, "message": f"No {normalized_kind} found for '{object_name}'"}
-            )
-            self._semantic_object_exists_cache[cache_key] = result.model_copy(deep=True)
-            return result
+            return FuncToolResult(result={"exists": False, "message": f"No {kind} found for '{object_name}'"})
 
         except Exception as e:
             logger.error(f"Error checking semantic object existence: {e}")
@@ -195,31 +146,6 @@ class GenerationTools:
     ) -> FuncToolResult:
         """Legacy wrapper for checking table existence."""
         return self.check_semantic_object_exists(table_name, kind="table")
-
-    def _get_semantic_table_object_index(self) -> Dict[str, Dict[str, object]]:
-        """Load table semantic objects once and index all identifier variants."""
-
-        if self._semantic_table_object_index is not None:
-            return self._semantic_table_object_index
-
-        storage = self.semantic_rag.storage
-        select_fields = ["id", "name", "kind", "table_name", "fq_name"]
-        rows = storage.search_all(where=And([eq("kind", "table")]), select_fields=select_fields)
-        index: Dict[str, Dict[str, object]] = {}
-        for obj in _rows_to_dicts(rows):
-            for field in ("name", "table_name", "fq_name"):
-                value = str(obj.get(field) or "").strip()
-                if not value:
-                    continue
-                for variant in _identifier_variants(value):
-                    if variant:
-                        index.setdefault(variant, obj)
-                    normalized = _normalized_identifier(variant)
-                    if normalized:
-                        index.setdefault(normalized, obj)
-
-        self._semantic_table_object_index = index
-        return index
 
     def end_semantic_model_generation(self, semantic_model_files: List[str]) -> FuncToolResult:
         """
@@ -253,8 +179,6 @@ class GenerationTools:
             logger.info(
                 f"Semantic model generation completed for {len(semantic_model_files)} files: {semantic_model_files}"
             )
-            self._semantic_object_exists_cache.clear()
-            self._semantic_table_object_index = None
 
             return FuncToolResult(
                 result={
@@ -268,10 +192,7 @@ class GenerationTools:
             return FuncToolResult(success=0, error=f"Failed to complete generation: {str(e)}")
 
     def end_metric_generation(
-        self,
-        metric_file: str,
-        semantic_model_files: Optional[List[str]] = None,
-        metric_sqls_json: str = "",
+        self, metric_file: str, semantic_model_file: str = "", metric_sqls_json: str = ""
     ) -> FuncToolResult:
         """
         Complete metric generation process and automatically sync to Knowledge Base.
@@ -286,9 +207,10 @@ class GenerationTools:
                 the live ``agent_config.current_datasource``. Absolute paths are only
                 accepted when they resolve inside the Knowledge Base semantic-model
                 sandbox.
-            semantic_model_files: Paths to semantic model files that were newly
-                created or updated and define the measure(s) used by this metric
-                batch. Same relative/absolute rules as ``metric_file``.
+            semantic_model_file: Path to the primary semantic model file that defines
+                the measure(s) used by this metric. Optional — provide this if the
+                semantic model was newly created or updated. Same relative/absolute
+                rules as ``metric_file``.
             metric_sqls_json: JSON string mapping metric names to their generated SQL (from query_metrics dry_run).
                               Example: '{"revenue_total": "SELECT SUM(revenue) FROM orders GROUP BY date"}'
 
@@ -318,7 +240,7 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files or [],
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -333,7 +255,7 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files or [],
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -343,7 +265,7 @@ class GenerationTools:
 
             logger.info(
                 f"Metric generation completed: metric_file={metric_file}, "
-                f"semantic_model_files={semantic_model_files or []}, "
+                f"semantic_model_file={semantic_model_file}, "
                 f"metric_sqls={metric_sqls}"
             )
 
@@ -360,38 +282,24 @@ class GenerationTools:
                 return resolve_kb_sandbox_path(path, kind, subject_root) or ""
 
             abs_metric = _resolve(metric_file, "metric")
-            semantic_model_files = semantic_model_files or []
-            if not isinstance(semantic_model_files, list):
-                return FuncToolResult(
-                    success=0,
-                    error="semantic_model_files must be a list of semantic model YAML paths",
-                    result={
-                        "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
-                        "metric_sqls": metric_sqls,
-                    },
-                )
-            abs_semantic_files: List[str] = []
-            for semantic_model_file in semantic_model_files:
-                abs_semantic = _resolve(semantic_model_file, "semantic")
-                if not abs_semantic:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"semantic_model_files contains path outside Knowledge Base sandbox: {semantic_model_file!r}",
-                        result={
-                            "metric_file": metric_file,
-                            "semantic_model_files": semantic_model_files,
-                            "metric_sqls": metric_sqls,
-                        },
-                    )
-                abs_semantic_files.append(abs_semantic)
+            abs_semantic = _resolve(semantic_model_file, "semantic")
             if not abs_metric:
                 return FuncToolResult(
                     success=0,
                     error=f"metric_file escapes Knowledge Base sandbox: {metric_file!r}",
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
+                        "semantic_model_file": semantic_model_file,
+                        "metric_sqls": metric_sqls,
+                    },
+                )
+            if semantic_model_file and not abs_semantic:
+                return FuncToolResult(
+                    success=0,
+                    error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
+                    result={
+                        "metric_file": metric_file,
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                     },
                 )
@@ -409,42 +317,27 @@ class GenerationTools:
                     error=preflight_error,
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                     },
                 )
             metric_names = self._extract_metric_names_from_file(abs_metric)
-            metric_definitions = self._extract_metric_definitions_from_file(abs_metric)
-            conflict_error = self._validate_metric_name_conflicts(metric_definitions)
-            if conflict_error:
-                return FuncToolResult(
-                    success=0,
-                    error=conflict_error,
-                    result={
-                        "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
-                        "metric_sqls": metric_sqls,
-                    },
-                )
-            required_metric_names = self._metric_names_requiring_dry_run(metric_names, metric_definitions, metric_sqls)
-            if required_metric_names and not self.generation_evidence.has_metric_dry_run(required_metric_names):
+            if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
                 return FuncToolResult(
                     success=0,
                     error=(
                         "query_metrics(dry_run=True) must pass for generated metric(s): "
-                        f"{', '.join(required_metric_names)}. Run a dry-run query for these metric names, "
+                        f"{', '.join(metric_names)}. Run a dry-run query for these metric names, "
                         "fix any issues, and retry end_metric_generation."
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                     },
                 )
-            if required_metric_names and not self.generation_evidence.has_required_queryability_dry_runs(
-                required_metric_names
-            ):
-                missing_contracts = self.generation_evidence.missing_queryability_contracts(required_metric_names)
+            if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
+                missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
                 contract_summary = summarize_queryability_contracts(missing_contracts)
                 return FuncToolResult(
                     success=0,
@@ -455,14 +348,14 @@ class GenerationTools:
                     ),
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                         "queryability_contracts": missing_contracts,
                     },
                 )
 
             # Auto-sync to Knowledge Base
-            sync_result = self._sync_metric_to_db(abs_metric, abs_semantic_files, metric_sqls)
+            sync_result = self._sync_metric_to_db(abs_metric, abs_semantic, metric_sqls)
 
             if not sync_result.get("success"):
                 return FuncToolResult(
@@ -470,7 +363,7 @@ class GenerationTools:
                     error=f"Metric file written but KB sync failed: {sync_result.get('error', 'unknown')}",
                     result={
                         "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
+                        "semantic_model_file": semantic_model_file,
                         "metric_sqls": metric_sqls,
                         "sync": sync_result,
                     },
@@ -479,14 +372,12 @@ class GenerationTools:
             self.generation_evidence.mark_kb_sync("metric")
             if sync_result.get("semantic_synced"):
                 self.generation_evidence.mark_kb_sync("semantic")
-            self._semantic_object_exists_cache.clear()
-            self._semantic_table_object_index = None
 
             return FuncToolResult(
                 result={
                     "message": "Metric generation completed and synced to Knowledge Base",
                     "metric_file": metric_file,
-                    "semantic_model_files": semantic_model_files,
+                    "semantic_model_file": semantic_model_file,
                     "metric_sqls": metric_sqls,
                     "sync": sync_result,
                 }
@@ -518,8 +409,6 @@ class GenerationTools:
                 "(separated by `---`)."
             )
         saw_metric_block = False
-        seen_names: Dict[str, str] = {}
-        saw_named_metric = False
         for doc in docs:
             if isinstance(doc, dict) and "metric" in doc:
                 saw_metric_block = True
@@ -527,18 +416,7 @@ class GenerationTools:
                 if isinstance(metric, dict):
                     name = metric.get("name")
                     if isinstance(name, str) and name.strip():
-                        saw_named_metric = True
-                        metric_name = name.strip()
-                        normalized = normalize_metric_name(metric_name)
-                        if normalized in seen_names:
-                            return (
-                                f"Metric file {metric_file!r} declares duplicate metric.name '{metric_name}'. "
-                                "Metric names must be unique within a datasource; merge identical definitions "
-                                "or choose a more specific business name."
-                            )
-                        seen_names[normalized] = metric_name
-        if saw_named_metric:
-            return None
+                        return None
         if saw_metric_block:
             return (
                 f"Metric file {metric_file!r} contains `metric:` YAML blocks, "
@@ -575,185 +453,20 @@ class GenerationTools:
                 names.append(name)
         return names
 
-    @staticmethod
-    def _extract_metric_definitions_from_file(metric_file: str) -> List[Dict[str, object]]:
-        """Return lightweight metric definitions for pre-sync conflict checks."""
-        try:
-            with open(metric_file, "r", encoding="utf-8") as f:
-                docs = list(yaml.safe_load_all(f))
-        except (OSError, yaml.YAMLError):
-            return []
-
-        definitions: List[Dict[str, object]] = []
-        for doc in docs:
-            if not isinstance(doc, dict):
-                continue
-            metric = doc.get("metric")
-            if not isinstance(metric, dict):
-                continue
-            name = metric.get("name")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            metric_type = str(metric.get("type") or "").strip()
-            type_params = metric.get("type_params") if isinstance(metric.get("type_params"), dict) else {}
-            measure_expr = ""
-            base_measures: List[str] = []
-
-            if metric_type == "measure_proxy":
-                measure = type_params.get("measure")
-                if isinstance(measure, str):
-                    measure_expr = measure
-                    base_measures.append(measure)
-                elif isinstance(measure, dict):
-                    measure_name = measure.get("name")
-                    if isinstance(measure_name, str) and measure_name.strip():
-                        measure_expr = measure_name
-                        base_measures.append(measure_name)
-            elif metric_type == "ratio":
-                for key in ("numerator", "denominator"):
-                    ref = type_params.get(key)
-                    if isinstance(ref, str) and ref.strip():
-                        base_measures.append(ref)
-                    elif isinstance(ref, dict):
-                        ref_name = ref.get("name")
-                        if isinstance(ref_name, str) and ref_name.strip():
-                            base_measures.append(ref_name)
-            elif metric_type in {"expr", "cumulative"}:
-                for ref in type_params.get("measures") or []:
-                    if isinstance(ref, str) and ref.strip():
-                        base_measures.append(ref)
-                    elif isinstance(ref, dict):
-                        ref_name = ref.get("name")
-                        if isinstance(ref_name, str) and ref_name.strip():
-                            base_measures.append(ref_name)
-                if metric_type == "expr" and type_params.get("expr"):
-                    measure_expr = str(type_params["expr"])
-            elif metric_type == "derived":
-                for ref in type_params.get("metrics") or []:
-                    if isinstance(ref, str) and ref.strip():
-                        base_measures.append(ref)
-                    elif isinstance(ref, dict):
-                        ref_name = ref.get("name")
-                        if isinstance(ref_name, str) and ref_name.strip():
-                            base_measures.append(ref_name)
-                if type_params.get("expr"):
-                    measure_expr = str(type_params["expr"])
-
-            definitions.append(
-                {
-                    "name": name.strip(),
-                    "metric_type": metric_type,
-                    "measure_expr": measure_expr,
-                    "base_measures": base_measures,
-                }
-            )
-        return definitions
-
-    def _metric_names_requiring_dry_run(
-        self,
-        metric_names: List[str],
-        metric_definitions: List[Dict[str, object]],
-        metric_sqls: Optional[Dict[str, str]] = None,
-    ) -> List[str]:
-        """Return the subset of a metric file that must be dry-run before publish.
-
-        Batch generation often appends new metrics to an existing metrics YAML file.
-        Requiring every historical metric in that file to be re-dry-run makes later
-        batches slower and brittle. We still require all new metric names, and any
-        metric name that the current run produced SQL evidence for.
-        """
-        if not metric_names:
-            return []
-
-        by_normalized_name = {normalize_metric_name(name): name for name in metric_names if normalize_metric_name(name)}
-        required = set()
-        for name in metric_sqls or {}:
-            normalized = normalize_metric_name(name)
-            if normalized and not normalized.startswith("__") and normalized in by_normalized_name:
-                required.add(normalized)
-        for name in self.generation_evidence.metric_dry_run_metrics:
-            normalized = normalize_metric_name(name)
-            if normalized in by_normalized_name:
-                required.add(normalized)
-
-        existing_names = self._existing_metric_names()
-        if existing_names is None:
-            return metric_names
-        for definition in metric_definitions:
-            normalized = normalize_metric_name(definition.get("name"))
-            if normalized and normalized not in existing_names:
-                required.add(normalized)
-
-        if not required:
-            return []
-        return [name for normalized, name in by_normalized_name.items() if normalized in required]
-
-    def _existing_metric_names(self) -> Optional[set[str]]:
-        try:
-            rows = self.metric_rag.search_all_metrics(select_fields=["name"])
-        except Exception as exc:
-            logger.warning("Failed to load existing metric names before publish dry-run gating: %s", exc)
-            return None
-        if not _is_supported_row_container(rows):
-            return None
-        normalized_rows = _rows_to_dicts(rows)
-        names = set()
-        for row in normalized_rows:
-            normalized = normalize_metric_name(row.get("name"))
-            if normalized:
-                names.add(normalized)
-        return names
-
-    def _validate_metric_name_conflicts(self, metric_definitions: List[Dict[str, object]]) -> Optional[str]:
-        if not metric_definitions:
-            return None
-
-        existing_by_name: Dict[str, List[Dict[str, object]]] = {}
-        try:
-            rows = self.metric_rag.search_all_metrics(
-                select_fields=["id", "name", "semantic_model_name", "metric_type", "measure_expr", "base_measures"]
-            )
-        except Exception as exc:
-            logger.warning("Failed to check existing metric name conflicts before sync: %s", exc)
-            return None
-        if not _is_supported_row_container(rows):
-            return None
-        normalized_rows = _rows_to_dicts(rows)
-
-        for row in normalized_rows:
-            normalized = normalize_metric_name(row.get("name"))
-            if normalized:
-                existing_by_name.setdefault(normalized, []).append(row)
-
-        for incoming in metric_definitions:
-            normalized = normalize_metric_name(incoming.get("name"))
-            if not normalized:
-                continue
-            for existing in existing_by_name.get(normalized, []):
-                conflict_field = metric_definition_conflict(existing, incoming)
-                if conflict_field:
-                    return (
-                        f"Metric name conflict within this datasource for '{incoming.get('name')}': "
-                        f"existing metric id '{existing.get('id')}' has a different '{conflict_field}'. "
-                        "Metric names must be unique within a datasource; choose a more specific name "
-                        "or update the existing metric explicitly."
-                    )
-        return None
-
     def _sync_metric_to_db(
         self,
         metric_file: str,
-        semantic_model_files: Optional[List[str]] = None,
+        semantic_model_file: Optional[str] = None,
         metric_sqls: Optional[Dict[str, str]] = None,
     ) -> dict:
         """
-        Sync metric and any updated semantic models to Knowledge Base.
+        Sync metric (and optionally semantic model) to Knowledge Base.
 
         Reuses GenerationHooks._sync_semantic_to_db() static method.
 
         Args:
             metric_file: Absolute path to metric YAML file
-            semantic_model_files: Optional absolute paths to semantic model YAML files
+            semantic_model_file: Optional absolute path to semantic model YAML file
             metric_sqls: Optional dict mapping metric names to generated SQL
 
         Returns:
@@ -765,34 +478,60 @@ class GenerationTools:
             if not os.path.exists(metric_file):
                 return {"success": False, "error": f"Metric file not found: {metric_file}"}
 
-            synced_semantic_files: List[str] = []
-            for semantic_model_file in semantic_model_files or []:
-                if not os.path.exists(semantic_model_file):
-                    return {
-                        "success": False,
-                        "error": f"Semantic model file not found: {semantic_model_file}",
-                    }
-                sem_result = GenerationHooks._sync_semantic_to_db(
-                    semantic_model_file,
-                    self.agent_config,
-                    include_semantic_objects=True,
-                    include_metrics=False,
-                )
-                if not sem_result.get("success"):
-                    return sem_result
-                synced_semantic_files.append(semantic_model_file)
+            if semantic_model_file and os.path.exists(semantic_model_file):
+                # Combine semantic model + metric into a temp file for sync
+                with open(semantic_model_file, "r", encoding="utf-8") as f:
+                    semantic_docs = list(yaml.safe_load_all(f))
+                with open(metric_file, "r", encoding="utf-8") as f:
+                    metric_docs = list(yaml.safe_load_all(f))
 
-            result = GenerationHooks._sync_semantic_to_db(
-                metric_file,
-                self.agent_config,
-                include_semantic_objects=False,
-                include_metrics=True,
-                metric_sqls=metric_sqls,
-                original_yaml_path=metric_file,
-            )
-            if result.get("success"):
-                result["semantic_synced"] = bool(synced_semantic_files)
-                result["semantic_model_files_synced"] = synced_semantic_files
+                combined_docs = semantic_docs + metric_docs
+                import tempfile
+
+                fd, temp_file = tempfile.mkstemp(
+                    suffix=".combined.tmp",
+                    dir=os.path.dirname(semantic_model_file),
+                )
+                try:
+                    os.close(fd)
+                    with open(temp_file, "w", encoding="utf-8") as f:
+                        yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
+
+                    # First: sync semantic objects from the semantic model file
+                    sem_result = GenerationHooks._sync_semantic_to_db(
+                        semantic_model_file,
+                        self.agent_config,
+                        include_semantic_objects=True,
+                        include_metrics=False,
+                    )
+                    if not sem_result.get("success"):
+                        return sem_result
+                    # Then: sync metrics from combined file
+                    result = GenerationHooks._sync_semantic_to_db(
+                        temp_file,
+                        self.agent_config,
+                        include_semantic_objects=False,
+                        include_metrics=True,
+                        metric_sqls=metric_sqls,
+                        original_yaml_path=metric_file,
+                    )
+                    if result.get("success"):
+                        result["semantic_synced"] = True
+                finally:
+                    if os.path.exists(temp_file):
+                        os.remove(temp_file)
+            else:
+                # Sync metric file alone
+                result = GenerationHooks._sync_semantic_to_db(
+                    metric_file,
+                    self.agent_config,
+                    include_semantic_objects=False,
+                    include_metrics=True,
+                    metric_sqls=metric_sqls,
+                    original_yaml_path=metric_file,
+                )
+                if result.get("success"):
+                    result["semantic_synced"] = False
 
             if result.get("success"):
                 logger.info(f"Successfully synced metric to KB: {result.get('message')}")

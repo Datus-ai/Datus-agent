@@ -726,6 +726,15 @@ def init_metadata_and_log_result(datasource_name: str, config_path: str, console
         try:
             if kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")
+                from datus.storage.backend_holder import create_vector_connection
+
+                db = create_vector_connection(agent_config.project_name)
+                try:
+                    db.drop_table("schema_metadata", ignore_missing=True)
+                    db.drop_table("schema_value", ignore_missing=True)
+                    logger.info("Dropped existing schema_metadata and schema_value tables")
+                finally:
+                    db.close()
             else:
                 agent_config.check_init_storage_config("database")
 
@@ -806,7 +815,15 @@ def do_init_sql_and_log_result(
 
         if kb_update_strategy == "overwrite":
             agent_config.save_storage_config("reference_sql")
-            ReferenceSqlRAG(agent_config).truncate()
+
+            from datus.storage.backend_holder import create_vector_connection
+
+            db = create_vector_connection(agent_config.project_name)
+            try:
+                db.drop_table("reference_sql", ignore_missing=True)
+                logger.info("Dropped existing reference_sql table")
+            finally:
+                db.close()
             # Also clear the sql_summaries directory (YAML files)
             sql_summary_dir = agent_config.path_manager.sql_summary_path()
             if sql_summary_dir.exists() and not safe_rmtree(sql_summary_dir, "SQL summary directory", force=force):

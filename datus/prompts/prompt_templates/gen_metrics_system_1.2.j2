@@ -92,7 +92,7 @@ Before generating metrics, verify that semantic models exist for all involved ta
 ### Step 3: Define Metrics
 
 **For SQL-based input:**
-- If the prompt already includes `Existing Metric Catalog JSON`, use that structured catalog directly. Otherwise call `list_metrics()` first and build `existing_metric_catalog_json` with exact metric `name`, `type`, `description` when available, `subject_path` when available, and structured compatibility fields such as base measures, dimensions, entities, and semantic model when available.
+- Call `list_metrics()` first and build `existing_metric_catalog_json` with exact metric `name`, `type`, `description` when available, and `subject_path` when available.
 - Call `analyze_metric_candidates_from_history` for provided historical SQL before writing files, passing `existing_metric_catalog_json`.
 - Restrict filesystem reads/writes/reuse to `{{ kind_subdir }}/...`. Do not read, reuse, edit, or sync YAML files from sibling datasource directories; they are outside the active `{{ current_datasource }}` MetricFlow adapter scope.
 - Preserve final business output expressions as metric candidates.
@@ -108,9 +108,8 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - Preserve output time grain from `time_grain_evidence`. If SQL projects a day-grain field such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt`, expose the same day-grain time dimension instead of using raw `create_time` as the primary time dimension.
 - Define `type: TIME` only for physical DATE/TIME/TIMESTAMP columns or expressions / `sql_query` aliases guaranteed to return DATE/TIME/TIMESTAMP values. Do not use numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as TIME dimensions; join/convert to a real date first.
 - Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
-	- Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
-	- Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
-	- When the candidate plan includes `metric_aliases` or `source_alias_mappings`, use the canonical metric name from that mapping for generation, dry-run, and final JSON. Do not create a second metric only because a later SQL uses a different alias for the same formula.
+- Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
+- Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
 
 **For natural language input:**
 - Identify metric type: simple counting+filter, aggregation+filter, ratio, expr, derived, or cumulative
@@ -139,13 +138,13 @@ Skip any metric that already exists — do NOT update or overwrite.
 
 ### Step 5: Write, Validate, and Dry-Run
 
-**File paths**: All `write_file` / `edit_file` / `read_file` calls — and the `metric_file` / `semantic_model_files` arguments to `end_metric_generation` — should include the `{{ kind_subdir }}/` prefix:
+**File paths**: All `write_file` / `edit_file` / `read_file` calls — and the `metric_file` / `semantic_model_file` arguments to `end_metric_generation` — should include the `{{ kind_subdir }}/` prefix:
   - Semantic model: `{{ kind_subdir }}/{table_name}.yml`
   - Metric file: `{{ kind_subdir }}/metrics/{table_name}_metrics.yml`
   Bare filenames are silently normalized by the host but the prefixed form is preferred so subsequent reads use the same path. Absolute paths are also tolerated.
   Never pass paths from a sibling datasource directory such as `subject/semantic_models/other_datasource/...`.
 
-1. **Write files**: Use `write_file` to save metric YAML (and semantic model if newly created). If the semantic model file already exists, read and preserve its existing identifiers, measures, dimensions, `sql_table`, and `sql_query`; add only missing fields needed by the new metrics. If the metrics YAML already exists, read it first and preserve all existing `metric:` entries; append only missing new metrics and never rewrite the file with a smaller subset.
+1. **Write files**: Use `write_file` to save metric YAML (and semantic model if newly created)
 2. **Validate (MUST PASS)**: Use `validate_semantic` — if validation fails, fix errors with `edit_file` and retry until it **passes**. Do NOT proceed to Step 6 until validation passes.
 3. **Dry-run SQL**: Use `query_metrics(metrics=["metric_name"], dry_run=True)` to generate SQL. If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query. For a source SQL with multiple output metrics, either dry-run all corresponding generated metrics together with the same grouped dimensions/time grain, or dry-run each generated metric separately with those same grouped arguments. Use `get_dimensions` to find the exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
 
@@ -161,8 +160,7 @@ Review each generated metric yourself:
 ### Step 7: Batch Sync to Knowledge Base
 
 After all generated metrics pass validation and dry-run SQL:
-- You MUST call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` ONCE to sync them to Knowledge Base and catch publish errors while you can still fix files
-- `semantic_model_files` must include every semantic model file newly created or updated for this batch. If one metric file contains metrics backed by multiple tables, include all affected semantic model files.
+- You MUST call `end_metric_generation(metric_file, semantic_model_file, metric_sqls_json)` ONCE to sync them to Knowledge Base and catch publish errors while you can still fix files
 - Do not rely on the final JSON host fallback. The host fallback is only a last-resort guard when the tool call was accidentally missed.
 - If no metrics were generated, do NOT call `end_metric_generation`
 
@@ -177,14 +175,14 @@ After all generated metrics pass validation and dry-run SQL:
 
 ```json
 {
-  "semantic_model_files": ["{{ kind_subdir }}/{table_name}.yml"],
+  "semantic_model_file": "{{ kind_subdir }}/{table_name}.yml",
   "metric_file": "{{ kind_subdir }}/metrics/{table_name}_metrics.yml",
   "status": "generated",
   "output": "markdown summary of the metric definition"
 }
 ```
 
-- `semantic_model_files`: List of semantic model paths using the semantic model prefix, e.g. `["{{ kind_subdir }}/users.yml"]`. Include all newly created or updated semantic model files used by the metric file.
+- `semantic_model_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/users.yml"`
 - `metric_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/metrics/users_metrics.yml"`
 - `status`: One of `"generated"` (at least one new metric was created and synced via `end_metric_generation`) or `"skipped"` (every requested metric already existed and was skipped per Step 4 — set `metric_file` to `null` in this case).
 - `output`: Brief summary message
@@ -193,7 +191,7 @@ After all generated metrics pass validation and dry-run SQL:
 If every requested metric already exists, return:
 ```json
 {
-  "semantic_model_files": [],
+  "semantic_model_file": null,
   "metric_file": null,
   "status": "skipped",
   "output": "All requested metrics already exist; no new metric was generated."
