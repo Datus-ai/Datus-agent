@@ -880,3 +880,94 @@ class TestCollectLatestTrajectoryFiles:
         (ns_dir / "run_a").mkdir(parents=True)
         result = collect_latest_trajectory_files(str(tmp_path), "ns")
         assert isinstance(result, dict)
+
+
+# ---------------------------------------------------------------------------
+# SingleFileGoldProvider — per-(datasource, database) routing
+# ---------------------------------------------------------------------------
+
+
+class TestSingleFileGoldProviderRouting:
+    """A datasource may serve multiple databases (e.g. each BIRD db_id is a file under one glob
+    datasource). The gold provider must run each task's gold SQL against that task's own database,
+    routing through db_manager.get_conn(datasource, db_name) — not a single datasource-default
+    connector that ignores the per-task database.
+    """
+
+    class _FakeExecResult:
+        def __init__(self, sql_return: str):
+            self.success = True
+            self.error = None
+            self.sql_return = sql_return
+
+    class _FakeConnector:
+        def __init__(self, db_name: str):
+            self._db_name = db_name
+
+        def execute_csv(self, sql_text: str):
+            # Encode which physical database answered so the test can assert routing end-to-end.
+            return TestSingleFileGoldProviderRouting._FakeExecResult(f"db\n{self._db_name}")
+
+    class _FakeDBManager:
+        def __init__(self):
+            self.calls = []
+
+        def get_conn(self, datasource: str, database: str = ""):
+            self.calls.append((datasource, database))
+            return TestSingleFileGoldProviderRouting._FakeConnector(database or "<default>")
+
+    def _write_gold_sql_csv(self, path):
+        import csv as _csv
+
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = _csv.writer(handle)
+            writer.writerow(["task_id", "gold_sql", "db_id"])
+            writer.writerow(["t1", "SELECT 1", "california_schools"])
+            writer.writerow(["t2", "SELECT 1", "financial"])
+
+    def test_each_task_routes_to_its_own_database(self, tmp_path):
+        from datus.utils.benchmark_utils import SingleFileGoldProvider
+
+        gold_file = tmp_path / "gold.csv"
+        self._write_gold_sql_csv(gold_file)
+
+        fake_mgr = self._FakeDBManager()
+        provider = SingleFileGoldProvider(
+            result_file=str(gold_file),
+            db_manager=fake_mgr,
+            datasource="bird_sqlite",
+            sql_key="gold_sql",
+            database_key="db_id",
+        )
+
+        r1 = provider.fetch("t1")
+        r2 = provider.fetch("t2")
+
+        # Routed by the task's own database within the shared datasource.
+        assert ("bird_sqlite", "california_schools") in fake_mgr.calls
+        assert ("bird_sqlite", "financial") in fake_mgr.calls
+        # The gold result came from the matching database, not a shared default.
+        assert r1.error is None and r1.dataframe["db"].tolist() == ["california_schools"]
+        assert r2.error is None and r2.dataframe["db"].tolist() == ["financial"]
+
+    def test_connector_resolution_failure_is_per_task_error(self, tmp_path):
+        from datus.utils.benchmark_utils import SingleFileGoldProvider
+
+        gold_file = tmp_path / "gold.csv"
+        self._write_gold_sql_csv(gold_file)
+
+        class _RaisingDBManager:
+            def get_conn(self, datasource: str, database: str = ""):
+                raise KeyError(f"{database} not found")
+
+        provider = SingleFileGoldProvider(
+            result_file=str(gold_file),
+            db_manager=_RaisingDBManager(),
+            datasource="bird_sqlite",
+            sql_key="gold_sql",
+            database_key="db_id",
+        )
+
+        result = provider.fetch("t1")
+        assert result.dataframe is None
+        assert "california_schools" in result.error

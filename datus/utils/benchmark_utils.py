@@ -28,10 +28,9 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 
 import pandas as pd
 import yaml
-from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
-from datus.tools.db_tools.db_manager import db_manager_instance, get_connection
+from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -609,7 +608,8 @@ class SingleFileGoldProvider(ResultProvider):
     def __init__(
         self,
         result_file: str,
-        connections: Dict[str, BaseSqlConnector],
+        db_manager: DBManager,
+        datasource: str,
         task_id_key: str = "task_id",
         sql_key: str = "",
         query_result_key: str = "",
@@ -622,7 +622,11 @@ class SingleFileGoldProvider(ResultProvider):
         self.sql_key = sql_key
         self.database_key = database_key
         self.result_file = Path(result_file)
-        self.connections = connections
+        # A datasource may serve multiple databases (e.g. each BIRD db_id is a database under a
+        # single glob datasource). Resolve the connector per task via (datasource, db_name) so the
+        # gold SQL runs against the task's actual database instead of the datasource default.
+        self._db_manager = db_manager
+        self._datasource = datasource
         self.allowed_task_ids = {str(task_id) for task_id in allowed_task_ids} if allowed_task_ids else None
         self.frame_cache_size = max(frame_cache_size, 1)
 
@@ -861,7 +865,13 @@ class SingleFileGoldProvider(ResultProvider):
         return False
 
     def _execute_gold_sql(self, task_id: str, sql_text: str, db_name: str) -> Optional[pd.DataFrame]:
-        connector = get_connection(self.connections, db_name)
+        # Route to the task's own database within the datasource (db_name empty -> default).
+        try:
+            connector = self._db_manager.get_conn(self._datasource, db_name)
+        except Exception as exc:
+            error_msg = f"Connector not found for datasource '{self._datasource}', database '{db_name}': {exc}"
+            self._errors[task_id] = error_msg
+            return None
         if connector is None:
             error_msg = f"Connector not found for database '{db_name}'"
             self._errors[task_id] = error_msg
@@ -2077,11 +2087,11 @@ def _build_gold_result_provider(
         )
 
     db_manager = db_manager_instance(agent_config.datasource_configs)
-    connections = db_manager.get_connections(agent_config.current_datasource)
 
     return SingleFileGoldProvider(
         result_file=str(result_file),
-        connections=connections,
+        db_manager=db_manager,
+        datasource=agent_config.current_datasource,
         task_id_key=task_id_key,
         sql_key=sql_key,
         query_result_key=query_result_key,
