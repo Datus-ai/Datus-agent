@@ -88,7 +88,7 @@ class TestPathHelpers:
         memory_file.parent.mkdir(parents=True)
         memory_file.write_bytes(b"\xff\xfe invalid utf-8 \x80\x81")
         result = read_memory_raw(str(tmp_path), "chat")
-        assert isinstance(result, str)
+        assert result == ""
 
     def test_read_os_error_returns_empty(self, tmp_path):
         memory_file = get_memory_file_path(str(tmp_path), "chat")
@@ -161,8 +161,9 @@ class TestLoadMemoryContext:
 
         result = load_memory_context(str(tmp_path), "chat")
         assert "truncated" in result
-        # Content (without the warning) stays at or under the cap; warning adds <300 bytes.
-        assert len(result.encode("utf-8")) <= MEMORY_BYTE_LIMIT + 300
+        # The whole returned string — body + appended warning — stays within the
+        # hard cap; the warning bytes are reserved before the content is sliced.
+        assert len(result.encode("utf-8")) <= MEMORY_BYTE_LIMIT
         body = result.split("> WARNING", 1)[0]
         assert len(body.encode("utf-8")) <= MEMORY_BYTE_LIMIT
 

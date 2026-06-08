@@ -107,7 +107,6 @@ class AgenticNode(Node):
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
-        memory_enabled: Optional[bool] = None,
         session_id: Optional[str] = None,
     ):
         """
@@ -123,12 +122,6 @@ class AgenticNode(Node):
             mcp_servers: Dictionary of MCP servers available to this node
             scope: Optional session scope for directory isolation
             is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
-            memory_enabled: Whether this node should get the Auto Memory section injected
-                into its system prompt. When ``None`` (default), resolved from
-                ``has_memory(self.get_node_name())`` — built-in subagents (gen_sql,
-                gen_report, feedback, etc.) default to ``False``; only ``chat`` and
-                custom/user-defined subagents default to ``True``. Pass an explicit
-                bool to override.
             session_id: Optional resume target. When provided, the node opens
                 this session id and persisted plan-mode state on disk is
                 restored automatically. When ``None``, a fresh id is generated
@@ -170,12 +163,6 @@ class AgenticNode(Node):
         # which injects the caller's MEMORY.md — read this instead of inferring
         # it from the session id prefix. ``None`` when no switch occurred.
         self.caller_node_name: Optional[str] = None
-
-        # Whether memory context is injected into this node's system prompt.
-        # Resolves from has_memory() when not explicitly set by the caller.
-        from datus.utils.memory_loader import has_memory
-
-        self.memory_enabled: bool = memory_enabled if memory_enabled is not None else has_memory(self.get_node_name())
 
         # Permission and skill management
         self.permission_manager: Optional["PermissionManager"] = None
@@ -3141,6 +3128,14 @@ class AgenticNode(Node):
             bash_tools = list(bash_tool.available_tools())
             if bash_tools:
                 mapping["bash_tools"] = bash_tools
+        # Dedicated memory tools are mounted on every main agent (and the
+        # feedback node), so classify them here in the base map — otherwise
+        # nodes without a ``_tool_category_map`` override (e.g. feedback) would
+        # fall back to the ``tools`` catch-all and the ``memory_tools.*`` profile
+        # rules would never govern ``add_memory`` / ``edit_memory``.
+        memory_func_tool = getattr(self, "memory_func_tool", None)
+        if memory_func_tool:
+            mapping["memory_tools"] = list(memory_func_tool.available_tools())
         return mapping
 
     def _populate_tool_registry(self) -> None:

@@ -473,11 +473,12 @@ class TestExtractStorageInfo:
 
 
 class TestMemoryEnabled:
-    """Verify the ``memory_enabled`` attribute on AgenticNode gates Auto Memory injection."""
+    """Verify which node types own their own memory file (``has_memory``)."""
 
     def test_chat_node_defaults_to_enabled(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.configuration.node_type import NodeType
+        from datus.utils.memory_loader import has_memory
 
         node = ChatAgenticNode(
             node_id="test_chat_mem",
@@ -485,13 +486,14 @@ class TestMemoryEnabled:
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
-        assert node.memory_enabled is True
+        assert has_memory(node.get_node_name()) is True
 
     def test_feedback_node_defaults_to_disabled(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.utils.memory_loader import has_memory
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
     def test_builtin_subagent_skips_memory_injection(self, real_agent_config, mock_llm_create):
         """A built-in node running as a SUB-agent with no inherited memory gets
@@ -514,9 +516,10 @@ class TestMemoryEnabled:
         assert "## Memory" not in prompt
 
     def test_explicit_override_forces_injection(self, real_agent_config, mock_llm_create):
-        """Passing override_node_name bypasses self.memory_enabled (feedback path)."""
+        """Passing override_node_name forces injection regardless of node identity (feedback path)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.configuration.node_type import NodeType
+        from datus.utils.memory_loader import has_memory
 
         node = GenSQLAgenticNode(
             node_id="test_gen_sql_override",
@@ -526,7 +529,7 @@ class TestMemoryEnabled:
             node_name="gen_sql",
             execution_mode="workflow",
         )
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
         prompt = node._inject_memory_context("BASE PROMPT", override_node_name="chat")
         assert "## Memory" in prompt

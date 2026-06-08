@@ -274,8 +274,7 @@ class ChatAgenticNode(AgenticNode):
             mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool:
             mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        if self.memory_func_tool:
-            mapping["memory_tools"] = list(self.memory_func_tool.available_tools())
+        # ``memory_tools`` is registered by the base ``_tool_category_map``.
         if self.sub_agent_task_tool:
             mapping["sub_agent_tools"] = list(self.sub_agent_task_tool.available_tools())
         catch_all: List[Any] = []

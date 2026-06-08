@@ -4,7 +4,7 @@
 
 """Tests for the read-only memory inheritance branch of ``_inject_memory_context``.
 
-Built-in subagents (``memory_enabled=False``) launched via SubAgentTaskTool now
+Built-in subagents (which own no memory of their own) launched via SubAgentTaskTool now
 read their parent's MEMORY.md when ``inherited_memory(...)`` is active in the
 contextvar. The injected block is read-only and must not contain the writable
 "Save" instructions that the writable branch renders for ``chat`` / custom
@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from datus.configuration.inherited_memory_overrides import inherited_memory
+from datus.utils.memory_loader import has_memory
 
 
 def _write_chat_memory(real_agent_config, content: str) -> Path:
@@ -57,7 +58,7 @@ class TestInheritedMemoryInjection:
             "## Profile\n- User prefers concise SQL comments.\n",
         )
         node = _new_gen_sql_node(real_agent_config)
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
         with inherited_memory("gen_sql", "chat"):
             prompt = node._inject_memory_context("BASE PROMPT")
@@ -74,7 +75,7 @@ class TestInheritedMemoryInjection:
 
     def test_builtin_without_inherited_returns_base_prompt(self, real_agent_config, mock_llm_create):
         node = _new_gen_sql_node(real_agent_config)
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
         # No contextvar push — current behavior preserved.
         prompt = node._inject_memory_context("BASE PROMPT")
@@ -94,7 +95,7 @@ class TestInheritedMemoryInjection:
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
-        assert chat.memory_enabled is True
+        assert has_memory(chat.get_node_name()) is True
 
         with inherited_memory("gen_sql", "chat"):
             prompt = chat._inject_memory_context("BASE PROMPT")

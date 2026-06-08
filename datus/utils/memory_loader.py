@@ -76,13 +76,21 @@ def _truncate_to_byte_limit(raw: str) -> str:
     if len(trimmed.encode("utf-8")) <= MEMORY_BYTE_LIMIT:
         return trimmed
 
-    encoded = trimmed.encode("utf-8")[:MEMORY_BYTE_LIMIT]
+    # Reserve room for the appended notice so the final string still fits the
+    # cap. If the warning itself somehow exceeds the budget, fall back to a bare
+    # byte cut with no notice rather than breach the limit.
+    warning = f"\n\n> WARNING: {MEMORY_FILENAME} exceeded {MEMORY_BYTE_LIMIT} bytes and was truncated at load time."
+    warning_bytes = len(warning.encode("utf-8"))
+    budget = MEMORY_BYTE_LIMIT - warning_bytes
+    if budget <= 0:
+        return trimmed.encode("utf-8")[:MEMORY_BYTE_LIMIT].decode("utf-8", errors="ignore")
+
+    encoded = trimmed.encode("utf-8")[:budget]
     # Decode ignoring a possibly-split trailing multi-byte char.
     safe = encoded.decode("utf-8", errors="ignore")
     cut_at = safe.rfind("\n")
     content = safe[:cut_at] if cut_at > 0 else safe
 
-    warning = f"\n\n> WARNING: {MEMORY_FILENAME} exceeded {MEMORY_BYTE_LIMIT} bytes and was truncated at load time."
     return content + warning
 
 

@@ -14,7 +14,7 @@ touch the ``.datus/memory/**`` subtree. This file covers:
    memory dir (``{project_root}/.datus/memory/{node}/MEMORY.md``) is loaded and
    injected (writable branch) into that node's system prompt.
 2. Memory inheritance — a built-in subagent that has no memory file of its own
-   (``memory_enabled is False``) inherits the parent's MEMORY.md in read-only
+   (``has_memory`` is False) inherits the parent's MEMORY.md in read-only
    mode when the ``inherited_memory`` contextvar is active (the path used when a
    custom subagent is launched via the ``task`` tool).
 3. Workspace isolation — a sibling node without its own MEMORY.md does not pick
@@ -88,7 +88,7 @@ class TestAutoMemoryLoadAndInherit:
             node_type=NodeType.TYPE_CHAT,
             agent_config=config,
         )
-        assert node.memory_enabled is True, "chat node must be memory-enabled"
+        assert has_memory(node.get_node_name()) is True, "chat node must be memory-enabled"
 
         prompt = node._get_system_prompt()
         assert CHAT_MEMORY_MARKER in prompt, "Loaded chat MEMORY.md content must appear in the system prompt"
@@ -107,8 +107,7 @@ class TestAutoMemoryLoadAndInherit:
             node_name="gen_sql",
             execution_mode="workflow",
         )
-        assert node.memory_enabled is False, "built-in gen_sql must not own a memory file"
-        assert has_memory("gen_sql") is False
+        assert has_memory("gen_sql") is False, "built-in gen_sql must not own a memory file"
 
         # Without inheritance active, gen_sql renders no memory section.
         base_prompt = node._inject_memory_context("BASE PROMPT")
@@ -134,7 +133,7 @@ class TestAutoMemoryLoadAndInherit:
             node_name=CUSTOM_AGENT,
             execution_mode="workflow",
         )
-        assert custom_node.memory_enabled is True, "custom (non-builtin) subagent must be memory-enabled"
+        assert has_memory(custom_node.get_node_name()) is True, "custom (non-builtin) subagent must be memory-enabled"
         custom_prompt = custom_node._get_system_prompt()
         assert CUSTOM_MEMORY_MARKER in custom_prompt, "Custom agent must load its own MEMORY.md"
 
