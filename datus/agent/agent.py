@@ -574,6 +574,7 @@ class Agent:
                         self.args.success_story,
                         subject_tree,
                         emit=self._emit_metrics_event,
+                        batch_size=getattr(self.args, "metrics_batch_size", 5),
                     )
 
                 if successful:
