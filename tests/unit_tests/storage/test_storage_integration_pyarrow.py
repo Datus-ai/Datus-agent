@@ -83,11 +83,12 @@ class TestMetricRAGPyArrow:
         metric_storage = MetricStorage(embedding_model=get_metric_embedding_model())
         metric_storage.batch_store_metrics(sample_metrics_with_domain_layers)
 
-        # Mock cache for MetricRAG
+        # Mock cache for MetricRAG — datasource_id must match the storage default
         rag = MetricRAG.__new__(MetricRAG)
         rag.storage = metric_storage
-        rag.datasource_id = "test_datasource"
+        rag.datasource_id = metric_storage.datasource_id
         rag._sub_agent_filter = None
+        rag._provenance_enabled = False
 
         result = rag.search_all_metrics()
 

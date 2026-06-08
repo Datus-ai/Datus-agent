@@ -379,7 +379,7 @@ class TestStoreMetric:
             manager.store_metric({"name": "revenue"}, subject_path=["Finance", "Revenue"])
 
         stored = mock_store.batch_store_metrics.call_args[0][0]
-        assert "Finance/Revenue.revenue" in stored[0]["id"]
+        assert stored[0]["id"] == "metric:revenue"
 
     def test_metric_type_defaults_to_simple(self):
         manager = _make_manager()

@@ -1058,14 +1058,13 @@ class TestQueryMetricsCompression:
 
         assert result.success == 1
         assert evidence.metric_dry_run_passed is True
-        assert evidence.metric_dry_run_queries == [
-            {
-                "metrics": ["revenue"],
-                "dimensions": ["customer_segment"],
-                "time_granularity": "month",
-                "sql": "SELECT SUM(revenue) AS revenue FROM orders",
-            }
-        ]
+        assert len(evidence.metric_dry_run_queries) == 1
+        dry_run = evidence.metric_dry_run_queries[0]
+        assert dry_run["metrics"] == ["revenue"]
+        assert dry_run["dimensions"] == ["customer_segment"]
+        assert dry_run["time_granularity"] == "month"
+        assert dry_run["time_granularity_explicit"] is True
+        assert dry_run["sql"] == "SELECT SUM(revenue) AS revenue FROM orders"
         assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
 
     def test_query_metrics_non_dry_run_does_not_record_publish_evidence(self, semantic_tools):
