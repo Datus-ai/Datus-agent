@@ -544,6 +544,7 @@ class ExplorerService:
             Result[MetricInfo] with metric name and YAML content
         """
         try:
+            self._require_datasource()
             import yaml
 
             from datus.api.models.config_models import ErrorCode
@@ -611,6 +612,7 @@ class ExplorerService:
             Result[GetReferenceSQLData] with SQL details
         """
         try:
+            self._require_datasource()
             logger.info(f"Getting reference SQL at path: {subject_path}")
             from datus.api.models.config_models import ErrorCode
 
