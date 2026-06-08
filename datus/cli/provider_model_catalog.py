@@ -48,6 +48,10 @@ FRESH_CACHE_TTL_SEC = 600.0
 # Cache versions that load_cached_models / load_cached_model_details accept.
 _SUPPORTED_CACHE_VERSIONS = frozenset({1, 2})
 
+# providers.yml key for the aggregate OpenRouter gateway. Its bucket keeps the
+# full "<vendor>/<slug>" model id instead of the stripped slug used elsewhere.
+OPENROUTER_PROVIDER_KEY = "openrouter"
+
 # OpenRouter prefixes every model id as "<vendor>/<slug>". Map the vendor half
 # onto the provider keys used in datus/conf/providers.yml.
 OPENROUTER_VENDOR_MAP: Dict[str, str] = {
@@ -193,7 +197,54 @@ def _bucket_by_vendor(
         if pricing:
             entry["pricing"] = pricing
         buckets.setdefault(provider_key, {}).setdefault(slug, entry)
-    return {k: list(v.values()) for k, v in buckets.items()}
+    result = {k: list(v.values()) for k, v in buckets.items()}
+    # The `openrouter` provider is an aggregate gateway: unlike the native
+    # vendor buckets (which strip the vendor prefix), it keeps the full
+    # ``vendor/slug`` id so LiteLLM can route through openrouter.ai. Only emit
+    # it when providers.yml explicitly whitelists the provider; a ``None``
+    # whitelist (no providers.yml) leaves the legacy vendor-only behaviour
+    # untouched.
+    if allowed is not None and OPENROUTER_PROVIDER_KEY in allowed:
+        aggregate = _aggregate_openrouter(raw_models)
+        if aggregate:
+            result[OPENROUTER_PROVIDER_KEY] = aggregate
+    return result
+
+
+def _aggregate_openrouter(raw_models: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collect every chat-capable model under one ``openrouter`` bucket.
+
+    Entries keep their full ``vendor/slug`` id (e.g. ``anthropic/claude-sonnet-4``)
+    so the ``openrouter`` provider can route to any vendor through a single key.
+    Reuses the same unfit filter as the per-vendor buckets; dedupes by full id
+    while preserving first-seen order.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    for item in raw_models:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        if not isinstance(model_id, str) or "/" not in model_id:
+            continue
+        full_id = model_id.strip()
+        _, _, slug = full_id.partition("/")
+        slug = slug.strip()
+        if not slug or full_id in out:
+            continue
+        ctx_len = _extract_context_length(item)
+        if _is_model_unfit(slug, ctx_len):
+            continue
+        entry: Dict[str, Any] = {"id": full_id}
+        name = item.get("name")
+        if isinstance(name, str) and name:
+            entry["name"] = name
+        if ctx_len is not None:
+            entry["context_length"] = ctx_len
+        pricing = _extract_pricing(item.get("pricing"))
+        if pricing:
+            entry["pricing"] = pricing
+        out[full_id] = entry
+    return list(out.values())
 
 
 def fetch_openrouter_models(

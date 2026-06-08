@@ -375,6 +375,125 @@ class TestBucketByVendor:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OpenRouter aggregate bucket
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestAggregateOpenrouter:
+    def test_keeps_full_vendor_slug_ids(self) -> None:
+        """The aggregate bucket preserves the full ``vendor/slug`` id, unlike the
+        per-vendor buckets which strip the vendor prefix."""
+        bucket = pmc._aggregate_openrouter(
+            [
+                {"id": "anthropic/claude-sonnet-4"},
+                {"id": "openai/gpt-4o"},
+            ]
+        )
+        assert [e["id"] for e in bucket] == ["anthropic/claude-sonnet-4", "openai/gpt-4o"]
+
+    def test_includes_vendors_outside_the_vendor_map(self) -> None:
+        """OpenRouter routes any vendor, so the aggregate is not limited to
+        OPENROUTER_VENDOR_MAP entries."""
+        bucket = pmc._aggregate_openrouter(
+            [
+                {"id": "meta-llama/llama-4-maverick"},
+                {"id": "mistralai/mistral-large"},
+            ]
+        )
+        assert [e["id"] for e in bucket] == [
+            "meta-llama/llama-4-maverick",
+            "mistralai/mistral-large",
+        ]
+
+    def test_applies_unfit_filter(self) -> None:
+        """Reuses _is_model_unfit: routing-suffix, non-chat, and small-context
+        models are dropped."""
+        bucket = pmc._aggregate_openrouter(
+            [
+                {"id": "openai/gpt-4o"},
+                {"id": "openai/gpt-4o:free"},
+                {"id": "openai/text-embedding-3-large"},
+                {"id": "openai/old-model", "context_length": 2048},
+            ]
+        )
+        assert [e["id"] for e in bucket] == ["openai/gpt-4o"]
+
+    def test_dedupes_preserving_first_seen_order(self) -> None:
+        bucket = pmc._aggregate_openrouter(
+            [
+                {"id": "openai/gpt-4o"},
+                {"id": "anthropic/claude-sonnet-4"},
+                {"id": "openai/gpt-4o"},
+            ]
+        )
+        assert [e["id"] for e in bucket] == ["openai/gpt-4o", "anthropic/claude-sonnet-4"]
+
+    def test_preserves_name_context_and_pricing(self) -> None:
+        bucket = pmc._aggregate_openrouter(
+            [
+                {
+                    "id": "openai/gpt-4o",
+                    "name": "GPT-4o",
+                    "context_length": 128000,
+                    "pricing": {"prompt": "0.0000025", "completion": "0.00001", "request": "0"},
+                }
+            ]
+        )
+        assert bucket == [
+            {
+                "id": "openai/gpt-4o",
+                "name": "GPT-4o",
+                "context_length": 128000,
+                "pricing": {"prompt": "0.0000025", "completion": "0.00001"},
+            }
+        ]
+
+    def test_ids_without_slash_or_empty_slug_are_skipped(self) -> None:
+        bucket = pmc._aggregate_openrouter(
+            [
+                {"id": "gpt-4o"},
+                {"id": "openai/"},
+                {"name": "no id"},
+                "not-a-dict",  # type: ignore[list-item]
+            ]
+        )
+        assert bucket == []
+
+    def test_bucket_by_vendor_emits_openrouter_when_whitelisted(self) -> None:
+        """When the whitelist contains ``openrouter``, _bucket_by_vendor adds a
+        full-id aggregate alongside the stripped per-vendor buckets."""
+        buckets = pmc._bucket_by_vendor(
+            [
+                {"id": "openai/gpt-4o"},
+                {"id": "anthropic/claude-sonnet-4"},
+            ],
+            allowed_providers={"openai", "openrouter"},
+        )
+        # openai vendor bucket keeps the stripped slug; the openrouter aggregate
+        # keeps both full ids (it is not constrained by the vendor whitelist).
+        assert buckets["openai"][0]["id"] == "gpt-4o"
+        assert [e["id"] for e in buckets["openrouter"]] == [
+            "openai/gpt-4o",
+            "anthropic/claude-sonnet-4",
+        ]
+
+    def test_bucket_by_vendor_omits_openrouter_when_not_whitelisted(self) -> None:
+        buckets = pmc._bucket_by_vendor(
+            [{"id": "openai/gpt-4o"}],
+            allowed_providers={"openai"},
+        )
+        assert "openrouter" not in buckets
+
+    def test_bucket_by_vendor_omits_openrouter_when_whitelist_is_none(self) -> None:
+        """A ``None`` whitelist preserves the legacy vendor-only behaviour."""
+        buckets = pmc._bucket_by_vendor(
+            [{"id": "openai/gpt-4o"}],
+            allowed_providers=None,
+        )
+        assert "openrouter" not in buckets
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Cache I/O
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -601,6 +720,41 @@ class TestResolveProviderModels:
         # Cache file was written
         cache_path = fake_datus_home / "cache" / pmc.CACHE_FILE_NAME
         assert cache_path.exists()
+
+    def test_openrouter_provider_overlaid_with_full_id_aggregate(self, fake_datus_home: Path) -> None:
+        """A declared ``openrouter`` provider gets the full ``vendor/slug`` catalog,
+        while native vendor buckets keep their stripped slugs."""
+
+        def handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_payload(
+                    "openai/gpt-4o",
+                    "anthropic/claude-sonnet-4",
+                    "meta-llama/llama-4-maverick",
+                ),
+            )
+
+        local = _local_catalog()
+        local["providers"]["openrouter"] = {
+            "type": "openrouter",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key_env": "OPENROUTER_API_KEY",
+            "models": ["anthropic/claude-sonnet-4"],
+            "default_model": "anthropic/claude-sonnet-4",
+        }
+        with _install_mock_transport(handler):
+            merged = pmc.resolve_provider_models(local)
+
+        assert merged["providers"]["openrouter"]["models"] == [
+            "openai/gpt-4o",
+            "anthropic/claude-sonnet-4",
+            "meta-llama/llama-4-maverick",
+        ]
+        # Native vendor bucket still strips the prefix; openrouter metadata kept.
+        assert merged["providers"]["openai"]["models"] == ["gpt-4o"]
+        assert merged["providers"]["openrouter"]["type"] == "openrouter"
+        assert merged["providers"]["openrouter"]["base_url"] == "https://openrouter.ai/api/v1"
 
     def test_preserves_non_models_fields(self, fake_datus_home: Path) -> None:
         def handler(_req: httpx.Request) -> httpx.Response:

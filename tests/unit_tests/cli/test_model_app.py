@@ -654,18 +654,61 @@ class TestCursor:
         app._clamp_cursor(3)
         assert app._list_cursor == 2
 
+    @staticmethod
+    def _set_rendered_height(app, window_height):
+        """Pin the list Window's rendered height, mimicking a real paint."""
+        app._list_window = MagicMock()
+        app._list_window.render_info = MagicMock(window_height=window_height)
+
     def test_visible_slice_scrolls_to_cursor(self):
         app = _build()
+        self._set_rendered_height(app, 16)  # 16 - 1 indicator = 15 visible
         total = 25
         app._list_cursor = 20
         start, end = app._visible_slice(total)
         assert start <= app._list_cursor < end
-        assert end - start <= app._max_visible
+        assert end - start <= 15
 
     def test_visible_slice_returns_full_range_when_total_fits(self):
         app = _build()
+        self._set_rendered_height(app, 16)
         start, end = app._visible_slice(10)
         assert (start, end) == (0, 10)
+
+    def test_effective_max_visible_uses_rendered_window_height(self):
+        """The cap follows the height prompt_toolkit actually allotted to the
+        list Window (one row reserved for the scroll indicator)."""
+        app = _build()
+        self._set_rendered_height(app, 12)
+        assert app._effective_max_visible() == 11
+
+    def test_effective_max_visible_caps_at_max(self):
+        app = _build()
+        self._set_rendered_height(app, 100)
+        assert app._effective_max_visible() == 15
+
+    def test_effective_max_visible_floors_at_min(self):
+        app = _build()
+        self._set_rendered_height(app, 2)
+        assert app._effective_max_visible() == 3
+
+    def test_effective_max_visible_falls_back_without_render_info(self):
+        """Before the first paint (no render_info) a conservative half-screen
+        estimate is used instead of overflowing."""
+        app = _build()
+        app._list_window = None
+        with patch("datus.cli.model_app.shutil.get_terminal_size") as mock_size:
+            mock_size.return_value.lines = 24  # 24 // 2 - 2 = 10
+            assert app._effective_max_visible() == 10
+
+    def test_visible_slice_respects_short_embedded_panel(self):
+        """A small panel height (embedded mode) yields a small visible slice."""
+        app = _build()
+        app._view = _View.PROVIDER_MODELS
+        self._set_rendered_height(app, 6)  # 6 - 1 = 5 visible
+        app._list_cursor = 0
+        start, end = app._visible_slice(50)
+        assert end - start == 5
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -826,6 +869,102 @@ class TestFinishAndLayout:
         target = object()
         app._focus(target)
         fake_layout.focus.assert_called_once_with(target)
+
+
+class TestProviderModelSearch:
+    """The provider-model view has a live search box that filters the list."""
+
+    def _enter_models(self, app, models, provider="openai"):
+        app._active_provider = provider
+        app._provider_models = list(models)
+        app._view = _View.PROVIDER_MODELS
+        app._model_search.text = ""
+        app._list_cursor = 0
+
+    def test_empty_search_returns_all_models(self):
+        app = _build()
+        models = ["anthropic/claude-sonnet-4", "openai/gpt-4o", "google/gemini-2.5-pro"]
+        self._enter_models(app, models)
+        assert app._filtered_models() == models
+
+    def test_filter_is_case_insensitive_substring(self):
+        app = _build()
+        self._enter_models(
+            app,
+            ["anthropic/claude-sonnet-4", "openai/gpt-4o", "openai/gpt-4o-mini", "google/gemini-2.5-pro"],
+        )
+        app._model_search.text = "OpenAI"
+        assert app._filtered_models() == ["openai/gpt-4o", "openai/gpt-4o-mini"]
+
+    def test_provider_models_items_reflects_filter(self):
+        app = _build()
+        self._enter_models(app, ["openai/gpt-4o", "anthropic/claude-sonnet-4"])
+        app._model_search.text = "claude"
+        labels = [label for label, _style in app._provider_models_items()]
+        assert labels == ["anthropic/claude-sonnet-4"]
+
+    def test_text_change_resets_cursor_and_offset(self):
+        app = _build()
+        self._enter_models(app, ["a/one", "b/two", "c/three", "d/four"])
+        app._list_cursor = 3
+        app._list_offset = 2
+        app._model_search.text = "t"  # matches two/three
+        assert app._list_cursor == 0
+        assert app._list_offset == 0
+
+    def test_on_model_enter_selects_from_filtered_list(self):
+        app = _build()
+        self._enter_models(app, ["openai/gpt-4o", "anthropic/claude-sonnet-4", "anthropic/claude-haiku"])
+        app._model_search.text = "haiku"
+        app._list_cursor = 0  # first (and only) filtered row
+        with patch.object(app, "_finish") as mock_exit:
+            app._on_model_enter()
+        result = mock_exit.call_args.args[0]
+        assert (result.provider, result.model) == ("openai", "anthropic/claude-haiku")
+
+    def test_on_model_enter_noops_when_filter_matches_nothing(self):
+        app = _build()
+        self._enter_models(app, ["openai/gpt-4o"])
+        app._model_search.text = "nonexistent"
+        with patch.object(app, "_finish") as mock_exit:
+            app._on_model_enter()
+        mock_exit.assert_not_called()
+
+    def test_enter_provider_models_clears_stale_filter(self):
+        app = _build()
+        app._model_search.text = "leftover"
+        app._enter_provider_models("openai")  # openai has models in the stub catalog
+        assert app._model_search.text == ""
+        assert app._filtered_models() == ["gpt-4.1", "gpt-4o"]
+
+    def test_footer_hint_mentions_filtering(self):
+        app = _build()
+        app._view = _View.PROVIDER_MODELS
+        hint = "".join(text for _style, text in app._render_footer_hint())
+        assert "filter" in hint.lower()
+
+    def _escape_binding(self, app):
+        from prompt_toolkit.keys import Keys
+
+        kb = app._build_key_bindings()
+        for binding in kb.bindings:
+            if binding.keys == (Keys.Escape,) and binding.filter():
+                return binding
+        raise AssertionError("no active escape binding for current view")
+
+    def test_escape_clears_filter_before_going_back(self):
+        app = _build()
+        self._enter_models(app, ["openai/gpt-4o", "anthropic/claude-sonnet-4"])
+        app._model_search.text = "gpt"
+        binding = self._escape_binding(app)
+        binding.call(MagicMock())
+        # First Esc only clears the filter; still on the model view.
+        assert app._model_search.text == ""
+        assert app._view == _View.PROVIDER_MODELS
+        # Second Esc returns to the provider list.
+        binding = self._escape_binding(app)
+        binding.call(MagicMock())
+        assert app._view == _View.PROVIDER_LIST
 
 
 class TestRunStandalone:
