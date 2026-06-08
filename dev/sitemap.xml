@@ -946,6 +946,12 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devmetricflow/introduction/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/zh/qa/metric-bootstrap-generation-qa/</loc>
+        <lastmod>2026-06-08</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/qa/metric-bootstrap-generation-qa/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/zh/subagent/builtin_subagents/</loc>
         <lastmod>2026-06-08</lastmod>
         <changefreq>daily</changefreq>
