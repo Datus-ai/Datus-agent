@@ -199,8 +199,6 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         but constructs ``self.FILESYSTEM_TOOL_CLS`` so write-protection
         for the artifact directory is in effect.
         """
-        from datus.configuration.inherited_memory_overrides import get_inherited_memory
-
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
         datus_home = kwargs.pop("datus_home", None)
         if datus_home is None and self.agent_config is not None:
@@ -214,15 +212,11 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         if strict is None:
             strict = self._resolve_filesystem_strict()
         current_node = kwargs.pop("current_node", None) or self.get_node_name()
-        inherited_memory_node = kwargs.pop("inherited_memory_node", None)
-        if inherited_memory_node is None:
-            inherited_memory_node = get_inherited_memory(current_node)
         return self.FILESYSTEM_TOOL_CLS(
             root_path=root_path,
             current_node=current_node,
             datus_home=datus_home,
             strict=strict,
-            inherited_memory_node=inherited_memory_node,
             **kwargs,
         )
 

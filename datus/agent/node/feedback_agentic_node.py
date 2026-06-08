@@ -83,28 +83,29 @@ class FeedbackAgenticNode(AgenticNode):
         return self.configured_node_name
 
     def setup_tools(self):
-        """Setup tools: sub-agent task delegation + filesystem for MEMORY.md."""
+        """Setup tools: sub-agent task delegation + memory tools for the caller."""
         if not self.agent_config:
             return
 
         self.tools = []
         self._setup_sub_agent_task_tool()
         self._setup_filesystem_tools()
+        # The feedback node maintains no memory of its own; it writes the
+        # caller's memory (built-in callers resolve to the shared 'chat' memory).
+        self._setup_memory_tools(memory_node=self._resolve_caller_memory_node())
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
         self._rebuild_tools()
 
     def _setup_filesystem_tools(self):
-        """Setup filesystem tools for writing MEMORY.md and other files.
+        """Setup filesystem tools for reading the workspace (not memory).
 
-        The tool is rooted with ``current_node=self._resolve_caller_node_name()``
-        so ``.datus/memory/{caller}/**`` lands in the WHITELIST zone — the
-        whole point of this node is to update the caller's memory, so the
-        policy must permit writes under the caller's memory subtree rather
-        than feedback's own.
+        Persistent memory is owned by the dedicated memory tools; the filesystem
+        tool here only serves general file reads/edits. The ``.datus/memory/**``
+        subtree is HIDDEN to it.
         """
         try:
-            self.filesystem_func_tool = self._make_filesystem_tool(current_node=self._resolve_caller_node_name())
+            self.filesystem_func_tool = self._make_filesystem_tool()
             logger.debug(f"Setup filesystem tools with root path: {self.filesystem_func_tool.root_path}")
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
@@ -114,6 +115,8 @@ class FeedbackAgenticNode(AgenticNode):
         self.tools = []
         if self.filesystem_func_tool:
             self.tools.extend(self.filesystem_func_tool.available_tools())
+        if self.memory_func_tool:
+            self.tools.extend(self.memory_func_tool.available_tools())
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
@@ -124,9 +127,9 @@ class FeedbackAgenticNode(AgenticNode):
         """The node whose memory this feedback run should update.
 
         Exposed as a property so assignment by the CLI (``node.caller_node_name
-        = "gen_sql"``) rebuilds the filesystem tool with the new caller —
-        otherwise the whitelist baked in at construction time (defaulting to
-        ``"chat"``) would keep the caller's memory path classified as HIDDEN.
+        = "gen_sql"``) rebuilds the memory tool to target the new caller —
+        otherwise add_memory/edit_memory would keep writing the previous
+        caller's memory (defaulting to ``"chat"``).
         """
         return getattr(self, "_caller_node_name", None)
 
@@ -134,13 +137,13 @@ class FeedbackAgenticNode(AgenticNode):
     def caller_node_name(self, value: Optional[str]) -> None:
         self._caller_node_name = value
         # Guard for the base class's __init__-time assignment: at that point
-        # ``filesystem_func_tool`` is still ``None`` and we must not rebuild.
-        if getattr(self, "filesystem_func_tool", None) is not None:
+        # ``memory_func_tool`` is still ``None`` and we must not rebuild.
+        if getattr(self, "memory_func_tool", None) is not None:
             try:
-                self.filesystem_func_tool = self._make_filesystem_tool(current_node=self._resolve_caller_node_name())
+                self.memory_func_tool = self._make_memory_tool(memory_node=self._resolve_caller_memory_node())
                 self._rebuild_tools()
             except Exception as e:
-                logger.debug(f"Could not rebuild filesystem tool on caller change: {e}")
+                logger.debug(f"Could not rebuild memory tool on caller change: {e}")
 
     def _resolve_caller_node_name(self) -> str:
         """Return the caller node whose memory this feedback run should update.
@@ -150,6 +153,13 @@ class FeedbackAgenticNode(AgenticNode):
         node — when no explicit caller was set.
         """
         return self.caller_node_name or "chat"
+
+    def _resolve_caller_memory_node(self) -> str:
+        """The memory file the caller owns: built-in callers share ``chat``,
+        custom agents use their own name (mirrors the main-agent rule)."""
+        from datus.utils.memory_loader import resolve_memory_node
+
+        return resolve_memory_node(self._resolve_caller_node_name())
 
     def _get_system_prompt(
         self,
@@ -182,7 +192,7 @@ class FeedbackAgenticNode(AgenticNode):
             # standard memory_context template by overriding the node name.
             return self._finalize_system_prompt(
                 base_prompt,
-                memory_node_name_override=self._resolve_caller_node_name(),
+                memory_node_name_override=self._resolve_caller_memory_node(),
             )
 
         except FileNotFoundError as e:

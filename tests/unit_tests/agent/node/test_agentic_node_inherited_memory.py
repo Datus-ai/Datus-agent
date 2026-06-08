@@ -34,6 +34,8 @@ def _new_gen_sql_node(real_agent_config):
     from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
     from datus.configuration.node_type import NodeType
 
+    # ``is_subagent=True`` so the node follows the sub-agent path (read-only
+    # inherited memory, no write tools) — the scenario this file exercises.
     return GenSQLAgenticNode(
         node_id="test_gen_sql_inherit",
         description="Test inherited memory for gen_sql",
@@ -41,6 +43,7 @@ def _new_gen_sql_node(real_agent_config):
         agent_config=real_agent_config,
         node_name="gen_sql",
         execution_mode="workflow",
+        is_subagent=True,
     )
 
 
@@ -59,12 +62,9 @@ class TestInheritedMemoryInjection:
         with inherited_memory("gen_sql", "chat"):
             prompt = node._inject_memory_context("BASE PROMPT")
 
-        # Read-only header carries the originating agent name and the parent's
-        # memory dir is rendered (so the child knows where its read-only topic
-        # files live). The child's own dir must NOT appear.
+        # Read-only header carries the originating agent name. The parent's
+        # memory is inlined in full (single file, no topic-file path to render).
         assert "## Memory (read-only inheritance from chat)" in prompt
-        assert ".datus/memory/chat" in prompt
-        assert ".datus/memory/gen_sql" not in prompt
         # The seeded chat memory content shows up.
         assert "User prefers concise SQL comments." in prompt
         # Read-only branch must NOT include the writable "Save" instructions.
@@ -132,3 +132,63 @@ class TestInheritedMemoryInjection:
         assert "## Memory" in prompt
         assert "**Save**" in prompt
         assert "read-only inheritance" not in prompt
+
+
+@pytest.mark.ci
+class TestMemoryToolMounting:
+    """The new rule: main agents mount add_memory/edit_memory (built-in → shared
+    'chat'); sub-agents never mount them."""
+
+    def test_builtin_main_agent_mounts_memory_tool_bound_to_chat(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_main_mount",
+            description="gen_sql as main agent",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+            execution_mode="workflow",
+        )
+        node._ensure_memory_tool_in_tools()
+
+        assert node.memory_func_tool.memory_node == "chat"
+        tool_names = {t.name for t in node.tools}
+        assert {"add_memory", "edit_memory"}.issubset(tool_names)
+
+    def test_subagent_does_not_mount_memory_tool(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_sub_mount",
+            description="gen_sql as sub-agent",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+            execution_mode="workflow",
+            is_subagent=True,
+        )
+        node._ensure_memory_tool_in_tools()
+
+        assert node.memory_func_tool is None
+        tool_names = {t.name for t in node.tools}
+        assert "add_memory" not in tool_names
+        assert "edit_memory" not in tool_names
+
+    def test_custom_main_agent_mounts_memory_tool_bound_to_own_name(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+
+        node = GenSQLAgenticNode(
+            node_id="test_custom_main_mount",
+            description="custom agent as main",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="finance_agent",
+            execution_mode="workflow",
+        )
+        node._ensure_memory_tool_in_tools()
+
+        assert node.memory_func_tool.memory_node == "finance_agent"

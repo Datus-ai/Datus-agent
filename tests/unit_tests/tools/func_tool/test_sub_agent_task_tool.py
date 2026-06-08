@@ -405,7 +405,7 @@ class TestResolveNodeType:
         parent = MagicMock()
         parent.get_node_name.return_value = "sales_analyst"
         task_tool._parent_node = parent
-        # 'sales_analyst' is a custom subagent → has_memory() is True → inherit
+        # custom parent owns its own memory node → child inherits it
         assert task_tool._resolve_inherited_memory_node("gen_sql") == "sales_analyst"
 
     def test_resolve_inherited_memory_returns_none_for_feedback(self, task_tool):
@@ -415,24 +415,25 @@ class TestResolveNodeType:
         task_tool._parent_node = parent
         assert task_tool._resolve_inherited_memory_node("feedback") is None
 
-    def test_resolve_inherited_memory_returns_none_for_custom_child(self, task_tool):
-        """Custom subagents already have their own memory and should not be overridden."""
+    def test_resolve_inherited_memory_custom_child_inherits_parent(self, task_tool):
+        """Every sub-agent (including custom ones) inlines the parent's memory
+        read-only when run via task — sub-agents never write memory."""
         parent = MagicMock()
         parent.get_node_name.return_value = "chat"
         task_tool._parent_node = parent
-        # 'sales_analyst' is a custom subagent (not in built-in set) → has_memory=True
-        assert task_tool._resolve_inherited_memory_node("sales_analyst") is None
+        assert task_tool._resolve_inherited_memory_node("sales_analyst") == "chat"
 
     def test_resolve_inherited_memory_returns_none_when_no_parent(self, task_tool):
         task_tool._parent_node = None
         assert task_tool._resolve_inherited_memory_node("gen_sql") is None
 
-    def test_resolve_inherited_memory_returns_none_when_parent_has_no_memory(self, task_tool):
-        """Defensive: if parent itself is a no-memory built-in, do not propagate."""
+    def test_resolve_inherited_memory_resolves_builtin_parent_to_chat(self, task_tool):
+        """A built-in parent owns no memory of its own — as a main agent it uses
+        the shared ``chat`` memory, so its sub-agents inherit ``chat``."""
         parent = MagicMock()
-        parent.get_node_name.return_value = "gen_report"  # built-in, no memory
+        parent.get_node_name.return_value = "gen_report"
         task_tool._parent_node = parent
-        assert task_tool._resolve_inherited_memory_node("gen_sql") is None
+        assert task_tool._resolve_inherited_memory_node("gen_sql") == "chat"
 
     def test_resolve_inherited_memory_swallows_parent_exceptions(self, task_tool):
         """If the parent's get_node_name() raises, fall back to no inheritance."""

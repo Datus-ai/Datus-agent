@@ -5,10 +5,10 @@
 """
 Nightly coverage for the extension flow ``extension.auto_memory``.
 
-Source-reality note (verified): there are no remember / forget / correct LLM
-tools — ``datus/tools/func_tool/memory_filesystem_tools.py`` is read-only
-glob/grep/read. So this file covers the parts of auto memory that are actually
-implemented:
+Memory is a single 2000-byte-capped ``MEMORY.md`` per node, written exclusively
+through the dedicated ``add_memory`` / ``edit_memory`` tools (see
+``datus/tools/func_tool/memory_tools.py``); generic filesystem tools cannot
+touch the ``.datus/memory/**`` subtree. This file covers:
 
 1. Memory LOAD — a MEMORY.md written into a memory-enabled node's workspace
    memory dir (``{project_root}/.datus/memory/{node}/MEMORY.md``) is loaded and
@@ -23,8 +23,10 @@ implemented:
    distinctive instruction runs end-to-end and the loaded memory is present in
    the prompt it sends.
 
-The remember/forget/correct write lifecycle is reported scoped-out (no tool
-support) and is intentionally not tested here.
+The add_memory/edit_memory write lifecycle (including the 2000-byte full →
+prune → retry loop) is covered deterministically in
+``tests/unit_tests/tools/func_tool/test_memory_tools.py`` and at the node level
+in the chat / feedback acceptance tests.
 """
 
 import os

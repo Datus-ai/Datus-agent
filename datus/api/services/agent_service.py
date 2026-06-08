@@ -19,6 +19,7 @@ from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
 from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+from datus.tools.func_tool.memory_tools import MemoryFuncTool
 from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -38,6 +39,7 @@ VALID_TOOL_METHODS: dict[str, set[str]] = {
     "reference_template_tools": set(ReferenceTemplateTools.all_tools_name()),
     "date_parsing_tools": {"parse_temporal_expressions"},
     "filesystem_tools": set(FilesystemFuncTool.all_tools_name()),
+    "memory_tools": set(MemoryFuncTool.all_tools_name()),
     "platform_doc_tools": set(PlatformDocSearchTool.all_tools_name()),
 }
 
@@ -73,7 +75,7 @@ _ASK_AGENT_FILESYSTEM_READ_ONLY: tuple[str, ...] = ("glob", "grep", "read_file")
 # truth: each agent type returns exactly the categories the editor should
 # surface, and the frontend can render whatever it receives.
 _TOOL_CATEGORIES_BY_AGENT_TYPE: dict[str, tuple[str, ...]] = {
-    "chat": _USER_FACING_TOOL_CATEGORIES,
+    "chat": _USER_FACING_TOOL_CATEGORIES + ("memory_tools",),
     "gen_sql": (
         "db_tools",
         "semantic_tools",
@@ -136,6 +138,7 @@ SUBAGENT_TOOL_REFERENCE: dict[str, dict[str, Any]] = {
             "reference_template_tools.*",
             "date_parsing_tools.*",
             "filesystem_tools.*",
+            "memory_tools.*",
             "platform_doc_tools.*",
         ],
         "tool_types": _build_tool_types("chat"),
