@@ -181,12 +181,12 @@ class BaseEmbeddingStore(StorageBase):
         """Fill in default values for rows that are missing them."""
         schema_names = set(self._schema.names) if self._datasource_scoped and self._schema is not None else set()
         for row in data:
+            for k, v in self._default_values.items():
+                row.setdefault(k, v)
             if DATASOURCE_ID_COLUMN in schema_names:
                 row.setdefault(DATASOURCE_ID_COLUMN, "")
             if STORAGE_KEY_COLUMN in schema_names and row.get("id") not in (None, ""):
                 row.setdefault(STORAGE_KEY_COLUMN, build_storage_key(row.get(DATASOURCE_ID_COLUMN, ""), row["id"]))
-            for k, v in self._default_values.items():
-                row.setdefault(k, v)
         return data
 
     def _scope_column_migration_exprs(self) -> Dict[str, str]:

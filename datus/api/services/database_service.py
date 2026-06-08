@@ -63,7 +63,13 @@ class DatasourceService:
             return self.semantic_rag
         self.current_datasource = self.agent_config.current_datasource
         if not self.current_datasource:
-            raise ValueError("No datasource is selected")
+            from datus.utils.exceptions import DatusException
+            from datus.utils.exceptions import ErrorCode as StorageErrorCode
+
+            raise DatusException(
+                StorageErrorCode.STORAGE_INVALID_ARGUMENT,
+                message_args={"error_message": "No datasource is selected"},
+            )
         self.semantic_rag = SemanticModelRAG(self.agent_config, datasource_id=self.current_datasource)
         return self.semantic_rag
 

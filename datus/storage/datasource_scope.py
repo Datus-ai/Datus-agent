@@ -60,7 +60,10 @@ def build_storage_key(datasource_id: str, business_id: Any) -> str:
 
     row_id = str(business_id or "").strip()
     if not row_id:
-        raise ValueError("business id is required to build storage_key")
+        raise DatusException(
+            ErrorCode.STORAGE_INVALID_ARGUMENT,
+            message_args={"error_message": "business id is required to build storage_key"},
+        )
     datasource = str(datasource_id or "").strip()
     if datasource:
         return f"{datasource}:{row_id}"

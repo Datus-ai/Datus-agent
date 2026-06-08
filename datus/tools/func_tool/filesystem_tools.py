@@ -685,9 +685,10 @@ class FilesystemFuncTool(BaseTool):
 
         fixed_prefix = "/".join(fixed_parts)
         remainder = "/".join(remainder_parts)
-        candidates = [fixed_prefix]
+        candidates = []
         if path not in ("", ".", "./"):
             candidates.append(os.path.join(path, fixed_prefix))
+        candidates.append(fixed_prefix)
 
         for candidate in candidates:
             resolved = self._classify(candidate)

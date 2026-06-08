@@ -381,8 +381,9 @@ def _dry_run_satisfies_time_group(dry_run: Dict[str, Any], time_hint: Dict[str, 
     if (
         isinstance(sql, str)
         and base_expr
+        and dimensions
         and _sql_contains_base_expr_text(sql, base_expr)
-        and (not dimensions or any(_is_metric_time_dimension(dimension) for dimension in dimensions))
+        and any(_is_metric_time_dimension(dimension) for dimension in dimensions)
     ):
         return True
     if not isinstance(sql, str) or not _sql_contains_time_group(sql, base_expr, grain):

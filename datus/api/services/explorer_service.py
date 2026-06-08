@@ -61,6 +61,16 @@ class ExplorerService:
             datasource_id=self.datasource_id,
         )
 
+    def _require_datasource(self) -> None:
+        """Raise if no datasource is bound to this service instance."""
+        if not self.datasource_id:
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            raise DatusException(
+                ErrorCode.STORAGE_INVALID_ARGUMENT,
+                message_args={"error_message": "No datasource is selected; select a datasource first"},
+            )
+
     def _gen_reference_sql_id(self, sql: str) -> str:
         """Generate a stable identifier for reference SQL entries."""
         from datus.storage.reference_sql.init_utils import gen_reference_sql_id
@@ -319,6 +329,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             logger.info(f"Creating directory at path: {request.subject_path}")
 
             # Use SubjectTreeStore to create or find the directory path
@@ -358,6 +369,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             logger.info(f"Creating reference SQL '{request.name}' at path: {request.subject_path}")
             from datus.api.models.config_models import ErrorCode
 
@@ -413,6 +425,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             logger.info(f"Renaming {request.type} from {request.subject_path} to {request.new_subject_path}")
             from datus.api.models.config_models import ErrorCode
             from datus.api.models.explorer_models import SubjectNodeType
@@ -672,6 +685,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             logger.info(f"Editing reference SQL at path: {request.subject_path}")
             from datus.api.models.config_models import ErrorCode
 
@@ -744,6 +758,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             import yaml
 
             from datus.api.models.config_models import ErrorCode
@@ -887,6 +902,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             import yaml
 
             from datus.api.models.config_models import ErrorCode
@@ -1035,6 +1051,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             from datus.api.models.config_models import ErrorCode
 
             logger.info(f"Editing semantic model entry: {request.entry_id}")
@@ -1087,6 +1104,7 @@ class ExplorerService:
             Result[dict]
         """
         try:
+            self._require_datasource()
             logger.info(f"Deleting {request.type} at path: {request.subject_path}")
             from datus.api.models.config_models import ErrorCode
             from datus.api.models.explorer_models import SubjectNodeType
