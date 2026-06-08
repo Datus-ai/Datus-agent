@@ -3485,6 +3485,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Interactive Picker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#filtering-the-model-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering the model list
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3712,6 +3729,8 @@
 </tbody>
 </table>
 <p>Use <strong>Up/Down</strong> arrows to navigate, <strong>Enter</strong> to select, and <strong>Esc</strong> / <strong>q</strong> to cancel.</p>
+<h4 id="filtering-the-model-list">Filtering the model list<a class="headerlink" href="#filtering-the-model-list" title="Permanent link">&para;</a></h4>
+<p>After drilling into a provider, the model list shows a <strong>Search</strong> box at the top — just start typing to filter the list by substring (case-insensitive). This is especially handy for gateways like <strong>OpenRouter</strong> that expose 300+ models. <strong>Up/Down</strong> and <strong>Enter</strong> keep operating on the filtered list; <strong>Esc</strong> clears the filter first, then a second <strong>Esc</strong> returns to the provider list. The list height adapts to the available terminal space and scrolls when it overflows.</p>
 <h3 id="direct-shortcuts">Direct Shortcuts<a class="headerlink" href="#direct-shortcuts" title="Permanent link">&para;</a></h3>
 <p>Switch without opening the picker:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># Switch to a specific provider + model
@@ -3728,7 +3747,7 @@
 <hr />
 <h2 id="provider-authentication">Provider Authentication<a class="headerlink" href="#provider-authentication" title="Permanent link">&para;</a></h2>
 <h3 id="api-key-providers">API Key Providers<a class="headerlink" href="#api-key-providers" title="Permanent link">&para;</a></h3>
-<p>For providers that require an API key (OpenAI, DeepSeek, Claude API, Kimi, Qwen, Gemini, etc.):</p>
+<p>For providers that require an API key (OpenAI, DeepSeek, Claude API, Kimi, Qwen, Gemini, OpenRouter, etc.):</p>
 <ol>
 <li>Select the provider in the picker</li>
 <li>If no credentials are configured, a credential form appears</li>
@@ -3759,7 +3778,7 @@
 <li>Select <strong>+ Add custom model</strong></li>
 <li>Fill in the form fields:</li>
 <li><strong>Name</strong> — Unique identifier (used as <code>agent.models.&lt;name&gt;</code> key)</li>
-<li><strong>Type</strong> — Interface type (<code>openai</code>, <code>claude</code>, <code>deepseek</code>, <code>kimi</code>, <code>gemini</code>, etc.)</li>
+<li><strong>Type</strong> — Interface type (<code>openai</code>, <code>claude</code>, <code>deepseek</code>, <code>kimi</code>, <code>gemini</code>, <code>openrouter</code>, etc.)</li>
 <li><strong>Base URL</strong> — API endpoint URL</li>
 <li><strong>API Key</strong> — Authentication credential (masked)</li>
 <li><strong>Model</strong> — Model name / SKU</li>

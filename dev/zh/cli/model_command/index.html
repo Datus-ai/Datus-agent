@@ -3485,10 +3485,27 @@
     </span>
   </a>
   
-</li>
+    <nav class="md-nav" aria-label="交互式选择器">
+      <ul class="md-nav__list">
         
           <li class="md-nav__item">
   <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        过滤模型列表
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         直接快捷方式
@@ -3504,7 +3521,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
         提供商认证
@@ -3554,7 +3571,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         自定义模型
@@ -3566,7 +3583,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
+  <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
         添加自定义模型
@@ -3577,7 +3594,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
+  <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
         删除自定义模型
@@ -3593,7 +3610,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
+  <a href="#_10" class="md-nav__link">
     <span class="md-ellipsis">
       
         配置文件
@@ -3643,7 +3660,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
+  <a href="#_11" class="md-nav__link">
     <span class="md-ellipsis">
       
         工作原理
@@ -3712,7 +3729,9 @@
 </tbody>
 </table>
 <p>使用**上/下**箭头导航，<strong>Enter</strong> 选择，<strong>Esc</strong> / <strong>q</strong> 取消。</p>
-<h3 id="_4">直接快捷方式<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<h4 id="_4">过滤模型列表<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h4>
+<p>进入某个 provider 后，模型列表顶部会出现一个 <strong>Search</strong> 检索框 —— 直接输入即可按子串过滤（不区分大小写）。这对 <strong>OpenRouter</strong> 这类暴露 300+ 模型的网关尤其有用。<strong>上/下</strong> 和 <strong>Enter</strong> 仍作用于过滤后的列表；<strong>Esc</strong> 先清空过滤，再次 <strong>Esc</strong> 才返回 provider 列表。列表高度会自适应终端可用空间，超出时滚动显示。</p>
+<h3 id="_5">直接快捷方式<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h3>
 <p>无需打开选择器即可切换：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># 切换到指定提供商 + 模型
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>/model openai/gpt-4.1
@@ -3726,9 +3745,9 @@
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>/model openai
 </span></code></pre></div>
 <hr />
-<h2 id="_5">提供商认证<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<h2 id="_6">提供商认证<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
 <h3 id="api-key">API Key 提供商<a class="headerlink" href="#api-key" title="Permanent link">&para;</a></h3>
-<p>对于需要 API Key 的提供商（OpenAI、DeepSeek、Claude API、Kimi、Qwen、Gemini 等）：</p>
+<p>对于需要 API Key 的提供商（OpenAI、DeepSeek、Claude API、Kimi、Qwen、Gemini、OpenRouter 等）：</p>
 <ol>
 <li>在选择器中选择该提供商</li>
 <li>如果未配置凭据，将出现凭据表单</li>
@@ -3752,28 +3771,28 @@
 <li>成功后返回选择器，Codex 模型变为可用</li>
 </ol>
 <hr />
-<h2 id="_6">自定义模型<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<h3 id="_7">添加自定义模型<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
+<h2 id="_7">自定义模型<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h3 id="_8">添加自定义模型<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
 <ol>
 <li>导航到选择器的 <strong>Custom</strong> 标签页</li>
 <li>选择 <strong>+ Add custom model</strong></li>
 <li>填写表单字段：</li>
 <li><strong>Name</strong> — 唯一标识符（用作 <code>agent.models.&lt;name&gt;</code> 的 key）</li>
-<li><strong>Type</strong> — 接口类型（<code>openai</code>、<code>claude</code>、<code>deepseek</code>、<code>kimi</code>、<code>gemini</code> 等）</li>
+<li><strong>Type</strong> — 接口类型（<code>openai</code>、<code>claude</code>、<code>deepseek</code>、<code>kimi</code>、<code>gemini</code>、<code>openrouter</code> 等）</li>
 <li><strong>Base URL</strong> — API 端点 URL</li>
 <li><strong>API Key</strong> — 认证凭据（掩码显示）</li>
 <li><strong>Model</strong> — 模型名称 / SKU</li>
 <li>按 <strong>Enter</strong> 保存</li>
 </ol>
 <p>自定义模型存储在 <code>agent.yml</code> 的 <code>agent.models</code> 下，并出现在 <strong>Custom</strong> 标签页中。</p>
-<h3 id="_8">删除自定义模型<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<h3 id="_9">删除自定义模型<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
 <ol>
 <li>导航到 <strong>Custom</strong> 标签页</li>
 <li>选择要删除的模型</li>
 <li>按 <strong>d</strong> 两次（两次按键确认）以删除</li>
 </ol>
 <hr />
-<h2 id="_9">配置文件<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
+<h2 id="_10">配置文件<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
 <h3 id="datusconfigyml">项目覆盖 (<code>.datus/config.yml</code>)<a class="headerlink" href="#datusconfigyml" title="Permanent link">&para;</a></h3>
 <p>当你通过 <code>/model</code> 选择模型时，选择会保存到当前工作目录的 <code>.datus/config.yml</code>：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># 提供商级选择</span>
@@ -3824,7 +3843,7 @@
 <h3 id="confprovidersyml">提供商目录 (<code>conf/providers.yml</code>)<a class="headerlink" href="#confprovidersyml" title="Permanent link">&para;</a></h3>
 <p>提供商目录定义了可用的提供商、模型、base URL 和模型规格。它是只读的，随 Datus 一起分发。向此文件添加新提供商即可在 <code>/model</code> 选择器中使用，无需代码更改。</p>
 <hr />
-<h2 id="_10">工作原理<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h2>
+<h2 id="_11">工作原理<a class="headerlink" href="#_11" title="Permanent link">&para;</a></h2>
 <p>模型解析遵循以下优先级：</p>
 <ol>
 <li><strong>项目覆盖</strong> — 当前工作目录中的 <code>.datus/config.yml</code></li>
