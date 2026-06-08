@@ -28,6 +28,10 @@
 
 使用**上/下**箭头导航，**Enter** 选择，**Esc** / **q** 取消。
 
+#### 过滤模型列表
+
+进入某个 provider 后，模型列表顶部会出现一个 **Search** 检索框 —— 直接输入即可按子串过滤（不区分大小写）。这对 **OpenRouter** 这类暴露 300+ 模型的网关尤其有用。**上/下** 和 **Enter** 仍作用于过滤后的列表；**Esc** 先清空过滤，再次 **Esc** 才返回 provider 列表。列表高度会自适应终端可用空间，超出时滚动显示。
+
 ### 直接快捷方式
 
 无需打开选择器即可切换：
@@ -51,7 +55,7 @@
 
 ### API Key 提供商
 
-对于需要 API Key 的提供商（OpenAI、DeepSeek、Claude API、Kimi、Qwen、Gemini 等）：
+对于需要 API Key 的提供商（OpenAI、DeepSeek、Claude API、Kimi、Qwen、Gemini、OpenRouter 等）：
 
 1. 在选择器中选择该提供商
 2. 如果未配置凭据，将出现凭据表单
@@ -87,7 +91,7 @@ ChatGPT Plus/Pro 用户通过 Codex：
 2. 选择 **+ Add custom model**
 3. 填写表单字段：
    - **Name** — 唯一标识符（用作 `agent.models.<name>` 的 key）
-   - **Type** — 接口类型（`openai`、`claude`、`deepseek`、`kimi`、`gemini` 等）
+   - **Type** — 接口类型（`openai`、`claude`、`deepseek`、`kimi`、`gemini`、`openrouter` 等）
    - **Base URL** — API 端点 URL
    - **API Key** — 认证凭据（掩码显示）
    - **Model** — 模型名称 / SKU

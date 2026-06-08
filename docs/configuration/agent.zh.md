@@ -76,6 +76,12 @@ agent:
 | `gemini` | `gemini-2.5-flash`、`gemini-2.5-pro` | `gemini` | API Key |
 | `minimax` | `MiniMax-M2.7`、`MiniMax-M2.5` | `minimax` | API Key |
 | `glm` | `glm-5`、`glm-4.7` | `glm` | API Key |
+| `openrouter` | `anthropic/claude-sonnet-4`、`openai/gpt-4o` | `openrouter` | API Key |
+
+!!! tip "OpenRouter —— 一把 Key，300+ 模型"
+    `openrouter` 是统一网关：一个 `OPENROUTER_API_KEY` 即可路由到任意厂商。
+    其模型名采用 `vendor/slug` 形式（如 `google/gemini-2.5-pro`）。`/model`
+    选择器会拉取 OpenRouter 的完整在线目录，并支持输入关键字过滤。
 
 ### 特殊认证 provider
 
@@ -109,7 +115,7 @@ agent:
 api_key: ${OPENAI_API_KEY}
 ```
 
-对于 OpenAI、DeepSeek、Claude、Kimi、Qwen、Gemini，配置向导会自动提示对应环境变量。对于 `minimax`、`glm` 和各类 `*_coding` provider，你也可以在输入 API Key 时直接填入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
+对于 OpenAI、DeepSeek、Claude、Kimi、Qwen、Gemini、OpenRouter，配置向导会自动提示对应环境变量（如 `${OPENROUTER_API_KEY}`）。对于 `minimax`、`glm` 和各类 `*_coding` provider，你也可以在输入 API Key 时直接填入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
 
 另外，当前实现会对少数模型自动补充固定参数覆盖：
 
@@ -170,6 +176,15 @@ qwen:
   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   api_key: ${DASHSCOPE_API_KEY}
   model: qwen3-max
+```
+
+=== "OpenRouter"
+```yaml
+openrouter:
+  type: openrouter
+  base_url: https://openrouter.ai/api/v1
+  api_key: ${OPENROUTER_API_KEY}
+  model: anthropic/claude-sonnet-4   # vendor/slug 形式
 ```
 
 === "Alibaba Coding Plan"

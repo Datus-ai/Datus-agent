@@ -28,6 +28,10 @@ The picker has three tabs, navigable with **Tab** / **Shift+Tab**:
 
 Use **Up/Down** arrows to navigate, **Enter** to select, and **Esc** / **q** to cancel.
 
+#### Filtering the model list
+
+After drilling into a provider, the model list shows a **Search** box at the top — just start typing to filter the list by substring (case-insensitive). This is especially handy for gateways like **OpenRouter** that expose 300+ models. **Up/Down** and **Enter** keep operating on the filtered list; **Esc** clears the filter first, then a second **Esc** returns to the provider list. The list height adapts to the available terminal space and scrolls when it overflows.
+
 ### Direct Shortcuts
 
 Switch without opening the picker:
@@ -51,7 +55,7 @@ Switch without opening the picker:
 
 ### API Key Providers
 
-For providers that require an API key (OpenAI, DeepSeek, Claude API, Kimi, Qwen, Gemini, etc.):
+For providers that require an API key (OpenAI, DeepSeek, Claude API, Kimi, Qwen, Gemini, OpenRouter, etc.):
 
 1. Select the provider in the picker
 2. If no credentials are configured, a credential form appears
@@ -87,7 +91,7 @@ For ChatGPT Plus/Pro users via Codex:
 2. Select **+ Add custom model**
 3. Fill in the form fields:
    - **Name** — Unique identifier (used as `agent.models.<name>` key)
-   - **Type** — Interface type (`openai`, `claude`, `deepseek`, `kimi`, `gemini`, etc.)
+   - **Type** — Interface type (`openai`, `claude`, `deepseek`, `kimi`, `gemini`, `openrouter`, etc.)
    - **Base URL** — API endpoint URL
    - **API Key** — Authentication credential (masked)
    - **Model** — Model name / SKU
