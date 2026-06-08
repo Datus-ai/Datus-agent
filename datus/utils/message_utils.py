@@ -79,7 +79,7 @@ def extract_user_input(content: Any) -> str:
                 if isinstance(text, str):
                     texts.append(extract_user_input(text) if is_structured_content(text) else text)
             elif block_type in _LEGACY_USER_BLOCK_TYPES:
-                text = part.get("content") or part.get("text")
+                text = part.get("content") if part.get("content") is not None else part.get("text")
                 if isinstance(text, str):
                     texts.append(text)
         return "\n".join(texts)
@@ -91,13 +91,17 @@ def extract_user_input(content: Any) -> str:
         return content.split(SYSTEM_REMINDER_CLOSE, 1)[1]
 
     # Legacy format: JSON array string [{"type":"enhanced",...},{"type":"user","content":"..."}]
+    # Only treat as legacy when the array actually contains recognized block types;
+    # plain JSON arrays (e.g. '["hello"]', '[1,2]') must pass through unchanged.
     if content.startswith("["):
         try:
             parts = json.loads(content)
-            if isinstance(parts, list):
-                return extract_user_input(parts)
         except (json.JSONDecodeError, TypeError):
-            pass
+            parts = None
+        if isinstance(parts, list) and any(
+            isinstance(p, dict) and p.get("type") in _TEXT_BLOCK_TYPES + _LEGACY_USER_BLOCK_TYPES for p in parts
+        ):
+            return extract_user_input(parts)
 
     return content
 
