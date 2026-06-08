@@ -1286,9 +1286,10 @@ metric:
 
         assert result["success"], f"Sync failed: {result.get('error')}"
         assert len(captured_metric) == 2
-        assert captured_metric[0]["id"] == "metric:Commerce/Orders/Average_Order_Value.average_gross_order_value"
-        assert captured_metric[1]["id"] == "metric:Finance/Orders/Average_Order_Value.average_gross_order_value"
-        assert captured_metric[0]["id"] != captured_metric[1]["id"]
+        assert captured_metric[0]["id"] == "metric:average_gross_order_value"
+        assert captured_metric[1]["id"] == "metric:average_gross_order_value"
+        assert captured_metric[0]["subject_path"] == ["Commerce", "Orders", "Average_Order_Value"]
+        assert captured_metric[1]["subject_path"] == ["Finance", "Orders", "Average_Order_Value"]
 
     def test_measure_proxy_nested_measure_is_stored_as_string(self, agent_config, tmp_path):
         yaml_file = tmp_path / "metrics.yml"

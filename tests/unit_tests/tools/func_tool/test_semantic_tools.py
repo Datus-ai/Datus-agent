@@ -83,6 +83,27 @@ class TestGenerationEvidence:
 
         assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is True
 
+    def test_queryability_contract_skips_unrelated_metric_scope(self):
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["activity_count"],
+                    "dimension_hints": ["start_month"],
+                    "time_group_hints": [
+                        {
+                            "alias": "start_month",
+                            "base_expr": "start_date",
+                            "grain": "month",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["avg_sr_value"]) is True
+
     def test_queryability_contract_accepts_split_grouped_dry_runs_for_source_metrics(self):
         contract = {
             "source": "sql_1",
@@ -1037,14 +1058,13 @@ class TestQueryMetricsCompression:
 
         assert result.success == 1
         assert evidence.metric_dry_run_passed is True
-        assert evidence.metric_dry_run_queries == [
-            {
-                "metrics": ["revenue"],
-                "dimensions": ["customer_segment"],
-                "time_granularity": "month",
-                "sql": "SELECT SUM(revenue) AS revenue FROM orders",
-            }
-        ]
+        assert len(evidence.metric_dry_run_queries) == 1
+        dry_run = evidence.metric_dry_run_queries[0]
+        assert dry_run["metrics"] == ["revenue"]
+        assert dry_run["dimensions"] == ["customer_segment"]
+        assert dry_run["time_granularity"] == "month"
+        assert dry_run["time_granularity_explicit"] is True
+        assert dry_run["sql"] == "SELECT SUM(revenue) AS revenue FROM orders"
         assert evidence.metric_sqls == {"revenue": "SELECT SUM(revenue) AS revenue FROM orders"}
 
     def test_query_metrics_non_dry_run_does_not_record_publish_evidence(self, semantic_tools):

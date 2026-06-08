@@ -214,7 +214,7 @@ class TestSemanticModelStorageBatchOps:
     def test_upsert_batch_insert(self, sem_storage):
         """Upserting new objects should insert them."""
         table_obj = _make_table_object("products", description="Products catalog")
-        sem_storage.upsert_batch([table_obj], on_column="id")
+        sem_storage.upsert_batch([table_obj], on_column="storage_key")
         results = sem_storage.search_all()
         assert len(results) == 1
         assert results[0]["name"] == "products"
@@ -225,7 +225,7 @@ class TestSemanticModelStorageBatchOps:
         sem_storage.store_batch([table_obj])
 
         updated_obj = _make_table_object("products", description="Updated description")
-        sem_storage.upsert_batch([updated_obj], on_column="id")
+        sem_storage.upsert_batch([updated_obj], on_column="storage_key")
 
         results = sem_storage.search_all()
         assert len(results) == 1

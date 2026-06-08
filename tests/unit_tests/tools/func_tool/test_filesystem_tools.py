@@ -455,6 +455,18 @@ class TestGlobSearch:
         assert "file.py" in names
         assert "other.py" not in names
 
+    def test_glob_path_like_pattern_searches_explicit_seed(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("subject/\n")
+        metrics_dir = tmp_path / "subject" / "semantic_models" / "starrocks" / "metrics"
+        metrics_dir.mkdir(parents=True)
+        (metrics_dir / "v_udata_ac_info_metrics.yml").write_text("metric: {}\n")
+
+        tool = _make_tool(str(tmp_path))
+        result = tool.glob("subject/semantic_models/starrocks/metrics/*.yml")
+
+        assert result.success == 1
+        assert result.result["files"] == ["subject/semantic_models/starrocks/metrics/v_udata_ac_info_metrics.yml"]
+
     def test_glob_truncation(self, tmp_path):
         """Results are truncated when exceeding max_results (200)."""
         for i in range(5):

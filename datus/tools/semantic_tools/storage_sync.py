@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.datasource_scope import add_datasource_scope_to_rows, resolve_datasource_id
 from datus.storage.metric.store import MetricStorage, build_metric_id
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.storage.subject_tree.store import SubjectTreeStore
@@ -37,6 +38,7 @@ class SemanticStorageManager:
             agent_config: Agent configuration
         """
         self.agent_config = agent_config
+        self.datasource_id = resolve_datasource_id(agent_config)
         self.semantic_model_store: Optional[SemanticModelStorage] = None
         self.metric_store: Optional[MetricStorage] = None
         self.subject_tree_store: Optional[SubjectTreeStore] = None
@@ -46,7 +48,7 @@ class SemanticStorageManager:
         if self.semantic_model_store is None:
             from datus.storage.semantic_model.store import SemanticModelRAG
 
-            rag = SemanticModelRAG(self.agent_config)
+            rag = SemanticModelRAG(self.agent_config, datasource_id=self.datasource_id)
             self.semantic_model_store = rag.storage
         return self.semantic_model_store
 
@@ -55,7 +57,7 @@ class SemanticStorageManager:
         if self.metric_store is None:
             from datus.storage.metric.store import MetricRAG
 
-            rag = MetricRAG(self.agent_config)
+            rag = MetricRAG(self.agent_config, datasource_id=self.datasource_id)
             self.metric_store = rag.storage
         return self.metric_store
 
@@ -64,7 +66,10 @@ class SemanticStorageManager:
         if self.subject_tree_store is None:
             from datus.storage.registry import get_subject_tree_store
 
-            self.subject_tree_store = get_subject_tree_store(project=self.agent_config.project_name)
+            self.subject_tree_store = get_subject_tree_store(
+                project=self.agent_config.project_name,
+                datasource_id=self.datasource_id,
+            )
         return self.subject_tree_store
 
     def store_semantic_model(
@@ -153,7 +158,7 @@ class SemanticStorageManager:
             "yaml_path": "",
             "updated_at": updated_at,
         }
-        store.batch_store([table_obj])
+        store.batch_store(add_datasource_scope_to_rows([table_obj], self.datasource_id))
 
         # Store dimensions
         dimensions = model_data.get("dimensions", [])
@@ -185,7 +190,7 @@ class SemanticStorageManager:
             }
             dim_objects.append(dim_obj)
         if dim_objects:
-            store.batch_store(dim_objects)
+            store.batch_store(add_datasource_scope_to_rows(dim_objects, self.datasource_id))
 
         # Store measures
         measures = model_data.get("measures", [])
@@ -217,7 +222,7 @@ class SemanticStorageManager:
             }
             measure_objects.append(measure_obj)
         if measure_objects:
-            store.batch_store(measure_objects)
+            store.batch_store(add_datasource_scope_to_rows(measure_objects, self.datasource_id))
 
         # Store identifiers (entity keys)
         identifiers = model_data.get("identifiers", [])
@@ -249,7 +254,7 @@ class SemanticStorageManager:
             }
             identifier_objects.append(identifier_obj)
         if identifier_objects:
-            store.batch_store(identifier_objects)
+            store.batch_store(add_datasource_scope_to_rows(identifier_objects, self.datasource_id))
 
         logger.info(
             f"Stored semantic model '{semantic_model_name}': "

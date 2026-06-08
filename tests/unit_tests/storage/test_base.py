@@ -331,7 +331,7 @@ class TestReadOnlyPathsWithoutEmbedding:
         result = store._search_all()
 
         assert result.num_rows == 0
-        assert result.column_names == ["name", "definition", "datasource_id"]
+        assert result.column_names == ["name", "definition"]
         assert db.open_table_calls == []
         assert store._shared.initialized is False
 

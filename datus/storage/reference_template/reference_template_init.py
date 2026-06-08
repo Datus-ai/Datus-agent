@@ -431,8 +431,8 @@ async def init_reference_template_async(
 
     if build_mode == "overwrite":
         logger.info(
-            "[overwrite] Wiping reference_template store for project '%s' before re-population",
-            global_config.project_name,
+            "[overwrite] Wiping reference_template rows for datasource '%s' before re-population",
+            storage.datasource_id,
         )
         storage.truncate()
 

@@ -10,6 +10,7 @@ import yaml
 from datus_storage_base.conditions import And, WhereExpr, eq, in_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
+from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -17,6 +18,45 @@ if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
 
 logger = get_logger(__name__)
+
+
+def _strip_identifier_quotes(value: str) -> str:
+    text = str(value or "").strip()
+    while len(text) >= 2 and (
+        (text[0] == text[-1] and text[0] in {'"', "'", "`"}) or (text[0] == "[" and text[-1] == "]")
+    ):
+        text = text[1:-1].strip()
+    return text
+
+
+def _identifier_variants(value: str) -> List[str]:
+    """Return common exact-match variants for SQL identifiers."""
+
+    parts = [_strip_identifier_quotes(part) for part in str(value or "").split(".") if part.strip()]
+    variants: List[str] = []
+    for start in range(len(parts)):
+        candidate = ".".join(parts[start:])
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    if parts:
+        leaf = parts[-1]
+        if leaf and leaf not in variants:
+            variants.append(leaf)
+    raw = _strip_identifier_quotes(value)
+    if raw and raw not in variants:
+        variants.append(raw)
+    lower_variants = []
+    for item in variants:
+        lowered = item.lower()
+        if lowered and lowered not in variants and lowered not in lower_variants:
+            lower_variants.append(lowered)
+    variants.extend(lower_variants)
+    return variants
+
+
+def _normalized_identifier(value: str) -> str:
+    parts = [_strip_identifier_quotes(part) for part in str(value or "").split(".") if part.strip()]
+    return ".".join(parts).lower()
 
 
 class SemanticModelStorage(BaseEmbeddingStore):
@@ -68,7 +108,8 @@ class SemanticModelStorage(BaseEmbeddingStore):
             ),
             vector_source_name="description",
             vector_column_name="vector",
-            unique_columns=["id"],
+            unique_columns=["storage_key"],
+            datasource_scoped=True,
             **kwargs,
         )
 
@@ -87,6 +128,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
         kinds: Optional[List[str]] = None,
         table_name: Optional[str] = None,
         top_n: int = 10,
+        extra_conditions: Optional[List] = None,
     ) -> List[Dict[str, Any]]:
         """Search for semantic objects."""
         conditions = []
@@ -94,6 +136,8 @@ class SemanticModelStorage(BaseEmbeddingStore):
             conditions.append(in_("kind", kinds))
         if table_name:
             conditions.append(eq("table_name", table_name))
+        if extra_conditions:
+            conditions.extend(extra_conditions)
 
         where_clause = And(conditions) if conditions else None
 
@@ -130,7 +174,12 @@ class SemanticModelStorage(BaseEmbeddingStore):
         "entity": "entity",
     }
 
-    def update_entry(self, entry_id: str, update_values: Dict[str, Any]) -> bool:
+    def update_entry(
+        self,
+        entry_id: str,
+        update_values: Dict[str, Any],
+        extra_conditions: Optional[List] = None,
+    ) -> bool:
         """Update a semantic model entry by ID and sync changes to the YAML file.
 
         Args:
@@ -152,8 +201,13 @@ class SemanticModelStorage(BaseEmbeddingStore):
                 ErrorCode.STORAGE_INVALID_ARGUMENT, message_args={"error_message": "update_values must not be empty"}
             )
 
+        conditions = [eq("id", entry_id)]
+        if extra_conditions:
+            conditions.extend(extra_conditions)
+        where = And(conditions)
+
         entries = self._search_all(
-            where=eq("id", entry_id), select_fields=["id", "kind", "name", "table_name", "yaml_path"]
+            where=where, select_fields=["id", "kind", "name", "table_name", "yaml_path"]
         ).to_pylist()
         if not entries:
             raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
@@ -164,7 +218,7 @@ class SemanticModelStorage(BaseEmbeddingStore):
         # data_source name, so fall back to it when ``table_name`` is empty.
         data_source_name = entry.get("table_name") or entry["name"]
 
-        self.update(where=eq("id", entry_id), update_values=update_values)
+        self.update(where=where, update_values=update_values)
 
         if yaml_path:
             self._sync_semantic_update_to_yaml(yaml_path, entry["kind"], entry["name"], data_source_name, update_values)
@@ -271,22 +325,25 @@ class SemanticModelRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self.storage: SemanticModelStorage = get_storage(
-            SemanticModelStorage, "semantic_model", project=agent_config.project_name
+            SemanticModelStorage,
+            "semantic_model",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
         )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.storage, "tables")
 
     def _sub_agent_conditions(self) -> list:
-        """Build sub-agent filter conditions (datasource_id handled by backend)."""
-        conditions = []
+        """Build datasource and sub-agent filter conditions."""
+        conditions = [datasource_condition(self.datasource_id)]
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
 
     def truncate(self) -> None:
         """Delete all semantic model data for this datasource."""
-        self.storage.truncate_scoped()
+        self.storage.delete_datasource_rows(self.datasource_id)
 
     def get_semantic_model(
         self,
@@ -431,11 +488,11 @@ class SemanticModelRAG:
 
     def store_batch(self, objects: List[Dict[str, Any]]):
         """Store a batch of semantic model objects."""
-        self.storage.store_batch(objects)
+        self.storage.store_batch(add_datasource_scope_to_rows(objects, self.datasource_id))
 
     def upsert_batch(self, objects: List[Dict[str, Any]]):
         """Upsert a batch of semantic model objects (update if id exists, insert if not)."""
-        self.storage.upsert_batch(objects, on_column="id")
+        self.storage.upsert_batch(add_datasource_scope_to_rows(objects, self.datasource_id), on_column="storage_key")
 
     def create_indices(self):
         """Create indices for semantic model storage."""

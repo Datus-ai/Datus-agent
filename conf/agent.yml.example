@@ -25,8 +25,8 @@ agent:
   #   slash command in the CLI can then switch between any model exposed by
   #   that provider without rewriting YAML. Supported providers (keys) are
   #   shipped in ``conf/providers.yml``: openai, claude, claude_subscription,
-  #   codex, deepseek, kimi, qwen, gemini, glm, minimax, alibaba_coding,
-  #   bigmodel_coding, zai_coding, minimax_coding, kimi_coding.
+  #   codex, deepseek, kimi, qwen, gemini, glm, minimax, openrouter,
+  #   alibaba_coding, bigmodel_coding, zai_coding, minimax_coding, kimi_coding.
   #
   # - ``agent.models.<name>`` (legacy / custom)
   #   Retained for self-hosted or private-deployment models — hand-edit this

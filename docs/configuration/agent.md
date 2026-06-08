@@ -97,7 +97,7 @@ The `agent.models` section is used for self-hosted or private-deployment LLM end
 **Required Parameters per custom entry:**
 
 - **Entry key (`models.<key>`)** — Logical identifier, referenced by `target: {custom: <key>}` or node `model` fields
-- **`type`** — Interface type (`openai`, `claude`, `deepseek`, `kimi`, `gemini`, `minimax`, `glm`, `codex`)
+- **`type`** — Interface type (`openai`, `claude`, `deepseek`, `kimi`, `gemini`, `minimax`, `glm`, `codex`, `openrouter`)
 - **`base_url`** — API endpoint URL
 - **`api_key`** — API key (supports `${ENV_VAR}` substitution)
 - **`model`** — Model name / SKU
@@ -143,6 +143,13 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 | `gemini` | `gemini-2.5-flash`, `gemini-2.5-pro` | `gemini` | API key |
 | `minimax` | `MiniMax-M2.7`, `MiniMax-M2.5` | `minimax` | API key |
 | `glm` | `glm-5`, `glm-4.7` | `glm` | API key |
+| `openrouter` | `anthropic/claude-sonnet-4`, `openai/gpt-4o` | `openrouter` | API key |
+
+!!! tip "OpenRouter — one key, 300+ models"
+    `openrouter` is a unified gateway: a single `OPENROUTER_API_KEY` routes to any
+    vendor. Its model names use the `vendor/slug` form (e.g. `google/gemini-2.5-pro`).
+    The `/model` picker fetches the full live catalog from OpenRouter and lets you
+    type to filter it.
 
 ### Special-auth providers
 
@@ -176,7 +183,7 @@ All providers support environment-variable references in `api_key`, for example:
 api_key: ${OPENAI_API_KEY}
 ```
 
-For OpenAI, DeepSeek, Claude, Kimi, Qwen, and Gemini, the configuration wizard can prompt with provider-specific environment variable hints. For `minimax`, `glm`, and the `*_coding` providers, you can still enter values such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}` directly.
+For OpenAI, DeepSeek, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configuration wizard can prompt with provider-specific environment variable hints (e.g. `${OPENROUTER_API_KEY}`). For `minimax`, `glm`, and the `*_coding` providers, you can still enter values such as `${MINIMAX_API_KEY}`, `${GLM_API_KEY}`, `${KIMI_API_KEY}`, or `${DASHSCOPE_API_KEY}` directly.
 
 The current implementation also auto-applies fixed parameter overrides for a few models:
 
@@ -204,6 +211,8 @@ With the new provider-level configuration, you only need to set credentials. All
           api_key: ${KIMI_API_KEY}
         qwen:
           api_key: ${DASHSCOPE_API_KEY}
+        openrouter:
+          api_key: ${OPENROUTER_API_KEY}
     ```
 
 === "Claude Subscription"

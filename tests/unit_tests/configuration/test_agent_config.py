@@ -1748,6 +1748,13 @@ class TestProviderConfigurationDispatch:
                     "api_key_env": "KIMI_API_KEY",
                     "default_model": "kimi-k2.5",
                 },
+                "openrouter": {
+                    "type": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "default_model": "anthropic/claude-sonnet-4",
+                    "models": ["anthropic/claude-sonnet-4", "openai/gpt-4o"],
+                },
             },
             "model_overrides": {
                 "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
@@ -1799,6 +1806,22 @@ class TestProviderConfigurationDispatch:
         assert active.api_key == "sk-test"
         assert active.model == "gpt-4.1"
         assert active.base_url == "https://api.openai.com/v1"
+
+    def test_openrouter_provider_synthesizes_openrouter_model_config(self, tmp_path):
+        """A provider whose catalog ``type`` is ``openrouter`` resolves to an
+        openrouter ModelConfig that drives ``OpenRouterModel`` via MODEL_TYPE_MAP,
+        keeping the full ``vendor/slug`` model name."""
+        cfg = self._make(
+            tmp_path,
+            providers={"openrouter": {"api_key": "sk-or-test"}},
+            target_provider="openrouter",
+            target_model="openai/gpt-4o",
+        )
+        active = cfg.active_model()
+        assert active.type == "openrouter"
+        assert active.api_key == "sk-or-test"
+        assert active.model == "openai/gpt-4o"
+        assert active.base_url == "https://openrouter.ai/api/v1"
 
     def test_model_overrides_applied_when_synthesizing(self, tmp_path):
         cfg = self._make(

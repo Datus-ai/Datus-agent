@@ -5,9 +5,9 @@
 """
 Storage registry with per-project LRU cache.
 
-Each (factory, project) pair gets its own storage instance with an isolated
-VectorDatabase connection. Project isolation is PHYSICAL: each project gets
-its own directory under ``{data_dir}/{project}/``.
+Each (factory, project, datasource_id) tuple gets its own storage wrapper.
+The underlying VectorDatabase connection remains project-scoped: each project
+gets its own directory under ``{data_dir}/{project}/``.
 """
 
 from __future__ import annotations
@@ -63,9 +63,14 @@ def get_storage_defaults() -> Dict[str, Any]:
     return dict(_storage_defaults)
 
 
-@lru_cache(maxsize=128)
-def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, project: str) -> BaseEmbeddingStore:
-    """LRU-cached storage creation, keyed by (factory, embedding model, project)."""
+@lru_cache(maxsize=256)
+def _get_storage_cached(
+    factory_name: str,
+    embedding_model_conf_name: str,
+    project: str,
+    datasource_id: str,
+) -> BaseEmbeddingStore:
+    """LRU-cached storage creation, keyed by (factory, embedding model, project, datasource)."""
     from datus.storage.backend_holder import create_vector_connection
     from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore
 
@@ -79,6 +84,7 @@ def _get_storage_cached(factory_name: str, embedding_model_conf_name: str, proje
     # path_manager (which fails outside chat task threads).
     if isinstance(factory, type) and issubclass(factory, BaseSubjectEmbeddingStore):
         kwargs["project"] = project
+        kwargs["datasource_id"] = datasource_id
 
     store = factory(get_embedding_model(embedding_model_conf_name), **kwargs)
     return store
@@ -88,12 +94,14 @@ def get_storage(
     factory: Callable[..., BaseEmbeddingStore],
     embedding_model_conf_name: str,
     project: str,
+    datasource_id: str = "",
 ) -> BaseEmbeddingStore:
-    """Return a storage instance scoped to *project*.
+    """Return a storage instance scoped to *project* and datasource wrapper.
 
     Project isolation is PHYSICAL: each project gets a per-project directory
     under ``{data_dir}/{project}/``. ``project`` must be non-empty and is
-    forwarded to the backend ``connect()`` call.
+    forwarded to the backend ``connect()`` call. ``datasource_id`` only scopes
+    the returned wrapper; it is not part of the backend namespace.
 
     Uses an LRU cache (maxsize=128) so that inactive projects are evicted.
     Global defaults set via ``configure_storage_defaults()`` are
@@ -101,20 +109,20 @@ def get_storage(
     """
     with _registry_lock:
         _factory_registry[factory.__name__] = factory
-    return _get_storage_cached(factory.__name__, embedding_model_conf_name, project)
+    return _get_storage_cached(factory.__name__, embedding_model_conf_name, project, datasource_id or "")
 
 
-@lru_cache(maxsize=128)
-def _get_subject_tree_cached(project: str) -> "SubjectTreeStore":
+@lru_cache(maxsize=256)
+def _get_subject_tree_cached(project: str, datasource_id: str) -> "SubjectTreeStore":
     """LRU-cached SubjectTreeStore creation."""
     from datus.storage.subject_tree.store import SubjectTreeStore
 
-    return SubjectTreeStore(project=project)
+    return SubjectTreeStore(project=project, datasource_id=datasource_id)
 
 
-def get_subject_tree_store(project: str) -> "SubjectTreeStore":
-    """Return a SubjectTreeStore instance (LRU-cached per project)."""
-    return _get_subject_tree_cached(project)
+def get_subject_tree_store(project: str, datasource_id: str = "") -> "SubjectTreeStore":
+    """Return a SubjectTreeStore instance (LRU-cached per project/datasource)."""
+    return _get_subject_tree_cached(project, datasource_id or "")
 
 
 def preload_all_storages(
@@ -168,19 +176,7 @@ def preload_all_storages(
     if defaults:
         configure_storage_defaults(**defaults)
 
-    # 3. Eagerly create all storage singletons
-    from datus.storage.metric.store import MetricStorage
-    from datus.storage.reference_sql.store import ReferenceSqlStorage
-    from datus.storage.schema_metadata.store import SchemaStorage, SchemaValueStorage
-    from datus.storage.semantic_model.store import SemanticModelStorage
-
-    get_storage(SchemaStorage, "database", project=project)
-    get_storage(SchemaValueStorage, "database", project=project)
-    get_storage(SemanticModelStorage, "semantic_model", project=project)
-    get_storage(MetricStorage, "metric", project=project)
-    get_storage(ReferenceSqlStorage, "reference_sql", project=project)
-    get_subject_tree_store(project=project)
-    logger.info("All storage singletons pre-loaded")
+    logger.info("Storage backends initialized; datasource-scoped stores will be created lazily")
 
 
 def clear_storage_registry() -> None:

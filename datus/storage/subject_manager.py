@@ -12,6 +12,7 @@ cross-datasource interference in multi-tenant setups.
 from typing import Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.datasource_scope import resolve_datasource_id
 from datus.storage.metric import MetricStorage
 from datus.storage.reference_sql import ReferenceSqlStorage
 from datus.storage.registry import get_storage
@@ -25,10 +26,18 @@ class SubjectUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id = datasource_id or agent_config.current_datasource or ""
-        self.metrics_storage: MetricStorage = get_storage(MetricStorage, "metric", project=agent_config.project_name)
+        self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
+        self.metrics_storage: MetricStorage = get_storage(
+            MetricStorage,
+            "metric",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
+        )
         self.reference_sql_storage: ReferenceSqlStorage = get_storage(
-            ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
+            ReferenceSqlStorage,
+            "reference_sql",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
         )
 
     def update_metrics_detail(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
@@ -40,7 +49,11 @@ class SubjectUpdater:
     def update_historical_sql(self, subject_path: List[str], name: str, update_values: Dict[str, Any]):
         if not update_values:
             return
-        self.reference_sql_storage.update_entry(subject_path, name, update_values)
+        self.reference_sql_storage.update_entry(
+            subject_path,
+            name,
+            update_values,
+        )
         logger.debug("Updated the reference SQL details in the main space successfully")
 
     def delete_metric(self, subject_path: List[str], name: str) -> Dict[str, Any]:

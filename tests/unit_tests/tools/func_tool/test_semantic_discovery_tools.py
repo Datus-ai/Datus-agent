@@ -586,6 +586,39 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert evidence["tables"] == ["users"]
         assert evidence["filters"] == ["is_test = 0 AND country = 'US'"]
 
+    def test_count_star_with_distinct_business_count_is_support_measure(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                SELECT COUNT(*) AS product_row_count,
+                       COUNT(DISTINCT ac_code) AS activity_count
+                FROM v_udata_ac_info
+                WHERE request_name LIKE '%小罗%' AND FIND_IN_SET('1', ac_tags)
+                """
+            ]
+        )
+
+        assert result.success == 1
+        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == ["activity_count"]
+        assert [candidate["name"] for candidate in result.result["metric_candidates"]] == ["activity_count"]
+        assert result.result["support_measure_candidates"][0]["name"] == "product_row_count"
+        assert result.result["support_measure_candidates"][0]["evidence_kind"] == "support_measure"
+        assert result.result["support_measure_candidates"][0]["base_measures"][0]["agg"] == "COUNT"
+
+    def test_count_star_without_distinct_business_count_stays_direct_metric(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=["SELECT COUNT(*) AS order_count, SUM(amount) AS revenue FROM orders"]
+        )
+
+        assert result.success == 1
+        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == [
+            "order_count",
+            "revenue",
+        ]
+        assert result.result["support_measure_candidates"] == []
+
     def test_repeated_aliases_are_merged(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(

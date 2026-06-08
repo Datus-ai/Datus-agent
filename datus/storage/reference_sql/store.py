@@ -10,6 +10,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
+from datus.storage.datasource_scope import datasource_condition, resolve_datasource_id
 from datus.storage.knowledge_provenance import enrich_reference_sql_results, is_knowledge_provenance_enabled
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
@@ -41,7 +42,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
                 ]
             ),
             vector_source_name="search_text",
-            unique_columns=["id"],
+            unique_columns=["storage_key"],
             **kwargs,
         )
 
@@ -116,7 +117,7 @@ class ReferenceSqlStorage(BaseSubjectEmbeddingStore):
                 raise ValueError("subject_path is required in SQL item data")
 
         # Use base class batch_upsert method
-        self.batch_upsert(sql_items, on_column="id")
+        self.batch_upsert(sql_items, on_column="storage_key")
 
     def search_reference_sql(
         self,
@@ -440,18 +441,21 @@ class ReferenceSqlRAG:
         from datus.storage.registry import get_storage
 
         self.agent_config = agent_config
-        self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
         self.reference_sql_storage = get_storage(
-            ReferenceSqlStorage, "reference_sql", project=agent_config.project_name
+            ReferenceSqlStorage,
+            "reference_sql",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
         )
         self._sub_agent_filter = _build_sub_agent_filter(
             agent_config, sub_agent_name, self.reference_sql_storage, "sqls"
         )
 
     def _sub_agent_conditions(self) -> List:
-        """Build sub-agent filter conditions (datasource_id handled by backend)."""
-        conditions = []
+        """Build datasource and sub-agent filter conditions."""
+        conditions = [datasource_condition(self.datasource_id)]
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
@@ -482,7 +486,7 @@ class ReferenceSqlRAG:
 
     def truncate(self) -> None:
         """Delete all reference SQL data for this datasource."""
-        self.reference_sql_storage.truncate_scoped()
+        self.reference_sql_storage.delete_datasource_rows(self.datasource_id)
 
     def store_batch(self, reference_sql_items: List[Dict[str, Any]]):
         """Store batch of reference SQL items."""

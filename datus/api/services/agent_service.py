@@ -354,7 +354,7 @@ def _classify_subject_paths(
         return buckets
 
     try:
-        subject_tree = get_subject_tree_store(project=agent_config.project_name)
+        subject_tree = get_subject_tree_store(project=agent_config.project_name, datasource_id=ds)
         metric_storage = MetricRAG(agent_config, datasource_id=ds).storage
         sql_storage = ReferenceSqlRAG(agent_config, datasource_id=ds).reference_sql_storage
     except Exception:

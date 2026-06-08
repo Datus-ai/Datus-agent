@@ -32,6 +32,15 @@ class TestDatasourceServiceInit:
         svc = DatasourceService(agent_config=real_agent_config)
         assert isinstance(svc.db_manager, DBManager)
 
+    def test_init_without_datasource_defers_semantic_rag(self, real_agent_config):
+        """Init does not open datasource-scoped semantic storage before datasource selection."""
+        real_agent_config.current_datasource = ""
+
+        svc = DatasourceService(agent_config=real_agent_config)
+
+        assert svc.current_datasource == ""
+        assert svc.semantic_rag is None
+
 
 class TestDatabaseServiceGetDatabaseType:
     """Tests for _get_database_type helper."""

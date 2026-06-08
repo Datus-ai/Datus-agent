@@ -62,6 +62,10 @@ _PLAN_PROVIDERS = frozenset({"claude_subscription", "codex"}) | _CODING_PLAN_PRO
 
 _MASKED_KEY_PLACEHOLDER = "••••••••"
 
+# Bounds for the scrollable list height (rows of list items shown at once).
+_MIN_LIST_ROWS = 3
+_MAX_LIST_ROWS = 15
+
 # Display-name overrides shown in the UI. The internal key (used as the
 # ``agent.providers`` map key and in ``providers.yml``) stays unchanged so
 # no config migration is required.
@@ -175,6 +179,10 @@ class ModelApp:
         self._provider_models: List[str] = []
         self._custom_names: List[str] = []
 
+        # Built lazily in ``_build_root_container``; read by
+        # ``_effective_max_visible`` for the live rendered row count.
+        self._list_window: Optional[Window] = None
+
         self._current_provider, self._current_model = self._read_current_selection()
         self._current_custom = self._cfg.target if self._cfg.target in (self._cfg.models or {}) else None
 
@@ -197,16 +205,20 @@ class ModelApp:
         )
         self._add_name = TextArea(height=1, multiline=False, prompt="name:      ", focus_on_click=True)
 
+        # Live filter box shown above the provider-model list. Typing narrows
+        # the list (essential for gateways like OpenRouter with 300+ models);
+        # arrow/Enter keys still drive the list via the app-level bindings.
+        self._model_search = TextArea(height=1, multiline=False, prompt="Search: ", focus_on_click=True)
+        # Any edit resets the cursor so the highlight never points past the
+        # freshly filtered list.
+        self._model_search.buffer.on_text_changed += lambda _buf: self._on_model_search_changed()
+
         self._form_focus_order: List[TextArea] = []
         self._form_focus_idx: int = 0
         # Set to the name of the custom entry that the user has pressed
         # ``d`` on once. A second press confirms deletion; any other key
         # clears the pending state.
         self._pending_delete_custom: Optional[str] = None
-
-        # title bar(1) + tab strip(1) + 2 separators(2) + error bar(1) + footer(1) + scroll indicator(1) = 7 lines chrome
-        term_height = shutil.get_terminal_size((120, 40)).lines
-        self._max_visible: int = max(3, min(15, term_height - 7))
 
         # ``_on_done`` is the active "finish" callable. Standalone mode
         # points it at ``Application.exit``; embedded mode points it at
@@ -235,8 +247,11 @@ class ModelApp:
             return early
         kb = self._build_key_bindings()
         root = self._build_root_container(kb)
+        # When the seed dropped us straight onto the model list, focus the
+        # search box so the first keystroke filters instead of being lost.
+        focused = self._model_search if self._view == _View.PROVIDER_MODELS else None
         self._app = Application(
-            layout=Layout(root, focused_element=None),
+            layout=Layout(root, focused_element=focused),
             key_bindings=kb,
             full_screen=False,
             mouse_support=False,
@@ -295,6 +310,8 @@ class ModelApp:
             and self._form_focus_order
         ):
             first_focus = self._form_focus_order[self._form_focus_idx]
+        elif self._view == _View.PROVIDER_MODELS:
+            first_focus = self._model_search
 
         return EmbeddedWizard(
             container=root,
@@ -484,6 +501,9 @@ class ModelApp:
             ]
         )
 
+        # Provider-model view stacks the live search box atop the shared list.
+        models_view = HSplit([self._model_search, self._list_window])
+
         def _body_container():
             if self._view == _View.PROVIDER_CRED_FORM:
                 return cred_form
@@ -491,6 +511,8 @@ class ModelApp:
                 return token_form
             if self._view == _View.ADD_MODEL_FORM:
                 return add_form
+            if self._view == _View.PROVIDER_MODELS:
+                return models_view
             return self._list_window
 
         body = DynamicContainer(_body_container)
@@ -551,7 +573,9 @@ class ModelApp:
                 "  \u2191\u2193 navigate   Enter select   d delete   Tab/\u2190\u2192 switch   Esc back   Ctrl+C cancel"
             )
         elif self._view == _View.PROVIDER_MODELS:
-            hint = "  \u2191\u2193 navigate   Enter select   Tab/\u2190\u2192 switch   Esc back   Ctrl+C cancel"
+            hint = (
+                "  type to filter   \u2191\u2193 navigate   Enter select   Tab switch   Esc clear/back   Ctrl+C cancel"
+            )
         else:
             hint = "  Tab next field   Enter submit   Esc back   Ctrl+C cancel"
         return [("class:model-app.hint", hint)]
@@ -669,10 +693,22 @@ class ModelApp:
             out.append((label, style))
         return out
 
+    def _filtered_models(self) -> List[str]:
+        """Provider models narrowed by the search box (case-insensitive substring)."""
+        query = self._model_search.text.strip().lower()
+        if not query:
+            return self._provider_models
+        return [m for m in self._provider_models if query in m.lower()]
+
+    def _on_model_search_changed(self) -> None:
+        """Keep the highlight valid as the filtered list shrinks/grows."""
+        self._list_cursor = 0
+        self._list_offset = 0
+
     def _provider_models_items(self) -> List[Tuple[str, str]]:
         provider = self._active_provider or ""
         out: List[Tuple[str, str]] = []
-        for model in self._provider_models:
+        for model in self._filtered_models():
             label = model
             is_current = provider == self._current_provider and model == self._current_model
             if is_current:
@@ -708,8 +744,32 @@ class ModelApp:
         if self._list_cursor < 0:
             self._list_cursor = 0
 
+    def _effective_max_visible(self) -> int:
+        """Rows available for list items, from the list Window's *real* height.
+
+        Reads the list Window's ``render_info.window_height`` — the height
+        prompt_toolkit actually allotted — rather than the full terminal size.
+        This is what ``ListSelectorApp`` (``/resume``) does and is essential in
+        embedded mode: the picker runs as ``DatusApp``'s bottom panel and only
+        owns a slice of the screen, so a full-terminal estimate overflowed.
+        Recomputed on every render, so terminal resizes are picked up too.
+
+        In the provider-model view the search box is a *sibling* Window, so the
+        list Window height already excludes it — no manual reservation needed.
+        One row is held back for the scroll indicator. Falls back to a
+        conservative half-screen before the first paint / when no Window exists
+        yet (e.g. unit tests without a render pass).
+        """
+        win = self._list_window
+        if win is not None:
+            info = getattr(win, "render_info", None)
+            if info is not None and getattr(info, "window_height", 0) > 0:
+                return max(_MIN_LIST_ROWS, min(_MAX_LIST_ROWS, int(info.window_height) - 1))
+        term_rows = shutil.get_terminal_size((120, 40)).lines
+        return max(_MIN_LIST_ROWS, min(_MAX_LIST_ROWS, term_rows // 2 - 2))
+
     def _visible_slice(self, total: int) -> Tuple[int, int]:
-        max_visible = self._max_visible
+        max_visible = self._effective_max_visible()
         if total <= max_visible:
             self._list_offset = 0
             return 0, total
@@ -757,12 +817,18 @@ class ModelApp:
         self._provider_models = [str(m) for m in models]
         self._view = _View.PROVIDER_MODELS
         self._error_message = None
-        if provider == self._current_provider and self._current_model in self._provider_models:
-            self._list_cursor = self._provider_models.index(self._current_model)
+        # Reset the filter so a previously typed query doesn't leak across
+        # providers. Assigning ``text`` fires ``on_text_changed`` (cursor → 0),
+        # which we override below for the current-selection / default cases.
+        self._model_search.text = ""
+        filtered = self._filtered_models()
+        if provider == self._current_provider and self._current_model in filtered:
+            self._list_cursor = filtered.index(self._current_model)
         else:
             default = str(meta.get("default_model") or "")
-            self._list_cursor = self._provider_models.index(default) if default in self._provider_models else 0
+            self._list_cursor = filtered.index(default) if default in filtered else 0
         self._list_offset = 0
+        self._focus(self._model_search)
 
     def _enter_cred_form(self, provider: str) -> None:
         meta = self._provider_meta.get(provider) or {}
@@ -876,9 +942,10 @@ class ModelApp:
             self._error_message = f"Unknown auth_type `{auth_type}` for provider `{provider}`"
 
     def _on_model_enter(self) -> None:
-        if not self._provider_models:
+        filtered = self._filtered_models()
+        if not filtered or self._list_cursor < 0 or self._list_cursor >= len(filtered):
             return
-        model = self._provider_models[self._list_cursor]
+        model = filtered[self._list_cursor]
         provider = self._active_provider or ""
         self._result = ModelSelection(kind="provider_model", provider=provider, model=model)
         self._finish(self._result)
@@ -1122,7 +1189,11 @@ class ModelApp:
         def _(event):
             _clear_pending_delete()
             if self._view == _View.PROVIDER_MODELS:
-                self._enter_provider_list(self._tab)
+                # A non-empty filter is cleared first; a second Esc goes back.
+                if self._model_search.text:
+                    self._model_search.text = ""
+                else:
+                    self._enter_provider_list(self._tab)
             else:
                 self._finish(None)
 

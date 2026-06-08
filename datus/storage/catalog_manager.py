@@ -10,6 +10,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.datasource_scope import datasource_condition, resolve_datasource_id
 from datus.storage.registry import get_storage
 from datus.storage.semantic_model.store import SemanticModelStorage
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -25,10 +26,23 @@ class CatalogUpdater:
 
     def __init__(self, agent_config: AgentConfig, datasource_id: Optional[str] = None):
         self._agent_config = agent_config
-        self.datasource_id = datasource_id or agent_config.current_datasource or ""
+        self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self.semantic_model_storage = get_storage(
-            SemanticModelStorage, "semantic_model", project=agent_config.project_name
+            SemanticModelStorage,
+            "semantic_model",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
         )
+        self._scope_conditions = [datasource_condition(self.datasource_id)]
+
+    def _update_entry(self, entry_id: str, changes: Dict[str, Any]) -> None:
+        """Update one semantic object, adding datasource scope when initialized normally."""
+
+        scope_conditions = getattr(self, "_scope_conditions", None)
+        if scope_conditions:
+            self.semantic_model_storage.update_entry(entry_id, changes, extra_conditions=scope_conditions)
+            return
+        self.semantic_model_storage.update_entry(entry_id, changes)
 
     def _parse_json_field(self, value: Any) -> Optional[List[Dict[str, Any]]]:
         """Parse JSON string or return list directly."""
@@ -52,7 +66,7 @@ class CatalogUpdater:
         if "description" in update_values:
             entry_id = f"table:{table_name}"
             try:
-                self.semantic_model_storage.update_entry(entry_id, {"description": update_values["description"]})
+                self._update_entry(entry_id, {"description": update_values["description"]})
             except DatusException as e:
                 if e.code == ErrorCode.STORAGE_ENTRY_NOT_FOUND:
                     logger.warning(f"Table entry not found: {entry_id}")
@@ -125,7 +139,7 @@ class CatalogUpdater:
 
             entry_id = f"column:{table_name}.{col_name}"
             try:
-                self.semantic_model_storage.update_entry(entry_id, changed)
+                self._update_entry(entry_id, changed)
             except DatusException as e:
                 if e.code == ErrorCode.STORAGE_ENTRY_NOT_FOUND:
                     logger.warning(f"Column entry not found: {entry_id}")

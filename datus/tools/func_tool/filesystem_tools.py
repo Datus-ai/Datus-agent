@@ -648,6 +648,56 @@ class FilesystemFuncTool(BaseTool):
 
         yield from walk_recursive(target_path)
 
+    @staticmethod
+    def _glob_part_has_magic(part: str) -> bool:
+        return any(ch in part for ch in "*?[{")
+
+    def _rescope_path_pattern_glob(self, pattern: str, path: str) -> tuple[str, str]:
+        """Treat path-like glob patterns as an explicit seed directory.
+
+        ``glob(pattern="subject/foo/*.yml", path=".")`` should search
+        ``subject/foo`` even when ``subject/`` is gitignored from a root walk.
+        """
+        if not pattern or os.path.isabs(pattern):
+            return pattern, path
+
+        normalized_pattern = pattern.replace("\\", "/")
+        if "/" not in normalized_pattern:
+            return pattern, path
+
+        parts = [part for part in normalized_pattern.split("/") if part not in ("", ".")]
+        if len(parts) <= 1:
+            return pattern, path
+
+        fixed_parts: List[str] = []
+        remainder_parts: List[str] = []
+        for idx, part in enumerate(parts):
+            if self._glob_part_has_magic(part):
+                remainder_parts = parts[idx:]
+                break
+            fixed_parts.append(part)
+        else:
+            fixed_parts = parts[:-1]
+            remainder_parts = parts[-1:]
+
+        if not fixed_parts or not remainder_parts:
+            return pattern, path
+
+        fixed_prefix = "/".join(fixed_parts)
+        remainder = "/".join(remainder_parts)
+        candidates = []
+        if path not in ("", ".", "./"):
+            candidates.append(os.path.join(path, fixed_prefix))
+        candidates.append(fixed_prefix)
+
+        for candidate in candidates:
+            resolved = self._classify(candidate)
+            if resolved.zone == PathZone.HIDDEN:
+                continue
+            if resolved.resolved.exists() and resolved.resolved.is_dir():
+                return remainder, candidate
+        return pattern, path
+
     def glob(self, pattern: str, path: str = ".") -> FuncToolResult:
         """
         Find files matching a glob pattern.
@@ -666,6 +716,7 @@ class FilesystemFuncTool(BaseTool):
         """
         max_results = 200
         try:
+            pattern, path = self._rescope_path_pattern_glob(pattern, path)
             seed = self._classify(path)
             if seed.zone == PathZone.HIDDEN:
                 return FuncToolResult(result={"files": [], "truncated": False})

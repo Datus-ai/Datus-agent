@@ -14,6 +14,12 @@ import pyarrow as pa
 from datus_storage_base.conditions import WhereExpr
 from datus_storage_base.vector.base import VectorDatabase, VectorTable
 
+from datus.storage.datasource_scope import (
+    DATASOURCE_ID_COLUMN,
+    STORAGE_KEY_COLUMN,
+    build_storage_key,
+    datasource_condition,
+)
 from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -83,6 +89,7 @@ class BaseEmbeddingStore(StorageBase):
         extra_fields: Optional[List[pa.Field]] = None,
         default_values: Optional[Dict[str, Any]] = None,
         scope_indices: Optional[List[str]] = None,
+        datasource_scoped: bool = False,
     ):
         super().__init__(db=db)
         self.model = embedding_model
@@ -94,16 +101,22 @@ class BaseEmbeddingStore(StorageBase):
         # Append extra fields to schema if provided
         if schema is not None and extra_fields:
             schema = pa.schema(list(schema) + extra_fields)
-        # Ensure datasource_id field exists for subject-tree-based stores
-        # (needed for RDB subject tree lookups even in PHYSICAL isolation mode)
-        if schema is not None:
+        # Datasource-scoped shared tables keep the physical namespace at the
+        # project level and isolate rows by datasource_id/storage_key.
+        if datasource_scoped and schema is not None:
             existing_names = {f.name for f in schema}
-            if "datasource_id" not in existing_names:
-                schema = pa.schema(list(schema) + [pa.field("datasource_id", pa.string())])
+            extra_scope_fields = []
+            if DATASOURCE_ID_COLUMN not in existing_names:
+                extra_scope_fields.append(pa.field(DATASOURCE_ID_COLUMN, pa.string()))
+            if "id" in existing_names and STORAGE_KEY_COLUMN not in existing_names:
+                extra_scope_fields.append(pa.field(STORAGE_KEY_COLUMN, pa.string()))
+            if extra_scope_fields:
+                schema = pa.schema(list(schema) + extra_scope_fields)
         self._schema = schema
         self._unique_columns = unique_columns
         self._default_values: Dict[str, Any] = dict(default_values) if default_values else {}
         self._scope_indices: List[str] = list(scope_indices or [])
+        self._datasource_scoped = datasource_scoped
         # Delay table initialization until first use.
         self._shared = _SharedTableState()
         self._table_lock = Lock()
@@ -143,6 +156,7 @@ class BaseEmbeddingStore(StorageBase):
         if not self.db.table_exists(self.table_name):
             return None
         self.table = self.db.open_table(self.table_name)
+        self._ensure_persisted_scope_columns()
         return self.table
 
     def _empty_result(self, select_fields: Optional[List[str]] = None) -> pa.Table:
@@ -165,12 +179,51 @@ class BaseEmbeddingStore(StorageBase):
 
     def _apply_default_values(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Fill in default values for rows that are missing them."""
-        if not self._default_values:
-            return data
+        schema_names = set(self._schema.names) if self._datasource_scoped and self._schema is not None else set()
         for row in data:
             for k, v in self._default_values.items():
                 row.setdefault(k, v)
+            if DATASOURCE_ID_COLUMN in schema_names:
+                row.setdefault(DATASOURCE_ID_COLUMN, "")
+            if STORAGE_KEY_COLUMN in schema_names and row.get("id") not in (None, ""):
+                row.setdefault(STORAGE_KEY_COLUMN, build_storage_key(row.get(DATASOURCE_ID_COLUMN, ""), row["id"]))
         return data
+
+    def _scope_column_migration_exprs(self) -> Dict[str, str]:
+        """Return default SQL expressions for missing row-scope columns."""
+
+        if not self._datasource_scoped or self._schema is None:
+            return {}
+        schema_names = set(self._schema.names)
+        exprs: Dict[str, str] = {}
+        if DATASOURCE_ID_COLUMN in schema_names:
+            exprs[DATASOURCE_ID_COLUMN] = "''"
+        if STORAGE_KEY_COLUMN in schema_names and "id" in schema_names:
+            exprs[STORAGE_KEY_COLUMN] = "'legacy:' || id"
+        return exprs
+
+    def _ensure_persisted_scope_columns(self) -> None:
+        """Best-effort migration for existing vector tables missing scope columns."""
+
+        if self.table is None:
+            return
+        ensure_columns = getattr(self.table, "ensure_columns", None)
+        if ensure_columns is None:
+            return
+        exprs = self._scope_column_migration_exprs()
+        if not exprs:
+            return
+        try:
+            ensure_columns(exprs)
+        except Exception as exc:
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={
+                    "operation": "ensure_scope_columns",
+                    "table_name": self.table_name,
+                    "error_message": str(exc),
+                },
+            ) from exc
 
     def _search_all(
         self, where: WhereExpr = None, select_fields: Optional[List[str]] = None, limit: Optional[int] = None
@@ -243,14 +296,24 @@ class BaseEmbeddingStore(StorageBase):
             self._shared.initialized = False
 
     def truncate_scoped(self) -> None:
-        """Delete all rows visible to the current connection.
+        """Legacy full-table truncate alias.
 
-        With PHYSICAL-only isolation this is equivalent to ``truncate()``
-        (drops the whole table); the method is retained as a stable alias
-        for call sites that previously relied on row-scoped deletion under
-        LOGICAL isolation.
+        Datasource-scoped overwrite paths must call ``delete_datasource_rows``
+        instead of this method.
         """
         self.truncate()
+
+    def delete_datasource_rows(self, datasource_id: str) -> None:
+        """Delete rows for one datasource without dropping the project table."""
+
+        if not self._datasource_scoped:
+            raise DatusException(
+                ErrorCode.STORAGE_INVALID_ARGUMENT,
+                message_args={
+                    "error_message": f"table '{self.table_name}' is not datasource-scoped",
+                },
+            )
+        self._delete_rows(datasource_condition(datasource_id))
 
     def _ensure_table(self, schema: Optional[pa.Schema] = None):
         if self.db.table_exists(self.table_name):
@@ -276,6 +339,7 @@ class BaseEmbeddingStore(StorageBase):
                     ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
                     message_args={"operation": "create_table", "table_name": self.table_name, "error_message": str(e)},
                 ) from e
+        self._ensure_persisted_scope_columns()
 
     def create_vector_index(
         self,

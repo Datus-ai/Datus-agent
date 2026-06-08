@@ -227,20 +227,20 @@ class TestEndMetricGeneration:
             result = generation_tools.end_metric_generation(metric_file="/path/semantic_models/metric.yaml")
         assert result.success == 1
         assert result.result["metric_file"] == "/path/semantic_models/metric.yaml"
-        assert result.result["semantic_model_file"] == ""
+        assert result.result["semantic_model_files"] == []
         assert result.result["metric_sqls"] == {}
         assert result.result["sync"]["success"] is True
 
-    def test_success_with_semantic_model(self, generation_tools):
+    def test_success_with_semantic_models(self, generation_tools):
         self._mark_ready_to_publish(generation_tools)
         p1, p2, p3 = self._patch_sync(generation_tools)
         with p1, p2, p3:
             result = generation_tools.end_metric_generation(
                 metric_file="/path/semantic_models/metric.yaml",
-                semantic_model_file="/path/semantic_models/model.yaml",
+                semantic_model_files=["/path/semantic_models/model.yaml"],
             )
         assert result.success == 1
-        assert result.result["semantic_model_file"] == "/path/semantic_models/model.yaml"
+        assert result.result["semantic_model_files"] == ["/path/semantic_models/model.yaml"]
 
     def test_success_with_metric_sqls_json(self, generation_tools):
         self._mark_ready_to_publish(generation_tools)
@@ -352,6 +352,124 @@ class TestEndMetricGenerationPreflight:
         ):
             result = generation_tools.end_metric_generation(metric_file=str(good))
         assert result.success == 1
+
+    def test_metric_sqls_scope_excludes_existing_file_metrics(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("new_metric")
+        generation_tools.generation_evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["existing_metric"],
+                    "dimension_hints": ["start_month"],
+                    "time_group_hints": [
+                        {
+                            "alias": "start_month",
+                            "base_expr": "created_at",
+                            "grain": "month",
+                        }
+                    ],
+                }
+            ]
+        )
+        metric_file = tmp_path / "semantic_models" / "mixed_metrics.yml"
+        metric_file.parent.mkdir(parents=True, exist_ok=True)
+        metric_file.write_text(
+            "metric:\n"
+            "  name: existing_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: existing_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_metric\n"
+        )
+        metric_sqls_json = json.dumps(
+            {
+                "existing_metric": "SELECT old_metric",
+                "new_metric": "SELECT new_metric",
+                "__query_metrics_dry_run__": "SELECT grouped_validation",
+            }
+        )
+
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_existing_metric_names", return_value={"existing_metric"}),
+            patch.object(generation_tools, "_validate_metric_name_conflicts", return_value=None),
+            patch.object(
+                generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(metric_file),
+                metric_sqls_json=metric_sqls_json,
+            )
+
+        assert result.success == 1
+        sync_mock.assert_called_once()
+        assert sync_mock.call_args.kwargs["metric_names_to_sync"] == {"new_metric"}
+
+    def test_combined_dry_run_scope_syncs_all_new_metrics(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.update(
+            {"existing_metric", "new_metric", "other_new_metric"}
+        )
+        generation_tools.generation_evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["existing_metric"],
+                    "dimension_hints": ["start_month"],
+                }
+            ]
+        )
+        metric_file = tmp_path / "semantic_models" / "combined_metrics.yml"
+        metric_file.parent.mkdir(parents=True, exist_ok=True)
+        metric_file.write_text(
+            "metric:\n"
+            "  name: existing_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: existing_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: other_new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: other_new_metric\n"
+        )
+        metric_sqls_json = json.dumps(
+            {
+                "existing_metric": "SELECT old_metric",
+                "__query_metrics_dry_run__": "SELECT grouped_validation",
+            }
+        )
+
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_existing_metric_names", return_value={"existing_metric"}),
+            patch.object(generation_tools, "_validate_metric_name_conflicts", return_value=None),
+            patch.object(
+                generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(metric_file),
+                metric_sqls_json=metric_sqls_json,
+            )
+
+        assert result.success == 1
+        sync_mock.assert_called_once()
+        assert sync_mock.call_args.kwargs["metric_names_to_sync"] == {"new_metric", "other_new_metric"}
 
     def test_rejects_missing_grouped_queryability_dry_run(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
@@ -519,8 +637,8 @@ class TestSyncMetricToDb:
             original_yaml_path=str(metric_file),
         )
 
-    def test_metric_with_semantic_model_combines_files(self, generation_tools, tmp_path):
-        """When both metric and semantic model files exist, combine into temp file."""
+    def test_metric_with_semantic_models_syncs_semantic_then_metric(self, generation_tools, tmp_path):
+        """When semantic model files are provided, sync semantic objects before metrics."""
         metric_file = tmp_path / "metric.yaml"
         metric_file.write_text("metric:\n  name: revenue\n  type: simple\n")
         semantic_file = tmp_path / "model.yaml"
@@ -528,23 +646,69 @@ class TestSyncMetricToDb:
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.return_value = {"success": True, "message": "synced"}
-            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file), {"rev": "SELECT 1"})
+            result = generation_tools._sync_metric_to_db(str(metric_file), [str(semantic_file)], {"rev": "SELECT 1"})
 
         assert result["success"] is True
         assert result["semantic_synced"] is True
+        assert result["semantic_model_files_synced"] == [str(semantic_file)]
         # Should have been called twice: first for semantic objects, then for metrics
         assert mock_sync.call_count == 2
         # First call: sync semantic objects
         sem_call = mock_sync.call_args_list[0]
         assert sem_call.kwargs.get("include_semantic_objects") is True
         assert sem_call.kwargs.get("include_metrics") is False
-        # Second call: sync metrics from combined temp file
+        # Second call: sync metrics from the metric file itself
         metric_call = mock_sync.call_args_list[1]
-        actual_temp_path = metric_call[0][0]
-        assert not os.path.exists(actual_temp_path), f"Temp file should be cleaned up: {actual_temp_path}"
+        assert metric_call[0][0] == str(metric_file)
         assert metric_call.kwargs.get("include_semantic_objects") is False
         assert metric_call.kwargs.get("include_metrics") is True
         assert metric_call.kwargs.get("metric_sqls") == {"rev": "SELECT 1"}
+        assert metric_call.kwargs.get("original_yaml_path") == str(metric_file)
+
+    def test_metric_sync_filters_to_publish_scope(self, generation_tools, tmp_path):
+        """When a publish scope is supplied, sync only those metric YAML docs."""
+        metric_file = tmp_path / "metric.yaml"
+        metric_file.write_text(
+            "metric:\n"
+            "  name: existing_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: existing_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_metric\n"
+        )
+        captured = {}
+
+        def fake_sync(file_path, *args, **kwargs):
+            captured["file_path"] = file_path
+            with open(file_path, encoding="utf-8") as f:
+                captured["content"] = f.read()
+            captured["kwargs"] = kwargs
+            return {"success": True, "message": "synced"}
+
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db", side_effect=fake_sync):
+            result = generation_tools._sync_metric_to_db(
+                str(metric_file),
+                metric_sqls={
+                    "existing_metric": "SELECT old_metric",
+                    "new_metric": "SELECT new_metric",
+                    "__query_metrics_dry_run__": "SELECT grouped_validation",
+                },
+                metric_names_to_sync={"new_metric"},
+            )
+
+        assert result["success"] is True
+        assert result["metric_names_synced"] == ["new_metric"]
+        assert captured["file_path"] != str(metric_file)
+        assert not os.path.exists(captured["file_path"])
+        assert "name: new_metric" in captured["content"]
+        assert "name: existing_metric" not in captured["content"]
+        assert captured["kwargs"]["metric_sqls"] == {"new_metric": "SELECT new_metric"}
+        assert captured["kwargs"]["original_yaml_path"] == str(metric_file)
 
     def test_semantic_sync_failure_aborts_metric_sync(self, generation_tools, tmp_path):
         """When semantic object sync fails, metric sync is skipped and failure propagated."""
@@ -555,33 +719,25 @@ class TestSyncMetricToDb:
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.return_value = {"success": False, "error": "semantic sync failed"}
-            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file))
+            result = generation_tools._sync_metric_to_db(str(metric_file), [str(semantic_file)])
 
         assert result["success"] is False
         assert result["error"] == "semantic sync failed"
         # Only called once (semantic sync), metric sync was skipped
         assert mock_sync.call_count == 1
 
-    def test_semantic_model_not_exists_falls_through(self, generation_tools, tmp_path):
-        """When semantic_model_file path provided but file doesn't exist, sync metric alone."""
+    def test_missing_semantic_model_file_returns_failure(self, generation_tools, tmp_path):
+        """When semantic_model_files contains a missing file, return failure before syncing metrics."""
         metric_file = tmp_path / "metric.yaml"
         metric_file.write_text("metric:\n  name: revenue\n")
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.return_value = {"success": True, "message": "ok"}
-            result = generation_tools._sync_metric_to_db(str(metric_file), "/nonexistent/model.yaml")
+            result = generation_tools._sync_metric_to_db(str(metric_file), ["/nonexistent/model.yaml"])
 
-        assert result["success"] is True
-        assert result["semantic_synced"] is False
-        # Should call with metric file directly (not combined)
-        mock_sync.assert_called_once_with(
-            str(metric_file),
-            generation_tools.agent_config,
-            include_semantic_objects=False,
-            include_metrics=True,
-            metric_sqls=None,
-            original_yaml_path=str(metric_file),
-        )
+        assert result["success"] is False
+        assert "Semantic model file not found" in result["error"]
+        mock_sync.assert_not_called()
 
     def test_sync_failure_propagated(self, generation_tools, tmp_path):
         """Sync failure result is returned as-is."""
@@ -607,8 +763,8 @@ class TestSyncMetricToDb:
         assert result["success"] is False
         assert "connection lost" in result["error"]
 
-    def test_temp_file_cleaned_on_sync_exception(self, generation_tools, tmp_path):
-        """Temp combined file is cleaned up even when sync raises."""
+    def test_exception_during_semantic_sync_returns_failure(self, generation_tools, tmp_path):
+        """Exception during semantic sync is caught and returned as failure dict."""
         metric_file = tmp_path / "metric.yaml"
         metric_file.write_text("metric:\n  name: revenue\n")
         semantic_file = tmp_path / "model.yaml"
@@ -616,11 +772,10 @@ class TestSyncMetricToDb:
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.side_effect = RuntimeError("boom")
-            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file))
+            result = generation_tools._sync_metric_to_db(str(metric_file), [str(semantic_file)])
 
         assert result["success"] is False
-        # Temp file should still be cleaned up
-        assert not (tmp_path / "model.yaml.combined.tmp").exists()
+        assert "boom" in result["error"]
 
 
 class TestGenerateSqlSummaryId:
@@ -638,3 +793,425 @@ class TestGenerateSqlSummaryId:
             result = generation_tools.generate_sql_summary_id("SELECT 1")
         assert result.success == 0
         assert "hash error" in result.error
+
+
+class TestRowsToDicts:
+    """Tests for generation_tools._rows_to_dicts helper."""
+
+    def test_none_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        assert _rows_to_dicts(None) == []
+
+    def test_list_of_dicts_returned_as_is(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        rows = [{"a": 1}, {"b": 2}]
+        assert _rows_to_dicts(rows) == rows
+
+    def test_single_dict_wrapped_in_list(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        assert _rows_to_dicts({"a": 1}) == [{"a": 1}]
+
+    def test_tuple_of_dicts_returned(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        rows = ({"a": 1}, {"b": 2})
+        result = _rows_to_dicts(rows)
+        assert result == [{"a": 1}, {"b": 2}]
+
+    def test_non_dict_items_in_list_filtered_out(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        rows = [{"a": 1}, "not_a_dict", 42, {"b": 2}]
+        assert _rows_to_dicts(rows) == [{"a": 1}, {"b": 2}]
+
+    def test_object_with_to_pylist_called(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        mock_table = Mock()
+        mock_table.to_pylist.return_value = [{"x": 1}]
+        assert _rows_to_dicts(mock_table) == [{"x": 1}]
+
+    def test_string_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        assert _rows_to_dicts("some_string") == []
+
+    def test_bytes_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        assert _rows_to_dicts(b"bytes") == []
+
+    def test_generator_of_dicts_consumed(self):
+        from datus.tools.func_tool.generation_tools import _rows_to_dicts
+
+        def gen():
+            yield {"a": 1}
+            yield {"b": 2}
+
+        assert _rows_to_dicts(gen()) == [{"a": 1}, {"b": 2}]
+
+
+class TestIsSupportedRowContainer:
+    """Tests for generation_tools._is_supported_row_container helper."""
+
+    def test_none_is_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container(None) is True
+
+    def test_list_is_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container([]) is True
+
+    def test_dict_is_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container({}) is True
+
+    def test_tuple_is_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container(()) is True
+
+    def test_object_with_to_pylist_is_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        mock_table = Mock()
+        mock_table.to_pylist = lambda: []
+        assert _is_supported_row_container(mock_table) is True
+
+    def test_string_not_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container("str") is False
+
+    def test_bytes_not_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container(b"bytes") is False
+
+    def test_integer_not_supported(self):
+        from datus.tools.func_tool.generation_tools import _is_supported_row_container
+
+        assert _is_supported_row_container(42) is False
+
+
+class TestRagScopeConditions:
+    """Tests for generation_tools._rag_scope_conditions helper."""
+
+    def test_no_method_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rag_scope_conditions
+
+        class NoMethod:
+            pass
+
+        assert _rag_scope_conditions(NoMethod()) == []
+
+    def test_non_callable_attribute_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rag_scope_conditions
+
+        class WithAttr:
+            _sub_agent_conditions = "not callable"
+
+        assert _rag_scope_conditions(WithAttr()) == []
+
+    def test_method_returning_list_returned(self):
+        from datus.tools.func_tool.generation_tools import _rag_scope_conditions
+
+        sentinel = object()
+        rag = Mock()
+        rag._sub_agent_conditions.return_value = [sentinel]
+        result = _rag_scope_conditions(rag)
+        assert result == [sentinel]
+
+    def test_method_returning_non_list_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rag_scope_conditions
+
+        rag = Mock()
+        rag._sub_agent_conditions.return_value = "not a list"
+        assert _rag_scope_conditions(rag) == []
+
+    def test_method_raising_exception_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import _rag_scope_conditions
+
+        rag = Mock()
+        rag._sub_agent_conditions.side_effect = RuntimeError("boom")
+        assert _rag_scope_conditions(rag) == []
+
+
+class TestCheckSemanticObjectExistsCacheHit:
+    """Test that the cache hit path (lines 129-130) is exercised."""
+
+    def test_cache_hit_returns_copy(self, generation_tools):
+        mock_storage = Mock()
+        generation_tools.semantic_rag.storage = mock_storage
+        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
+            # First call populates the cache
+            result1 = generation_tools.check_semantic_object_exists("orders", kind="table")
+            # Second call should hit the cache
+            result2 = generation_tools.check_semantic_object_exists("orders", kind="table")
+
+        assert result1.success == result2.success
+        assert result1.result == result2.result
+        # Cache should have been populated
+        assert len(generation_tools._semantic_object_exists_cache) >= 1
+
+
+class TestEndSemanticModelGenerationCacheReset:
+    """Test that end_semantic_model_generation resets caches (lines 272-273)."""
+
+    def test_clears_caches_on_success(self, generation_tools):
+        generation_tools.generation_evidence.validation_passed = True
+        # Pre-populate caches
+        generation_tools._semantic_object_exists_cache[("table", "orders", "")] = Mock()
+        generation_tools._semantic_table_object_index = {"orders": {}}
+
+        result = generation_tools.end_semantic_model_generation(["/path/model.yaml"])
+
+        assert result.success == 1
+        assert generation_tools._semantic_object_exists_cache == {}
+        assert generation_tools._semantic_table_object_index is None
+
+
+class TestEndMetricGenerationLegacyParam:
+    """Test end_metric_generation with the legacy semantic_model_file param (line 319)."""
+
+    def test_legacy_semantic_model_file_param(self, generation_tools, tmp_path):
+        generation_tools.generation_evidence.validation_passed = True
+        generation_tools.generation_evidence.metric_dry_run_passed = True
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue")
+
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
+        good.write_text("metric:\n  name: revenue\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        mock_pm = Mock()
+        mock_pm.subject_dir = str(tmp_path)
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}),
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(good),
+                semantic_model_file="/some/model.yaml",  # legacy param
+            )
+        # The legacy param should be converted to semantic_model_files
+        assert result.success == 0  # will fail because /some/model.yaml is outside sandbox
+
+
+class TestEndMetricGenerationMetricSqlsFromEvidence:
+    """Test that metric_sqls from generation_evidence take precedence (line 362-363)."""
+
+    def test_uses_evidence_metric_sqls_when_present(self, generation_tools, tmp_path):
+        generation_tools.generation_evidence.validation_passed = True
+        generation_tools.generation_evidence.metric_dry_run_passed = True
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("revenue")
+        generation_tools.generation_evidence.metric_sqls = {"revenue": "SELECT SUM(revenue)"}
+
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
+        good.write_text("metric:\n  name: revenue\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        mock_pm = Mock()
+        mock_pm.subject_dir = str(tmp_path)
+        captured = {}
+
+        def fake_sync(metric_file, *args, **kwargs):
+            captured["metric_sqls"] = kwargs.get("metric_sqls")
+            return {"success": True, "message": "ok"}
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(generation_tools, "_sync_metric_to_db", side_effect=fake_sync),
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(good))
+
+        assert result.success == 1
+        # Evidence SQLs should be visible in the returned result
+        assert result.result["metric_sqls"] == {"revenue": "SELECT SUM(revenue)"}
+
+
+class TestEndMetricGenerationSemanticFileSandbox:
+    """Test that semantic_model_files outside sandbox is rejected (line 398)."""
+
+    def test_rejects_semantic_file_outside_sandbox(self, generation_tools, tmp_path):
+        generation_tools.generation_evidence.validation_passed = True
+        generation_tools.generation_evidence.metric_dry_run_passed = True
+
+        good = tmp_path / "semantic_models" / "good_metric.yml"
+        good.parent.mkdir(parents=True, exist_ok=True)
+        good.write_text("metric:\n  name: revenue\n  type: measure_proxy\n  type_params:\n    measure: revenue\n")
+        mock_pm = Mock()
+        mock_pm.subject_dir = str(tmp_path)
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(generation_tools, "_sync_metric_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(good),
+                semantic_model_files=["/outside/model.yaml"],
+            )
+
+        assert result.success == 0
+        assert "Knowledge Base sandbox" in result.error
+        sync_mock.assert_not_called()
+
+
+class TestFilterMetricSqls:
+    """Tests for GenerationTools._filter_metric_sqls static method."""
+
+    def test_none_returns_none(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        assert GenerationTools._filter_metric_sqls(None, {"revenue"}) is None
+
+    def test_filters_to_matching_names(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        sqls = {"revenue_total": "SELECT 1", "cost": "SELECT 2", "__combined__": "SELECT 3"}
+        result = GenerationTools._filter_metric_sqls(sqls, {"revenue_total"})
+        assert result == {"revenue_total": "SELECT 1"}
+
+    def test_empty_sync_set_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        sqls = {"revenue": "SELECT 1"}
+        result = GenerationTools._filter_metric_sqls(sqls, set())
+        assert result == {}
+
+
+class TestWriteFilteredMetricFile:
+    """Tests for GenerationTools._write_filtered_metric_file static method."""
+
+    def test_writes_only_matching_docs(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        metric_file = tmp_path / "metrics.yml"
+        metric_file.write_text(
+            "metric:\n  name: revenue\n  type: measure_proxy\n---\nmetric:\n  name: cost\n  type: measure_proxy\n"
+        )
+        temp_path = GenerationTools._write_filtered_metric_file(str(metric_file), {"revenue"})
+        try:
+            import yaml
+
+            with open(temp_path, encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+            names = [d["metric"]["name"] for d in docs if isinstance(d, dict) and "metric" in d]
+            assert names == ["revenue"]
+        finally:
+            import os
+
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    def test_raises_when_no_matching_docs(self, tmp_path):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        metric_file = tmp_path / "metrics.yml"
+        metric_file.write_text("metric:\n  name: revenue\n  type: measure_proxy\n")
+
+        with pytest.raises(ValueError, match="No matching metric definitions"):
+            GenerationTools._write_filtered_metric_file(str(metric_file), {"nonexistent"})
+
+
+class TestValidateMetricNameConflicts:
+    """Tests for GenerationTools._validate_metric_name_conflicts."""
+
+    def test_empty_definitions_returns_none(self, generation_tools):
+        assert generation_tools._validate_metric_name_conflicts([]) is None
+
+    def test_no_existing_metrics_returns_none(self, generation_tools):
+        generation_tools.metric_rag.search_all_metrics.return_value = []
+        result = generation_tools._validate_metric_name_conflicts([{"name": "revenue", "metric_type": "measure_proxy"}])
+        assert result is None
+
+    def test_non_conflicting_same_definition_returns_none(self, generation_tools):
+        from unittest.mock import patch
+
+        generation_tools.metric_rag.search_all_metrics.return_value = [
+            {
+                "id": "m1",
+                "name": "revenue",
+                "semantic_model_name": "orders",
+                "metric_type": "measure_proxy",
+                "measure_expr": "revenue",
+                "base_measures": ["revenue"],
+            }
+        ]
+        with patch("datus.tools.func_tool.generation_tools.metric_definition_conflict", return_value=None):
+            result = generation_tools._validate_metric_name_conflicts(
+                [
+                    {
+                        "name": "revenue",
+                        "metric_type": "measure_proxy",
+                        "measure_expr": "revenue",
+                        "base_measures": ["revenue"],
+                    }
+                ]
+            )
+        assert result is None
+
+    def test_conflicting_definition_returns_error_string(self, generation_tools):
+        from unittest.mock import patch
+
+        generation_tools.metric_rag.search_all_metrics.return_value = [
+            {
+                "id": "m1",
+                "name": "revenue",
+                "semantic_model_name": "orders",
+                "metric_type": "measure_proxy",
+                "measure_expr": "revenue",
+                "base_measures": ["revenue"],
+            }
+        ]
+        with patch("datus.tools.func_tool.generation_tools.metric_definition_conflict", return_value="metric_type"):
+            result = generation_tools._validate_metric_name_conflicts([{"name": "revenue", "metric_type": "ratio"}])
+        assert result is not None
+        assert "conflict" in result.lower()
+
+    def test_exception_during_search_returns_none(self, generation_tools):
+        generation_tools.metric_rag.search_all_metrics.side_effect = RuntimeError("storage error")
+        result = generation_tools._validate_metric_name_conflicts([{"name": "revenue"}])
+        assert result is None
+
+
+class TestFilterMetricNames:
+    """Tests for GenerationTools._filter_metric_names static method."""
+
+    def test_none_scope_returns_all(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        assert GenerationTools._filter_metric_names(["a", "b"], None) == ["a", "b"]
+
+    def test_filters_to_scope(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        result = GenerationTools._filter_metric_names(["revenue_total", "cost"], {"revenue_total"})
+        assert result == ["revenue_total"]
+
+
+class TestPublicMetricSqlNames:
+    """Tests for GenerationTools._public_metric_sql_names static method."""
+
+    def test_filters_out_dunder_names(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        sqls = {"revenue": "SELECT 1", "__query_metrics_dry_run__": "SELECT 2", "__combined__": "SELECT 3"}
+        result = GenerationTools._public_metric_sql_names(sqls)
+        assert result == {"revenue"}
+
+    def test_none_returns_empty(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        assert GenerationTools._public_metric_sql_names(None) == set()
+
+    def test_empty_name_skipped(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        assert GenerationTools._public_metric_sql_names({"": "SELECT 1"}) == set()

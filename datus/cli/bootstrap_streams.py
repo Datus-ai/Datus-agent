@@ -358,8 +358,8 @@ async def stream_reference_sql(
 
     if build_mode == "overwrite":
         logger.info(
-            "[overwrite] Wiping reference_sql store for project '%s' before re-population",
-            agent_config.project_name,
+            "[overwrite] Wiping reference_sql rows for datasource '%s' before re-population",
+            storage.datasource_id,
         )
         storage.truncate()
         yield message_action("Reference SQL: cleared existing entries (overwrite mode).")

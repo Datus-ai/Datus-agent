@@ -56,8 +56,8 @@ async def init_local_schema_async(
     """
     if build_mode == "overwrite":
         logger.info(
-            "[overwrite] Wiping schema metadata store for project '%s' before re-population",
-            agent_config.project_name,
+            "[overwrite] Wiping schema metadata rows for datasource '%s' before re-population",
+            table_lineage_store.datasource_id,
         )
         table_lineage_store.truncate()
 

@@ -309,7 +309,7 @@ class TestInitSuccessStoryMetricsAsync:
 
         assert success is True
         assert error == ""
-        assert result == {"response": "done"}
+        assert result == {"response": "done", "metrics_count": 0, "final_metrics_count": 0}
 
     @pytest.mark.asyncio
     async def test_batch_flow_allows_recoverable_tool_failure(self):
@@ -360,7 +360,7 @@ class TestInitSuccessStoryMetricsAsync:
 
         assert success is True
         assert error == ""
-        assert result == {"response": "done"}
+        assert result == {"response": "done", "metrics_count": 0, "final_metrics_count": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -506,13 +506,13 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
             )
 
         assert success is True
-        rag_factory.assert_called_once_with(mock_config)
+        rag_factory.assert_any_call(mock_config)
         fake_rag_instance.truncate.assert_called_once_with()
         mock_exists.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_incremental_does_not_call_truncate(self):
-        """build_mode='incremental' must not call truncate; it consults exists_metrics instead."""
+        """build_mode='incremental' must not call truncate."""
         from unittest.mock import patch
 
         import pandas as pd
@@ -561,7 +561,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
 
         assert success is True
         fake_rag_instance.truncate.assert_not_called()
-        mock_exists.assert_called_once()
+        mock_exists.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +672,7 @@ class TestMetricProvenanceHelpers:
 @pytest.mark.ci
 class TestDefaultMetricsBatchSize:
     def test_default_batch_size(self):
-        assert DEFAULT_METRICS_BATCH_SIZE == 1
+        assert DEFAULT_METRICS_BATCH_SIZE == 5
 
 
 # ---------------------------------------------------------------------------
@@ -1084,7 +1084,7 @@ class TestBatchSplitting:
             )
 
         assert ok is True
-        assert result == {"metrics": ["m0"]}
+        assert result == {"metrics": ["m0"], "metrics_count": 0, "final_metrics_count": 0}
 
     @pytest.mark.asyncio
     async def test_batch_size_parameter_passed_through_sync(self):
@@ -1096,3 +1096,340 @@ class TestBatchSplitting:
         sig = inspect.signature(init_success_story_metrics)
         assert "batch_size" in sig.parameters
         assert sig.parameters["batch_size"].default == DEFAULT_METRICS_BATCH_SIZE
+
+
+class TestBatchHasNoMetricCandidates:
+    """Tests for _batch_has_no_metric_candidates early-skip logic."""
+
+    def test_returns_false_when_plan_unavailable(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        assert _batch_has_no_metric_candidates({}) is False
+        assert _batch_has_no_metric_candidates({"available": False}) is False
+        assert _batch_has_no_metric_candidates(None) is False
+
+    def test_returns_false_when_direct_candidates_exist(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "direct_metric_candidates": [{"name": "revenue"}],
+            "non_metric_evidence": [{"name": "detail_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is False
+
+    def test_returns_false_when_derived_candidates_exist(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "derived_metric_candidates": [{"name": "mom_delta"}],
+            "non_metric_evidence": [{"name": "detail_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is False
+
+    def test_returns_true_when_only_non_metric_evidence(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "direct_metric_candidates": [],
+            "derived_metric_candidates": [],
+            "non_metric_evidence": [{"name": "row_number_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is True
+
+    def test_returns_true_when_only_identity_references(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "identity_metric_references": [{"name": "activity_count"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is True
+
+    def test_returns_true_when_only_derived_datasource_recommendations(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "derived_datasource_recommendations": [{"sql_query": "SELECT ..."}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is True
+
+    def test_returns_false_when_no_evidence_at_all(self):
+        """Available plan with zero candidates AND zero evidence should NOT skip."""
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {"available": True}
+        assert _batch_has_no_metric_candidates(plan) is False
+
+
+@pytest.mark.ci
+class TestSourceNames:
+    """Tests for _source_names helper."""
+
+    def test_empty_value_returns_empty_set(self):
+        from datus.storage.metric.metric_init import _source_names
+
+        assert _source_names("") == set()
+        assert _source_names(None) == set()
+        assert _source_names([]) == set()
+
+    def test_list_of_strings(self):
+        from datus.storage.metric.metric_init import _source_names
+
+        assert _source_names(["sql_1", "sql_2"]) == {"sql_1", "sql_2"}
+
+    def test_tuple_of_strings(self):
+        from datus.storage.metric.metric_init import _source_names
+
+        assert _source_names(("sql_1", "sql_2")) == {"sql_1", "sql_2"}
+
+    def test_set_of_strings(self):
+        from datus.storage.metric.metric_init import _source_names
+
+        assert _source_names({"sql_1"}) == {"sql_1"}
+
+    def test_comma_separated_string(self):
+        from datus.storage.metric.metric_init import _source_names
+
+        assert _source_names("sql_1, sql_2") == {"sql_1", "sql_2"}
+
+    def test_single_string(self):
+        from datus.storage.metric.metric_init import _source_names
+
+        assert _source_names("sql_1") == {"sql_1"}
+
+
+@pytest.mark.ci
+class TestSourceScopedItems:
+    """Tests for _source_scoped_items helper."""
+
+    def test_non_list_returns_empty(self):
+        from datus.storage.metric.metric_init import _source_scoped_items
+
+        assert _source_scoped_items(None, {"sql_1"}) == []
+        assert _source_scoped_items("not_a_list", {"sql_1"}) == []
+
+    def test_non_dict_items_skipped(self):
+        from datus.storage.metric.metric_init import _source_scoped_items
+
+        assert _source_scoped_items(["not_dict", 42], {"sql_1"}) == []
+
+    def test_item_without_source_always_included(self):
+        from datus.storage.metric.metric_init import _source_scoped_items
+
+        item = {"name": "m1"}
+        result = _source_scoped_items([item], {"sql_1"})
+        assert item in result
+
+    def test_item_with_matching_source_included(self):
+        from datus.storage.metric.metric_init import _source_scoped_items
+
+        item = {"name": "m1", "source_sql_name": "sql_1"}
+        result = _source_scoped_items([item], {"sql_1"})
+        assert item in result
+
+    def test_item_with_non_matching_source_excluded(self):
+        from datus.storage.metric.metric_init import _source_scoped_items
+
+        item = {"name": "m1", "source_sql_name": "sql_99"}
+        result = _source_scoped_items([item], {"sql_1"})
+        assert result == []
+
+    def test_uses_source_key_as_fallback(self):
+        from datus.storage.metric.metric_init import _source_scoped_items
+
+        item = {"name": "m1", "source": "sql_1"}
+        result = _source_scoped_items([item], {"sql_1"})
+        assert item in result
+
+
+@pytest.mark.ci
+class TestNormalizedScalar:
+    """Tests for _normalized_scalar helper."""
+
+    def test_strips_and_lowercases(self):
+        from datus.storage.metric.metric_init import _normalized_scalar
+
+        assert _normalized_scalar("  MeasureProxy  ") == "measureproxy"
+
+    def test_none_returns_empty(self):
+        from datus.storage.metric.metric_init import _normalized_scalar
+
+        assert _normalized_scalar(None) == ""
+
+    def test_empty_string(self):
+        from datus.storage.metric.metric_init import _normalized_scalar
+
+        assert _normalized_scalar("") == ""
+
+
+@pytest.mark.ci
+class TestNormalizedMetricType:
+    """Tests for _normalized_metric_type helper."""
+
+    def test_simple_mapped_to_measure_proxy(self):
+        from datus.storage.metric.metric_init import _normalized_metric_type
+
+        assert _normalized_metric_type("simple") == "measure_proxy"
+
+    def test_other_types_unchanged(self):
+        from datus.storage.metric.metric_init import _normalized_metric_type
+
+        assert _normalized_metric_type("ratio") == "ratio"
+        assert _normalized_metric_type("derived") == "derived"
+
+    def test_none_returns_empty(self):
+        from datus.storage.metric.metric_init import _normalized_metric_type
+
+        assert _normalized_metric_type(None) == ""
+
+
+@pytest.mark.ci
+class TestNormalizedMeasureNames:
+    """Tests for _normalized_measure_names helper."""
+
+    def test_non_list_returns_empty(self):
+        from datus.storage.metric.metric_init import _normalized_measure_names
+
+        assert _normalized_measure_names(None) == set()
+        assert _normalized_measure_names("not_a_list") == set()
+
+    def test_list_of_strings(self):
+        from datus.storage.metric.metric_init import _normalized_measure_names
+
+        assert _normalized_measure_names(["Revenue", "Cost"]) == {"revenue", "cost"}
+
+    def test_list_of_dicts_with_name_key(self):
+        from datus.storage.metric.metric_init import _normalized_measure_names
+
+        result = _normalized_measure_names([{"name": "Revenue"}, {"name": "Cost"}])
+        assert result == {"revenue", "cost"}
+
+    def test_list_of_dicts_with_measure_key(self):
+        from datus.storage.metric.metric_init import _normalized_measure_names
+
+        result = _normalized_measure_names([{"measure": "Revenue"}])
+        assert result == {"revenue"}
+
+    def test_ignores_non_string_non_dict_items(self):
+        from datus.storage.metric.metric_init import _normalized_measure_names
+
+        result = _normalized_measure_names([42, None, "revenue"])
+        assert result == {"revenue"}
+
+
+@pytest.mark.ci
+class TestCandidateHasDefinitionEvidence:
+    """Tests for _candidate_has_definition_evidence helper."""
+
+    def test_empty_candidate_returns_false(self):
+        from datus.storage.metric.metric_init import _candidate_has_definition_evidence
+
+        assert _candidate_has_definition_evidence({}) is False
+
+    def test_candidate_with_metric_type(self):
+        from datus.storage.metric.metric_init import _candidate_has_definition_evidence
+
+        assert _candidate_has_definition_evidence({"metric_type": "measure_proxy"}) is True
+
+    def test_candidate_with_semantic_model(self):
+        from datus.storage.metric.metric_init import _candidate_has_definition_evidence
+
+        assert _candidate_has_definition_evidence({"semantic_model": "orders"}) is True
+
+    def test_candidate_with_base_measures(self):
+        from datus.storage.metric.metric_init import _candidate_has_definition_evidence
+
+        assert _candidate_has_definition_evidence({"base_measures": ["order_count"]}) is True
+
+    def test_candidate_with_referenced_metrics(self):
+        from datus.storage.metric.metric_init import _candidate_has_definition_evidence
+
+        assert _candidate_has_definition_evidence({"referenced_metrics": ["revenue"]}) is True
+
+
+@pytest.mark.ci
+class TestCandidateMatchesExistingMetric:
+    """Tests for _candidate_matches_existing_metric helper."""
+
+    def test_no_definition_evidence_returns_false(self):
+        from datus.storage.metric.metric_init import _candidate_matches_existing_metric
+
+        assert _candidate_matches_existing_metric({}, {"name": "revenue", "type": "measure_proxy"}) is False
+
+    def test_matching_type_and_measures(self):
+        from datus.storage.metric.metric_init import _candidate_matches_existing_metric
+
+        candidate = {"metric_type": "measure_proxy", "base_measures": ["revenue_total"]}
+        existing = {"type": "measure_proxy", "base_measures": ["revenue_total"]}
+        assert _candidate_matches_existing_metric(candidate, existing) is True
+
+    def test_mismatched_metric_type_returns_false(self):
+        from datus.storage.metric.metric_init import _candidate_matches_existing_metric
+
+        candidate = {"metric_type": "ratio", "base_measures": ["a", "b"]}
+        existing = {"type": "measure_proxy", "base_measures": ["a"]}
+        assert _candidate_matches_existing_metric(candidate, existing) is False
+
+    def test_mismatched_semantic_model_returns_false(self):
+        from datus.storage.metric.metric_init import _candidate_matches_existing_metric
+
+        candidate = {"metric_type": "measure_proxy", "semantic_model_name": "orders"}
+        existing = {"type": "measure_proxy", "semantic_model_name": "customers"}
+        assert _candidate_matches_existing_metric(candidate, existing) is False
+
+    def test_mismatched_base_measures_returns_false(self):
+        from datus.storage.metric.metric_init import _candidate_matches_existing_metric
+
+        candidate = {"metric_type": "measure_proxy", "base_measures": ["revenue"]}
+        existing = {"type": "measure_proxy", "base_measures": ["cost"]}
+        assert _candidate_matches_existing_metric(candidate, existing) is False
+
+    def test_simple_type_normalized_to_measure_proxy(self):
+        from datus.storage.metric.metric_init import _candidate_matches_existing_metric
+
+        candidate = {"metric_type": "simple", "base_measures": ["revenue"]}
+        existing = {"type": "measure_proxy", "base_measures": ["revenue"]}
+        assert _candidate_matches_existing_metric(candidate, existing) is True
+
+
+@pytest.mark.ci
+class TestAllCandidateMetricsSatisfied:
+    """Tests for _all_candidate_metrics_satisfied helper."""
+
+    def test_empty_candidates_returns_false(self):
+        from datus.storage.metric.metric_init import _all_candidate_metrics_satisfied
+
+        assert _all_candidate_metrics_satisfied({}, []) is False
+
+    def test_candidate_not_in_existing_returns_false(self):
+        from datus.storage.metric.metric_init import _all_candidate_metrics_satisfied
+
+        plan = {"direct_metric_candidates": [{"name": "new_metric", "metric_type": "measure_proxy"}]}
+        assert _all_candidate_metrics_satisfied(plan, []) is False
+
+    def test_all_candidates_satisfied(self):
+        from datus.storage.metric.metric_init import _all_candidate_metrics_satisfied
+
+        plan = {
+            "direct_metric_candidates": [
+                {"name": "revenue_total", "metric_type": "measure_proxy", "base_measures": ["revenue"]}
+            ]
+        }
+        existing = [{"name": "revenue_total", "type": "measure_proxy", "base_measures": ["revenue"]}]
+        assert _all_candidate_metrics_satisfied(plan, existing) is True
+
+    def test_one_unsatisfied_returns_false(self):
+        from datus.storage.metric.metric_init import _all_candidate_metrics_satisfied
+
+        plan = {
+            "direct_metric_candidates": [
+                {"name": "revenue_total", "metric_type": "measure_proxy", "base_measures": ["revenue"]},
+                {"name": "new_metric", "metric_type": "measure_proxy", "base_measures": ["something"]},
+            ]
+        }
+        existing = [{"name": "revenue_total", "type": "measure_proxy", "base_measures": ["revenue"]}]
+        assert _all_candidate_metrics_satisfied(plan, existing) is False

@@ -91,6 +91,20 @@ providers:
       - glm-4.5-air
       - glm-4.5-flash
 
+  # OpenRouter unified gateway — one API key, 300+ models routed by vendor/slug.
+  # The `models` list below is an offline fallback; when online,
+  # provider_model_catalog overlays the full live catalog (cached locally).
+  openrouter:
+    type: openrouter
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    default_model: anthropic/claude-sonnet-4
+    models:
+      - anthropic/claude-sonnet-4
+      - openai/gpt-4o
+      - google/gemini-2.5-pro
+      - deepseek/deepseek-chat
+
   # Coding Plan providers (vendor Anthropic-compatible endpoints)
   alibaba_coding:
     type: claude

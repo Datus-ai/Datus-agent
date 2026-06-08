@@ -98,29 +98,47 @@ class TestGetStorageLRUCache:
             patch("datus.storage.backend_holder.get_vector_backend") as mock_backend,
         ):
             mock_backend.return_value = MagicMock()
-            store = get_storage(MetricStorage, "metric", project="my_project")
+            store = get_storage(MetricStorage, "metric", project="my_project", datasource_id="ds1")
 
         assert store.subject_tree is project_tree
-        assert call("my_project") in mock_tree.call_args_list
+        assert call("my_project", "ds1") in mock_tree.call_args_list
+
+    def test_datasource_scopes_wrapper_not_backend_namespace(self, reset_global_singletons):
+        """Different datasource wrappers share the same project backend namespace."""
+        from datus.storage.registry import get_storage
+
+        def _factory(embedding_model, **kwargs):
+            return BaseEmbeddingStore(table_name="test", embedding_model=embedding_model, **kwargs)
+
+        backend = MagicMock()
+        backend.connect.return_value = MagicMock()
+        with (
+            patch("datus.storage.registry.get_embedding_model", return_value=_FakeEmbeddingModel()),
+            patch("datus.storage.backend_holder.get_vector_backend", return_value=backend),
+        ):
+            s1 = get_storage(_factory, "database", project="proj_1", datasource_id="ds_a")
+            s2 = get_storage(_factory, "database", project="proj_1", datasource_id="ds_b")
+
+        assert s1 is not s2
+        assert backend.connect.call_args_list == [call("proj_1"), call("proj_1")]
 
 
 class TestPreloadAllStorages:
     """Tests for preload_all_storages() with project."""
 
     def test_preload_forwards_project(self, reset_global_singletons):
-        """preload_all_storages forwards project to both init_backends and get_storage."""
+        """preload_all_storages initializes backends without opening datasource-scoped stores."""
         from datus.storage.registry import preload_all_storages
 
         with (
             patch("datus.storage.registry.get_storage") as mock_get_storage,
             patch("datus.storage.backend_holder.init_backends") as mock_init,
-            patch("datus.storage.registry.get_subject_tree_store"),
+            patch("datus.storage.registry.get_subject_tree_store") as mock_get_subject_tree_store,
         ):
             preload_all_storages(data_dir="/tmp/test", project="my_project")
             mock_init.assert_called_once_with(config=None, data_dir="/tmp/test")
-            # All get_storage calls receive project as a kwarg.
-            for call_args in mock_get_storage.call_args_list:
-                assert call_args.kwargs.get("project") == "my_project"
+            mock_get_storage.assert_not_called()
+            mock_get_subject_tree_store.assert_not_called()
 
     def test_preload_applies_defaults(self, reset_global_singletons):
         """preload_all_storages applies deployment defaults."""

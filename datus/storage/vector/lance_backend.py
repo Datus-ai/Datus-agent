@@ -210,6 +210,13 @@ class LanceVectorTable(VectorTable):
     def create_scalar_index(self, column: str) -> None:
         self._table.create_scalar_index(column, replace=True)
 
+    def ensure_columns(self, expressions: Dict[str, str]) -> None:
+        """Add missing columns using Lance SQL expressions."""
+
+        missing = {name: expr for name, expr in expressions.items() if name not in self._table.schema.names}
+        if missing:
+            self._table.add_columns(missing)
+
     # -- Maintenance --
 
     def compact_files(self) -> None:
