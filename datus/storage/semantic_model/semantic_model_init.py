@@ -97,11 +97,12 @@ async def init_success_story_semantic_model_async(
     if build_mode == "overwrite":
         from datus.storage.semantic_model.store import SemanticModelRAG
 
+        semantic_model_rag = SemanticModelRAG(agent_config)
         logger.info(
-            "[overwrite] Wiping semantic_model store for project '%s' before re-population",
-            agent_config.project_name,
+            "[overwrite] Wiping semantic_model rows for datasource '%s' before re-population",
+            semantic_model_rag.datasource_id,
         )
-        SemanticModelRAG(agent_config).truncate()
+        semantic_model_rag.truncate()
 
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"

@@ -12,6 +12,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
+from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
 from datus.storage.embedding_models import EmbeddingModel
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
@@ -67,6 +68,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
                 ]
             ),
             vector_source_name=vector_source_name,
+            datasource_scoped=True,
             **kwargs,
         )
 
@@ -241,14 +243,24 @@ class SchemaWithValueRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
-        self.datasource_id = datasource_id or agent_config.current_datasource or ""
-        self.schema_store = get_storage(SchemaStorage, "database", project=agent_config.project_name)
-        self.value_store = get_storage(SchemaValueStorage, "database", project=agent_config.project_name)
+        self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
+        self.schema_store = get_storage(
+            SchemaStorage,
+            "database",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
+        )
+        self.value_store = get_storage(
+            SchemaValueStorage,
+            "database",
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
+        )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.schema_store, "tables")
 
     def _sub_agent_conditions(self) -> list:
-        """Build sub-agent filter conditions (datasource_id handled by backend)."""
-        conditions = []
+        """Build datasource and sub-agent filter conditions."""
+        conditions = [datasource_condition(self.datasource_id)]
         if self._sub_agent_filter:
             conditions.append(self._sub_agent_filter)
         return conditions
@@ -265,12 +277,12 @@ class SchemaWithValueRAG:
 
     def truncate(self) -> None:
         """Delete all schema metadata for this datasource."""
-        self.schema_store.truncate_scoped()
-        self.value_store.truncate_scoped()
+        self.schema_store.delete_datasource_rows(self.datasource_id)
+        self.value_store.delete_datasource_rows(self.datasource_id)
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]):
         if schemas:
-            self.schema_store.store_batch(schemas)
+            self.schema_store.store_batch(add_datasource_scope_to_rows(schemas, self.datasource_id, id_field=""))
 
         if len(values) == 0:
             return
@@ -284,7 +296,7 @@ class SchemaWithValueRAG:
                 sample_rows = json2csv(sample_rows)
             item["sample_rows"] = sample_rows
             final_values.append(item)
-        self.value_store.store_batch(final_values)
+        self.value_store.store_batch(add_datasource_scope_to_rows(final_values, self.datasource_id, id_field=""))
 
         logger.debug(f"Batch stored {len(schemas)} schemas, {len(final_values)} values")
 
@@ -508,9 +520,12 @@ class SchemaWithValueRAG:
             table_name=table_name,
             table_type=table_type,
         )
-        if where_condition:
-            self.schema_store._delete_rows(where_condition)
-            self.value_store._delete_rows(where_condition)
+        if where_condition is None:
+            return
+        scoped_where = self._add_sub_agent_filter(where_condition)
+        if scoped_where:
+            self.schema_store._delete_rows(scoped_where)
+            self.value_store._delete_rows(scoped_where)
 
 
 def _build_where_clause(

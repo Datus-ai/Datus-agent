@@ -370,7 +370,10 @@ class Agent:
                 if action_name not in seen:
                     seen.add(action_name)
                     print(f"  {action_name}:", flush=True)
-            self._print_stream_lines(payload.get("output", {}).get("raw_output"), indent="    ", prefix="")
+            raw_output = payload.get("output", {}).get("raw_output")
+            if isinstance(raw_output, str) and len(raw_output) > 500:
+                raw_output = raw_output[:500] + "\n... (truncated)"
+            self._print_stream_lines(raw_output, indent="    ", prefix="")
             # Check for semantic model output
             output = payload.get("output")
             if isinstance(output, dict):

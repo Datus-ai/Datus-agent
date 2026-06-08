@@ -83,6 +83,27 @@ class TestGenerationEvidence:
 
         assert evidence.has_required_queryability_dry_runs(["revenue_total"]) is True
 
+    def test_queryability_contract_skips_unrelated_metric_scope(self):
+        evidence = GenerationEvidence()
+        evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["activity_count"],
+                    "dimension_hints": ["start_month"],
+                    "time_group_hints": [
+                        {
+                            "alias": "start_month",
+                            "base_expr": "start_date",
+                            "grain": "month",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        assert evidence.has_required_queryability_dry_runs(["avg_sr_value"]) is True
+
     def test_queryability_contract_accepts_split_grouped_dry_runs_for_source_metrics(self):
         contract = {
             "source": "sql_1",

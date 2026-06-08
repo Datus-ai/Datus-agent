@@ -846,6 +846,19 @@ class TestSubjectTreeDatasourceFields:
         node = store.create_node(None, "Finance")
         assert "datasource_id" in node
 
+    def test_same_project_different_datasources_have_independent_trees(self, storage_test_project):
+        """The same path can exist independently for two datasources in one project."""
+        store_a = SubjectTreeStore(project=storage_test_project, datasource_id="ds_a")
+        store_b = SubjectTreeStore(project=storage_test_project, datasource_id="ds_b")
 
-# Datasource isolation is now handled at the RDB layer (SqliteRdbDatabase).
-# See tests/unit_tests/storage/rdb/ for isolation tests.
+        node_a = store_a.create_node(None, "Finance")
+        node_b = store_b.create_node(None, "Finance")
+
+        assert node_a["node_id"] != node_b["node_id"]
+        assert store_a.get_tree_structure().keys() == {"Finance"}
+        assert store_b.get_tree_structure().keys() == {"Finance"}
+        assert store_a.get_node(node_b["node_id"]) is None
+        assert store_b.get_node(node_a["node_id"]) is None
+
+
+# Datasource isolation is row-level in the shared project tree.

@@ -439,6 +439,7 @@ class SemanticDiscoveryTools:
             base_measures: Dict[str, Dict[str, Any]] = {}
             non_metric_evidence: List[Dict[str, Any]] = []
             identity_metric_references: List[Dict[str, Any]] = []
+            support_measure_candidates: List[Dict[str, Any]] = []
             parse_errors: List[Dict[str, Any]] = []
             source_classifications: List[Dict[str, Any]] = []
             derived_datasource_recommendations: List[Dict[str, Any]] = []
@@ -479,6 +480,7 @@ class SemanticDiscoveryTools:
                         select_tables = self._collect_tables(select)
                         filters = self._collect_filters(select)
                         dimensions = self._collect_dimensions(select)
+                        support_projection_aliases = self._support_measure_projection_aliases(select)
 
                         for projection in select.expressions:
                             candidate = self._candidate_from_projection(
@@ -494,6 +496,19 @@ class SemanticDiscoveryTools:
                             entry_has_metric_evidence = True
                             if candidate.get("evidence_kind") == "identity_metric_reference":
                                 identity_metric_references.append(candidate)
+                                continue
+                            if self._projection_alias_key(projection) in support_projection_aliases:
+                                support_candidate = dict(candidate)
+                                support_candidate["evidence_kind"] = "support_measure"
+                                support_candidate["reason"] = (
+                                    "COUNT(*) appears alongside a distinct business count; keep it as a "
+                                    "support/base measure instead of a published metric"
+                                )
+                                support_measure_candidates.append(support_candidate)
+                                for measure in support_candidate.get("base_measures", []):
+                                    measure = dict(measure)
+                                    measure["evidence_kind"] = "support_measure"
+                                    self._merge_base_measure(base_measures, measure)
                                 continue
                             found_candidate = True
                             entry_candidates.append(candidate)
@@ -560,6 +575,7 @@ class SemanticDiscoveryTools:
                     "direct_metric_candidates": direct_candidates,
                     "derived_metric_candidates": derived_candidates,
                     "base_measures": measures,
+                    "support_measure_candidates": support_measure_candidates,
                     "non_metric_evidence": non_metric_evidence,
                     "identity_metric_references": identity_metric_references,
                     "parse_errors": parse_errors,
@@ -1334,6 +1350,63 @@ class SemanticDiscoveryTools:
             "source_count": 1,
             "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
         }
+
+    def _support_measure_projection_aliases(self, select: Any) -> set[str]:
+        """Return projection aliases that should stay as support measures only.
+
+        A common BI de-duplication query projects ``COUNT(*)`` next to
+        ``COUNT(DISTINCT business_key)`` to show raw rows versus deduplicated
+        business entities. In that shape, the row count is useful dependency
+        evidence but is usually not a standalone business metric.
+        """
+        aggregate_classes = self._aggregate_classes()
+        count_star_aliases: set[str] = set()
+        has_distinct_business_count = False
+
+        for projection in getattr(select, "expressions", []) or []:
+            expr = self._projection_expr(projection)
+            aggregates = list(expr.find_all(*aggregate_classes))
+            if len(aggregates) != 1 or not self._is_same_expression(expr, aggregates[0]):
+                continue
+            aggregate = aggregates[0]
+            if self._is_count_star(aggregate):
+                alias_key = self._projection_alias_key(projection)
+                if alias_key:
+                    count_star_aliases.add(alias_key)
+                continue
+            if self._is_count_distinct(aggregate):
+                has_distinct_business_count = True
+
+        if not has_distinct_business_count:
+            return set()
+        return count_star_aliases
+
+    def _projection_expr(self, projection: Any) -> Any:
+        """Return the expression represented by a SELECT projection."""
+        from sqlglot import expressions as exp
+
+        return projection.this if isinstance(projection, exp.Alias) else projection
+
+    def _projection_alias_key(self, projection: Any) -> str:
+        """Return the normalized key used to identify a projection alias."""
+        from sqlglot import expressions as exp
+
+        alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+        return self._safe_name(alias or projection.sql())
+
+    def _is_count_star(self, aggregate: Any) -> bool:
+        """Return true for COUNT(*)."""
+        from sqlglot import expressions as exp
+
+        return isinstance(aggregate, exp.Count) and (aggregate.this is None or isinstance(aggregate.this, exp.Star))
+
+    def _is_count_distinct(self, aggregate: Any) -> bool:
+        """Return true for COUNT(DISTINCT ...)."""
+        from sqlglot import expressions as exp
+
+        return isinstance(aggregate, exp.Count) and (
+            isinstance(aggregate.this, exp.Distinct) or "DISTINCT" in aggregate.sql().upper()
+        )
 
     def _classify_metric_expression(
         self, expr: Any, name: str, aggregates: List[Any], columns: set, existing_metric_names: set

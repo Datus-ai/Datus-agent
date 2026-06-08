@@ -526,7 +526,7 @@ class TestExtractMetricAndOutputFromResponse:
         }
         sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "revenue_metrics.yml"
-        assert sem_model == "model.yml"
+        assert sem_model == ["model.yml"]
         assert status is None
         assert out == "Generated successfully"
 
@@ -542,6 +542,7 @@ class TestExtractMetricAndOutputFromResponse:
         output = {"content": content}
         sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
         assert metric_file == "sales_metrics.yml"
+        assert sem_model == ["model.yml"]
         assert status is None
         assert out == "Done"
 
@@ -556,7 +557,7 @@ class TestExtractMetricAndOutputFromResponse:
             }
         }
         sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_model == "model.yml"
+        assert sem_model == ["model.yml"]
         assert metric_file is None
         assert status == "skipped"
         assert out.startswith("All requested metrics already exist")
@@ -572,7 +573,7 @@ class TestExtractMetricAndOutputFromResponse:
             }
         }
         sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_model == "model.yml"
+        assert sem_model == ["model.yml"]
         assert metric_file is None
         assert status == "generated"
         assert out == "Generated successfully."
@@ -588,7 +589,7 @@ class TestExtractMetricAndOutputFromResponse:
             }
         }
         sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
-        assert sem_model == "model.yml"
+        assert sem_model == ["model.yml"]
         assert metric_file is None
         assert status == "done"
         assert out == "Done."
@@ -605,6 +606,7 @@ class TestExtractMetricAndOutputFromResponse:
         )
         output = {"content": content}
         sem_model, metric_file, status, out = node._extract_metric_and_output_from_response(output)
+        assert sem_model == ["model.yml"]
         assert metric_file is None
         assert status == "skipped"
         assert out == "Skipped: metric already exists."
@@ -850,7 +852,7 @@ class TestExecuteStreamGenMetricsError:
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["orders_total"], dry_run=True)
         node.generation_tools.end_metric_generation.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
+            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
     def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
@@ -924,7 +926,7 @@ class TestExecuteStreamGenMetricsError:
 
         node.generation_tools.end_metric_generation.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_file=str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml"),
+            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
     @pytest.mark.asyncio

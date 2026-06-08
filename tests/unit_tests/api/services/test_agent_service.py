@@ -1465,7 +1465,7 @@ class TestClassifySubjectPaths:
         monkeypatch.setattr(ReferenceSqlRAG, "__init__", fake_sql_init)
         monkeypatch.setattr(
             "datus.storage.registry.get_subject_tree_store",
-            lambda project: _StubTree(),
+            lambda project, datasource_id="": _StubTree(),
         )
 
         result = _classify_subject_paths(
@@ -1831,7 +1831,7 @@ class TestSubagentScopedContextRoundTrip:
         monkeypatch.setattr(ReferenceSqlRAG, "__init__", fake_sql_init)
         monkeypatch.setattr(
             "datus.storage.registry.get_subject_tree_store",
-            lambda project: _StubTree(),
+            lambda project, datasource_id="": _StubTree(),
         )
 
         # Seed an entry already bound to "finance" via scoped_context, then

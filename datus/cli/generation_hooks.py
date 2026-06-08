@@ -1146,7 +1146,14 @@ class GenerationHooks(AgentHooks):
                             measure_name = base_measures[0]
                             # Query semantic objects to find the measure's table
                             measure_objs = semantic_rag.storage._search_all(
-                                where=And([eq("kind", "column"), eq("is_measure", True), eq("name", measure_name)])
+                                where=And(
+                                    [
+                                        eq("kind", "column"),
+                                        eq("is_measure", True),
+                                        eq("name", measure_name),
+                                    ]
+                                    + semantic_rag._sub_agent_conditions()
+                                )
                             ).to_pylist()
                             if measure_objs:
                                 measure_table = measure_objs[0].get("table_name", "")

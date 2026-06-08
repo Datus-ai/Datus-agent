@@ -50,11 +50,22 @@ class DatasourceService:
 
         self.db_manager = DBManager(agent_config.datasource_configs)
         self.current_datasource = agent_config.current_datasource
-        self.semantic_rag = SemanticModelRAG(self.agent_config)
+        self.semantic_rag = SemanticModelRAG(self.agent_config) if self.current_datasource else None
 
         self.current_db_connector = None
         self.current_db_name = None
         self._initialize_connection()
+
+    def _ensure_semantic_rag(self) -> SemanticModelRAG:
+        """Create semantic model storage only after a datasource is selected."""
+
+        if self.semantic_rag is not None:
+            return self.semantic_rag
+        self.current_datasource = self.agent_config.current_datasource
+        if not self.current_datasource:
+            raise ValueError("No datasource is selected")
+        self.semantic_rag = SemanticModelRAG(self.agent_config, datasource_id=self.current_datasource)
+        return self.semantic_rag
 
     def _get_database_type(self, database_name: Optional[str] = None) -> tuple[str, str]:
         """
@@ -398,7 +409,7 @@ class DatasourceService:
         table_name = name_parts["table_name"]
 
         # Get semantic model using SemanticMetricsRAG
-        semantic_model = self.semantic_rag.get_semantic_model(
+        semantic_model = self._ensure_semantic_rag().get_semantic_model(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,

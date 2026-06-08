@@ -1,5 +1,7 @@
 """Tests for datus.api.services.explorer_service — catalog and subject tree."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from datus.api.models.base_models import Result
@@ -220,6 +222,35 @@ class TestExplorerServiceReferenceSql:
             )
         )
         assert result.success is True
+
+    async def test_edit_reference_sql_uses_sub_agent_conditions(self, real_agent_config):
+        """edit_reference_sql should preserve scoped-agent filters when updating storage."""
+        svc = ExplorerService(agent_config=real_agent_config)
+        marker_condition = object()
+        svc.reference_sql_rag._sub_agent_conditions = MagicMock(return_value=[marker_condition])
+        svc.reference_sql_rag.reference_sql_storage.update_entry = MagicMock(return_value=True)
+
+        result = await svc.edit_reference_sql(
+            ReferenceSQLInput(
+                subject_path=["edit_ref", "editable"],
+                name="editable",
+                sql="SELECT 2",
+                summary="updated",
+                search_text="updated",
+            )
+        )
+
+        assert result.success is True
+        svc.reference_sql_rag.reference_sql_storage.update_entry.assert_called_once_with(
+            subject_path=["edit_ref"],
+            name="editable",
+            update_values={
+                "sql": "SELECT 2",
+                "summary": "updated",
+                "search_text": "updated",
+            },
+            extra_conditions=[marker_condition],
+        )
 
 
 @pytest.mark.asyncio

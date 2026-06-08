@@ -20,7 +20,7 @@ class TestReferenceTemplateStorage:
         call_kwargs = mock_super.call_args
         assert call_kwargs.kwargs["table_name"] == "reference_template"
         assert call_kwargs.kwargs["vector_source_name"] == "search_text"
-        assert call_kwargs.kwargs["unique_columns"] == ["id"]
+        assert call_kwargs.kwargs["unique_columns"] == ["storage_key"]
 
     @patch("datus.storage.reference_template.store.BaseSubjectEmbeddingStore.__init__", return_value=None)
     def test_create_indices(self, mock_super):
@@ -116,7 +116,7 @@ class TestReferenceTemplateStorage:
 
         items = [{"id": "abc", "template": "SELECT 1", "subject_path": ["Sales"]}]
         storage.batch_upsert_templates(items)
-        storage.batch_upsert.assert_called_once_with(items, on_column="id")
+        storage.batch_upsert.assert_called_once_with(items, on_column="storage_key")
 
     @patch("datus.storage.reference_template.store.BaseSubjectEmbeddingStore.__init__", return_value=None)
     def test_search_reference_templates(self, mock_super):
@@ -175,7 +175,7 @@ class TestReferenceTemplateRAG:
     def test_truncate(self, mock_get_storage, mock_filter):
         rag, mock_storage = self._create_rag(mock_get_storage)
         rag.truncate()
-        mock_storage.truncate_scoped.assert_called_once()
+        mock_storage.delete_datasource_rows.assert_called_once_with("test_ns")
 
     @patch("datus.storage.rag_scope._build_sub_agent_filter", return_value=None)
     @patch("datus.storage.registry.get_storage")

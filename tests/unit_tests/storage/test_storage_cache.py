@@ -87,12 +87,12 @@ class TestGetStorage:
             b = get_storage(_DummyStore, "metric", project="test")
         assert a is not b
 
-    def test_different_datasources_not_in_key(self):
-        """get_storage ignores datasource — same factory always returns same instance."""
+    def test_different_datasources_get_distinct_wrappers(self):
+        """Datasource participates in the wrapper cache key."""
         with patch("datus.storage.registry.get_embedding_model", side_effect=_fake_get_embedding_model):
-            a = get_storage(_DummyStore, "metric", project="test")
-            b = get_storage(_DummyStore, "metric", project="test")
-        assert a is b
+            a = get_storage(_DummyStore, "metric", project="test", datasource_id="ds_a")
+            b = get_storage(_DummyStore, "metric", project="test", datasource_id="ds_b")
+        assert a is not b
 
 
 class TestConfigureStorageDefaults:

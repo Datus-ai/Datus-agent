@@ -14,6 +14,8 @@ from datus.storage.subject_manager import SubjectUpdater
 def _build_updater() -> SubjectUpdater:
     """Create a SubjectUpdater with all storage dependencies mocked."""
     mock_config = MagicMock()
+    mock_config.current_datasource = "test_ds"
+    mock_config.project_name = "test_project"
     mock_storage = MagicMock()
     with patch("datus.storage.subject_manager.get_storage", return_value=mock_storage):
         updater = SubjectUpdater(mock_config)
@@ -41,7 +43,9 @@ class TestUpdateMetricsDetail:
         updater = _build_updater()
         updater.update_metrics_detail(["Finance", "Revenue"], "dau", {"description": "daily active users"})
         updater.metrics_storage.update_entry.assert_called_once_with(
-            ["Finance", "Revenue"], "dau", {"description": "daily active users"}
+            ["Finance", "Revenue"],
+            "dau",
+            {"description": "daily active users"},
         )
 
 
@@ -66,7 +70,9 @@ class TestUpdateHistoricalSql:
         updater = _build_updater()
         updater.update_historical_sql(["Analytics"], "query_1", {"sql": "SELECT 1"})
         updater.reference_sql_storage.update_entry.assert_called_once_with(
-            ["Analytics"], "query_1", {"sql": "SELECT 1"}
+            ["Analytics"],
+            "query_1",
+            {"sql": "SELECT 1"},
         )
 
 
@@ -84,7 +90,10 @@ class TestDeleteMetric:
         updater = _build_updater()
         updater.metrics_storage.delete_metric.return_value = {"success": True, "message": "deleted"}
         result = updater.delete_metric(["Finance"], "old_metric")
-        updater.metrics_storage.delete_metric.assert_called_once_with(["Finance"], "old_metric")
+        updater.metrics_storage.delete_metric.assert_called_once_with(
+            ["Finance"],
+            "old_metric",
+        )
         assert result == {"success": True, "message": "deleted"}
 
 
@@ -103,7 +112,8 @@ class TestDeleteReferenceSql:
         updater.reference_sql_storage.delete_reference_sql.return_value = True
         result = updater.delete_reference_sql(["Analytics", "Reports"], "old_query")
         updater.reference_sql_storage.delete_reference_sql.assert_called_once_with(
-            ["Analytics", "Reports"], "old_query"
+            ["Analytics", "Reports"],
+            "old_query",
         )
         assert result is True
 

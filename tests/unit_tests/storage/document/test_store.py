@@ -138,6 +138,12 @@ class TestDocumentStoreInit:
     def test_table_name(self, doc_store):
         """Table name should be 'document'."""
         assert doc_store.table_name == "document"
+
+    def test_document_store_is_not_datasource_scoped(self, doc_store):
+        """Document storage is platform/version scoped, not datasource-scoped."""
+        schema_names = set(doc_store._schema.names)
+        assert "datasource_id" not in schema_names
+        assert "storage_key" not in schema_names
         assert doc_store.TABLE_NAME == "document"
 
     def test_vector_source_name(self, doc_store):

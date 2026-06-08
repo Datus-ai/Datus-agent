@@ -87,11 +87,23 @@ class TestExtraFields:
             embedding_model=_FakeEmbeddingModel(),
             schema=schema,
         )
-        # datasource_id is auto-appended for subject tree compatibility
         schema_names = {f.name for f in store._schema}
         assert "id" in schema_names
         assert "text" in schema_names
+        assert "datasource_id" not in schema_names
+        assert "storage_key" not in schema_names
+
+    def test_datasource_scoped_schema_appends_scope_fields(self):
+        schema = _base_schema()
+        store = BaseEmbeddingStore(
+            table_name="test",
+            embedding_model=_FakeEmbeddingModel(),
+            schema=schema,
+            datasource_scoped=True,
+        )
+        schema_names = {f.name for f in store._schema}
         assert "datasource_id" in schema_names
+        assert "storage_key" in schema_names
 
     def test_extra_fields_are_appended(self):
         schema = _base_schema()
@@ -171,6 +183,34 @@ class TestDefaultValues:
         data = [{"id": "1", "text": "hello"}]
         result = store._apply_default_values(data)
         assert result[0]["workspace_id"] == "ws_123"
+        assert "datasource_id" not in result[0]
+        assert "storage_key" not in result[0]
+
+    def test_apply_default_values_fills_datasource_scope(self):
+        store = BaseEmbeddingStore(
+            table_name="test",
+            embedding_model=_FakeEmbeddingModel(),
+            schema=_base_schema(),
+            datasource_scoped=True,
+        )
+        data = [{"id": "1", "text": "hello", "datasource_id": "ds"}]
+        result = store._apply_default_values(data)
+        assert result[0]["datasource_id"] == "ds"
+        assert result[0]["storage_key"] == "ds:1"
+
+    def test_apply_default_values_ignores_scope_fields_when_not_datasource_scoped(self):
+        schema = pa.schema(list(_base_schema()) + [pa.field("datasource_id", pa.string())])
+        store = BaseEmbeddingStore(
+            table_name="test",
+            embedding_model=_FakeEmbeddingModel(),
+            schema=schema,
+        )
+        data = [{"id": "1", "text": "hello", "datasource_id": "business_value"}]
+
+        result = store._apply_default_values(data)
+
+        assert result[0]["datasource_id"] == "business_value"
+        assert "storage_key" not in result[0]
 
     def test_apply_default_values_does_not_overwrite_existing(self):
         store = BaseEmbeddingStore(
@@ -214,10 +254,10 @@ class TestDefaultValues:
 
 
 class TestTruncateScoped:
-    """Tests for truncate_scoped() — aliased to truncate() under PHYSICAL-only isolation."""
+    """Tests for truncate_scoped() as a legacy full-table truncate alias."""
 
     def test_truncate_scoped_drops_table(self):
-        """truncate_scoped() drops the entire table (alias for truncate())."""
+        """truncate_scoped() drops the entire table."""
         from unittest.mock import MagicMock
 
         store = BaseEmbeddingStore(

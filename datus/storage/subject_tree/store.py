@@ -14,6 +14,12 @@ from datus_storage_base.conditions import and_, in_, like
 from datus_storage_base.rdb.base import ColumnDef, IndexDef, TableDefinition, UniqueViolationError, WhereOp
 
 from datus.storage import BaseEmbeddingStore
+from datus.storage.datasource_scope import (
+    DATASOURCE_ID_COLUMN,
+    STORAGE_KEY_COLUMN,
+    build_storage_key,
+    datasource_condition,
+)
 from datus.storage.embedding_models import EmbeddingModel
 from datus.utils.loggings import get_logger
 
@@ -77,13 +83,14 @@ class SubjectTreeStore:
     Implements adjacency list model for tree structure.
     """
 
-    def __init__(self, project: str):
+    def __init__(self, project: str, datasource_id: str = ""):
         """Initialize SubjectTreeStore.
 
         Args:
             project: Project identifier used by the underlying RDB backend for
                 isolation. Must be non-empty; the backend rejects empty
                 identifiers.
+            datasource_id: Row-level datasource scope inside the project tree.
 
         Reads ``table_prefix``, ``extra_fields``, and ``scope_indices`` from
         the storage registry defaults (set via ``configure_storage_defaults()``).
@@ -115,6 +122,7 @@ class SubjectTreeStore:
                 if idx_name not in existing_idx_names:
                     table_def.indices = table_def.indices + [IndexDef(name=idx_name, columns=[col])]
 
+        self.datasource_id = str(datasource_id or "")
         self._rdb = create_rdb_for_store("subject_tree", project=project)
         self._table = self._rdb.ensure_table(table_def)
         self._migrate_null_parents()
@@ -168,6 +176,7 @@ class SubjectTreeStore:
                 description=description,
                 created_at=now,
                 updated_at=now,
+                datasource_id=self.datasource_id,
             )
             node_id = self._table.insert(record)
 
@@ -190,7 +199,7 @@ class SubjectTreeStore:
         Returns:
             Node dict or None if not found
         """
-        rows = self._table.query(SubjectNodeRecord, where={"node_id": node_id})
+        rows = self._table.query(SubjectNodeRecord, where={"node_id": node_id, "datasource_id": self.datasource_id})
         if rows:
             return _node_to_dict(rows[0])
         return None
@@ -259,7 +268,7 @@ class SubjectTreeStore:
         data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         try:
-            self._table.update(data, where={"node_id": node_id})
+            self._table.update(data, where={"node_id": node_id, "datasource_id": self.datasource_id})
             logger.info(f"Updated node {node_id}")
             return True
         except UniqueViolationError as e:
@@ -290,9 +299,9 @@ class SubjectTreeStore:
             with self._rdb.transaction():
                 for descendant in descendants:
                     child_path = self.get_full_path(descendant["node_id"])
-                    self._table.delete(where={"node_id": descendant["node_id"]})
+                    self._table.delete(where={"node_id": descendant["node_id"], "datasource_id": self.datasource_id})
                     logger.info(f"Deleted child node {descendant['node_id']} ({child_path})")
-                self._table.delete(where={"node_id": node_id})
+                self._table.delete(where={"node_id": node_id, "datasource_id": self.datasource_id})
             logger.info(f"Deleted node {node_id} ({node_path})" + (" with cascade" if cascade else ""))
             return True
         except Exception as e:
@@ -304,7 +313,7 @@ class SubjectTreeStore:
     def get_children(self, parent_id: Optional[int]) -> List[Dict[str, Any]]:
         """Get direct children of a node."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
-        where = {"parent_id": db_parent_id}
+        where = {"parent_id": db_parent_id, "datasource_id": self.datasource_id}
         rows = self._table.query(
             SubjectNodeRecord,
             where=where,
@@ -541,7 +550,7 @@ class SubjectTreeStore:
     def _find_child_by_name(self, parent_id: Optional[int], name: str) -> Optional[Dict[str, Any]]:
         """Find a child node by name under a specific parent."""
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
-        where = {"parent_id": db_parent_id, "name": name}
+        where = {"parent_id": db_parent_id, "name": name, "datasource_id": self.datasource_id}
         rows = self._table.query(
             SubjectNodeRecord,
             where=where,
@@ -678,6 +687,8 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         # so BaseEmbeddingStore (which has a strict signature) doesn't reject it.
         # Falls back to the active path_manager for callers that bypass the registry.
         project = kwargs.pop("project", None)
+        datasource_id = kwargs.pop("datasource_id", "")
+        kwargs.setdefault("datasource_scoped", True)
 
         super().__init__(
             table_name=table_name,
@@ -697,7 +708,8 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
             project = get_path_manager().project_name
 
-        self.subject_tree = get_subject_tree_store(project=project)
+        self.datasource_id = str(datasource_id or "")
+        self.subject_tree = get_subject_tree_store(project=project, datasource_id=self.datasource_id)
 
     def batch_store(
         self,
@@ -728,6 +740,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
                 # Create new item dict without subject_path field and with subject_node_id
                 processed_item = item.copy()
                 processed_item[SUBJECT_ID_COLUMN_NAME] = subject_node_id
+                processed_item[DATASOURCE_ID_COLUMN] = self.datasource_id
+                if processed_item.get("id") not in (None, ""):
+                    processed_item[STORAGE_KEY_COLUMN] = build_storage_key(self.datasource_id, processed_item["id"])
                 processed_item.pop(SUBJECT_PATH_COLUMN_NAME, None)
 
                 # Auto-generate timestamp if needed
@@ -776,6 +791,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
                 # Create new item dict without subject_path field and with subject_node_id
                 processed_item = item.copy()
                 processed_item[SUBJECT_ID_COLUMN_NAME] = subject_node_id
+                processed_item[DATASOURCE_ID_COLUMN] = self.datasource_id
+                if processed_item.get("id") not in (None, ""):
+                    processed_item[STORAGE_KEY_COLUMN] = build_storage_key(self.datasource_id, processed_item["id"])
                 processed_item.pop(SUBJECT_PATH_COLUMN_NAME, None)
 
                 # Auto-generate timestamp if needed
@@ -822,7 +840,9 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
 
         results = []
         for path, name in path_filter:
-            conditions = additional_conditions.copy() if additional_conditions else []
+            conditions = [datasource_condition(self.datasource_id)]
+            if additional_conditions:
+                conditions.extend(additional_conditions)
 
             # Convert path to include all descendant node_ids if provided
             if path:
@@ -1038,12 +1058,20 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         self._ensure_table_ready()
         from datus_storage_base.conditions import and_, eq
 
-        where_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, old_subject_node_id), eq("name", old_name))
+        where_condition = and_(
+            eq(SUBJECT_ID_COLUMN_NAME, old_subject_node_id),
+            eq("name", old_name),
+            datasource_condition(self.datasource_id),
+        )
 
         # Check for conflicts when both name and parent are changing
         if name_changed and parent_changed:
             # Check if target (new_subject_node_id + new_name) already exists
-            conflict_condition = and_(eq(SUBJECT_ID_COLUMN_NAME, new_subject_node_id), eq("name", new_name))
+            conflict_condition = and_(
+                eq(SUBJECT_ID_COLUMN_NAME, new_subject_node_id),
+                eq("name", new_name),
+                datasource_condition(self.datasource_id),
+            )
             existing_count = self._count_rows(conflict_condition)
             if existing_count > 0:
                 raise ValueError(
@@ -1132,7 +1160,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         self._ensure_table_ready()
         from datus_storage_base.conditions import and_, eq
 
-        conditions = [eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name.strip())]
+        conditions = [
+            eq(SUBJECT_ID_COLUMN_NAME, subject_node_id),
+            eq(NAME_COLUMN_NAME, name.strip()),
+            datasource_condition(self.datasource_id),
+        ]
         if extra_conditions:
             conditions.extend(extra_conditions)
         where_condition = and_(*conditions)
@@ -1189,7 +1221,7 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
             self._ensure_table_ready()
 
             # Build where clause
-            conditions = [eq(SUBJECT_ID_COLUMN_NAME, node_id)]
+            conditions = [eq(SUBJECT_ID_COLUMN_NAME, node_id), datasource_condition(self.datasource_id)]
 
             if name:
                 conditions.append(eq(NAME_COLUMN_NAME, name))
@@ -1243,7 +1275,11 @@ class BaseSubjectEmbeddingStore(BaseEmbeddingStore):
         self._ensure_table_ready()
         from datus_storage_base.conditions import and_, eq
 
-        conditions = [eq(SUBJECT_ID_COLUMN_NAME, subject_node_id), eq(NAME_COLUMN_NAME, name)]
+        conditions = [
+            eq(SUBJECT_ID_COLUMN_NAME, subject_node_id),
+            eq(NAME_COLUMN_NAME, name),
+            datasource_condition(self.datasource_id),
+        ]
         if extra_conditions:
             conditions.extend(extra_conditions)
         where_condition = and_(*conditions)

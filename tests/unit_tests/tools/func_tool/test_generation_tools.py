@@ -227,20 +227,20 @@ class TestEndMetricGeneration:
             result = generation_tools.end_metric_generation(metric_file="/path/semantic_models/metric.yaml")
         assert result.success == 1
         assert result.result["metric_file"] == "/path/semantic_models/metric.yaml"
-        assert result.result["semantic_model_file"] == ""
+        assert result.result["semantic_model_files"] == []
         assert result.result["metric_sqls"] == {}
         assert result.result["sync"]["success"] is True
 
-    def test_success_with_semantic_model(self, generation_tools):
+    def test_success_with_semantic_models(self, generation_tools):
         self._mark_ready_to_publish(generation_tools)
         p1, p2, p3 = self._patch_sync(generation_tools)
         with p1, p2, p3:
             result = generation_tools.end_metric_generation(
                 metric_file="/path/semantic_models/metric.yaml",
-                semantic_model_file="/path/semantic_models/model.yaml",
+                semantic_model_files=["/path/semantic_models/model.yaml"],
             )
         assert result.success == 1
-        assert result.result["semantic_model_file"] == "/path/semantic_models/model.yaml"
+        assert result.result["semantic_model_files"] == ["/path/semantic_models/model.yaml"]
 
     def test_success_with_metric_sqls_json(self, generation_tools):
         self._mark_ready_to_publish(generation_tools)
@@ -352,6 +352,124 @@ class TestEndMetricGenerationPreflight:
         ):
             result = generation_tools.end_metric_generation(metric_file=str(good))
         assert result.success == 1
+
+    def test_metric_sqls_scope_excludes_existing_file_metrics(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.add("new_metric")
+        generation_tools.generation_evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["existing_metric"],
+                    "dimension_hints": ["start_month"],
+                    "time_group_hints": [
+                        {
+                            "alias": "start_month",
+                            "base_expr": "created_at",
+                            "grain": "month",
+                        }
+                    ],
+                }
+            ]
+        )
+        metric_file = tmp_path / "semantic_models" / "mixed_metrics.yml"
+        metric_file.parent.mkdir(parents=True, exist_ok=True)
+        metric_file.write_text(
+            "metric:\n"
+            "  name: existing_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: existing_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_metric\n"
+        )
+        metric_sqls_json = json.dumps(
+            {
+                "existing_metric": "SELECT old_metric",
+                "new_metric": "SELECT new_metric",
+                "__query_metrics_dry_run__": "SELECT grouped_validation",
+            }
+        )
+
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_existing_metric_names", return_value={"existing_metric"}),
+            patch.object(generation_tools, "_validate_metric_name_conflicts", return_value=None),
+            patch.object(
+                generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(metric_file),
+                metric_sqls_json=metric_sqls_json,
+            )
+
+        assert result.success == 1
+        sync_mock.assert_called_once()
+        assert sync_mock.call_args.kwargs["metric_names_to_sync"] == {"new_metric"}
+
+    def test_combined_dry_run_scope_syncs_all_new_metrics(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.generation_evidence.metric_dry_run_metrics.update(
+            {"existing_metric", "new_metric", "other_new_metric"}
+        )
+        generation_tools.generation_evidence.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "metric_hints": ["existing_metric"],
+                    "dimension_hints": ["start_month"],
+                }
+            ]
+        )
+        metric_file = tmp_path / "semantic_models" / "combined_metrics.yml"
+        metric_file.parent.mkdir(parents=True, exist_ok=True)
+        metric_file.write_text(
+            "metric:\n"
+            "  name: existing_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: existing_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: other_new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: other_new_metric\n"
+        )
+        metric_sqls_json = json.dumps(
+            {
+                "existing_metric": "SELECT old_metric",
+                "__query_metrics_dry_run__": "SELECT grouped_validation",
+            }
+        )
+
+        with (
+            self._patch_path_resolution(generation_tools, tmp_path),
+            patch.object(generation_tools, "_existing_metric_names", return_value={"existing_metric"}),
+            patch.object(generation_tools, "_validate_metric_name_conflicts", return_value=None),
+            patch.object(
+                generation_tools, "_sync_metric_to_db", return_value={"success": True, "message": "ok"}
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(
+                metric_file=str(metric_file),
+                metric_sqls_json=metric_sqls_json,
+            )
+
+        assert result.success == 1
+        sync_mock.assert_called_once()
+        assert sync_mock.call_args.kwargs["metric_names_to_sync"] == {"new_metric", "other_new_metric"}
 
     def test_rejects_missing_grouped_queryability_dry_run(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
@@ -519,8 +637,8 @@ class TestSyncMetricToDb:
             original_yaml_path=str(metric_file),
         )
 
-    def test_metric_with_semantic_model_combines_files(self, generation_tools, tmp_path):
-        """When both metric and semantic model files exist, combine into temp file."""
+    def test_metric_with_semantic_models_syncs_semantic_then_metric(self, generation_tools, tmp_path):
+        """When semantic model files are provided, sync semantic objects before metrics."""
         metric_file = tmp_path / "metric.yaml"
         metric_file.write_text("metric:\n  name: revenue\n  type: simple\n")
         semantic_file = tmp_path / "model.yaml"
@@ -528,23 +646,69 @@ class TestSyncMetricToDb:
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.return_value = {"success": True, "message": "synced"}
-            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file), {"rev": "SELECT 1"})
+            result = generation_tools._sync_metric_to_db(str(metric_file), [str(semantic_file)], {"rev": "SELECT 1"})
 
         assert result["success"] is True
         assert result["semantic_synced"] is True
+        assert result["semantic_model_files_synced"] == [str(semantic_file)]
         # Should have been called twice: first for semantic objects, then for metrics
         assert mock_sync.call_count == 2
         # First call: sync semantic objects
         sem_call = mock_sync.call_args_list[0]
         assert sem_call.kwargs.get("include_semantic_objects") is True
         assert sem_call.kwargs.get("include_metrics") is False
-        # Second call: sync metrics from combined temp file
+        # Second call: sync metrics from the metric file itself
         metric_call = mock_sync.call_args_list[1]
-        actual_temp_path = metric_call[0][0]
-        assert not os.path.exists(actual_temp_path), f"Temp file should be cleaned up: {actual_temp_path}"
+        assert metric_call[0][0] == str(metric_file)
         assert metric_call.kwargs.get("include_semantic_objects") is False
         assert metric_call.kwargs.get("include_metrics") is True
         assert metric_call.kwargs.get("metric_sqls") == {"rev": "SELECT 1"}
+        assert metric_call.kwargs.get("original_yaml_path") == str(metric_file)
+
+    def test_metric_sync_filters_to_publish_scope(self, generation_tools, tmp_path):
+        """When a publish scope is supplied, sync only those metric YAML docs."""
+        metric_file = tmp_path / "metric.yaml"
+        metric_file.write_text(
+            "metric:\n"
+            "  name: existing_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: existing_metric\n"
+            "---\n"
+            "metric:\n"
+            "  name: new_metric\n"
+            "  type: measure_proxy\n"
+            "  type_params:\n"
+            "    measure: new_metric\n"
+        )
+        captured = {}
+
+        def fake_sync(file_path, *args, **kwargs):
+            captured["file_path"] = file_path
+            with open(file_path, encoding="utf-8") as f:
+                captured["content"] = f.read()
+            captured["kwargs"] = kwargs
+            return {"success": True, "message": "synced"}
+
+        with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db", side_effect=fake_sync):
+            result = generation_tools._sync_metric_to_db(
+                str(metric_file),
+                metric_sqls={
+                    "existing_metric": "SELECT old_metric",
+                    "new_metric": "SELECT new_metric",
+                    "__query_metrics_dry_run__": "SELECT grouped_validation",
+                },
+                metric_names_to_sync={"new_metric"},
+            )
+
+        assert result["success"] is True
+        assert result["metric_names_synced"] == ["new_metric"]
+        assert captured["file_path"] != str(metric_file)
+        assert not os.path.exists(captured["file_path"])
+        assert "name: new_metric" in captured["content"]
+        assert "name: existing_metric" not in captured["content"]
+        assert captured["kwargs"]["metric_sqls"] == {"new_metric": "SELECT new_metric"}
+        assert captured["kwargs"]["original_yaml_path"] == str(metric_file)
 
     def test_semantic_sync_failure_aborts_metric_sync(self, generation_tools, tmp_path):
         """When semantic object sync fails, metric sync is skipped and failure propagated."""
@@ -555,33 +719,25 @@ class TestSyncMetricToDb:
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.return_value = {"success": False, "error": "semantic sync failed"}
-            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file))
+            result = generation_tools._sync_metric_to_db(str(metric_file), [str(semantic_file)])
 
         assert result["success"] is False
         assert result["error"] == "semantic sync failed"
         # Only called once (semantic sync), metric sync was skipped
         assert mock_sync.call_count == 1
 
-    def test_semantic_model_not_exists_falls_through(self, generation_tools, tmp_path):
-        """When semantic_model_file path provided but file doesn't exist, sync metric alone."""
+    def test_missing_semantic_model_file_returns_failure(self, generation_tools, tmp_path):
+        """When semantic_model_files contains a missing file, return failure before syncing metrics."""
         metric_file = tmp_path / "metric.yaml"
         metric_file.write_text("metric:\n  name: revenue\n")
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.return_value = {"success": True, "message": "ok"}
-            result = generation_tools._sync_metric_to_db(str(metric_file), "/nonexistent/model.yaml")
+            result = generation_tools._sync_metric_to_db(str(metric_file), ["/nonexistent/model.yaml"])
 
-        assert result["success"] is True
-        assert result["semantic_synced"] is False
-        # Should call with metric file directly (not combined)
-        mock_sync.assert_called_once_with(
-            str(metric_file),
-            generation_tools.agent_config,
-            include_semantic_objects=False,
-            include_metrics=True,
-            metric_sqls=None,
-            original_yaml_path=str(metric_file),
-        )
+        assert result["success"] is False
+        assert "Semantic model file not found" in result["error"]
+        mock_sync.assert_not_called()
 
     def test_sync_failure_propagated(self, generation_tools, tmp_path):
         """Sync failure result is returned as-is."""
@@ -607,8 +763,8 @@ class TestSyncMetricToDb:
         assert result["success"] is False
         assert "connection lost" in result["error"]
 
-    def test_temp_file_cleaned_on_sync_exception(self, generation_tools, tmp_path):
-        """Temp combined file is cleaned up even when sync raises."""
+    def test_exception_during_semantic_sync_returns_failure(self, generation_tools, tmp_path):
+        """Exception during semantic sync is caught and returned as failure dict."""
         metric_file = tmp_path / "metric.yaml"
         metric_file.write_text("metric:\n  name: revenue\n")
         semantic_file = tmp_path / "model.yaml"
@@ -616,11 +772,10 @@ class TestSyncMetricToDb:
 
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as mock_sync:
             mock_sync.side_effect = RuntimeError("boom")
-            result = generation_tools._sync_metric_to_db(str(metric_file), str(semantic_file))
+            result = generation_tools._sync_metric_to_db(str(metric_file), [str(semantic_file)])
 
         assert result["success"] is False
-        # Temp file should still be cleaned up
-        assert not (tmp_path / "model.yaml.combined.tmp").exists()
+        assert "boom" in result["error"]
 
 
 class TestGenerateSqlSummaryId:

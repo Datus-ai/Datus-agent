@@ -37,8 +37,16 @@ class ExplorerService:
             agent_config: Agent configuration object
         """
         self.agent_config = agent_config
-        self.datasource_id = agent_config.current_datasource
+        self.datasource_id = str(agent_config.current_datasource or "").strip()
         logger.info("ExplorerService initialized")
+
+        self.metric_rag = None
+        self.reference_sql_rag = None
+        self.semantic_model_rag = None
+        self.subject_tree_store = None
+        if not self.datasource_id:
+            logger.info("ExplorerService initialized without datasource; subject tree is empty until one is selected")
+            return
 
         from datus.storage.metric.store import MetricRAG
         from datus.storage.reference_sql.store import ReferenceSqlRAG
@@ -48,7 +56,10 @@ class ExplorerService:
         self.metric_rag = MetricRAG(agent_config, datasource_id=self.datasource_id)
         self.reference_sql_rag = ReferenceSqlRAG(agent_config, datasource_id=self.datasource_id)
         self.semantic_model_rag = SemanticModelRAG(agent_config, datasource_id=self.datasource_id)
-        self.subject_tree_store = get_subject_tree_store(project=agent_config.project_name)
+        self.subject_tree_store = get_subject_tree_store(
+            project=agent_config.project_name,
+            datasource_id=self.datasource_id,
+        )
 
     def _gen_reference_sql_id(self, sql: str) -> str:
         """Generate a stable identifier for reference SQL entries."""
@@ -209,6 +220,9 @@ class ExplorerService:
             logger.info("Getting subject list")
 
             from datus.api.models.explorer_models import SubjectNodeType
+
+            if self.subject_tree_store is None:
+                return Result[SubjectListData](success=True, data=SubjectListData(subjects=[]))
 
             # Get tree structure from subject tree store
             tree_structure = self.subject_tree_store.get_tree_structure()
@@ -684,6 +698,7 @@ class ExplorerService:
                 subject_path=parent_path,
                 name=sql_name,
                 update_values=update_values,
+                extra_conditions=self.reference_sql_rag._sub_agent_conditions(),
             )
 
             logger.info(f"Successfully updated reference SQL: {sql_name}")
@@ -1041,6 +1056,7 @@ class ExplorerService:
             self.semantic_model_rag.storage.update_entry(
                 entry_id=request.entry_id,
                 update_values=request.update_values,
+                extra_conditions=self.semantic_model_rag._sub_agent_conditions(),
             )
 
             logger.info(f"Successfully updated semantic model entry: {request.entry_id}")

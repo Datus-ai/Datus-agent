@@ -309,7 +309,7 @@ class TestInitSuccessStoryMetricsAsync:
 
         assert success is True
         assert error == ""
-        assert result == {"response": "done"}
+        assert result == {"response": "done", "metrics_count": 0, "final_metrics_count": 0}
 
     @pytest.mark.asyncio
     async def test_batch_flow_allows_recoverable_tool_failure(self):
@@ -360,7 +360,7 @@ class TestInitSuccessStoryMetricsAsync:
 
         assert success is True
         assert error == ""
-        assert result == {"response": "done"}
+        assert result == {"response": "done", "metrics_count": 0, "final_metrics_count": 0}
 
 
 # ---------------------------------------------------------------------------
@@ -506,13 +506,13 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
             )
 
         assert success is True
-        rag_factory.assert_called_once_with(mock_config)
+        rag_factory.assert_any_call(mock_config)
         fake_rag_instance.truncate.assert_called_once_with()
         mock_exists.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_incremental_does_not_call_truncate(self):
-        """build_mode='incremental' must not call truncate; it consults exists_metrics instead."""
+        """build_mode='incremental' must not call truncate."""
         from unittest.mock import patch
 
         import pandas as pd
@@ -561,7 +561,7 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
 
         assert success is True
         fake_rag_instance.truncate.assert_not_called()
-        mock_exists.assert_called_once()
+        mock_exists.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +672,7 @@ class TestMetricProvenanceHelpers:
 @pytest.mark.ci
 class TestDefaultMetricsBatchSize:
     def test_default_batch_size(self):
-        assert DEFAULT_METRICS_BATCH_SIZE == 1
+        assert DEFAULT_METRICS_BATCH_SIZE == 5
 
 
 # ---------------------------------------------------------------------------
@@ -1084,7 +1084,7 @@ class TestBatchSplitting:
             )
 
         assert ok is True
-        assert result == {"metrics": ["m0"]}
+        assert result == {"metrics": ["m0"], "metrics_count": 0, "final_metrics_count": 0}
 
     @pytest.mark.asyncio
     async def test_batch_size_parameter_passed_through_sync(self):
@@ -1096,3 +1096,70 @@ class TestBatchSplitting:
         sig = inspect.signature(init_success_story_metrics)
         assert "batch_size" in sig.parameters
         assert sig.parameters["batch_size"].default == DEFAULT_METRICS_BATCH_SIZE
+
+
+class TestBatchHasNoMetricCandidates:
+    """Tests for _batch_has_no_metric_candidates early-skip logic."""
+
+    def test_returns_false_when_plan_unavailable(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        assert _batch_has_no_metric_candidates({}) is False
+        assert _batch_has_no_metric_candidates({"available": False}) is False
+        assert _batch_has_no_metric_candidates(None) is False
+
+    def test_returns_false_when_direct_candidates_exist(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "direct_metric_candidates": [{"name": "revenue"}],
+            "non_metric_evidence": [{"name": "detail_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is False
+
+    def test_returns_false_when_derived_candidates_exist(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "derived_metric_candidates": [{"name": "mom_delta"}],
+            "non_metric_evidence": [{"name": "detail_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is False
+
+    def test_returns_true_when_only_non_metric_evidence(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "direct_metric_candidates": [],
+            "derived_metric_candidates": [],
+            "non_metric_evidence": [{"name": "row_number_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is True
+
+    def test_returns_true_when_only_identity_references(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "identity_metric_references": [{"name": "activity_count"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is True
+
+    def test_returns_true_when_only_derived_datasource_recommendations(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "derived_datasource_recommendations": [{"sql_query": "SELECT ..."}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is True
+
+    def test_returns_false_when_no_evidence_at_all(self):
+        """Available plan with zero candidates AND zero evidence should NOT skip."""
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {"available": True}
+        assert _batch_has_no_metric_candidates(plan) is False
