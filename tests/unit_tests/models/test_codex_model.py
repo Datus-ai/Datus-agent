@@ -572,7 +572,7 @@ class TestCodexModelGenerateWithToolsStream:
     @patch("datus.models.codex_model.extract_sql_contexts")
     async def test_stream_repairs_malformed_tool_call_arguments_dict(
         self, mock_extract, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
-    ):
+    ) -> None:
         """Cover the dict-based raw_item repair branch (lines 659-660)."""
         from datus.models.codex_model import CodexModel
 
@@ -621,8 +621,15 @@ class TestCodexModelGenerateWithToolsStream:
                 actions.append(action)
 
             assert len(actions) == 3
-            # Verify the dict raw_item was repaired in place
-            assert json.loads(tool_call_event.item.raw_item["arguments"])["sql"] is not None
+            repaired_raw = tool_call_event.item.raw_item
+            parsed = json.loads(repaired_raw["arguments"])
+            assert parsed["sql"] == "SELECT * FROM users"
+            assert repaired_raw["name"] == "execute_sql"
+            assert repaired_raw["call_id"] == "call_repair_dict"
+            # Contract: to_input_item() must serialize valid JSON into session history
+            tool_call_event.item.to_input_item.return_value = repaired_raw
+            input_item = tool_call_event.item.to_input_item()
+            json.loads(input_item["arguments"])
 
     @pytest.mark.asyncio
     @patch("datus.models.codex_model.OAuthManager")
@@ -632,7 +639,7 @@ class TestCodexModelGenerateWithToolsStream:
     @patch("datus.models.codex_model.extract_sql_contexts")
     async def test_stream_repairs_malformed_tool_call_arguments_pydantic(
         self, mock_extract, mock_agent_cls, mock_runner, mock_mcp, mock_oauth_cls, model_config
-    ):
+    ) -> None:
         """Cover the Pydantic model_copy repair branch (lines 662-664)."""
         from pydantic import BaseModel
 
@@ -687,10 +694,15 @@ class TestCodexModelGenerateWithToolsStream:
                 actions.append(action)
 
             assert len(actions) == 3
-            # Verify model_copy was used — the event's raw_item should have repaired arguments
             repaired_raw = tool_call_event.item.raw_item
             parsed = json.loads(repaired_raw.arguments)
-            assert "sql" in parsed
+            assert parsed["sql"] == "SELECT count(*) FROM orders"
+            assert repaired_raw.name == "execute_sql"
+            assert repaired_raw.call_id == "call_repair_pydantic"
+            # Contract: to_input_item() must serialize valid JSON into session history
+            tool_call_event.item.to_input_item.return_value = {"arguments": repaired_raw.arguments}
+            input_item = tool_call_event.item.to_input_item()
+            json.loads(input_item["arguments"])
 
     @pytest.mark.asyncio
     @patch("datus.models.codex_model.OAuthManager")

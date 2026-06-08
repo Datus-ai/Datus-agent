@@ -1320,13 +1320,16 @@ class OpenAICompatibleModel(LLMBaseModel):
                             final_assistant_yielded = False
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item:
-                                tool_name = getattr(raw_item, "name", None)
-                                if not tool_name:
+                                if isinstance(raw_item, dict):
+                                    tool_name = raw_item.get("name") or "unknown"
+                                    arguments = raw_item.get("arguments", "{}")
+                                    call_id = raw_item.get("call_id")
+                                else:
+                                    tool_name = getattr(raw_item, "name", None) or "unknown"
+                                    arguments = getattr(raw_item, "arguments", "{}")
+                                    call_id = getattr(raw_item, "call_id", None)
+                                if not tool_name or tool_name == "unknown":
                                     logger.warning(f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}")
-                                    tool_name = "unknown"
-
-                                arguments = getattr(raw_item, "arguments", "{}")
-                                call_id = getattr(raw_item, "call_id", None)
 
                                 # Generate call_id if missing
                                 if not call_id:
@@ -1339,8 +1342,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                                         f"Repaired malformed tool call arguments for '{tool_name}' "
                                         f"in session history: {arguments[:200]}"
                                     )
-                                    event.item.raw_item = raw_item.model_copy(update={"arguments": repaired_args})
-                                    raw_item = event.item.raw_item
+                                    if isinstance(raw_item, dict):
+                                        raw_item["arguments"] = repaired_args
+                                    else:
+                                        event.item.raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+                                        raw_item = event.item.raw_item
                                     arguments = repaired_args
                                 try:
                                     args_str = to_str(json.loads(arguments))[:80]

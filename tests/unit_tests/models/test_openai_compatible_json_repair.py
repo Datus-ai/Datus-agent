@@ -35,14 +35,14 @@ class TestRepairToolCallArguments:
         assert result == args
         assert was_repaired is False
 
-    def test_empty_string_returns_empty_dict(self):
+    def test_empty_string_not_repaired(self):
         result, was_repaired = repair_tool_call_arguments("")
-        assert result == "{}"
+        assert result == ""
         assert was_repaired is False
 
-    def test_whitespace_only_returns_empty_dict(self):
+    def test_whitespace_only_not_repaired(self):
         result, was_repaired = repair_tool_call_arguments("   \t\n  ")
-        assert result == "{}"
+        assert result == ""
         assert was_repaired is False
 
     def test_malformed_json_is_repaired(self):
@@ -62,13 +62,15 @@ class TestRepairToolCallArguments:
         assert parsed["question"] == "请问您想查询哪个数据库的信息？"
         assert parsed["options"] == ["StarRocks", "MySQL"]
 
-    def test_garbage_input_still_returns_valid_json(self):
+    def test_garbage_input_fallback(self):
         garbage = "not json at all {{{{[[[["
         result, was_repaired = repair_tool_call_arguments(garbage)
-        # json_repair may produce something from garbage; either way the result must be valid JSON
-        json.loads(result)
-        # If repair failed, original is returned unchanged
-        assert was_repaired is True or result == garbage
+        # repair either produced a valid JSON object, or fell back to the original unchanged
+        if was_repaired:
+            parsed = json.loads(result)
+            assert isinstance(parsed, dict)
+        else:
+            assert result == garbage
 
     @pytest.mark.parametrize(
         "valid_args",
@@ -144,9 +146,9 @@ class TestDictRawItemRepair:
 class TestRepairEdgeCases:
     """Cover edge cases and exception paths in repair_tool_call_arguments."""
 
-    def test_none_like_string_treated_as_empty(self):
+    def test_whitespace_string_not_repaired(self):
         result, was_repaired = repair_tool_call_arguments("  ")
-        assert result == "{}"
+        assert result == ""
         assert was_repaired is False
 
     def test_truncated_json_repaired(self):
@@ -236,3 +238,40 @@ class TestStreamingRepairIntegration:
         parsed = json.loads(arguments)
         assert parsed["table"] == "users"
         assert parsed["limit"] == 10
+
+
+class TestToInputItemContract:
+    """Regression: repaired arguments must survive to_input_item() serialization."""
+
+    def test_pydantic_raw_item_to_input_item_contains_valid_json(self):
+        """model_copy(update=...) keeps 'arguments' in model_fields_set so to_input_item works."""
+        from unittest.mock import MagicMock
+
+        malformed = '{"sql": SELECT * FROM orders}'
+        raw_item = FakeRawItem(name="execute_sql", call_id="call_contract_pydantic", arguments=malformed)
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+
+        new_raw_item = raw_item.model_copy(update={"arguments": repaired_args})
+        event_item = MagicMock()
+        event_item.raw_item = new_raw_item
+        event_item.to_input_item.return_value = {"arguments": new_raw_item.arguments, "name": new_raw_item.name}
+
+        input_item = event_item.to_input_item()
+        assert json.loads(input_item["arguments"]) == json.loads(repaired_args)
+
+    def test_dict_raw_item_to_input_item_contains_valid_json(self):
+        from unittest.mock import MagicMock
+
+        malformed = '{"sql": SELECT count(*) FROM users}'
+        raw_item = {"name": "execute_sql", "call_id": "call_contract_dict", "arguments": malformed}
+        repaired_args, was_repaired = repair_tool_call_arguments(malformed)
+        assert was_repaired is True
+
+        raw_item["arguments"] = repaired_args
+        event_item = MagicMock()
+        event_item.raw_item = raw_item
+        event_item.to_input_item.return_value = raw_item
+
+        input_item = event_item.to_input_item()
+        assert json.loads(input_item["arguments"]) == json.loads(repaired_args)

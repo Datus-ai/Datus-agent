@@ -600,7 +600,7 @@ def repair_tool_call_arguments(arguments: str) -> tuple[str, bool]:
     Returns (json_str, was_repaired).
     """
     if not arguments or not arguments.strip():
-        return "{}", False
+        return "", False
     try:
         json.loads(arguments)
         return arguments, False
@@ -608,6 +608,9 @@ def repair_tool_call_arguments(arguments: str) -> tuple[str, bool]:
         pass
     try:
         repaired = json_repair.loads(arguments)
+        # Repair is best-effort: semantics may change (e.g. unquoted value → string literal)
+        if not isinstance(repaired, dict):
+            return arguments, False
         repaired_str = json.dumps(repaired, ensure_ascii=False)
         json.loads(repaired_str)
         return repaired_str, True
