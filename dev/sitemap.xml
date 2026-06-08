@@ -351,13 +351,6 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/integration/validation/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/knowledge_base/ext_knowledge/</loc>
-        <lastmod>2026-06-08</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/knowledge_base/ext_knowledge/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/knowledge_base/ext_knowledge/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/knowledge_base/introduction/</loc>
         <lastmod>2026-06-08</lastmod>
         <changefreq>daily</changefreq>
@@ -895,13 +888,6 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/integration/validation/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devintegration/validation/"/>
-    </url>
-    <url>
-        <loc>https://docs.datus.ai/dev/zh/knowledge_base/ext_knowledge/</loc>
-        <lastmod>2026-06-08</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/knowledge_base/ext_knowledge/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devknowledge_base/ext_knowledge/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/knowledge_base/introduction/</loc>

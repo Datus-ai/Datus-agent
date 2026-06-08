@@ -1584,8 +1584,6 @@
       
         
       
-        
-      
     
     
     
@@ -1644,34 +1642,6 @@
     
   
     Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    External Knowledge
   
 
     
@@ -3852,7 +3822,7 @@
 <h2 id="kb-component-bootstrap">KB Component Bootstrap<a class="headerlink" href="#kb-component-bootstrap" title="Permanent link">&para;</a></h2>
 <h3 id="post-apiv1kbbootstrap"><code>POST /api/v1/kb/bootstrap</code><a class="headerlink" href="#post-apiv1kbbootstrap" title="Permanent link">&para;</a></h3>
 <p>Start a knowledge base component bootstrap with SSE progress streaming. Components include metadata, semantic model,
-metrics, external knowledge, and reference SQL.</p>
+metrics, and reference SQL.</p>
 <p><strong>Body</strong>:</p>
 <table>
 <thead>
@@ -3868,7 +3838,7 @@ metrics, external knowledge, and reference SQL.</p>
 <td><code>components</code></td>
 <td>string[]</td>
 <td><em>(required)</em></td>
-<td>Components to bootstrap: <code>metadata</code>, <code>semantic_model</code>, <code>metrics</code>, <code>ext_knowledge</code>, <code>reference_sql</code></td>
+<td>Components to bootstrap: <code>metadata</code>, <code>semantic_model</code>, <code>metrics</code>, <code>reference_sql</code></td>
 </tr>
 <tr>
 <td><code>strategy</code></td>
@@ -3911,12 +3881,6 @@ metrics, external knowledge, and reference SQL.</p>
 <td>string?</td>
 <td><code>null</code></td>
 <td>Project-root-relative directory with <code>.sql</code> files</td>
-</tr>
-<tr>
-<td><code>ext_knowledge</code></td>
-<td>string?</td>
-<td><code>null</code></td>
-<td>Project-root-relative CSV for external knowledge</td>
 </tr>
 </tbody>
 </table>

@@ -1584,8 +1584,6 @@
       
         
       
-        
-      
     
     
     
@@ -1644,34 +1642,6 @@
     
   
     介绍
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    外部知识
   
 
     
@@ -3828,7 +3798,7 @@
 <p>知识库接口负责 KB 构建操作，通过 Server-Sent Events (SSE) 实时推送进度。所有接口位于 <code>/api/v1/kb</code> 前缀下。</p>
 <h2 id="kb">KB 组件构建<a class="headerlink" href="#kb" title="Permanent link">&para;</a></h2>
 <h3 id="post-apiv1kbbootstrap"><code>POST /api/v1/kb/bootstrap</code><a class="headerlink" href="#post-apiv1kbbootstrap" title="Permanent link">&para;</a></h3>
-<p>启动知识库组件构建，通过 SSE 流式推送进度。组件包括 metadata、semantic model、metrics、ext knowledge 和 reference SQL。</p>
+<p>启动知识库组件构建，通过 SSE 流式推送进度。组件包括 metadata、semantic model、metrics 和 reference SQL。</p>
 <p><strong>请求体</strong>：</p>
 <table>
 <thead>
@@ -3844,7 +3814,7 @@
 <td><code>components</code></td>
 <td>string[]</td>
 <td><em>（必填）</em></td>
-<td>要构建的组件：<code>metadata</code>、<code>semantic_model</code>、<code>metrics</code>、<code>ext_knowledge</code>、<code>reference_sql</code></td>
+<td>要构建的组件：<code>metadata</code>、<code>semantic_model</code>、<code>metrics</code>、<code>reference_sql</code></td>
 </tr>
 <tr>
 <td><code>strategy</code></td>
@@ -3887,12 +3857,6 @@
 <td>string?</td>
 <td><code>null</code></td>
 <td>项目根目录的相对路径，指向 <code>.sql</code> 文件目录</td>
-</tr>
-<tr>
-<td><code>ext_knowledge</code></td>
-<td>string?</td>
-<td><code>null</code></td>
-<td>项目根目录的相对路径，指向外部知识 CSV</td>
 </tr>
 </tbody>
 </table>
