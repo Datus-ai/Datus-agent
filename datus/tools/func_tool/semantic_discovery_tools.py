@@ -451,6 +451,7 @@ class SemanticDiscoveryTools:
             for idx, entry in enumerate(entries):
                 sql_text = entry.get("sql", "")
                 source_name = entry.get("name") or entry.get("summary") or entry.get("filepath") or f"sql_{idx + 1}"
+                source_context = self._metric_source_context(entry)
                 if not sql_text:
                     continue
 
@@ -486,6 +487,7 @@ class SemanticDiscoveryTools:
                             candidate = self._candidate_from_projection(
                                 projection=projection,
                                 source_name=source_name,
+                                source_context=source_context,
                                 tables=select_tables,
                                 filters=filters,
                                 dimensions=dimensions,
@@ -532,8 +534,17 @@ class SemanticDiscoveryTools:
                                 }
                             )
 
+                entry_has_llm_review_candidates = any(
+                    candidate.get("candidate_classification") == "llm_review_candidate"
+                    for candidate in entry_candidates
+                )
+                entry_has_direct_candidates = any(
+                    candidate.get("candidate_classification") != "llm_review_candidate"
+                    for candidate in entry_candidates
+                )
                 classification = self._classify_source_query(
-                    has_candidates=bool(entry_candidates),
+                    has_direct_candidates=entry_has_direct_candidates,
+                    has_llm_review_candidates=entry_has_llm_review_candidates,
                     has_non_metric_evidence=entry_has_non_metric_evidence,
                     derived_datasource_recommendations=modeling_analysis["derived_datasource_recommendations"],
                 )
@@ -556,10 +567,16 @@ class SemanticDiscoveryTools:
                 metric_candidates.values(), key=lambda item: (-item.get("source_count", 1), item["name"])
             )
             measures = sorted(base_measures.values(), key=lambda item: (-item.get("source_count", 1), item["name"]))
+            llm_review_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.get("candidate_classification") == "llm_review_candidate"
+            ]
             direct_candidates = [
                 candidate
                 for candidate in candidates
                 if candidate.get("metric_type") != "derived"
+                and candidate.get("candidate_classification") != "llm_review_candidate"
                 and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
             ]
             derived_candidates = [
@@ -574,6 +591,7 @@ class SemanticDiscoveryTools:
                     "metric_candidates": candidates,
                     "direct_metric_candidates": direct_candidates,
                     "derived_metric_candidates": derived_candidates,
+                    "llm_review_candidates": llm_review_candidates,
                     "base_measures": measures,
                     "support_measure_candidates": support_measure_candidates,
                     "non_metric_evidence": non_metric_evidence,
@@ -604,15 +622,18 @@ class SemanticDiscoveryTools:
 
     def _classify_source_query(
         self,
-        has_candidates: bool,
+        has_direct_candidates: bool,
+        has_llm_review_candidates: bool,
         has_non_metric_evidence: bool,
         derived_datasource_recommendations: List[Dict[str, Any]],
     ) -> str:
         """Classify how a SQL query should be modeled."""
         if derived_datasource_recommendations:
             return "metric_plus_derived_datasource"
-        if has_candidates:
+        if has_direct_candidates:
             return "direct_metric"
+        if has_llm_review_candidates:
+            return "llm_review_candidate"
         if has_non_metric_evidence:
             return "cohort_or_dataset_only"
         return "manual_review_required"
@@ -628,6 +649,8 @@ class SemanticDiscoveryTools:
             return "metric_plus_derived_datasource"
         if "direct_metric" in classifications:
             return "direct_metric"
+        if "llm_review_candidate" in classifications:
+            return "llm_review_candidate"
         if classifications == {"cohort_or_dataset_only"}:
             return "cohort_or_dataset_only"
         if parse_errors and not source_classifications:
@@ -1231,6 +1254,20 @@ class SemanticDiscoveryTools:
             }
         return catalog
 
+    def _metric_source_context(self, entry: Dict[str, Any]) -> str:
+        """Return source text that can disambiguate metric-like SQL projections."""
+        import re
+
+        parts = []
+        for field in ("question", "name", "summary", "comment", "search_text", "description"):
+            value = str(entry.get(field) or "").strip()
+            if not value:
+                continue
+            if field == "name" and re.fullmatch(r"sql_\d+", value):
+                continue
+            parts.append(value)
+        return " ".join(parts)
+
     def _parse_sql(self, sql_text: str):
         """Parse one SQL string into sqlglot expressions."""
         import sqlglot
@@ -1271,6 +1308,7 @@ class SemanticDiscoveryTools:
         self,
         projection: Any,
         source_name: str,
+        source_context: str,
         tables: List[str],
         filters: List[str],
         dimensions: List[str],
@@ -1290,6 +1328,17 @@ class SemanticDiscoveryTools:
         referenced_metric_names = columns & existing_metric_names
 
         if not has_aggregates and not referenced_metric_names:
+            llm_review_candidate = self._llm_review_candidate_from_projection(
+                expr=expr,
+                alias=alias or "",
+                source_name=source_name,
+                source_context=source_context,
+                tables=tables,
+                filters=filters,
+                dimensions=dimensions,
+            )
+            if llm_review_candidate:
+                return llm_review_candidate
             return None
         if not has_aggregates and referenced_metric_names:
             if not columns <= existing_metric_names:
@@ -1332,6 +1381,13 @@ class SemanticDiscoveryTools:
             score_reasons.append("GROUP BY dimensions preserved as query-grain evidence")
 
         return {
+            "evidence_kind": "metric_projection",
+            "candidate_classification": "exact_metric",
+            "expression_kind": self._exact_metric_expression_kind(metric_type, expr, aggregates),
+            "aggregation_scope": "metric_reference" if metric_type == "derived" else "aggregate",
+            "representable_as": metric_type,
+            "equivalence": "exact",
+            "requires_validation": False,
             "name": name,
             "metric_type": metric_type,
             "expression": expr.sql(),
@@ -1350,6 +1406,263 @@ class SemanticDiscoveryTools:
             "source_count": 1,
             "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
         }
+
+    def _exact_metric_expression_kind(self, metric_type: str, expr: Any, aggregates: List[Any]) -> str:
+        """Return a stable expression-kind label for deterministic metric candidates."""
+        from sqlglot import expressions as exp
+
+        if metric_type == "derived":
+            return "derived_expr"
+        if metric_type == "cumulative":
+            return "cumulative_expr"
+        if metric_type == "ratio":
+            return "aggregate_ratio_expr"
+        if metric_type == "expr":
+            return "aggregate_expr"
+        if any(list(expr.find_all(exp.Case))) or any(list(agg.find_all(exp.Case)) for agg in aggregates):
+            return "conditional_aggregate_expr"
+        return "aggregate_expr"
+
+    def _llm_review_candidate_from_projection(
+        self,
+        expr: Any,
+        alias: str,
+        source_name: str,
+        source_context: str,
+        tables: List[str],
+        filters: List[str],
+        dimensions: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Infer a possible metric candidate from row-level SQL expressions.
+
+        This pass is intentionally SQL-first and high recall: it does not prove
+        business metric equivalence. Instead, it preserves row-level arithmetic
+        as candidate evidence for the gen_metrics LLM to accept, reject, or lift
+        into a reusable MetricFlow metric.
+        """
+        from sqlglot import expressions as exp
+
+        if list(expr.find_all(exp.Window)):
+            return None
+
+        core_expr = self._unwrap_metric_candidate_expr(expr)
+        if not self._has_row_metric_expression(core_expr):
+            return None
+        if not self._has_column_operand(core_expr):
+            return None
+
+        div_expr = self._first_division_expr(core_expr)
+        has_additive_math = any(list(core_expr.find_all(cls)) for cls in (exp.Add, exp.Sub))
+        metric_type = "ratio" if div_expr is not None and not has_additive_math else "expr"
+        expression_kind = "row_ratio_expr" if metric_type == "ratio" else "row_arithmetic_expr"
+
+        if metric_type == "ratio" and div_expr is not None:
+            measures = self._raw_ratio_base_measures(div_expr)
+        else:
+            measures = self._raw_expression_base_measures(core_expr)
+        if not measures:
+            return None
+
+        name = self._llm_review_metric_name(
+            alias=alias,
+            expr=expr,
+            metric_type=metric_type,
+            source_context=source_context,
+            measures=measures,
+        )
+        has_context = self._has_metric_naming_context(alias=alias, source_context=source_context)
+        confidence = "medium" if alias or has_context else "low"
+        score_reasons = [
+            "row-level arithmetic expression is metric-like but not statically equivalent to an aggregate metric",
+            "candidate must be reviewed before lifting into MetricFlow metric algebra",
+        ]
+        if metric_type == "ratio":
+            score_reasons.append("division expression can be reviewed as a possible ratio metric")
+        else:
+            score_reasons.append("arithmetic expression can be reviewed as a possible expr metric")
+        if alias:
+            score_reasons.append("final SELECT alias provides naming evidence")
+        if has_context:
+            score_reasons.append("source question/name/summary provides business naming evidence")
+        if filters:
+            score_reasons.append("historical SQL filters preserved as metric evidence")
+        if dimensions:
+            score_reasons.append("GROUP BY dimensions preserved as query-grain evidence")
+
+        return {
+            "evidence_kind": "llm_review_projection",
+            "candidate_classification": "llm_review_candidate",
+            "expression_kind": expression_kind,
+            "aggregation_scope": "row",
+            "representable_as": metric_type,
+            "equivalence": "lifted",
+            "requires_validation": True,
+            "name": name,
+            "metric_type": metric_type,
+            "expression": expr.sql(),
+            "source_alias": alias or "",
+            "source_sql_name": source_name,
+            "source_context": source_context,
+            "base_measures": measures,
+            "dimensions": dimensions,
+            "filters": filters,
+            "tables": tables,
+            "confidence": confidence,
+            "requires_name_translation": not bool(alias) or self._requires_name_translation(alias),
+            "name_source": "source_alias" if alias else "expression_with_optional_source_context",
+            "score_reasons": score_reasons,
+            "source_count": 1,
+            "referenced_metrics": [],
+        }
+
+    def _unwrap_metric_candidate_expr(self, expr: Any) -> Any:
+        """Remove expression wrappers that do not change metric lineage."""
+        from sqlglot import expressions as exp
+
+        wrapper_classes = tuple(
+            cls
+            for cls in (getattr(exp, "Cast", None), getattr(exp, "TryCast", None), getattr(exp, "Paren", None))
+            if cls
+        )
+        current = expr
+        while True:
+            if wrapper_classes and isinstance(current, wrapper_classes):
+                inner = current.args.get("this")
+            elif isinstance(current, exp.Round):
+                inner = current.args.get("this")
+            else:
+                inner = None
+            if inner is None or inner is current:
+                return current
+            current = inner
+
+    def _has_row_metric_expression(self, expr: Any) -> bool:
+        """Return true for row-level arithmetic expressions worth LLM review."""
+        from sqlglot import expressions as exp
+
+        math_classes = (exp.Add, exp.Sub, exp.Mul, exp.Div)
+        return isinstance(expr, math_classes) or any(list(expr.find_all(cls)) for cls in math_classes)
+
+    def _has_column_operand(self, expr: Any) -> bool:
+        """Return true when an expression depends on at least one physical column."""
+        from sqlglot import expressions as exp
+
+        return bool(list(expr.find_all(exp.Column)))
+
+    def _first_division_expr(self, expr: Any) -> Optional[Any]:
+        """Return the primary division expression, if any."""
+        from sqlglot import expressions as exp
+
+        if isinstance(expr, exp.Div):
+            return expr
+        divisions = list(expr.find_all(exp.Div))
+        return divisions[0] if divisions else None
+
+    def _raw_ratio_base_measures(self, div_expr: Any) -> List[Dict[str, Any]]:
+        """Build default SUM base-measure evidence for raw ratio operands."""
+        measures: List[Dict[str, Any]] = []
+        for role, operand in (
+            ("numerator", div_expr.args.get("this")),
+            ("denominator", div_expr.args.get("expression")),
+        ):
+            measure_expr = self._raw_ratio_operand_sql(operand)
+            if not measure_expr:
+                return []
+            measures.append(
+                {
+                    "name": self._safe_name(measure_expr),
+                    "agg": "SUM",
+                    "expr": measure_expr,
+                    "filter": "",
+                    "source_alias": "",
+                    "requires_name_translation": False,
+                    "source_count": 1,
+                    "evidence_kind": "row_ratio_operand",
+                    "role": role,
+                }
+            )
+        return self._deduplicate_items(measures, ["name", "agg", "expr", "filter", "role"])
+
+    def _raw_ratio_operand_sql(self, operand: Any) -> str:
+        """Return SQL for a raw ratio operand, unwrapping safe divide guards and percentage scaling."""
+        from sqlglot import expressions as exp
+
+        if operand is None:
+            return ""
+        operand = self._unwrap_metric_candidate_expr(operand)
+        if isinstance(operand, exp.Nullif):
+            inner = operand.args.get("this")
+            return self._raw_ratio_operand_sql(inner)
+        if isinstance(operand, exp.Mul):
+            left = operand.args.get("this")
+            right = operand.args.get("expression")
+            if isinstance(left, exp.Literal) and not left.is_string:
+                return self._raw_ratio_operand_sql(right)
+            if isinstance(right, exp.Literal) and not right.is_string:
+                return self._raw_ratio_operand_sql(left)
+        if isinstance(operand, exp.Literal):
+            return ""
+        if list(operand.find_all(*self._aggregate_classes())):
+            return ""
+        return operand.sql()
+
+    def _raw_expression_base_measures(self, expr: Any) -> List[Dict[str, Any]]:
+        """Build SUM base-measure evidence for row-level arithmetic operands."""
+        from sqlglot import expressions as exp
+
+        measures: List[Dict[str, Any]] = []
+        for column in expr.find_all(exp.Column):
+            measure_expr = column.sql()
+            measures.append(
+                {
+                    "name": self._safe_name(column.name or measure_expr),
+                    "agg": "SUM",
+                    "expr": measure_expr,
+                    "filter": "",
+                    "source_alias": "",
+                    "requires_name_translation": False,
+                    "source_count": 1,
+                    "evidence_kind": "row_arithmetic_operand",
+                    "role": "operand",
+                }
+            )
+        return self._deduplicate_items(measures, ["name", "agg", "expr", "filter", "role"])
+
+    def _llm_review_metric_name(
+        self,
+        alias: str,
+        expr: Any,
+        metric_type: str,
+        source_context: str,
+        measures: List[Dict[str, Any]],
+    ) -> str:
+        """Build a readable fallback name for LLM-reviewed candidates."""
+        if alias:
+            return self._metric_candidate_name(alias, expr)
+
+        if metric_type == "ratio" and len(measures) >= 2:
+            numerator = measures[0].get("name", "numerator")
+            denominator = measures[1].get("name", "denominator")
+            context_lower = source_context.lower()
+            if "rate" in context_lower or "percent" in context_lower or "percentage" in context_lower:
+                return self._safe_name(f"{numerator}_rate")
+            if "share" in context_lower or "proportion" in context_lower:
+                return self._safe_name(f"{numerator}_share")
+            return self._safe_name(f"{numerator}_per_{denominator}")
+
+        return self._metric_candidate_name("", expr)
+
+    def _has_metric_naming_context(self, alias: str, source_context: str) -> bool:
+        """Return true when source text gives useful business naming evidence."""
+        import re
+
+        context_text = " ".join(part for part in (alias, source_context) if part).lower()
+        return bool(
+            re.search(
+                r"\b(metrics?|measures?|kpis?|rates?|ratios?|shares?|percent(?:age)?s?|proportions?|arpu|arppu)\b",
+                context_text,
+            )
+        )
 
     def _support_measure_projection_aliases(self, select: Any) -> set[str]:
         """Return projection aliases that should stay as support measures only.

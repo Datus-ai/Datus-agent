@@ -310,6 +310,7 @@ def _build_candidate_plan(
             "metric_candidates": [],
             "direct_metric_candidates": [],
             "derived_metric_candidates": [],
+            "llm_review_candidates": [],
             "base_measures": [],
             "support_measure_candidates": [],
             "non_metric_evidence": [],
@@ -363,6 +364,7 @@ def _candidate_plan_for_sources(candidate_plan: dict[str, Any], batch_sources: s
         "metric_candidates",
         "direct_metric_candidates",
         "derived_metric_candidates",
+        "llm_review_candidates",
         "base_measures",
         "support_measure_candidates",
         "non_metric_evidence",
@@ -382,6 +384,7 @@ def _candidate_plan_for_sources(candidate_plan: dict[str, Any], batch_sources: s
         f"Batch candidate plan for {len(batch_sources)} SQL source(s): "
         f"{len(scoped.get('direct_metric_candidates') or [])} direct, "
         f"{len(scoped.get('derived_metric_candidates') or [])} derived, "
+        f"{len(scoped.get('llm_review_candidates') or [])} LLM review, "
         f"{len(scoped.get('blocked_direct_metric_candidates') or [])} blocked direct candidate(s)."
     )
     return scoped
@@ -389,7 +392,7 @@ def _candidate_plan_for_sources(candidate_plan: dict[str, Any], batch_sources: s
 
 def _candidate_metric_names(candidate_plan: dict[str, Any]) -> list[str]:
     names: list[str] = []
-    for key in ("direct_metric_candidates", "derived_metric_candidates", "metric_candidates"):
+    for key in ("direct_metric_candidates", "derived_metric_candidates", "llm_review_candidates", "metric_candidates"):
         for candidate in candidate_plan.get(key) or []:
             if not isinstance(candidate, dict):
                 continue
@@ -422,7 +425,7 @@ def _candidate_metric_items(candidate_plan: dict[str, Any]) -> list[dict[str, An
     candidates_by_name: dict[str, dict[str, Any]] = {}
     ordered_names: list[str] = []
     seen: set[str] = set()
-    for key in ("direct_metric_candidates", "derived_metric_candidates", "metric_candidates"):
+    for key in ("direct_metric_candidates", "derived_metric_candidates", "llm_review_candidates", "metric_candidates"):
         for candidate in candidate_plan.get(key) or []:
             if not isinstance(candidate, dict):
                 continue

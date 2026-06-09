@@ -99,6 +99,8 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - Parse aggregations (SUM, COUNT, AVG, etc.) → dependency measures
 - Support aggregations that only feed another final KPI should be added/reused as semantic-model measures, not published as separate top-level metrics unless the user question or candidate plan identifies them as final KPIs.
 - Treat `support_measure_candidates` as dependency or comparison measures only. Do not publish a `metric:` block for them; add/reuse the measure only when another generated metric needs it.
+- Treat `llm_review_candidates` as possible metric evidence, not confirmed metrics. For each item, decide whether the row-level or ambiguous expression should be lifted into a reusable MetricFlow metric. Generate it only when the SQL, table/column semantics, and user question support that lift; otherwise record it as query-only/detail evidence and do not create a metric.
+- For candidates with `equivalence: "lifted"` or `requires_validation: true`, do not assume exact equivalence to the historical SQL. Prefer a semantically correct aggregate metric such as `SUM(numerator) / SUM(denominator)` only when that lift is business-valid; otherwise skip the metric.
 - Parse GROUP BY → dimensions
 - Deduplicate only the underlying measure definition when the aggregation/expression is identical
 - Preserve separate metrics when filters or business semantics differ (e.g., paid revenue vs refunded revenue)
@@ -112,6 +114,7 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
 - Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
 - Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
+- Natural-language fields in the candidate plan (`question`, `name`, `summary`, or `source_context`) are naming and business-meaning evidence only. They should never override the SQL expression structure or turn a detail query into a metric by themselves.
 
 **For natural language input:**
 - Identify metric type: simple counting+filter, aggregation+filter, ratio, expr, derived, or cumulative

@@ -1128,6 +1128,22 @@ class TestBatchHasNoMetricCandidates:
         }
         assert _batch_has_no_metric_candidates(plan) is False
 
+    def test_returns_false_when_llm_review_candidates_exist(self):
+        from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
+
+        plan = {
+            "available": True,
+            "llm_review_candidates": [
+                {
+                    "name": "price_per_quantity",
+                    "candidate_classification": "llm_review_candidate",
+                    "equivalence": "lifted",
+                }
+            ],
+            "non_metric_evidence": [{"name": "detail_query"}],
+        }
+        assert _batch_has_no_metric_candidates(plan) is False
+
     def test_returns_true_when_only_non_metric_evidence(self):
         from datus.storage.metric.metric_init import _batch_has_no_metric_candidates
 
