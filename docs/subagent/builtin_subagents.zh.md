@@ -1031,7 +1031,7 @@ agent:
 | `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
 | `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL 到 MetricFlow 模型、内置验证 |
 | `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL 到 MetricFlow 指标、主题树支持 |
-| `ask_metrics` | 回答已有指标问题 | Markdown 报告 | N/A | KPI 数值、趋势、分组结果、归因分析，不退回原始 SQL |
+| `ask_metrics` | 回答已有指标问题 | Markdown 报告 | N/A | KPI 数值、趋势、分组结果、归因分析、不退回原始 SQL |
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |
