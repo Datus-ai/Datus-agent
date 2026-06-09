@@ -8,17 +8,17 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/zh/develop/observability/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/zh/subagent/ask_metrics/">
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../gen_metrics/">
       
       
-        <link rel="next" href="../../vscode_extension/introduction/">
+        <link rel="next" href="../gen_semantic_model/">
       
       
         
-          <link rel="alternate" href="../../../develop/observability/" hreflang="en">
+          <link rel="alternate" href="../../../subagent/ask_metrics/" hreflang="en">
         
           <link rel="alternate" href="./" hreflang="zh">
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>可观测性 - Datus Docs</title>
+        <title>指标问答 - Datus Docs</title>
       
     
     
@@ -86,7 +86,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#_1" class="md-skip">
+        <a href="#askmetrics" class="md-skip">
           跳转至
         </a>
       
@@ -123,7 +123,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              可观测性
+              指标问答
             
           </span>
         </div>
@@ -180,7 +180,7 @@
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="../../../develop/observability/" hreflang="en" class="md-select__link">
+            <a href="../../../subagent/ask_metrics/" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
@@ -967,8 +967,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1005,11 +1007,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_4" checked>
         
           
           <label class="md-nav__link" for="__nav_1_4" id="__nav_1_4_label" tabindex="0">
@@ -1030,7 +1032,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1048,7 +1050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -1076,7 +1078,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/builtin_subagents/" class="md-nav__link">
+      <a href="../builtin_subagents/" class="md-nav__link">
         
   
   
@@ -1104,7 +1106,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/customized_subagent/" class="md-nav__link">
+      <a href="../customized_subagent/" class="md-nav__link">
         
   
   
@@ -1132,7 +1134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_dashboard/" class="md-nav__link">
+      <a href="../gen_dashboard/" class="md-nav__link">
         
   
   
@@ -1160,7 +1162,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_metrics/" class="md-nav__link">
+      <a href="../gen_metrics/" class="md-nav__link">
         
   
   
@@ -1185,10 +1187,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../subagent/ask_metrics/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标问答
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1204,6 +1233,131 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        概览
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置条件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        快速开始
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        工作方式
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        默认工具
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#askmetrics-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自定义 AskMetrics Agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#askmetrics_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        不适合使用 AskMetrics 的场景
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1216,7 +1370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_semantic_model/" class="md-nav__link">
+      <a href="../gen_semantic_model/" class="md-nav__link">
         
   
   
@@ -1244,7 +1398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/scheduler/" class="md-nav__link">
+      <a href="../scheduler/" class="md-nav__link">
         
   
   
@@ -1272,7 +1426,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_sql_summary/" class="md-nav__link">
+      <a href="../gen_sql_summary/" class="md-nav__link">
         
   
   
@@ -1300,7 +1454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_table/" class="md-nav__link">
+      <a href="../gen_table/" class="md-nav__link">
         
   
   
@@ -1328,7 +1482,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_job/" class="md-nav__link">
+      <a href="../gen_job/" class="md-nav__link">
         
   
   
@@ -1356,7 +1510,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_visual_report/" class="md-nav__link">
+      <a href="../gen_visual_report/" class="md-nav__link">
         
   
   
@@ -1384,7 +1538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../subagent/gen_visual_dashboard/" class="md-nav__link">
+      <a href="../gen_visual_dashboard/" class="md-nav__link">
         
   
   
@@ -3307,8 +3461,6 @@
                 
   
   
-    
-  
   
   
     
@@ -3327,15 +3479,15 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_16" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_16" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../develop/" class="md-nav__link ">
               
   
   
@@ -3359,7 +3511,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_16">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3376,37 +3528,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    可观测性
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../develop/observability/" class="md-nav__link">
         
   
   
@@ -3422,164 +3547,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        概览
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        实现方式
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        本地观测
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="本地观测">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#repl-trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        REPL 内联 Trace
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#yaml-trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        本地 YAML Trace
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        基础配置
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#langfuse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Langfuse
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#langsmith" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        LangSmith
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#datadog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Datadog
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        多后端
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#otlp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        通用 OTLP
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查找 Trace
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3682,7 +3649,7 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         概览
@@ -3693,10 +3660,21 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置条件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        实现方式
+        快速开始
       
     </span>
   </a>
@@ -3707,30 +3685,52 @@
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        本地观测
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="本地观测">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#repl-trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        REPL 内联 Trace
+        工作方式
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#yaml-trace" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        本地 YAML Trace
+        默认工具
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        输出
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        配置
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="配置">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#askmetrics-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        自定义 AskMetrics Agent
       
     </span>
   </a>
@@ -3743,76 +3743,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#askmetrics_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        基础配置
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#langfuse" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Langfuse
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#langsmith" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        LangSmith
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#datadog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Datadog
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        多后端
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#otlp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        通用 OTLP
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#trace" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        查找 Trace
+        不适合使用 AskMetrics 的场景
       
     </span>
   </a>
@@ -3836,7 +3770,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/develop/observability.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/subagent/ask_metrics.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3844,252 +3778,166 @@
   
 
 
-<h1 id="_1">可观测性<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Datus 提供本地执行检查与外部 trace export，用于调试 agent run、workflow run、benchmark、模型调用和工具调用。</p>
-<h2 id="_2">概览<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>范围</th>
-<th>机制</th>
-<th>适用场景</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>当前 REPL turn</td>
-<td>按 <code>Ctrl+O</code></td>
-<td>本地交互时查看工具调用、SQL、原始输出</td>
-</tr>
-<tr>
-<td>本地文件</td>
-<td><code>--save_llm_trace</code> 或 <code>save_llm_trace: true</code></td>
-<td>不接入托管 tracing 系统时，调试精确 prompt 与模型输出</td>
-</tr>
-<tr>
-<td>外部 trace</td>
-<td><code>agent.observability.tracing</code></td>
-<td>跨运行关联 workflow、benchmark、chat、LiteLLM、OpenAI Agents SDK 和工具 span</td>
-</tr>
-</tbody>
-</table>
-<p>外部 trace export 只通过 <code>agent.observability.tracing.enabled: true</code> 启用。只设置 provider API key 不会自动打开 tracing。</p>
-<h2 id="_3">实现方式<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>Datus observability 基于 OpenTelemetry trace export：</p>
+<h1 id="askmetrics">AskMetrics 指南<a class="headerlink" href="#askmetrics" title="Permanent link">&para;</a></h1>
+<h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p><code>ask_metrics</code> 是内置的指标问答 subagent。它基于已有语义指标回答问题，不探索原始表，也不生成 SQL。</p>
+<p>适合使用 AskMetrics 的问题包括：</p>
 <ul>
-<li>Datus 在每个进程中创建一个 OpenTelemetry tracer provider。</li>
-<li>每个配置的 adapter 都会在这个 provider 上挂载 exporter/span processor。</li>
-<li>内置的 <code>langsmith</code>、<code>langfuse</code>、<code>datadog</code>、<code>braintrust</code>、<code>otlp</code> adapter 都发送 OpenTelemetry trace。</li>
-<li>平台 adapter 是轻量 preset：负责解析平台 endpoint 和鉴权，然后复用共享 OTLP exporter。</li>
-<li>基础 trace export 不需要安装 LangSmith、Langfuse 或 Datadog 等平台 SDK。</li>
-<li>OpenAI Agents SDK span 通过 OpenInference instrumentation 接入，并合并到 Datus trace tree。</li>
-<li>Datus 通过 OpenTelemetry baggage 和 span attributes 传播 trace 级别的 identity。</li>
+<li>KPI 数值，例如“上个月收入是多少？”</li>
+<li>指标趋势，例如“发货数量按月如何变化？”</li>
+<li>按维度分组的指标结果，例如“Q1 各地区收入”</li>
+<li>指标归因，例如“哪个客户分群导致收入下降？”</li>
 </ul>
-<p>同一个进程中可以启用多个 adapter。同一批 span 可以同时发送到 LangSmith、Langfuse、Datadog、Braintrust 和通用 OTLP collector。</p>
-<p>Tracing setup 每个进程只初始化一次。修改 tracing 配置或环境变量后，需要重启 Datus 进程。</p>
-<h2 id="_4">本地观测<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
-<h3 id="repl-trace">REPL 内联 Trace<a class="headerlink" href="#repl-trace" title="Permanent link">&para;</a></h3>
-<p>在 <code>datus</code> REPL 中，运行中或运行后按 <code>Ctrl+O</code> 可切换 verbose trace 详情。再次按下，或按 <code>q</code>，回到 compact 视图。</p>
-<h3 id="yaml-trace">本地 YAML Trace<a class="headerlink" href="#yaml-trace" title="Permanent link">&para;</a></h3>
-<p>使用 <code>--save_llm_trace</code> 持久化模型输入输出：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>--save_llm_trace<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--datasource<span class="w"> </span>local_duckdb<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--task_db_name<span class="w"> </span>duckdb-demo<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--task<span class="w"> </span><span class="s2">&quot;Summarize the tree table&quot;</span>
+<p>AskMetrics 的能力边界刻意保持较窄。如果没有现有指标能够回答问题，它会直接说明原因，不会退回到原始 SQL 查询。</p>
+<h2 id="_2">前置条件<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p>AskMetrics 需要已配置的语义层和已发布的指标。</p>
+<p>以 MetricFlow 为例，在 <code>agent.yml</code> 中配置语义层：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">metricflow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 </span></code></pre></div>
-<p>也可以在 custom model 条目上启用：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">my-internal</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://internal.example.com/v1</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${MY_KEY}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">internal-gpt-4</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">save_llm_trace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<p>完整配置见 <a href="../../configuration/semantic_layer/">语义层配置</a>。</p>
+<p>指标可以来自已有 MetricFlow YAML，也可以由 <a href="../gen_metrics/">Generate Metrics</a> subagent 生成。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。</p>
+<h2 id="_3">快速开始<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>使用包含指标的 datasource 启动 Datus：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus<span class="w"> </span>--datasource<span class="w"> </span>production
 </span></code></pre></div>
-<p>Trace YAML 会写入 <code>{agent.home}/trajectory/...</code>。Workflow checkpoint 也保存在同一棵 trajectory 目录下；配置外部 observability 后，保存的 workflow metadata 中可能包含 <code>trace_id</code>、<code>trace_span_id</code>、<code>trace_run_id</code>、<code>trace_provider</code> 等稳定 trace 引用字段。</p>
-<h2 id="_5">基础配置<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p>最短的外部 tracing 配置会启用 tracing，并使用默认的 <code>langfuse</code> adapter：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">capture_content</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<p>通过内置 subagent 提问：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>/ask_metrics<span class="w"> </span>What<span class="w"> </span>was<span class="w"> </span>total<span class="w"> </span>revenue<span class="w"> </span>last<span class="w"> </span>month<span class="w"> </span>by<span class="w"> </span>customer<span class="w"> </span>segment?
 </span></code></pre></div>
-<p>上面的配置等价于：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">langfuse</span>
-</span></code></pre></div>
-<p>常用 tracing 字段：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus-agent</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="nt">capture_content</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">capture</span><span class="p">:</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">        </span><span class="nt">prompts</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">        </span><span class="nt">responses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">        </span><span class="nt">reasoning</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">        </span><span class="nt">tool_args</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">        </span><span class="nt">tool_results</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="w">        </span><span class="nt">sql</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">        </span><span class="nt">artifacts</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">      </span><span class="nt">redact</span><span class="p">:</span>
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a><span class="w">        </span><span class="nt">fields</span><span class="p">:</span>
-</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">api_key</span>
-</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">password</span>
-</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">token</span>
-</span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">          </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secret</span>
-</span></code></pre></div>
-<p><code>capture_content</code> 默认是 <code>true</code>，以保持当前调试体验。需要更严格的内容采集策略时，可以设置为 <code>false</code>，或在 <code>capture</code> 下覆盖单个字段。</p>
-<h2 id="langfuse">Langfuse<a class="headerlink" href="#langfuse" title="Permanent link">&para;</a></h2>
-<p>设置 <code>tracing.enabled: true</code> 且省略 <code>adapters</code> 时，Datus 默认使用 Langfuse adapter。</p>
-<p>环境变量：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_PUBLIC_KEY</span><span class="o">=</span>pk-lf-...
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_SECRET_KEY</span><span class="o">=</span>sk-lf-...
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGFUSE_HOST</span><span class="o">=</span>https://us.cloud.langfuse.com
-</span></code></pre></div>
-<p>配置：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">      </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus-agent</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">langfuse</span>
-</span></code></pre></div>
-<p>Datus 会根据 <code>LANGFUSE_PUBLIC_KEY</code> 和 <code>LANGFUSE_SECRET_KEY</code> 在内部生成 Langfuse Basic Auth header，不需要单独设置 <code>LANGFUSE_AUTH_STRING</code>。</p>
-<h2 id="langsmith">LangSmith<a class="headerlink" href="#langsmith" title="Permanent link">&para;</a></h2>
-<p>LangSmith 使用 <code>LANGSMITH_API_KEY</code> 或 <code>LANGCHAIN_API_KEY</code>；<code>LANGSMITH_PROJECT</code> 可选。</p>
-<p>环境变量：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_API_KEY</span><span class="o">=</span>lsv2_...
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_PROJECT</span><span class="o">=</span>datus-trace
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">LANGSMITH_ENDPOINT</span><span class="o">=</span>https://api.smith.langchain.com
-</span></code></pre></div>
-<p>配置：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">      </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus-agent</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">langsmith</span>
-</span></code></pre></div>
-<p>不需要设置 <code>LANGSMITH_TRACING=true</code> 这类 legacy LangChain tracing 开关。Datus 通过 <code>agent.observability.tracing</code> 控制 trace export。</p>
-<h2 id="datadog">Datadog<a class="headerlink" href="#datadog" title="Permanent link">&para;</a></h2>
-<p>Datadog 默认使用本地 Agent 的 OTLP HTTP receiver。</p>
-<p>Datadog Agent 配置：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">otlp_config</span><span class="p">:</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">receiver</span><span class="p">:</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">protocols</span><span class="p">:</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">http</span><span class="p">:</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">        </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost:4318</span>
-</span></code></pre></div>
-<p>Datus 配置：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">      </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus-agent</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datadog</span>
-</span></code></pre></div>
-<p>如果 Datus 不能访问默认 endpoint，可以显式配置：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">      </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus-agent</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datadog</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">          </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:4318/v1/traces</span>
-</span></code></pre></div>
-<p>如果 Datus 运行在 Docker 中，而 Datadog Agent 运行在宿主机上，应使用容器内可访问的宿主机地址：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datadog</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">          </span><span class="nt">agent_host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">host.docker.internal</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">          </span><span class="nt">agent_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4318</span>
-</span></code></pre></div>
-<p>本地 Agent export 场景下，Datadog API key 配在 Agent 上即可。只有当 Datus 直接发送到一个要求 Datadog API key header 的 endpoint 时，才需要为 Datus 配置 <code>DD_API_KEY</code> 或 <code>DATADOG_API_KEY</code>。</p>
-<h2 id="_6">多后端<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<p>需要同一个 Datus 进程把 span 同时发送到多个后端时，显式配置多个 adapter：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">      </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus-agent</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">      </span><span class="nt">environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">langsmith</span>
-</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">langfuse</span>
-</span><span id="__span-13-10"><a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datadog</span>
-</span><span id="__span-13-11"><a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a><span class="w">          </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://127.0.0.1:4318/v1/traces</span>
-</span></code></pre></div>
-<h2 id="otlp">通用 OTLP<a class="headerlink" href="#otlp" title="Permanent link">&para;</a></h2>
-<p>需要完全控制 endpoint/header 时，继续使用 <code>otlp</code>：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">observability</span><span class="p">:</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">tracing</span><span class="p">:</span>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">      </span><span class="nt">adapters</span><span class="p">:</span>
-</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">otlp</span>
-</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">          </span><span class="nt">endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://collector.example/v1/traces</span>
-</span><span id="__span-14-8"><a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">          </span><span class="nt">headers</span><span class="p">:</span>
-</span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">            </span><span class="nt">x-api-key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OTLP_API_KEY}</span>
-</span></code></pre></div>
-<h2 id="trace">查找 Trace<a class="headerlink" href="#trace" title="Permanent link">&para;</a></h2>
-<p>运行任意被 trace 的路径：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>uv<span class="w"> </span>run<span class="w"> </span>datus-agent<span class="w"> </span>benchmark<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span>--config<span class="w"> </span>conf/agent.yml<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">  </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span>--benchmark_task_ids<span class="w"> </span><span class="m">14</span>
-</span></code></pre></div>
-<p>在配置的 provider project 中查看 trace。Trace 名称按操作组织：</p>
+<p>主 chat agent 也可以在识别到 metric-first 问题时，通过 <code>task(type="ask_metrics")</code> 自动委派给 AskMetrics。Web/API 调用方可以使用 <code>subagent_id: "ask_metrics"</code> 直接路由。</p>
+<p>AskMetrics 只作用于当前 datasource。如果用户询问其他 datasource，请先切换 datasource 再提问。</p>
+<h2 id="_4">工作方式<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>AskMetrics 遵循 metric-first 工作流：</p>
+<pre class="mermaid"><code>graph LR
+    A[用户指标问题] --&gt; B[匹配主题树]
+    B --&gt; C{直接命中指标?}
+    C --&gt;|是| D[使用指标名和路径]
+    C --&gt;|否| E[搜索指标]
+    D --&gt; F[必要时获取维度]
+    E --&gt; F
+    F --&gt; G[查询指标]
+    G --&gt; H{是否为归因问题?}
+    H --&gt;|是| I[运行归因分析]
+    H --&gt;|否| J[返回 Markdown 答案]
+    I --&gt; J</code></pre>
+<p>关键行为：</p>
+<ul>
+<li>优先使用主题树中的直接指标匹配，而不是搜索。</li>
+<li>只有在主题树缺失、不完整或存在歧义时才使用 <code>search_metrics</code>。</li>
+<li>分组、过滤或归因前会先调用 <code>get_dimensions</code>。</li>
+<li><code>query_metrics</code> 是查询指标值的主要工具。</li>
+<li>变化解释和贡献分析问题使用 <code>attribution_analyze</code>。</li>
+<li>默认工具面不包含原始 SQL 工具。</li>
+</ul>
+<h2 id="_5">默认工具<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>操作</th>
-<th>Trace 名称形态</th>
+<th>工具</th>
+<th>用途</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Workflow run</td>
-<td><code>workflow/&lt;workflow&gt;</code></td>
+<td><code>context_search_tools.search_metrics</code></td>
+<td>当主题树无法直接匹配时搜索候选指标</td>
 </tr>
 <tr>
-<td>Benchmark task</td>
-<td><code>benchmark/&lt;benchmark&gt;/&lt;context&gt;/task-&lt;id&gt;</code></td>
+<td><code>context_search_tools.get_metrics</code></td>
+<td>获取已知主题路径和指标名的指标详情</td>
 </tr>
 <tr>
-<td>知识库初始化</td>
-<td><code>bootstrap-kb/&lt;datasource&gt;/&lt;components&gt;</code></td>
+<td><code>context_search_tools.list_subject_tree</code></td>
+<td>当启动时主题树过大、只能内联部分内容时列出指标主题路径</td>
 </tr>
 <tr>
-<td>Agent session</td>
-<td><code>agent/&lt;node&gt;</code></td>
+<td><code>semantic_tools.list_metrics</code></td>
+<td>从语义适配器列出可执行指标</td>
+</tr>
+<tr>
+<td><code>semantic_tools.get_dimensions</code></td>
+<td>发现可用于分组、过滤和归因的维度</td>
+</tr>
+<tr>
+<td><code>semantic_tools.query_metrics</code></td>
+<td>查询指标值</td>
+</tr>
+<tr>
+<td><code>semantic_tools.attribution_analyze</code></td>
+<td>按候选维度解释指标变化</td>
 </tr>
 </tbody>
 </table>
-<p>Tag 与 metadata 会包含 datasource、workflow、benchmark、task id、run id，以及可用时的 <code>agent.home</code>。</p>
-<p>Datus 不会在 workflow metadata 中持久化后端特有的 UI URL。使用 <code>trace_id</code>、<code>trace_span_id</code>、<code>trace_run_id</code>、<code>trace_provider</code> 等稳定 metadata 字段，将 workflow checkpoint 关联到对应 backend trace。</p>
+<p>如果语义适配器不可用，AskMetrics 会不可用，因为它无法安全回答指标问题。如果上下文搜索不可用，AskMetrics 仍可使用语义适配器工具，但不会有主题树路由上下文。</p>
+<h2 id="_6">输出<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>AskMetrics 返回简洁的 Markdown 报告，包含：</p>
+<ul>
+<li>解释后的问题和时间范围</li>
+<li>使用的指标名</li>
+<li>指标工具返回的结果值</li>
+<li>执行归因时的归因结论</li>
+<li>无法通过现有指标回答时的限制说明</li>
+</ul>
+<p>它不会返回原始 SQL，也不会编造指标值。</p>
+<h2 id="_7">配置<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<p>配置语义适配器后，内置 <code>ask_metrics</code> subagent 即可使用。你可以覆盖模型和轮数：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">ask_metrics</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span>
+</span></code></pre></div>
+<h3 id="askmetrics-agent">自定义 AskMetrics Agent<a class="headerlink" href="#askmetrics-agent" title="Permanent link">&para;</a></h3>
+<p>使用 <code>type: ask_metrics</code> 可以创建具有独立名称、提示词模板或工具 allowlist 的自定义指标问答 agent：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">sales_metric_qa</span><span class="p">:</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ask_metrics</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">12</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">      </span><span class="nt">prompt_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;1.0&quot;</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">tools</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;context_search_tools.search_metrics,context_search_tools.get_metrics,semantic_tools.get_dimensions,semantic_tools.query_metrics&quot;</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">      </span><span class="nt">subject_tree_prompt_limit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">      </span><span class="nt">agent_description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Answer</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">metric</span><span class="nv"> </span><span class="s">questions</span><span class="nv"> </span><span class="s">using</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">sales</span><span class="nv"> </span><span class="s">semantic</span><span class="nv"> </span><span class="s">layer.&quot;</span>
+</span></code></pre></div>
+<p>如果省略 <code>system_prompt</code>，Datus 会先查找与自定义 agent 名称匹配的模板，例如 <code>sales_metric_qa_system_1.0.j2</code>，找不到时再回退到内置 <code>ask_metrics_system</code> 模板。</p>
+<p><code>tools</code> 可以是逗号分隔字符串，也可以是列表。默认工具面聚焦指标。自定义 agent 可以按需选择其他用户可见工具类别，但保持 AskMetrics 仅使用指标工具通常能得到更稳定的回答。</p>
+<h2 id="askmetrics_1">不适合使用 AskMetrics 的场景<a class="headerlink" href="#askmetrics_1" title="Permanent link">&para;</a></h2>
+<p>当任务无法通过现有语义指标回答时，请使用其他 subagent：</p>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>使用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>从 SQL 生成新的指标定义</td>
+<td><a href="../gen_metrics/">gen_metrics</a></td>
+</tr>
+<tr>
+<td>生成或修复原始表 SQL</td>
+<td><a href="../builtin_subagents/#gen_sql">gen_sql</a></td>
+</tr>
+<tr>
+<td>探索 schema、样本或参考上下文</td>
+<td><a href="../builtin_subagents/#explore">explore</a></td>
+</tr>
+<tr>
+<td>构建可视化报告 artifact</td>
+<td><a href="../gen_visual_report/">gen_visual_report</a></td>
+</tr>
+<tr>
+<td>在 BI 工具中创建 dashboard</td>
+<td><a href="../gen_dashboard/">gen_dashboard</a></td>
+</tr>
+</tbody>
+</table>
 
 
 
@@ -4121,7 +3969,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../" class="md-footer__link md-footer__link--prev" aria-label="上一页: 概览">
+          <a href="../gen_metrics/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 生成指标">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4131,20 +3979,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                概览
+                生成指标
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../vscode_extension/introduction/" class="md-footer__link md-footer__link--next" aria-label="下一页: VSCode 插件">
+          <a href="../gen_semantic_model/" class="md-footer__link md-footer__link--next" aria-label="下一页: 生成语义模型">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                VSCode 插件
+                生成语义模型
               </div>
             </div>
             <div class="md-footer__button md-icon">

@@ -407,6 +407,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/metricflow/introduction/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/subagent/ask_metrics/</loc>
+        <lastmod>2026-06-09</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/subagent/ask_metrics/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/subagent/ask_metrics/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/subagent/builtin_subagents/</loc>
         <lastmod>2026-06-09</lastmod>
         <changefreq>daily</changefreq>
@@ -950,6 +957,13 @@
         <lastmod>2026-06-09</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/qa/metric-bootstrap-generation-qa/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/subagent/ask_metrics/</loc>
+        <lastmod>2026-06-09</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/subagent/ask_metrics/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devsubagent/ask_metrics/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/subagent/builtin_subagents/</loc>
