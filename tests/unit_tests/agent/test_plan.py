@@ -156,6 +156,18 @@ class TestCreateSingleNode:
         assert isinstance(input_data, AskMetricsNodeInput)
         assert input_data.user_message == "how many activities?"
 
+    def test_agentic_node_ask_metrics_passes_reference_date(self):
+        """When sql_task has current_date, it is passed as reference_date to AskMetricsNodeInput."""
+        cfg = _mock_config(agentic_nodes={"my_am": {"node_type": "ask_metrics"}})
+        task = _sql_task(task="activity count in June")
+        task.current_date = "2025-06-01"
+        fake_node = MagicMock()
+        fake_node.type = NodeType.TYPE_ASK_METRICS
+        with patch("datus.agent.plan.Node.new_instance", return_value=fake_node) as new_instance:
+            _create_single_node("my_am", "node_am", task, cfg)
+        input_data = new_instance.call_args.kwargs["input_data"]
+        assert input_data.reference_date == "2025-06-01"
+
     def test_agentic_node_with_invalid_node_type_falls_back_to_gen_sql(self):
         """When agentic_nodes has an invalid node_type, it falls back to gen_sql."""
         cfg = _mock_config(agentic_nodes={"my_node": {"node_type": "nonexistent_type"}})

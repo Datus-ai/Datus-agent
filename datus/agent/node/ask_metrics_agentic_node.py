@@ -419,7 +419,8 @@ class AskMetricsAgenticNode(AgenticNode):
 
         from datus.utils.time_utils import get_default_current_date
 
-        context["current_date"] = get_default_current_date(None)
+        input_ref_date = getattr(self.input, "reference_date", None) if self.input else None
+        context["current_date"] = get_default_current_date(input_ref_date)
 
         version_value = prompt_version if prompt_version not in (None, "") else self.node_config.get("prompt_version")
         version = None if version_value in (None, "") else str(version_value)

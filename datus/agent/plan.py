@@ -192,6 +192,7 @@ def _create_single_node(
             catalog=sql_task.catalog_name or None,
             database=sql_task.database_name or None,
             db_schema=sql_task.schema_name or None,
+            reference_date=sql_task.current_date or None,
         )
 
     node = Node.new_instance(
