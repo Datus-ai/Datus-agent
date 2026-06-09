@@ -1445,9 +1445,16 @@ class TestNativeLoopHooks:
     @pytest.mark.asyncio
     async def test_invoke_hook_noop_when_method_absent(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
-        # Bare object without the method, and None hooks: both no-op silently.
-        await model._invoke_hook(SimpleNamespace(), "on_tool_end", None)
-        await model._invoke_hook(None, "on_tool_end", None)
+        # Bare object without the method, and None hooks: both no-op silently
+        # (return None) rather than raising AttributeError / calling None(...).
+        assert await model._invoke_hook(SimpleNamespace(), "on_tool_end", None) is None
+        assert await model._invoke_hook(None, "on_tool_end", None) is None
+
+        # A hooks object whose lifecycle attribute is explicitly None must hit
+        # the ``method is None`` guard and never be awaited.
+        hooks = MagicMock()
+        hooks.on_tool_end = None
+        assert await model._invoke_hook(hooks, "on_tool_end", None) is None
 
     @pytest.mark.asyncio
     async def test_tool_lifecycle_hooks_fired_for_func_tool(self):
