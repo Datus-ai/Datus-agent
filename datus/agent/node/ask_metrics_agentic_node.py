@@ -520,7 +520,9 @@ class AskMetricsAgenticNode(AgenticNode):
 
             from datus.schemas.node_models import SQLContext
 
-            workflow.context.sql_contexts.append(SQLContext(sql_query=sql_query, sql_return=sql_return))
+            workflow.context.sql_contexts.append(
+                SQLContext(sql_query=sql_query, sql_return=sql_return, row_count=row_count)
+            )
             logger.info("Captured query_metrics result: %d columns, %d rows", len(columns), row_count)
             return {"success": True, "message": "query_metrics result captured"}
 
