@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -455,3 +455,155 @@ class TestAskMetricsAgenticNode:
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 
         assert AskMetricsAgenticNode._extract_subject_tree_metric_entries(["not", "a", "tree"]) == []
+
+
+class TestUpdateContext:
+    """Tests for AskMetricsAgenticNode.update_context."""
+
+    def _make_node_with_result(self, action_history):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        node = MagicMock(spec=AskMetricsAgenticNode)
+        node.result = MagicMock()
+        node.result.action_history = action_history
+        node.update_context = AskMetricsAgenticNode.update_context.__get__(node)
+        return node
+
+    def test_captures_compressed_data(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["metric_time__month", "activity_count"],
+                            "data": {
+                                "compressed_data": "index,metric_time__month,activity_count\n0,2025-06,100",
+                                "original_rows": 1,
+                                "is_compressed": False,
+                            },
+                            "metadata": {"sql": "SELECT COUNT(*) FROM t"},
+                        },
+                    }
+                },
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result["success"] is True
+        assert len(workflow.context.sql_contexts) == 1
+        ctx = workflow.context.sql_contexts[0]
+        assert "activity_count" in ctx.sql_return
+        assert ctx.sql_query == "SELECT COUNT(*) FROM t"
+        assert ctx.row_count == 1
+
+    def test_captures_list_data(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["ac_channel", "count"],
+                            "data": [["ch1", 10], ["ch2", 20]],
+                            "metadata": {},
+                        },
+                    }
+                },
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result["success"] is True
+        ctx = workflow.context.sql_contexts[0]
+        assert "ch1" in ctx.sql_return
+        assert ctx.row_count == 2
+        assert ctx.sql_query == ""
+
+    def test_skips_failed_actions(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "failed",
+                "output": {"error": "some error"},
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        with patch(
+            "datus.agent.node.agentic_node.AgenticNode.update_context",
+            return_value={"success": True},
+        ):
+            node.update_context(workflow)
+
+        assert len(workflow.context.sql_contexts) == 0
+
+    def test_picks_last_successful_call(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["x"],
+                            "data": {"compressed_data": "index,x\n0,first", "original_rows": 1},
+                            "metadata": {},
+                        },
+                    }
+                },
+            },
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["x"],
+                            "data": {"compressed_data": "index,x\n0,last", "original_rows": 1},
+                            "metadata": {},
+                        },
+                    }
+                },
+            },
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        node.update_context(workflow)
+
+        assert "last" in workflow.context.sql_contexts[0].sql_return
+
+    def test_no_query_metrics_falls_back_to_super(self):
+        actions = [
+            {"action_type": "list_metrics", "status": "success", "output": {}},
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        with patch(
+            "datus.agent.node.agentic_node.AgenticNode.update_context",
+            return_value={"success": True, "message": "parent called"},
+        ) as parent_update:
+            result = node.update_context(workflow)
+
+        parent_update.assert_called_once()
+        assert result["message"] == "parent called"

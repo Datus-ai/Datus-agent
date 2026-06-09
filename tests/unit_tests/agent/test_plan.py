@@ -137,6 +137,37 @@ class TestCreateSingleNode:
         assert call_kwargs["node_type"] == NodeType.TYPE_GEN_SQL
         assert call_kwargs["node_name"] == "myagent"
 
+    def test_agentic_node_with_node_type_ask_metrics(self):
+        """When agentic_nodes has node_type=ask_metrics, it creates an ask_metrics node."""
+        cfg = _mock_config(agentic_nodes={"my_ask_metrics": {"node_type": "ask_metrics"}})
+        task = _sql_task(task="how many activities?")
+        fake_node = MagicMock()
+        fake_node.type = NodeType.TYPE_ASK_METRICS
+        with patch("datus.agent.plan.Node.new_instance", return_value=fake_node) as new_instance:
+            node = _create_single_node("my_ask_metrics", "node_am", task, cfg)
+        assert node.type == NodeType.TYPE_ASK_METRICS
+        new_instance.assert_called_once()
+        call_kwargs = new_instance.call_args.kwargs
+        assert call_kwargs["node_type"] == NodeType.TYPE_ASK_METRICS
+        assert call_kwargs["node_name"] == "my_ask_metrics"
+        input_data = call_kwargs["input_data"]
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        assert isinstance(input_data, AskMetricsNodeInput)
+        assert input_data.user_message == "how many activities?"
+
+    def test_agentic_node_with_invalid_node_type_falls_back_to_gen_sql(self):
+        """When agentic_nodes has an invalid node_type, it falls back to gen_sql."""
+        cfg = _mock_config(agentic_nodes={"my_node": {"node_type": "nonexistent_type"}})
+        task = _sql_task()
+        fake_node = MagicMock()
+        fake_node.type = NodeType.TYPE_GEN_SQL
+        with patch("datus.agent.plan.Node.new_instance", return_value=fake_node) as new_instance:
+            node = _create_single_node("my_node", "node_x", task, cfg)
+        assert node.type == NodeType.TYPE_GEN_SQL
+        call_kwargs = new_instance.call_args.kwargs
+        assert call_kwargs["node_type"] == NodeType.TYPE_GEN_SQL
+
     def test_schema_linking_creates_schema_linking_input(self):
         task = _sql_task()
         cfg = _mock_config()
