@@ -170,9 +170,11 @@ def _create_single_node(
         normalized_type = NodeType.TYPE_EXECUTE_SQL
     elif node_type == "chat":
         normalized_type = NodeType.TYPE_CHAT
-    # Check if node_type is defined in agentic_nodes config - if so, map to gen_sql
+    # Check if node_type is defined in agentic_nodes config
     elif agent_config and hasattr(agent_config, "agentic_nodes") and node_type in agent_config.agentic_nodes:
-        normalized_type = NodeType.TYPE_GEN_SQL
+        agentic_config = agent_config.agentic_nodes[node_type]
+        configured_type = agentic_config.get("node_type") if isinstance(agentic_config, dict) else None
+        normalized_type = configured_type if configured_type in NodeType.ACTION_TYPES else NodeType.TYPE_GEN_SQL
 
     description = NodeType.get_description(normalized_type)
 
@@ -182,6 +184,15 @@ def _create_single_node(
             sql_task=sql_task,
             matching_rate=agent_config.schema_linking_rate if agent_config else "fast",
         )
+    elif normalized_type == NodeType.TYPE_ASK_METRICS:
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        input_data = AskMetricsNodeInput(
+            user_message=sql_task.task or "",
+            catalog=sql_task.catalog_name or None,
+            database=sql_task.database_name or None,
+            db_schema=sql_task.schema_name or None,
+        )
 
     node = Node.new_instance(
         node_id=node_id,
@@ -189,9 +200,7 @@ def _create_single_node(
         node_type=normalized_type,
         input_data=input_data,
         agent_config=agent_config,
-        node_name=node_type
-        if normalized_type == NodeType.TYPE_GEN_SQL
-        else None,  # Pass original name for gen_sql nodes
+        node_name=node_type if normalized_type in (NodeType.TYPE_GEN_SQL, NodeType.TYPE_ASK_METRICS) else None,
     )
 
     return node

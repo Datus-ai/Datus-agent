@@ -479,26 +479,37 @@ class AskMetricsAgenticNode(AgenticNode):
                 continue
             if action.get("status") != "success":
                 continue
+
             output = action.get("output", {})
-            if not isinstance(output, dict) or not output.get("success"):
+            if not isinstance(output, dict):
                 continue
-            result = output.get("result", {})
+            raw_output = output.get("raw_output", output)
+            if not isinstance(raw_output, dict) or not raw_output.get("success"):
+                continue
+            result = raw_output.get("result", {})
             if not isinstance(result, dict):
                 continue
 
             columns = result.get("columns", [])
-            data = result.get("data", [])
+            data = result.get("data")
             if not columns or not data:
                 continue
 
-            import csv
-            import io
+            if isinstance(data, dict) and data.get("compressed_data"):
+                sql_return = data["compressed_data"]
+                row_count = data.get("original_rows", 0)
+            elif isinstance(data, list):
+                import csv
+                import io
 
-            buf = io.StringIO()
-            writer = csv.writer(buf)
-            writer.writerow(columns)
-            writer.writerows(data)
-            sql_return = buf.getvalue()
+                buf = io.StringIO()
+                writer = csv.writer(buf)
+                writer.writerow(columns)
+                writer.writerows(data)
+                sql_return = buf.getvalue()
+                row_count = len(data)
+            else:
+                continue
 
             metadata = result.get("metadata", {}) or {}
             sql_query = ""
@@ -510,7 +521,7 @@ class AskMetricsAgenticNode(AgenticNode):
             from datus.schemas.node_models import SQLContext
 
             workflow.context.sql_contexts.append(SQLContext(sql_query=sql_query, sql_return=sql_return))
-            logger.info("Captured query_metrics result: %d columns, %d rows", len(columns), len(data))
+            logger.info("Captured query_metrics result: %d columns, %d rows", len(columns), row_count)
             return {"success": True, "message": "query_metrics result captured"}
 
         return super().update_context(workflow)
