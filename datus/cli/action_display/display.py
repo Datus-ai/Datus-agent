@@ -234,6 +234,17 @@ class ActionHistoryDisplay:
             # INTERACTION actions: only shown during live interaction, skip in history replay
             if action.role == ActionRole.INTERACTION:
                 continue
+            # token_usage actions drive the status bar / pinned-header token
+            # counters only — they carry no transcript content. The live
+            # streaming path folds them into subagent totals via
+            # ``StreamingActionContext._apply_subagent_usage``; this replay path
+            # (Ctrl+O toggle, .resume, end-of-turn reprint) has no counter
+            # display, so skip them outright. Otherwise a subagent's depth>0
+            # ``token_usage`` would buffer into the group and render as a bogus
+            # ``💬 Token usage update`` row (and a main-agent depth=0 one would
+            # render as a standalone line on .resume).
+            if action.action_type == "token_usage":
+                continue
             # Skip PROCESSING TOOL entries (only render SUCCESS/FAILED)
             if action.role == ActionRole.TOOL and action.status == ActionStatus.PROCESSING:
                 continue
