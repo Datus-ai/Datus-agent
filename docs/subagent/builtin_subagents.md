@@ -4,20 +4,21 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers twelve core subagents:
+This document covers thirteen core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
 3. **[gen_metrics](#gen_metrics)** — Generates MetricFlow metric definitions
-4. **[explore](#explore)** — Read-only data exploration and context gathering
-5. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
-6. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
-7. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
-8. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
-9. **[gen_skill](#gen_skill)** — Skill creation and optimization
-10. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
-11. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
-12. **[scheduler](#scheduler)** — Airflow job lifecycle management
+4. **[ask_metrics](ask_metrics.md)** — Answers KPI, trend, grouped metric, and attribution questions from existing semantic metrics
+5. **[explore](#explore)** — Read-only data exploration and context gathering
+6. **[gen_sql](#gen_sql)** — Specialized SQL generation with deep expertise
+7. **[gen_report](#gen_report)** — Flexible report generation with configurable tools
+8. **[gen_table](gen_table.md)** — Database table creation via CTAS or natural language
+9. **[gen_job](gen_job.md)** — Data pipeline execution (single-database ETL AND cross-database migration with reconciliation)
+10. **[gen_skill](#gen_skill)** — Skill creation and optimization
+11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
+12. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
+13. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -33,6 +34,10 @@ agent:
     gen_metrics:
       model: claude     # Optional: defaults to configured model
       max_turns: 30     # Optional: defaults to 30
+
+    ask_metrics:
+      model: claude     # Optional: defaults to configured model
+      max_turns: 12     # Optional: defaults to 12
 
     gen_sql_summary:
       model: deepseek   # Optional: defaults to configured model
@@ -1027,6 +1032,7 @@ agent:
 | `gen_sql_summary` | Summarize and classify SQL queries | YAML (SQL summary) | `/data/reference_sql` | Subject tree categorization, auto context retrieval |
 | `gen_semantic_model` | Generate semantic model from tables | YAML (semantic model) | `/data/semantic_models` | DDL to MetricFlow model, built-in validation |
 | `gen_metrics` | Generate metrics from SQL | YAML (metric) | `/data/semantic_models` | SQL to MetricFlow metric, subject tree support |
+| `ask_metrics` | Answer existing metric questions | Markdown report | N/A | KPI values, trends, grouped results, attribution, no raw SQL fallback |
 | `explore` | Read-only data exploration | Structured context | N/A | Strictly read-only, fast turn budget, three exploration directions |
 | `gen_sql` | Generate optimized SQL | SQL query / SQL file | N/A | Deep SQL expertise, auto-validation, file-based output |
 | `gen_report` | Flexible report generation | Structured report | N/A | Configurable tools, extensible, custom report subagents |

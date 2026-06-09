@@ -26,6 +26,7 @@ nav:
       - Customized subagents: subagent/customized_subagent.md
       - Generate Dashboard: subagent/gen_dashboard.md
       - Generate Metrics: subagent/gen_metrics.md
+      - Ask Metrics: subagent/ask_metrics.md
       - Generate Semantic Model: subagent/gen_semantic_model.md
       - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
@@ -126,6 +127,7 @@ plugins:
             Customized subagents: 自定义 subagent
             Generate Dashboard: 生成 Dashboard
             Generate Metrics: 生成指标
+            Ask Metrics: 指标问答
             Generate Semantic Model: 生成语义模型
             Scheduler: 调度器
             Chatbot: chatbot
