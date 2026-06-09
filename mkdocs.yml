@@ -218,9 +218,12 @@ edit_uri: !ENV [DOCS_EDIT_URI, "edit/main/docs/"]
 extra:
   version:
     provider: mike
-  analytics:
-    provider: google
-    property: G-8HMXHZDV7F
+  # GA4 is loaded via docs/javascripts/analytics.js instead of the built-in
+  # Material analytics, so it only fires on docs.datus.ai (excludes localhost /
+  # 127.0.0.1 / *.github.io developer & preview traffic).
+  # analytics:
+  #   provider: google
+  #   property: G-8HMXHZDV7F
 
   alternate:
     - name: English
@@ -288,3 +291,6 @@ markdown_extensions:
 
 extra_css:
   - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/analytics.js
