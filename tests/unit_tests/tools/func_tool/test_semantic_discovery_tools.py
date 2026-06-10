@@ -652,8 +652,13 @@ class TestAnalyzeMetricCandidatesFromHistory:
         )
 
         assert result.success == 1
-        derived = {candidate["name"]: candidate for candidate in result.result["derived_metric_candidates"]}
-        delta = derived["order_count_period_delta"]
+        matches = [
+            candidate
+            for candidate in result.result["derived_metric_candidates"]
+            if candidate["name"] == "order_count_period_delta"
+        ]
+        assert len(matches) == 1
+        delta = matches[0]
         assert delta["expression"] == "order_count - order_count_prev"
         assert delta["inputs"] == [
             {"name": "order_count"},

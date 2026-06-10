@@ -771,6 +771,8 @@ class SemanticDiscoveryTools:
                     if not alias:
                         continue
                     for window in expr.find_all(exp.Window):
+                        if window is not expr:
+                            continue
                         detail = self._period_shift_output_detail(
                             window=window,
                             alias=alias,
@@ -800,9 +802,6 @@ class SemanticDiscoveryTools:
                             derived_candidates[self._metric_candidate_merge_key(previous_candidate)] = (
                                 previous_candidate
                             )
-
-            if not shift_outputs_by_select:
-                continue
 
             for select_name, select in self._named_selects_for_period_analysis(parsed):
                 source_names = self._direct_source_names(select)
