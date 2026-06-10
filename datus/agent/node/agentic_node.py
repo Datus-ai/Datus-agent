@@ -107,7 +107,6 @@ class AgenticNode(Node):
         mcp_servers: Optional[Dict[str, MCPServerStdio]] = None,
         scope: Optional[str] = None,
         is_subagent: bool = False,
-        memory_enabled: Optional[bool] = None,
         session_id: Optional[str] = None,
     ):
         """
@@ -123,12 +122,6 @@ class AgenticNode(Node):
             mcp_servers: Dictionary of MCP servers available to this node
             scope: Optional session scope for directory isolation
             is_subagent: When True, skip SubAgentTaskTool setup (2-level depth enforcement)
-            memory_enabled: Whether this node should get the Auto Memory section injected
-                into its system prompt. When ``None`` (default), resolved from
-                ``has_memory(self.get_node_name())`` — built-in subagents (gen_sql,
-                gen_report, feedback, etc.) default to ``False``; only ``chat`` and
-                custom/user-defined subagents default to ``True``. Pass an explicit
-                bool to override.
             session_id: Optional resume target. When provided, the node opens
                 this session id and persisted plan-mode state on disk is
                 restored automatically. When ``None``, a fresh id is generated
@@ -171,12 +164,6 @@ class AgenticNode(Node):
         # it from the session id prefix. ``None`` when no switch occurred.
         self.caller_node_name: Optional[str] = None
 
-        # Whether memory context is injected into this node's system prompt.
-        # Resolves from has_memory() when not explicitly set by the caller.
-        from datus.utils.memory_loader import has_memory
-
-        self.memory_enabled: bool = memory_enabled if memory_enabled is not None else has_memory(self.get_node_name())
-
         # Permission and skill management
         self.permission_manager: Optional["PermissionManager"] = None
         # PermissionHooks is attached lazily once tools are set up — see
@@ -189,6 +176,7 @@ class AgenticNode(Node):
         self.ask_user_tool = None
         self.sub_agent_task_tool = None
         self.bash_tool = None
+        self.memory_func_tool = None
         self._is_subagent = is_subagent
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
@@ -943,6 +931,9 @@ class AgenticNode(Node):
         # Same lazy-injection trick for the general-purpose BashTool.
         self._ensure_bash_tool_in_tools()
 
+        # And for the dedicated memory tools (main agents only; sub-agents skip).
+        self._ensure_memory_tool_in_tools()
+
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
             skills_xml = self._get_available_skills_context()
@@ -988,15 +979,14 @@ class AgenticNode(Node):
         """Inject memory context into the system prompt.
 
         Injection rules (resolved in order):
-        1. ``override_node_name`` provided (feedback path) → unconditional
-           injection of that node's memory, writable.
-        2. ``self.memory_enabled`` True (chat / custom subagents) → own memory,
-           writable.
-        3. ``inherited_memory`` contextvar set by ``SubAgentTaskTool`` for this
-           node name → render the parent's memory in **read-only** mode. Built-in
-           subagents launched via ``task`` see their originating parent's memory
-           for context but cannot modify it.
-        4. None of the above → no memory section is appended.
+        1. ``override_node_name`` provided (feedback path) → writable injection of
+           that node's memory (the feedback node injects its caller's memory).
+        2. ``inherited_memory`` contextvar set by ``SubAgentTaskTool`` → this node
+           is running as a **sub-agent**; render the parent's memory **read-only**
+           (content only, no write manual). It has no memory write tools.
+        3. Otherwise this is a **main** agent → render its own memory writable.
+           The owner is ``resolve_memory_node(get_node_name())`` (built-in main
+           agents share ``chat``; custom agents use their own name).
 
         Args:
             base_prompt: The prompt to append memory context to.
@@ -1005,19 +995,24 @@ class AgenticNode(Node):
                 feedback node injects its caller's memory).
         """
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
-        from datus.utils.memory_loader import get_memory_dir, load_memory_context
+        from datus.utils.memory_loader import get_memory_dir, load_memory_context, resolve_memory_node
 
         read_only = False
         if override_node_name:
             node_name = override_node_name
-        elif self.memory_enabled:
-            node_name = self.get_node_name()
         else:
             inherited = get_inherited_memory(self.get_node_name())
-            if not inherited:
+            if inherited:
+                # Sub-agent: inline the parent's memory read-only.
+                node_name = inherited
+                read_only = True
+            elif self._is_subagent:
+                # Sub-agent whose parent has no memory: nothing to show, and a
+                # sub-agent must never get the writable manual (it has no tools).
                 return base_prompt
-            node_name = inherited
-            read_only = True
+            else:
+                # Main agent: own writable memory (built-in → shared 'chat').
+                node_name = resolve_memory_node(self.get_node_name())
 
         try:
             workspace_root = self._resolve_workspace_root()
@@ -2109,6 +2104,40 @@ class AgenticNode(Node):
             f"{[t.name for t in self.bash_tool.available_tools()]}"
         )
 
+    def _ensure_memory_tool_in_tools(self) -> None:
+        """Ensure ``add_memory`` / ``edit_memory`` are in ``self.tools`` for a main agent.
+
+        Mirrors :meth:`_ensure_skill_tools_in_tools`: a single lazy chokepoint so
+        every main-agent node gets the memory tools without each ``setup_tools``
+        having to wire them. Sub-agents are skipped entirely — they never write
+        memory, only see the parent's memory inlined read-only. Idempotent; the
+        memory owner defaults to ``resolve_memory_node(get_node_name())`` (built-in
+        main agents share ``chat``; custom agents use their own name), but a node
+        that already built its own ``memory_func_tool`` (e.g. feedback, bound to
+        its caller) keeps it.
+        """
+        if self._is_subagent:
+            return
+
+        if self.memory_func_tool is None:
+            from datus.utils.memory_loader import resolve_memory_node
+
+            try:
+                self.memory_func_tool = self._make_memory_tool(memory_node=resolve_memory_node(self.get_node_name()))
+            except Exception as e:
+                logger.error(f"Failed to build memory tool for node '{self.get_node_name()}': {e}")
+                return
+
+        memory_tool_names = {t.name for t in self.memory_func_tool.available_tools()}
+        existing_names = {t.name for t in (self.tools or [])}
+        if memory_tool_names.issubset(existing_names):
+            return
+
+        if self.tools is None:
+            self.tools = []
+        self.tools.extend(self.memory_func_tool.available_tools())
+        logger.debug(f"Memory tools injected into node '{self.get_node_name()}': {sorted(memory_tool_names)}")
+
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
         """
         Set callback for ASK permission prompts.
@@ -2951,13 +2980,13 @@ class AgenticNode(Node):
 
         All production call sites go through this helper so ``root_path`` is
         uniformly ``_resolve_workspace_root()`` and ``current_node`` matches
-        ``get_node_name()`` — the two inputs the path policy module expects to
-        classify ``.datus/memory/{current_node}/**`` as a whitelist subtree
-        for this node only. The ``strict`` flag is resolved from
+        ``get_node_name()``. The ``strict`` flag is resolved from
         ``agent_config.filesystem_strict`` so API / gateway can opt out of
-        interactive EXTERNAL prompts.
+        interactive EXTERNAL prompts. Persistent memory is no longer reachable
+        through this tool — the whole ``.datus/memory/**`` subtree is HIDDEN and
+        owned exclusively by the dedicated ``add_memory`` / ``edit_memory``
+        tools (see ``_make_memory_tool``).
         """
-        from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.tools.func_tool import FilesystemFuncTool
 
         root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
@@ -2973,19 +3002,50 @@ class AgenticNode(Node):
         if strict is None:
             strict = self._resolve_filesystem_strict()
         current_node = kwargs.pop("current_node", None) or self.get_node_name()
-        inherited_memory_node = kwargs.pop("inherited_memory_node", None)
-        if inherited_memory_node is None:
-            inherited_memory_node = get_inherited_memory(current_node)
         session_data_dir = kwargs.pop("session_data_dir", None) or self._resolve_session_data_dir()
         return FilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
             datus_home=datus_home,
             strict=strict,
-            inherited_memory_node=inherited_memory_node,
             session_data_dir=session_data_dir,
             **kwargs,
         )
+
+    def _make_memory_tool(self, **kwargs):
+        """Construct a ``MemoryFuncTool`` bound to a single memory owner node.
+
+        ``memory_node`` defaults to ``get_node_name()`` (chat / custom subagents
+        own their memory) but the feedback node passes its caller's name so it
+        writes the caller's memory instead of its own.
+        """
+        from datus.tools.func_tool import MemoryFuncTool
+
+        root_path = kwargs.pop("root_path", None) or self._resolve_workspace_root()
+        memory_node = kwargs.pop("memory_node", None) or self.get_node_name()
+        return MemoryFuncTool(root_path=root_path, memory_node=memory_node, **kwargs)
+
+    def _setup_memory_tools(self, memory_node: Optional[str] = None) -> None:
+        """Mount the dedicated memory tools (``add_memory`` / ``edit_memory``).
+
+        Only *main* agents write memory. A node running as a sub-agent (launched
+        via ``task``) never mounts the tools — it only sees the parent's memory
+        inlined read-only (see ``_inject_memory_context``). The memory owner
+        defaults to ``resolve_memory_node(get_node_name())`` (built-in main
+        agents share ``chat``; custom agents use their own name); the feedback
+        node passes an explicit ``memory_node`` (its caller's resolved memory).
+        """
+        from datus.utils.memory_loader import resolve_memory_node
+
+        if self._is_subagent:
+            return
+        node = memory_node or resolve_memory_node(self.get_node_name())
+        try:
+            self.memory_func_tool = self._make_memory_tool(memory_node=node)
+            self.tools.extend(self.memory_func_tool.available_tools())
+            logger.debug(f"Setup memory tools for node: {self.memory_func_tool.memory_node}")
+        except Exception as e:
+            logger.error(f"Failed to setup memory tools: {e}")
 
     def _resolve_session_data_dir(self) -> Optional[str]:
         """Resolve the compact-archive data dir for this node's current session.
@@ -3066,6 +3126,14 @@ class AgenticNode(Node):
             bash_tools = list(bash_tool.available_tools())
             if bash_tools:
                 mapping["bash_tools"] = bash_tools
+        # Dedicated memory tools are mounted on every main agent (and the
+        # feedback node), so classify them here in the base map — otherwise
+        # nodes without a ``_tool_category_map`` override (e.g. feedback) would
+        # fall back to the ``tools`` catch-all and the ``memory_tools.*`` profile
+        # rules would never govern ``add_memory`` / ``edit_memory``.
+        memory_func_tool = getattr(self, "memory_func_tool", None)
+        if memory_func_tool:
+            mapping["memory_tools"] = list(memory_func_tool.available_tools())
         return mapping
 
     def _populate_tool_registry(self) -> None:

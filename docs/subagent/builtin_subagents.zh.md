@@ -4,20 +4,21 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖十二个核心 subagent：
+本文档涵盖十三个核心 subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
 3. **[gen_metrics](#gen_metrics)** — 生成 MetricFlow 指标定义
-4. **[explore](#explore)** — 只读数据探索和上下文收集
-5. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
-6. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
-7. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
-8. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
-9. **[gen_skill](#gen_skill)** — skill 创建与优化
-10. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
-11. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
-12. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
+4. **[ask_metrics](ask_metrics.zh.md)** — 基于已有语义指标回答 KPI、趋势、分组指标和归因问题
+5. **[explore](#explore)** — 只读数据探索和上下文收集
+6. **[gen_sql](#gen_sql)** — 具备深度专业知识的专用 SQL 生成
+7. **[gen_report](#gen_report)** — 灵活的报告生成，支持可配置工具
+8. **[gen_table](gen_table.zh.md)** — 数据库建表（CTAS 或自然语言描述）
+9. **[gen_job](gen_job.zh.md)** — 数据管道执行（单库 ETL 和跨库迁移，含对数校验）
+10. **[gen_skill](#gen_skill)** — skill 创建与优化
+11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
+12. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
+13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -33,6 +34,10 @@ agent:
     gen_metrics:
       model: claude     # 可选：默认使用已配置的模型
       max_turns: 30     # 可选：默认为 30
+
+    ask_metrics:
+      model: claude     # 可选：默认使用已配置的模型
+      max_turns: 12     # 可选：默认为 12
 
     gen_sql_summary:
       model: deepseek   # 可选：默认使用已配置的模型
@@ -1026,6 +1031,7 @@ agent:
 | `gen_sql_summary` | 总结和分类 SQL 查询 | YAML（SQL 摘要） | `/data/reference_sql` | 主题树分类、自动上下文检索 |
 | `gen_semantic_model` | 从表生成语义模型 | YAML（语义模型） | `/data/semantic_models` | DDL 到 MetricFlow 模型、内置验证 |
 | `gen_metrics` | 从 SQL 生成指标 | YAML（指标） | `/data/semantic_models` | SQL 到 MetricFlow 指标、主题树支持 |
+| `ask_metrics` | 回答已有指标问题 | Markdown 报告 | N/A | KPI 数值、趋势、分组结果、归因分析、不退回原始 SQL |
 | `explore` | 只读数据探索 | 结构化上下文 | N/A | 严格只读、低轮数、三方向探索 |
 | `gen_sql` | 生成优化 SQL | SQL 查询 / SQL 文件 | N/A | 深度 SQL 专长、自动验证、支持文件输出 |
 | `gen_report` | 灵活报告生成 | 结构化报告 | N/A | 工具可配置、可扩展、自定义报告 subagent |

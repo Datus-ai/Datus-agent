@@ -56,6 +56,21 @@ def _normalize_dimension_rows(raw) -> list:
     return normalized
 
 
+def _normalize_metric_metadata(raw) -> dict:
+    """Keep adapter-provided metric metadata only when it is tool-safe."""
+    if not isinstance(raw, dict):
+        return {}
+
+    safe_metadata = {}
+    for key, value in raw.items():
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            continue
+        safe_metadata[str(key)] = value
+    return safe_metadata
+
+
 def _normalize_name_list(value) -> List[str]:
     """Normalize LLM-provided string/list arguments into a clean list of names."""
     value = normalize_null(value)
@@ -430,7 +445,7 @@ class SemanticTools:
         Returns:
             FuncToolResult with result as FuncToolListResult:
               - items (List[Dict]): metric rows, each with name, description, type,
-                dimensions, measures, unit, format, path
+                dimensions, measures, unit, format, path, metadata
               - total (int | None): full metric count before pagination
               - has_more (bool | None): True when offset + len(items) < total
               - extra (dict | None): {"next_offset": int} when has_more is True
@@ -459,6 +474,7 @@ class SemanticTools:
                     "unit": getattr(m, "unit", None),
                     "format": getattr(m, "format", None),
                     "path": getattr(m, "path", None),
+                    "metadata": _normalize_metric_metadata(getattr(m, "metadata", None)),
                 }
                 for m in async_result
             ]

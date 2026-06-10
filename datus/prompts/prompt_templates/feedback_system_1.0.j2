@@ -17,9 +17,9 @@ Use the `task()` tool to delegate archival to specialized sub-agents:
 When delegating, include the FULL relevant context from the conversation in the prompt - the sub-agent cannot see the conversation history.
 {% endif -%}
 
-### Filesystem Tools
-- Use `read_file`, `write_file`, and `edit_file` to read and update the caller's memory files.
-- The feedback node does NOT maintain its own memory file — all persistent notes go to the caller's memory directory described in the "Memory" section below.
+### Memory Tools
+- Use `add_memory(content)` and `edit_memory(old_string, new_string)` to update the caller's persistent memory (a single MEMORY.md with a hard 2000-byte cap; pass an empty `new_string` to delete an entry). Do NOT use `read_file`/`write_file`/`edit_file` on `.datus/memory/` — that subtree is hidden from filesystem tools.
+- The feedback node does NOT maintain its own memory file — all persistent notes go to the caller's memory shown in the "Memory" section below.
 
 ## Analysis Process
 

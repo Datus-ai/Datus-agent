@@ -122,6 +122,28 @@ class TestFeedbackAgenticNodeInit:
         assert "read_file" in tool_names
         assert "write_file" in tool_names
 
+    def test_setup_tools_includes_memory_tools_for_caller(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        tool_names = [tool.name for tool in node.tools]
+        assert "add_memory" in tool_names
+        assert "edit_memory" in tool_names
+        # The memory tool targets the caller's memory (defaulting to "chat").
+        assert node.memory_func_tool.memory_node == "chat"
+
+    def test_caller_change_retargets_memory_tool(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        assert node.memory_func_tool.memory_node == "chat"
+        # A built-in caller owns no memory of its own → resolves to shared 'chat'.
+        node.caller_node_name = "gen_sql"
+        assert node.memory_func_tool.memory_node == "chat"
+        # A custom caller retargets the memory tool to that caller's own memory.
+        node.caller_node_name = "sales_analyst"
+        assert node.memory_func_tool.memory_node == "sales_analyst"
+
     def test_setup_tools_includes_task(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
@@ -290,21 +312,18 @@ class TestFeedbackMemoryFlowAcceptance:
     """Deterministic feedback flow coverage for updating caller memory."""
 
     @pytest.mark.asyncio
-    async def test_feedback_writes_caller_memory_with_real_filesystem_tool(self, real_agent_config, mock_llm_create):
+    async def test_feedback_writes_caller_memory_with_add_memory_tool(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
         from datus.utils.memory_loader import load_memory_context
 
-        memory_text = "# Memory\n\n## SQL feedback\n- Charter-school detail queries should filter active campuses.\n"
+        memory_text = "Charter-school detail queries should filter active campuses."
         mock_llm_create.reset(
             responses=[
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="write_file",
-                            arguments={
-                                "path": ".datus/memory/chat/MEMORY.md",
-                                "content": memory_text,
-                            },
+                            name="add_memory",
+                            arguments={"content": memory_text},
                         )
                     ],
                     content="Archived the feedback into chat memory.",
@@ -326,7 +345,7 @@ class TestFeedbackMemoryFlowAcceptance:
         assert memory_file.read_text(encoding="utf-8") == memory_text
         assert "filter active campuses" in load_memory_context(real_agent_config.project_root, "chat")
 
-        tool_calls = [item for item in mock_llm_create.tool_results if item["tool"] == "write_file"]
+        tool_calls = [item for item in mock_llm_create.tool_results if item["tool"] == "add_memory"]
         assert len(tool_calls) == 1
         assert tool_calls[0]["executed"] is True
         assert isinstance(node.result, FeedbackNodeResult)
@@ -454,11 +473,12 @@ class TestExtractStorageInfo:
 
 
 class TestMemoryEnabled:
-    """Verify the ``memory_enabled`` attribute on AgenticNode gates Auto Memory injection."""
+    """Verify which node types own their own memory file (``has_memory``)."""
 
     def test_chat_node_defaults_to_enabled(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
         from datus.configuration.node_type import NodeType
+        from datus.utils.memory_loader import has_memory
 
         node = ChatAgenticNode(
             node_id="test_chat_mem",
@@ -466,17 +486,18 @@ class TestMemoryEnabled:
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
-        assert node.memory_enabled is True
+        assert has_memory(node.get_node_name()) is True
 
     def test_feedback_node_defaults_to_disabled(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+        from datus.utils.memory_loader import has_memory
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
     def test_builtin_subagent_skips_memory_injection(self, real_agent_config, mock_llm_create):
-        """Built-in subagents (memory_enabled=False) must NOT get the Auto Memory
-        section in their system prompt — only chat and custom agents do."""
+        """A built-in node running as a SUB-agent with no inherited memory gets
+        NO Auto Memory section — sub-agents never get the writable manual."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.configuration.node_type import NodeType
 
@@ -487,17 +508,18 @@ class TestMemoryEnabled:
             agent_config=real_agent_config,
             node_name="gen_sql",
             execution_mode="workflow",
+            is_subagent=True,
         )
-        assert node.memory_enabled is False
 
         prompt = node._inject_memory_context("BASE PROMPT")
         assert prompt == "BASE PROMPT"
         assert "## Memory" not in prompt
 
     def test_explicit_override_forces_injection(self, real_agent_config, mock_llm_create):
-        """Passing override_node_name bypasses self.memory_enabled (feedback path)."""
+        """Passing override_node_name forces injection regardless of node identity (feedback path)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.configuration.node_type import NodeType
+        from datus.utils.memory_loader import has_memory
 
         node = GenSQLAgenticNode(
             node_id="test_gen_sql_override",
@@ -507,33 +529,31 @@ class TestMemoryEnabled:
             node_name="gen_sql",
             execution_mode="workflow",
         )
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
         prompt = node._inject_memory_context("BASE PROMPT", override_node_name="chat")
         assert "## Memory" in prompt
-        assert ".datus/memory/chat" in prompt
+        # Writable branch instructs the model to use the dedicated memory tools.
+        assert "add_memory" in prompt
 
-    def test_explicit_memory_enabled_override(self, real_agent_config, mock_llm_create):
-        """Passing memory_enabled=True to __init__ overrides has_memory() default."""
+    def test_builtin_as_main_agent_uses_chat_memory(self, real_agent_config, mock_llm_create):
+        """A built-in node running as a MAIN agent (not a sub-agent) gets the
+        writable Auto Memory section bound to the shared 'chat' memory."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.configuration.node_type import NodeType
 
         node = GenSQLAgenticNode(
-            node_id="test_gen_sql_mem_opt_in",
-            description="Test gen_sql opt-in memory",
+            node_id="test_gen_sql_main",
+            description="gen_sql as main agent",
             node_type=NodeType.TYPE_GEN_SQL,
             agent_config=real_agent_config,
             node_name="gen_sql",
             execution_mode="workflow",
         )
-        # Default resolved via has_memory("gen_sql") → False
-        assert node.memory_enabled is False
-
-        # Flipping the attribute post-init should re-enable injection.
-        node.memory_enabled = True
+        # Main agent (is_subagent defaults to False) → writable memory section.
         prompt = node._inject_memory_context("BASE PROMPT")
         assert "## Memory" in prompt
-        assert ".datus/memory/gen_sql" in prompt
+        assert "add_memory" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -673,12 +693,12 @@ class TestFeedbackSystemPrompt:
         prompt = node._get_system_prompt()
 
         assert "## Memory" in prompt
-        # get_memory_dir returns a relative path; it should appear verbatim.
-        assert ".datus/memory/chat" in prompt
-        # The truncated memory content itself is embedded in <memory>…</memory>.
+        # Writable branch instructs the model to use the dedicated memory tools.
+        assert "add_memory" in prompt
+        # The memory content itself is embedded in <memory>…</memory>.
         assert "user prefers DuckDB over SQLite for local analytics" in prompt
         # When real memory content is present, the empty placeholder must NOT appear.
-        assert "empty — no memories saved yet" not in prompt
+        assert "(empty)" not in prompt
 
     def test_feedback_system_prompt_injects_memory_for_caller_without_default_memory(
         self, real_agent_config, mock_llm_create
@@ -700,7 +720,7 @@ class TestFeedbackSystemPrompt:
         prompt = node._get_system_prompt()
 
         assert "## Memory" in prompt
-        assert ".datus/memory/gen_sql" in prompt
+        assert "add_memory" in prompt
 
     def test_feedback_system_prompt_renders_empty_placeholder_when_caller_file_missing(
         self, real_agent_config, mock_llm_create
@@ -718,7 +738,7 @@ class TestFeedbackSystemPrompt:
         prompt = node._get_system_prompt()
 
         assert "## Memory" in prompt
-        assert ".datus/memory/chat" in prompt
+        assert "add_memory" in prompt
         # The <memory> block is always rendered, with an explicit empty marker
         # when no MEMORY.md has been created yet.
         assert "<memory>" in prompt

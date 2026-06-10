@@ -265,6 +265,13 @@ def create_parser() -> argparse.ArgumentParser:
         "If not provided, existing categories will be reused or new ones created.",
     )
     bootstrap_parser.add_argument(
+        "--metrics-batch-size",
+        type=int,
+        default=5,
+        help="Number of SQL queries per batch for metrics extraction (default: 5). "
+        "Set to 1 to enable per-query provenance tracking.",
+    )
+    bootstrap_parser.add_argument(
         "-y",
         "--yes",
         action="store_true",

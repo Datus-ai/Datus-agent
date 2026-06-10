@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Non-REPL handler for the ``datus upgrade`` / ``datus update`` subcommand.
+"""Non-REPL handler for the ``datus upgrade`` subcommand.
 
 Lists the ``datus-*`` packages installed in the active interpreter and
 upgrades them to the latest release in a single ``uv``/``pip`` run. Lives

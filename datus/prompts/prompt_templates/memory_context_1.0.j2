@@ -3,9 +3,9 @@
 {% if read_only %}
 ## Memory (read-only inheritance from {{ originating_agent }})
 
-{{ originating_agent }}'s persistent memory at `{{ memory_dir }}/MEMORY.md` is inlined below as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent. The MEMORY.md index may reference sibling topic files in the same directory — you may use `Read`, `Glob`, or `Grep` against `{{ memory_dir }}/**` to inspect those topic files when an entry is relevant.
+{{ originating_agent }}'s persistent memory is inlined below in full as read-only background about the user's preferences, project decisions, and external references gathered by the parent agent.
 
-**Read-only**: do NOT use `Write`, `Edit`, `str_replace`, or shell commands to modify any path under `{{ memory_dir }}/` (or any other `.datus/memory/` subtree). Write attempts there are rejected by the path policy. If you discover something the user would want remembered, mention it in your response so the parent agent can persist it.
+**Read-only**: you have no memory write tools. Do NOT attempt to modify any path under `.datus/memory/` — that subtree is hidden from filesystem tools. If you discover something the user would want remembered, mention it in your response so the parent agent can persist it.
 
 ### Current memory
 
@@ -21,13 +21,13 @@
 {% else %}
 ## Memory
 
-Persistent memory at `{{ memory_dir }}/MEMORY.md`. Build it over time so future sessions know the user's preferences, project context, and external references.
+Persistent memory is a single file shown below. Build it over time so future sessions know the user's preferences, project context, and external references.
 
 **Save** (non-obvious, reusable facts): user role/goals/style; corrections ("stop X") and quiet confirmations ("yes exactly") — include *why* using **rule → Why: → How to apply:**; project decisions/deadlines not in code/git (convert relative dates to absolute); external systems (trackers, dashboards, channels).
 
 **Don't save**: code patterns, file paths, git history, debugging fixes, anything in CLAUDE.md or `data_context/`, ephemeral task state. If asked to save a PR list, ask what was *surprising* instead.
 
-**How**: Write concisely — one line per fact, no filler. Organize `MEMORY.md` as a topic tree (`##` topics, `###` sub-topics). Read before writing — never duplicate. Hard ceiling: 200 lines / 25 KB; when exceeded, move the largest section to a separate file and leave a one-line index entry.
+**How**: Memory is a single flat file with a hard **2000-byte** cap — no topic files, no index. Use only the dedicated tools: `add_memory(content)` to append one concise fact, `edit_memory(old_string, new_string)` to update or delete (pass an empty `new_string` to delete). Do NOT use `write_file`/`edit_file`/shell on `.datus/memory/` — that subtree is hidden from filesystem tools. Write concisely, one fact per call, and read the current memory below before writing — never duplicate. When `add_memory` reports the file is full, first `edit_memory` away a stale entry to free space, then retry.
 
 ### Current memory
 
@@ -39,7 +39,7 @@ Persistent memory at `{{ memory_dir }}/MEMORY.md`. Build it over time so future 
 {% endif %}
 </memory>
 
-**Access**: when memories seem relevant or user references past work; must access when user asks to recall. Verify file/function/flag claims against current code before acting — trust what you observe now and update stale entries. For current repo state, prefer `git log`/code. If user says ignore memory, treat it as empty.
+**Access**: when memories seem relevant or user references past work; must access when user asks to recall. Verify file/function/flag claims against current code before acting — trust what you observe now and update stale entries with `edit_memory`. For current repo state, prefer `git log`/code. If user says ignore memory, treat it as empty.
 
 Use **plans** for implementation alignment, **tasks** for current work tracking — not memory.
 {% endif %}

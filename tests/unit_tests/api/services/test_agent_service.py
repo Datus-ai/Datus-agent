@@ -332,13 +332,14 @@ class TestConstants:
             "reference_template_tools.*",
             "date_parsing_tools.*",
             "filesystem_tools.*",
+            "memory_tools.*",
             "platform_doc_tools.*",
         ]
         # chat is the most permissive agent type — the picker surfaces every
-        # user-facing category. ``platform_doc_tools`` stays in default_tools
-        # but not in tool_types (matches the documented "valid tool, hidden
-        # from picker" precedent for platform_doc_tools).
-        assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        # user-facing category plus the dedicated memory tools.
+        # ``platform_doc_tools`` stays in default_tools but not in tool_types
+        # (matches the documented "valid tool, hidden from picker" precedent).
+        assert set(entry["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES) | {"memory_tools"}
         assert "platform_doc_tools" not in entry["tool_types"]
 
     def test_reference_template_tools_registered(self):
@@ -436,8 +437,8 @@ class TestGetUseTools:
         assert "reference_template_tools.*" in result.data["default_tools"]
         assert "reference_template_tools" in result.data["tool_types"]
         # chat is the most permissive agent type; its tool_types covers every
-        # user-facing category so the editor can surface them all.
-        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES)
+        # user-facing category plus memory_tools so the editor can surface them.
+        assert set(result.data["tool_types"].keys()) == set(_USER_FACING_TOOL_CATEGORIES) | {"memory_tools"}
 
     @pytest.mark.parametrize("agent_type", ["ask_report", "ask_dashboard"])
     def test_ask_agent_tool_types_includes_filesystem_read_only(self, agent_type):

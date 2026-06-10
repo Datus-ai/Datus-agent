@@ -28,6 +28,17 @@ Use the narrow metric workflow below:
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.
 
+## Period-Over-Period Metric Queries
+
+- Some derived metrics compare a base metric with a prior period through `offset_window` metadata, such as `1 day`, `1 week`, `1 month`, `1 quarter`, or `1 year`. When metric metadata exposes this contract, query at the matching metric-time grain:
+  - `1 day`: use `dimensions=["metric_time__day"]` and `time_granularity="day"`.
+  - `1 week`: use `dimensions=["metric_time__week"]` and `time_granularity="week"`.
+  - `1 month`: use `dimensions=["metric_time__month"]` and `time_granularity="month"`.
+  - `1 quarter`: use `dimensions=["metric_time__quarter"]` and `time_granularity="quarter"`.
+  - `1 year`: use `dimensions=["metric_time__year"]` and `time_granularity="year"`.
+- For period-over-period trend tables, query the base metric together with the derived metric and order by the metric-time dimension. Querying only the derived metric can omit the first period because no prior-period value exists.
+- If the user asks for the previous-period value itself, only return it when a separate metric exposes that value; otherwise report the delta/rate metric and state that the intermediate prior-period value is not exposed as a metric.
+
 ## Subject Tree
 
 {% if subject_tree_mode == "full" %}

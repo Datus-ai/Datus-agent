@@ -36,7 +36,7 @@ from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
-from datus.utils.memory_loader import has_memory
+from datus.utils.memory_loader import resolve_memory_node
 
 if TYPE_CHECKING:
     from datus.agent.node.agentic_node import AgenticNode
@@ -861,17 +861,17 @@ class SubAgentTaskTool:
         return self._convert_to_func_result(final_output, session_id=node.session_id)
 
     def _resolve_inherited_memory_node(self, subagent_type: str) -> Optional[str]:
-        """Pick the parent memory node name that a built-in child should inherit (read-only).
+        """Pick the memory node a sub-agent should inherit (read-only inline).
 
-        Returns ``None`` (no inheritance) when:
-        - the child has its own memory (custom subagent or ``chat``);
-        - the child is ``feedback`` — already injects the caller's memory via
-          ``override_node_name`` and would double-render;
-        - no parent node is registered, or the parent itself has no memory.
+        Every sub-agent (built-in or custom) sees its parent's memory inlined
+        read-only — sub-agents never write memory. Returns the parent's resolved
+        memory node (``resolve_memory_node`` maps built-in parents to the shared
+        ``chat`` memory; custom parents to their own name), or ``None`` when:
+        - the child is ``feedback`` — it injects the caller's memory via
+          ``override_node_name`` and would otherwise double-render;
+        - no parent node is registered.
         """
         if subagent_type == "feedback":
-            return None
-        if has_memory(subagent_type):
             return None
         if self._parent_node is None:
             return None
@@ -879,9 +879,9 @@ class SubAgentTaskTool:
             parent_name = self._parent_node.get_node_name()
         except Exception:
             return None
-        if not parent_name or not has_memory(parent_name):
+        if not parent_name:
             return None
-        return parent_name
+        return resolve_memory_node(parent_name)
 
     def _resolve_effective_sub_agent_config(self, subagent_type: str) -> SubAgentConfig:
         """Build an effective SubAgentConfig that inherits parent scoped_context when child has none."""

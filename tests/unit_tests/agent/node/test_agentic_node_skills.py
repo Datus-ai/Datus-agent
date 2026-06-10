@@ -768,15 +768,18 @@ class TestSkillIntegrationEdgeCases:
         base_prompt = "Base prompt"
         node._finalize_system_prompt(base_prompt)
 
-        # Should have all tools: 2 existing + 2 skill tools + 1 bash tool
-        # (BashTool is created by AgenticNode.__init__ and lazy-injected here).
-        assert len(node.tools) == 5
+        # Should have all tools: 2 existing + 2 skill tools + 1 bash tool +
+        # 2 memory tools (this node is a main agent, so add_memory/edit_memory
+        # are lazy-injected alongside skills and bash).
+        assert len(node.tools) == 7
         tool_names = [t.name for t in node.tools]
         assert "tool1" in tool_names
         assert "tool2" in tool_names
         assert "load_skill" in tool_names
         assert "skill_execute_command" in tool_names
         assert "execute_command" in tool_names
+        assert "add_memory" in tool_names
+        assert "edit_memory" in tool_names
 
     def test_setup_exception_handling(self, mock_agent_config):
         """Test that setup exceptions are handled gracefully."""

@@ -211,3 +211,29 @@ class TestSkillCreatorToolCategoryMap:
         node._session_search_tool = None
 
         assert node._tool_category_map() == {}
+
+
+class TestBaseMemoryToolCategoryMap:
+    """The base map classifies the dedicated memory tools so nodes without a
+    ``_tool_category_map`` override (notably the feedback node, which mounts
+    ``add_memory`` / ``edit_memory`` for its caller) are governed by the
+    ``memory_tools.*`` profile rules rather than the ``tools`` catch-all."""
+
+    def test_feedback_registers_memory_tools(self):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode.__new__(FeedbackAgenticNode)
+        node.skill_func_tool = None
+        node.memory_func_tool = _stub("add_memory", "edit_memory")
+
+        mapping = node._tool_category_map()
+        assert {t.name for t in mapping["memory_tools"]} == {"add_memory", "edit_memory"}
+
+    def test_memory_bucket_omitted_when_tool_absent(self):
+        from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
+
+        node = FeedbackAgenticNode.__new__(FeedbackAgenticNode)
+        node.skill_func_tool = None
+        node.memory_func_tool = None
+
+        assert "memory_tools" not in node._tool_category_map()

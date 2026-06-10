@@ -4,30 +4,28 @@ Auto Memory is a persistent memory system for Datus-agent that enables agents to
 
 ## Overview
 
-When users interact with the agent, the agent can recognize valuable information and persist it to Markdown files stored under the workspace. On subsequent conversations, this memory is automatically loaded, allowing the agent to recall prior context.
+When users interact with the agent, the agent can recognize valuable information and persist it to a single Markdown file stored under the workspace. On subsequent conversations, this memory is automatically loaded in full, allowing the agent to recall prior context.
 
 **Key characteristics:**
 
-- **File-based**: Memory is stored as plain Markdown files, managed via existing `read_file` / `write_file` / `edit_file` tools
-- **Two-layer structure**: A concise `MEMORY.md` main file auto-loaded into context, plus optional topic sub-files read on demand
+- **File-based**: Memory is stored as a single plain Markdown file (`MEMORY.md`)
+- **Dedicated tools**: Memory is written exclusively through `add_memory` / `edit_memory` -- generic filesystem tools cannot touch the memory subtree
+- **Hard byte cap**: A single flat file capped at **2000 bytes** -- no topic files, no index, so the whole file always fits in the system prompt
 - **Per-subagent isolation**: Each subagent has its own memory directory
 - **Zero configuration**: No setup needed -- eligible agents are automatically enabled
 
 ## Memory Directory
 
-Memory files are stored under `.datus/memory/` in the workspace, with each agent having its own subdirectory:
+Memory is stored under `.datus/memory/` in the workspace, with each agent having its own subdirectory holding a single `MEMORY.md`:
 
 ```text
 {workspace_root}/
 └── .datus/
     └── memory/
         ├── chat/                       # Built-in chat agent
-        │   ├── MEMORY.md              # Main file: auto-loaded (≤200 lines)
-        │   ├── patterns.md            # Sub-file: read on demand
-        │   └── conventions.md
+        │   └── MEMORY.md              # Single file, auto-loaded (≤2000 bytes)
         └── my_custom_agent/           # Custom subagent
-            ├── MEMORY.md
-            └── domain.md
+            └── MEMORY.md
 ```
 
 > The memory directory is created automatically on the agent's first write -- no manual setup needed.
@@ -41,34 +39,28 @@ Memory files are stored under `.datus/memory/` in the workspace, with each agent
 | Built-in system subagents (`gen_sql`, `gen_report`, etc.) | No |
 | `explore` | No |
 
-Only interactive, user-facing agents have memory. Built-in system subagents that perform specific pipeline tasks do not.
+Only interactive, user-facing agents have memory. Built-in system subagents that perform specific pipeline tasks do not; when launched via `task`, they receive their parent agent's memory inlined as read-only background.
 
-## Two-Layer Memory
+## Single-File Memory
 
-### L1: MEMORY.md (Main File)
+Memory is one flat `MEMORY.md` file per agent:
 
-- **Automatically loaded** into agent context at the start of every conversation
-- Capped at **200 lines** -- content beyond this is truncated
-- Best for concise key information and links to L2 files
+- **Automatically loaded** into agent context, in full, at the start of every conversation
+- Capped at **2000 bytes** -- the dedicated tools reject writes that would exceed the cap, and an externally-edited file that exceeds it is truncated at load time
+- Best for concise, durable facts: user preferences, key project decisions, references to external systems
 
-### L2: Topic Sub-files
+There are no topic sub-files and no index -- keep entries short so the whole file stays under the cap.
 
-- Read by the agent **on demand** via `read_file`
-- No line limit -- suitable for detailed content
-- Examples: `patterns.md`, `conventions.md`, `domain.md`
+## Memory Tools
 
-**Best stored in L1:**
+The agent maintains memory through two dedicated tools:
 
-- User preferences and workflow habits
-- Key project structure and file paths
-- Frequently referenced conventions
-- Links to L2 topic files
+| Tool | Purpose |
+|------|---------|
+| `add_memory(content)` | Append one concise fact to memory |
+| `edit_memory(old_string, new_string)` | Update an entry, or delete it by passing an empty `new_string` |
 
-**Best stored in L2:**
-
-- Detailed debugging notes
-- Complex domain patterns and business rules
-- Extended decision records
+When `add_memory` would push the file past 2000 bytes, the write is rejected with guidance to free space first; the agent then `edit_memory`s away a stale entry and retries.
 
 ## Usage
 
@@ -82,7 +74,7 @@ Use natural language:
 > Remember the default report format is Markdown
 ```
 
-The agent will write the information to `MEMORY.md`, and it will take effect in the next conversation.
+The agent will save the information via `add_memory`, and it will take effect in the next conversation.
 
 ### Ask the Agent to Forget
 
@@ -91,7 +83,7 @@ The agent will write the information to `MEMORY.md`, and it will take effect in 
 > Stop remembering the naming convention
 ```
 
-The agent will find and remove the corresponding memory entry.
+The agent will find and remove the corresponding entry with `edit_memory`.
 
 ### Correct a Memory
 
@@ -101,11 +93,11 @@ When the agent gives a wrong answer based on memory, simply correct it:
 > That's wrong, our project uses PostgreSQL, not DuckDB
 ```
 
-The agent will immediately update the incorrect memory entry.
+The agent will immediately update the incorrect entry with `edit_memory`.
 
 ### View Current Memory
 
-Memory files are plain Markdown -- you can view or manually edit them:
+The memory file is plain Markdown -- you can view or manually edit it:
 
 ```bash
 cat {workspace_root}/.datus/memory/chat/MEMORY.md
@@ -114,7 +106,7 @@ cat {workspace_root}/.datus/memory/chat/MEMORY.md
 Or ask the agent:
 
 ```text
-> Read your current memory file
+> Read your current memory
 ```
 
 ## Agent Memory Behavior
@@ -154,8 +146,7 @@ For example, when `agent.project_root` is set to `~/my_project`, the chat agent'
 
 ## Best Practices
 
-1. **Keep MEMORY.md concise**: Stay within 200 lines -- move detailed content to L2 sub-files
-2. **Organize by topic**: Use semantic sub-file names (e.g., `db_conventions.md`) rather than chronological logs
-3. **Clean up regularly**: Ask the agent to delete or correct outdated or incorrect memories
-4. **Use explicit requests**: For important information, explicitly say "remember this" to ensure persistence
-5. **Manual editing works too**: Memory files are plain Markdown -- feel free to view and edit them directly
+1. **Keep entries concise**: The whole file is capped at 2000 bytes -- one short line per fact
+2. **Prune regularly**: Ask the agent to delete or correct outdated or incorrect memories to free space
+3. **Use explicit requests**: For important information, explicitly say "remember this" to ensure persistence
+4. **Manual editing works too**: The memory file is plain Markdown -- feel free to view and edit it directly (stay under the 2000-byte cap)

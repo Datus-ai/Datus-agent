@@ -451,6 +451,7 @@ class SemanticDiscoveryTools:
             for idx, entry in enumerate(entries):
                 sql_text = entry.get("sql", "")
                 source_name = entry.get("name") or entry.get("summary") or entry.get("filepath") or f"sql_{idx + 1}"
+                source_context = self._metric_source_context(entry)
                 if not sql_text:
                     continue
 
@@ -463,6 +464,7 @@ class SemanticDiscoveryTools:
                 entry_candidates: List[Dict[str, Any]] = []
                 entry_has_non_metric_evidence = False
                 entry_has_metric_evidence = False
+                found_candidate = False
                 modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
                 if modeling_analysis["derived_datasource_recommendations"]:
                     derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
@@ -473,8 +475,25 @@ class SemanticDiscoveryTools:
                 literal_mappings.extend(preservation_evidence["literal_mappings"])
                 time_grain_evidence.extend(preservation_evidence["time_grain_evidence"])
                 post_aggregation_constraints.extend(preservation_evidence["post_aggregation_constraints"])
+                pop_candidates = self._period_over_period_metric_candidates(
+                    parsed_expressions,
+                    source_name,
+                    source_context,
+                    existing_metric_catalog,
+                )
+                for candidate in pop_candidates["base_metric_candidates"]:
+                    entry_has_metric_evidence = True
+                    found_candidate = True
+                    entry_candidates.append(candidate)
+                    self._merge_metric_candidate(metric_candidates, candidate)
+                    for measure in candidate.get("base_measures", []):
+                        self._merge_base_measure(base_measures, measure)
+                for candidate in pop_candidates["derived_metric_candidates"]:
+                    entry_has_metric_evidence = True
+                    found_candidate = True
+                    entry_candidates.append(candidate)
+                    self._merge_metric_candidate(metric_candidates, candidate)
 
-                found_candidate = False
                 for parsed in parsed_expressions:
                     for select in self._iter_selects(parsed):
                         select_tables = self._collect_tables(select)
@@ -486,6 +505,7 @@ class SemanticDiscoveryTools:
                             candidate = self._candidate_from_projection(
                                 projection=projection,
                                 source_name=source_name,
+                                source_context=source_context,
                                 tables=select_tables,
                                 filters=filters,
                                 dimensions=dimensions,
@@ -532,8 +552,17 @@ class SemanticDiscoveryTools:
                                 }
                             )
 
+                entry_has_llm_review_candidates = any(
+                    candidate.get("candidate_classification") == "llm_review_candidate"
+                    for candidate in entry_candidates
+                )
+                entry_has_direct_candidates = any(
+                    candidate.get("candidate_classification") != "llm_review_candidate"
+                    for candidate in entry_candidates
+                )
                 classification = self._classify_source_query(
-                    has_candidates=bool(entry_candidates),
+                    has_direct_candidates=entry_has_direct_candidates,
+                    has_llm_review_candidates=entry_has_llm_review_candidates,
                     has_non_metric_evidence=entry_has_non_metric_evidence,
                     derived_datasource_recommendations=modeling_analysis["derived_datasource_recommendations"],
                 )
@@ -556,10 +585,16 @@ class SemanticDiscoveryTools:
                 metric_candidates.values(), key=lambda item: (-item.get("source_count", 1), item["name"])
             )
             measures = sorted(base_measures.values(), key=lambda item: (-item.get("source_count", 1), item["name"]))
+            llm_review_candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.get("candidate_classification") == "llm_review_candidate"
+            ]
             direct_candidates = [
                 candidate
                 for candidate in candidates
                 if candidate.get("metric_type") != "derived"
+                and candidate.get("candidate_classification") != "llm_review_candidate"
                 and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
             ]
             derived_candidates = [
@@ -574,6 +609,7 @@ class SemanticDiscoveryTools:
                     "metric_candidates": candidates,
                     "direct_metric_candidates": direct_candidates,
                     "derived_metric_candidates": derived_candidates,
+                    "llm_review_candidates": llm_review_candidates,
                     "base_measures": measures,
                     "support_measure_candidates": support_measure_candidates,
                     "non_metric_evidence": non_metric_evidence,
@@ -604,15 +640,18 @@ class SemanticDiscoveryTools:
 
     def _classify_source_query(
         self,
-        has_candidates: bool,
+        has_direct_candidates: bool,
+        has_llm_review_candidates: bool,
         has_non_metric_evidence: bool,
         derived_datasource_recommendations: List[Dict[str, Any]],
     ) -> str:
         """Classify how a SQL query should be modeled."""
         if derived_datasource_recommendations:
             return "metric_plus_derived_datasource"
-        if has_candidates:
+        if has_direct_candidates:
             return "direct_metric"
+        if has_llm_review_candidates:
+            return "llm_review_candidate"
         if has_non_metric_evidence:
             return "cohort_or_dataset_only"
         return "manual_review_required"
@@ -628,6 +667,8 @@ class SemanticDiscoveryTools:
             return "metric_plus_derived_datasource"
         if "direct_metric" in classifications:
             return "direct_metric"
+        if "llm_review_candidate" in classifications:
+            return "llm_review_candidate"
         if classifications == {"cohort_or_dataset_only"}:
             return "cohort_or_dataset_only"
         if parse_errors and not source_classifications:
@@ -703,6 +744,413 @@ class SemanticDiscoveryTools:
         return {
             "derived_datasource_recommendations": recommendations,
             "classification_reason": reason,
+        }
+
+    def _period_over_period_metric_candidates(
+        self,
+        parsed_expressions: List[Any],
+        source_name: str,
+        source_context: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Extract MetricFlow derived metric candidates from LAG-style period comparisons."""
+        from sqlglot import expressions as exp
+
+        base_candidates: Dict[str, Dict[str, Any]] = {}
+        derived_candidates: Dict[str, Dict[str, Any]] = {}
+
+        for parsed in parsed_expressions:
+            projection_index = self._named_projection_index(parsed)
+            shift_outputs_by_select: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+            for select_name, select in self._named_selects_for_period_analysis(parsed):
+                source_names = self._direct_source_names(select)
+                for projection in select.expressions:
+                    expr = projection.this if isinstance(projection, exp.Alias) else projection
+                    alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+                    if not alias:
+                        continue
+                    for window in expr.find_all(exp.Window):
+                        if window is not expr:
+                            continue
+                        detail = self._period_shift_output_detail(
+                            window=window,
+                            alias=alias,
+                            source_names=source_names,
+                            projection_index=projection_index,
+                        )
+                        if not detail:
+                            continue
+                        shift_outputs_by_select.setdefault(select_name, {})[self._normalize_identifier(alias)] = detail
+                        base_candidate = self._base_candidate_for_period_shift(
+                            detail=detail,
+                            source_name=source_name,
+                            source_context=source_context,
+                            existing_metric_catalog=existing_metric_catalog,
+                            projection_index=projection_index,
+                        )
+                        if base_candidate:
+                            base_candidates[self._metric_candidate_merge_key(base_candidate)] = base_candidate
+
+                        previous_candidate = self._previous_period_candidate_from_shift(
+                            detail=detail,
+                            source_name=source_name,
+                            select_name=select_name,
+                            existing_metric_catalog=existing_metric_catalog,
+                        )
+                        if previous_candidate:
+                            derived_candidates[self._metric_candidate_merge_key(previous_candidate)] = (
+                                previous_candidate
+                            )
+
+            for select_name, select in self._named_selects_for_period_analysis(parsed):
+                source_names = self._direct_source_names(select)
+                visible_shifts = self._visible_period_shift_outputs(
+                    source_names=source_names,
+                    shift_outputs_by_select=shift_outputs_by_select,
+                    projection_index=projection_index,
+                )
+                visible_shifts.update(shift_outputs_by_select.get(select_name, {}))
+                for projection in select.expressions:
+                    candidate = self._period_over_period_candidate_from_projection(
+                        projection=projection,
+                        source_name=source_name,
+                        select_name=select_name,
+                        shift_outputs=visible_shifts,
+                        source_names=source_names,
+                        projection_index=projection_index,
+                        existing_metric_catalog=existing_metric_catalog,
+                    )
+                    if candidate:
+                        derived_candidates[self._metric_candidate_merge_key(candidate)] = candidate
+
+        return {
+            "base_metric_candidates": sorted(base_candidates.values(), key=lambda item: item["name"]),
+            "derived_metric_candidates": sorted(derived_candidates.values(), key=lambda item: item["name"]),
+        }
+
+    def _named_selects_for_period_analysis(self, parsed: Any) -> List[tuple]:
+        """Return outer and named inner SELECTs with stable names."""
+        from sqlglot import expressions as exp
+
+        selects: List[tuple] = []
+        if isinstance(parsed, exp.Select):
+            selects.append(("__outer__", parsed))
+        selects.extend(self._iter_cte_selects(parsed))
+        selects.extend(self._iter_inline_subquery_selects(parsed))
+        return selects
+
+    def _named_projection_index(self, parsed: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Index named SELECT output aliases for CTE/subquery lookups."""
+        from sqlglot import expressions as exp
+
+        index: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for select_name, select in self._named_selects_for_period_analysis(parsed):
+            projections: Dict[str, Dict[str, Any]] = {}
+            for projection in select.expressions:
+                expr = projection.this if isinstance(projection, exp.Alias) else projection
+                alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+                if alias:
+                    projections[self._normalize_identifier(alias)] = {
+                        "projection": projection,
+                        "expr": expr,
+                        "select": select,
+                        "select_name": select_name,
+                    }
+            index[select_name] = projections
+        return index
+
+    def _direct_source_names(self, select: Any) -> List[str]:
+        """Return direct FROM/JOIN source names for one SELECT."""
+        from sqlglot import expressions as exp
+
+        names: List[str] = []
+
+        def add_source(node: Any) -> None:
+            if isinstance(node, exp.Table):
+                name = self._safe_name(node.name)
+            elif isinstance(node, exp.Subquery):
+                name = self._safe_name(node.alias_or_name or "derived_datasource")
+            else:
+                name = self._safe_name(getattr(node, "alias_or_name", "") or getattr(node, "name", ""))
+            if name and name not in names:
+                names.append(name)
+
+        from_clause = select.args.get("from_")
+        if from_clause is not None:
+            if getattr(from_clause, "this", None) is not None:
+                add_source(from_clause.this)
+            for expr in getattr(from_clause, "expressions", []) or []:
+                add_source(expr)
+
+        for join in select.args.get("joins") or []:
+            if getattr(join, "this", None) is not None:
+                add_source(join.this)
+        return names
+
+    def _period_shift_output_detail(
+        self,
+        window: Any,
+        alias: str,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return LAG offset metadata for one window projection."""
+        from sqlglot import expressions as exp
+
+        if not self._is_period_shift_window(window):
+            return None
+        function_name = self._window_function_name(window)
+        if function_name != "LAG":
+            return None
+        input_expr = getattr(window.this, "this", None)
+        if not isinstance(input_expr, exp.Column):
+            return None
+        input_metric = self._safe_name(input_expr.name)
+        offset_window = self._infer_period_offset_window(window, source_names, projection_index)
+        if not offset_window:
+            return None
+        return {
+            "alias": self._safe_name(alias),
+            "input_metric": input_metric,
+            "offset_window": offset_window,
+            "window_function": function_name,
+            "source_names": source_names,
+            "window": {
+                "function": function_name,
+                "order_by": self._window_order_by(window),
+            },
+        }
+
+    def _is_period_shift_window(self, window: Any) -> bool:
+        """Return true for LAG/LEAD windows that can become offset inputs."""
+        from sqlglot import expressions as exp
+
+        return isinstance(window.this, (exp.Lag, exp.Lead))
+
+    def _infer_period_offset_window(
+        self,
+        window: Any,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> str:
+        """Infer MetricFlow-style offset_window from the window ORDER BY grain."""
+        count = self._period_shift_count(window)
+        grain = ""
+        order_items = self._window_order_by(window)
+        if order_items:
+            order_expr = order_items[0].get("expr", "")
+            order_name = self._normalize_identifier(order_expr.split(".")[-1])
+            for source_name in source_names:
+                projection = projection_index.get(source_name, {}).get(order_name)
+                if projection:
+                    grain = (
+                        self._time_grain_for_expr(projection["expr"]) or self._time_grain_from_alias(order_name) or ""
+                    )
+                    if grain:
+                        break
+            if not grain:
+                try:
+                    parsed_order = self._parse_sql(f"SELECT {order_expr} AS order_expr")[0]
+                    order_projection = parsed_order.expressions[0]
+                    expr = order_projection.this
+                    grain = self._time_grain_for_expr(expr) or self._time_grain_from_alias(order_name) or ""
+                except Exception:
+                    grain = self._time_grain_from_alias(order_name) or ""
+        if not grain:
+            return ""
+        unit = grain.lower()
+        if count != 1 and not unit.endswith("s"):
+            unit = f"{unit}s"
+        return f"{count} {unit}"
+
+    def _period_shift_count(self, window: Any) -> int:
+        """Return the LAG offset count, defaulting to one period."""
+        offset = getattr(window.this, "args", {}).get("offset")
+        try:
+            value = int(getattr(offset, "this", "") or 1)
+        except (TypeError, ValueError):
+            value = 1
+        return max(value, 1)
+
+    def _base_candidate_for_period_shift(
+        self,
+        detail: Dict[str, Any],
+        source_name: str,
+        source_context: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return the upstream aggregate candidate required by a period shift."""
+        input_metric = self._normalize_identifier(detail.get("input_metric", ""))
+        if not input_metric or input_metric in existing_metric_catalog:
+            return None
+        for source in detail.get("source_names", []):
+            projection_info = projection_index.get(source, {}).get(input_metric)
+            if not projection_info:
+                continue
+            select = projection_info["select"]
+            candidate = self._candidate_from_projection(
+                projection=projection_info["projection"],
+                source_name=source_name,
+                source_context=source_context,
+                tables=self._collect_tables(select),
+                filters=self._collect_filters(select),
+                dimensions=self._collect_dimensions(select),
+                existing_metric_catalog=existing_metric_catalog,
+            )
+            if candidate and candidate.get("evidence_kind") != "identity_metric_reference":
+                candidate["source_select"] = projection_info.get("select_name", source)
+                return candidate
+        return None
+
+    def _previous_period_candidate_from_shift(
+        self,
+        detail: Dict[str, Any],
+        source_name: str,
+        select_name: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return a derived metric exposing the previous-period metric value itself."""
+        alias = self._safe_name(detail.get("alias", ""))
+        input_metric = self._safe_name(detail.get("input_metric", ""))
+        offset_window = detail.get("offset_window", "")
+        if not alias or not input_metric or not offset_window:
+            return None
+
+        referenced_metric_names = {self._normalize_identifier(input_metric)}
+        missing_inputs = sorted(name for name in referenced_metric_names if name not in existing_metric_catalog)
+        return {
+            "name": alias,
+            "metric_type": "derived",
+            "metric_kind": "derived",
+            "expression": alias,
+            "source_alias": alias,
+            "source_sql_name": source_name,
+            "source_select": select_name,
+            "inputs": [
+                {
+                    "name": input_metric,
+                    "alias": alias,
+                    "offset_window": offset_window,
+                }
+            ],
+            "offset_window": offset_window,
+            "tables": [],
+            "dimensions": [],
+            "filters": [],
+            "base_measures": [],
+            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
+            "required_input_metrics": missing_inputs,
+            "confidence": "high",
+            "source_count": 1,
+            "score_reasons": [
+                "LAG window maps to a derived metric input with offset_window",
+                "SQL projects the previous-period value as an output column",
+            ],
+        }
+
+    def _visible_period_shift_outputs(
+        self,
+        source_names: List[str],
+        shift_outputs_by_select: Dict[str, Dict[str, Dict[str, Any]]],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return period-shift aliases visible through direct CTE/subquery sources."""
+        visible: Dict[str, Dict[str, Any]] = {}
+        for source_name in source_names:
+            source_shifts = shift_outputs_by_select.get(source_name, {})
+            for alias in projection_index.get(source_name, {}):
+                shift = source_shifts.get(alias)
+                if shift:
+                    visible[alias] = shift
+        return visible
+
+    def _period_over_period_candidate_from_projection(
+        self,
+        projection: Any,
+        source_name: str,
+        select_name: str,
+        shift_outputs: Dict[str, Dict[str, Any]],
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Build a derived metric candidate from expressions over shifted metric aliases."""
+        from sqlglot import expressions as exp
+
+        if not isinstance(projection, exp.Alias):
+            return None
+        expr = projection.this
+        alias = projection.alias
+        if not alias or not self._has_real_metric_math(expr):
+            return None
+        column_names = {self._normalize_identifier(col.name) for col in expr.find_all(exp.Column)}
+        shift_aliases = sorted(column_names & set(shift_outputs))
+        expression = expr.sql()
+        for window in expr.find_all(exp.Window):
+            detail = self._period_shift_output_detail(
+                window=window,
+                alias=f"{self._safe_name(getattr(getattr(window.this, 'this', None), 'name', '') or 'metric')}_prev",
+                source_names=source_names,
+                projection_index=projection_index,
+            )
+            if detail:
+                expression = expression.replace(window.sql(), detail["alias"])
+                shift_aliases.append(self._normalize_identifier(detail["alias"]))
+                shift_outputs[self._normalize_identifier(detail["alias"])] = detail
+
+        if not shift_aliases:
+            return None
+
+        inputs: List[Dict[str, Any]] = []
+        base_names = {shift_outputs[shift_alias]["input_metric"] for shift_alias in shift_aliases}
+        for col_name in sorted(column_names - set(shift_outputs)):
+            if col_name in base_names:
+                self._append_unique(inputs, {"name": col_name}, ["name", "alias", "offset_window"])
+        for base_name in sorted(base_names):
+            self._append_unique(inputs, {"name": base_name}, ["name", "alias", "offset_window"])
+        for shift_alias in shift_aliases:
+            detail = shift_outputs[shift_alias]
+            self._append_unique(
+                inputs,
+                {
+                    "name": detail["input_metric"],
+                    "alias": detail["alias"],
+                    "offset_window": detail["offset_window"],
+                },
+                ["name", "alias", "offset_window"],
+            )
+        if len(inputs) < 2:
+            return None
+
+        referenced_metric_names = {self._normalize_identifier(item["name"]) for item in inputs}
+        missing_inputs = sorted(name for name in referenced_metric_names if name not in existing_metric_catalog)
+        return {
+            "name": self._metric_candidate_name(alias, expr),
+            "metric_type": "derived",
+            "metric_kind": "derived",
+            "expression": expression,
+            "source_alias": alias,
+            "source_sql_name": source_name,
+            "source_select": select_name,
+            "inputs": inputs,
+            "offset_window": next(
+                (item.get("offset_window") for item in inputs if item.get("offset_window")),
+                "",
+            ),
+            "tables": [],
+            "dimensions": [],
+            "filters": [],
+            "base_measures": [],
+            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
+            "required_input_metrics": missing_inputs,
+            "confidence": "high",
+            "source_count": 1,
+            "score_reasons": [
+                "LAG window maps to derived metric input with offset_window",
+                "final SELECT expression combines current and prior-period metric values",
+            ],
         }
 
     def _extract_semantic_preservation_evidence(
@@ -1231,6 +1679,20 @@ class SemanticDiscoveryTools:
             }
         return catalog
 
+    def _metric_source_context(self, entry: Dict[str, Any]) -> str:
+        """Return source text that can disambiguate metric-like SQL projections."""
+        import re
+
+        parts = []
+        for field in ("question", "name", "summary", "comment", "search_text", "description"):
+            value = str(entry.get(field) or "").strip()
+            if not value:
+                continue
+            if field == "name" and re.fullmatch(r"sql_\d+", value):
+                continue
+            parts.append(value)
+        return " ".join(parts)
+
     def _parse_sql(self, sql_text: str):
         """Parse one SQL string into sqlglot expressions."""
         import sqlglot
@@ -1271,6 +1733,7 @@ class SemanticDiscoveryTools:
         self,
         projection: Any,
         source_name: str,
+        source_context: str,
         tables: List[str],
         filters: List[str],
         dimensions: List[str],
@@ -1290,6 +1753,17 @@ class SemanticDiscoveryTools:
         referenced_metric_names = columns & existing_metric_names
 
         if not has_aggregates and not referenced_metric_names:
+            llm_review_candidate = self._llm_review_candidate_from_projection(
+                expr=expr,
+                alias=alias or "",
+                source_name=source_name,
+                source_context=source_context,
+                tables=tables,
+                filters=filters,
+                dimensions=dimensions,
+            )
+            if llm_review_candidate:
+                return llm_review_candidate
             return None
         if not has_aggregates and referenced_metric_names:
             if not columns <= existing_metric_names:
@@ -1332,6 +1806,13 @@ class SemanticDiscoveryTools:
             score_reasons.append("GROUP BY dimensions preserved as query-grain evidence")
 
         return {
+            "evidence_kind": "metric_projection",
+            "candidate_classification": "exact_metric",
+            "expression_kind": self._exact_metric_expression_kind(metric_type, expr, aggregates),
+            "aggregation_scope": "metric_reference" if metric_type == "derived" else "aggregate",
+            "representable_as": metric_type,
+            "equivalence": "exact",
+            "requires_validation": False,
             "name": name,
             "metric_type": metric_type,
             "expression": expr.sql(),
@@ -1350,6 +1831,263 @@ class SemanticDiscoveryTools:
             "source_count": 1,
             "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
         }
+
+    def _exact_metric_expression_kind(self, metric_type: str, expr: Any, aggregates: List[Any]) -> str:
+        """Return a stable expression-kind label for deterministic metric candidates."""
+        from sqlglot import expressions as exp
+
+        if metric_type == "derived":
+            return "derived_expr"
+        if metric_type == "cumulative":
+            return "cumulative_expr"
+        if metric_type == "ratio":
+            return "aggregate_ratio_expr"
+        if metric_type == "expr":
+            return "aggregate_expr"
+        if any(list(expr.find_all(exp.Case))) or any(list(agg.find_all(exp.Case)) for agg in aggregates):
+            return "conditional_aggregate_expr"
+        return "aggregate_expr"
+
+    def _llm_review_candidate_from_projection(
+        self,
+        expr: Any,
+        alias: str,
+        source_name: str,
+        source_context: str,
+        tables: List[str],
+        filters: List[str],
+        dimensions: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Infer a possible metric candidate from row-level SQL expressions.
+
+        This pass is intentionally SQL-first and high recall: it does not prove
+        business metric equivalence. Instead, it preserves row-level arithmetic
+        as candidate evidence for the gen_metrics LLM to accept, reject, or lift
+        into a reusable MetricFlow metric.
+        """
+        from sqlglot import expressions as exp
+
+        if list(expr.find_all(exp.Window)):
+            return None
+
+        core_expr = self._unwrap_metric_candidate_expr(expr)
+        if not self._has_row_metric_expression(core_expr):
+            return None
+        if not self._has_column_operand(core_expr):
+            return None
+
+        div_expr = self._first_division_expr(core_expr)
+        has_additive_math = any(list(core_expr.find_all(cls)) for cls in (exp.Add, exp.Sub))
+        metric_type = "ratio" if div_expr is not None and not has_additive_math else "expr"
+        expression_kind = "row_ratio_expr" if metric_type == "ratio" else "row_arithmetic_expr"
+
+        if metric_type == "ratio" and div_expr is not None:
+            measures = self._raw_ratio_base_measures(div_expr)
+        else:
+            measures = self._raw_expression_base_measures(core_expr)
+        if not measures:
+            return None
+
+        name = self._llm_review_metric_name(
+            alias=alias,
+            expr=expr,
+            metric_type=metric_type,
+            source_context=source_context,
+            measures=measures,
+        )
+        has_context = self._has_metric_naming_context(alias=alias, source_context=source_context)
+        confidence = "medium" if alias or has_context else "low"
+        score_reasons = [
+            "row-level arithmetic expression is metric-like but not statically equivalent to an aggregate metric",
+            "candidate must be reviewed before lifting into MetricFlow metric algebra",
+        ]
+        if metric_type == "ratio":
+            score_reasons.append("division expression can be reviewed as a possible ratio metric")
+        else:
+            score_reasons.append("arithmetic expression can be reviewed as a possible expr metric")
+        if alias:
+            score_reasons.append("final SELECT alias provides naming evidence")
+        if has_context:
+            score_reasons.append("source question/name/summary provides business naming evidence")
+        if filters:
+            score_reasons.append("historical SQL filters preserved as metric evidence")
+        if dimensions:
+            score_reasons.append("GROUP BY dimensions preserved as query-grain evidence")
+
+        return {
+            "evidence_kind": "llm_review_projection",
+            "candidate_classification": "llm_review_candidate",
+            "expression_kind": expression_kind,
+            "aggregation_scope": "row",
+            "representable_as": metric_type,
+            "equivalence": "lifted",
+            "requires_validation": True,
+            "name": name,
+            "metric_type": metric_type,
+            "expression": expr.sql(),
+            "source_alias": alias or "",
+            "source_sql_name": source_name,
+            "source_context": source_context,
+            "base_measures": measures,
+            "dimensions": dimensions,
+            "filters": filters,
+            "tables": tables,
+            "confidence": confidence,
+            "requires_name_translation": not bool(alias) or self._requires_name_translation(alias),
+            "name_source": "source_alias" if alias else "expression_with_optional_source_context",
+            "score_reasons": score_reasons,
+            "source_count": 1,
+            "referenced_metrics": [],
+        }
+
+    def _unwrap_metric_candidate_expr(self, expr: Any) -> Any:
+        """Remove expression wrappers that do not change metric lineage."""
+        from sqlglot import expressions as exp
+
+        wrapper_classes = tuple(
+            cls
+            for cls in (getattr(exp, "Cast", None), getattr(exp, "TryCast", None), getattr(exp, "Paren", None))
+            if cls
+        )
+        current = expr
+        while True:
+            if wrapper_classes and isinstance(current, wrapper_classes):
+                inner = current.args.get("this")
+            elif isinstance(current, exp.Round):
+                inner = current.args.get("this")
+            else:
+                inner = None
+            if inner is None or inner is current:
+                return current
+            current = inner
+
+    def _has_row_metric_expression(self, expr: Any) -> bool:
+        """Return true for row-level arithmetic expressions worth LLM review."""
+        from sqlglot import expressions as exp
+
+        math_classes = (exp.Add, exp.Sub, exp.Mul, exp.Div)
+        return isinstance(expr, math_classes) or any(list(expr.find_all(cls)) for cls in math_classes)
+
+    def _has_column_operand(self, expr: Any) -> bool:
+        """Return true when an expression depends on at least one physical column."""
+        from sqlglot import expressions as exp
+
+        return bool(list(expr.find_all(exp.Column)))
+
+    def _first_division_expr(self, expr: Any) -> Optional[Any]:
+        """Return the primary division expression, if any."""
+        from sqlglot import expressions as exp
+
+        if isinstance(expr, exp.Div):
+            return expr
+        divisions = list(expr.find_all(exp.Div))
+        return divisions[0] if divisions else None
+
+    def _raw_ratio_base_measures(self, div_expr: Any) -> List[Dict[str, Any]]:
+        """Build default SUM base-measure evidence for raw ratio operands."""
+        measures: List[Dict[str, Any]] = []
+        for role, operand in (
+            ("numerator", div_expr.args.get("this")),
+            ("denominator", div_expr.args.get("expression")),
+        ):
+            measure_expr = self._raw_ratio_operand_sql(operand)
+            if not measure_expr:
+                return []
+            measures.append(
+                {
+                    "name": self._safe_name(measure_expr),
+                    "agg": "SUM",
+                    "expr": measure_expr,
+                    "filter": "",
+                    "source_alias": "",
+                    "requires_name_translation": False,
+                    "source_count": 1,
+                    "evidence_kind": "row_ratio_operand",
+                    "role": role,
+                }
+            )
+        return self._deduplicate_items(measures, ["name", "agg", "expr", "filter", "role"])
+
+    def _raw_ratio_operand_sql(self, operand: Any) -> str:
+        """Return SQL for a raw ratio operand, unwrapping safe divide guards and percentage scaling."""
+        from sqlglot import expressions as exp
+
+        if operand is None:
+            return ""
+        operand = self._unwrap_metric_candidate_expr(operand)
+        if isinstance(operand, exp.Nullif):
+            inner = operand.args.get("this")
+            return self._raw_ratio_operand_sql(inner)
+        if isinstance(operand, exp.Mul):
+            left = operand.args.get("this")
+            right = operand.args.get("expression")
+            if isinstance(left, exp.Literal) and not left.is_string:
+                return self._raw_ratio_operand_sql(right)
+            if isinstance(right, exp.Literal) and not right.is_string:
+                return self._raw_ratio_operand_sql(left)
+        if isinstance(operand, exp.Literal):
+            return ""
+        if list(operand.find_all(*self._aggregate_classes())):
+            return ""
+        return operand.sql()
+
+    def _raw_expression_base_measures(self, expr: Any) -> List[Dict[str, Any]]:
+        """Build SUM base-measure evidence for row-level arithmetic operands."""
+        from sqlglot import expressions as exp
+
+        measures: List[Dict[str, Any]] = []
+        for column in expr.find_all(exp.Column):
+            measure_expr = column.sql()
+            measures.append(
+                {
+                    "name": self._safe_name(column.name or measure_expr),
+                    "agg": "SUM",
+                    "expr": measure_expr,
+                    "filter": "",
+                    "source_alias": "",
+                    "requires_name_translation": False,
+                    "source_count": 1,
+                    "evidence_kind": "row_arithmetic_operand",
+                    "role": "operand",
+                }
+            )
+        return self._deduplicate_items(measures, ["name", "agg", "expr", "filter", "role"])
+
+    def _llm_review_metric_name(
+        self,
+        alias: str,
+        expr: Any,
+        metric_type: str,
+        source_context: str,
+        measures: List[Dict[str, Any]],
+    ) -> str:
+        """Build a readable fallback name for LLM-reviewed candidates."""
+        if alias:
+            return self._metric_candidate_name(alias, expr)
+
+        if metric_type == "ratio" and len(measures) >= 2:
+            numerator = measures[0].get("name", "numerator")
+            denominator = measures[1].get("name", "denominator")
+            context_lower = source_context.lower()
+            if "rate" in context_lower or "percent" in context_lower or "percentage" in context_lower:
+                return self._safe_name(f"{numerator}_rate")
+            if "share" in context_lower or "proportion" in context_lower:
+                return self._safe_name(f"{numerator}_share")
+            return self._safe_name(f"{numerator}_per_{denominator}")
+
+        return self._metric_candidate_name("", expr)
+
+    def _has_metric_naming_context(self, alias: str, source_context: str) -> bool:
+        """Return true when source text gives useful business naming evidence."""
+        import re
+
+        context_text = " ".join(part for part in (alias, source_context) if part).lower()
+        return bool(
+            re.search(
+                r"\b(metrics?|measures?|kpis?|rates?|ratios?|shares?|percent(?:age)?s?|proportions?|arpu|arppu)\b",
+                context_text,
+            )
+        )
 
     def _support_measure_projection_aliases(self, select: Any) -> set[str]:
         """Return projection aliases that should stay as support measures only.
@@ -1531,7 +2269,26 @@ class SemanticDiscoveryTools:
         measure_parts = []
         for measure in candidate.get("base_measures", []):
             measure_parts.append("|".join(str(measure.get(field, "")) for field in ("name", "agg", "expr", "filter")))
-        return "||".join([candidate.get("expression", ""), *sorted(measure_parts)])
+        input_parts = []
+        for item in candidate.get("inputs", []):
+            input_parts.append(
+                "|".join(
+                    [
+                        self._normalize_identifier(str(item.get("name", ""))),
+                        self._normalize_identifier(str(item.get("alias", ""))),
+                        str(item.get("offset_window", "")),
+                        str(item.get("offset_to_grain", "")),
+                    ]
+                )
+            )
+        return "||".join(
+            [
+                candidate.get("expression", ""),
+                f"offset_window:{candidate.get('offset_window', '')}",
+                *[f"measure:{part}" for part in sorted(measure_parts)],
+                *[f"input:{part}" for part in sorted(input_parts)],
+            ]
+        )
 
     def _merge_base_measure(self, measures: Dict[str, Dict[str, Any]], measure: Dict[str, Any]) -> None:
         """Merge repeated base measure evidence."""

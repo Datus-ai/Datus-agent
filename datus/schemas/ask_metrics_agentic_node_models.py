@@ -20,6 +20,7 @@ class AskMetricsNodeInput(BaseInput):
     db_schema: Optional[str] = Field(None, description="Database schema")
     max_turns: int = Field(default=12, description="Maximum turns for quick metric answering")
     prompt_version: Optional[str] = Field(None, description="Prompt template version override")
+    reference_date: Optional[str] = Field(None, description="Reference date for relative time expressions (YYYY-MM-DD)")
 
 
 class AskMetricsNodeResult(BaseResult):

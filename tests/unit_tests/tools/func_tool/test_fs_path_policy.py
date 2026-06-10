@@ -61,15 +61,18 @@ class TestClassifyWhitelist:
         assert r.zone == PathZone.WHITELIST
         assert r.display.startswith(".datus/skills/")
 
-    def test_own_memory_dir_is_whitelist(self, project):
+    def test_own_memory_dir_is_hidden(self, project):
+        # Memory is owned exclusively by the dedicated add_memory/edit_memory
+        # tools; the whole subtree is HIDDEN to filesystem tools regardless of
+        # current_node.
         r = classify_path(".datus/memory/gen_sql/MEMORY.md", root_path=project, current_node="gen_sql")
-        assert r.zone == PathZone.WHITELIST
+        assert r.zone == PathZone.HIDDEN
 
     def test_other_node_memory_is_hidden(self, project):
         r = classify_path(".datus/memory/chat/MEMORY.md", root_path=project, current_node="gen_sql")
         assert r.zone == PathZone.HIDDEN
 
-    def test_none_node_disables_memory_whitelist(self, project):
+    def test_none_node_memory_is_hidden(self, project):
         r = classify_path(".datus/memory/any/MEMORY.md", root_path=project, current_node=None)
         assert r.zone == PathZone.HIDDEN
 
@@ -84,63 +87,20 @@ class TestClassifyWhitelist:
         assert r.display.startswith("~/.datus/skills/")
 
 
-class TestClassifyInheritedMemory:
-    """A built-in sub-agent passing ``inherited_memory_node`` should be able to
-    READ the parent's memory tree (zone=WHITELIST, read_only=True) while its
-    OWN memory subtree remains writable."""
+class TestClassifyMemoryAlwaysHidden:
+    """Every ``.datus/memory/**`` path is HIDDEN to filesystem tools — the
+    dedicated add_memory/edit_memory tools own the subtree, and read-only
+    inheritance reaches a child by inlining the parent's memory into the prompt,
+    not via a filesystem read path."""
 
-    def test_inherited_dir_is_readonly_whitelist(self, project):
-        r = classify_path(
-            ".datus/memory/chat/MEMORY.md",
-            root_path=project,
-            current_node="gen_sql",
-            inherited_memory_node="chat",
-        )
-        assert r.zone == PathZone.WHITELIST
-        assert r.read_only is True
-
-    def test_inherited_topic_file_is_readonly_whitelist(self, project):
-        r = classify_path(
-            ".datus/memory/chat/feedback_testing.md",
-            root_path=project,
-            current_node="gen_sql",
-            inherited_memory_node="chat",
-        )
-        assert r.zone == PathZone.WHITELIST
-        assert r.read_only is True
-
-    def test_own_memory_remains_writable_when_inheriting(self, project):
-        """Owning a self memory dir AND inheriting another should leave self writable."""
-        r = classify_path(
-            ".datus/memory/gen_sql/MEMORY.md",
-            root_path=project,
-            current_node="gen_sql",
-            inherited_memory_node="chat",
-        )
-        assert r.zone == PathZone.WHITELIST
-        assert r.read_only is False
-
-    def test_unrelated_memory_dir_still_hidden(self, project):
-        """Inheriting from chat does NOT open up some_other_node's memory."""
-        r = classify_path(
-            ".datus/memory/feedback/MEMORY.md",
-            root_path=project,
-            current_node="gen_sql",
-            inherited_memory_node="chat",
-        )
+    def test_memory_file_is_hidden(self, project):
+        r = classify_path(".datus/memory/chat/MEMORY.md", root_path=project, current_node="gen_sql")
         assert r.zone == PathZone.HIDDEN
-
-    def test_inherited_same_as_current_node_collapses_to_writable(self, project):
-        """Defensive: when the inherited name equals current_node, do not
-        spuriously demote that subtree to read-only."""
-        r = classify_path(
-            ".datus/memory/chat/MEMORY.md",
-            root_path=project,
-            current_node="chat",
-            inherited_memory_node="chat",
-        )
-        assert r.zone == PathZone.WHITELIST
         assert r.read_only is False
+
+    def test_own_memory_is_hidden(self, project):
+        r = classify_path(".datus/memory/gen_sql/MEMORY.md", root_path=project, current_node="gen_sql")
+        assert r.zone == PathZone.HIDDEN
 
 
 class TestClassifyExternal:
@@ -183,39 +143,26 @@ class TestRootUnderHome:
 class TestWhitelistAnchors:
     def test_anchor_list_contains_project_and_home(self, project, fake_home):
         anchors = whitelist_anchors(root_path=project, current_node="chat", datus_home=fake_home)
-        # project_skills, home_skills (no memory since current_node without memory dir) — but current_node="chat" still adds memory anchor.
-        assert (project / ".datus" / "skills").resolve(strict=False) in anchors
-        assert (project / ".datus" / "memory" / "chat").resolve(strict=False) in anchors
-        assert (fake_home / "skills").resolve(strict=False) in anchors
-
-    def test_anchors_skip_memory_when_node_none(self, project, fake_home):
-        anchors = whitelist_anchors(root_path=project, current_node=None, datus_home=fake_home)
-        # Expect exactly three anchors: project .datus/skills, project .datus/plans
-        # and home .datus/skills. No per-node memory anchor because current_node is None.
+        # Exactly skills (project) + plans (project) + skills (home). Memory is
+        # never an anchor — it is HIDDEN to filesystem tools.
         assert len(anchors) == 3
-        # Compare full resolved paths so a regression that drops one anchor
-        # but duplicates another (same parent/name tuple) still fails.
         assert (project / ".datus" / "skills").resolve(strict=False) in anchors
         assert (project / ".datus" / "plans").resolve(strict=False) in anchors
         assert (fake_home / "skills").resolve(strict=False) in anchors
 
-    def test_anchors_include_inherited_memory_dir(self, project, fake_home):
-        anchors = whitelist_anchors(
-            root_path=project,
-            current_node="gen_sql",
-            datus_home=fake_home,
-            inherited_memory_node="chat",
-        )
-        assert (project / ".datus" / "memory" / "gen_sql").resolve(strict=False) in anchors
-        assert (project / ".datus" / "memory" / "chat").resolve(strict=False) in anchors
+    def test_no_memory_anchor_for_any_node(self, project, fake_home):
+        for node in (None, "chat", "gen_sql"):
+            anchors = whitelist_anchors(root_path=project, current_node=node, datus_home=fake_home)
+            assert len(anchors) == 3
+            assert (project / ".datus" / "memory" / "chat").resolve(strict=False) not in anchors
+            assert (project / ".datus" / "memory" / "gen_sql").resolve(strict=False) not in anchors
 
 
 class TestBuildWalkPatterns:
     """The walker relies on these patterns to prune ``HIDDEN`` subtrees cheaply
     — ``wcmatch`` is fed ``excludes`` first and then applies ``re_includes`` so
-    the two allowed subtrees under ``.datus/`` (skills + per-node memory) stay
-    visible. The glob strings below are the contract that the filesystem tool
-    expects, so they are pinned here.
+    the allowed subtrees under ``.datus/`` (skills + plans) stay visible. Memory
+    is never re-included; the glob strings are the contract pinned here.
     """
 
     def test_excludes_prune_entire_dot_datus(self, project):
@@ -224,38 +171,12 @@ class TestBuildWalkPatterns:
         # otherwise ``.datus`` survives the first-level match.
         assert excludes == [".datus", ".datus/**"]
 
-    def test_re_includes_default_to_skills_and_plans_only(self, project):
-        _, re_includes = build_walk_patterns(root_path=project, current_node=None)
-        # Without a current_node we cannot scope a memory subtree — only the
-        # project-local skills and plans directories get re-included.
-        assert re_includes == [".datus/skills/**", ".datus/plans/**"]
-
-    def test_re_includes_add_node_memory(self, project):
-        _, re_includes = build_walk_patterns(root_path=project, current_node="gen_sql")
-        # Skills/plans stay first (downstream walker iterates in list order
-        # for determinism).
-        assert re_includes == [".datus/skills/**", ".datus/plans/**", ".datus/memory/gen_sql/**"]
-
-    def test_re_includes_add_inherited_memory(self, project):
-        _, re_includes = build_walk_patterns(
-            root_path=project,
-            current_node="gen_sql",
-            inherited_memory_node="chat",
-        )
-        assert re_includes == [
-            ".datus/skills/**",
-            ".datus/plans/**",
-            ".datus/memory/gen_sql/**",
-            ".datus/memory/chat/**",
-        ]
-
-    def test_inherited_same_as_current_does_not_duplicate(self, project):
-        _, re_includes = build_walk_patterns(
-            root_path=project,
-            current_node="chat",
-            inherited_memory_node="chat",
-        )
-        assert re_includes == [".datus/skills/**", ".datus/plans/**", ".datus/memory/chat/**"]
+    def test_re_includes_are_skills_and_plans_only(self, project):
+        # Memory is HIDDEN to filesystem tools, so current_node never adds a
+        # memory re-include regardless of its value.
+        for node in (None, "chat", "gen_sql"):
+            _, re_includes = build_walk_patterns(root_path=project, current_node=node)
+            assert re_includes == [".datus/skills/**", ".datus/plans/**"]
 
     def test_patterns_are_posix_for_wcmatch(self, project):
         """All generated patterns are POSIX slashes; wcmatch does not normalize

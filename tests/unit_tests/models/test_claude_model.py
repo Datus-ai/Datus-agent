@@ -1263,6 +1263,10 @@ class TestNativeTokenUsageStreaming:
         func_tool.on_invoke_tool = AsyncMock(return_value="ok")
 
         hook, node, emitted = self._usage_hook()
+        # The native loop now feeds usage through the standard ``on_llm_end``
+        # hook, which reads ``node.model._extract_usage_info`` — point it at the
+        # real model so the SDK ``Usage`` snapshot is parsed for real.
+        node.model = model
 
         ahm = ActionHistoryManager()
         node._current_action_history = ahm
@@ -1396,45 +1400,314 @@ class TestNativeTokenUsageStreaming:
         session.add_items.assert_not_awaited()
 
 
-class TestNativeTokenUsageHooks:
-    """The native loop drives token-usage hooks manually (no SDK Runner)."""
+def _make_recorder_hooks():
+    """A duck-typed AgentHooks recorder: every lifecycle method is an AsyncMock.
 
-    def test_iter_yields_bare_hook_and_composite_inner_hooks(self):
-        model = _make_claude_model(_make_model_config(use_native_api=True))
-        bare = MagicMock(spec=["emit_manual"])
-        assert list(model._iter_token_usage_hooks(bare)) == [bare]
-        assert list(model._iter_token_usage_hooks(None)) == []
+    The native loop calls ``getattr(hooks, name)`` and awaits it, so a plain
+    MagicMock with AsyncMock attributes stands in for a composed hook without
+    importing the real classes. ``emit_manual`` is set so tests can prove the
+    native loop no longer uses the legacy manual-fan-in path.
+    """
+    rec = MagicMock()
+    rec.on_start = AsyncMock()
+    rec.on_tool_start = AsyncMock()
+    rec.on_tool_end = AsyncMock()
+    rec.on_llm_end = AsyncMock()
+    rec.on_end = AsyncMock()
+    rec.emit_manual = AsyncMock()
+    return rec
 
-        # Composite: hooks_list with a mix of usage and non-usage hooks.
-        usage_hook = MagicMock(spec=["emit_manual", "on_start"])
-        other_hook = MagicMock(spec=["on_start"])  # no emit_manual → skipped
-        composite = SimpleNamespace(hooks_list=[usage_hook, other_hook])
-        assert list(model._iter_token_usage_hooks(composite)) == [usage_hook]
 
-    @pytest.mark.asyncio
-    async def test_reset_and_emit_drive_composite_inner_hooks(self):
-        model = _make_claude_model(_make_model_config(use_native_api=True))
-        usage_hook = MagicMock()
-        usage_hook.on_start = AsyncMock()
-        usage_hook.emit_manual = AsyncMock()
-        composite = SimpleNamespace(hooks_list=[usage_hook])
-
-        await model._reset_token_usage_hook(composite)
-        usage_hook.on_start.assert_awaited_once()
-
-        await model._emit_native_token_usage(composite, {"total_tokens": 42})
-        usage_hook.emit_manual.assert_awaited_once_with({"total_tokens": 42})
+class TestNativeLoopHooks:
+    """The native Anthropic loop drives the full AgentHooks lifecycle itself
+    (no SDK Runner), so permission / compact / KB-sync / token-usage hooks all
+    fire exactly as they would on the SDK path."""
 
     @pytest.mark.asyncio
-    async def test_emit_swallows_hook_failure(self):
+    async def test_invoke_hook_swallows_non_permission_errors(self):
         model = _make_claude_model(_make_model_config(use_native_api=True))
-        bad = MagicMock()
-        bad.emit_manual = AsyncMock(side_effect=RuntimeError("boom"))
-        # Must not propagate — the native loop keeps running.
-        await model._emit_native_token_usage(bad, {"total_tokens": 1})
-        # The hook WAS invoked (so the raise happened inside and was swallowed),
-        # proving the suppression path — not a silent skip — was exercised.
-        bad.emit_manual.assert_awaited_once_with({"total_tokens": 1})
+        hooks = MagicMock()
+        hooks.on_tool_end = AsyncMock(side_effect=RuntimeError("boom"))
+        # A best-effort hook raising must NOT propagate out of the loop driver.
+        await model._invoke_hook(hooks, "on_tool_end", None, None, None)
+        hooks.on_tool_end.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_reraises_permission_denied(self):
+        from datus.tools.permission.permission_hooks import PermissionDeniedException
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        hooks = MagicMock()
+        hooks.on_tool_start = AsyncMock(side_effect=PermissionDeniedException("no"))
+        with pytest.raises(PermissionDeniedException):
+            await model._invoke_hook(hooks, "on_tool_start", None, None, None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_hook_noop_when_method_absent(self):
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        # Bare object without the method, and None hooks: both no-op silently
+        # (return None) rather than raising AttributeError / calling None(...).
+        assert await model._invoke_hook(SimpleNamespace(), "on_tool_end", None) is None
+        assert await model._invoke_hook(None, "on_tool_end", None) is None
+
+        # A hooks object whose lifecycle attribute is explicitly None must hit
+        # the ``method is None`` guard and never be awaited.
+        hooks = MagicMock()
+        hooks.on_tool_end = None
+        assert await model._invoke_hook(hooks, "on_tool_end", None) is None
+
+    @pytest.mark.asyncio
+    async def test_tool_lifecycle_hooks_fired_for_func_tool(self):
+        import json as _json
+
+        from datus.schemas.action_history import ActionHistoryManager
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        tool_block = _make_tool_use_block(name="list_tables", block_id="call_1", input_data={"db": "main"})
+        resp_tool = _make_response([tool_block])
+        resp_final = _make_response([_make_text_block("done")])
+        model.anthropic_client.messages.create.side_effect = [resp_tool, resp_final]
+
+        func_tool = MagicMock()
+        func_tool.name = "list_tables"
+        func_tool.description = "List tables"
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value='["t1", "t2"]')
+
+        hooks = _make_recorder_hooks()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ActionHistoryManager(),
+                hooks=hooks,
+            ):
+                pass
+
+        # on_tool_start: context carries the real arguments; tool exposes .name.
+        hooks.on_tool_start.assert_awaited_once()
+        ts_ctx, _agent, ts_tool = hooks.on_tool_start.await_args.args
+        assert _json.loads(ts_ctx.tool_arguments) == {"db": "main"}
+        assert ts_tool.name == "list_tables"
+        # on_tool_end: receives the func tool's raw structured return value.
+        hooks.on_tool_end.assert_awaited_once()
+        te_args = hooks.on_tool_end.await_args.args
+        assert te_args[3] == '["t1", "t2"]'
+        # on_tool_start fires BEFORE the tool actually runs.
+        assert hooks.on_tool_start.await_args_list  # sanity
+        func_tool.on_invoke_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_tool_lifecycle_hooks_fired_for_mcp_tool(self):
+        from datus.schemas.action_history import ActionHistoryManager
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        tool_block = _make_tool_use_block(name="read_data", block_id="call_m", input_data={"k": "v"})
+        resp_tool = _make_response([tool_block])
+        resp_final = _make_response([_make_text_block("done")])
+        model.anthropic_client.messages.create.side_effect = [resp_tool, resp_final]
+
+        mcp_tool = SimpleNamespace(
+            name="read_data",
+            description="d",
+            inputSchema={"type": "object", "properties": {}},
+            annotations=None,
+        )
+        tool_result = SimpleNamespace(content=[SimpleNamespace(text="rows")])
+        connected_server = MagicMock()
+        connected_server.list_tools = AsyncMock(return_value=[mcp_tool])
+        connected_server.call_tool = AsyncMock(return_value=tool_result)
+
+        hooks = _make_recorder_hooks()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={"srv": connected_server})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={"srv": MagicMock()},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ActionHistoryManager(),
+                hooks=hooks,
+            ):
+                pass
+
+        hooks.on_tool_start.assert_awaited_once()
+        _ctx, _agent, ts_tool = hooks.on_tool_start.await_args.args
+        assert ts_tool.name == "read_data"  # the real MCP tool object, not a stub
+        hooks.on_tool_end.assert_awaited_once()
+        assert hooks.on_tool_end.await_args.args[3] == "rows"
+        connected_server.call_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_denied_tool_aborts_native_loop(self):
+        """on_tool_start raising PermissionDeniedException must propagate out of
+        the generator and prevent the tool from running — mirroring the SDK
+        path, where a denied tool aborts the run instead of feeding the model a
+        tool_result."""
+        from datus.schemas.action_history import ActionHistoryManager, ActionStatus
+        from datus.tools.permission.permission_hooks import PermissionDeniedException
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        tool_block = _make_tool_use_block(name="list_tables", block_id="call_1")
+        resp_tool = _make_response([tool_block])
+        # Second response would only be reached if the loop kept going.
+        model.anthropic_client.messages.create.side_effect = [resp_tool, _make_response([_make_text_block("x")])]
+
+        func_tool = MagicMock()
+        func_tool.name = "list_tables"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+
+        hooks = _make_recorder_hooks()
+        hooks.on_tool_start = AsyncMock(side_effect=PermissionDeniedException("denied"))
+
+        seen = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(PermissionDeniedException):
+                async for action in model._generate_with_mcp_stream(
+                    prompt="q",
+                    mcp_servers={},
+                    instruction="sys",
+                    output_type={},
+                    func_tools=[func_tool],
+                    action_history_manager=ActionHistoryManager(),
+                    hooks=hooks,
+                ):
+                    seen.append(action)
+
+        # Tool never executed; no SUCCESS completion emitted for the block.
+        func_tool.on_invoke_tool.assert_not_awaited()
+        assert not any(getattr(a, "status", None) == ActionStatus.SUCCESS and a.role.name == "TOOL" for a in seen)
+
+    @pytest.mark.asyncio
+    async def test_token_usage_via_standard_on_llm_end(self):
+        """Token usage flows through the standard on_llm_end hook: the loop hands
+        each response an SDK ``Usage`` snapshot via ``context.usage`` and never
+        falls back to the legacy ``emit_manual`` path."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        resp = _make_response([_make_text_block("hi")], input_tokens=120, output_tokens=30)
+        resp.usage.cache_read_input_tokens = 20
+        model.anthropic_client.messages.create.return_value = resp
+
+        captured = {}
+
+        async def _capture(ctx, agent, response):
+            captured["info"] = model._extract_usage_info(ctx.usage)
+
+        hooks = _make_recorder_hooks()
+        hooks.on_llm_end = AsyncMock(side_effect=_capture)
+
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ActionHistoryManager(),
+                hooks=hooks,
+            ):
+                pass
+
+        hooks.on_llm_end.assert_awaited_once()
+        hooks.emit_manual.assert_not_called()
+        info = captured["info"]
+        # input_tokens folds the cache_read component back in (120 + 20).
+        assert info["input_tokens"] == 140
+        assert info["output_tokens"] == 30
+        assert info["cached_tokens"] == 20
+        assert info["last_call_input_tokens"] == 140
+        assert info["requests"] == 1
+
+    @pytest.mark.asyncio
+    async def test_on_start_and_on_end_fired_once(self):
+        from datus.schemas.action_history import ActionHistoryManager
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        model.anthropic_client.messages.create.return_value = _make_response([_make_text_block("hi")])
+
+        hooks = _make_recorder_hooks()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="q",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                action_history_manager=ActionHistoryManager(),
+                hooks=hooks,
+            ):
+                pass
+
+        hooks.on_start.assert_awaited_once()
+        hooks.on_end.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_composite_permission_hook_denies_and_aborts(self):
+        """End-to-end: a real CompositeHooks wrapping a real PermissionHooks with
+        a DENY rule blocks the tool and propagates, while the token-usage hook
+        in the same composite still saw the LLM response."""
+        from datus.schemas.action_history import ActionHistoryManager
+        from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+        from datus.tools.permission.permission_hooks import CompositeHooks, PermissionDeniedException, PermissionHooks
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        model = _make_claude_model(_make_model_config(use_native_api=True))
+        tool_block = _make_tool_use_block(name="list_tables", block_id="call_1")
+        model.anthropic_client.messages.create.side_effect = [
+            _make_response([tool_block]),
+            _make_response([_make_text_block("x")]),
+        ]
+
+        func_tool = MagicMock()
+        func_tool.name = "list_tables"
+        func_tool.description = ""
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value="result")
+
+        registry = ToolRegistry({"list_tables": "db_tools"})
+        manager = PermissionManager(
+            global_config=PermissionConfig(
+                default_permission=PermissionLevel.ALLOW,
+                rules=[PermissionRule(tool="db_tools", pattern="list_tables", permission=PermissionLevel.DENY)],
+            )
+        )
+        perm = PermissionHooks(broker=MagicMock(), permission_manager=manager, node_name="chat", tool_registry=registry)
+        recorder = _make_recorder_hooks()
+        composite = CompositeHooks([perm, recorder])
+
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            with pytest.raises(PermissionDeniedException):
+                async for _ in model._generate_with_mcp_stream(
+                    prompt="q",
+                    mcp_servers={},
+                    instruction="sys",
+                    output_type={},
+                    func_tools=[func_tool],
+                    action_history_manager=ActionHistoryManager(),
+                    hooks=composite,
+                ):
+                    pass
+
+        func_tool.on_invoke_tool.assert_not_awaited()
+        # The composite still fanned the first LLM response out to the recorder.
+        recorder.on_llm_end.assert_awaited()
 
 
 class TestStoreNativeTurnUsage:

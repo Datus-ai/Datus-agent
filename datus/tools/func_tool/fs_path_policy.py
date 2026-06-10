@@ -48,8 +48,8 @@ class ResolvedPath:
         display: Human/LLM-friendly rendering. Relative to ``root_path`` for
             ``INTERNAL``/``WHITELIST``-in-project, ``~``-prefixed for home
             whitelist, absolute for ``EXTERNAL``/``HIDDEN``.
-        read_only: True when the path is whitelisted only because the calling
-            node inherited a parent's memory directory. Reads are allowed but
+        read_only: True when the path is whitelisted only for reading (e.g. the
+            current session's compact-archive directory). Reads are allowed but
             writes/edits must be rejected at the tool layer.
     """
 
@@ -83,9 +83,8 @@ def classify_path(
     path: str,
     *,
     root_path: Path,
-    current_node: Optional[str],
+    current_node: Optional[str] = None,
     datus_home: Optional[Path] = None,
-    inherited_memory_node: Optional[str] = None,
     session_data_dir: Optional[Path] = None,
 ) -> ResolvedPath:
     """Classify ``path`` into a ``PathZone`` relative to ``root_path``.
@@ -98,17 +97,13 @@ def classify_path(
             as the anchor for ``INTERNAL`` / project-side whitelist checks).
             Will be ``resolve()``'d internally, so symlinks in the root are
             normalized up front.
-        current_node: Name of the currently executing node. Only then does
-            ``{root_path}/.datus/memory/{current_node}/**`` qualify as
-            ``WHITELIST``. ``None`` causes the memory anchor to be dropped,
-            which demotes every ``.datus/memory/**`` path to ``HIDDEN``.
+        current_node: Name of the currently executing node. Accepted for call-
+            site compatibility; the whole ``.datus/memory/**`` subtree is
+            ``HIDDEN`` to filesystem tools regardless (persistent memory is
+            written exclusively through the dedicated ``add_memory`` /
+            ``edit_memory`` tools), so this no longer influences classification.
         datus_home: Override for ``~/.datus``. Primarily a test hook; when
             ``None`` the classifier uses the real home directory.
-        inherited_memory_node: When a built-in sub-agent inherits its parent's
-            memory (read-only), the parent's
-            ``{root_path}/.datus/memory/{inherited_memory_node}/**`` subtree
-            also qualifies as ``WHITELIST``, but the resulting ``ResolvedPath``
-            carries ``read_only=True`` so the tool layer can deny writes.
         session_data_dir: When provided, the current session's compact-archive
             directory (``path_manager.session_data_dir(session_id)``) qualifies
             as a read-only ``WHITELIST`` anchor. Lets the model ``read_file``
@@ -139,26 +134,18 @@ def classify_path(
     # anchor so a project that happens to live under ``~/.datus`` still
     # classifies ``{project_root}/.datus/skills/x`` as the project's own skill
     # rather than the global one. See Decision Order step 4 in the plan.
+    # ``current_node`` no longer creates a writable memory anchor: the entire
+    # ``.datus/memory/**`` subtree is HIDDEN to filesystem tools so the
+    # dedicated memory tools own it exclusively.
+    del current_node
     project_dot_datus = (root_resolved / ".datus").resolve(strict=False)
     project_skills = (project_dot_datus / "skills").resolve(strict=False)
     project_plans = (project_dot_datus / "plans").resolve(strict=False)
-    project_memory_node: Optional[Path] = None
-    if current_node:
-        project_memory_node = (project_dot_datus / "memory" / current_node).resolve(strict=False)
     global_skills = (home_resolved / "skills").resolve(strict=False)
 
-    inherited_memory_dir: Optional[Path] = None
-    if inherited_memory_node and inherited_memory_node != current_node:
-        inherited_memory_dir = (project_dot_datus / "memory" / inherited_memory_node).resolve(strict=False)
-
-    # Owned (writable) anchors first; the inherited anchor is checked last and
-    # tagged ``read_only=True`` so the tool layer can deny writes there.
     # ``project_plans`` hosts the LLM's plan-mode markdown files and must be
     # both readable and writable from any agentic node.
-    writable_whitelist = [project_skills, project_plans]
-    if project_memory_node is not None:
-        writable_whitelist.append(project_memory_node)
-    writable_whitelist.append(global_skills)
+    writable_whitelist = [project_skills, project_plans, global_skills]
 
     session_data_anchor: Optional[Path] = None
     if session_data_dir is not None:
@@ -173,13 +160,9 @@ def classify_path(
     # backslashes on Windows, which ``wcmatch`` does not normalize — it would
     # silently reject valid writes.
     matched_writable = any(_is_relative_to(resolved, anchor) for anchor in writable_whitelist)
-    matched_inherited = inherited_memory_dir is not None and _is_relative_to(resolved, inherited_memory_dir)
     matched_session_data = session_data_anchor is not None and _is_relative_to(resolved, session_data_anchor)
-    if matched_writable or matched_inherited:
+    if matched_writable:
         zone = PathZone.WHITELIST
-        # Owned matches always win; the read-only flag is only set when the
-        # path is exclusively reachable via the inherited anchor.
-        read_only = matched_inherited and not matched_writable
         if _is_relative_to(resolved, root_resolved):
             display = resolved.relative_to(root_resolved).as_posix()
         elif _is_relative_to(resolved, home_resolved):
@@ -220,9 +203,8 @@ def classify_path(
 def whitelist_anchors(
     *,
     root_path: Path,
-    current_node: Optional[str],
+    current_node: Optional[str] = None,
     datus_home: Optional[Path] = None,
-    inherited_memory_node: Optional[str] = None,
     session_data_dir: Optional[Path] = None,
 ) -> list[Path]:
     """Return the resolved whitelist anchor directories for a given node.
@@ -230,22 +212,19 @@ def whitelist_anchors(
     Used by walkers that need to answer "is there a whitelisted subtree
     underneath this HIDDEN directory?" without re-running ``classify_path``
     for every descendant. The order mirrors ``classify_path`` (project-side
-    first) so longer prefixes win. ``inherited_memory_node`` adds the parent
-    sub-agent's memory dir so a built-in child can ``Read``/``Glob`` it; write
-    enforcement is the tool layer's job.
+    first) so longer prefixes win. ``current_node`` is accepted for call-site
+    compatibility but no longer contributes a memory anchor — the
+    ``.datus/memory/**`` subtree is HIDDEN to filesystem tools.
     """
+    del current_node
     root_resolved = Path(root_path).expanduser().resolve(strict=False)
     home_resolved = _resolve_home(datus_home)
     project_dot_datus = (root_resolved / ".datus").resolve(strict=False)
     anchors = [
         (project_dot_datus / "skills").resolve(strict=False),
         (project_dot_datus / "plans").resolve(strict=False),
+        (home_resolved / "skills").resolve(strict=False),
     ]
-    if current_node:
-        anchors.append((project_dot_datus / "memory" / current_node).resolve(strict=False))
-    if inherited_memory_node and inherited_memory_node != current_node:
-        anchors.append((project_dot_datus / "memory" / inherited_memory_node).resolve(strict=False))
-    anchors.append((home_resolved / "skills").resolve(strict=False))
     if session_data_dir is not None:
         anchors.append(Path(session_data_dir).expanduser().resolve(strict=False))
     return anchors
@@ -254,35 +233,29 @@ def whitelist_anchors(
 def build_walk_patterns(
     *,
     root_path: Path,
-    current_node: Optional[str],
-    inherited_memory_node: Optional[str] = None,
+    current_node: Optional[str] = None,
 ) -> tuple[list[str], list[str]]:
     """Build the (exclude, re-include) glob pattern pair used by the walker.
 
     The tool feeds these into ``wcmatch`` so ``HIDDEN`` subtrees are pruned
     before any per-entry work, mirroring Claude Code's ``--glob !{pattern}``
-    ripgrep trick. Re-includes win over excludes, so the two whitelisted
-    subtrees under ``.datus/`` stay visible.
+    ripgrep trick. Re-includes win over excludes, so the whitelisted subtrees
+    under ``.datus/`` stay visible. The ``.datus/memory/**`` subtree is never
+    re-included — it is HIDDEN to filesystem tools.
 
     Args:
         root_path: Project root (unused beyond documentation today; accepted
             for forward-compat so callers that later want root-relative
             patterns don't need to change signature).
-        current_node: Same semantics as ``classify_path``; ``None`` leaves
-            the memory subtree excluded.
-        inherited_memory_node: When set and distinct from ``current_node``,
-            the parent's memory subtree is also re-included so ``Glob`` /
-            ``Grep`` can surface inherited topic files (read-only).
+        current_node: Accepted for call-site compatibility; no longer affects
+            the pattern set.
 
     Returns:
         ``(excludes, re_includes)`` — both are glob patterns rooted at
         ``root_path`` (no leading ``/``).
     """
     del root_path  # reserved for future use; keeps API stable.
+    del current_node
     excludes = [".datus", ".datus/**"]
     re_includes = [".datus/skills/**", ".datus/plans/**"]
-    if current_node:
-        re_includes.append(f".datus/memory/{current_node}/**")
-    if inherited_memory_node and inherited_memory_node != current_node:
-        re_includes.append(f".datus/memory/{inherited_memory_node}/**")
     return excludes, re_includes

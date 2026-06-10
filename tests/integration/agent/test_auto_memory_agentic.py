@@ -5,16 +5,16 @@
 """
 Nightly coverage for the extension flow ``extension.auto_memory``.
 
-Source-reality note (verified): there are no remember / forget / correct LLM
-tools — ``datus/tools/func_tool/memory_filesystem_tools.py`` is read-only
-glob/grep/read. So this file covers the parts of auto memory that are actually
-implemented:
+Memory is a single 2000-byte-capped ``MEMORY.md`` per node, written exclusively
+through the dedicated ``add_memory`` / ``edit_memory`` tools (see
+``datus/tools/func_tool/memory_tools.py``); generic filesystem tools cannot
+touch the ``.datus/memory/**`` subtree. This file covers:
 
 1. Memory LOAD — a MEMORY.md written into a memory-enabled node's workspace
    memory dir (``{project_root}/.datus/memory/{node}/MEMORY.md``) is loaded and
    injected (writable branch) into that node's system prompt.
 2. Memory inheritance — a built-in subagent that has no memory file of its own
-   (``memory_enabled is False``) inherits the parent's MEMORY.md in read-only
+   (``has_memory`` is False) inherits the parent's MEMORY.md in read-only
    mode when the ``inherited_memory`` contextvar is active (the path used when a
    custom subagent is launched via the ``task`` tool).
 3. Workspace isolation — a sibling node without its own MEMORY.md does not pick
@@ -23,8 +23,10 @@ implemented:
    distinctive instruction runs end-to-end and the loaded memory is present in
    the prompt it sends.
 
-The remember/forget/correct write lifecycle is reported scoped-out (no tool
-support) and is intentionally not tested here.
+The add_memory/edit_memory write lifecycle (including the 2000-byte full →
+prune → retry loop) is covered deterministically in
+``tests/unit_tests/tools/func_tool/test_memory_tools.py`` and at the node level
+in the chat / feedback acceptance tests.
 """
 
 import os
@@ -86,7 +88,7 @@ class TestAutoMemoryLoadAndInherit:
             node_type=NodeType.TYPE_CHAT,
             agent_config=config,
         )
-        assert node.memory_enabled is True, "chat node must be memory-enabled"
+        assert has_memory(node.get_node_name()) is True, "chat node must be memory-enabled"
 
         prompt = node._get_system_prompt()
         assert CHAT_MEMORY_MARKER in prompt, "Loaded chat MEMORY.md content must appear in the system prompt"
@@ -97,6 +99,8 @@ class TestAutoMemoryLoadAndInherit:
         config = _isolated_config(nightly_agent_config, tmp_path)
         _write_memory(str(tmp_path), "chat", f"# Memory\n\n## Domain\n- {CUSTOM_MEMORY_MARKER}\n")
 
+        # ``is_subagent=True`` so the node follows the sub-agent path; without it
+        # the node counts as a main agent and resolves the shared 'chat' memory.
         node = GenSQLAgenticNode(
             node_id="nightly_mem_inherit",
             description="gen_sql inherits chat memory",
@@ -104,9 +108,9 @@ class TestAutoMemoryLoadAndInherit:
             agent_config=config,
             node_name="gen_sql",
             execution_mode="workflow",
+            is_subagent=True,
         )
-        assert node.memory_enabled is False, "built-in gen_sql must not own a memory file"
-        assert has_memory("gen_sql") is False
+        assert has_memory("gen_sql") is False, "built-in gen_sql must not own a memory file"
 
         # Without inheritance active, gen_sql renders no memory section.
         base_prompt = node._inject_memory_context("BASE PROMPT")
@@ -132,7 +136,7 @@ class TestAutoMemoryLoadAndInherit:
             node_name=CUSTOM_AGENT,
             execution_mode="workflow",
         )
-        assert custom_node.memory_enabled is True, "custom (non-builtin) subagent must be memory-enabled"
+        assert has_memory(custom_node.get_node_name()) is True, "custom (non-builtin) subagent must be memory-enabled"
         custom_prompt = custom_node._get_system_prompt()
         assert CUSTOM_MEMORY_MARKER in custom_prompt, "Custom agent must load its own MEMORY.md"
 

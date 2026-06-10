@@ -19,6 +19,7 @@ from datus.tools.func_tool.fs_path_policy import (
     whitelist_anchors,
 )
 from datus.utils.loggings import get_logger
+from datus.utils.memory_loader import apply_single_replacement
 
 logger = get_logger(__name__)
 
@@ -75,7 +76,6 @@ class FilesystemFuncTool(BaseTool):
         current_node: Optional[str] = None,
         datus_home: Optional[str] = None,
         strict: bool = False,
-        inherited_memory_node: Optional[str] = None,
         session_data_dir: Optional[str] = None,
         **kwargs,
     ):
@@ -89,11 +89,6 @@ class FilesystemFuncTool(BaseTool):
                 closed instead of ever touching the host filesystem.
                 ``False`` (the CLI default) lets ``PermissionHooks`` prompt
                 the user.
-            inherited_memory_node: When set, the path policy treats
-                ``.datus/memory/{inherited_memory_node}/**`` as a read-only
-                whitelisted subtree so the calling node can ``Read``/``Glob``
-                its parent's memory. Writes/edits to that subtree are rejected
-                at the tool layer with a clear error message.
             session_data_dir: When set, the compact-archive directory for the
                 current session (``path_manager.session_data_dir(session_id)``)
                 qualifies as a read-only WHITELIST anchor so the LLM can
@@ -107,7 +102,6 @@ class FilesystemFuncTool(BaseTool):
         self._datus_home = Path(datus_home).expanduser().resolve(strict=False) if datus_home else None
         self._root_resolved = Path(self.root_path).expanduser().resolve(strict=False)
         self._strict = strict
-        self._inherited_memory_node = inherited_memory_node
         self._session_data_dir = Path(session_data_dir).expanduser().resolve(strict=False) if session_data_dir else None
 
     @property
@@ -163,18 +157,14 @@ class FilesystemFuncTool(BaseTool):
             root_path=self._root_resolved,
             current_node=self._current_node,
             datus_home=self._datus_home,
-            inherited_memory_node=self._inherited_memory_node,
             session_data_dir=self._session_data_dir,
         )
 
     def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
-        """Reject writes to a read-only whitelist (inherited parent memory)."""
+        """Reject writes to a read-only whitelist (e.g. the session compact archive)."""
         return FuncToolResult(
             success=0,
-            error=(
-                f"Read-only path: {resolved.display} is inherited from the parent "
-                "agent's memory and cannot be modified by this sub-agent."
-            ),
+            error=f"Read-only path: {resolved.display} cannot be modified.",
         )
 
     def _not_found(self, resolved: ResolvedPath) -> FuncToolResult:
@@ -446,24 +436,11 @@ class FilesystemFuncTool(BaseTool):
 
             try:
                 content = target_path.read_text(encoding="utf-8")
-                match_count = content.count(old_string)
+                new_content, error = apply_single_replacement(content, old_string, new_string)
+                if error is not None:
+                    return FuncToolResult(success=0, error=error)
 
-                if match_count == 0:
-                    preview = old_string[:100] + "..." if len(old_string) > 100 else old_string
-                    return FuncToolResult(
-                        success=0,
-                        error=f"old_string not found in file. Looking for: {preview}",
-                    )
-
-                if match_count > 1:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"old_string matches {match_count} times in file. It must match exactly once. "
-                        "Provide more surrounding context to make the match unique.",
-                    )
-
-                content = content.replace(old_string, new_string, 1)
-                target_path.write_text(content, encoding="utf-8")
+                target_path.write_text(new_content, encoding="utf-8")
                 return FuncToolResult(result=f"File edited successfully: {resolved.display}")
             except UnicodeDecodeError:
                 return FuncToolResult(success=0, error=f"Cannot edit binary file: {resolved.display}")
@@ -553,7 +530,6 @@ class FilesystemFuncTool(BaseTool):
             root_path=self._root_resolved,
             current_node=self._current_node,
             datus_home=self._datus_home,
-            inherited_memory_node=self._inherited_memory_node,
             session_data_dir=self._session_data_dir,
         )
 
@@ -620,7 +596,6 @@ class FilesystemFuncTool(BaseTool):
                                 root_path=self._root_resolved,
                                 current_node=self._current_node,
                                 datus_home=self._datus_home,
-                                inherited_memory_node=self._inherited_memory_node,
                                 session_data_dir=self._session_data_dir,
                             ).zone
                             if item_zone == PathZone.EXTERNAL:
@@ -881,7 +856,6 @@ def filesystem_function_tools(
     *,
     current_node: Optional[str] = None,
     strict: bool = False,
-    inherited_memory_node: Optional[str] = None,
     session_data_dir: Optional[str] = None,
 ) -> List[Tool]:
     """Get filesystem function tools"""
@@ -889,6 +863,5 @@ def filesystem_function_tools(
         root_path=root_path,
         current_node=current_node,
         strict=strict,
-        inherited_memory_node=inherited_memory_node,
         session_data_dir=session_data_dir,
     ).available_tools()

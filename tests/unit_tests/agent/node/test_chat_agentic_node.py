@@ -383,17 +383,14 @@ class TestChatMemoryFlowAcceptance:
     async def test_chat_turn_writes_memory_and_later_turn_receives_it(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
-        memory_text = "# Memory\n\n## Revenue conventions\n- Net revenue excludes refunds.\n"
+        memory_text = "Net revenue excludes refunds."
         mock_llm_create.reset(
             responses=[
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="write_file",
-                            arguments={
-                                "path": ".datus/memory/chat/MEMORY.md",
-                                "content": memory_text,
-                            },
+                            name="add_memory",
+                            arguments={"content": memory_text},
                         )
                     ],
                     content="Saved the revenue convention to memory.",
@@ -431,7 +428,7 @@ class TestChatMemoryFlowAcceptance:
         async for _ in second_turn.execute_stream(action_manager):
             pass
 
-        tool_calls = [item for item in mock_llm_create.tool_results if item["tool"] == "write_file"]
+        tool_calls = [item for item in mock_llm_create.tool_results if item["tool"] == "add_memory"]
         assert len(tool_calls) == 1
         assert tool_calls[0]["executed"] is True
 

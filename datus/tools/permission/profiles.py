@@ -98,6 +98,11 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "read_*", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "glob", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
+    # persistent memory: ALLOW. add_memory/edit_memory only touch a single
+    # hidden, 2000-byte-capped MEMORY.md with no external reach — gating
+    # benign self-notes behind a prompt would fire on routine "remember this"
+    # turns for zero safety benefit.
+    _rule("memory_tools", "*", PermissionLevel.ALLOW),
     # plan read
     _rule("tools", "todo_list", PermissionLevel.ALLOW),
     _rule("tools", "todo_read", PermissionLevel.ALLOW),

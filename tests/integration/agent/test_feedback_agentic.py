@@ -18,6 +18,7 @@ from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 from datus.schemas.action_history import ActionHistoryManager, ActionStatus
 from datus.schemas.feedback_agentic_node_models import FeedbackNodeInput, FeedbackNodeResult
 from datus.utils.loggings import get_logger
+from datus.utils.memory_loader import has_memory
 
 logger = get_logger(__name__)
 
@@ -32,7 +33,7 @@ class TestFeedbackAgentic:
 
         assert node.get_node_name() == "feedback"
         assert node.execution_mode == "workflow"
-        assert node.memory_enabled is False
+        assert has_memory(node.get_node_name()) is False
 
         tool_names = [tool.name for tool in node.tools]
         assert "read_file" in tool_names, f"Missing read_file, got: {tool_names}"

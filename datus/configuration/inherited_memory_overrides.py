@@ -5,8 +5,8 @@
 """Runtime overrides that let a built-in sub-agent inherit its parent's memory.
 
 When ``SubAgentTaskTool`` launches a built-in sub-agent (gen_sql, gen_report,
-explore, ...), that child has ``memory_enabled=False`` by default and would
-otherwise see no MEMORY.md context. This module installs the parent's memory
+explore, ...), that child owns no memory of its own (``has_memory`` is False)
+and would otherwise see no MEMORY.md context. This module installs the parent's memory
 node name under the child's subagent name for the duration of the child's
 execution; ``AgenticNode._inject_memory_context`` consults the override and
 renders the parent's memory in read-only mode.
