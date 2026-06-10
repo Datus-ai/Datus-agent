@@ -22,7 +22,13 @@ logger = get_logger(__name__)
 class ArgumentParser:
     def __init__(self):
         self.parser = argparse.ArgumentParser(
-            description="Datus: Data engineering agent builds evolvable context for your data system"
+            description="Datus: Data engineering agent builds evolvable context for your data system",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=(
+                "subcommands:\n"
+                "  upgrade            Upgrade datus-agent and installed datus-* packages to the latest release\n"
+                "  upgrade --check    Report the latest version without installing"
+            ),
         )
         self._setup_arguments()
 
@@ -243,8 +249,8 @@ class Application:
         elif args.web:
             self._run_web_interface(args)
         else:
-            # Import lazily so the 'upgrade'/'update' interceptor in main() can run
-            # even when datus.cli.repl is broken (the whole point of self-upgrade).
+            # Import lazily so the 'upgrade' interceptor in main() can run even
+            # when datus.cli.repl is broken (the whole point of self-upgrade).
             from datus.cli.repl import DatusCLI
 
             cli = DatusCLI(args)
@@ -509,10 +515,10 @@ def main():
     import signal
     import sys
 
-    # Intercept 'upgrade'/'update' subcommand: self-upgrade datus-agent and the
-    # installed datus-* adapter packages. Handled before the REPL is built so it
-    # works even when the installed CLI is otherwise broken.
-    if len(sys.argv) > 1 and sys.argv[1] in ("upgrade", "update"):
+    # Intercept 'upgrade' subcommand: self-upgrade datus-agent and the installed
+    # datus-* adapter packages. Handled before the REPL is built so it works even
+    # when the installed CLI is otherwise broken.
+    if len(sys.argv) > 1 and sys.argv[1] == "upgrade":
         from datus.cli.upgrade_cli import run_upgrade_command
 
         configure_logging(False, console_output=False)
