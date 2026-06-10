@@ -167,29 +167,38 @@ flow_groups:
           - docs/cli/model_command.md
           - docs/cli/language_command.md
           - docs/cli/effort_command.md
+          - docs/cli/orchestrator_tools.md
           - docs/cli/plan_mode.md
           - docs/configuration/compact.md
         entrypoints:
           - "CLI: datus"
+          - "CLI print mode: --orchestrator-tools with --proxy_tools orchestrator_tools.*"
           - "CLI slash commands: /model, /language, /effort"
         contracts:
           - Documented CLI command routing remains stable.
           - Model, language, and effort overrides are accepted and persisted through the CLI layer.
+          - Print mode can expose orchestrator lifecycle tools and proxy them externally without tracker credentials in Datus-agent.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+              - tests/unit_tests/cli/test_main.py
+              - tests/unit_tests/cli/test_print_mode.py
               - tests/unit_tests/cli/test_model_commands.py
               - tests/unit_tests/cli/test_language_commands.py
               - tests/unit_tests/cli/test_effort_commands.py
+              - tests/unit_tests/tools/func_tool/test_orchestrator_tools.py
           merge_queue:
             status: covered
             nodeids:
               - tests/unit_tests/cli/test_core_entrypoint_acceptance.py
+              - tests/unit_tests/cli/test_main.py
+              - tests/unit_tests/cli/test_print_mode.py
               - tests/unit_tests/cli/test_model_commands.py
               - tests/unit_tests/cli/test_language_commands.py
               - tests/unit_tests/cli/test_effort_commands.py
+              - tests/unit_tests/tools/func_tool/test_orchestrator_tools.py
           nightly:
             status: covered
             nodeids:
