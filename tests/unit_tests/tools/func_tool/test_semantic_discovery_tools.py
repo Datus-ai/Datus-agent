@@ -629,6 +629,100 @@ class TestAnalyzeMetricCandidatesFromHistory:
             },
         ]
 
+    def test_inline_lag_metric_math_uses_source_time_grain_context(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH monthly_orders AS (
+                    SELECT
+                        DATE_TRUNC('month', order_date) AS metric_month,
+                        COUNT(DISTINCT order_id) AS order_count
+                    FROM fact_orders
+                    GROUP BY DATE_TRUNC('month', order_date)
+                )
+                SELECT
+                    metric_month,
+                    order_count,
+                    order_count - LAG(order_count) OVER (ORDER BY metric_month) AS order_count_period_delta
+                FROM monthly_orders
+                ORDER BY metric_month
+                """
+            ]
+        )
+
+        assert result.success == 1
+        derived = {candidate["name"]: candidate for candidate in result.result["derived_metric_candidates"]}
+        delta = derived["order_count_period_delta"]
+        assert delta["expression"] == "order_count - order_count_prev"
+        assert delta["inputs"] == [
+            {"name": "order_count"},
+            {
+                "name": "order_count",
+                "alias": "order_count_prev",
+                "offset_window": "1 month",
+            },
+        ]
+
+    def test_period_shift_aliases_are_scoped_to_source_select(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH monthly_orders AS (
+                    SELECT
+                        DATE_TRUNC('month', order_date) AS metric_month,
+                        COUNT(DISTINCT order_id) AS order_count
+                    FROM fact_orders
+                    GROUP BY DATE_TRUNC('month', order_date)
+                ),
+                weekly_orders AS (
+                    SELECT
+                        DATE_TRUNC('week', order_date) AS metric_week,
+                        COUNT(DISTINCT order_id) AS order_count
+                    FROM fact_orders
+                    GROUP BY DATE_TRUNC('week', order_date)
+                ),
+                monthly_comparison AS (
+                    SELECT
+                        metric_month,
+                        order_count,
+                        LAG(order_count) OVER (ORDER BY metric_month) AS order_count_previous_period
+                    FROM monthly_orders
+                ),
+                weekly_comparison AS (
+                    SELECT
+                        metric_week,
+                        order_count,
+                        LAG(order_count) OVER (ORDER BY metric_week) AS order_count_previous_period
+                    FROM weekly_orders
+                )
+                SELECT
+                    metric_month,
+                    order_count,
+                    order_count_previous_period,
+                    order_count - order_count_previous_period AS order_count_period_delta
+                FROM monthly_comparison
+                ORDER BY metric_month
+                """
+            ]
+        )
+
+        assert result.success == 1
+        delta = next(
+            candidate
+            for candidate in result.result["derived_metric_candidates"]
+            if candidate["name"] == "order_count_period_delta"
+        )
+        assert delta["inputs"] == [
+            {"name": "order_count"},
+            {
+                "name": "order_count",
+                "alias": "order_count_previous_period",
+                "offset_window": "1 month",
+            },
+        ]
+
     def test_conditional_aggregation_keeps_case_measure_evidence(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(

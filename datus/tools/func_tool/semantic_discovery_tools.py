@@ -761,7 +761,7 @@ class SemanticDiscoveryTools:
 
         for parsed in parsed_expressions:
             projection_index = self._named_projection_index(parsed)
-            shift_outputs: Dict[str, Dict[str, Any]] = {}
+            shift_outputs_by_select: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
             for select_name, select in self._named_selects_for_period_analysis(parsed):
                 source_names = self._direct_source_names(select)
@@ -779,7 +779,7 @@ class SemanticDiscoveryTools:
                         )
                         if not detail:
                             continue
-                        shift_outputs[self._normalize_identifier(alias)] = detail
+                        shift_outputs_by_select.setdefault(select_name, {})[self._normalize_identifier(alias)] = detail
                         base_candidate = self._base_candidate_for_period_shift(
                             detail=detail,
                             source_name=source_name,
@@ -801,23 +801,25 @@ class SemanticDiscoveryTools:
                                 previous_candidate
                             )
 
-            if not shift_outputs:
+            if not shift_outputs_by_select:
                 continue
 
             for select_name, select in self._named_selects_for_period_analysis(parsed):
                 source_names = self._direct_source_names(select)
                 visible_shifts = self._visible_period_shift_outputs(
                     source_names=source_names,
-                    shift_outputs=shift_outputs,
+                    shift_outputs_by_select=shift_outputs_by_select,
                     projection_index=projection_index,
                 )
-                visible_shifts.update(shift_outputs)
+                visible_shifts.update(shift_outputs_by_select.get(select_name, {}))
                 for projection in select.expressions:
                     candidate = self._period_over_period_candidate_from_projection(
                         projection=projection,
                         source_name=source_name,
                         select_name=select_name,
                         shift_outputs=visible_shifts,
+                        source_names=source_names,
+                        projection_index=projection_index,
                         existing_metric_catalog=existing_metric_catalog,
                     )
                     if candidate:
@@ -1052,14 +1054,15 @@ class SemanticDiscoveryTools:
     def _visible_period_shift_outputs(
         self,
         source_names: List[str],
-        shift_outputs: Dict[str, Dict[str, Any]],
+        shift_outputs_by_select: Dict[str, Dict[str, Dict[str, Any]]],
         projection_index: Dict[str, Dict[str, Dict[str, Any]]],
     ) -> Dict[str, Dict[str, Any]]:
         """Return period-shift aliases visible through direct CTE/subquery sources."""
         visible: Dict[str, Dict[str, Any]] = {}
         for source_name in source_names:
+            source_shifts = shift_outputs_by_select.get(source_name, {})
             for alias in projection_index.get(source_name, {}):
-                shift = shift_outputs.get(alias)
+                shift = source_shifts.get(alias)
                 if shift:
                     visible[alias] = shift
         return visible
@@ -1070,6 +1073,8 @@ class SemanticDiscoveryTools:
         source_name: str,
         select_name: str,
         shift_outputs: Dict[str, Dict[str, Any]],
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
         existing_metric_catalog: Dict[str, Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
         """Build a derived metric candidate from expressions over shifted metric aliases."""
@@ -1088,8 +1093,8 @@ class SemanticDiscoveryTools:
             detail = self._period_shift_output_detail(
                 window=window,
                 alias=f"{self._safe_name(getattr(getattr(window.this, 'this', None), 'name', '') or 'metric')}_prev",
-                source_names=[],
-                projection_index={},
+                source_names=source_names,
+                projection_index=projection_index,
             )
             if detail:
                 expression = expression.replace(window.sql(), detail["alias"])
@@ -2265,7 +2270,26 @@ class SemanticDiscoveryTools:
         measure_parts = []
         for measure in candidate.get("base_measures", []):
             measure_parts.append("|".join(str(measure.get(field, "")) for field in ("name", "agg", "expr", "filter")))
-        return "||".join([candidate.get("expression", ""), *sorted(measure_parts)])
+        input_parts = []
+        for item in candidate.get("inputs", []):
+            input_parts.append(
+                "|".join(
+                    [
+                        self._normalize_identifier(str(item.get("name", ""))),
+                        self._normalize_identifier(str(item.get("alias", ""))),
+                        str(item.get("offset_window", "")),
+                        str(item.get("offset_to_grain", "")),
+                    ]
+                )
+            )
+        return "||".join(
+            [
+                candidate.get("expression", ""),
+                f"offset_window:{candidate.get('offset_window', '')}",
+                *[f"measure:{part}" for part in sorted(measure_parts)],
+                *[f"input:{part}" for part in sorted(input_parts)],
+            ]
+        )
 
     def _merge_base_measure(self, measures: Dict[str, Dict[str, Any]], measure: Dict[str, Any]) -> None:
         """Merge repeated base measure evidence."""
