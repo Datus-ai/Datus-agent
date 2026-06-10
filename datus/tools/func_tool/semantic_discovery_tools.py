@@ -446,6 +446,7 @@ class SemanticDiscoveryTools:
             source_classifications: List[Dict[str, Any]] = []
             derived_datasource_recommendations: List[Dict[str, Any]] = []
             blocked_direct_metric_candidates: List[Dict[str, Any]] = []
+            metric_generation_skips: List[Dict[str, Any]] = []
             literal_mappings: List[Dict[str, Any]] = []
             time_grain_evidence: List[Dict[str, Any]] = []
             post_aggregation_constraints: List[Dict[str, Any]] = []
@@ -470,6 +471,7 @@ class SemanticDiscoveryTools:
                 modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
                 if modeling_analysis["derived_datasource_recommendations"]:
                     derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
+                    metric_generation_skips.extend(modeling_analysis["metric_generation_skips"])
                 preservation_evidence = self._extract_semantic_preservation_evidence(
                     parsed_expressions,
                     source_name,
@@ -624,6 +626,7 @@ class SemanticDiscoveryTools:
                     "source_classifications": source_classifications,
                     "derived_datasource_recommendations": derived_datasource_recommendations,
                     "blocked_direct_metric_candidates": blocked_direct_metric_candidates,
+                    "metric_generation_skips": metric_generation_skips,
                     "literal_mappings": literal_mappings,
                     "time_grain_evidence": time_grain_evidence,
                     "post_aggregation_constraints": post_aggregation_constraints,
@@ -741,10 +744,26 @@ class SemanticDiscoveryTools:
                 )
 
         reason = ""
+        metric_generation_skips: List[Dict[str, Any]] = []
         if recommendations:
             reason = "rank/window output is filtered or aggregated downstream; model it as a derived data source first"
+            for rec in recommendations:
+                metric_generation_skips.append(
+                    {
+                        "source_sql_name": rec.get("source_sql_name", source_name),
+                        "reason": (
+                            "rank/window TopN query returns row-level or post-window results; "
+                            "skip during metric generation"
+                        ),
+                        "sql_shape": "ranked_window",
+                        "window": rec.get("window", {}),
+                        "rank_alias": rec.get("rank_alias", ""),
+                        "rank_filters": rec.get("rank_filters", []),
+                    }
+                )
         return {
             "derived_datasource_recommendations": recommendations,
+            "metric_generation_skips": metric_generation_skips,
             "classification_reason": reason,
         }
 
@@ -755,7 +774,7 @@ class SemanticDiscoveryTools:
         source_context: str,
         existing_metric_catalog: Dict[str, Dict[str, Any]],
     ) -> Dict[str, List[Dict[str, Any]]]:
-        """Extract MetricFlow derived metric candidates from LAG-style period comparisons."""
+        """Extract derived metric candidates from LAG-style period comparisons."""
         from sqlglot import expressions as exp
 
         base_candidates: Dict[str, Dict[str, Any]] = {}
@@ -1747,6 +1766,8 @@ class SemanticDiscoveryTools:
         expr = projection.this if isinstance(projection, exp.Alias) else projection
         alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
         name = self._metric_candidate_name(alias or expr.alias_or_name, expr)
+        if any(self._is_period_shift_window(window) for window in expr.find_all(exp.Window)):
+            return None
         aggregate_classes = self._aggregate_classes()
         aggregates = list(expr.find_all(*aggregate_classes))
         has_aggregates = bool(aggregates)

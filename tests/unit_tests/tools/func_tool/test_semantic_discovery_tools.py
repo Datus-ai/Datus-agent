@@ -1025,6 +1025,22 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert result.result["query_classification"] == "metric_plus_derived_datasource"
         assert result.result["direct_metric_candidates"] == []
         assert result.result["blocked_direct_metric_candidates"][0]["name"] == "time_count"
+        assert result.result["metric_generation_skips"] == [
+            {
+                "source_sql_name": "sql_1",
+                "reason": (
+                    "rank/window TopN query returns row-level or post-window results; skip during metric generation"
+                ),
+                "sql_shape": "ranked_window",
+                "window": {
+                    "function": "RANK",
+                    "partition_by": ["f.dt", "f.module"],
+                    "order_by": [{"expr": "f.sell_hitrate", "direction": "ASC"}],
+                },
+                "rank_alias": "rank_no",
+                "rank_filters": ["rank_no <= 10"],
+            }
+        ]
         recommendation = result.result["derived_datasource_recommendations"][0]
         assert recommendation["source_cte"] == "rank_data"
         assert recommendation["rank_alias"] == "rank_no"

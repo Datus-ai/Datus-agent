@@ -1,0 +1,104 @@
+"""Phase 3 closure: an OSI-authored model is validated/queried via the osi adapter.
+
+When the active semantic adapter is ``osi``, the generation flow's
+``validate_semantic`` / ``query_metrics`` calls are served by DatusOSIAdapter,
+which compiles OSI -> IR -> MetricFlow YAML and returns business-semantic errors.
+This test drives that adapter the same way SemanticTools does (via the registry),
+proving the loop closes without the LLM ever writing MetricFlow syntax.
+
+Uses the ``native`` execution backend so it runs in the agent's no-optional-package
+CI (no MetricFlow needed). Skipped when ``datus_semantic_osi`` is not installed.
+"""
+
+import pytest
+
+pytest.importorskip("datus_semantic_osi")
+
+from datus.tools.semantic_tools.registry import semantic_adapter_registry
+
+GOOD_OSI = """
+version: 0.2.0.dev0
+semantic_model:
+  - name: shop
+    datasets:
+      - name: orders
+        source: orders
+        primary_key: [order_id]
+        fields:
+          - name: order_date
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: order_date
+            dimension: {is_time: true}
+            custom_extensions:
+              - vendor_name: DATUS
+                data: '{"type":"time","time_granularity":"day"}'
+    metrics:
+      - name: order_count
+        description: "number of orders"
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "COUNT(DISTINCT order_id)"
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"dataset":"orders","time_dimension":"order_date"}'
+"""
+
+# A detail query must not be modeled as a metric -> business-semantic error.
+BAD_OSI = """
+version: 0.2.0.dev0
+semantic_model:
+  - name: shop
+    datasets:
+      - name: orders
+        source: orders
+    metrics:
+      - name: ranked
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: "RANK() OVER (ORDER BY amount DESC)"
+        custom_extensions:
+          - vendor_name: DATUS
+            data: '{"dataset":"orders"}'
+"""
+
+
+def _make_adapter(osi_dir):
+    from datus_semantic_osi import register
+    from datus_semantic_osi.config import DatusOSIConfig
+
+    register()
+    config = DatusOSIConfig(semantic_models_path=str(osi_dir), datasource="orders", execution_backend="native")
+    return semantic_adapter_registry.create_adapter("osi", config)
+
+
+@pytest.mark.asyncio
+async def test_good_osi_validates_and_dry_runs(tmp_path):
+    (tmp_path / "model.yaml").write_text(GOOD_OSI)
+    adapter = _make_adapter(tmp_path)
+
+    result = await adapter.validate_semantic()
+    errors = [i.message for i in result.issues if i.severity == "error"]
+    assert result.valid, f"errors: {errors}"
+
+    metrics = {m.name for m in await adapter.list_metrics()}
+    assert "order_count" in metrics
+
+    q = await adapter.query_metrics(["order_count"], dry_run=True)
+    assert "COUNT(DISTINCT order_id)" in q.metadata["sql"]
+
+
+@pytest.mark.asyncio
+async def test_bad_osi_returns_business_semantic_error(tmp_path):
+    (tmp_path / "model.yaml").write_text(BAD_OSI)
+    adapter = _make_adapter(tmp_path)
+
+    result = await adapter.validate_semantic()
+    assert not result.valid
+    messages = " ".join(i.message for i in result.issues).lower()
+    # business-semantic phrasing, not MetricFlow YAML internals
+    assert "window" in messages or "ranking" in messages
+    assert "type_params" not in messages

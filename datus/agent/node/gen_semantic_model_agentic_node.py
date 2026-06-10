@@ -205,9 +205,14 @@ class GenSemanticModelAgenticNode(AgenticNode):
     def _setup_generation_tools(self):
         """Setup generation tools."""
         try:
+            from datus.agent.node.semantic_authoring import resolve_authoring_format
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config, generation_evidence=self.generation_evidence)
+            self.generation_tools = GenerationTools(
+                self.agent_config,
+                generation_evidence=self.generation_evidence,
+                authoring_format=resolve_authoring_format(self.agent_config, self.node_config),
+            )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
@@ -215,6 +220,16 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")
+
+    def _setup_skill_func_tools(self) -> None:
+        """Avoid injecting MetricFlow authoring skills into OSI workflows."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        node_config = getattr(self, "node_config", None) or {}
+        if is_osi_authoring(self.agent_config, node_config) and "skills" not in node_config:
+            logger.info("Skipping default MetricFlow skills for OSI semantic-model authoring")
+            return
+        super()._setup_skill_func_tools()
 
     def _setup_hooks(self):
         """Setup hooks for interactive mode."""
@@ -291,12 +306,25 @@ class GenSemanticModelAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
+        from datus.agent.node.semantic_authoring import (
+            AUTHORING_FORMAT_OSI,
+            osi_prompt_version,
+            osi_template_name,
+            resolve_authoring_format,
+        )
+
         # ``prompt_version`` kwarg wins over the config default; preserves the
         # template's signature parity with the other nodes.
-        version = prompt_version or self.node_config.get("prompt_version")
-
-        # Hardcoded system_prompt template name
-        template_name = f"{self.NODE_NAME}_system"
+        # OSI mode uses a separate template name so the default metricflow
+        # template and its latest-version scan are left untouched.
+        authoring_format = resolve_authoring_format(self.agent_config, self.node_config)
+        if authoring_format == AUTHORING_FORMAT_OSI:
+            template_name = osi_template_name(self.NODE_NAME)
+            requested = prompt_version or self.node_config.get("prompt_version")
+            version = osi_prompt_version(self.agent_config, self.NODE_NAME, requested)
+        else:
+            template_name = f"{self.NODE_NAME}_system"
+            version = prompt_version or self.node_config.get("prompt_version")
 
         try:
             # Prepare template variables
@@ -512,6 +540,20 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
             if not os.path.exists(full_path):
                 logger.warning(f"Semantic model file not found: {full_path}")
+                return False
+
+            from datus.agent.node.semantic_authoring import is_osi_authoring
+
+            if is_osi_authoring(self.agent_config, self.node_config):
+                if not self.generation_tools:
+                    logger.error("Generation tools unavailable for OSI semantic sync")
+                    return False
+                result = self.generation_tools.sync_osi_semantic_to_db(full_path)
+                if result.get("success"):
+                    self.generation_evidence.mark_kb_sync("semantic")
+                    logger.info(f"Successfully saved OSI semantic model to database: {result.get('message')}")
+                    return True
+                logger.error(f"Failed to save OSI semantic model to database: {result.get('error', 'unknown error')}")
                 return False
 
             # Call static method to save to database

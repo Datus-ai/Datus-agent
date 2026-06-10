@@ -184,9 +184,14 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_generation_tools(self):
         """Setup generation tools."""
         try:
+            from datus.agent.node.semantic_authoring import resolve_authoring_format
             from datus.tools.func_tool import trans_to_function_tool
 
-            self.generation_tools = GenerationTools(self.agent_config, generation_evidence=self.generation_evidence)
+            self.generation_tools = GenerationTools(
+                self.agent_config,
+                generation_evidence=self.generation_evidence,
+                authoring_format=resolve_authoring_format(self.agent_config, self.node_config),
+            )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_metric_generation))
@@ -197,6 +202,16 @@ class GenMetricsAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")
+
+    def _setup_skill_func_tools(self) -> None:
+        """Avoid injecting MetricFlow authoring skills into OSI workflows."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        node_config = getattr(self, "node_config", None) or {}
+        if is_osi_authoring(self.agent_config, node_config) and "skills" not in node_config:
+            logger.info("Skipping default MetricFlow skills for OSI metrics authoring")
+            return
+        super()._setup_skill_func_tools()
 
     def _setup_semantic_tools(self):
         """Setup semantic tools for metrics querying and exploration."""
@@ -335,12 +350,28 @@ class GenMetricsAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        version = (
-            prompt_version or getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")
+        from datus.agent.node.semantic_authoring import (
+            AUTHORING_FORMAT_OSI,
+            osi_prompt_version,
+            osi_template_name,
+            resolve_authoring_format,
         )
 
-        # Hardcoded system_prompt template name
-        template_name = f"{self.NODE_NAME}_system"
+        # Select the authoring format (metricflow YAML vs OSI + Datus hints).
+        # OSI mode uses a separate template name so the default metricflow
+        # template and its latest-version scan are left untouched.
+        authoring_format = resolve_authoring_format(self.agent_config, self.node_config)
+        if authoring_format == AUTHORING_FORMAT_OSI:
+            template_name = osi_template_name(self.NODE_NAME)
+            requested = (
+                prompt_version or getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")
+            )
+            version = osi_prompt_version(self.agent_config, self.NODE_NAME, requested)
+        else:
+            template_name = f"{self.NODE_NAME}_system"
+            version = (
+                prompt_version or getattr(self.input, "prompt_version", None) or self.node_config.get("prompt_version")
+            )
 
         try:
             # Prepare template variables
@@ -557,6 +588,16 @@ class GenMetricsAgenticNode(AgenticNode):
         status: Optional[str],
     ) -> None:
         """Ensure generated metric artifacts are published without relying on one LLM tool call."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        if is_osi_authoring(self.agent_config, self.node_config):
+            self._finalize_osi_metric_generation(
+                semantic_model_files=semantic_model_files,
+                metric_file=metric_file,
+                status=status,
+            )
+            return
+
         normalized_status = status.strip().lower() if isinstance(status, str) else status
 
         if normalized_status == "skipped":
@@ -642,6 +683,88 @@ class GenMetricsAgenticNode(AgenticNode):
         )
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"Metric KB sync failed: {self._tool_error(publish_result)}")
+        self.generation_evidence.mark_kb_sync("metric")
+
+    def _finalize_osi_metric_generation(
+        self,
+        semantic_model_files: Optional[List[str] | str],
+        metric_file: Optional[str],
+        status: Optional[str],
+    ) -> None:
+        """Finalize OSI-authored metrics without using MetricFlow YAML preflight."""
+        normalized_status = status.strip().lower() if isinstance(status, str) else status
+
+        if normalized_status == "skipped":
+            if metric_file:
+                raise RuntimeError(
+                    "Metric generation returned status='skipped' with a non-null metric_file. "
+                    "Skipped responses must set metric_file to null; generated metric files must be published."
+                )
+            return
+
+        if self.generation_evidence.metric_kb_sync_passed:
+            return
+
+        if normalized_status and not metric_file:
+            raise RuntimeError(
+                f"Metric generation returned status='{normalized_status}' without a metric_file. "
+                "Non-skipped OSI metric responses must include metric_file or call end_metric_generation."
+            )
+
+        if not metric_file:
+            return
+
+        if not self.generation_tools:
+            raise RuntimeError("Metric generation produced a metric_file, but generation tools are unavailable.")
+        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
+
+        if not self.generation_evidence.validation_passed:
+            if not getattr(self, "semantic_tools", None):
+                raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
+            validation_result = self.semantic_tools.validate_semantic()
+            self.generation_evidence.record_validation_result(validation_result)
+            if not self._tool_succeeded(validation_result):
+                raise RuntimeError(
+                    f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
+                )
+
+        abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
+        if isinstance(semantic_model_files, str):
+            semantic_model_file_candidates = [semantic_model_files]
+        else:
+            semantic_model_file_candidates = semantic_model_files or []
+        abs_semantic_model_files = [
+            self._resolve_metric_artifact_path(semantic_model_file, "semantic")
+            for semantic_model_file in semantic_model_file_candidates
+            if semantic_model_file
+        ]
+        metric_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
+        if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
+            if not getattr(self, "semantic_tools", None):
+                raise RuntimeError("Metric generation produced a metric_file, but query_metrics is unavailable.")
+            dry_run_result = self.semantic_tools.query_metrics(metrics=metric_names, dry_run=True)
+            self.generation_evidence.record_metric_dry_run(metric_names, dry_run_result)
+            if not self._tool_succeeded(dry_run_result):
+                raise RuntimeError(
+                    "query_metrics(dry_run=True) failed for generated OSI metric(s) "
+                    f"{', '.join(metric_names)}: {self._tool_error(dry_run_result)}"
+                )
+        if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
+            missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions before "
+                "publishing metrics. Run a dry-run query for the generated metric names with the matching "
+                "dimensions/time grain, fix semantic model join or dimension issues, and retry. "
+                f"Missing: {summarize_queryability_contracts(missing_contracts)}",
+            )
+
+        publish_result = self.generation_tools.end_metric_generation(
+            metric_file=abs_metric_file,
+            semantic_model_files=abs_semantic_model_files,
+        )
+        if not self._tool_succeeded(publish_result):
+            raise RuntimeError(f"OSI metric KB sync failed: {self._tool_error(publish_result)}")
         self.generation_evidence.mark_kb_sync("metric")
 
     def _extract_metric_and_output_from_response(
