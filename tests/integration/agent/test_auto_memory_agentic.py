@@ -99,6 +99,8 @@ class TestAutoMemoryLoadAndInherit:
         config = _isolated_config(nightly_agent_config, tmp_path)
         _write_memory(str(tmp_path), "chat", f"# Memory\n\n## Domain\n- {CUSTOM_MEMORY_MARKER}\n")
 
+        # ``is_subagent=True`` so the node follows the sub-agent path; without it
+        # the node counts as a main agent and resolves the shared 'chat' memory.
         node = GenSQLAgenticNode(
             node_id="nightly_mem_inherit",
             description="gen_sql inherits chat memory",
@@ -106,6 +108,7 @@ class TestAutoMemoryLoadAndInherit:
             agent_config=config,
             node_name="gen_sql",
             execution_mode="workflow",
+            is_subagent=True,
         )
         assert has_memory("gen_sql") is False, "built-in gen_sql must not own a memory file"
 
