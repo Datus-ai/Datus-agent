@@ -1337,6 +1337,10 @@ class TestListMetrics:
         mock_metric.unit = None
         mock_metric.format = None
         mock_metric.path = ["Sales"]
+        mock_metric.metadata = {
+            "inputs": [{"name": "orders", "offset_window": "1 month"}],
+            "non_serializable": object(),
+        }
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
             result = tool.list_metrics()
@@ -1353,6 +1357,7 @@ class TestListMetrics:
                 "unit": None,
                 "format": None,
                 "path": ["Sales"],
+                "metadata": {"inputs": [{"name": "orders", "offset_window": "1 month"}]},
             }
         ]
         assert envelope["total"] is None
@@ -1388,6 +1393,25 @@ class TestListMetrics:
         assert envelope["has_more"] is True
         assert envelope["extra"] == {"next_offset": 5}
         mock_adapter.list_metrics.assert_called_once_with(path=["Finance"], limit=3, offset=2)
+
+    def test_ignores_non_dict_metric_metadata(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        mock_metric = Mock()
+        mock_metric.name = "orders"
+        mock_metric.description = ""
+        mock_metric.type = "count"
+        mock_metric.dimensions = []
+        mock_metric.measures = []
+        mock_metric.unit = None
+        mock_metric.format = None
+        mock_metric.path = ["Sales"]
+        mock_metric.metadata = "not a metadata dict"
+
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
+            result = tool.list_metrics()
+
+        assert result.success == 1
+        assert result.result["items"][0]["metadata"] == {}
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter
@@ -1784,6 +1808,7 @@ class TestCompressorModelName:
         mock_metric.unit = None
         mock_metric.format = None
         mock_metric.path = []
+        mock_metric.metadata = {}
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=[mock_metric]):
             result = tool.list_metrics()

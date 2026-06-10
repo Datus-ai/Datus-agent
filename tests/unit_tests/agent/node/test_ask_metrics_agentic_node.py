@@ -99,6 +99,10 @@ class TestAskMetricsAgenticNode:
         assert "do not call `list_subject_tree`" in prompt
         assert "do not call `search_metrics` for metrics that match these entries directly" in prompt
         assert "When the subject tree gives a direct metric/path match" in prompt
+        assert "`offset_window` metadata" in prompt
+        assert 'dimensions=["metric_time__month"]' in prompt
+        assert "query the base metric together with the derived metric" in prompt
+        assert "first period" in prompt
         assert node.subject_tree_prompt_limit == 100
 
     def test_large_subject_tree_exposes_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
