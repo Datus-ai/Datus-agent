@@ -567,6 +567,56 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidate["name"] == "rolling_7d_revenue"
         assert candidate["metric_type"] == "cumulative"
 
+    def test_lag_monthly_aggregation_becomes_derived_offset_candidate(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS start_month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    WHERE start_date >= '2025-04-01' AND start_date < '2025-11-01'
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        start_month,
+                        activity_count,
+                        LAG(activity_count) OVER (ORDER BY start_month) AS previous_month_activity_count
+                    FROM monthly
+                )
+                SELECT
+                    start_month,
+                    activity_count,
+                    previous_month_activity_count,
+                    activity_count - previous_month_activity_count AS activity_count_mom_delta
+                FROM compared
+                ORDER BY start_month
+                """
+            ]
+        )
+
+        assert result.success == 1
+        direct = result.result["direct_metric_candidates"]
+        assert [candidate["name"] for candidate in direct] == ["activity_count"]
+        derived = result.result["derived_metric_candidates"]
+        assert len(derived) == 1
+        candidate = derived[0]
+        assert candidate["name"] == "activity_count_mom_delta"
+        assert candidate["metric_type"] == "derived"
+        assert candidate["metric_kind"] == "derived"
+        assert candidate["expression"] == "activity_count - previous_month_activity_count"
+        assert candidate["inputs"] == [
+            {"name": "activity_count"},
+            {
+                "name": "activity_count",
+                "alias": "previous_month_activity_count",
+                "offset_window": "1 month",
+            },
+        ]
+
     def test_conditional_aggregation_keeps_case_measure_evidence(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
@@ -864,6 +914,22 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert result.result["query_classification"] == "metric_plus_derived_datasource"
         assert result.result["direct_metric_candidates"] == []
         assert result.result["blocked_direct_metric_candidates"][0]["name"] == "time_count"
+        assert result.result["metric_generation_skips"] == [
+            {
+                "source_sql_name": "sql_1",
+                "reason": (
+                    "rank/window TopN query returns row-level or post-window results; skip during metric generation"
+                ),
+                "sql_shape": "ranked_window",
+                "window": {
+                    "function": "RANK",
+                    "partition_by": ["f.dt", "f.module"],
+                    "order_by": [{"expr": "f.sell_hitrate", "direction": "ASC"}],
+                },
+                "rank_alias": "rank_no",
+                "rank_filters": ["rank_no <= 10"],
+            }
+        ]
         recommendation = result.result["derived_datasource_recommendations"][0]
         assert recommendation["source_cte"] == "rank_data"
         assert recommendation["rank_alias"] == "rank_no"

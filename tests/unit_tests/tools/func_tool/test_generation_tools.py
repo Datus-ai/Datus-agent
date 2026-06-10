@@ -4,6 +4,7 @@
 
 import json
 import os
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -262,6 +263,31 @@ class TestEndMetricGeneration:
             )
         assert result.success == 1
         assert result.result["metric_sqls"] == {}
+
+    def test_osi_skips_metricflow_metric_block_preflight(self, generation_tools, tmp_path):
+        self._mark_ready_to_publish(generation_tools)
+        generation_tools.authoring_format = "osi"
+        metric_file = tmp_path / "semantic_models" / "starrocks" / "orders_metrics.yml"
+        metric_file.parent.mkdir(parents=True)
+        metric_file.write_text(
+            "metrics:\n  - name: order_count\n    expression: COUNT(DISTINCT order_id)\n    dataset: orders\n"
+        )
+        mock_pm = Mock()
+        mock_pm.subject_dir = str(tmp_path)
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(type(generation_tools), "_validate_metric_file_has_blocks") as preflight_mock,
+            patch.object(
+                generation_tools,
+                "_sync_osi_metric_to_db",
+                return_value={"success": True, "message": "synced"},
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_metric_generation(metric_file=str(metric_file))
+
+        assert result.success == 1
+        preflight_mock.assert_not_called()
+        sync_mock.assert_called_once()
 
 
 class TestEndMetricGenerationPreflight:
@@ -776,6 +802,143 @@ class TestSyncMetricToDb:
 
         assert result["success"] is False
         assert "boom" in result["error"]
+
+
+class TestOsiSync:
+    def test_sync_osi_metric_to_db_upserts_only_metrics_declared_in_current_file(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
+            "        expression:\n"
+            "          dialects:\n"
+            "            - dialect: ANSI_SQL\n"
+            "              expression: COUNT(DISTINCT order_id)\n"
+            "        custom_extensions:\n"
+            "          - vendor_name: DATUS\n"
+            '            data: \'{"dataset":"orders"}\'\n'
+        )
+        dataset = SimpleNamespace(
+            name="orders",
+            source=SimpleNamespace(table="orders"),
+            primary_key="order_id",
+            time_dimension=SimpleNamespace(name="order_date"),
+            dimensions=[SimpleNamespace(name="customer_segment")],
+        )
+        metric = SimpleNamespace(
+            name="order_count",
+            description="Number of orders",
+            expression="COUNT(DISTINCT order_id)",
+            dataset="orders",
+            subject_path=None,
+            kind=None,
+        )
+        old_metric = SimpleNamespace(
+            name="old_metric",
+            description="Should not be synced from this file",
+            expression="SUM(old_value)",
+            dataset="orders",
+            subject_path=None,
+            kind=None,
+        )
+        doc = SimpleNamespace(datasets=[dataset], metrics=[metric, old_metric])
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(
+                str(metric_file),
+                metric_sqls={"order_count": "SELECT 1", "old_metric": "SELECT 2"},
+            )
+
+        assert result["success"] is True
+        generation_tools.metric_rag.upsert_batch.assert_called_once()
+        metric_objects = generation_tools.metric_rag.upsert_batch.call_args.args[0]
+        assert len(metric_objects) == 1
+        metric_obj = metric_objects[0]
+        assert metric_obj["name"] == "order_count"
+        assert metric_obj["semantic_model_name"] == "orders"
+        assert metric_obj["measure_expr"] == "COUNT(DISTINCT order_id)"
+        assert metric_obj["dimensions"] == ["order_date", "customer_segment"]
+        assert metric_obj["entities"] == ["order_id"]
+        assert metric_obj["sql"] == "SELECT 1"
+        assert metric_obj["yaml_path"] == str(metric_file)
+        assert result["metric_names"] == ["order_count"]
+
+    def test_sync_osi_metric_to_db_rejects_metric_file_without_metrics(self, generation_tools, tmp_path):
+        metric_file = tmp_path / "empty_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: empty\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+        )
+
+        result = generation_tools._sync_osi_metric_to_db(str(metric_file))
+
+        assert result["success"] is False
+        assert "No OSI metrics found in metric file" in result["error"]
+        generation_tools.metric_rag.upsert_batch.assert_not_called()
+
+    def test_sync_osi_semantic_to_db_upserts_only_current_dataset_columns(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
+        semantic_file = tmp_path / "orders.yml"
+        semantic_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "        primary_key: [order_id]\n"
+        )
+        dataset = SimpleNamespace(
+            name="orders",
+            description="Orders table",
+            source=SimpleNamespace(table="orders"),
+            primary_key="order_id",
+            time_dimension=SimpleNamespace(name="order_date", granularity="day"),
+            dimensions=[
+                SimpleNamespace(
+                    name="customer_segment",
+                    expr="customer_segment",
+                    type="categorical",
+                    description="Customer segment",
+                    granularity=None,
+                )
+            ],
+        )
+        other_dataset = SimpleNamespace(
+            name="customers",
+            description="Customers table",
+            source=SimpleNamespace(table="customers"),
+            primary_key="customer_id",
+            time_dimension=None,
+            dimensions=[],
+        )
+        doc = SimpleNamespace(datasets=[dataset, other_dataset], metrics=[])
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
+
+        assert result["success"] is True
+        generation_tools.semantic_rag.upsert_batch.assert_called_once()
+        objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
+        assert [obj["kind"] for obj in objects] == ["table", "column", "column", "column"]
+        assert objects[0]["name"] == "orders"
+        assert objects[1]["name"] == "order_id"
+        assert objects[1]["is_entity_key"] is True
 
 
 class TestGenerateSqlSummaryId:

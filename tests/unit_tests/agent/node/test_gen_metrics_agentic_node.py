@@ -929,6 +929,53 @@ class TestExecuteStreamGenMetricsError:
             semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
+    def test_osi_final_metric_publish_uses_semantic_model_files(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        datasource = real_agent_config.current_datasource
+        semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
+        metric_dir = semantic_dir / "metrics"
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        metric_path = metric_dir / "orders_metrics.yml"
+        metric_path.write_text(
+            """
+version: 0.2.0.dev0
+semantic_model:
+  - name: shop
+    datasets:
+      - name: orders
+        source: orders
+    metrics:
+      - name: order_count
+        expression:
+          dialects:
+            - dialect: ANSI_SQL
+              expression: COUNT(DISTINCT order_id)
+""",
+            encoding="utf-8",
+        )
+        reported_semantic_path = f"subject/semantic_models/{datasource}/orders.yml"
+        reported_metric_path = f"subject/semantic_models/{datasource}/metrics/orders_metrics.yml"
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.node_config["authoring_format"] = "osi"
+        node.input = SemanticNodeInput(user_message="Generate OSI metrics")
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT 1"}})
+        )
+        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        node._finalize_metric_generation([reported_semantic_path], reported_metric_path, "generated")
+
+        node.semantic_tools.query_metrics.assert_called_once_with(metrics=["order_count"], dry_run=True)
+        node.generation_tools.end_metric_generation.assert_called_once_with(
+            metric_file=str(metric_path),
+            semantic_model_files=[str(semantic_dir / "orders.yml")],
+        )
+
     @pytest.mark.asyncio
     async def test_final_metric_file_rejects_out_of_sandbox_absolute_path(
         self, real_agent_config, mock_llm_create, tmp_path
