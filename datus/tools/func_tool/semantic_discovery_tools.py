@@ -464,6 +464,7 @@ class SemanticDiscoveryTools:
                 entry_candidates: List[Dict[str, Any]] = []
                 entry_has_non_metric_evidence = False
                 entry_has_metric_evidence = False
+                found_candidate = False
                 modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
                 if modeling_analysis["derived_datasource_recommendations"]:
                     derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
@@ -474,8 +475,25 @@ class SemanticDiscoveryTools:
                 literal_mappings.extend(preservation_evidence["literal_mappings"])
                 time_grain_evidence.extend(preservation_evidence["time_grain_evidence"])
                 post_aggregation_constraints.extend(preservation_evidence["post_aggregation_constraints"])
+                pop_candidates = self._period_over_period_metric_candidates(
+                    parsed_expressions,
+                    source_name,
+                    source_context,
+                    existing_metric_catalog,
+                )
+                for candidate in pop_candidates["base_metric_candidates"]:
+                    entry_has_metric_evidence = True
+                    found_candidate = True
+                    entry_candidates.append(candidate)
+                    self._merge_metric_candidate(metric_candidates, candidate)
+                    for measure in candidate.get("base_measures", []):
+                        self._merge_base_measure(base_measures, measure)
+                for candidate in pop_candidates["derived_metric_candidates"]:
+                    entry_has_metric_evidence = True
+                    found_candidate = True
+                    entry_candidates.append(candidate)
+                    self._merge_metric_candidate(metric_candidates, candidate)
 
-                found_candidate = False
                 for parsed in parsed_expressions:
                     for select in self._iter_selects(parsed):
                         select_tables = self._collect_tables(select)
@@ -726,6 +744,409 @@ class SemanticDiscoveryTools:
         return {
             "derived_datasource_recommendations": recommendations,
             "classification_reason": reason,
+        }
+
+    def _period_over_period_metric_candidates(
+        self,
+        parsed_expressions: List[Any],
+        source_name: str,
+        source_context: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Extract MetricFlow derived metric candidates from LAG-style period comparisons."""
+        from sqlglot import expressions as exp
+
+        base_candidates: Dict[str, Dict[str, Any]] = {}
+        derived_candidates: Dict[str, Dict[str, Any]] = {}
+
+        for parsed in parsed_expressions:
+            projection_index = self._named_projection_index(parsed)
+            shift_outputs: Dict[str, Dict[str, Any]] = {}
+
+            for select_name, select in self._named_selects_for_period_analysis(parsed):
+                source_names = self._direct_source_names(select)
+                for projection in select.expressions:
+                    expr = projection.this if isinstance(projection, exp.Alias) else projection
+                    alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+                    if not alias:
+                        continue
+                    for window in expr.find_all(exp.Window):
+                        detail = self._period_shift_output_detail(
+                            window=window,
+                            alias=alias,
+                            source_names=source_names,
+                            projection_index=projection_index,
+                        )
+                        if not detail:
+                            continue
+                        shift_outputs[self._normalize_identifier(alias)] = detail
+                        base_candidate = self._base_candidate_for_period_shift(
+                            detail=detail,
+                            source_name=source_name,
+                            source_context=source_context,
+                            existing_metric_catalog=existing_metric_catalog,
+                            projection_index=projection_index,
+                        )
+                        if base_candidate:
+                            base_candidates[self._metric_candidate_merge_key(base_candidate)] = base_candidate
+
+                        previous_candidate = self._previous_period_candidate_from_shift(
+                            detail=detail,
+                            source_name=source_name,
+                            select_name=select_name,
+                            existing_metric_catalog=existing_metric_catalog,
+                        )
+                        if previous_candidate:
+                            derived_candidates[self._metric_candidate_merge_key(previous_candidate)] = (
+                                previous_candidate
+                            )
+
+            if not shift_outputs:
+                continue
+
+            for select_name, select in self._named_selects_for_period_analysis(parsed):
+                source_names = self._direct_source_names(select)
+                visible_shifts = self._visible_period_shift_outputs(
+                    source_names=source_names,
+                    shift_outputs=shift_outputs,
+                    projection_index=projection_index,
+                )
+                visible_shifts.update(shift_outputs)
+                for projection in select.expressions:
+                    candidate = self._period_over_period_candidate_from_projection(
+                        projection=projection,
+                        source_name=source_name,
+                        select_name=select_name,
+                        shift_outputs=visible_shifts,
+                        existing_metric_catalog=existing_metric_catalog,
+                    )
+                    if candidate:
+                        derived_candidates[self._metric_candidate_merge_key(candidate)] = candidate
+
+        return {
+            "base_metric_candidates": sorted(base_candidates.values(), key=lambda item: item["name"]),
+            "derived_metric_candidates": sorted(derived_candidates.values(), key=lambda item: item["name"]),
+        }
+
+    def _named_selects_for_period_analysis(self, parsed: Any) -> List[tuple]:
+        """Return outer and named inner SELECTs with stable names."""
+        from sqlglot import expressions as exp
+
+        selects: List[tuple] = []
+        if isinstance(parsed, exp.Select):
+            selects.append(("__outer__", parsed))
+        selects.extend(self._iter_cte_selects(parsed))
+        selects.extend(self._iter_inline_subquery_selects(parsed))
+        return selects
+
+    def _named_projection_index(self, parsed: Any) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """Index named SELECT output aliases for CTE/subquery lookups."""
+        from sqlglot import expressions as exp
+
+        index: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for select_name, select in self._named_selects_for_period_analysis(parsed):
+            projections: Dict[str, Dict[str, Any]] = {}
+            for projection in select.expressions:
+                expr = projection.this if isinstance(projection, exp.Alias) else projection
+                alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+                if alias:
+                    projections[self._normalize_identifier(alias)] = {
+                        "projection": projection,
+                        "expr": expr,
+                        "select": select,
+                        "select_name": select_name,
+                    }
+            index[select_name] = projections
+        return index
+
+    def _direct_source_names(self, select: Any) -> List[str]:
+        """Return direct FROM/JOIN source names for one SELECT."""
+        from sqlglot import expressions as exp
+
+        names: List[str] = []
+
+        def add_source(node: Any) -> None:
+            if isinstance(node, exp.Table):
+                name = self._safe_name(node.name)
+            elif isinstance(node, exp.Subquery):
+                name = self._safe_name(node.alias_or_name or "derived_datasource")
+            else:
+                name = self._safe_name(getattr(node, "alias_or_name", "") or getattr(node, "name", ""))
+            if name and name not in names:
+                names.append(name)
+
+        from_clause = select.args.get("from_")
+        if from_clause is not None:
+            if getattr(from_clause, "this", None) is not None:
+                add_source(from_clause.this)
+            for expr in getattr(from_clause, "expressions", []) or []:
+                add_source(expr)
+
+        for join in select.args.get("joins") or []:
+            if getattr(join, "this", None) is not None:
+                add_source(join.this)
+        return names
+
+    def _period_shift_output_detail(
+        self,
+        window: Any,
+        alias: str,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return LAG offset metadata for one window projection."""
+        from sqlglot import expressions as exp
+
+        if not self._is_period_shift_window(window):
+            return None
+        function_name = self._window_function_name(window)
+        if function_name != "LAG":
+            return None
+        input_expr = getattr(window.this, "this", None)
+        if not isinstance(input_expr, exp.Column):
+            return None
+        input_metric = self._safe_name(input_expr.name)
+        offset_window = self._infer_period_offset_window(window, source_names, projection_index)
+        if not offset_window:
+            return None
+        return {
+            "alias": self._safe_name(alias),
+            "input_metric": input_metric,
+            "offset_window": offset_window,
+            "window_function": function_name,
+            "source_names": source_names,
+            "window": {
+                "function": function_name,
+                "order_by": self._window_order_by(window),
+            },
+        }
+
+    def _is_period_shift_window(self, window: Any) -> bool:
+        """Return true for LAG/LEAD windows that can become offset inputs."""
+        from sqlglot import expressions as exp
+
+        return isinstance(window.this, (exp.Lag, exp.Lead))
+
+    def _infer_period_offset_window(
+        self,
+        window: Any,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> str:
+        """Infer MetricFlow-style offset_window from the window ORDER BY grain."""
+        count = self._period_shift_count(window)
+        grain = ""
+        order_items = self._window_order_by(window)
+        if order_items:
+            order_expr = order_items[0].get("expr", "")
+            order_name = self._normalize_identifier(order_expr.split(".")[-1])
+            for source_name in source_names:
+                projection = projection_index.get(source_name, {}).get(order_name)
+                if projection:
+                    grain = (
+                        self._time_grain_for_expr(projection["expr"]) or self._time_grain_from_alias(order_name) or ""
+                    )
+                    if grain:
+                        break
+            if not grain:
+                try:
+                    parsed_order = self._parse_sql(f"SELECT {order_expr} AS order_expr")[0]
+                    order_projection = parsed_order.expressions[0]
+                    expr = order_projection.this
+                    grain = self._time_grain_for_expr(expr) or self._time_grain_from_alias(order_name) or ""
+                except Exception:
+                    grain = self._time_grain_from_alias(order_name) or ""
+        if not grain:
+            return ""
+        unit = grain.lower()
+        if count != 1 and not unit.endswith("s"):
+            unit = f"{unit}s"
+        return f"{count} {unit}"
+
+    def _period_shift_count(self, window: Any) -> int:
+        """Return the LAG offset count, defaulting to one period."""
+        offset = getattr(window.this, "args", {}).get("offset")
+        try:
+            value = int(getattr(offset, "this", "") or 1)
+        except (TypeError, ValueError):
+            value = 1
+        return max(value, 1)
+
+    def _base_candidate_for_period_shift(
+        self,
+        detail: Dict[str, Any],
+        source_name: str,
+        source_context: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return the upstream aggregate candidate required by a period shift."""
+        input_metric = self._normalize_identifier(detail.get("input_metric", ""))
+        if not input_metric or input_metric in existing_metric_catalog:
+            return None
+        for source in detail.get("source_names", []):
+            projection_info = projection_index.get(source, {}).get(input_metric)
+            if not projection_info:
+                continue
+            select = projection_info["select"]
+            candidate = self._candidate_from_projection(
+                projection=projection_info["projection"],
+                source_name=source_name,
+                source_context=source_context,
+                tables=self._collect_tables(select),
+                filters=self._collect_filters(select),
+                dimensions=self._collect_dimensions(select),
+                existing_metric_catalog=existing_metric_catalog,
+            )
+            if candidate and candidate.get("evidence_kind") != "identity_metric_reference":
+                candidate["source_select"] = projection_info.get("select_name", source)
+                return candidate
+        return None
+
+    def _previous_period_candidate_from_shift(
+        self,
+        detail: Dict[str, Any],
+        source_name: str,
+        select_name: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return a derived metric exposing the previous-period metric value itself."""
+        alias = self._safe_name(detail.get("alias", ""))
+        input_metric = self._safe_name(detail.get("input_metric", ""))
+        offset_window = detail.get("offset_window", "")
+        if not alias or not input_metric or not offset_window:
+            return None
+
+        referenced_metric_names = {self._normalize_identifier(input_metric)}
+        missing_inputs = sorted(name for name in referenced_metric_names if name not in existing_metric_catalog)
+        return {
+            "name": alias,
+            "metric_type": "derived",
+            "metric_kind": "derived",
+            "expression": alias,
+            "source_alias": alias,
+            "source_sql_name": source_name,
+            "source_select": select_name,
+            "inputs": [
+                {
+                    "name": input_metric,
+                    "alias": alias,
+                    "offset_window": offset_window,
+                }
+            ],
+            "offset_window": offset_window,
+            "tables": [],
+            "dimensions": [],
+            "filters": [],
+            "base_measures": [],
+            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
+            "required_input_metrics": missing_inputs,
+            "confidence": "high",
+            "source_count": 1,
+            "score_reasons": [
+                "LAG window maps to a derived metric input with offset_window",
+                "SQL projects the previous-period value as an output column",
+            ],
+        }
+
+    def _visible_period_shift_outputs(
+        self,
+        source_names: List[str],
+        shift_outputs: Dict[str, Dict[str, Any]],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return period-shift aliases visible through direct CTE/subquery sources."""
+        visible: Dict[str, Dict[str, Any]] = {}
+        for source_name in source_names:
+            for alias in projection_index.get(source_name, {}):
+                shift = shift_outputs.get(alias)
+                if shift:
+                    visible[alias] = shift
+        return visible
+
+    def _period_over_period_candidate_from_projection(
+        self,
+        projection: Any,
+        source_name: str,
+        select_name: str,
+        shift_outputs: Dict[str, Dict[str, Any]],
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Build a derived metric candidate from expressions over shifted metric aliases."""
+        from sqlglot import expressions as exp
+
+        if not isinstance(projection, exp.Alias):
+            return None
+        expr = projection.this
+        alias = projection.alias
+        if not alias or not self._has_real_metric_math(expr):
+            return None
+        column_names = {self._normalize_identifier(col.name) for col in expr.find_all(exp.Column)}
+        shift_aliases = sorted(column_names & set(shift_outputs))
+        expression = expr.sql()
+        for window in expr.find_all(exp.Window):
+            detail = self._period_shift_output_detail(
+                window=window,
+                alias=f"{self._safe_name(getattr(getattr(window.this, 'this', None), 'name', '') or 'metric')}_prev",
+                source_names=[],
+                projection_index={},
+            )
+            if detail:
+                expression = expression.replace(window.sql(), detail["alias"])
+                shift_aliases.append(self._normalize_identifier(detail["alias"]))
+                shift_outputs[self._normalize_identifier(detail["alias"])] = detail
+
+        if not shift_aliases:
+            return None
+
+        inputs: List[Dict[str, Any]] = []
+        base_names = {shift_outputs[shift_alias]["input_metric"] for shift_alias in shift_aliases}
+        for col_name in sorted(column_names - set(shift_outputs)):
+            if col_name in base_names:
+                self._append_unique(inputs, {"name": col_name}, ["name", "alias", "offset_window"])
+        for base_name in sorted(base_names):
+            self._append_unique(inputs, {"name": base_name}, ["name", "alias", "offset_window"])
+        for shift_alias in shift_aliases:
+            detail = shift_outputs[shift_alias]
+            self._append_unique(
+                inputs,
+                {
+                    "name": detail["input_metric"],
+                    "alias": detail["alias"],
+                    "offset_window": detail["offset_window"],
+                },
+                ["name", "alias", "offset_window"],
+            )
+        if len(inputs) < 2:
+            return None
+
+        referenced_metric_names = {self._normalize_identifier(item["name"]) for item in inputs}
+        missing_inputs = sorted(name for name in referenced_metric_names if name not in existing_metric_catalog)
+        return {
+            "name": self._metric_candidate_name(alias, expr),
+            "metric_type": "derived",
+            "metric_kind": "derived",
+            "expression": expression,
+            "source_alias": alias,
+            "source_sql_name": source_name,
+            "source_select": select_name,
+            "inputs": inputs,
+            "offset_window": next(
+                (item.get("offset_window") for item in inputs if item.get("offset_window")),
+                "",
+            ),
+            "tables": [],
+            "dimensions": [],
+            "filters": [],
+            "base_measures": [],
+            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
+            "required_input_metrics": missing_inputs,
+            "confidence": "high",
+            "source_count": 1,
+            "score_reasons": [
+                "LAG window maps to derived metric input with offset_window",
+                "final SELECT expression combines current and prior-period metric values",
+            ],
         }
 
     def _extract_semantic_preservation_evidence(

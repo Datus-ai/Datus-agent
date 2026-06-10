@@ -567,6 +567,68 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidate["name"] == "rolling_7d_revenue"
         assert candidate["metric_type"] == "cumulative"
 
+    def test_lag_monthly_aggregation_becomes_previous_and_delta_metrics(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS start_month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    WHERE start_date >= '2025-04-01' AND start_date < '2025-11-01'
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        start_month,
+                        activity_count,
+                        LAG(activity_count) OVER (ORDER BY start_month) AS previous_month_activity_count
+                    FROM monthly
+                )
+                SELECT
+                    start_month,
+                    activity_count,
+                    previous_month_activity_count,
+                    activity_count - previous_month_activity_count AS activity_count_mom_delta
+                FROM compared
+                ORDER BY start_month
+                """
+            ]
+        )
+
+        assert result.success == 1
+        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == ["activity_count"]
+
+        derived = {candidate["name"]: candidate for candidate in result.result["derived_metric_candidates"]}
+        assert sorted(derived) == ["activity_count_mom_delta", "previous_month_activity_count"]
+
+        previous = derived["previous_month_activity_count"]
+        assert previous["metric_type"] == "derived"
+        assert previous["metric_kind"] == "derived"
+        assert previous["expression"] == "previous_month_activity_count"
+        assert previous["inputs"] == [
+            {
+                "name": "activity_count",
+                "alias": "previous_month_activity_count",
+                "offset_window": "1 month",
+            }
+        ]
+
+        delta = derived["activity_count_mom_delta"]
+        assert delta["metric_type"] == "derived"
+        assert delta["metric_kind"] == "derived"
+        assert delta["expression"] == "activity_count - previous_month_activity_count"
+        assert delta["inputs"] == [
+            {"name": "activity_count"},
+            {
+                "name": "activity_count",
+                "alias": "previous_month_activity_count",
+                "offset_window": "1 month",
+            },
+        ]
+
     def test_conditional_aggregation_keeps_case_measure_evidence(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
