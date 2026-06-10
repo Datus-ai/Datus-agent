@@ -84,3 +84,22 @@ datus-agent bootstrap-kb --datasource my_duckdb --components metadata
 The old database-selection flag is no longer accepted by the current CLI; use `--datasource`.
 
 ---
+
+## Self-Upgrade
+
+### `datus upgrade`
+
+Upgrade `datus-agent` and every installed `datus-*` adapter package to the
+latest release in one `uv` / `pip` run. Third-party dependencies are bumped only
+when a new datus release requires it; editable / source (`git`) checkouts are
+skipped. Add `--check` to report the latest version without installing.
+
+```bash
+datus upgrade
+datus upgrade --check
+```
+
+On an interactive launch, `datus` also prints a one-line hint when a newer
+release is available. Set `DATUS_DISABLE_VERSION_CHECK=1` to silence it.
+
+---
