@@ -567,64 +567,64 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidate["name"] == "rolling_7d_revenue"
         assert candidate["metric_type"] == "cumulative"
 
-    def test_lag_monthly_aggregation_becomes_previous_and_delta_metrics(self):
+    def test_lag_period_aggregation_becomes_previous_and_delta_metrics(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
             sql_queries=[
                 """
-                WITH monthly AS (
+                WITH monthly_orders AS (
                     SELECT
-                        DATE_TRUNC('month', start_date) AS start_month,
-                        COUNT(DISTINCT ac_code) AS activity_count
-                    FROM v_udata_ac_info
-                    WHERE start_date >= '2025-04-01' AND start_date < '2025-11-01'
-                    GROUP BY DATE_TRUNC('month', start_date)
+                        DATE_TRUNC('month', order_date) AS metric_month,
+                        COUNT(DISTINCT order_id) AS order_count
+                    FROM fact_orders
+                    WHERE order_date >= '2025-01-01' AND order_date < '2025-07-01'
+                    GROUP BY DATE_TRUNC('month', order_date)
                 ),
-                compared AS (
+                period_comparison AS (
                     SELECT
-                        start_month,
-                        activity_count,
-                        LAG(activity_count) OVER (ORDER BY start_month) AS previous_month_activity_count
-                    FROM monthly
+                        metric_month,
+                        order_count,
+                        LAG(order_count) OVER (ORDER BY metric_month) AS order_count_previous_period
+                    FROM monthly_orders
                 )
                 SELECT
-                    start_month,
-                    activity_count,
-                    previous_month_activity_count,
-                    activity_count - previous_month_activity_count AS activity_count_mom_delta
-                FROM compared
-                ORDER BY start_month
+                    metric_month,
+                    order_count,
+                    order_count_previous_period,
+                    order_count - order_count_previous_period AS order_count_period_delta
+                FROM period_comparison
+                ORDER BY metric_month
                 """
             ]
         )
 
         assert result.success == 1
-        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == ["activity_count"]
+        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == ["order_count"]
 
         derived = {candidate["name"]: candidate for candidate in result.result["derived_metric_candidates"]}
-        assert sorted(derived) == ["activity_count_mom_delta", "previous_month_activity_count"]
+        assert sorted(derived) == ["order_count_period_delta", "order_count_previous_period"]
 
-        previous = derived["previous_month_activity_count"]
+        previous = derived["order_count_previous_period"]
         assert previous["metric_type"] == "derived"
         assert previous["metric_kind"] == "derived"
-        assert previous["expression"] == "previous_month_activity_count"
+        assert previous["expression"] == "order_count_previous_period"
         assert previous["inputs"] == [
             {
-                "name": "activity_count",
-                "alias": "previous_month_activity_count",
+                "name": "order_count",
+                "alias": "order_count_previous_period",
                 "offset_window": "1 month",
             }
         ]
 
-        delta = derived["activity_count_mom_delta"]
+        delta = derived["order_count_period_delta"]
         assert delta["metric_type"] == "derived"
         assert delta["metric_kind"] == "derived"
-        assert delta["expression"] == "activity_count - previous_month_activity_count"
+        assert delta["expression"] == "order_count - order_count_previous_period"
         assert delta["inputs"] == [
-            {"name": "activity_count"},
+            {"name": "order_count"},
             {
-                "name": "activity_count",
-                "alias": "previous_month_activity_count",
+                "name": "order_count",
+                "alias": "order_count_previous_period",
                 "offset_window": "1 month",
             },
         ]
