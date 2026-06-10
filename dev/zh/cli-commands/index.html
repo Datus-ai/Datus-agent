@@ -3562,6 +3562,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#self-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Upgrade
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Self-Upgrade">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#datus-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        datus upgrade
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3659,6 +3687,18 @@ for the same datasource CRUD operations (handy in scripts or CI).</p>
 - If only one database is configured, it's auto-selected
 - Otherwise, a list of available databases is shown</p>
 <p>The old database-selection flag is no longer accepted by the current CLI; use <code>--datasource</code>.</p>
+<hr />
+<h2 id="self-upgrade">Self-Upgrade<a class="headerlink" href="#self-upgrade" title="Permanent link">&para;</a></h2>
+<h3 id="datus-upgrade"><code>datus upgrade</code><a class="headerlink" href="#datus-upgrade" title="Permanent link">&para;</a></h3>
+<p>Upgrade <code>datus-agent</code> and every installed <code>datus-*</code> adapter package to the
+latest release in one <code>uv</code> / <code>pip</code> run. Third-party dependencies are bumped only
+when a new datus release requires it; editable / source (<code>git</code>) checkouts are
+skipped. Add <code>--check</code> to report the latest version without installing.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>upgrade
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>upgrade<span class="w"> </span>--check
+</span></code></pre></div>
+<p>On an interactive launch, <code>datus</code> also prints a one-line hint when a newer
+release is available. Set <code>DATUS_DISABLE_VERSION_CHECK=1</code> to silence it.</p>
 <hr />
 
 
