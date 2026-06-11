@@ -257,7 +257,13 @@ class DBManager:
 
     def _init_connection(self, datasource: str, database: str) -> BaseSqlConnector:
         db_name, db_config = self._resolve_db_config(datasource, database)
-        group = self._conn_dict.setdefault(datasource, {})
+        # Self-heal: a caller may have nulled this datasource's entry to mark its
+        # connectors closed (e.g. an external pool on eviction). setdefault keeps
+        # an existing None, so rebuild a fresh group rather than calling .get on it.
+        group = self._conn_dict.get(datasource)
+        if not isinstance(group, dict):
+            group = {}
+            self._conn_dict[datasource] = group
         cached = group.get(db_name)
         if cached is not None:
             return cached
@@ -355,6 +361,8 @@ class DBManager:
     def close(self):
         """Close all database connections."""
         for datasource, group in list(self._conn_dict.items()):
+            if not isinstance(group, dict):
+                continue
             for db_name, conn in list(group.items()):
                 if conn is None:
                     continue

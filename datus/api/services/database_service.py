@@ -307,7 +307,7 @@ class DatasourceService:
             return Result(success=True, data=data)
 
         except Exception as e:
-            logger.error(f"Failed to list databases: {e}")
+            logger.error(f"Failed to list databases: {e}", exc_info=True)
             return Result(
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
