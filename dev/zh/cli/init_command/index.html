@@ -3555,15 +3555,22 @@
 
 <h1 id="init-init">Init 命令 <code>/init</code><a class="headerlink" href="#init-init" title="Permanent link">&para;</a></h1>
 <h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p><code>/init</code> 是一个轻量级快捷入口——它把"按 <code>init</code> skill 的步骤为当前项目生成
-<code>AGENTS.md</code>"作为一句话发给 chat agent。skill 本身会带着 agent 走完整流程：</p>
+<p><code>/init</code> 是一个轻量级快捷入口——它让 chat agent 按内置 <strong><code>init</code> skill</strong>
+端到端地初始化项目工作区：构建知识库,最后以 <code>AGENTS.md</code> 总览收尾。
+skill 本身会带着 agent 走完整流程：</p>
 <ol>
-<li>用 <code>ask_user</code> 询问项目目标</li>
-<li>用 <code>filesystem_tools</code> 扫描目录结构</li>
-<li>读取 <code>README.md</code>（若存在)</li>
-<li>询问要纳入哪些已配置服务,并支持用户描述未配置的额外服务</li>
-<li>对每个选中数据源的表清单做"按类别归档"（不会枚举所有表)</li>
-<li>生成 markdown 并写入 <code>./AGENTS.md</code>（已存在时会先确认是否覆盖）</li>
+<li>从 <code>README.md</code>、目录树和 <code>agent.yml</code> 推断项目目标与数据源范围——
+   前期不提任何问题</li>
+<li>扫描文件与数据库元数据（目录树、表结构描述、样本行、行数统计），
+   并把所有内容归类到业务域</li>
+<li>用只读 <code>explore</code> 子代理并行探索每个业务域（并发上限 3）</li>
+<li>输出 <strong>Generation Manifest</strong>（推断出的目标、数据源范围、每个待生成
+   产物一行），然后**停下等待确认**——回复确认,或修正目标/范围/任意一行</li>
+<li>确认后按 <code>storage-classify</code> skill 把每个产物路由到对应存储：
+   semantic models、metrics、reference SQL、knowledge,各由匹配的
+   生成子代理产出</li>
+<li>最后生成精简的 <code>AGENTS.md</code> 总览并写入 <code>./AGENTS.md</code>
+   （已存在时会先确认是否覆盖）</li>
 </ol>
 <p>由于 <code>/init</code> 走的是标准 chat 流水线,所以你会自动获得熟悉的 UX——
 <code>ActionHistory</code> 事件流式渲染、<strong>Ctrl+O</strong> 切换 trace 详情、<strong>ESC</strong> 中断、
@@ -3576,13 +3583,17 @@ registry 直接从已安装的包内加载——不再向 <code>~/.datus/skills<
 <hr />
 <h2 id="_2">基本用法<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>&gt; /init
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>&gt; /init 这是一个销售分析数仓,重点关注订单域
 </span></code></pre></div>
-<p><code>/init</code> 不接受任何参数。skill 中传给 <code>db_tools.list_tables</code> 的数据源是
-当前 REPL 选中的那一个（启动时通过 <code>--datasource</code> 指定,或运行时用
-<code>/datasource</code> 切换）。</p>
-<p>执行时你会看到标准的 chat trace:<code>load_skill</code>、若干 <code>ask_user</code> 交互、
-若干 <code>filesystem_tools.*</code> 调用、<code>db_tools.list_tables</code> 调用,最后是
-<code>filesystem_tools.write_file</code>。</p>
+<p><code>/init</code> 接受一段可选的自由文本描述。命令后的内容会原样转发给 skill,
+作为目标/范围提示,由 skill 合并进推断出的上下文和 Generation Manifest。
+不带参数时,skill 自行推断全部上下文。数据源范围默认是当前 REPL 选中的
+那一个（启动时通过 <code>--datasource</code> 指定,或运行时用 <code>/datasource</code> 切换）。</p>
+<p>执行时你会看到标准的 chat trace:<code>load_skill</code>、文件系统扫描
+（<code>glob</code> / <code>grep</code> / <code>read_file</code>）、数据库元数据调用（<code>list_tables</code>、
+<code>describe_table</code>、<code>read_query</code>）、并行的 <code>explore</code> 子代理 <code>task</code> 调用,
+然后在 Generation Manifest 处暂停。确认后,生成类 <code>task</code> 分批执行,
+最终以写入 <code>AGENTS.md</code> 的 <code>filesystem_tools.write_file</code> 收尾。</p>
 <hr />
 <h2 id="_3">前置条件<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <ul>

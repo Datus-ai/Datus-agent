@@ -3828,8 +3828,20 @@
 <tr>
 <td><code>/init</code></td>
 <td></td>
-<td>为当前项目生成 <code>AGENTS.md</code>（使用当前 LLM）</td>
+<td>端到端初始化项目工作区并生成 <code>AGENTS.md</code>；可附加自由文本作为目标/范围提示</td>
 <td><a href="../init_command/">Init 命令</a></td>
+</tr>
+<tr>
+<td><code>/session-summarize</code></td>
+<td></td>
+<td>把当前会话总结进各持久化存储（先出 manifest,确认后执行）；可附加自由文本作为关注点提示</td>
+<td></td>
+</tr>
+<tr>
+<td><code>/memory-organize</code></td>
+<td></td>
+<td>审计并整理所有持久化存储（先出整改计划,确认后执行）；可附加自由文本作为关注点提示</td>
+<td></td>
 </tr>
 <tr>
 <td><code>/mcp</code></td>
