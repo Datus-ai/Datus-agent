@@ -123,3 +123,19 @@ def test_profile_command_is_hidden_deprecated_compatibility_entry():
     assert spec.group == "system"
     assert spec.hidden is True
     assert "deprecated" in spec.summary.lower()
+
+
+def test_session_summarize_command_registered_in_system_group():
+    from datus.cli.slash_registry import SLASH_COMMANDS
+
+    spec = next(s for s in SLASH_COMMANDS if s.name == "session-summarize")
+    assert spec.group == "system"
+    assert spec.summary  # non-empty and autocomplete-relevant
+
+
+def test_memory_organize_command_registered_in_system_group():
+    from datus.cli.slash_registry import SLASH_COMMANDS
+
+    spec = next(s for s in SLASH_COMMANDS if s.name == "memory-organize")
+    assert spec.group == "system"
+    assert spec.summary

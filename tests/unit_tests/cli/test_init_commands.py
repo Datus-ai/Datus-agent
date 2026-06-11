@@ -25,23 +25,12 @@ def _build_cli(*, plan_mode: bool = False, with_chat: bool = True):
     return cli
 
 
-class TestCmdInitArgumentValidation:
-    """`/init` accepts no arguments."""
+class TestCmdInitArgumentHandling:
+    """`/init` accepts an optional free-text description appended to the prompt."""
 
-    def test_rejects_any_argument(self):
-        from datus.cli.init_commands import InitCommands
-
-        cli = _build_cli()
-        ic = InitCommands(cli)
-
-        with patch("datus.cli.init_commands.print_error") as mock_err:
-            ic.cmd_init("--datasource foo")
-
-        mock_err.assert_called_once()
-        cli.chat_commands.execute_chat_command.assert_not_called()
-
-    def test_accepts_blank_or_whitespace(self):
-        from datus.cli.init_commands import InitCommands
+    def test_blank_sends_canonical_prompt(self):
+        from datus.cli.init_commands import _INIT_PROMPT, InitCommands
+        from datus.cli.skill_command_utils import render_skill_prompt
 
         cli = _build_cli()
         ic = InitCommands(cli)
@@ -51,6 +40,26 @@ class TestCmdInitArgumentValidation:
 
         mock_err.assert_not_called()
         cli.chat_commands.execute_chat_command.assert_called_once()
+        args, _ = cli.chat_commands.execute_chat_command.call_args
+        # No placeholder leaks; identical to the empty-args render.
+        assert args[0] == render_skill_prompt(_INIT_PROMPT, "")
+        assert "{user_context}" not in args[0]
+
+    def test_argument_appended_as_context_block(self):
+        from datus.cli.init_commands import InitCommands
+
+        cli = _build_cli()
+        ic = InitCommands(cli)
+
+        ic.cmd_init("sales analytics warehouse, focus on the orders domain")
+
+        cli.chat_commands.execute_chat_command.assert_called_once()
+        args, _ = cli.chat_commands.execute_chat_command.call_args
+        # The base instruction survives and the description is forwarded verbatim.
+        assert "`init` skill" in args[0]
+        assert "sales analytics warehouse, focus on the orders domain" in args[0]
+        assert "Additional context from the user" in args[0]
+        assert "{user_context}" not in args[0]
 
 
 class TestCmdInitChatDispatch:
@@ -58,6 +67,7 @@ class TestCmdInitChatDispatch:
 
     def test_forwards_init_prompt_to_chat(self):
         from datus.cli.init_commands import _INIT_PROMPT, InitCommands
+        from datus.cli.skill_command_utils import render_skill_prompt
 
         cli = _build_cli()
         ic = InitCommands(cli)
@@ -67,7 +77,7 @@ class TestCmdInitChatDispatch:
         cli.chat_commands.execute_chat_command.assert_called_once()
         args, kwargs = cli.chat_commands.execute_chat_command.call_args
         # First positional argument is the chat message.
-        assert args[0] == _INIT_PROMPT
+        assert args[0] == render_skill_prompt(_INIT_PROMPT, "")
         # Skill must be referenced explicitly so the model picks the right one.
         assert "`init` skill" in args[0]
         assert "AGENTS.md" in args[0]

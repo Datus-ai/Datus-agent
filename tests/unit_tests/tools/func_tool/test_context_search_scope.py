@@ -93,3 +93,23 @@ def test_missing_sub_agent_config_uses_default_context_tools():
         "get_reference_sql",
         "search_semantic_objects",
     }
+
+
+def test_declared_config_without_tools_key_inherits_default_context_tools():
+    # A named node config (e.g. ``agentic_nodes.gen_sql: {max_turns, system_prompt}``)
+    # that sets other keys but omits ``tools:`` yields an EMPTY tool_list. An empty
+    # list must mean "did not restrict → inherit node defaults (allow)", not
+    # "deny everything". Before this was fixed, such a bare node silently lost all
+    # context-search tools even though its DEFAULT_TOOLS enabled context_search_tools.*.
+    tools = _build_tools({"max_turns": 100, "system_prompt": "gen_sql"})
+
+    tool_names = {tool.name for tool in tools.available_tools()}
+
+    assert tool_names == {
+        "list_subject_tree",
+        "search_metrics",
+        "get_metrics",
+        "search_reference_sql",
+        "get_reference_sql",
+        "search_semantic_objects",
+    }

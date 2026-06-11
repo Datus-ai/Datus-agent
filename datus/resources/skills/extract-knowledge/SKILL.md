@@ -6,7 +6,7 @@ tags:
   - sql
   - gold-sql
   - iteration
-version: "1.1.0"
+version: "1.3.0"
 user_invocable: true
 disable_model_invocation: false
 ---
@@ -167,6 +167,15 @@ For every candidate diff item, ask these 4 questions in order. **If any answer i
 
 **lite mode:** every diff item from Steps 2–4 (lite) is a candidate fact.
 **deep mode:** diff the subagent's final SQL against `gold_sql` (also against the subagent's *first* attempt — the middle is informative). On failure, additionally walk through every follow-up prompt you sent; the "directions you've already qualitatively named" are confirmed fact sources.
+
+**Systematic corpus scan (both modes, additive) — mine encodings the per-pair diff misses.** The diff only surfaces facts a generic agent got *wrong on this question*; a literal that the draft happened to guess, or that no pair exercised, slips through. So, when you have access to the validated-SQL corpus (not just the single pair), also scan its `WHERE` / `SELECT` clauses **structurally** for non-inferable atoms, independent of any single diff:
+- **Literal filter values / coded enumerations** — every constant predicate (`col = '<literal>'`, `col IN (...)`, bit/flag tests) where the literal carries business meaning → a *term ↔ column ↔ value* fact (e.g. a business term maps to a specific column holding a specific code).
+- **Business-term → column / expression mappings** — when a question's term resolves to a particular column or computed expression in `SELECT`/`WHERE` → record the mapping.
+- **Question-word → column trigger mappings** — when a recurring *interrogative phrasing* (not just a noun) consistently resolves to one column or expression across pairs (e.g. one wording always hits column A while a near-synonym wording hits column B), record the trigger fact: *question says ⟨phrasing⟩ → use ⟨column/expression⟩*. These disambiguate near-duplicate columns that schema inspection cannot.
+- **Recurring mandatory constant filters** — a constant predicate that appears across many pairs and whose omission corrupts results → a required-filter fact.
+- **Threshold facts always carry the comparison operator's strictness.** A threshold without its boundary semantics is half a fact: record `> 500` vs `>= 500` (and `BETWEEN`'s inclusivity) exactly as the validated SQL has it — strict-vs-inclusive mismatches flip rows at the boundary and are among the most common silent errors.
+
+This pass extracts **structure** (literals in `WHERE`, term→column in `SELECT`), never hardcoded domain vocabulary — it works for any dataset. Every candidate it produces is just another candidate: funnel it through the same "worth-writing" test (so generic/inferable facts are still dropped) and the same Step 6 dedup/conflict gates (so it never duplicates what the diff already wrote).
 
 Pass every candidate through the "worth-writing" test. Only survivors become facts.
 

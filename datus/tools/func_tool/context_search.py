@@ -98,6 +98,16 @@ class ContextSearchTools:
             return True
 
         tool_list = self.sub_agent_config.tool_list
+        # An empty/undeclared tool_list means the sub-agent did not restrict its
+        # toolset, so it inherits the node's defaults — allow (same semantics as
+        # having no sub_agent_config above). Only a NON-empty list acts as an
+        # explicit allowlist that restricts. Without this, a named node whose
+        # ``agentic_nodes.<name>`` block omits ``tools:`` gets ``tool_list == []``
+        # and every context-search tool is silently denied, even though the
+        # node's DEFAULT_TOOLS enables ``context_search_tools.*``.
+        if not tool_list:
+            return True
+
         return (
             tool_namespace in tool_list
             or f"{tool_namespace}.*" in tool_list

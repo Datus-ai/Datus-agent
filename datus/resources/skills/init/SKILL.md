@@ -1,120 +1,168 @@
 ---
 name: init
-description: Initialize project workspace — generate AGENTS.md with architecture, directory map, services, and artifacts
+description: Initialize a project workspace end-to-end — scan every file plus database metadata (db/table/desc/sample/statistic), classify them into business domains, explore each domain in parallel with explore subagents, then (after the user confirms a generation manifest) route every artifact to its store via storage-classify and finish with a concise AGENTS.md overview
 tags:
   - init
   - workspace
   - project
-version: 1.0.0
+  - classify
+version: 2.4.0
 user_invocable: true
 ---
 
 # Project Initialization
 
-You are initializing a project workspace. Your goal is to generate an `AGENTS.md` file that describes this project's architecture, directory structure, services, and data assets at a high level.
+You are initializing a project workspace **end-to-end**. This is an orchestration skill: you scan the whole project (files + database metadata), classify everything into business domains, fan out read-only `explore` subagents to summarize each domain, and — **only after the user confirms a generation manifest** — route each artifact into its persistent store, finishing with a top-level `AGENTS.md` overview.
 
-**IMPORTANT**: AGENTS.md is an overview document, NOT a data dictionary. Keep it concise. Do NOT list every table — summarize databases by category and table count. The agent can use `list_tables` and `search_table` at runtime to explore details.
+You run in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `get_table_ddl`, `search_table`, `read_query`).
 
-Follow these steps in order:
+**Routing authority is `storage-classify`.** This skill decides *what to scan and explore*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load and follow `storage-classify` in Step 3.
 
-## Step 1: Gather Project Context
+**Two-phase contract (important).** Heavy generation (`gen_semantic_model` / `gen_metrics` / `gen_sql_summary` / `gen_skill` / `extract-knowledge`) costs tokens and writes real files. So there is a hard **turn boundary** after exploration: you produce a Generation Manifest and then **end your turn**. Do NOT call `ask_user` for this confirmation — just present the manifest and stop. The user confirms or corrects it in their next message; only then do you run Step 3 and Step 4.
 
-1. Use `ask_user` to ask: **"What is the goal of this project? Describe it in 1-2 sentences."**
-2. Use `filesystem_tools` to list the current directory structure (scan top 3 levels, skip hidden dirs and `__pycache__`/`node_modules`/.venv`)
-3. Read `README.md` if it exists (first 3000 chars)
-4. If `./knowledge/` exists, list its `*.md` files — these become the `## Knowledge` section index in Step 3
+---
 
-## Step 2: Select Services
+## Step 0 — Project Context (inferred, no questions)
 
-1. The system context includes configured databases from `agent.yml`. Present them to the user.
-2. Use `ask_user` to ask: **"Which of these services should be included in the project? You can also describe additional services (e.g., Airflow scheduler, Superset BI) that aren't configured yet."**
-   - Show the available databases as choices
-   - Allow free-text input for additional services
-3. For each selected database, use `db_tools.list_tables()` to get a table overview. **Do NOT include all tables in AGENTS.md** — just count them and categorize.
+**Do NOT call `ask_user` in this step.** Infer the project goal and the in-scope datasources from the repository and configuration; the user gets exactly one confirmation point — the Generation Manifest at the turn boundary.
 
-## Step 3: Generate AGENTS.md
+1. **Infer the goal.** Read `README.md` if it exists (first 3000 chars); otherwise derive a 1-2 sentence goal from the directory name, top-level files, and the datasource/table names. State it as an explicit assumption you will surface in the manifest.
+2. **Infer datasource scope from configuration.** Take the datasources configured in `agent.yml` (from the system context). If a `default_datasource` is set, scope to it; if the project files clearly reference specific datasources/tables, scope to those; otherwise include all configured datasources. Do not invent unconfigured services — only mention an extra service (Airflow, Superset, …) if a project file explicitly references it.
+3. Use `glob` to scan the directory tree (top 3 levels). Skip hidden dirs and `__pycache__` / `node_modules` / `.venv`.
 
-Based on the gathered context, generate a markdown document with these sections:
+Record the inferred **goal** and **in-scope datasources** (with the one-line reason for each) — they become the first rows of the Generation Manifest so the user can correct them at the single confirmation point.
 
-### # {project_name}
-One-line project description based on what the user told you.
+---
 
-### ## Architecture
-Brief architecture description. Include:
-- The data flow or system stack
-- How services connect
-- An ASCII diagram if the project is complex enough
+## Step 1 — Scan & Classify
 
-### ## Directory Map
-A table with columns: **Directory | Purpose | Key Entry Point | Consumer**
+Gather the raw material, then classify it into a **multi-level taxonomy of business domains / subtopics** (e.g. `sales/orders`, `sales/refunds`, `infra/etl`).
 
-Cover the main directories found in the scan.
+**File side:**
+- Use `glob` / `grep` to collect candidate files: `*.sql`, `*.md`, `*.yml` / `*.yaml`, scripts, configs, notebooks.
+- **Validated-query corpus is special — treat it as enumerable, never as a sample.** When the project holds a corpus of validated `(question, SQL)` pairs (a queries file, a golden/benchmark set, a saved-query catalog, a dbt/analysis SQL folder), count the total and plan to index **every** pair. Unlike tables (where representative sampling is fine), each validated query is a future few-shot example: one omitted pair is one the runtime can never retrieve. Do **not** curate "representative" patterns here.
 
-### ## Services
-A table with columns: **Service | Type | Connection | Description**
+**Database side (for each in-scope datasource):**
+- `list_databases` → `list_tables` to enumerate tables/views.
+- For representative tables: `describe_table` (or `get_table_ddl`) for **desc** (column names/types/comments), `search_table` (its `sample_data`) or `read_query("SELECT * FROM <t> LIMIT 5")` for **sample**, and `read_query("SELECT COUNT(*) AS rows, COUNT(DISTINCT <key>) AS card FROM <t>")` for key **statistics** (row count, key-column cardinality). There is no dedicated statistics tool — compute it with `read_query`.
+- For large databases (>50 tables), sample representative tables per naming pattern rather than describing every table.
 
-Include both configured databases and any additional services the user mentioned.
+**Classify** every file and every table into the domain taxonomy. A single domain may contain both files and tables.
 
-### ## Data Assets
-**Do NOT list every table.** Instead, provide a high-level summary per database:
+**Record with todos when the taxonomy is large (> 3 domains):** call `todo_write` with one todo per domain — `title` = domain name (≤ 8 words), `content` = the files + tables it covers plus exploration focus notes. Track each domain's progress with `todo_update` (`pending` → `in_progress` → `completed` / `failed`) in the next steps. Skip todos for small projects (≤ 3 domains) to avoid noise.
 
-- Database name, type, and total table count
-- Categorize tables by domain (e.g., "Core: 8 tables — blocks, transactions, logs...", "Analytics: 4 tables — DEX trades, NFT trades...")
-- Mention 3-5 key representative tables per category, not all of them
-- Note: "Use `list_tables` and `search_table` to explore table details at runtime"
+---
 
-Example format:
+## Step 2 — Explore Each Domain in Parallel (concurrency ≤ 3)
+
+For each domain, delegate a read-only exploration to an `explore` subagent:
+
+`task(type="explore", prompt=..., description="explore <domain>")`
+
+The `explore` subagent runs in an isolated context — it sees nothing you gathered unless you inline it. The prompt must carry: the **inferred project goal** and the **datasource (+ dialect)** the domain lives in, the domain's file list + table list, and the already-gathered desc / sample / statistic summaries. It must instruct the subagent to **explore read-only and summarize**, returning a **structured result in the storage-classify taxonomy**:
+
 ```
-### ethereum_iceberg (StarRocks, 15 tables)
-
-| Category | Count | Key Tables | Description |
-|----------|-------|------------|-------------|
-| Core | 8 | blocks, transactions, logs, traces | Raw blockchain data |
-| Derived | 3 | logs_decoded, traces_decoded | Decoded contract events |
-| Analytics | 4 | dex_trades, nft_trades | Pre-built analytical datasets |
-
-> Use `list_tables` and `search_table` tools to explore schema details.
+subject (the domain)
+  → store: one of semantic_models | metrics | reference_sql | knowledge | skills | memory | AGENTS.md | none
+    → ref: file path / table name / column name
+       rationale: one line — why this store (cite the storage-classify decision-tree branch)
+       prompt-seed: the self-contained seed to hand the downstream generator — not just a bare ref but the context it needs (e.g. table names + the column encodings/intent for gen_semantic_model; the full SQL + the business question + any mandatory filter for gen_sql_summary)
 ```
 
-For databases with many tables (>50), group by schema or naming pattern.
+Coverage is limited to **semantic_models, metrics, reference_sql, and knowledge+skills** — do not have the subagent propose other stores beyond memory/AGENTS.md notes.
 
-### ## Recommended Tools
-For each configured service, list the tools the agent should use to interact with it at runtime. Match tools to service types:
+**For a validated-query corpus, instruct the explorer to enumerate EVERY `(question, SQL)` pair as its own `reference_sql` ref** (not a representative handful), and to carry each pair's **original natural-language question** in the `prompt-seed` (it is the best retrieval key for future questions). Large corpora: have the explorer return the full list in batches rather than truncating.
 
-| Service Type | Recommended Tools |
-|-------------|-------------------|
-| Database (sqlite, duckdb, snowflake, starrocks, mysql, postgresql) | `list_tables`, `search_table`, `describe_table`, `read_query` |
-| BI Tool (superset) | `bi_tools.*` |
-| Scheduler (airflow) | (future) |
-| Semantic Layer (metricflow, dbt, cube) | `search_metrics`, `search_semantic_model` |
-| Knowledge Base | `search_documents`, `search_historical_sql` |
+**Concurrency rule:** issue at most **3** `task` calls per batch (3 tool calls in one message), wait for the batch to return, then start the next batch. Set the domain's todo to `in_progress` when you launch it and `completed` when it returns. Tell the user (briefly) how many domains were dropped if you cap anything.
 
-Only include rows for services that are actually configured or mentioned by the user.
+---
 
-### ## Artifacts
-Describe data artifacts, configs, or outputs this project produces:
-- Data catalogs, semantic models
-- SQL files, reference queries
-- Reports, dashboards
-- API schemas, config files
+## Turn Boundary — Emit the Generation Manifest, then STOP
 
-### ## Knowledge
-Index of business knowledge extracted from gold SQL pairs. Maintained by the `/extract-knowledge` skill.
+This manifest is the **single user confirmation point** — it must lead with the inferred context (Step 0) so the user can correct the goal or scope here, not via an earlier question.
 
-- If `./knowledge/` is empty or missing, render a single placeholder line: `_No extracted knowledge yet. Run /extract-knowledge to add entries._`
-- Otherwise, list one bullet per `*.md` file (alphabetical):
-  - `- [<topic title>](knowledge/<topic-slug>.md) — <one-line summary from the file's first paragraph>`
+1. **Lead with the inferred context** so it is explicitly confirmable:
 
-## Step 4: Write File
+   > **Inferred goal:** <1-2 sentences> — *(from `README.md` / directory name / table names)*
+   > **In-scope datasources:** <names> — *(from `agent.yml`: default_datasource / file references / all configured)*
 
-1. If `AGENTS.md` already exists in the current directory, use `ask_user` to ask: **"AGENTS.md already exists. Overwrite it?"**
-2. Use `filesystem_tools.write_file` to write the generated content to `./AGENTS.md`
-3. Tell the user the file has been created and they can edit it to refine.
+2. Aggregate every explore result, **dedupe** refs that appear under multiple domains, and build a **Generation Manifest** grouped by store, rendered as a Markdown table:
+
+   | Subject | Store | Refs | Mechanism | Summary |
+   |---------|-------|------|-----------|---------|
+   | sales/orders | semantic_models | `orders`, `order_items` | `task(gen_semantic_model)` | core order facts |
+   | sales/orders | metrics | GMV, AOV | `task(gen_metrics)` | built on orders measures |
+   | … | reference_sql | `queries/top_skus.sql` | `task(gen_sql_summary)` | reusable ranking query |
+   | … | knowledge | `status` enum on `orders` | `extract-knowledge` (lite) | atomic field-encoding fact |
+
+3. **STOP here.** After printing the inferred context + manifest, **end your turn**. Do **NOT** call any generation `task`, `extract-knowledge`, `gen_skill`, `add_memory`, or write any store yet. Do **NOT** call `ask_user`. State plainly: *"Reply to confirm, or correct the goal / datasource scope / any manifest row, and I'll run the generation."* Wait for the user's next message.
+
+---
+
+## Step 3 — Route & Generate (next turn, after confirmation; concurrency ≤ 3)
+
+Once the user confirms or corrects the manifest:
+
+1. `load_skill("storage-classify")` and treat its **Decision Tree** + **Per-Store Reference** + **Context Handoff to Subagents** as the routing authority for every item.
+2. **Make every delegated prompt self-contained (see storage-classify's *Context Handoff*).** The `explore` subagents that produced these refs are gone, and each generator runs in a fresh context — so inline the **datasource (+ dialect)**, the **business intent**, the **`prompt-seed` the explorer returned**, and the **rules/encodings already gathered** that the artifact must honor. Route each manifest item to its store with the prescribed mechanism:
+   - **Light items** → write directly: `memory` via `add_memory` (≤ 2000 bytes); small AGENTS.md notes via `write_file` / `edit_file`.
+   - **Heavy items** → delegate (the placeholders below are the *minimum* each prompt must carry):
+     - semantic_models → `task(type="gen_semantic_model", prompt="<datasource> · <table name(s)> · intent · known column encodings / join-key traps>")`
+     - metrics → `task(type="gen_metrics", prompt="<datasource> · metric name + definition · the base semantic model / measure it builds on · any mandatory filter>")`
+     - reference_sql → `task(type="gen_sql_summary", prompt="<datasource/dialect> · the original natural-language question (if known) · the complete SQL · why it is written this way>")` — **one call per SQL, enumerate the whole corpus**: each query becomes its own `reference_sql` entry; index **every** `(question, SQL)` pair, do not select representatives (recall is driven by coverage). If a manifest row lists several SQLs, expand it into one `gen_sql_summary` call each; never pass multiple queries in a single prompt (they collapse into one mixed, unsearchable entry). Always pass the **original question** when the example came from one — it is the retrieval key future questions match against. The prompt must also instruct the generator explicitly: **"set `search_text` to the original natural-language question verbatim** (trim whitespace, keep its language); only fall back to keyword phrases when no original question exists" — `search_text` is the vector key the runtime embeds, and a user's question matches another question far better than it matches SQL keywords.
+     - skills → `task(type="gen_skill", prompt="<skill intent + the concrete steps observed>")`
+     - knowledge → run `extract-knowledge` in **lite** mode (do NOT trigger its deep blind-SQL flow); pass the **source (the SQL/doc/table) and the specific fact to mine**, plus the datasource it applies to
+3. **Ordering:** metrics build on semantic models — generate all `semantic_models` items **before** their dependent `metrics` items.
+   - **Dual-route every `(question, SQL)` pair — this is required, not optional.** For each pair: (a) send it to `gen_sql_summary` so the example (with its original question) lands in `reference_sql`, AND (b) feed the same pair to `extract-knowledge` (lite) to mine the non-inferable rule. The example teaches *answer shape* (retrieved later for few-shot); the mined atom teaches *why* (encodings, mandatory filters, term→column mappings). One source, two stores — neither replaces the other.
+4. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Update each item's todo (`in_progress` → `completed` / `failed`) as you go.
+
+Do not hand-write semantic_models / metrics / reference_sql YAML yourself — always go through the matching subagent (per storage-classify's Forbidden rules).
+
+---
+
+## Step 4 — Finish with a Concise AGENTS.md Overview
+
+After all generation completes, generate or update `./AGENTS.md` **last**, following the *AGENTS.md Section Ownership* from `storage-classify`:
+
+`# <project name>` · `## Architecture` · `## Directory Map` · `## Services` · `## Data Assets` · `## Recommended Tools` · `## SQL Conventions` · `## Semantic Models` · `## Metrics` · `## Reference SQL` · `## Knowledge`
+
+**AGENTS.md is the project's KB entry point.** Because the agentic runtime injects AGENTS.md's first ~200 lines into every node's `<project_context>`, this is the one place that reliably tells a downstream agent *what KB exists and how to reach it*. Index every store here, at two granularities:
+
+- **knowledge → map to files.** One bullet per `./knowledge/*.md`: `- [<Domain>](knowledge/<slug>.md) — <one-line scope>`. The agent can `read_file` these directly. This `## Knowledge` section is **owned by `extract-knowledge`**; do not overwrite its entries. If empty, render `_No extracted knowledge yet. Run /extract-knowledge to add entries._`
+  **Write the scope line to convey unguessable specifics** — name the kinds of concrete values inside (exact thresholds, literal filter codes, enum spellings, term→column mappings), not just the topic. A downstream agent decides whether to `read_file` from this one line; "domain overview" reads as skippable in a familiar domain, while "contains exact codes/thresholds you cannot infer from the schema" does not.
+- **semantic_models / metrics / reference_sql → describe the subject list, not the contents.** For each, give **what it covers + how many + which tool retrieves it** (these stores are queried by retrieval, not read as files), e.g.:
+  - `## Semantic Models` — `N` models (`schools`, `satscores`, `frpm`); retrieve with `search_semantic_model`.
+  - `## Metrics` — `N` metrics (`county_avg_sat_math`, `avg_frpm_rate`, …); retrieve with `search_metrics`.
+  - `## Reference SQL` — `N` validated queries; retrieve similar `(question → SQL)` examples with `search_reference_sql` before writing new SQL.
+
+### `## SQL Conventions` — derive the project's output discipline from its own corpus
+
+If the project has a validated-SQL corpus, **induce** its recurring output conventions and write them as a short `## SQL Conventions` bullet list. This section rides in `<project_context>`, so it nudges every downstream `gen_sql` toward this project's answer shape — the residual failure mode after schema/encodings are known is usually **answer-shape mismatch** (extra columns, scalar-vs-list, ratio split across columns, missing `LIMIT 1`).
+
+- **Induce, do not hardcode.** Read a representative slice of the corpus and state only patterns you actually observe, phrased schema-free (no specific table/column/code names). Typical inducible conventions: *project exactly the columns asked, in order, no helper columns; "how many / total" → a single scalar aggregate; "ratio / percentage" → a single computed expression; "which / most / highest" → `ORDER BY … LIMIT 1`; compute rates from raw components rather than a stored percent column.*
+- **Every rule carries its trigger phrasing.** Write each convention as *"when the question says/asks ⟨observable phrasing⟩ → ⟨output shape⟩"*. A rule whose trigger you cannot state as question wording is not a rule — drop it. Trigger-free rules get applied to questions they were never induced from, and a misfiring convention is worse than none.
+- **Counter-example scan before persisting.** For each candidate rule, scan the corpus for pairs whose question matches the trigger phrasing but whose validated SQL has a *different* shape. Any counter-example means the trigger is too broad: narrow it (add the distinguishing wording) or drop the rule. Example failure this prevents: "how many X" usually maps to a scalar `COUNT`, but when X is an already-stored count column the corpus may list it per row — one blanket rule silently breaks the other case.
+- **Universal output-discipline candidates — confirm, never copy.** These four shapes recur across validated corpora; check each against *this* corpus and persist only the confirmed ones: scalar aggregates carry **no alias**; **no `DISTINCT` / `ROUND`** unless the question asks; multi-column fields (e.g. split name parts) are **projected separately, never concatenated**; **no helper/context columns** beyond what is asked.
+- If the corpus is absent or too small to show a pattern, render `_No SQL conventions induced yet._` and move on — never invent rules.
+- This is a **project-level presentation convention**, not knowledge and not a global rule (per `storage-classify`): it belongs only in this project's `AGENTS.md`.
+
+### Make the KB reachable at runtime
+
+The KB you just built is useless if `gen_sql` can't reach its retrieval tools. With the default tool-permission behavior, a `gen_sql` node whose `agentic_nodes.gen_sql` block omits `tools:` inherits node defaults (which include `context_search_tools.*`), so **no per-project `tools:` list is required**. Only if the project's `agent.yml` pins an explicit `tools:` for `gen_sql` must it include `context_search_tools.*`. Mention this in your closing note only when the config visibly restricts tools; otherwise leave config untouched.
+
+Hard constraints:
+- **AGENTS.md is a top-level overview, not a data dictionary.** Target **≤ 200 lines** (only the first ~200 lines are injected into `<project_context>`).
+- `## Data Assets` — **never enumerate every table.** Summarize per database by domain + table count, naming 3-5 representative tables; note "Use `list_tables` / `search_table` to explore details at runtime."
+- For the semantic/metric/reference_sql index lines, state the **count and the retrieval tool** so a downstream agent knows the KB exists and how to consult it — do NOT inline their contents.
+- If `AGENTS.md` already exists, prefer a scoped `edit_file` over a full rewrite, and ask via `ask_user` before overwriting an existing file wholesale.
+
+Tell the user the file is ready and they can edit it to refine.
+
+---
 
 ## Important Notes
 
-- **Keep it concise** — AGENTS.md is a project overview, not documentation for every table/column
-- If you can't determine something (e.g., architecture), use placeholder comments like `<!-- Describe your architecture here -->`
-- The ASCII diagram should be simple and readable
-- Use the project directory name as the project name unless the README suggests otherwise
-- For large databases (hundreds/thousands of tables), categorize and summarize — never enumerate all tables
+- **Routing lives in `storage-classify`, not here.** When in doubt about which store an item belongs to, defer to its decision tree and disambiguation table.
+- The explore subagent's `subject → store → ref` output is exactly `storage-classify`'s input contract — they dovetail.
+- Use placeholder comments (e.g. `<!-- Describe your architecture here -->`) when you cannot determine something rather than inventing facts.
+- **Do not ask the user anything before the manifest.** Goal and datasource scope are inferred in Step 0 and confirmed at the turn boundary; the manifest is the single confirmation gate, not an `ask_user`. (The only later `ask_user` allowed is the Step 4 guard before wholesale-overwriting an existing `AGENTS.md`.)

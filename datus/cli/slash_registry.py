@@ -84,6 +84,8 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("model", "Switch LLM provider/model", "system", aliases=("models",)),
     SlashSpec("effort", "Set reasoning effort (off|minimal|low|medium|high)", "system"),
     SlashSpec("init", "Generate AGENTS.md for the current project", "system"),
+    SlashSpec("session-summarize", "Summarize the current session into persistent stores", "system"),
+    SlashSpec("memory-organize", "Audit and reorganize all persistent stores", "system"),
     SlashSpec("services", "Configure dashboards/schedulers (TUI) or list read-only methods", "system"),
     SlashSpec(
         "permission",

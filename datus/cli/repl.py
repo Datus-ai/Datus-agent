@@ -67,6 +67,7 @@ from datus.cli.model_commands import ModelCommands
 from datus.cli.service_commands import ServiceCommands
 from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
 from datus.cli.status_bar import StatusBarProvider
+from datus.cli.summarize_commands import MemoryOrganizeCommands, SessionSummarizeCommands
 from datus.cli.todo_sidebar import TodoSidebarProvider
 from datus.cli.tui import DatusApp, tui_enabled
 from datus.cli.tui.app import EXIT_SENTINEL
@@ -270,6 +271,8 @@ class DatusCLI:
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
         self.init_commands = InitCommands(self)
+        self.session_summarize_commands = SessionSummarizeCommands(self)
+        self.memory_organize_commands = MemoryOrganizeCommands(self)
         self.service_commands = ServiceCommands(self)
         from datus.cli.datasource_commands import DatasourceCommands
 
@@ -353,6 +356,8 @@ class DatusCLI:
             "model": self.model_commands.cmd_model,
             "effort": self.effort_commands.cmd_effort,
             "init": self.init_commands.cmd_init,
+            "session-summarize": self.session_summarize_commands.cmd_session_summarize,
+            "memory-organize": self.memory_organize_commands.cmd_memory_organize,
             "services": self.service_commands.cmd_services,
             "permission": self._cmd_permission,
             "profile": self._cmd_profile,
