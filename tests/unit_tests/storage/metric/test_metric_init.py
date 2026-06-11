@@ -15,11 +15,18 @@ from datus.storage.metric.metric_init import (
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
     _append_auto_offset_result,
+    _append_metric_docs,
     _auto_generate_offset_derived_metrics,
+    _derived_metric_doc,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
+    _is_offset_derived_candidate,
+    _load_metric_doc_names,
+    _offset_grain,
+    _offset_identity_alias_candidates,
     _source_provenance_from_row,
     _sync_metric_provenance,
+    _unique_metric_catalog_by_name,
     init_semantic_yaml_metrics,
 )
 from datus.tools.func_tool.base import FuncToolResult
@@ -1227,6 +1234,81 @@ class TestAutoGenerateOffsetDerivedMetrics:
 
     def _metric_file(self, tmp_path):
         return tmp_path / "subject" / "semantic_models" / "starrocks" / "metrics" / "auto_offset_derived_metrics.yml"
+
+    def test_offset_helper_defensive_branches(self, tmp_path):
+        assert _offset_grain(None) is None
+        assert _offset_grain("1 centuries") is None
+        assert _offset_grain("1 months") == "month"
+        assert (
+            _is_offset_derived_candidate({"metric_type": "simple", "inputs": [{"offset_window": "1 month"}]}) is False
+        )
+        assert _is_offset_derived_candidate({"metric_type": "derived", "inputs": []}) is False
+        assert _offset_identity_alias_candidates({"inputs": []}) == []
+        assert (
+            _offset_identity_alias_candidates(
+                {
+                    "name": "previous_month_activity_count",
+                    "expression": "previous_month_activity_count",
+                    "inputs": [{"name": "activity_count", "alias": "", "offset_window": "1 month"}],
+                }
+            )
+            == []
+        )
+        assert (
+            _offset_identity_alias_candidates(
+                {
+                    "name": "activity_count_previous_month",
+                    "expression": "activity_count_previous_month",
+                    "inputs": [
+                        {"name": "activity_count", "alias": "activity_count_previous_month", "offset_window": "1 month"}
+                    ],
+                }
+            )
+            == []
+        )
+
+        metric_doc = _derived_metric_doc(
+            {
+                "name": "activity_count_previous_month",
+                "expression": "activity_count_previous_month",
+                "inputs": [
+                    "not-dict",
+                    {},
+                    {
+                        "name": "activity_count",
+                        "alias": "activity_count_previous_month",
+                        "offset_window": "1 month",
+                        "offset_to_grain": "month",
+                    },
+                ],
+            },
+            {"activity_count": {"subject_path": ["ac_manage", "campaign"]}},
+        )
+        metric_input = metric_doc["metric"]["type_params"]["metrics"][0]
+        assert metric_input["offset_to_grain"] == "month"
+        assert metric_doc["metric"]["locked_metadata"]["tags"] == [
+            "ac_manage/campaign",
+            "subject_tree: ac_manage/campaign",
+        ]
+
+        malformed_metric_file = tmp_path / "bad.yml"
+        malformed_metric_file.write_text("metric: [", encoding="utf-8")
+        assert _load_metric_doc_names(malformed_metric_file) == set()
+
+        empty_metric_file = tmp_path / "empty.yml"
+        _append_metric_docs(empty_metric_file, [])
+        assert not empty_metric_file.exists()
+
+        unique, ambiguous = _unique_metric_catalog_by_name(
+            [
+                "not-dict",
+                {"name": "activity_count"},
+                {"name": "activity_count"},
+                {"name": "order_count"},
+            ]
+        )
+        assert unique == {"order_count": {"name": "order_count"}}
+        assert ambiguous == {"activity_count"}
 
     def test_generates_and_syncs_offset_derived_metrics(self, tmp_path, monkeypatch):
         synced = {}

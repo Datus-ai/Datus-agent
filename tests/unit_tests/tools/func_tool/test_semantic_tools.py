@@ -893,6 +893,42 @@ class TestQueryMetricsCompression:
         assert semantic_tools.get_cached_query_metrics_result(second)["row_count"] == 1
         assert semantic_tools.get_cached_query_metrics_result(third)["row_count"] == 1
 
+    def test_query_metrics_result_cache_helpers_handle_supported_data_shapes(self, semantic_tools):
+        class NumRows:
+            num_rows = "7"
+
+        class BadNumRows:
+            num_rows = "bad"
+
+        class ShapeRows:
+            shape = (3, 2)
+
+        class BadShapeRows:
+            shape = ()
+
+        class CsvLike:
+            def to_csv(self, index=False):
+                assert index is False
+                return "x\n1\n"
+
+        class ToPandasLike:
+            def to_pandas(self):
+                return CsvLike()
+
+        assert semantic_tools._query_data_row_count(None) == 0
+        assert semantic_tools._query_data_row_count(NumRows()) == 7
+        assert semantic_tools._query_data_row_count(BadNumRows()) == 0
+        assert semantic_tools._query_data_row_count(ShapeRows()) == 3
+        assert semantic_tools._query_data_row_count(BadShapeRows()) == 0
+        assert semantic_tools._query_data_row_count(1) == 0
+
+        assert semantic_tools._query_data_to_csv(["x"], None) == ""
+        assert semantic_tools._query_data_to_csv(["x"], ToPandasLike()) == "x\n1\n"
+        assert semantic_tools._query_data_to_csv(["x"], [{"x": 1}, (2,), 3]) == "x\r\n1\r\n2\r\n3\r\n"
+        assert semantic_tools._cache_query_metrics_result(["x"], None) is None
+        with patch.object(semantic_tools, "_query_data_to_csv", return_value=""):
+            assert semantic_tools._cache_query_metrics_result(["x"], [{"x": 1}]) is None
+
     def test_query_metrics_empty_data(self, semantic_tools):
         """Test query_metrics with empty result set."""
         query_result = QueryResult(

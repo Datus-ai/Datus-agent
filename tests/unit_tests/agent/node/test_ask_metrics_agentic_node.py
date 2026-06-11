@@ -1017,6 +1017,34 @@ class TestUpdateContext:
         assert ctx.row_count == 0
         assert ctx.sql_query == "SELECT month, count FROM t WHERE 1 = 0"
 
+    def test_query_result_helpers_handle_defensive_branches(self):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        assert AskMetricsAgenticNode._query_action_arguments({"input": {"arguments": {"a": 1}}}) == {"a": 1}
+        assert AskMetricsAgenticNode._query_action_arguments({"input": {"arguments": '{"a": 1}'}}) == {"a": 1}
+        assert AskMetricsAgenticNode._query_action_arguments({"input": {"arguments": "not-json"}}) == {}
+        assert AskMetricsAgenticNode._query_action_arguments({"input": {"arguments": "[1]"}}) == {}
+        assert AskMetricsAgenticNode._query_action_arguments({}) == {}
+
+        assert AskMetricsAgenticNode._query_result_payload({"output": "not-dict"}) is None
+        assert AskMetricsAgenticNode._query_result_payload({"output": {"raw_output": {"success": 0}}}) is None
+        assert (
+            AskMetricsAgenticNode._query_result_payload({"output": {"raw_output": {"success": 1, "result": []}}})
+            is None
+        )
+        assert AskMetricsAgenticNode._query_result_columns({"columns": "x"}) == []
+        assert AskMetricsAgenticNode._query_result_columns({"columns": ["x", None, ""]}) == ["x", "None"]
+        assert AskMetricsAgenticNode._query_result_row_count({"data": {"original_rows": "bad"}}) == 0
+        assert AskMetricsAgenticNode._query_result_row_count({"data": [["a"], ["b"]]}) == 2
+        assert AskMetricsAgenticNode._query_result_row_count({"data": "not-list"}) == 0
+        assert AskMetricsAgenticNode._query_result_id({"result_id": " rid "}) == "rid"
+        assert AskMetricsAgenticNode._query_result_id({"metadata": {"_full_result_cache_key": " cache "}}) == "cache"
+        assert AskMetricsAgenticNode._query_result_id({"metadata": {}}) is None
+
+        assert AskMetricsAgenticNode._select_last_query_metrics_action(["bad"]) is None
+        assert AskMetricsAgenticNode._selected_final_result_id_from_actions(["bad"]) is None
+        assert AskMetricsAgenticNode._select_query_metrics_action_by_result_id(["bad"], "missing") is None
+
     def test_skips_failed_actions(self):
         actions = [
             {
