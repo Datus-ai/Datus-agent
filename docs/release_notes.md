@@ -2,6 +2,31 @@
 
 ## 0.3
 
+### 0.3.4
+
+**New Features**
+
+- **AskMetrics Subagent** - A dedicated metric QA agent for KPI, trend, group-by, and attribution questions that reaches for metric-specific tools and prompts instead of raw SQL, with customizable routing, templates, and tools. [#954](https://github.com/Datus-ai/Datus-agent/pull/954) [docs](subagent/ask_metrics.md)
+- **OpenRouter Provider** - Point a single `OPENROUTER_API_KEY` at the full vendor/model catalog; the `/model` picker now has search filtering and hides the non-canonical `-fast` Claude aliases. [#973](https://github.com/Datus-ai/Datus-agent/pull/973) [#936](https://github.com/Datus-ai/Datus-agent/pull/936) [docs](cli/model_command.md)
+- **Self-Update Commands** - `datus upgrade` / `datus update` check for and install new versions of your `datus-*` packages from the CLI; interactive sessions flag new versions on startup, and `--check` looks without installing. [#949](https://github.com/Datus-ai/Datus-agent/pull/949)
+- **Orchestrator Tools in Print Mode** - `--orchestrator-tools` lets an external orchestrator request issue comments, status updates, human input, blocked flags, and mission completion through proxy tools, with each tool's strict JSON schema preserved. [#950](https://github.com/Datus-ai/Datus-agent/pull/950)
+
+**Enhancements**
+
+- **Queryable Metrics by Default** - Metric generation now extracts a queryability contract and validates it with `query_metrics(dry_run=True)`, so you no longer get metrics that are structurally valid but cannot actually be queried at the original grain. [#943](https://github.com/Datus-ai/Datus-agent/pull/943) [#962](https://github.com/Datus-ai/Datus-agent/pull/962)
+- **Scoped Agent Memory** - Each agent gets a per-agent 2000-byte `MEMORY.md` that is write-only through `add_memory` / `edit_memory`; sub-agents inherit it read-only. [#975](https://github.com/Datus-ai/Datus-agent/pull/975) [docs](integration/memory.md)
+- **Built-in Knowledge Extraction** - External knowledge generation moved off the old `ext_knowledge` vector subsystem to the built-in `extract-knowledge` skill, trimming legacy storage and tooling while keeping the knowledge-base API. [#932](https://github.com/Datus-ai/Datus-agent/pull/932)
+- **Stronger Snowflake Support** - Snowflake setups now accept inline PEM private keys, reject unsupported catalog params, and normalize time-grain queries across the DB and MetricFlow adapters; docs clarify that password and private key are mutually exclusive, warehouse is required, and catalog usually should not be set. [#937](https://github.com/Datus-ai/Datus-agent/pull/937) [datus-db-adapters#70](https://github.com/Datus-ai/datus-db-adapters/pull/70) [datus-db-adapters#72](https://github.com/Datus-ai/datus-db-adapters/pull/72) [datus-semantic-adapter#27](https://github.com/Datus-ai/datus-semantic-adapter/pull/27) [datus-semantic-adapter#28](https://github.com/Datus-ai/datus-semantic-adapter/pull/28) [datus-semantic-adapter#29](https://github.com/Datus-ai/datus-semantic-adapter/pull/29) [docs](configuration/datasources.md)
+- **Unified `gen_sql` Naming** - The SQL-generation node, workflow, config, CLI command (`/gen_sql`), prompt templates, and sub-agent name now share one consistent `gen_sql` naming; projects on the old `generate_sql` / `sql_system` config should migrate. [#935](https://github.com/Datus-ai/Datus-agent/pull/935) [docs](configuration/nodes.md)
+- **Configurable Metrics Batch Size** - `bootstrap-kb --components metrics` adds `--metrics-batch-size`; set it to `1` when you need per-success-story provenance, or keep the default of `5` for the original throughput. [#976](https://github.com/Datus-ai/Datus-agent/pull/976)
+
+**Bug Fixes**
+
+- **Datasource-Isolated Metrics Bootstrap** - Metrics bootstrap now isolates rows per datasource in multi-datasource projects, so `overwrite` no longer deletes another datasource's KB data, with hardened MetricFlow YAML merge, batch refresh, final metric de-duplication, and CLI long-output truncation. [#974](https://github.com/Datus-ai/Datus-agent/pull/974)
+- **Robust Semantic Metric Query & Validation** - Snowflake table coordinates now reach semantic-model generation prompts, multi-metric dimension compatibility gets a preflight with split suggestions, temporary YAML validation no longer scans unrelated parent directories, and non-string / nullable PyArrow results display safely. [#941](https://github.com/Datus-ai/Datus-agent/pull/941) [#946](https://github.com/Datus-ai/Datus-agent/pull/946)
+- **Cross-Datasource Subject Node Migration** - Upgrading older SQLite storage migrates the stale `subject_nodes` UNIQUE constraint so same-named subject nodes can coexist across datasources while staying de-duplicated within one. [#964](https://github.com/Datus-ai/Datus-agent/pull/964)
+- **One Datasource, Multiple Databases** - A single datasource can now route to multiple databases — file-glob datasources, benchmark tasks, `/database` switching, DB tools, and node execution all select the connection by `(datasource, database)`, and benchmark SQL tasks can name their datasource explicitly. [#961](https://github.com/Datus-ai/Datus-agent/pull/961) [#934](https://github.com/Datus-ai/Datus-agent/pull/934) [datus-db-adapters#71](https://github.com/Datus-ai/datus-db-adapters/pull/71)
+
 ### 0.3.3
 
 **New Features**
