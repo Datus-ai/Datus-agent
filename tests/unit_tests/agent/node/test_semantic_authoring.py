@@ -76,8 +76,10 @@ def test_osi_skill_skip_handles_missing_node_config(monkeypatch):
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
+    parent_calls = []
+
     def _unexpected_parent_call(self):
-        raise AssertionError("MetricFlow skills should not be injected in OSI mode")
+        parent_calls.append(type(self).__name__)
 
     monkeypatch.setattr(AgenticNode, "_setup_skill_func_tools", _unexpected_parent_call)
 
@@ -90,3 +92,5 @@ def test_osi_skill_skip_handles_missing_node_config(monkeypatch):
     semantic_node.agent_config = _agent_config("osi")
     semantic_node.node_config = None
     semantic_node._setup_skill_func_tools()
+
+    assert parent_calls == [], "MetricFlow skills should not be injected in OSI mode"
