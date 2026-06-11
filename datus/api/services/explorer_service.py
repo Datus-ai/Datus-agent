@@ -2,6 +2,7 @@
 Explorer service for catalog and subject tree management.
 """
 
+import asyncio
 import os
 from typing import List, Optional, Tuple
 
@@ -11,6 +12,9 @@ from datus.api.models.explorer_models import (
     DeleteSubjectInput,
     EditMetricInput,
     EditSemanticModelInput,
+    MetricDimensionItem,
+    MetricDimensionPreflight,
+    MetricDimensionsData,
     MetricInfo,
     MetricPreviewData,
     MetricPreviewInput,
@@ -604,12 +608,68 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
+    async def get_metric_dimensions(self, subject_path: List[str]) -> Result[MetricDimensionsData]:
+        """List the queryable dimensions of a saved metric.
+
+        Powers the preview panel's dimension picker, so the user only chooses
+        dimensions the metric actually supports.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        try:
+            self._require_datasource()
+
+            if not subject_path:
+                return Result[MetricDimensionsData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Subject path cannot be empty",
+                )
+
+            metric_name = subject_path[-1]
+
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+
+            tools = SemanticTools(self.agent_config)
+            adapter = tools.adapter
+            if adapter is None:
+                return Result[MetricDimensionsData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Semantic adapter is not available; cannot load dimensions.",
+                )
+
+            dimensions = await adapter.get_dimensions(metric_name=metric_name)
+            items = [
+                MetricDimensionItem(
+                    name=d.name,
+                    type=getattr(d, "type", None),
+                    description=getattr(d, "description", None),
+                    is_primary_key=getattr(d, "is_primary_key", None),
+                )
+                for d in (dimensions or [])
+            ]
+            return Result[MetricDimensionsData](
+                success=True,
+                data=MetricDimensionsData(metric=metric_name, dimensions=items),
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to get metric dimensions: {e}")
+            return Result[MetricDimensionsData](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage=str(e),
+            )
+
     async def preview_metric(self, request: MetricPreviewInput) -> Result[MetricPreviewData]:
         """Compile a saved metric into runnable SQL via the semantic adapter.
 
         Uses dry-run so nothing executes here: the frontend hands the returned
         SQL to the existing SQL-result panel, which runs it and renders the
         table / chart. Only already-saved (registered) metrics are supported.
+        When requested dimensions aren't supported, returns a structured
+        ``preflight_error`` (with the metric's valid dimensions) instead of SQL.
         """
         from datus.api.models.config_models import ErrorCode
 
@@ -628,16 +688,18 @@ class ExplorerService:
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
             tools = SemanticTools(self.agent_config)
-            adapter = tools.adapter
-            if adapter is None:
+            if tools.adapter is None:
                 return Result[MetricPreviewData](
                     success=False,
                     errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                     errorMessage="Semantic adapter is not available; cannot preview this metric.",
                 )
 
-            # dry_run asks the adapter to render SQL without executing it.
-            query_result = await adapter.query_metrics(
+            # query_metrics is sync (it wraps an async adapter call); run it off
+            # the event loop. dry_run renders SQL and runs the dimension preflight
+            # without executing anything.
+            func_result = await asyncio.to_thread(
+                tools.query_metrics,
                 metrics=[metric_name],
                 dimensions=request.dimensions or [],
                 time_start=request.time_start,
@@ -649,22 +711,45 @@ class ExplorerService:
                 dry_run=True,
             )
 
-            metadata = query_result.metadata or {}
-            sql = metadata.get("sql")
-            if not sql and query_result.data:
-                # MetricFlow also echoes the rendered SQL in the single data row.
-                sql = (query_result.data[0] or {}).get("sql")
-
-            if not sql:
+            if func_result.success == 1:
+                payload = func_result.result or {}
+                sql = (payload.get("metadata") or {}).get("sql")
+                if not sql:
+                    data = payload.get("data")
+                    if isinstance(data, list) and data:
+                        sql = (data[0] or {}).get("sql")
+                if not sql:
+                    return Result[MetricPreviewData](
+                        success=False,
+                        errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                        errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
+                    )
                 return Result[MetricPreviewData](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
+                    success=True,
+                    data=MetricPreviewData(metric=metric_name, sql=sql, datasource=self.datasource_id or None),
+                )
+
+            # A dimension preflight failure carries structured detail; surface it
+            # so the UI can guide the user instead of showing a raw error.
+            detail = func_result.result
+            if isinstance(detail, dict) and detail.get("invalid_dimensions") is not None:
+                return Result[MetricPreviewData](
+                    success=True,
+                    data=MetricPreviewData(
+                        metric=metric_name,
+                        preflight_error=MetricDimensionPreflight(
+                            message=func_result.error or "Some dimensions are not supported by this metric.",
+                            invalid_dimensions=detail.get("invalid_dimensions") or [],
+                            common_dimensions=detail.get("common_dimensions") or [],
+                            suggested_metric_groups=detail.get("suggested_metric_groups") or [],
+                        ),
+                    ),
                 )
 
             return Result[MetricPreviewData](
-                success=True,
-                data=MetricPreviewData(metric=metric_name, sql=sql, datasource=self.datasource_id or None),
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage=func_result.error or "Failed to preview metric.",
             )
 
         except Exception as e:
