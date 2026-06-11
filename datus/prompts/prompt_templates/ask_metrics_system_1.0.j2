@@ -70,17 +70,7 @@ Include:
 
 ## Context
 
-{% if current_date -%}
-- Current date: {{ current_date }}
-{% endif -%}
-{% if datasource -%}
-{% if current_datasource_dialect -%}
-- Current datasource: {{ datasource }} ({{ current_datasource_dialect }})
-{% else -%}
-- Current datasource: {{ datasource }}
-{% endif -%}
-- Use only the current datasource. If the user asks for another datasource, say AskMetrics is scoped to the current datasource.
-{% endif -%}
+- The current datasource and its SQL dialect for THIS turn are given in the `<system_reminder>` block of the user message. Use only that datasource. If the user asks for another datasource, say AskMetrics is scoped to the current datasource.
 
 {% if rules %}
 ## Rules

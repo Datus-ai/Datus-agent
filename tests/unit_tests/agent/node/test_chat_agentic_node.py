@@ -698,22 +698,26 @@ class TestChatAgenticNodeSystemPrompt:
         assert isinstance(prompt, str)
         assert len(prompt) >= 100
 
-    def test_get_system_prompt_contains_active_permission_profile(self, real_agent_config, mock_llm_create):
-        """Runtime /profile changes must be visible to the next LLM turn."""
+    def test_get_system_prompt_excludes_permission_profile(self, real_agent_config, mock_llm_create):
+        """The permission profile is enforced by hooks at tool-call time, never prompted.
+
+        Keeping it out of the system prompt also keeps the frozen per-session
+        snapshot byte-stable across a runtime /profile switch.
+        """
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
 
         real_agent_config.active_profile_name = "dangerous"
         node = ChatAgenticNode(
             node_id="test_prompt_profile",
-            description="Test active permission profile in prompt",
+            description="Test permission profile absent from prompt",
             node_type=NodeType.TYPE_CHAT,
             agent_config=real_agent_config,
         )
 
         prompt = node._get_system_prompt()
 
-        assert "Current permission profile: dangerous" in prompt
-        assert "authoritative for this turn" in prompt
+        assert "Current permission profile" not in prompt
+        assert "dangerous" not in prompt
 
     def test_workflow_prompt_does_not_advertise_ask_user(self, real_agent_config, mock_llm_create):
         """Workflow chat has no ask_user tool, so the prompt must not route to it."""

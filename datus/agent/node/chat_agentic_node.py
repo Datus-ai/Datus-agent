@@ -471,10 +471,10 @@ class ChatAgenticNode(AgenticNode):
         )
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         context["has_ask_user_tool"] = "ask_user" in exposed
-        context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
-        from datus.utils.time_utils import get_default_current_date
-
-        context["current_date"] = get_default_current_date(None)
+        # No per-turn values here: the current date lives in the shared
+        # runtime-context block, the current datasource/dialect in the user
+        # turn's <system_reminder>, and the permission profile is enforced by
+        # the permission hooks at tool-call time rather than prompted.
         prompt_version = prompt_version or self.node_config.get("prompt_version")
 
         system_prompt_name = self.node_config.get("system_prompt") or self.get_node_name()

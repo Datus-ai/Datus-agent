@@ -400,6 +400,13 @@ class AskMetricsAgenticNode(AgenticNode):
                 mapping[category] = category_tools
         return mapping
 
+    def _runtime_context_current_date(self) -> str:
+        """Honor the per-input ``reference_date`` in the frozen runtime context."""
+        from datus.utils.time_utils import get_default_current_date
+
+        input_ref_date = getattr(self.input, "reference_date", None) if self.input else None
+        return get_default_current_date(input_ref_date)
+
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         context: Dict[str, Any] = {
             "agent_config": self.agent_config,
@@ -416,11 +423,6 @@ class AskMetricsAgenticNode(AgenticNode):
 
             context.update(build_datasource_prompt_context(self.agent_config))
             context["db_name"] = context.get("datasource")
-
-        from datus.utils.time_utils import get_default_current_date
-
-        input_ref_date = getattr(self.input, "reference_date", None) if self.input else None
-        context["current_date"] = get_default_current_date(input_ref_date)
 
         version_value = prompt_version if prompt_version not in (None, "") else self.node_config.get("prompt_version")
         version = None if version_value in (None, "") else str(version_value)

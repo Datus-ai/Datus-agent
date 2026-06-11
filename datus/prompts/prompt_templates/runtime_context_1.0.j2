@@ -1,0 +1,19 @@
+{# Shared runtime-context block appended uniformly by ``_finalize_system_prompt``
+   for DB-capable nodes. Holds the session-stable context that used to be
+   duplicated inline across the ``*_system_*.j2`` templates: the session-start
+   date, the configured datasource catalog, and the sql files root. These
+   values are frozen into the per-session system-prompt snapshot. The *current*
+   datasource selection and its dialect are NOT here — they are live per-turn
+   values injected into the user message's ``<system_reminder>`` envelope so a
+   mid-session switch stays correct without invalidating the cached prefix. #}
+Current context:
+{% if current_date -%}
+- Current date: {{ current_date }}
+{% endif -%}
+{% if available_datasources and available_datasources|length > 0 -%}
+- Available datasources: {% for ds_name, ds_type in available_datasources.items() %}{{ ds_name }} ({{ ds_type }}){% if not loop.last %}, {% endif %}{% endfor %}
+
+{% endif -%}
+{% if workspace_root -%}
+- Current sql files root directory: {{ workspace_root }}
+{% endif -%}

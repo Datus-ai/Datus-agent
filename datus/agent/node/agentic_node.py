@@ -682,6 +682,49 @@ class AgenticNode(Node):
         elif self.is_in_plan_mode():
             self.deactivate_plan_mode()
 
+    def _build_datasource_reminder(self, user_input: Any = None) -> str:
+        """Live per-turn datasource line for the user-message envelope.
+
+        The frozen system-prompt snapshot must never pin the *current*
+        datasource: a mid-session ``/datasource`` switch would silently leave a
+        stale dialect in every later turn. Instead this line rides in the
+        ``<system_reminder>`` envelope of each user message. It merges what
+        used to be a separate "Database Context" block — dialect, catalog,
+        database (resolved via the connector default), and schema — into one
+        line so the dialect is stated exactly once per turn. Gated on
+        ``db_func_tool`` so non-DB nodes add no noise; returns an empty string
+        when no datasource is selected.
+        """
+        agent_config = getattr(self, "agent_config", None)
+        if not agent_config or getattr(self, "db_func_tool", None) is None:
+            return ""
+        from datus.utils.node_utils import build_datasource_prompt_context, resolve_database_name_for_prompt
+
+        ds_ctx = build_datasource_prompt_context(agent_config)
+        datasource = ds_ctx.get("datasource")
+        if not datasource:
+            return ""
+
+        details: List[str] = []
+        dialect = ds_ctx.get("current_datasource_dialect")
+        if dialect:
+            details.append(f"dialect: {dialect}")
+        catalog = getattr(user_input, "catalog", "") or ""
+        if catalog:
+            details.append(f"catalog: {catalog}")
+        connector = getattr(self.db_func_tool, "connector", None)
+        database = resolve_database_name_for_prompt(connector, getattr(user_input, "database", "") or "")
+        if database:
+            details.append(f"database: {database}")
+        schema = getattr(user_input, "db_schema", "") or ""
+        if schema:
+            details.append(f"schema: {schema}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        return (
+            f"Current datasource: {datasource}{suffix}. This is the authoritative "
+            "target for this turn; generate SQL for THIS dialect."
+        )
+
     def _build_enhanced_message(
         self,
         user_input: Any,
@@ -720,12 +763,22 @@ class AgenticNode(Node):
 
         enhanced_parts: List[str] = []
 
+        # Live per-turn datasource line (dialect + catalog/database/schema in
+        # one place). Deliberately NOT in the frozen system-prompt snapshot —
+        # injecting it here keeps the system-prompt prefix byte-stable across
+        # a mid-session datasource switch while the model still targets the
+        # right dialect THIS turn. It supersedes the legacy "Database Context"
+        # block, which only renders below when this line is absent.
+        datasource_reminder = self._build_datasource_reminder(user_input)
+        if datasource_reminder:
+            enhanced_parts.append(datasource_reminder)
+
         ext_know = getattr(user_input, "external_knowledge", "") or ""
         if ext_know:
             enhanced_parts.append(f"MUST use these business logic:\n{ext_know}")
 
         db_type = getattr(self.agent_config, "db_type", "") if self.agent_config else ""
-        if db_type:
+        if db_type and not datasource_reminder:
             # Always resolve empty database via the connector default — the
             # helper is a no-op when no connector is wired or value is set.
             from datus.utils.node_utils import resolve_database_name_for_prompt
@@ -844,6 +897,77 @@ class AgenticNode(Node):
             return node_class
         return AgenticNode.get_node_name(self)
 
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        """Identity keys that invalidate the cached system-prompt snapshot.
+
+        The snapshot is replayed verbatim while these stay equal. They cover
+        the inputs that change the prompt's identity within a session: the
+        node template, its version, and the active model (a model switch also
+        resets the provider-side prefix cache, so rebuilding is free). The
+        live per-turn datasource/dialect is injected in the user message
+        instead, so it deliberately does **not** appear here; date, language,
+        memory, and skills are frozen until the snapshot is rebuilt.
+        """
+        agent_config = getattr(self, "agent_config", None)
+        version = prompt_version
+        if version is None and agent_config is not None and hasattr(agent_config, "prompt_version"):
+            version = agent_config.prompt_version
+        model_id = ""
+        try:
+            mc = agent_config.active_model() if agent_config is not None else None
+            if mc is not None:
+                model_id = f"{getattr(mc, 'type', '') or ''}:{getattr(mc, 'model', '') or ''}"
+        except Exception:
+            model_id = ""
+        return {
+            "node_name": self.get_node_name(),
+            "prompt_version": str(version or ""),
+            "model_name": model_id,
+        }
+
+    def _get_session_system_prompt(
+        self,
+        prompt_version: Optional[str] = None,
+        template_context: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Return the system prompt for this turn, served from a session snapshot.
+
+        On the first LLM call of a session the finalized prompt is built via
+        :meth:`_get_system_prompt` (subclass overrides honored) and persisted
+        under ``{session_dir}/{session_id}.sysprompt.json``. Later turns —
+        including new node instances, API per-request nodes, ``/resume``, and
+        subagent sessions — replay the exact bytes, keeping the provider
+        prefix cache warm and skipping the per-turn template render and
+        AGENTS.md/MEMORY.md file reads. A major compact or ``/clear`` drops
+        the snapshot so it rebuilds (session-rebuild semantics); a model
+        switch invalidates it via the meta comparison.
+        """
+        session_id = getattr(self, "session_id", "") or ""
+        meta = self._system_prompt_snapshot_meta(prompt_version)
+        sm = None
+        if session_id:
+            try:
+                sm = self.session_manager
+            except Exception as exc:  # session manager wiring is optional in some unit paths
+                logger.debug("System-prompt snapshot disabled (no session manager): %s", exc)
+                sm = None
+
+        if sm is not None:
+            snapshot = sm.load_system_prompt_snapshot(session_id)
+            if snapshot is not None and all(snapshot.get(k) == v for k, v in meta.items()):
+                return snapshot["prompt"]
+
+        # Cache miss / stale meta: rebuild. Preserve the call shape — several
+        # subclass overrides accept only ``prompt_version``.
+        if template_context:
+            prompt = self._get_system_prompt(prompt_version=prompt_version, template_context=template_context)
+        else:
+            prompt = self._get_system_prompt(prompt_version=prompt_version)
+
+        if sm is not None:
+            sm.save_system_prompt_snapshot(session_id, prompt, meta)
+        return prompt
+
     def _get_system_prompt(
         self,
         prompt_version: Optional[str] = None,
@@ -922,6 +1046,12 @@ class AgenticNode(Node):
         Returns:
             Prompt with skills XML and memory context appended
         """
+        # Inject the shared runtime-context block (session-start date,
+        # datasource catalog, sql files root) for DB-capable nodes. Replaces
+        # the per-template "Current context" stanzas; the *current* datasource
+        # selection lives in the per-turn user message instead.
+        base_prompt = self._inject_runtime_context(base_prompt)
+
         # Inject AGENTS.md project context if present in cwd
         agents_md = self._load_agents_md()
         if agents_md:
@@ -949,6 +1079,51 @@ class AgenticNode(Node):
         # sub-agents invoked via ``task`` — honors the configured output language.
         base_prompt = self._inject_response_language(base_prompt)
 
+        return base_prompt
+
+    def _runtime_context_current_date(self) -> str:
+        """Session-start date rendered into the shared runtime-context block.
+
+        Defaults to today. Subclasses with a reference-date concept (e.g.
+        GenSQL/AskMetrics, which honor a benchmark/replay ``reference_date``)
+        override this so the frozen prompt reflects the intended evaluation
+        date.
+        """
+        from datus.utils.time_utils import get_default_current_date
+
+        return get_default_current_date(None)
+
+    def _inject_runtime_context(self, base_prompt: str) -> str:
+        """Append the shared runtime-context block for DB-capable nodes.
+
+        Renders ``runtime_context_1.0.j2`` with the session-stable values that
+        used to be duplicated inline across the node templates: the
+        session-start date, the configured datasource catalog, and the sql
+        files root. Gated on ``db_func_tool`` so non-DB nodes (e.g.
+        report/dashboard writers without a connector) are unaffected. The
+        *current* datasource selection and its dialect are NOT here — they are
+        injected per turn into the user message (see
+        :meth:`_build_datasource_reminder`).
+        """
+        if getattr(self, "db_func_tool", None) is None:
+            return base_prompt
+        agent_config = getattr(self, "agent_config", None)
+        try:
+            from datus.utils.node_utils import build_datasource_prompt_context
+
+            ds_ctx = build_datasource_prompt_context(agent_config) if agent_config else {}
+            section = get_prompt_manager(agent_config=agent_config).render_template(
+                template_name="runtime_context",
+                version=None,
+                current_date=self._runtime_context_current_date(),
+                available_datasources=ds_ctx.get("available_datasources") or {},
+                workspace_root=self._resolve_workspace_root(),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to inject runtime context: {e}")
+            return base_prompt
+        if section and section.strip():
+            base_prompt = base_prompt + "\n\n" + section.strip()
         return base_prompt
 
     def _inject_response_language(self, base_prompt: str) -> str:
@@ -1185,6 +1360,14 @@ class AgenticNode(Node):
                 compact_action_id = f"compact_{uuid.uuid4().hex[:8]}"
                 self._emit_compact_display_action(compact_action_id, "progress")
                 result = await self._major_compact(reason=reason)
+                # A major compact is a session rebuild: drop the frozen system
+                # prompt so the next turn re-bakes it (fresh date, AGENTS.md,
+                # memory, skills) instead of replaying the pre-compact snapshot.
+                if result.get("success") and self.session_id:
+                    try:
+                        self.session_manager.delete_system_prompt_snapshot(self.session_id)
+                    except Exception as exc:
+                        logger.debug("Failed to drop system-prompt snapshot after compact: %s", exc)
                 # Always emit the terminal action — even on failure — so the
                 # pinned hint is cleared; the renderer only draws the panel when
                 # a summary is actually present.
@@ -2426,13 +2609,12 @@ class AgenticNode(Node):
 
             template_context = self._build_template_context(ctx)
             prompt_version = getattr(self.input, "prompt_version", None)
-            if template_context:
-                ctx.system_instruction = self._get_system_prompt(
-                    prompt_version=prompt_version,
-                    template_context=template_context,
-                )
-            else:
-                ctx.system_instruction = self._get_system_prompt(prompt_version=prompt_version)
+            # Served from a per-session snapshot when available; rebuilt and
+            # re-persisted on a cache miss or when the snapshot meta is stale.
+            ctx.system_instruction = self._get_session_system_prompt(
+                prompt_version=prompt_version,
+                template_context=template_context,
+            )
 
             # Compose the user prompt, optionally with a per-run override of
             # ``user_input.user_message`` set during ``_before_stream`` (used

@@ -1898,3 +1898,116 @@ class TestSessionMatchesAgent:
         assert session_matches_agent("legacy-id", None) is True
         assert session_matches_agent("legacy-id", "chat") is True
         assert session_matches_agent("legacy-id", "gen_metrics") is False
+
+
+# ===========================================================================
+# TestSystemPromptSnapshot
+# ===========================================================================
+
+
+class TestSystemPromptSnapshot:
+    """save/load/delete_system_prompt_snapshot: the frozen per-session prompt."""
+
+    META = {"node_name": "chat", "prompt_version": "1.2", "model_name": "openai:gpt-4.1"}
+
+    def _path(self, sm_custom, session_id):
+        return os.path.join(sm_custom.session_dir, f"{session_id}.sysprompt.json")
+
+    def test_round_trip_returns_prompt_and_meta(self, sm_custom):
+        """A saved snapshot loads back with the exact prompt bytes and meta keys."""
+        prompt = "SYSTEM PROMPT\nwith unicode — 中文 ✓"
+        sm_custom.save_system_prompt_snapshot("chat_session_rt", prompt, dict(self.META))
+
+        payload = sm_custom.load_system_prompt_snapshot("chat_session_rt")
+
+        assert payload["prompt"] == prompt
+        assert payload["schema_version"] == 1
+        for key, value in self.META.items():
+            assert payload[key] == value
+
+    def test_load_missing_returns_none(self, sm_custom):
+        """No snapshot file -> None (caller rebuilds)."""
+        assert sm_custom.load_system_prompt_snapshot("chat_session_missing") is None
+
+    def test_load_corrupt_json_returns_none(self, sm_custom):
+        """A truncated/corrupt file -> None, never an exception."""
+        path = self._path(sm_custom, "chat_session_corrupt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"schema_version": 1, "prompt": "trunc')
+
+        assert sm_custom.load_system_prompt_snapshot("chat_session_corrupt") is None
+
+    def test_load_schema_mismatch_returns_none(self, sm_custom):
+        """A future schema version is not replayed by this build."""
+        path = self._path(sm_custom, "chat_session_schema")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 99, "prompt": "p", **self.META}, f)
+
+        assert sm_custom.load_system_prompt_snapshot("chat_session_schema") is None
+
+    def test_load_non_string_prompt_returns_none(self, sm_custom):
+        """A payload whose prompt is not a string is unusable -> None."""
+        path = self._path(sm_custom, "chat_session_badprompt")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1, "prompt": ["not", "a", "string"], **self.META}, f)
+
+        assert sm_custom.load_system_prompt_snapshot("chat_session_badprompt") is None
+
+    def test_save_overwrites_previous_snapshot(self, sm_custom):
+        """A rebuild (stale meta) replaces the old snapshot in full."""
+        sm_custom.save_system_prompt_snapshot("chat_session_ow", "OLD", dict(self.META))
+        new_meta = {**self.META, "model_name": "anthropic:claude"}
+        sm_custom.save_system_prompt_snapshot("chat_session_ow", "NEW", new_meta)
+
+        payload = sm_custom.load_system_prompt_snapshot("chat_session_ow")
+        assert payload["prompt"] == "NEW"
+        assert payload["model_name"] == "anthropic:claude"
+
+    def test_delete_removes_file_and_is_idempotent(self, sm_custom):
+        """delete removes the file; deleting again is a silent no-op."""
+        sm_custom.save_system_prompt_snapshot("chat_session_del", "P", dict(self.META))
+        path = self._path(sm_custom, "chat_session_del")
+        assert os.path.exists(path)
+
+        sm_custom.delete_system_prompt_snapshot("chat_session_del")
+        assert not os.path.exists(path)
+        assert sm_custom.load_system_prompt_snapshot("chat_session_del") is None
+
+        sm_custom.delete_system_prompt_snapshot("chat_session_del")
+        assert not os.path.exists(path)
+
+    def test_delete_session_drops_snapshot(self, sm_custom):
+        """Deleting a session (CLI /clear, API delete) drops its frozen prompt too."""
+        session_id = "chat_session_dropall"
+        sm_custom.get_session(session_id)
+        sm_custom.save_system_prompt_snapshot(session_id, "P", dict(self.META))
+
+        sm_custom.delete_session(session_id)
+
+        assert not os.path.exists(self._path(sm_custom, session_id))
+        assert sm_custom.load_system_prompt_snapshot(session_id) is None
+
+    def test_clear_session_drops_snapshot(self, sm_custom):
+        """Clearing history is a session rebuild: the frozen prompt must go."""
+        session_id = "chat_session_clear"
+        sm_custom.get_session(session_id)
+        sm_custom.save_system_prompt_snapshot(session_id, "P", dict(self.META))
+
+        sm_custom.clear_session(session_id)
+
+        assert sm_custom.load_system_prompt_snapshot(session_id) is None
+
+    def test_invalid_session_id_raises(self, sm_custom):
+        """Path-unsafe session ids are rejected before touching the filesystem."""
+        with pytest.raises(ValueError):
+            sm_custom.save_system_prompt_snapshot("../escape", "P", dict(self.META))
+        with pytest.raises(ValueError):
+            sm_custom.load_system_prompt_snapshot("../escape")
+        with pytest.raises(ValueError):
+            sm_custom.delete_system_prompt_snapshot("../escape")
+
+    def test_save_leaves_no_tmp_file(self, sm_custom):
+        """The atomic write must not leave a .tmp behind on success."""
+        sm_custom.save_system_prompt_snapshot("chat_session_tmp", "P", dict(self.META))
+        leftovers = [f for f in os.listdir(sm_custom.session_dir) if f.endswith(".tmp")]
+        assert leftovers == []

@@ -172,6 +172,87 @@ class SessionManager:
             logger.debug(f"Cleared session: {session_id}")
         else:
             logger.warning(f"Attempted to clear non-existent session: {session_id}")
+        # Clearing history is a session rebuild: drop the frozen system prompt
+        # so the next turn re-bakes it instead of replaying pre-clear context.
+        self.delete_system_prompt_snapshot(session_id)
+
+    # ------------------------------------------------------------------
+    # System-prompt snapshot persistence
+    # ------------------------------------------------------------------
+    # The finalized system prompt of a session is frozen on the first LLM
+    # call and replayed verbatim on every later turn so the provider-side
+    # prefix cache (Anthropic ephemeral / OpenAI prompt_cache_key) stays
+    # warm. The snapshot lives next to the session db. Multi-process note:
+    # when a CLI and an API server share a session dir the last writer wins
+    # on disk; rebuilt prompts for the same meta are semantically equivalent
+    # and the live datasource/dialect is injected per turn in the user
+    # message, so a stale snapshot can never emit a wrong dialect.
+
+    _SNAPSHOT_SCHEMA_VERSION = 1
+
+    def _snapshot_path(self, session_id: str) -> str:
+        self._validate_session_id(session_id)
+        return os.path.join(self.session_dir, f"{session_id}.sysprompt.json")
+
+    def save_system_prompt_snapshot(self, session_id: str, prompt: str, meta: Dict[str, Any]) -> None:
+        """Persist the finalized system prompt plus its invalidation metadata.
+
+        ``meta`` carries the identity keys (node_name, prompt_version,
+        model_name) the consumer compares before replaying; a mismatch on any
+        key triggers a rebuild that overwrites this file. Written atomically
+        (``.tmp`` then ``os.replace``) so a crash mid-write never leaves a
+        truncated snapshot. A disk failure only logs a warning — the caller
+        already holds the freshly built prompt for this turn.
+        """
+        path = self._snapshot_path(session_id)
+        payload: Dict[str, Any] = {"schema_version": self._SNAPSHOT_SCHEMA_VERSION, "prompt": prompt, **meta}
+        tmp_path = f"{path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+            os.replace(tmp_path, path)
+            logger.debug(f"Saved system-prompt snapshot: {path}")
+        except OSError as exc:
+            logger.warning("Failed to save system-prompt snapshot %s: %s", path, exc)
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+
+    def load_system_prompt_snapshot(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Return the stored snapshot payload, or ``None`` when unusable.
+
+        Missing file, corrupt JSON, a non-dict payload, a schema-version
+        mismatch, or a non-string prompt all yield ``None`` so the caller
+        transparently rebuilds and overwrites. Meta comparison is the
+        caller's job — the full payload is returned for that purpose.
+        """
+        path = self._snapshot_path(session_id)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("Failed to load system-prompt snapshot %s: %s", path, exc)
+            return None
+        if not isinstance(payload, dict) or payload.get("schema_version") != self._SNAPSHOT_SCHEMA_VERSION:
+            return None
+        if not isinstance(payload.get("prompt"), str):
+            return None
+        return payload
+
+    def delete_system_prompt_snapshot(self, session_id: str) -> None:
+        """Delete the snapshot file (best-effort, idempotent)."""
+        path = self._snapshot_path(session_id)
+        try:
+            os.remove(path)
+            logger.debug(f"Deleted system-prompt snapshot: {path}")
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Failed to delete system-prompt snapshot %s: %s", path, exc)
 
     def delete_session(self, session_id: str) -> None:
         """
@@ -211,6 +292,9 @@ class SessionManager:
                 logger.debug(f"Deleted session archive dir: {archive_root}")
             except OSError as exc:
                 logger.warning("Failed to remove session archive dir %s: %s", archive_root, exc)
+
+        # The frozen system prompt belongs to the deleted conversation.
+        self.delete_system_prompt_snapshot(session_id)
 
     def copy_session(self, source_session_id: str, target_node_name: str) -> str:
         """Copy a session to a new one with a different node-name prefix.

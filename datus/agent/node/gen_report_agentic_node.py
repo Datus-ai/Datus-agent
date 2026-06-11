@@ -347,10 +347,6 @@ class GenReportAgenticNode(AgenticNode):
             context.update(build_datasource_prompt_context(self.agent_config))
             context["db_name"] = context.get("datasource")
 
-        from datus.utils.time_utils import get_default_current_date
-
-        context["current_date"] = get_default_current_date(None)
-
         version = None if prompt_version in (None, "") else str(prompt_version)
 
         # Construct template name: {system_prompt}_system or fallback to {node_name}_system

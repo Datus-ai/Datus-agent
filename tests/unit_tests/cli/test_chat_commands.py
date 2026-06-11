@@ -1500,7 +1500,9 @@ class TestEdgeCases:
 
         message = node._build_enhanced_message(ChatNodeInput(user_message="有哪些表"))
 
-        assert "**Database**: connector_db" in message
+        # Connector-default database resolution surfaces in the merged
+        # per-turn datasource reminder line.
+        assert "database: connector_db" in message
 
     def test_display_markdown_response_simple_text(self, real_agent_config, mock_llm_create):
         """Simple text with no markdown formatting is still displayed."""
