@@ -385,6 +385,33 @@ class TestDBManager:
         assert "raw" not in mgr._conn_dict["analytics"]
         assert "main" not in mgr._conn_dict["mart"]
 
+    def test_get_conn_self_heals_when_entry_nulled(self):
+        # An external pool may null a datasource entry to mark its connectors
+        # closed on eviction. setdefault keeps the None, so the manager must
+        # rebuild rather than raise 'NoneType' object has no attribute 'get'.
+        configs = {"ns": _cfg(type="sqlite", uri="sqlite:///test.db")}
+        mgr = DBManager(configs)
+        with patch.object(mgr, "_build_conn", side_effect=lambda cfg: MagicMock()):
+            first = mgr.get_conn("ns")
+            mgr._conn_dict["ns"] = None  # external eviction landmine
+            rebuilt = mgr.get_conn("ns")
+        assert rebuilt is not first
+        assert isinstance(mgr._conn_dict["ns"], dict)
+
+    def test_close_skips_nulled_entry(self):
+        # A nulled datasource entry must not break close() with
+        # 'NoneType' object has no attribute 'items'.
+        mgr = DBManager({})
+        conn = MagicMock()
+        mgr._conn_dict["analytics"] = {"raw": conn}
+        mgr._conn_dict["mart"] = None
+
+        mgr.close()
+
+        conn.close.assert_called_once()
+        assert "raw" not in mgr._conn_dict["analytics"]  # live group still drained
+        assert mgr._conn_dict["mart"] is None  # nulled entry skipped, not crashed
+
 
 # ---------------------------------------------------------------------------
 # DBManager._db_config_to_connection_config — adapter branch (lines 269-309)
