@@ -1633,6 +1633,41 @@ class TestChatAgenticNodePlanMode:
         finally:
             os.chdir(cwd)
 
+    def test_build_plan_mode_prompt_passes_auto_execute_flag(self, real_agent_config, mock_llm_create, tmp_path):
+        """build_plan_mode_enhanced_prompt forwards input.auto_execute_plan to the template."""
+        import os
+
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            node = ChatAgenticNode(
+                node_id="test_auto_exec_prompt",
+                description="Plan prompt auto-execute flag",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+            node.activate_plan_mode()
+            node.input = ChatNodeInput(user_message="hi", plan_mode=True, auto_execute_plan=True)
+
+            with patch("datus.agent.node.agentic_node.get_prompt_manager") as mock_pm:
+                mock_pm.return_value.render_template.return_value = "RENDERED"
+                rendered = node.build_plan_mode_enhanced_prompt()
+
+            assert rendered == "RENDERED"
+            assert mock_pm.return_value.render_template.call_args.kwargs["auto_execute_plan"] is True
+
+            # Interactive default: the flag resolves False.
+            node.workflow_prompt_sent = False
+            node.input = ChatNodeInput(user_message="hi", plan_mode=True)
+            with patch("datus.agent.node.agentic_node.get_prompt_manager") as mock_pm:
+                mock_pm.return_value.render_template.return_value = "RENDERED"
+                node.build_plan_mode_enhanced_prompt()
+            assert mock_pm.return_value.render_template.call_args.kwargs["auto_execute_plan"] is False
+        finally:
+            os.chdir(cwd)
+
 
 # ===========================================================================
 # _rebuild_tools Tests

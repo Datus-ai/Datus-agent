@@ -52,6 +52,7 @@ class PrintModeRunner:
         self.orchestrator_tools = getattr(args, "orchestrator_tools", False)
         self.scope = getattr(args, "session_scope", None)
         self.stream_thinking = getattr(args, "stream_thinking", False)
+        self.plan_mode = getattr(args, "plan_mode", False)
 
         self.catalog, self.database, self.db_schema = self._resolve_database_context(args)
 
@@ -107,7 +108,12 @@ class PrintModeRunner:
             at_tables=at_tables,
             at_metrics=at_metrics,
             at_sqls=at_sqls,
+            plan_mode=self.plan_mode,
         )
+        if self.plan_mode and hasattr(node_input, "auto_execute_plan"):
+            # Print mode is headless: the plan must be auto-approved so the
+            # run does not block waiting for an interactive confirmation.
+            node_input.auto_execute_plan = True
         node.input = node_input
         run_async(self._stream_chat(node))
 

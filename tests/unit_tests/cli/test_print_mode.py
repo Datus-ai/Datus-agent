@@ -522,6 +522,55 @@ class TestRunUsesFactory:
 
 
 # ---------------------------------------------------------------------------
+# Tests: run() with --plan-mode
+# ---------------------------------------------------------------------------
+
+
+class TestRunPlanMode:
+    def _run_with_plan_mode(self, plan_mode_override):
+        overrides = {} if plan_mode_override is None else {"plan_mode": plan_mode_override}
+        runner = _make_runner(**overrides)
+
+        mock_node = MagicMock()
+        mock_node.session_id = None
+
+        async def fake_stream(actions):
+            return
+            yield
+
+        mock_node.execute_stream_with_interactions = fake_stream
+        # Real-shaped input: plan fields behave like ChatNodeInput defaults.
+        node_input = SimpleNamespace(plan_mode=False, auto_execute_plan=False)
+
+        with (
+            patch("datus.cli.print_mode.create_interactive_node", return_value=mock_node),
+            patch("datus.cli.print_mode.create_node_input", return_value=node_input) as mock_create_input,
+        ):
+            runner.run()
+        return mock_create_input, mock_node
+
+    def test_plan_mode_flag_enables_auto_execute(self):
+        mock_create_input, mock_node = self._run_with_plan_mode(True)
+
+        assert mock_create_input.call_args.kwargs["plan_mode"] is True
+        # Print mode is headless, so the generated plan must auto-confirm.
+        assert mock_node.input.auto_execute_plan is True
+
+    def test_plan_mode_default_off(self):
+        mock_create_input, mock_node = self._run_with_plan_mode(False)
+
+        assert mock_create_input.call_args.kwargs["plan_mode"] is False
+        assert mock_node.input.auto_execute_plan is False
+
+    def test_plan_mode_missing_arg_defaults_off(self):
+        # Older callers build args without the plan_mode attribute at all.
+        mock_create_input, mock_node = self._run_with_plan_mode(None)
+
+        assert mock_create_input.call_args.kwargs["plan_mode"] is False
+        assert mock_node.input.auto_execute_plan is False
+
+
+# ---------------------------------------------------------------------------
 # Tests: run() with proxy_tool_patterns
 # ---------------------------------------------------------------------------
 

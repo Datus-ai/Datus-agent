@@ -518,6 +518,10 @@ class ConfirmPlanTool:
         - Ask the user to either ``confirm`` or type free-text feedback.
         - On ``confirm``: deactivate plan mode and return success.
         - On feedback: return the text so the LLM can revise the plan.
+
+        When the node input carries ``auto_execute_plan=True`` (benchmark /
+        print mode), the user-facing prompt is skipped entirely: the plan is
+        treated as approved and the confirmed result is returned immediately.
         """
         # Local imports to avoid cycles with execution_state / schemas.
         from datus.cli.execution_state import InteractionCancelled
@@ -542,8 +546,10 @@ class ConfirmPlanTool:
                 ),
             )
 
+        auto_execute = bool(getattr(getattr(self.node, "input", None), "auto_execute_plan", False))
+
         broker = getattr(self.node, "interaction_broker", None)
-        if broker is None:
+        if broker is None and not auto_execute:
             return FuncToolResult(success=0, error="interaction broker unavailable on node")
 
         try:
@@ -552,7 +558,11 @@ class ConfirmPlanTool:
             return FuncToolResult(success=0, error=f"failed to read plan file: {exc}")
 
         preview = f"\n---\n\n{plan_md}"
-        await broker.send(content=preview, content_type="markdown", action_type="plan_preview")
+        if broker is not None:
+            await broker.send(content=preview, content_type="markdown", action_type="plan_preview")
+
+        if auto_execute:
+            return self._confirmed_result(auto_confirmed=True)
 
         event = InteractionEvent(
             title="Plan",
@@ -574,36 +584,7 @@ class ConfirmPlanTool:
             user_choice = answers[0][0] or ""
 
         if user_choice == "confirm":
-            plan_path = self.node.plan_file_path
-            self.node.deactivate_plan_mode()
-            # Set a one-shot flag so the next user prompt carries an "execute
-            # the confirmed plan" reminder in the enhanced section.
-            self.node._plan_just_confirmed = True
-            return FuncToolResult(
-                result={
-                    "status": "confirmed",
-                    "plan_file": plan_path,
-                    "next_action": (
-                        f"The plan at {plan_path} has been approved. Plan mode is now exited.\n"
-                        "**Do NOT end this turn with a natural-language message yet.** "
-                        "Your immediate next steps MUST be:\n"
-                        f"  1. Read {plan_path} via read_file to recall the plan content.\n"
-                        "  2. Call todo_write with [{title, content}] for each concrete actionable "
-                        "step (title ≤ 8 words; content is the detailed instruction).\n"
-                        "  3. Before starting work on a step, call todo_update(id, 'in_progress') "
-                        "so the sidebar reflects what you are doing.\n"
-                        "  4. Execute the step by calling the relevant tools "
-                        "(grep / read_file / list_tables / read_query / write_file — whatever "
-                        "the step requires).\n"
-                        "  5. After completing the step, call todo_update(id, 'completed'); "
-                        "use 'failed' instead if it could not be finished. Then move to the "
-                        "next step.\n"
-                        "  6. Continue executing steps without asking the user for permission, "
-                        "until either all todos are done or you hit a blocker that genuinely "
-                        "requires user input (in which case use ask_user)."
-                    ),
-                }
-            )
+            return self._confirmed_result(auto_confirmed=False)
 
         return FuncToolResult(
             result={
@@ -616,3 +597,42 @@ class ConfirmPlanTool:
                 ),
             }
         )
+
+    def _confirmed_result(self, auto_confirmed: bool) -> FuncToolResult:
+        """Exit plan mode and build the shared "plan approved" result.
+
+        Used by both the interactive path (user clicked ``confirm``) and the
+        auto-execute path (``auto_execute_plan=True`` on the node input).
+        """
+        plan_path = self.node.plan_file_path
+        self.node.deactivate_plan_mode()
+        # Set a one-shot flag so the next user prompt carries an "execute
+        # the confirmed plan" reminder in the enhanced section.
+        self.node._plan_just_confirmed = True
+        result = {
+            "status": "confirmed",
+            "plan_file": plan_path,
+            "next_action": (
+                f"The plan at {plan_path} has been approved. Plan mode is now exited.\n"
+                "**Do NOT end this turn with a natural-language message yet.** "
+                "Your immediate next steps MUST be:\n"
+                f"  1. Read {plan_path} via read_file to recall the plan content.\n"
+                "  2. Call todo_write with [{title, content}] for each concrete actionable "
+                "step (title ≤ 8 words; content is the detailed instruction).\n"
+                "  3. Before starting work on a step, call todo_update(id, 'in_progress') "
+                "so the sidebar reflects what you are doing.\n"
+                "  4. Execute the step by calling the relevant tools "
+                "(grep / read_file / list_tables / read_query / write_file — whatever "
+                "the step requires).\n"
+                "  5. After completing the step, call todo_update(id, 'completed'); "
+                "use 'failed' instead if it could not be finished. Then move to the "
+                "next step.\n"
+                "  6. Continue executing steps without asking the user for permission, "
+                "until either all todos are done or you hit a blocker that genuinely "
+                "requires user input (in which case use ask_user)."
+            ),
+        }
+        if auto_confirmed:
+            result["auto_confirmed"] = True
+            logger.info("Plan auto-confirmed (auto_execute_plan=True): %s", plan_path)
+        return FuncToolResult(result=result)

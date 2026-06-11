@@ -339,3 +339,35 @@ class TestEnvCacheBehavior:
         env_after = manager._get_env()
 
         assert env_before is not env_after
+
+
+class TestPlanModeSystemTemplate:
+    """Render the real packaged plan_mode_system template (interactive vs auto-execute)."""
+
+    def _render(self, tmp_path, **kwargs):
+        # Keep the packaged default_templates_dir so the real template resolves.
+        manager = PromptManager(path_manager=DatusPathManager(tmp_path / "tenant_home"))
+        return manager.render_template("plan_mode_system", None, plan_file_path="./.datus/plans/x.md", **kwargs)
+
+    def test_full_workflow_interactive_requires_user_approval(self, tmp_path):
+        rendered = self._render(tmp_path, workflow_prompt_sent=False, auto_execute_plan=False)
+        assert "request the user's approval" in rendered
+        assert "`ask_user`" in rendered
+        assert "auto-approved" not in rendered
+
+    def test_full_workflow_auto_execute_forbids_ask_user(self, tmp_path):
+        rendered = self._render(tmp_path, workflow_prompt_sent=False, auto_execute_plan=True)
+        assert "auto-approved" in rendered
+        assert "Do NOT call `ask_user`" in rendered
+        assert "request the user's approval" not in rendered
+
+    def test_reminder_interactive_keeps_ask_user_rule(self, tmp_path):
+        rendered = self._render(tmp_path, workflow_prompt_sent=True, auto_execute_plan=False)
+        assert "Plan mode is still active" in rendered
+        assert "`ask_user` (if you still need information)" in rendered
+
+    def test_reminder_auto_execute_auto_approves(self, tmp_path):
+        rendered = self._render(tmp_path, workflow_prompt_sent=True, auto_execute_plan=True)
+        assert "Plan mode is still active" in rendered
+        assert "auto-approved" in rendered
+        assert "Do NOT call `ask_user`" in rendered

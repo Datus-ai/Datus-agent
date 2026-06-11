@@ -48,8 +48,11 @@ class WorkflowRunner:
         )
 
         if hasattr(self.args, "plan_mode"):
-            self.workflow.metadata["plan_mode"] = self.args.plan_mode
-            self.workflow.metadata["auto_execute_plan"] = True
+            plan_mode = bool(self.args.plan_mode)
+            self.workflow.metadata["plan_mode"] = plan_mode
+            # Workflow runs are headless: a generated plan must be auto-approved
+            # (consumed by ConfirmPlanTool) instead of waiting for user input.
+            self.workflow.metadata["auto_execute_plan"] = plan_mode
 
         self.workflow.display()
         logger.info("Initial workflow generated")

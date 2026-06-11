@@ -90,6 +90,13 @@ def setup_base_parser_args(parser: argparse.ArgumentParser):
         action="store_true",
         help="Delete existing round output directory before each round starts",
     )
+    parser.add_argument(
+        "--plan-mode",
+        "--plan_mode",
+        dest="plan_mode",
+        action="store_true",
+        help="Enable plan mode for benchmark execution (generates plan then auto-executes without confirmation)",
+    )
 
 
 def sanitize_group_name(workflow: str) -> str:
@@ -161,6 +168,7 @@ def build_agent_args(
         "output_file": str(evaluation_file),
         "max_workers": cli_args.workers,
         "summary_report_file": cli_args.summary_report_file,
+        "plan_mode": getattr(cli_args, "plan_mode", False),
     }
     return argparse.Namespace(**common_kwargs)
 

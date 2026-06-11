@@ -70,6 +70,18 @@ class TestArgumentParser:
             args = ap.parse_args()
         assert args.orchestrator_tools is True
 
+    def test_parse_args_plan_mode(self):
+        ap = ArgumentParser()
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello", "--plan-mode"]):
+            args = ap.parse_args()
+        assert args.plan_mode is True
+
+    def test_parse_args_plan_mode_default_off(self):
+        ap = ArgumentParser()
+        with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--print", "hello"]):
+            args = ap.parse_args()
+        assert args.plan_mode is False
+
     def test_parse_args_web(self):
         ap = ArgumentParser()
         with patch.object(sys, "argv", ["datus", "--datasource", "ns1", "--web"]):
@@ -164,6 +176,28 @@ class TestApplicationRun:
             resume=None,
             proxy_tools=None,
             orchestrator_tools=True,
+            config=None,
+        )
+        with (
+            patch.object(app.arg_parser, "parse_args", return_value=mock_args),
+            patch("datus.cli.main.configure_logging"),
+            patch.object(app, "_ensure_project_config"),
+        ):
+            with pytest.raises(SystemExit):
+                app.run()
+
+    def test_plan_mode_without_print_mode_errors(self):
+        """Verify that --plan-mode without --print raises SystemExit."""
+        app = Application()
+        mock_args = SimpleNamespace(
+            debug=False,
+            datasource="ns1",
+            print_mode=None,
+            web=False,
+            resume=None,
+            proxy_tools=None,
+            orchestrator_tools=False,
+            plan_mode=True,
             config=None,
         )
         with (

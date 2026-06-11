@@ -489,12 +489,14 @@ class AgenticNode(Node):
         if not self.plan_mode_active or not self.plan_file_path:
             return ""
 
+        auto_execute_plan = bool(getattr(self.input, "auto_execute_plan", False))
         try:
             rendered = get_prompt_manager(agent_config=self.agent_config).render_template(
                 template_name="plan_mode_system",
                 version=None,
                 plan_file_path=self.plan_file_path,
                 workflow_prompt_sent=self.workflow_prompt_sent,
+                auto_execute_plan=auto_execute_plan,
             )
         except FileNotFoundError:
             logger.warning("plan_mode_system template not found, using inline fallback")

@@ -210,6 +210,17 @@ class ArgumentParser:
             help="Expose orchestrator issue lifecycle tools in print mode",
         )
 
+        self.parser.add_argument(
+            "--plan-mode",
+            dest="plan_mode",
+            action="store_true",
+            default=False,
+            help=(
+                "Enable plan mode in print mode: the agent writes a plan first, the plan is "
+                "auto-confirmed (no interactive approval), then executed in the same run"
+            ),
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -241,6 +252,9 @@ class Application:
 
         if getattr(args, "orchestrator_tools", False) and args.print_mode is None:
             self.arg_parser.parser.error("--orchestrator-tools requires --print mode")
+
+        if getattr(args, "plan_mode", False) and args.print_mode is None:
+            self.arg_parser.parser.error("--plan-mode requires --print mode (use Shift+Tab in the REPL)")
 
         if args.print_mode is not None:
             from datus.cli.print_mode import PrintModeRunner

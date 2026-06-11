@@ -471,6 +471,17 @@ class TestBuildAgentArgs:
         assert "runABC" in result.output_file
         assert "2" in result.output_file
 
+    def test_plan_mode_passthrough(self, tmp_path):
+        cli_args = self._make_cli_args(plan_mode=True)
+        result = build_agent_args(cli_args, ["t1"], tmp_path, 0, "run1")
+        assert result.plan_mode is True
+
+    def test_plan_mode_defaults_off_when_missing(self, tmp_path):
+        # _make_cli_args has no plan_mode attribute → getattr fallback.
+        cli_args = self._make_cli_args()
+        result = build_agent_args(cli_args, ["t1"], tmp_path, 0, "run1")
+        assert result.plan_mode is False
+
 
 # ---------------------------------------------------------------------------
 # resolve_task_ids - explicit ids
@@ -537,3 +548,13 @@ class TestSetupBaseParserArgs:
         setup_base_parser_args(parser)
         args = parser.parse_args(["--datasource", "ns", "--benchmark", "bm"])
         assert args.workflow == "reflection"
+
+    def test_plan_mode_flag(self):
+        parser = argparse.ArgumentParser()
+        setup_base_parser_args(parser)
+        args = parser.parse_args(["--datasource", "ns", "--benchmark", "bm"])
+        assert args.plan_mode is False
+        args = parser.parse_args(["--datasource", "ns", "--benchmark", "bm", "--plan-mode"])
+        assert args.plan_mode is True
+        args = parser.parse_args(["--datasource", "ns", "--benchmark", "bm", "--plan_mode"])
+        assert args.plan_mode is True

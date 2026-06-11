@@ -175,7 +175,7 @@ class TestInitializeWorkflow:
         mock_wf.display.assert_called_once()
 
     def test_plan_mode_stored_in_metadata(self):
-        args = _make_args(plan_mode="auto")
+        args = _make_args(plan_mode=True)
         runner = _make_runner(args=args)
         mock_wf = _make_mock_workflow()
         mock_wf.display = MagicMock()
@@ -184,8 +184,21 @@ class TestInitializeWorkflow:
         with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
             runner.initialize_workflow(_make_sql_task())
 
-        assert mock_wf.metadata.get("plan_mode") == "auto"
+        assert mock_wf.metadata.get("plan_mode") is True
         assert mock_wf.metadata.get("auto_execute_plan") is True
+
+    def test_plan_mode_disabled_keeps_auto_execute_off(self):
+        args = _make_args(plan_mode=False)
+        runner = _make_runner(args=args)
+        mock_wf = _make_mock_workflow()
+        mock_wf.display = MagicMock()
+        mock_wf.metadata = {}
+
+        with patch("datus.agent.workflow_runner.generate_workflow", return_value=mock_wf):
+            runner.initialize_workflow(_make_sql_task())
+
+        assert mock_wf.metadata.get("plan_mode") is False
+        assert mock_wf.metadata.get("auto_execute_plan") is False
 
 
 # ---------------------------------------------------------------------------

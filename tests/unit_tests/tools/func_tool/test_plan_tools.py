@@ -3,13 +3,15 @@
 """Unit tests for plan_tools module - CI level, zero external dependencies."""
 
 import json
-from unittest.mock import Mock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from pydantic import ValidationError
 
 from datus.tools.func_tool.plan_tools import (
     TITLE_WORD_LIMIT,
+    ConfirmPlanTool,
     PlanTool,
     SessionTodoStorage,
     TodoItem,
@@ -511,3 +513,108 @@ class TestPlanToolTodoUpdate:
         result = plan_tool.todo_update(999, "completed")
         assert result.success == 0
         assert "not found" in result.error
+
+
+def _make_plan_node(tmp_path, *, plan_active=True, auto_execute=False, broker="default", plan_file_exists=True):
+    """Build a mocked AgenticNode shaped for ConfirmPlanTool."""
+    node = MagicMock()
+    node.is_in_plan_mode.return_value = plan_active
+    plan_file = tmp_path / "plan.md"
+    if plan_file_exists:
+        plan_file.write_text("# My Plan\n\n1. step one", encoding="utf-8")
+    node.plan_file_path = str(plan_file)
+    node.input = SimpleNamespace(auto_execute_plan=auto_execute)
+    if broker == "default":
+        broker_mock = MagicMock()
+        broker_mock.send = AsyncMock()
+        broker_mock.request = AsyncMock(return_value=[["confirm"]])
+        node.interaction_broker = broker_mock
+    else:
+        node.interaction_broker = broker
+    return node
+
+
+class TestConfirmPlanTool:
+    @pytest.mark.asyncio
+    async def test_auto_execute_skips_user_interaction(self, tmp_path):
+        node = _make_plan_node(tmp_path, auto_execute=True)
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 1
+        assert result.result["status"] == "confirmed"
+        assert result.result["auto_confirmed"] is True
+        assert result.result["plan_file"] == str(tmp_path / "plan.md")
+        assert "todo_write" in result.result["next_action"]
+        node.deactivate_plan_mode.assert_called_once()
+        assert node._plan_just_confirmed is True
+        # The plan preview is still streamed, but no approval prompt is issued.
+        node.interaction_broker.send.assert_awaited_once()
+        node.interaction_broker.request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_execute_works_without_broker(self, tmp_path):
+        node = _make_plan_node(tmp_path, auto_execute=True, broker=None)
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 1
+        assert result.result["status"] == "confirmed"
+        assert result.result["auto_confirmed"] is True
+        node.deactivate_plan_mode.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_auto_execute_handles_node_without_input(self, tmp_path):
+        node = _make_plan_node(tmp_path)
+        node.input = None
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        # No input → auto_execute_plan resolves False → interactive path runs.
+        assert result.success == 1
+        assert result.result["status"] == "confirmed"
+        node.interaction_broker.request.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_interactive_confirm_choice(self, tmp_path):
+        node = _make_plan_node(tmp_path, auto_execute=False)
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 1
+        assert result.result["status"] == "confirmed"
+        assert "auto_confirmed" not in result.result
+        node.interaction_broker.request.assert_awaited_once()
+        node.deactivate_plan_mode.assert_called_once()
+        assert node._plan_just_confirmed is True
+
+    @pytest.mark.asyncio
+    async def test_interactive_feedback_keeps_plan_mode(self, tmp_path):
+        node = _make_plan_node(tmp_path, auto_execute=False)
+        node.interaction_broker.request = AsyncMock(return_value=[["please add an index step"]])
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 1
+        assert result.result["status"] == "feedback"
+        assert result.result["feedback"] == "please add an index step"
+        node.deactivate_plan_mode.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plan_mode_inactive_errors(self, tmp_path):
+        node = _make_plan_node(tmp_path, plan_active=False, auto_execute=True)
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 0
+        assert "plan mode is not active" in result.error
+
+    @pytest.mark.asyncio
+    async def test_missing_plan_file_errors(self, tmp_path):
+        node = _make_plan_node(tmp_path, auto_execute=True, plan_file_exists=False)
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 0
+        assert "plan file not found" in result.error
+
+    @pytest.mark.asyncio
+    async def test_interactive_without_broker_errors(self, tmp_path):
+        node = _make_plan_node(tmp_path, auto_execute=False, broker=None)
+        result = await ConfirmPlanTool(node).confirm_plan()
+
+        assert result.success == 0
+        assert "interaction broker unavailable" in result.error

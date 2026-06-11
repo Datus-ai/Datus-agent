@@ -5,6 +5,9 @@
    - workflow_prompt_sent: When False, render the full workflow description.
                            When True, render a short reminder so we do not
                            re-send the full workflow on every turn.
+   - auto_execute_plan: When True the run is non-interactive (benchmark /
+                        print mode): no user is available to answer
+                        questions, and confirm_plan is auto-approved.
 #}
 {% if not workflow_prompt_sent -%}
 ## Plan File Info
@@ -38,7 +41,11 @@ Goal: Design the implementation approach.
    - Anticipate potential challenges.
 
 ### Phase 3: Review
+{% if auto_execute_plan -%}
+Goal: Review the plan from Phase 2 and ensure alignment with the user's intent. This run is non-interactive — do NOT call `ask_user`; resolve any remaining ambiguities by making reasonable assumptions and recording them in the plan file.
+{%- else -%}
 Goal: Review the plan from Phase 2 and ensure alignment with the user's intent. Use AskUser-style clarifying questions to resolve any remaining ambiguities.
+{%- endif %}
 
 ### Phase 4: Final Plan
 Goal: Write the final plan to the plan file ({{ plan_file_path }}) — the only file you are allowed to edit.
@@ -50,6 +57,11 @@ Goal: Write the final plan to the plan file ({{ plan_file_path }}) — the only 
 - Include a **Verification** section describing how to test the changes end-to-end.
 
 ### Phase 5: Call confirm_plan
+{% if auto_execute_plan -%}
+After finalising the plan file, call the `confirm_plan` tool. It will be auto-approved (no user is available in this non-interactive run); immediately afterwards, execute the plan steps following the instructions returned by the tool.
+
+**Hard rule — end every plan-mode turn with a `confirm_plan` call.** Do NOT call `ask_user` (nobody will answer) and do NOT end a plan-mode turn with only a natural-language response.
+{%- else -%}
 After clarifying open questions and finalising the plan file, call the `confirm_plan` tool to request the user's approval.
 
 **Hard rule — end every plan-mode turn with a tool call.** A plan-mode turn must terminate with EITHER:
@@ -57,10 +69,15 @@ After clarifying open questions and finalising the plan file, call the `confirm_
 - a call to the `confirm_plan` tool (when the plan is ready for the user to approve).
 
 Do NOT end a plan-mode turn with only a natural-language response that poses questions in plain text — wrap any question in `ask_user`. Do NOT use clarifying tools to ask "Is this plan okay?" or "Should I proceed?" — that is exactly what `confirm_plan` is for.
+{%- endif %}
 {%- else -%}
 Plan mode is still active. Plan file: {{ plan_file_path }}.
 
 **If the plan file already contains a draft**, prefer calling `confirm_plan` (when the plan looks complete) or using `edit_file` for incremental refinements — do NOT regenerate the whole file with `write_file`.
 
+{% if auto_execute_plan -%}
+**End-of-turn rule still applies**: every turn must terminate with `confirm_plan` once the plan is ready — it will be auto-approved. Do NOT call `ask_user` (this run is non-interactive); make reasonable assumptions and record them in the plan file.
+{%- else -%}
 **End-of-turn rule still applies**: every turn must terminate with `ask_user` (if you still need information) or `confirm_plan` (if the plan is ready). No bare-text questions.
+{%- endif %}
 {%- endif %}
