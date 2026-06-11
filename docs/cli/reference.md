@@ -48,7 +48,9 @@ All slash commands available in Datus-CLI, grouped by category.
 |---------|---------|-------------|---------|
 | `/model` | `/models` | Switch LLM provider/model at runtime | [Model Command](model_command.md) |
 | `/effort` | | Set reasoning effort level (off/minimal/low/medium/high) | [Effort Command](effort_command.md) |
-| `/init` | | Generate `AGENTS.md` for the current project (uses the active LLM) | [Init Command](init_command.md) |
+| `/init` | | Initialize the project workspace end-to-end and generate `AGENTS.md`; optional free text adds goal/scope hints | [Init Command](init_command.md) |
+| `/session-summarize` | | Summarize the current session into persistent stores (manifest, then confirm); optional free text adds focus hints | |
+| `/memory-organize` | | Audit and reorganize all persistent stores (remediation plan, then confirm); optional free text adds focus hints | |
 | `/mcp` | | Manage MCP servers (list/add/remove/check/call/filter) | [MCP Extensions](mcp_extensions.md) |
 | `/skill` | | Manage skills and marketplace | [Skill Command](skill_command.md) |
 | `/bootstrap-bi` | | Extract BI dashboard assets for sub-agent context | |

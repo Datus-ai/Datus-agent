@@ -21,6 +21,7 @@ from datus.cli.datasource_commands import DatasourceCommands
 from datus.cli.init_commands import _INIT_PROMPT, InitCommands
 from datus.cli.model_commands import ModelCommands
 from datus.cli.repl import CommandType, DatusCLI
+from datus.cli.skill_command_utils import render_skill_prompt
 from datus.cli.slash_registry import lookup
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -76,6 +77,8 @@ def _build_core_cli() -> DatusCLI:
     cli.bg_sync = MagicMock()
     cli.service_commands = MagicMock()
     cli.service_commands.dispatch = MagicMock(return_value=False)
+    cli.session_summarize_commands = MagicMock()
+    cli.memory_organize_commands = MagicMock()
 
     cli.agent_commands = MagicMock()
     cli.context_commands = MagicMock()
@@ -114,7 +117,7 @@ def test_cli_slash_commands_route_through_shared_repl_dispatch() -> None:
     assert (cmd_type, cmd, args) == (CommandType.SLASH, "/init", "")
     DatusCLI._execute_slash_command(cli, cmd, args)
     cli.chat_commands.execute_chat_command.assert_called_once_with(
-        _INIT_PROMPT,
+        render_skill_prompt(_INIT_PROMPT, ""),
         plan_mode=True,
         subagent_name=None,
     )

@@ -9,7 +9,7 @@ Datus is configured entirely from inside the REPL. After installation, launch
 |---------|---------|
 | [`/model`](cli/model_command.md) | Pick an LLM provider, capture credentials, persist to `~/.datus/conf/agent.yml` |
 | [`/datasource`](cli/reference.md) | Add / edit / delete / switch datasources (DuckDB, SQLite, Snowflake, MySQL, PostgreSQL, StarRocks, …); writes to `~/.datus/conf/agent.yml` under `services.datasources` |
-| [`/init`](cli/init_command.md) | Generate an `AGENTS.md` for the current project (scans the directory, optionally probes a datasource, calls the active LLM) |
+| [`/init`](cli/init_command.md) | Initialize the project workspace end-to-end (scans files + database metadata, builds the knowledge base after you confirm a generation manifest, writes `AGENTS.md`); accepts optional free-text goal/scope hints |
 
 The resulting `~/.datus/conf/agent.yml` looks like:
 

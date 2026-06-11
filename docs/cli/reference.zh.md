@@ -48,7 +48,9 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 |------|------|------|------|
 | `/model` | `/models` | 运行时切换 LLM 提供商/模型 | [Model 命令](model_command.zh.md) |
 | `/effort` | | 设置 reasoning 强度（off/minimal/low/medium/high） | [Effort 命令](effort_command.zh.md) |
-| `/init` | | 为当前项目生成 `AGENTS.md`（使用当前 LLM） | [Init 命令](init_command.zh.md) |
+| `/init` | | 端到端初始化项目工作区并生成 `AGENTS.md`；可附加自由文本作为目标/范围提示 | [Init 命令](init_command.zh.md) |
+| `/session-summarize` | | 把当前会话总结进各持久化存储（先出 manifest,确认后执行）；可附加自由文本作为关注点提示 | |
+| `/memory-organize` | | 审计并整理所有持久化存储（先出整改计划,确认后执行）；可附加自由文本作为关注点提示 | |
 | `/mcp` | | 管理 MCP 服务器（列表/添加/删除/检查/调用/过滤） | [MCP 扩展](mcp_extensions.zh.md) |
 | `/skill` | | 管理技能和市场 | [Skill 命令](skill_command.zh.md) |
 | `/bootstrap-bi` | | 为子 agent 上下文提取 BI 仪表盘资产 | |
