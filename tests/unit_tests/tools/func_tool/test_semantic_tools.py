@@ -882,6 +882,17 @@ class TestQueryMetricsCompression:
         assert "49,4900" in cached_result["csv"]
         assert "..." not in cached_result["csv"]
 
+    def test_query_metrics_full_result_cache_is_bounded(self, semantic_tools):
+        semantic_tools.MAX_QUERY_METRICS_RESULT_CACHE_SIZE = 2
+
+        first = semantic_tools._cache_query_metrics_result(["id"], [{"id": 1}])
+        second = semantic_tools._cache_query_metrics_result(["id"], [{"id": 2}])
+        third = semantic_tools._cache_query_metrics_result(["id"], [{"id": 3}])
+
+        assert semantic_tools.get_cached_query_metrics_result(first) is None
+        assert semantic_tools.get_cached_query_metrics_result(second)["row_count"] == 1
+        assert semantic_tools.get_cached_query_metrics_result(third)["row_count"] == 1
+
     def test_query_metrics_empty_data(self, semantic_tools):
         """Test query_metrics with empty result set."""
         query_result = QueryResult(

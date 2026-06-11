@@ -987,6 +987,36 @@ class TestUpdateContext:
         assert ctx.row_count == 2
         assert ctx.sql_query == ""
 
+    def test_captures_zero_row_result(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["metric_time__month", "activity_count"],
+                            "data": [],
+                            "metadata": {"sql": "SELECT month, count FROM t WHERE 1 = 0"},
+                        },
+                    }
+                },
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result["success"] is True
+        assert len(workflow.context.sql_contexts) == 1
+        ctx = workflow.context.sql_contexts[0]
+        assert ctx.sql_return == "metric_time__month,activity_count\r\n"
+        assert ctx.row_count == 0
+        assert ctx.sql_query == "SELECT month, count FROM t WHERE 1 = 0"
+
     def test_skips_failed_actions(self):
         actions = [
             {

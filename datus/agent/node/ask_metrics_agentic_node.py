@@ -784,7 +784,7 @@ class AskMetricsAgenticNode(AgenticNode):
                 continue
             columns = cls._query_result_columns(result)
             data = result.get("data")
-            if not columns or not data:
+            if not columns or data is None:
                 continue
             selected = action
 
@@ -849,7 +849,7 @@ class AskMetricsAgenticNode(AgenticNode):
 
             columns = result.get("columns", [])
             data = result.get("data")
-            if not columns or not data:
+            if not columns or data is None:
                 return super().update_context(workflow)
 
             metadata = result.get("metadata", {}) or {}

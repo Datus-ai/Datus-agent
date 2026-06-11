@@ -673,6 +673,31 @@ def _append_metric_docs(metric_file: Path, docs: list[dict[str, Any]]) -> None:
         metric_file.write_text(f"{rendered}\n", encoding="utf-8")
 
 
+def _restore_metric_file(metric_file: Path, previous_content: Optional[str]) -> None:
+    if previous_content is None:
+        if metric_file.exists():
+            metric_file.unlink()
+        return
+    metric_file.parent.mkdir(parents=True, exist_ok=True)
+    metric_file.write_text(previous_content, encoding="utf-8")
+
+
+def _unique_metric_catalog_by_name(
+    existing_metric_catalog: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], set[str]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in existing_metric_catalog:
+        if not isinstance(item, dict):
+            continue
+        normalized = _normalize_metric_name(item.get("name"))
+        if normalized:
+            grouped.setdefault(normalized, []).append(item)
+
+    unique = {name: items[0] for name, items in grouped.items() if len(items) == 1}
+    ambiguous = {name for name, items in grouped.items() if len(items) > 1}
+    return unique, ambiguous
+
+
 def _auto_generate_offset_derived_metrics(
     candidate_plan: dict[str, Any],
     existing_metric_catalog: list[dict[str, Any]],
@@ -701,9 +726,7 @@ def _auto_generate_offset_derived_metrics(
             expanded_offset_candidates.append(expanded_candidate)
             seen_candidate_names.add(normalized)
 
-    existing_by_name = {
-        _normalize_metric_name(item.get("name")): item for item in existing_metric_catalog if item.get("name")
-    }
+    existing_by_name, ambiguous_existing_names = _unique_metric_catalog_by_name(existing_metric_catalog)
     metric_file = (
         agent_config.path_manager.semantic_model_path(agent_config.current_datasource)
         / "metrics"
@@ -713,21 +736,41 @@ def _auto_generate_offset_derived_metrics(
 
     docs: list[dict[str, Any]] = []
     generated_names: list[str] = []
+    resync_names: set[str] = set()
     for candidate in expanded_offset_candidates:
         normalized_name = _normalize_metric_name(candidate.get("name"))
-        if normalized_name in existing_by_name or normalized_name in file_metric_names:
+        if not normalized_name:
+            continue
+        if normalized_name in ambiguous_existing_names:
+            logger.warning("Skipping auto offset metric %s because existing metric name is ambiguous", normalized_name)
+            continue
+        if normalized_name in existing_by_name:
             continue
         input_names = _candidate_input_metric_names(candidate)
-        if not input_names or not input_names <= set(existing_by_name):
+        if not input_names:
+            continue
+        if input_names & ambiguous_existing_names:
+            logger.warning(
+                "Skipping auto offset metric %s because input metric names are ambiguous: %s",
+                normalized_name,
+                sorted(input_names & ambiguous_existing_names),
+            )
+            continue
+        if not input_names <= set(existing_by_name):
+            continue
+        if normalized_name in file_metric_names:
+            resync_names.add(normalized_name)
             continue
         docs.append(_derived_metric_doc(candidate, existing_by_name))
         generated_names.append(str(candidate["name"]).strip())
         file_metric_names.add(normalized_name)
 
-    if not docs:
+    if not docs and not resync_names:
         return {"generated_metric_names": [], "metric_artifact_ids": []}
 
-    _append_metric_docs(metric_file, docs)
+    previous_metric_file_content = metric_file.read_text(encoding="utf-8") if metric_file.exists() else None
+    if docs:
+        _append_metric_docs(metric_file, docs)
 
     from datus.tools.func_tool.generation_tools import GenerationTools
     from datus.tools.func_tool.semantic_tools import SemanticTools
@@ -739,6 +782,8 @@ def _auto_generate_offset_derived_metrics(
             "Auto-generated offset derived metrics failed validation: %s",
             validation.error,
         )
+        if docs:
+            _restore_metric_file(metric_file, previous_metric_file_content)
         return {"generated_metric_names": [], "metric_artifact_ids": [], "error": validation.error}
 
     metric_sqls: dict[str, str] = {}
@@ -761,19 +806,23 @@ def _auto_generate_offset_derived_metrics(
             if isinstance(sql, str) and sql.strip():
                 metric_sqls[name] = sql
 
+    metric_names_to_sync = set(generated_names) | resync_names
     sync = GenerationTools(agent_config=agent_config)._sync_metric_to_db(
         str(metric_file),
         metric_sqls=metric_sqls,
-        metric_names_to_sync=set(generated_names),
+        metric_names_to_sync=metric_names_to_sync,
     )
     if not sync.get("success"):
         logger.warning("Auto-generated offset derived metrics failed to sync: %s", sync.get("error"))
+        if docs:
+            _restore_metric_file(metric_file, previous_metric_file_content)
         return {"generated_metric_names": [], "metric_artifact_ids": [], "error": sync.get("error")}
 
-    artifact_ids = [f"metric:{name}" for name in generated_names]
-    logger.info("Auto-generated %d offset derived metric(s): %s", len(generated_names), generated_names)
+    synced_names = [*generated_names, *sorted(resync_names)]
+    artifact_ids = [f"metric:{name}" for name in synced_names]
+    logger.info("Auto-generated/resynced %d offset derived metric(s): %s", len(synced_names), synced_names)
     return {
-        "generated_metric_names": generated_names,
+        "generated_metric_names": synced_names,
         "metric_artifact_ids": artifact_ids,
         "metric_file": str(metric_file),
         "metric_sqls": metric_sqls,
@@ -1046,7 +1095,6 @@ async def init_success_story_metrics_async(
         batch_candidate_plan = _candidate_plan_for_sources(candidate_plan, batch_sources)
         batch_candidate_plan_json = _json_dump_compact(batch_candidate_plan) if batch_candidate_plan else ""
         source_entries = [record["source"] for record in batch_records if record.get("source")]
-        metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
 
         logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_queries)} queries)")
 
@@ -1062,6 +1110,8 @@ async def init_success_story_metrics_async(
             auto_derived_result["provenance_entries"] = batch_provenance_entries
             existing_metric_catalog = _build_existing_metric_catalog(agent_config)
             existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
+
+        metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
 
         auto_satisfied = bool(auto_metric_artifact_ids) and _all_candidate_metrics_satisfied(
             batch_candidate_plan,

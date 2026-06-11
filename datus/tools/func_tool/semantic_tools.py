@@ -13,6 +13,7 @@ import csv
 import inspect
 import io
 import json
+from collections import OrderedDict
 from typing import Any, Dict, List, Literal, Optional, Set
 
 from agents import Tool
@@ -221,6 +222,8 @@ def _run_async(coro):
 class SemanticTools:
     """Function tool wrapper for semantic layer operations."""
 
+    MAX_QUERY_METRICS_RESULT_CACHE_SIZE = 100
+
     @classmethod
     def all_tools_name(cls) -> List[str]:
         """Return list of all tool method names for wizard display."""
@@ -260,7 +263,7 @@ class SemanticTools:
         self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         self.compressor = DataCompressor(model_name=agent_config.active_model().model)
-        self._query_metrics_result_cache: Dict[str, dict] = {}
+        self._query_metrics_result_cache: OrderedDict[str, dict] = OrderedDict()
         self._query_metrics_result_cache_counter = 0
 
         # Lazy load adapter and attribution tool
@@ -324,6 +327,8 @@ class SemanticTools:
             "csv": full_csv,
             "row_count": self._query_data_row_count(data),
         }
+        while len(self._query_metrics_result_cache) > self.MAX_QUERY_METRICS_RESULT_CACHE_SIZE:
+            self._query_metrics_result_cache.popitem(last=False)
         return cache_key
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:

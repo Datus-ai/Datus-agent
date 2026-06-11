@@ -1225,6 +1225,9 @@ class TestAutoGenerateOffsetDerivedMetrics:
             ],
         }
 
+    def _metric_file(self, tmp_path):
+        return tmp_path / "subject" / "semantic_models" / "starrocks" / "metrics" / "auto_offset_derived_metrics.yml"
+
     def test_generates_and_syncs_offset_derived_metrics(self, tmp_path, monkeypatch):
         synced = {}
 
@@ -1279,6 +1282,150 @@ class TestAutoGenerateOffsetDerivedMetrics:
         assert "name: activity_count_previous_month" in text
         assert "offset_window: 1 month" in text
         assert "expr: activity_count - previous_month_activity_count" in text
+
+    def test_skips_ambiguous_existing_input_metric_names(self, tmp_path, monkeypatch):
+        class UnexpectedSemanticTools:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError("semantic tools should not be constructed")
+
+        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", UnexpectedSemanticTools)
+
+        result = _auto_generate_offset_derived_metrics(
+            self._candidate_plan(),
+            [
+                {"name": "activity_count", "type": "measure_proxy", "subject_path": ["a"]},
+                {"name": "activity_count", "type": "measure_proxy", "subject_path": ["b"]},
+            ],
+            self._config(tmp_path),
+        )
+
+        assert result == {"generated_metric_names": [], "metric_artifact_ids": []}
+
+    def test_rolls_back_metric_file_when_validation_fails(self, tmp_path, monkeypatch):
+        metric_file = self._metric_file(tmp_path)
+        metric_file.parent.mkdir(parents=True)
+        original_content = "metric:\n  name: existing_metric\n"
+        metric_file.write_text(original_content, encoding="utf-8")
+
+        class FakeSemanticTools:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def validate_semantic(self, scope="all"):
+                return FuncToolResult(success=0, error="bad model")
+
+        class UnexpectedGenerationTools:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError("generation tools should not be constructed")
+
+        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
+        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", UnexpectedGenerationTools)
+
+        result = _auto_generate_offset_derived_metrics(
+            self._candidate_plan(),
+            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
+            self._config(tmp_path),
+        )
+
+        assert result["error"] == "bad model"
+        assert metric_file.read_text(encoding="utf-8") == original_content
+
+    def test_rolls_back_metric_file_when_sync_fails(self, tmp_path, monkeypatch):
+        metric_file = self._metric_file(tmp_path)
+
+        class FakeSemanticTools:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def validate_semantic(self, scope="all"):
+                return FuncToolResult(result={"valid": True, "scope": scope})
+
+            def query_metrics(self, metrics, dimensions=None, time_granularity=None, dry_run=False, **kwargs):
+                return FuncToolResult(result={"metadata": {"sql": f"SELECT {metrics[0]}"}})
+
+        class FakeGenerationTools:
+            def __init__(self, agent_config):
+                self.agent_config = agent_config
+
+            def _sync_metric_to_db(self, metric_file, metric_sqls=None, metric_names_to_sync=None):
+                return {"success": False, "error": "sync failed"}
+
+        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
+        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", FakeGenerationTools)
+
+        result = _auto_generate_offset_derived_metrics(
+            self._candidate_plan(),
+            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
+            self._config(tmp_path),
+        )
+
+        assert result["error"] == "sync failed"
+        assert not metric_file.exists()
+
+    def test_resyncs_file_backed_metric_missing_from_catalog(self, tmp_path, monkeypatch):
+        synced = {}
+        metric_file = self._metric_file(tmp_path)
+        metric_file.parent.mkdir(parents=True)
+        metric_file.write_text(
+            "metric:\n"
+            "  name: activity_count_previous_month\n"
+            "  type: derived\n"
+            "  type_params:\n"
+            "    expr: activity_count_previous_month\n"
+            "    metrics:\n"
+            "      - name: activity_count\n"
+            "        alias: activity_count_previous_month\n"
+            "        offset_window: 1 month\n",
+            encoding="utf-8",
+        )
+
+        class FakeSemanticTools:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def validate_semantic(self, scope="all"):
+                return FuncToolResult(result={"valid": True, "scope": scope})
+
+        class FakeGenerationTools:
+            def __init__(self, agent_config):
+                self.agent_config = agent_config
+
+            def _sync_metric_to_db(self, metric_file, metric_sqls=None, metric_names_to_sync=None):
+                synced["metric_file"] = metric_file
+                synced["metric_sqls"] = metric_sqls
+                synced["metric_names_to_sync"] = metric_names_to_sync
+                return {"success": True}
+
+        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
+        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", FakeGenerationTools)
+
+        result = _auto_generate_offset_derived_metrics(
+            {
+                "available": True,
+                "derived_metric_candidates": [
+                    {
+                        "name": "activity_count_previous_month",
+                        "metric_type": "derived",
+                        "expression": "activity_count_previous_month",
+                        "inputs": [
+                            {
+                                "name": "activity_count",
+                                "alias": "activity_count_previous_month",
+                                "offset_window": "1 month",
+                            }
+                        ],
+                    }
+                ],
+            },
+            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
+            self._config(tmp_path),
+        )
+
+        assert result["generated_metric_names"] == ["activity_count_previous_month"]
+        assert result["metric_artifact_ids"] == ["metric:activity_count_previous_month"]
+        assert synced["metric_sqls"] == {}
+        assert synced["metric_names_to_sync"] == {"activity_count_previous_month"}
+        assert metric_file.read_text(encoding="utf-8").count("name: activity_count_previous_month") == 1
 
     def test_skips_when_input_metric_missing(self, tmp_path, monkeypatch):
         class UnexpectedSemanticTools:
