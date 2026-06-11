@@ -42,7 +42,8 @@ class ArgumentParser:
             dest="db_type",
             choices=[DBType.SQLITE, "snowflake", DBType.DUCKDB],
             default=DBType.SQLITE,
-            help="Database type to connect to",
+            metavar="DB_TYPE",
+            help="Database type to connect to (%(choices)s)",
         )
         self.parser.add_argument(
             "--db_path", dest="db_path", type=str, help="Path to database file (for SQLite/DuckDB)"

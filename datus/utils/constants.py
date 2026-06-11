@@ -2,10 +2,10 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-from enum import Enum
+from enum import StrEnum
 
 
-class DBType(str, Enum):
+class DBType(StrEnum):
     """Built-in database dialect types (zero or minimal dependencies).
 
     External dialects (mysql, postgresql, snowflake, etc.) are registered
@@ -16,7 +16,7 @@ class DBType(str, Enum):
     DUCKDB = "duckdb"
 
 
-class LLMProvider(str, Enum):
+class LLMProvider(StrEnum):
     """Large Language Model provider types supported by Datus."""
 
     OPENAI = "openai"
@@ -34,7 +34,7 @@ class LLMProvider(str, Enum):
     OPENROUTER = "openrouter"  # OpenRouter unified AI gateway
 
 
-class EmbeddingProvider(str, Enum):
+class EmbeddingProvider(StrEnum):
     """Embedding model provider types supported by Datus."""
 
     OPENAI = "openai"
@@ -67,7 +67,7 @@ SYS_SUB_AGENTS = {
 HIDDEN_SYS_SUB_AGENTS = {"feedback"}
 
 
-class SQLType(str, Enum):
+class SQLType(StrEnum):
     """SQL statement types."""
 
     SELECT = "select"
