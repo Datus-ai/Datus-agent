@@ -113,6 +113,27 @@ class EditMetricInput(BaseModel):
     yaml: str = Field(..., description="Updated YAML content")
 
 
+class MetricPreviewInput(BaseModel):
+    """Preview a saved metric by compiling it to SQL (dry-run)."""
+
+    subject_path: List[str] = Field(..., description="Path to the saved metric; the leaf is the metric name")
+    dimensions: Optional[List[str]] = Field(None, description="Optional dimensions to group by")
+    time_start: Optional[str] = Field(None, description="Optional start time (ISO or relative, e.g. '-7d')")
+    time_end: Optional[str] = Field(None, description="Optional end time (ISO or relative, e.g. 'now')")
+    time_granularity: Optional[str] = Field(None, description="Optional grain: day/week/month/quarter/year")
+    where: Optional[str] = Field(None, description="Optional SQL WHERE clause (without the WHERE keyword)")
+    limit: Optional[int] = Field(None, description="Optional row limit")
+    order_by: Optional[List[str]] = Field(None, description="Optional order-by columns; prefix '-' for descending")
+
+
+class MetricPreviewData(BaseModel):
+    """Compiled SQL for previewing a metric's data."""
+
+    metric: str = Field(..., description="Metric name")
+    sql: str = Field(..., description="Runnable SQL compiled from the metric definition")
+    datasource: Optional[str] = Field(None, description="Datasource the SQL should run against")
+
+
 class EditSemanticModelInput(BaseModel):
     """Edit semantic model entry (table or column)."""
 

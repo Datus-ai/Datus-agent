@@ -882,3 +882,112 @@ class TestExplorerServiceHelpers:
         id1 = svc._gen_reference_sql_id("SELECT 1")
         id2 = svc._gen_reference_sql_id("SELECT 2")
         assert id1 != id2
+
+
+@pytest.mark.asyncio
+class TestExplorerServicePreviewMetric:
+    """Tests for preview_metric — compile a saved metric to SQL via dry-run."""
+
+    @staticmethod
+    def _patch_adapter(monkeypatch, *, adapter):
+        """Make SemanticTools(...) yield a stub exposing ``adapter``."""
+        from types import SimpleNamespace
+
+        tools_stub = SimpleNamespace(adapter=adapter)
+        monkeypatch.setattr(
+            "datus.tools.func_tool.semantic_tools.SemanticTools",
+            lambda *a, **k: tools_stub,
+        )
+
+    @staticmethod
+    def _query_result(*, metadata=None, data=None):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(metadata=metadata or {}, data=data or [])
+
+    async def test_empty_subject_path_fails(self, real_agent_config):
+        """Empty subject path is rejected before touching the adapter."""
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=[]))
+        assert result.success is False
+        assert "Subject path cannot be empty" in result.errorMessage
+
+    async def test_adapter_unavailable_fails(self, real_agent_config, monkeypatch):
+        """A missing semantic adapter surfaces a clear error, not a crash."""
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        self._patch_adapter(monkeypatch, adapter=None)
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["Finance", "revenue"]))
+        assert result.success is False
+        assert "adapter is not available" in result.errorMessage
+
+    async def test_returns_compiled_sql_from_metadata(self, real_agent_config, monkeypatch):
+        """Happy path: leaf is the metric, SQL comes from dry-run metadata."""
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        adapter = MagicMock()
+        adapter.query_metrics = AsyncMock(
+            return_value=self._query_result(metadata={"explain": True, "sql": "SELECT 1 AS revenue"})
+        )
+        self._patch_adapter(monkeypatch, adapter=adapter)
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["Finance", "revenue"]))
+
+        assert result.success is True
+        assert result.data.metric == "revenue"
+        assert result.data.sql == "SELECT 1 AS revenue"
+        assert result.data.datasource == svc.datasource_id
+        # dry_run must be requested so nothing actually executes.
+        assert adapter.query_metrics.await_args.kwargs["dry_run"] is True
+        assert adapter.query_metrics.await_args.kwargs["metrics"] == ["revenue"]
+
+    async def test_falls_back_to_data_row_sql(self, real_agent_config, monkeypatch):
+        """SQL is recovered from the single data row when metadata omits it."""
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        adapter = MagicMock()
+        adapter.query_metrics = AsyncMock(return_value=self._query_result(metadata={}, data=[{"sql": "SELECT 2"}]))
+        self._patch_adapter(monkeypatch, adapter=adapter)
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
+        assert result.success is True
+        assert result.data.sql == "SELECT 2"
+
+    async def test_no_sql_compiled_fails(self, real_agent_config, monkeypatch):
+        """When neither metadata nor data carry SQL, report a clean failure."""
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        adapter = MagicMock()
+        adapter.query_metrics = AsyncMock(return_value=self._query_result(metadata={}, data=[]))
+        self._patch_adapter(monkeypatch, adapter=adapter)
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
+        assert result.success is False
+        assert "Failed to compile SQL" in result.errorMessage
+
+    async def test_adapter_exception_is_caught(self, real_agent_config, monkeypatch):
+        """Adapter errors become a failed Result rather than propagating."""
+        from unittest.mock import AsyncMock
+
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        adapter = MagicMock()
+        adapter.query_metrics = AsyncMock(side_effect=RuntimeError("unknown metric 'revenue'"))
+        self._patch_adapter(monkeypatch, adapter=adapter)
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
+        assert result.success is False
+        assert "unknown metric" in result.errorMessage

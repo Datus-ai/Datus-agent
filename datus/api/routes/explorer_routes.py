@@ -12,6 +12,8 @@ from datus.api.models.explorer_models import (
     EditMetricInput,
     EditSemanticModelInput,
     MetricInfo,
+    MetricPreviewData,
+    MetricPreviewInput,
     ReferenceSQLInfo,
     ReferenceSQLInput,
     RenameSubjectInput,
@@ -92,6 +94,20 @@ async def get_metric(
 ) -> Result[MetricInfo]:
     """Get metric info."""
     return await svc.explorer.get_metric(request.subject_path)
+
+
+@router.post(
+    "/subject/metric/preview",
+    response_model=Result[MetricPreviewData],
+    summary="Preview Metric",
+    description="Compile a saved metric into runnable SQL (dry-run) for previewing its data",
+)
+async def preview_metric(
+    request: MetricPreviewInput,
+    svc: ServiceDep,
+) -> Result[MetricPreviewData]:
+    """Compile a saved metric to SQL for preview."""
+    return await svc.explorer.preview_metric(request)
 
 
 @router.post(

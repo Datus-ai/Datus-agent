@@ -12,6 +12,8 @@ from datus.api.models.explorer_models import (
     EditMetricInput,
     EditSemanticModelInput,
     MetricInfo,
+    MetricPreviewData,
+    MetricPreviewInput,
     ReferenceSQLInfo,
     ReferenceSQLInput,
     RenameSubjectInput,
@@ -597,6 +599,77 @@ class ExplorerService:
             from datus.api.models.config_models import ErrorCode
 
             return Result[MetricInfo](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage=str(e),
+            )
+
+    async def preview_metric(self, request: MetricPreviewInput) -> Result[MetricPreviewData]:
+        """Compile a saved metric into runnable SQL via the semantic adapter.
+
+        Uses dry-run so nothing executes here: the frontend hands the returned
+        SQL to the existing SQL-result panel, which runs it and renders the
+        table / chart. Only already-saved (registered) metrics are supported.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        try:
+            self._require_datasource()
+
+            if not request.subject_path:
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Subject path cannot be empty",
+                )
+
+            metric_name = request.subject_path[-1]
+
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+
+            tools = SemanticTools(self.agent_config)
+            adapter = tools.adapter
+            if adapter is None:
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage="Semantic adapter is not available; cannot preview this metric.",
+                )
+
+            # dry_run asks the adapter to render SQL without executing it.
+            query_result = await adapter.query_metrics(
+                metrics=[metric_name],
+                dimensions=request.dimensions or [],
+                time_start=request.time_start,
+                time_end=request.time_end,
+                time_granularity=request.time_granularity,
+                where=request.where,
+                limit=request.limit,
+                order_by=request.order_by or None,
+                dry_run=True,
+            )
+
+            metadata = query_result.metadata or {}
+            sql = metadata.get("sql")
+            if not sql and query_result.data:
+                # MetricFlow also echoes the rendered SQL in the single data row.
+                sql = (query_result.data[0] or {}).get("sql")
+
+            if not sql:
+                return Result[MetricPreviewData](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
+                )
+
+            return Result[MetricPreviewData](
+                success=True,
+                data=MetricPreviewData(metric=metric_name, sql=sql, datasource=self.datasource_id or None),
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to preview metric: {e}")
+            return Result[MetricPreviewData](
                 success=False,
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                 errorMessage=str(e),
