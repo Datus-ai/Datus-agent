@@ -1746,6 +1746,7 @@ class AgenticNode(Node):
             "adapter_type",
             "semantic_adapter",
             "subject_tree_prompt_limit",
+            "require_final_result_selection",
             "sql_file_threshold",
             "sql_preview_lines",
             "bi_platform",

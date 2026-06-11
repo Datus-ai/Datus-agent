@@ -5,6 +5,7 @@
 """Unit tests for datus.storage.metric.metric_init."""
 
 from enum import Enum
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,12 +14,15 @@ from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
+    _append_auto_offset_result,
+    _auto_generate_offset_derived_metrics,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _source_provenance_from_row,
     _sync_metric_provenance,
     init_semantic_yaml_metrics,
 )
+from datus.tools.func_tool.base import FuncToolResult
 
 # ---------------------------------------------------------------------------
 # _action_status_value
@@ -1179,6 +1183,142 @@ class TestBatchHasNoMetricCandidates:
 
         plan = {"available": True}
         assert _batch_has_no_metric_candidates(plan) is False
+
+
+class TestAutoGenerateOffsetDerivedMetrics:
+    def _config(self, tmp_path):
+        semantic_root = tmp_path / "subject" / "semantic_models" / "starrocks"
+        path_manager = SimpleNamespace(semantic_model_path=lambda datasource: semantic_root)
+        return SimpleNamespace(current_datasource="starrocks", path_manager=path_manager)
+
+    def _candidate_plan(self):
+        return {
+            "available": True,
+            "derived_metric_candidates": [
+                {
+                    "name": "previous_month_activity_count",
+                    "metric_type": "derived",
+                    "expression": "previous_month_activity_count",
+                    "inputs": [
+                        {
+                            "name": "activity_count",
+                            "alias": "previous_month_activity_count",
+                            "offset_window": "1 month",
+                        }
+                    ],
+                    "offset_window": "1 month",
+                },
+                {
+                    "name": "activity_count_mom_delta",
+                    "metric_type": "derived",
+                    "expression": "activity_count - previous_month_activity_count",
+                    "inputs": [
+                        {"name": "activity_count"},
+                        {
+                            "name": "activity_count",
+                            "alias": "previous_month_activity_count",
+                            "offset_window": "1 month",
+                        },
+                    ],
+                    "offset_window": "1 month",
+                },
+            ],
+        }
+
+    def test_generates_and_syncs_offset_derived_metrics(self, tmp_path, monkeypatch):
+        synced = {}
+
+        class FakeSemanticTools:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def validate_semantic(self, scope="all"):
+                return FuncToolResult(result={"valid": True, "scope": scope})
+
+            def query_metrics(self, metrics, dimensions=None, time_granularity=None, dry_run=False, **kwargs):
+                return FuncToolResult(result={"metadata": {"sql": f"SELECT {metrics[0]}"}})
+
+        class FakeGenerationTools:
+            def __init__(self, agent_config):
+                self.agent_config = agent_config
+
+            def _sync_metric_to_db(self, metric_file, metric_sqls=None, metric_names_to_sync=None):
+                synced["metric_file"] = metric_file
+                synced["metric_sqls"] = metric_sqls
+                synced["metric_names_to_sync"] = metric_names_to_sync
+                return {"success": True}
+
+        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
+        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", FakeGenerationTools)
+
+        result = _auto_generate_offset_derived_metrics(
+            self._candidate_plan(),
+            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
+            self._config(tmp_path),
+        )
+
+        assert result["generated_metric_names"] == [
+            "previous_month_activity_count",
+            "activity_count_previous_month",
+            "activity_count_mom_delta",
+        ]
+        assert result["metric_artifact_ids"] == [
+            "metric:previous_month_activity_count",
+            "metric:activity_count_previous_month",
+            "metric:activity_count_mom_delta",
+        ]
+        assert synced["metric_names_to_sync"] == {
+            "previous_month_activity_count",
+            "activity_count_previous_month",
+            "activity_count_mom_delta",
+        }
+        metric_file = (
+            tmp_path / "subject" / "semantic_models" / "starrocks" / "metrics" / "auto_offset_derived_metrics.yml"
+        )
+        text = metric_file.read_text()
+        assert "name: activity_count_previous_month" in text
+        assert "offset_window: 1 month" in text
+        assert "expr: activity_count - previous_month_activity_count" in text
+
+    def test_skips_when_input_metric_missing(self, tmp_path, monkeypatch):
+        class UnexpectedSemanticTools:
+            def __init__(self, *args, **kwargs):
+                raise AssertionError("semantic tools should not be constructed")
+
+        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", UnexpectedSemanticTools)
+
+        result = _auto_generate_offset_derived_metrics(self._candidate_plan(), [], self._config(tmp_path))
+
+        assert result == {"generated_metric_names": [], "metric_artifact_ids": []}
+
+    def test_append_auto_offset_result_merges_without_duplicates(self):
+        batch_result = {
+            "auto_generated_offset_derived_metrics": ["previous_month_activity_count"],
+            "_synced_metric_artifact_ids": ["metric:previous_month_activity_count"],
+            "provenance_entries": 1,
+        }
+
+        _append_auto_offset_result(
+            batch_result,
+            {
+                "generated_metric_names": ["previous_month_activity_count", "activity_count_mom_delta"],
+                "metric_artifact_ids": [
+                    "metric:previous_month_activity_count",
+                    "metric:activity_count_mom_delta",
+                ],
+            },
+            provenance_entries=2,
+        )
+
+        assert batch_result["auto_generated_offset_derived_metrics"] == [
+            "previous_month_activity_count",
+            "activity_count_mom_delta",
+        ]
+        assert batch_result["_synced_metric_artifact_ids"] == [
+            "metric:previous_month_activity_count",
+            "metric:activity_count_mom_delta",
+        ]
+        assert batch_result["provenance_entries"] == 3
 
 
 @pytest.mark.ci

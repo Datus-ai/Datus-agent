@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import pandas as pd
+import yaml
 
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -527,6 +528,283 @@ def _all_candidate_metrics_satisfied(
     return True
 
 
+def _offset_grain(offset_window: Any) -> Optional[str]:
+    parts = str(offset_window or "").strip().lower().split()
+    if len(parts) < 2:
+        return None
+    unit = parts[1].rstrip("s")
+    return unit if unit in {"day", "week", "month", "quarter", "year"} else None
+
+
+def _is_offset_derived_candidate(candidate: dict[str, Any]) -> bool:
+    if _normalized_metric_type(candidate.get("metric_type") or candidate.get("type")) != "derived":
+        return False
+    inputs = candidate.get("inputs")
+    return isinstance(inputs, list) and any(isinstance(item, dict) and item.get("offset_window") for item in inputs)
+
+
+def _candidate_input_metric_names(candidate: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for item in candidate.get("inputs") or []:
+        if isinstance(item, dict):
+            normalized = _normalize_metric_name(item.get("name"))
+            if normalized:
+                names.add(normalized)
+    return names
+
+
+def _candidate_subject_tags(candidate: dict[str, Any], existing_by_name: dict[str, dict[str, Any]]) -> list[str]:
+    tags: list[str] = []
+    for input_name in _candidate_input_metric_names(candidate):
+        subject_path = existing_by_name.get(input_name, {}).get("subject_path")
+        if isinstance(subject_path, list) and subject_path:
+            joined = "/".join(str(part) for part in subject_path if str(part).strip())
+            if joined:
+                tags.extend([joined, f"subject_tree: {joined}"])
+                break
+    return tags
+
+
+def _derived_metric_doc(candidate: dict[str, Any], existing_by_name: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    metric_inputs: list[dict[str, Any]] = []
+    for item in candidate.get("inputs") or []:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        metric_input = {"name": str(item["name"]).strip()}
+        alias = str(item.get("alias") or "").strip()
+        offset_window = str(item.get("offset_window") or "").strip()
+        offset_to_grain = str(item.get("offset_to_grain") or "").strip()
+        if alias:
+            metric_input["alias"] = alias
+        if offset_window:
+            metric_input["offset_window"] = offset_window
+        if offset_to_grain:
+            metric_input["offset_to_grain"] = offset_to_grain
+        metric_inputs.append(metric_input)
+
+    metric: dict[str, Any] = {
+        "name": str(candidate["name"]).strip(),
+        "description": str(candidate.get("description") or candidate.get("source_alias") or candidate["name"]).strip(),
+        "type": "derived",
+        "type_params": {
+            "metrics": metric_inputs,
+            "expr": str(candidate.get("expression") or candidate["name"]).strip(),
+        },
+    }
+    tags = _candidate_subject_tags(candidate, existing_by_name)
+    if tags:
+        metric["locked_metadata"] = {"tags": tags}
+    return {"metric": metric}
+
+
+def _offset_identity_alias_candidates(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    inputs = [item for item in candidate.get("inputs") or [] if isinstance(item, dict) and item.get("offset_window")]
+    if len(inputs) != 1:
+        return []
+
+    offset_input = inputs[0]
+    base_name = _normalize_metric_name(offset_input.get("name"))
+    alias = _normalize_metric_name(offset_input.get("alias"))
+    offset_window = str(offset_input.get("offset_window") or "").strip()
+    grain = _offset_grain(offset_window)
+    if not base_name or not alias or not grain:
+        return []
+
+    expression = _normalize_metric_name(candidate.get("expression"))
+    candidate_name = _normalize_metric_name(candidate.get("name"))
+    if expression != alias or candidate_name != alias:
+        return []
+
+    equivalent_name = f"{base_name}_previous_{grain}"
+    if equivalent_name == candidate_name:
+        return []
+
+    equivalent = dict(candidate)
+    equivalent["name"] = equivalent_name
+    equivalent["expression"] = equivalent_name
+    equivalent["source_alias"] = equivalent_name
+    equivalent["description"] = str(candidate.get("description") or equivalent_name).replace(
+        candidate_name, equivalent_name
+    )
+    equivalent_inputs: list[dict[str, Any]] = []
+    for item in candidate.get("inputs") or []:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        if copied.get("offset_window"):
+            copied["alias"] = equivalent_name
+        equivalent_inputs.append(copied)
+    equivalent["inputs"] = equivalent_inputs
+    return [equivalent]
+
+
+def _load_metric_doc_names(metric_file: Path) -> set[str]:
+    if not metric_file.exists():
+        return set()
+    try:
+        docs = list(yaml.safe_load_all(metric_file.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+    names: set[str] = set()
+    for doc in docs:
+        if not isinstance(doc, dict):
+            continue
+        metric = doc.get("metric")
+        if isinstance(metric, dict):
+            normalized = _normalize_metric_name(metric.get("name"))
+            if normalized:
+                names.add(normalized)
+    return names
+
+
+def _append_metric_docs(metric_file: Path, docs: list[dict[str, Any]]) -> None:
+    metric_file.parent.mkdir(parents=True, exist_ok=True)
+    rendered = "\n---\n".join(
+        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False).strip() for doc in docs if isinstance(doc, dict)
+    )
+    if not rendered:
+        return
+    if metric_file.exists() and metric_file.read_text(encoding="utf-8").strip():
+        with metric_file.open("a", encoding="utf-8") as handle:
+            handle.write("\n\n---\n")
+            handle.write(rendered)
+            handle.write("\n")
+    else:
+        metric_file.write_text(f"{rendered}\n", encoding="utf-8")
+
+
+def _auto_generate_offset_derived_metrics(
+    candidate_plan: dict[str, Any],
+    existing_metric_catalog: list[dict[str, Any]],
+    agent_config: AgentConfig,
+) -> dict[str, Any]:
+    """Deterministically materialize MetricFlow offset-window derived metrics from mined SQL evidence."""
+    if not candidate_plan or not candidate_plan.get("available"):
+        return {"generated_metric_names": [], "metric_artifact_ids": []}
+    derived_candidates = candidate_plan.get("derived_metric_candidates")
+    if not isinstance(derived_candidates, list):
+        return {"generated_metric_names": [], "metric_artifact_ids": []}
+    offset_candidates = [
+        candidate
+        for candidate in derived_candidates
+        if isinstance(candidate, dict) and candidate.get("name") and _is_offset_derived_candidate(candidate)
+    ]
+    if not offset_candidates:
+        return {"generated_metric_names": [], "metric_artifact_ids": []}
+    expanded_offset_candidates: list[dict[str, Any]] = []
+    seen_candidate_names: set[str] = set()
+    for candidate in offset_candidates:
+        for expanded_candidate in [candidate, *_offset_identity_alias_candidates(candidate)]:
+            normalized = _normalize_metric_name(expanded_candidate.get("name"))
+            if not normalized or normalized in seen_candidate_names:
+                continue
+            expanded_offset_candidates.append(expanded_candidate)
+            seen_candidate_names.add(normalized)
+
+    existing_by_name = {
+        _normalize_metric_name(item.get("name")): item for item in existing_metric_catalog if item.get("name")
+    }
+    metric_file = (
+        agent_config.path_manager.semantic_model_path(agent_config.current_datasource)
+        / "metrics"
+        / "auto_offset_derived_metrics.yml"
+    )
+    file_metric_names = _load_metric_doc_names(metric_file)
+
+    docs: list[dict[str, Any]] = []
+    generated_names: list[str] = []
+    for candidate in expanded_offset_candidates:
+        normalized_name = _normalize_metric_name(candidate.get("name"))
+        if normalized_name in existing_by_name or normalized_name in file_metric_names:
+            continue
+        input_names = _candidate_input_metric_names(candidate)
+        if not input_names or not input_names <= set(existing_by_name):
+            continue
+        docs.append(_derived_metric_doc(candidate, existing_by_name))
+        generated_names.append(str(candidate["name"]).strip())
+        file_metric_names.add(normalized_name)
+
+    if not docs:
+        return {"generated_metric_names": [], "metric_artifact_ids": []}
+
+    _append_metric_docs(metric_file, docs)
+
+    from datus.tools.func_tool.generation_tools import GenerationTools
+    from datus.tools.func_tool.semantic_tools import SemanticTools
+
+    semantic_tools = SemanticTools(agent_config=agent_config, sub_agent_name=METRICS_NODE_NAME)
+    validation = semantic_tools.validate_semantic(scope="all")
+    if not validation.success:
+        logger.warning(
+            "Auto-generated offset derived metrics failed validation: %s",
+            validation.error,
+        )
+        return {"generated_metric_names": [], "metric_artifact_ids": [], "error": validation.error}
+
+    metric_sqls: dict[str, str] = {}
+    for name in generated_names:
+        candidate = next(
+            (item for item in expanded_offset_candidates if item.get("name") == name),
+            {},
+        )
+        grain = _offset_grain(candidate.get("offset_window"))
+        dimensions = [f"metric_time__{grain}"] if grain else []
+        dry_run = semantic_tools.query_metrics(
+            metrics=[name],
+            dimensions=dimensions,
+            time_granularity=grain,
+            dry_run=True,
+        )
+        if dry_run.success and isinstance(dry_run.result, dict):
+            metadata = dry_run.result.get("metadata") if isinstance(dry_run.result.get("metadata"), dict) else {}
+            sql = metadata.get("sql")
+            if isinstance(sql, str) and sql.strip():
+                metric_sqls[name] = sql
+
+    sync = GenerationTools(agent_config=agent_config)._sync_metric_to_db(
+        str(metric_file),
+        metric_sqls=metric_sqls,
+        metric_names_to_sync=set(generated_names),
+    )
+    if not sync.get("success"):
+        logger.warning("Auto-generated offset derived metrics failed to sync: %s", sync.get("error"))
+        return {"generated_metric_names": [], "metric_artifact_ids": [], "error": sync.get("error")}
+
+    artifact_ids = [f"metric:{name}" for name in generated_names]
+    logger.info("Auto-generated %d offset derived metric(s): %s", len(generated_names), generated_names)
+    return {
+        "generated_metric_names": generated_names,
+        "metric_artifact_ids": artifact_ids,
+        "metric_file": str(metric_file),
+        "metric_sqls": metric_sqls,
+        "sync": sync,
+    }
+
+
+def _append_auto_offset_result(
+    batch_result: dict[str, Any],
+    auto_derived_result: dict[str, Any],
+    provenance_entries: int = 0,
+) -> None:
+    """Attach deterministic offset-derived metric artifacts to a batch result."""
+    generated_names = list(auto_derived_result.get("generated_metric_names") or [])
+    artifact_ids = list(auto_derived_result.get("metric_artifact_ids") or [])
+    if generated_names:
+        existing_names = batch_result.setdefault("auto_generated_offset_derived_metrics", [])
+        if isinstance(existing_names, list):
+            for name in generated_names:
+                if name not in existing_names:
+                    existing_names.append(name)
+    if artifact_ids:
+        existing_ids = batch_result.setdefault("_synced_metric_artifact_ids", [])
+        if isinstance(existing_ids, list):
+            for artifact_id in artifact_ids:
+                if artifact_id not in existing_ids:
+                    existing_ids.append(artifact_id)
+    if provenance_entries:
+        batch_result["provenance_entries"] = batch_result.get("provenance_entries", 0) + provenance_entries
+
+
 async def _generate_metrics_batch(
     batch_queries: list[str],
     batch_idx: int,
@@ -772,7 +1050,24 @@ async def init_success_story_metrics_async(
 
         logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_queries)} queries)")
 
-        if build_mode == "incremental" and _all_candidate_metrics_satisfied(
+        auto_derived_result = _auto_generate_offset_derived_metrics(
+            batch_candidate_plan,
+            existing_metric_catalog,
+            agent_config,
+        )
+        auto_metric_artifact_ids = list(auto_derived_result.get("metric_artifact_ids") or [])
+        if auto_metric_artifact_ids:
+            batch_provenance_entries = _sync_metric_provenance(agent_config, auto_metric_artifact_ids, source_entries)
+            provenance_entries += batch_provenance_entries
+            auto_derived_result["provenance_entries"] = batch_provenance_entries
+            existing_metric_catalog = _build_existing_metric_catalog(agent_config)
+            existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
+
+        auto_satisfied = bool(auto_metric_artifact_ids) and _all_candidate_metrics_satisfied(
+            batch_candidate_plan,
+            existing_metric_catalog,
+        )
+        if (build_mode == "incremental" or auto_satisfied) and _all_candidate_metrics_satisfied(
             batch_candidate_plan,
             existing_metric_catalog,
         ):
@@ -806,6 +1101,12 @@ async def init_success_story_metrics_async(
                 "skipped_queries": len(batch_records),
                 "skipped_metric_candidates": skipped_names,
             }
+            if auto_metric_artifact_ids:
+                batch_result["auto_generated_offset_derived_metrics"] = auto_derived_result.get(
+                    "generated_metric_names", []
+                )
+                batch_result["_synced_metric_artifact_ids"] = auto_metric_artifact_ids
+                batch_result["provenance_entries"] = auto_derived_result.get("provenance_entries", 0)
             if merged_result is None:
                 merged_result = batch_result
             elif isinstance(merged_result, dict):
@@ -886,6 +1187,29 @@ async def init_success_story_metrics_async(
                 batch_result["provenance_entries"] = (
                     batch_result.get("provenance_entries", 0) + batch_provenance_entries
                 )
+
+            if isinstance(batch_result, dict):
+                refreshed_catalog = _build_existing_metric_catalog(agent_config)
+                post_auto_derived_result = _auto_generate_offset_derived_metrics(
+                    batch_candidate_plan,
+                    refreshed_catalog,
+                    agent_config,
+                )
+                post_auto_metric_artifact_ids = list(post_auto_derived_result.get("metric_artifact_ids") or [])
+                if post_auto_metric_artifact_ids:
+                    post_auto_provenance_entries = _sync_metric_provenance(
+                        agent_config,
+                        post_auto_metric_artifact_ids,
+                        source_entries,
+                    )
+                    provenance_entries += post_auto_provenance_entries
+                    _append_auto_offset_result(
+                        batch_result,
+                        post_auto_derived_result,
+                        provenance_entries=post_auto_provenance_entries,
+                    )
+                    existing_metric_catalog = _build_existing_metric_catalog(agent_config)
+                    existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
 
             if merged_result is None:
                 merged_result = batch_result

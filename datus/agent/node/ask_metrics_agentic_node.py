@@ -51,7 +51,6 @@ class AskMetricsAgenticNode(AgenticNode):
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
     )
-
     _TOOL_NAMES_BY_CATEGORY = {
         "db_tools": set(DBFuncTool.all_tools_name()),
         "context_search_tools": set(ContextSearchTools.all_tools_name()),
@@ -95,6 +94,8 @@ class AskMetricsAgenticNode(AgenticNode):
         self.subject_tree_metric_entries: List[Dict[str, Any]] = []
         self.subject_tree_mode: str = "none"
         self.subject_tree_prompt: str = ""
+        self._metric_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._selected_final_metric_result_id: Optional[str] = None
         self.startup_error: Optional[str] = None
 
         super().__init__(
@@ -116,6 +117,7 @@ class AskMetricsAgenticNode(AgenticNode):
         self.skill_func_tool = None
         self.ask_user_tool = None
         self.sub_agent_task_tool = None
+        self.require_final_result_selection = self._resolve_bool_config("require_final_result_selection", False)
         self.subject_tree_prompt_limit = self._resolve_subject_tree_prompt_limit()
         self.setup_tools()
         self._populate_tool_registry()
@@ -153,6 +155,21 @@ class AskMetricsAgenticNode(AgenticNode):
             return self.SUBJECT_TREE_PROMPT_LIMIT
         return limit
 
+    def _resolve_bool_config(self, key: str, default: bool = False) -> bool:
+        raw_value = self.node_config.get(key, default)
+        if isinstance(raw_value, bool):
+            return raw_value
+        if isinstance(raw_value, str):
+            normalized = raw_value.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "n", "off", ""}:
+                return False
+        if raw_value in (0, 1):
+            return bool(raw_value)
+        logger.warning("Invalid ask_metrics %s=%r; using default %s", key, raw_value, default)
+        return default
+
     def setup_tools(self) -> None:
         if not self.agent_config:
             return
@@ -187,6 +204,8 @@ class AskMetricsAgenticNode(AgenticNode):
 
         for pattern in tool_patterns:
             self._setup_tool_pattern(pattern)
+        if self.require_final_result_selection:
+            self._append_tool(trans_to_function_tool(self.select_final_metric_result))
 
     def _configured_tool_patterns(self) -> List[str]:
         config_value = self.node_config.get("tools")
@@ -240,7 +259,11 @@ class AskMetricsAgenticNode(AgenticNode):
             logger.warning("Ignoring unsupported ask_metrics tool: %s.%s", category, method_name)
             return
 
-        method = getattr(tool_instance, method_name)
+        method = (
+            self.query_metrics
+            if category == "semantic_tools" and method_name == "query_metrics"
+            else getattr(tool_instance, method_name)
+        )
         if category == "db_tools" and callable(getattr(tool_instance, "to_function_tool", None)):
             tool = tool_instance.to_function_tool(method)
         else:
@@ -291,6 +314,8 @@ class AskMetricsAgenticNode(AgenticNode):
         if not callable(available_tools):
             return
         for tool in available_tools():
+            if tool_instance is self.semantic_tools and getattr(tool, "name", "") == "query_metrics":
+                tool = trans_to_function_tool(self.query_metrics)
             self._append_tool(tool)
 
     def _add_available_context_tools(self) -> None:
@@ -385,6 +410,222 @@ class AskMetricsAgenticNode(AgenticNode):
             }
         )
 
+    def query_metrics(
+        self,
+        metrics: Optional[List[str]] = None,
+        dimensions: Optional[List[str]] = None,
+        path: Optional[List[str]] = None,
+        time_start: Optional[str] = None,
+        time_end: Optional[str] = None,
+        time_granularity: Optional[str] = None,
+        where: Optional[str] = None,
+        limit: Optional[int] = None,
+        order_by: Optional[List[str]] = None,
+        dry_run: bool = False,
+    ) -> FuncToolResult:
+        """
+        Query metric values.
+
+        For period-over-period derived metrics, AskMetrics expands the request
+        to include the base and previous-period metrics when those metrics are
+        already present in the executable catalog.
+        """
+        if not self.semantic_tools:
+            return FuncToolResult(success=0, error="semantic tools unavailable")
+
+        expanded_metrics = self._expand_period_over_period_metrics(metrics)
+        if not expanded_metrics:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "query_metrics requires at least one metric name. "
+                    "Call list_metrics first and pass one or more metric names exactly as returned."
+                ),
+            )
+        return self.semantic_tools.query_metrics(
+            metrics=expanded_metrics,
+            dimensions=dimensions,
+            path=path,
+            time_start=time_start,
+            time_end=time_end,
+            time_granularity=time_granularity,
+            where=where,
+            limit=limit,
+            order_by=order_by,
+            dry_run=dry_run,
+        )
+
+    def select_final_metric_result(self, result_id: str) -> FuncToolResult:
+        """
+        Select the query_metrics result that should be stored as the final structured result.
+
+        This tool is only exposed when require_final_result_selection is enabled.
+        The result_id must be returned by a successful query_metrics call.
+        """
+        result_id = str(result_id or "").strip()
+        if not result_id:
+            return FuncToolResult(success=0, error="result_id is required")
+        if (
+            self.semantic_tools
+            and hasattr(self.semantic_tools, "get_cached_query_metrics_result")
+            and self.semantic_tools.get_cached_query_metrics_result(result_id) is None
+        ):
+            return FuncToolResult(success=0, error=f"Unknown query_metrics result_id: {result_id}")
+
+        self._selected_final_metric_result_id = result_id
+        return FuncToolResult(result={"result_id": result_id})
+
+    def _expand_period_over_period_metrics(self, metrics: Optional[List[str]]) -> List[str]:
+        requested_metrics = self._normalize_string_list(metrics)
+        if not requested_metrics:
+            return []
+
+        catalog = self._metric_catalog()
+        if not catalog:
+            return requested_metrics
+
+        expanded: List[str] = []
+        for metric_name in requested_metrics:
+            metric = catalog.get(metric_name)
+            if not metric:
+                self._append_unique(expanded, metric_name)
+                continue
+
+            for bundled_metric in self._period_over_period_metric_bundle(metric_name, metric, catalog):
+                self._append_unique(expanded, bundled_metric)
+
+        return expanded
+
+    def _metric_catalog(self) -> Dict[str, Dict[str, Any]]:
+        if self._metric_catalog_cache is not None:
+            return self._metric_catalog_cache
+        if not self.semantic_tools:
+            return {}
+
+        catalog: Dict[str, Dict[str, Any]] = {}
+        offset = 0
+        limit = 500
+        for _ in range(10):
+            try:
+                result = self.semantic_tools.list_metrics(limit=limit, offset=offset)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Unable to load ask_metrics metric catalog: %s", exc)
+                break
+
+            if not isinstance(result, FuncToolResult) or result.success == 0:
+                logger.debug("Unable to load ask_metrics metric catalog: %s", getattr(result, "error", None))
+                break
+
+            payload = result.result if isinstance(result.result, dict) else {}
+            items = payload.get("items", []) if isinstance(payload, dict) else []
+            for item in items:
+                if isinstance(item, dict) and item.get("name"):
+                    catalog[str(item["name"])] = item
+
+            if not isinstance(payload, dict) or not payload.get("has_more"):
+                break
+            extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
+            next_offset = extra.get("next_offset")
+            if not isinstance(next_offset, int) or next_offset <= offset:
+                break
+            offset = next_offset
+
+        self._metric_catalog_cache = catalog
+        return catalog
+
+    @classmethod
+    def _period_over_period_metric_bundle(
+        cls,
+        metric_name: str,
+        metric: Dict[str, Any],
+        catalog: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        metadata = metric.get("metadata") if isinstance(metric, dict) else {}
+        if not isinstance(metadata, dict):
+            return [metric_name]
+
+        inputs = metadata.get("inputs")
+        if not isinstance(inputs, list):
+            return [metric_name]
+
+        base_metrics: List[str] = []
+        previous_metrics: List[str] = []
+        has_current_input = False
+        has_offset_input = False
+        for item in inputs:
+            if not isinstance(item, dict):
+                continue
+
+            base_name = item.get("name")
+            if not isinstance(base_name, str) or base_name not in catalog:
+                continue
+
+            if item.get("offset_window"):
+                has_offset_input = True
+                alias = item.get("alias")
+                if isinstance(alias, str) and alias in catalog:
+                    cls._append_unique(previous_metrics, alias)
+                for equivalent_metric in cls._equivalent_offset_identity_metrics(base_name, item, catalog):
+                    cls._append_unique(previous_metrics, equivalent_metric)
+            else:
+                has_current_input = True
+                cls._append_unique(base_metrics, base_name)
+
+        if not has_current_input or not has_offset_input:
+            return [metric_name]
+
+        return [*base_metrics, *previous_metrics, metric_name]
+
+    @classmethod
+    def _equivalent_offset_identity_metrics(
+        cls,
+        base_name: str,
+        offset_input: Dict[str, Any],
+        catalog: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        offset_window = str(offset_input.get("offset_window") or "").strip()
+        offset_to_grain = str(offset_input.get("offset_to_grain") or "").strip()
+        if not offset_window:
+            return []
+
+        equivalent_metrics: List[str] = []
+        for candidate_name, candidate in catalog.items():
+            metadata = candidate.get("metadata") if isinstance(candidate, dict) else {}
+            inputs = metadata.get("inputs") if isinstance(metadata, dict) else None
+            if not isinstance(inputs, list) or len(inputs) != 1:
+                continue
+            candidate_input = inputs[0]
+            if not isinstance(candidate_input, dict):
+                continue
+            if candidate_input.get("name") != base_name:
+                continue
+            if str(candidate_input.get("offset_window") or "").strip() != offset_window:
+                continue
+            if str(candidate_input.get("offset_to_grain") or "").strip() != offset_to_grain:
+                continue
+            alias = candidate_input.get("alias")
+            expr = metadata.get("expr")
+            if isinstance(alias, str) and isinstance(expr, str) and expr.strip() == alias and candidate_name == alias:
+                cls._append_unique(equivalent_metrics, candidate_name)
+        return equivalent_metrics
+
+    @staticmethod
+    def _normalize_string_list(value: Optional[List[str]]) -> List[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            values = [value]
+        elif isinstance(value, (list, tuple)):
+            values = list(value)
+        else:
+            return []
+        return [str(item).strip() for item in values if str(item).strip()]
+
+    @staticmethod
+    def _append_unique(values: List[str], value: str) -> None:
+        if value not in values:
+            values.append(value)
+
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         if self.startup_error:
             raise DatusException(
@@ -409,6 +650,7 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_count": len(self.subject_tree_metric_entries),
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
+            "require_final_result_selection": self.require_final_result_selection,
         }
 
         if self.agent_config:
@@ -470,35 +712,159 @@ class AskMetricsAgenticNode(AgenticNode):
             },
         )
 
-    def update_context(self, workflow: "Workflow") -> Dict:
-        """Extract last query_metrics result into sql_context for OutputNode."""
-        actions = getattr(self.result, "action_history", None) or []
-        for action in reversed(actions):
+    @staticmethod
+    def _query_action_arguments(action: Dict[str, Any]) -> Dict[str, Any]:
+        raw_arguments = (action.get("input") or {}).get("arguments")
+        if isinstance(raw_arguments, dict):
+            return raw_arguments
+        if isinstance(raw_arguments, str) and raw_arguments.strip():
+            try:
+                parsed = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    @staticmethod
+    def _query_result_payload(action: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        output = action.get("output", {})
+        if not isinstance(output, dict):
+            return None
+        raw_output = output.get("raw_output", output)
+        if not isinstance(raw_output, dict) or not raw_output.get("success"):
+            return None
+        result = raw_output.get("result", {})
+        return result if isinstance(result, dict) else None
+
+    @staticmethod
+    def _query_result_columns(result: Dict[str, Any]) -> List[str]:
+        columns = result.get("columns", [])
+        if not isinstance(columns, list):
+            return []
+        return [str(column) for column in columns if str(column)]
+
+    @staticmethod
+    def _query_result_row_count(result: Dict[str, Any]) -> int:
+        data = result.get("data")
+        if isinstance(data, dict):
+            raw_count = data.get("original_rows", 0)
+            try:
+                return int(raw_count)
+            except (TypeError, ValueError):
+                return 0
+        if isinstance(data, list):
+            return len(data)
+        return 0
+
+    @staticmethod
+    def _query_result_id(result: Dict[str, Any]) -> Optional[str]:
+        result_id = result.get("result_id")
+        if isinstance(result_id, str) and result_id.strip():
+            return result_id.strip()
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict):
+            cache_key = metadata.get("_full_result_cache_key")
+            if isinstance(cache_key, str) and cache_key.strip():
+                return cache_key.strip()
+        return None
+
+    @classmethod
+    def _select_last_query_metrics_action(cls, actions: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        selected: Optional[Dict[str, Any]] = None
+
+        for action in actions:
             if not isinstance(action, dict):
                 continue
             if action.get("action_type") != "query_metrics":
                 continue
             if action.get("status") != "success":
                 continue
+            result = cls._query_result_payload(action)
+            if not result:
+                continue
+            columns = cls._query_result_columns(result)
+            data = result.get("data")
+            if not columns or not data:
+                continue
+            selected = action
 
-            output = action.get("output", {})
-            if not isinstance(output, dict):
+        return selected
+
+    @classmethod
+    def _selected_final_result_id_from_actions(cls, actions: List[Dict[str, Any]]) -> Optional[str]:
+        selected_result_id: Optional[str] = None
+        for action in actions:
+            if not isinstance(action, dict):
                 continue
-            raw_output = output.get("raw_output", output)
-            if not isinstance(raw_output, dict) or not raw_output.get("success"):
+            if action.get("action_type") != "select_final_metric_result":
                 continue
-            result = raw_output.get("result", {})
-            if not isinstance(result, dict):
+            if action.get("status") != "success":
                 continue
+            result = cls._query_result_payload(action)
+            if not result:
+                continue
+            result_id = result.get("result_id")
+            if isinstance(result_id, str) and result_id.strip():
+                selected_result_id = result_id.strip()
+        return selected_result_id
+
+    @classmethod
+    def _select_query_metrics_action_by_result_id(
+        cls,
+        actions: List[Dict[str, Any]],
+        result_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        for action in actions:
+            if not isinstance(action, dict):
+                continue
+            if action.get("action_type") != "query_metrics" or action.get("status") != "success":
+                continue
+            result = cls._query_result_payload(action)
+            if result and cls._query_result_id(result) == result_id:
+                return action
+        return None
+
+    def update_context(self, workflow: "Workflow") -> Dict:
+        """Extract the selected query_metrics result into sql_context for OutputNode."""
+        actions = getattr(self.result, "action_history", None) or []
+        require_selection = getattr(self, "require_final_result_selection", False)
+        require_selection = require_selection if isinstance(require_selection, bool) else False
+
+        if require_selection:
+            selected_result_id = self._selected_final_result_id_from_actions(actions)
+            if not selected_result_id:
+                selected_result_id = getattr(self, "_selected_final_metric_result_id", None)
+            if not selected_result_id:
+                logger.warning("ask_metrics requires select_final_metric_result, but no final result was selected")
+                return {"success": False, "message": "final query_metrics result was not selected"}
+            action = self._select_query_metrics_action_by_result_id(actions, selected_result_id)
+            if not action:
+                logger.warning("Selected query_metrics result_id was not found: %s", selected_result_id)
+                return {"success": False, "message": f"selected query_metrics result not found: {selected_result_id}"}
+        else:
+            action = self._select_last_query_metrics_action(actions)
+
+        if action:
+            result = self._query_result_payload(action) or {}
 
             columns = result.get("columns", [])
             data = result.get("data")
             if not columns or not data:
-                continue
+                return super().update_context(workflow)
+
+            metadata = result.get("metadata", {}) or {}
+            cached_result = None
+            cache_key = metadata.get("_full_result_cache_key")
+            if cache_key and self.semantic_tools and hasattr(self.semantic_tools, "get_cached_query_metrics_result"):
+                cached_result = self.semantic_tools.get_cached_query_metrics_result(cache_key)
 
             if isinstance(data, dict) and data.get("compressed_data"):
-                sql_return = data["compressed_data"]
                 row_count = data.get("original_rows", 0)
+                if isinstance(cached_result, dict) and cached_result.get("csv"):
+                    sql_return = cached_result["csv"]
+                    row_count = cached_result.get("row_count", row_count)
+                else:
+                    sql_return = data["compressed_data"]
             elif isinstance(data, list):
                 import csv
                 import io
@@ -510,9 +876,8 @@ class AskMetricsAgenticNode(AgenticNode):
                 sql_return = buf.getvalue()
                 row_count = len(data)
             else:
-                continue
+                return super().update_context(workflow)
 
-            metadata = result.get("metadata", {}) or {}
             sql_query = ""
             for key in ("sql", "compiled_sql", "generated_sql"):
                 if metadata.get(key):

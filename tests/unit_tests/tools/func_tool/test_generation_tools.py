@@ -56,6 +56,34 @@ class TestCheckSemanticObjectExists:
         assert result.result["exists"] is True
         assert result.result["name"] == "orders"
 
+    def test_accepts_prompt_documented_name_argument(self, generation_tools):
+        mock_storage = Mock()
+        generation_tools.semantic_rag.storage = mock_storage
+        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
+            result = generation_tools.check_semantic_object_exists(name="orders", kind="table")
+
+        assert result.success == 1
+        assert result.result["exists"] is True
+
+    def test_accepts_legacy_object_name_argument(self, generation_tools):
+        mock_storage = Mock()
+        generation_tools.semantic_rag.storage = mock_storage
+        mock_storage.search_all.return_value = [{"id": "t1", "name": "orders", "kind": "table"}]
+
+        with patch("datus.tools.func_tool.generation_tools.And"), patch("datus.tools.func_tool.generation_tools.eq"):
+            result = generation_tools.check_semantic_object_exists(object_name="orders", kind="table")
+
+        assert result.success == 1
+        assert result.result["exists"] is True
+
+    def test_requires_name(self, generation_tools):
+        result = generation_tools.check_semantic_object_exists(kind="table")
+
+        assert result.success == 0
+        assert "name is required" in result.error
+
     def test_table_not_found(self, generation_tools):
         mock_storage = Mock()
         generation_tools.semantic_rag.storage = mock_storage

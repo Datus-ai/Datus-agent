@@ -110,34 +110,17 @@ def _format_as_csv(df: pd.DataFrame, compressed_indices: Optional[Tuple[List[int
 
         # Split the dataframe
         head_df = df.iloc[: len(head_indices)].copy()
+        ellipsis_df = df.iloc[len(head_indices) : len(head_indices) + 1].copy()
         tail_df = df.iloc[len(head_indices) + 1 :].copy()
 
         # Set proper indices
         head_df.index = head_indices
+        ellipsis_df.index = ["..."]
         tail_df.index = tail_indices
 
-        # Format each part
-        result_parts = []
-
-        # Header
-        header = "index," + ",".join(df.columns)
-        result_parts.append(header)
-
-        # Head rows
-        for idx, row in head_df.iterrows():
-            row_str = str(idx) + "," + ",".join(str(val) for val in row.values)
-            result_parts.append(row_str)
-
-        # Ellipsis row
-        ellipsis_str = "...," + ",".join("..." for _ in df.columns)
-        result_parts.append(ellipsis_str)
-
-        # Tail rows
-        for idx, row in tail_df.iterrows():
-            row_str = str(idx) + "," + ",".join(str(val) for val in row.values)
-            result_parts.append(row_str)
-
-        return "\n".join(result_parts)
+        output = StringIO()
+        pd.concat([head_df, ellipsis_df, tail_df]).to_csv(output, index=True, index_label="index")
+        return output.getvalue().strip()
     else:
         # Normal formatting with index
         output = StringIO()

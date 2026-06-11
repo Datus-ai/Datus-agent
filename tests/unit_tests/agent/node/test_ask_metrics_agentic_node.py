@@ -101,8 +101,11 @@ class TestAskMetricsAgenticNode:
         assert "When the subject tree gives a direct metric/path match" in prompt
         assert "`offset_window` metadata" in prompt
         assert 'dimensions=["metric_time__month"]' in prompt
-        assert "query the base metric together with the derived metric" in prompt
+        assert "query the complete metric bundle" in prompt
+        assert "Previous-period aliases inside a derived metric are calculation inputs" in prompt
         assert "first period" in prompt
+        assert "do not add a `where` filter that enumerates dimension values" in prompt
+        assert "full result is cached" in prompt
         assert node.subject_tree_prompt_limit == 100
 
     def test_large_subject_tree_exposes_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
@@ -174,6 +177,26 @@ class TestAskMetricsAgenticNode:
         assert "metric_1" in prompt
         assert "metric_2" not in prompt
 
+    def test_final_result_selection_tool_is_opt_in(self, real_agent_config, mock_llm_create):
+        tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
+
+        default_node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_name="default_final_selection_agent",
+        )
+        strict_node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_config={"require_final_result_selection": True},
+            node_name="strict_final_selection_agent",
+        )
+
+        assert "select_final_metric_result" not in [tool.name for tool in default_node.tools]
+        assert "select_final_metric_result" not in default_node._get_system_prompt()
+        assert "select_final_metric_result" in [tool.name for tool in strict_node.tools]
+        assert "select_final_metric_result" in strict_node._get_system_prompt()
+
     def test_invalid_subject_tree_prompt_limit_uses_default(self, real_agent_config, mock_llm_create):
         tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
 
@@ -233,6 +256,388 @@ class TestAskMetricsAgenticNode:
             "query_metrics",
             "attribution_analyze",
         ]
+
+    def test_query_metrics_expands_period_over_period_bundle(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Marketing": {"Activity": {"metrics": ["activity_count_mom_delta"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={
+                "items": [
+                    {"name": "activity_count", "metadata": {"metric_kind": "measure_proxy"}},
+                    {
+                        "name": "previous_month_activity_count",
+                        "metadata": {
+                            "expr": "previous_month_activity_count",
+                            "inputs": [
+                                {
+                                    "name": "activity_count",
+                                    "alias": "previous_month_activity_count",
+                                    "offset_window": "1 month",
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "name": "activity_count_previous_month",
+                        "metadata": {
+                            "expr": "activity_count_previous_month",
+                            "inputs": [
+                                {
+                                    "name": "activity_count",
+                                    "alias": "activity_count_previous_month",
+                                    "offset_window": "1 month",
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "name": "activity_count_mom_delta",
+                        "metadata": {
+                            "inputs": [
+                                {"name": "activity_count"},
+                                {
+                                    "name": "activity_count",
+                                    "alias": "previous_month_activity_count",
+                                    "offset_window": "1 month",
+                                },
+                            ]
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        result = node.query_metrics(
+            metrics=["activity_count", "activity_count_mom_delta"],
+            dimensions=["product_type", "metric_time__month"],
+            time_start="2025-04-01",
+            time_end="2025-10-31",
+            time_granularity="month",
+            order_by=["metric_time__month", "product_type"],
+        )
+
+        assert result.success == 1
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=[
+                "activity_count",
+                "previous_month_activity_count",
+                "activity_count_previous_month",
+                "activity_count_mom_delta",
+            ],
+            dimensions=["product_type", "metric_time__month"],
+            path=None,
+            time_start="2025-04-01",
+            time_end="2025-10-31",
+            time_granularity="month",
+            where=None,
+            limit=None,
+            order_by=["metric_time__month", "product_type"],
+            dry_run=False,
+        )
+
+    def test_query_metrics_does_not_invent_missing_previous_period_metric(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Marketing": {"Activity": {"metrics": ["activity_count_mom_delta"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={
+                "items": [
+                    {"name": "activity_count", "metadata": {}},
+                    {
+                        "name": "activity_count_mom_delta",
+                        "metadata": {
+                            "inputs": [
+                                {"name": "activity_count"},
+                                {
+                                    "name": "activity_count",
+                                    "alias": "previous_month_activity_count",
+                                    "offset_window": "1 month",
+                                },
+                            ]
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(metrics=["activity_count_mom_delta"])
+
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["activity_count", "activity_count_mom_delta"],
+            dimensions=None,
+            path=None,
+            time_start=None,
+            time_end=None,
+            time_granularity=None,
+            where=None,
+            limit=None,
+            order_by=None,
+            dry_run=False,
+        )
+
+    def test_query_metrics_rejects_missing_metrics_without_raising(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Marketing": {"Activity": {"metrics": ["activity_count"]}}},
+        )
+
+        result = node.query_metrics()
+
+        assert result.success == 0
+        assert "at least one metric name" in result.error
+        semantic_tools.query_metrics.assert_not_called()
+
+    def test_query_metrics_does_not_expand_previous_period_metric_alone(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Marketing": {"Activity": {"metrics": ["previous_month_activity_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={
+                "items": [
+                    {"name": "activity_count", "metadata": {}},
+                    {
+                        "name": "previous_month_activity_count",
+                        "metadata": {
+                            "inputs": [
+                                {
+                                    "name": "activity_count",
+                                    "alias": "previous_month_activity_count",
+                                    "offset_window": "1 month",
+                                }
+                            ]
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(metrics=["previous_month_activity_count"])
+
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["previous_month_activity_count"],
+            dimensions=None,
+            path=None,
+            time_start=None,
+            time_end=None,
+            time_granularity=None,
+            where=None,
+            limit=None,
+            order_by=None,
+            dry_run=False,
+        )
+
+    def test_query_metrics_does_not_expand_plain_derived_metric(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Marketing": {"Activity": {"metrics": ["delivery_activity_ratio"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={
+                "items": [
+                    {"name": "activity_count", "metadata": {}},
+                    {"name": "delivery_activity_count", "metadata": {}},
+                    {
+                        "name": "delivery_activity_ratio",
+                        "metadata": {
+                            "inputs": [
+                                {"name": "delivery_activity_count"},
+                                {"name": "activity_count"},
+                            ]
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(metrics=["delivery_activity_ratio"])
+
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["delivery_activity_ratio"],
+            dimensions=None,
+            path=None,
+            time_start=None,
+            time_end=None,
+            time_granularity=None,
+            where=None,
+            limit=None,
+            order_by=None,
+            dry_run=False,
+        )
+
+    def test_query_metrics_passes_limit_through(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Marketing": {"Activity": {"metrics": ["activity_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "activity_count", "metadata": {}}], "has_more": False}
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(
+            metrics=["activity_count"],
+            dimensions=["ac_channel"],
+            limit=10,
+        )
+
+        semantic_tools.query_metrics.assert_called_once()
+        assert semantic_tools.query_metrics.call_args.kwargs["limit"] == 10
+
+    def test_update_context_defaults_to_last_query_metrics_result(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node, _, _ = _make_node(real_agent_config, tree={})
+
+        def query_action(rows, *, limit):
+            return {
+                "action_type": "query_metrics",
+                "status": "success",
+                "input": {"arguments": f'{{"limit": {limit}}}'},
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": [
+                                "metric_time__month",
+                                "product_type",
+                                "activity_count",
+                                "previous_month_activity_count",
+                                "activity_count_mom_delta",
+                            ],
+                            "data": {
+                                "original_rows": rows,
+                                "compressed_data": f"rows={rows}",
+                            },
+                            "metadata": {},
+                        },
+                    }
+                },
+            }
+
+        node.result = Mock(
+            action_history=[
+                query_action(21, limit=100),
+                query_action(3, limit=5),
+            ]
+        )
+        workflow = Mock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result == {"success": True, "message": "query_metrics result captured"}
+        assert len(workflow.context.sql_contexts) == 1
+        assert workflow.context.sql_contexts[0].sql_return == "rows=3"
+        assert workflow.context.sql_contexts[0].row_count == 3
+
+    def test_update_context_required_selection_uses_selected_result_id(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={},
+            node_config={"require_final_result_selection": True},
+            node_name="strict_ask_metrics",
+        )
+
+        def query_action(result_id, rows):
+            return {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "result_id": result_id,
+                            "columns": ["metric_time__month", "activity_count"],
+                            "data": {
+                                "original_rows": rows,
+                                "compressed_data": f"rows={rows}",
+                            },
+                            "metadata": {},
+                        },
+                    }
+                },
+            }
+
+        node.result = Mock(
+            action_history=[
+                query_action("query_metrics:1", 21),
+                query_action("query_metrics:2", 3),
+                {
+                    "action_type": "select_final_metric_result",
+                    "status": "success",
+                    "output": {
+                        "raw_output": {
+                            "success": 1,
+                            "result": {"result_id": "query_metrics:1"},
+                        }
+                    },
+                },
+            ]
+        )
+        workflow = Mock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result == {"success": True, "message": "query_metrics result captured"}
+        assert workflow.context.sql_contexts[0].sql_return == "rows=21"
+        assert workflow.context.sql_contexts[0].row_count == 21
+
+    def test_update_context_required_selection_fails_without_selection(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={},
+            node_config={"require_final_result_selection": True},
+            node_name="strict_ask_metrics_missing_selection",
+        )
+        node.result = Mock(
+            action_history=[
+                {
+                    "action_type": "query_metrics",
+                    "status": "success",
+                    "output": {
+                        "raw_output": {
+                            "success": 1,
+                            "result": {
+                                "result_id": "query_metrics:1",
+                                "columns": ["activity_count"],
+                                "data": {"original_rows": 1, "compressed_data": "activity_count\n1"},
+                                "metadata": {},
+                            },
+                        }
+                    },
+                }
+            ]
+        )
+        workflow = Mock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result == {"success": False, "message": "final query_metrics result was not selected"}
+        assert workflow.context.sql_contexts == []
 
     def test_unsupported_tool_patterns_are_ignored(self, real_agent_config, mock_llm_create):
         node, _, _ = _make_node(
@@ -470,6 +875,11 @@ class TestUpdateContext:
         node = MagicMock(spec=AskMetricsAgenticNode)
         node.result = MagicMock()
         node.result.action_history = action_history
+        node.require_final_result_selection = False
+        node._select_last_query_metrics_action = AskMetricsAgenticNode._select_last_query_metrics_action
+        node._selected_final_result_id_from_actions = AskMetricsAgenticNode._selected_final_result_id_from_actions
+        node._select_query_metrics_action_by_result_id = AskMetricsAgenticNode._select_query_metrics_action_by_result_id
+        node._query_result_payload = AskMetricsAgenticNode._query_result_payload
         node.update_context = AskMetricsAgenticNode.update_context.__get__(node)
         return node
 
@@ -506,6 +916,47 @@ class TestUpdateContext:
         assert "activity_count" in ctx.sql_return
         assert ctx.sql_query == "SELECT COUNT(*) FROM t"
         assert ctx.row_count == 1
+
+    def test_captures_full_cached_data_before_compressed_preview(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["metric_time__month", "activity_count"],
+                            "data": {
+                                "compressed_data": (
+                                    "metric_time__month,activity_count\n2025-01-01,1\n...,...\n2025-12-01,12"
+                                ),
+                                "original_rows": 21,
+                                "is_compressed": True,
+                                "compression_type": "rows",
+                            },
+                            "metadata": {"_full_result_cache_key": "query_metrics:1"},
+                        },
+                    }
+                },
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.get_cached_query_metrics_result.return_value = {
+            "csv": "metric_time__month,activity_count\n2025-01-01,1\n2025-02-01,2\n",
+            "row_count": 21,
+        }
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result["success"] is True
+        ctx = workflow.context.sql_contexts[0]
+        assert "2025-02-01,2" in ctx.sql_return
+        assert "..." not in ctx.sql_return
+        assert ctx.row_count == 21
 
     def test_captures_list_data(self):
         actions = [

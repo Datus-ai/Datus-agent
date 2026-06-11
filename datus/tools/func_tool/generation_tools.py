@@ -100,9 +100,10 @@ class GenerationTools:
 
     def check_semantic_object_exists(
         self,
-        object_name: str,
+        name: str = "",
         kind: str = "table",  # table, column, metric
         table_context: str = "",
+        object_name: str = "",
     ) -> FuncToolResult:
         """
         Check if a semantic object (table, column, metric) already exists in vector store.
@@ -110,18 +111,23 @@ class GenerationTools:
         Use this tool to avoid duplicating work.
 
         Args:
-            object_name: Name of the object (e.g. "orders", "orders.amount")
+            name: Name of the object (e.g. "orders", "orders.amount")
             kind: Type of object ("table", "column", "metric")
             table_context: If checking a column/metric, providing the table name helps narrow search.
+            object_name: Backward-compatible alias for name.
 
         Returns:
             dict: Check results containing existence status and details.
         """
         try:
+            object_name = str(name or object_name or "").strip()
+            if not object_name:
+                return FuncToolResult(success=0, error="name is required")
+
             normalized_kind = str(kind or "").strip().lower()
             cache_key = (
                 normalized_kind,
-                str(object_name or "").strip().lower(),
+                object_name.lower(),
                 str(table_context or "").strip().lower(),
             )
             cached = self._semantic_object_exists_cache.get(cache_key)

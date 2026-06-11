@@ -9,9 +9,11 @@ Provides unified interface to semantic layer services through adapters.
 All public semantic tools require a successfully initialized semantic adapter.
 """
 
+import csv
 import inspect
+import io
 import json
-from typing import Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 from agents import Tool
 
@@ -92,6 +94,12 @@ def _normalize_name_list(value) -> List[str]:
         if text:
             names.append(text)
     return names
+
+
+def _normalize_optional_path(value) -> Optional[List[str]]:
+    """Normalize optional subject paths and drop null placeholders."""
+    names = _normalize_name_list(value)
+    return names or None
 
 
 _TIME_GRANULARITIES = {"day", "week", "month", "quarter", "year"}
@@ -252,11 +260,74 @@ class SemanticTools:
         self.semantic_model_rag = SemanticModelRAG(agent_config, sub_agent_name)
         self.metric_rag = MetricRAG(agent_config, sub_agent_name)
         self.compressor = DataCompressor(model_name=agent_config.active_model().model)
+        self._query_metrics_result_cache: Dict[str, dict] = {}
+        self._query_metrics_result_cache_counter = 0
 
         # Lazy load adapter and attribution tool
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
         self._adapter_load_error: Optional[str] = None
+
+    @staticmethod
+    def _query_data_row_count(data: Any) -> int:
+        if data is None:
+            return 0
+        if hasattr(data, "num_rows"):
+            try:
+                return int(data.num_rows)
+            except (TypeError, ValueError):
+                return 0
+        if hasattr(data, "shape"):
+            try:
+                return int(data.shape[0])
+            except (TypeError, ValueError, IndexError):
+                return 0
+        try:
+            return len(data)
+        except TypeError:
+            return 0
+
+    @staticmethod
+    def _query_data_to_csv(columns: List[str], data: Any) -> str:
+        if data is None:
+            return ""
+
+        if hasattr(data, "to_pandas"):
+            data = data.to_pandas()
+
+        if hasattr(data, "to_csv"):
+            return data.to_csv(index=False)
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(columns)
+        for row in data or []:
+            if isinstance(row, dict):
+                writer.writerow([row.get(column, "") for column in columns])
+            elif isinstance(row, (list, tuple)):
+                writer.writerow(row)
+            else:
+                writer.writerow([row])
+        return buf.getvalue()
+
+    def _cache_query_metrics_result(self, columns: List[str], data: Any) -> Optional[str]:
+        if data is None:
+            return None
+        full_csv = self._query_data_to_csv(columns, data)
+        if not full_csv:
+            return None
+
+        self._query_metrics_result_cache_counter += 1
+        cache_key = f"query_metrics:{self._query_metrics_result_cache_counter}"
+        self._query_metrics_result_cache[cache_key] = {
+            "columns": list(columns),
+            "csv": full_csv,
+            "row_count": self._query_data_row_count(data),
+        }
+        return cache_key
+
+    def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
+        return self._query_metrics_result_cache.get(cache_key)
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""
@@ -456,7 +527,7 @@ class SemanticTools:
             response size.
         """
         # Normalize null values from LLM
-        path = normalize_null(path)
+        path = _normalize_optional_path(path)
         logger.info(f"list_metrics called: path={path}, limit={limit}, offset={offset}")
         adapter, error = self._require_adapter("list_metrics")
         if error:
@@ -539,7 +610,7 @@ class SemanticTools:
                 equals len(items) and has_more is False.
         """
         # Normalize null values from LLM
-        path = normalize_null(path)
+        path = _normalize_optional_path(path)
         logger.info(f"get_dimensions called: metric={metric_name}, path={path}")
         adapter, error = self._require_adapter("get_dimensions")
         if error:
@@ -701,6 +772,7 @@ class SemanticTools:
             )
 
         # Sanitize time parameters: LLM may pass string "null"/"None" instead of omitting
+        path = _normalize_optional_path(path)
         time_start = normalize_null(time_start)
         time_end = normalize_null(time_end)
         time_granularity = normalize_null(time_granularity)
@@ -743,8 +815,20 @@ class SemanticTools:
                     safe_metadata[k] = v
                 except (TypeError, ValueError):
                     continue
+            cache_key = None
+            if not dry_run:
+                cache_key = self._cache_query_metrics_result(result.columns, result.data)
+                if cache_key:
+                    safe_metadata["_full_result_cache_key"] = cache_key
+                    safe_metadata["_full_result_cached"] = True
+                    safe_metadata["_full_result_row_count"] = self._query_data_row_count(result.data)
+                    safe_metadata["_full_result_note"] = (
+                        "The complete uncompressed query result is cached and will be used for final output; "
+                        "do not re-query only because the returned data is a compressed preview."
+                    )
 
             result_dict = {
+                "result_id": cache_key,
                 "columns": result.columns,
                 "data": self.compressor.compress(result.data),
                 "metadata": safe_metadata,
