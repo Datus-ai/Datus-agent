@@ -209,6 +209,11 @@ class ClaudeModel(OpenAICompatibleModel):
                 http_client=self.async_proxy_client,
                 default_headers=extra_headers or None,
             )
+            # The SDK falls back to the ANTHROPIC_API_KEY env var when api_key=None,
+            # and auth_headers merges both credentials — a stale env key would make
+            # requests carry X-Api-Key alongside the Bearer token and get rejected.
+            self.anthropic_client.api_key = None
+            self.async_anthropic_client.api_key = None
         else:
             self.anthropic_client = anthropic.Anthropic(
                 api_key=self.api_key,
@@ -222,6 +227,11 @@ class ClaudeModel(OpenAICompatibleModel):
                 http_client=self.async_proxy_client,
                 default_headers=extra_headers or None,
             )
+            # Symmetric guard: the SDK falls back to the ANTHROPIC_AUTH_TOKEN env
+            # var when auth_token is not given, which would add a spurious
+            # Authorization: Bearer header next to X-Api-Key.
+            self.anthropic_client.auth_token = None
+            self.async_anthropic_client.auth_token = None
 
         # Wrap with LangSmith if available. Wrap sync and async clients
         # independently so a failure on the async wrap (e.g. older langsmith

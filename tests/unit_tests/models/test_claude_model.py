@@ -2499,6 +2499,60 @@ class TestProxyClientInit:
 
 
 # ---------------------------------------------------------------------------
+# Env credential fallback guard
+# ---------------------------------------------------------------------------
+
+
+class TestEnvCredentialFallbackGuard:
+    """The Anthropic SDK silently falls back to ANTHROPIC_API_KEY /
+    ANTHROPIC_AUTH_TOKEN env vars when the corresponding constructor arg is
+    None, and ``auth_headers`` merges both credentials. A stale env var would
+    make every request carry two auth headers and get rejected (401). These
+    tests construct REAL SDK clients (no network) to pin the guard behaviour.
+    """
+
+    def _build_model(self, cfg, env):
+        with (
+            patch("datus.models.openai_compatible.LiteLLMAdapter") as mock_adapter_cls,
+            patch("langsmith.wrappers.wrap_anthropic", side_effect=lambda c: c),
+            patch(
+                "datus.auth.claude_credential.get_claude_subscription_token",
+                return_value=(cfg.api_key, "config (agent.yml)"),
+            ),
+            patch.dict("os.environ", env, clear=True),
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.litellm_model_name = "anthropic/claude-sonnet-4-5"
+            mock_adapter.provider = "anthropic"
+            mock_adapter.is_thinking_model = False
+            mock_adapter.get_agents_sdk_model.return_value = MagicMock()
+            mock_adapter_cls.return_value = mock_adapter
+            return ClaudeModel(cfg)
+
+    def test_subscription_mode_ignores_env_api_key(self):
+        """OAuth requests must carry ONLY the Bearer header even when the
+        user's environment exports a (possibly stale) ANTHROPIC_API_KEY."""
+        cfg = _make_model_config(api_key="sk-ant-oat01-sub-token", auth_type="subscription")
+        model = self._build_model(cfg, {"ANTHROPIC_API_KEY": "sk-ant-stale-env-key"})
+
+        for client in (model.anthropic_client, model.async_anthropic_client):
+            assert client.api_key is None
+            assert client.auth_token == "sk-ant-oat01-sub-token"
+            assert client.auth_headers == {"Authorization": "Bearer sk-ant-oat01-sub-token"}
+
+    def test_api_key_mode_ignores_env_auth_token(self):
+        """API-key requests must carry ONLY X-Api-Key even when the user's
+        environment exports a leftover ANTHROPIC_AUTH_TOKEN."""
+        cfg = _make_model_config(api_key="sk-ant-real-key", auth_type="api_key")
+        model = self._build_model(cfg, {"ANTHROPIC_AUTH_TOKEN": "leaked-bearer-token"})
+
+        for client in (model.anthropic_client, model.async_anthropic_client):
+            assert client.auth_token is None
+            assert client.api_key == "sk-ant-real-key"
+            assert client.auth_headers == {"X-Api-Key": "sk-ant-real-key"}
+
+
+# ---------------------------------------------------------------------------
 # _anthropic_messages_stream routing
 # ---------------------------------------------------------------------------
 
