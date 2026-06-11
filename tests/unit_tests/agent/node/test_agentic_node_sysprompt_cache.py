@@ -43,6 +43,14 @@ ACTIVE_TEMPLATES = [
     "gen_report_system_1.0.j2",
     "ask_metrics_system_1.0.j2",
 ]
+# Deliverable templates never inlined the datasource selection; they are held
+# to the same no-volatile-variables bar but don't point to <system_reminder>.
+DELIVERABLE_TEMPLATES = [
+    "gen_table_system_1.0.j2",
+    "gen_dashboard_system_1.0.j2",
+    "gen_job_system_1.0.j2",
+    "scheduler_system_1.0.j2",
+]
 
 
 def _agent_config(*, current_datasource=None, services=None, model="gpt-4.1"):
@@ -63,6 +71,18 @@ class _SnapshotNode(AgenticNode):
         self.agent_config = agent_config
         self.db_func_tool = db_func_tool
         self.build_count = 0
+        self.lazy_mount_count = 0
+        # Lazy-tool wiring runs on the cache-hit path too; give the ensure
+        # methods the attributes they gate on (all "nothing to mount" here).
+        self.skill_func_tool = None
+        self.bash_tool = None
+        self.memory_func_tool = None
+        self._is_subagent = True
+        self._node_model_name = None
+
+    def _ensure_lazy_tools_mounted(self) -> None:
+        self.lazy_mount_count += 1
+        super()._ensure_lazy_tools_mounted()
 
     def get_node_name(self) -> str:
         return "chat"
@@ -155,6 +175,28 @@ class TestGetSessionSystemPrompt:
         node._get_session_system_prompt(prompt_version="1.2")
         assert node.build_count == 1
 
+    def test_cache_hit_mounts_lazy_tools(self, session_manager):
+        """A replayed prompt advertises skill/bash/memory tools — the hit path
+        must run the (skipped) build's tool-mounting side effect."""
+        node1 = _SnapshotNode(session_manager, _agent_config())
+        node1._get_session_system_prompt(prompt_version="1.2")
+
+        # Fresh instance resuming the session: pure cache hit, no build.
+        node2 = _SnapshotNode(session_manager, _agent_config())
+        node2.session_id = node1.session_id
+        node2._get_session_system_prompt(prompt_version="1.2")
+        assert node2.build_count == 0
+        assert node2.lazy_mount_count == 1
+
+    def test_node_model_override_switch_rebuilds(self, session_manager):
+        """A node-level model override change must invalidate the snapshot."""
+        node = _SnapshotNode(session_manager, _agent_config())
+        node._node_model_name = "gpt-5-mini"
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#1"
+        node._node_model_name = "gpt-5"
+        assert node._get_session_system_prompt(prompt_version="1.2") == "SYS#2"
+        assert node.build_count == 2
+
 
 class TestSnapshotMeta:
     def test_meta_is_exactly_the_identity_keys(self, session_manager):
@@ -176,6 +218,14 @@ class TestSnapshotMeta:
         node = _SnapshotNode(session_manager, cfg)
         meta = node._system_prompt_snapshot_meta("1.2")
         assert meta["model_name"] == ""
+
+    def test_meta_prefers_node_model_override(self, session_manager):
+        """``node_config.model`` pins the effective model — it is the identity,
+        not the agent-level target."""
+        node = _SnapshotNode(session_manager, _agent_config(model="gpt-4.1"))
+        node._node_model_name = "gpt-5-mini"
+        meta = node._system_prompt_snapshot_meta("1.2")
+        assert meta["model_name"] == "node:gpt-5-mini"
 
 
 class TestDatasourceReminder:
@@ -334,7 +384,7 @@ class TestReferenceDateOverrides:
 class TestTemplateHygiene:
     """The active templates must not inline per-turn volatile variables."""
 
-    @pytest.mark.parametrize("template", ACTIVE_TEMPLATES)
+    @pytest.mark.parametrize("template", ACTIVE_TEMPLATES + DELIVERABLE_TEMPLATES)
     def test_no_inline_volatile_variables(self, template):
         source = (TEMPLATE_DIR / template).read_text(encoding="utf-8")
         assert "{{ current_date }}" not in source

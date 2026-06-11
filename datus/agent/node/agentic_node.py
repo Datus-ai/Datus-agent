@@ -912,13 +912,21 @@ class AgenticNode(Node):
         version = prompt_version
         if version is None and agent_config is not None and hasattr(agent_config, "prompt_version"):
             version = agent_config.prompt_version
-        model_id = ""
-        try:
-            mc = agent_config.active_model() if agent_config is not None else None
-            if mc is not None:
-                model_id = f"{getattr(mc, 'type', '') or ''}:{getattr(mc, 'model', '') or ''}"
-        except Exception:
+        # A node-level model override (``node_config.model``) pins the
+        # effective model regardless of the agent-level target, so it must be
+        # the identity when set — otherwise a /model switch that doesn't
+        # affect this node would spuriously rebuild (and vice versa).
+        node_model = getattr(self, "_node_model_name", None)
+        if node_model:
+            model_id = f"node:{node_model}"
+        else:
             model_id = ""
+            try:
+                mc = agent_config.active_model() if agent_config is not None else None
+                if mc is not None:
+                    model_id = f"{getattr(mc, 'type', '') or ''}:{getattr(mc, 'model', '') or ''}"
+            except Exception:
+                model_id = ""
         return {
             "node_name": self.get_node_name(),
             "prompt_version": str(version or ""),
@@ -955,6 +963,9 @@ class AgenticNode(Node):
         if sm is not None:
             snapshot = sm.load_system_prompt_snapshot(session_id)
             if snapshot is not None and all(snapshot.get(k) == v for k, v in meta.items()):
+                # The replayed prompt advertises skill/bash/memory tools whose
+                # mounting is normally a side effect of the (skipped) build.
+                self._ensure_lazy_tools_mounted()
                 return snapshot["prompt"]
 
         # Cache miss / stale meta: rebuild. Preserve the call shape — several
@@ -1057,14 +1068,8 @@ class AgenticNode(Node):
         if agents_md:
             base_prompt = base_prompt + "\n\n" + agents_md
 
-        # Ensure skill tools are in self.tools (lazy injection after subclass setup_tools()).
-        self._ensure_skill_tools_in_tools()
-
-        # Same lazy-injection trick for the general-purpose BashTool.
-        self._ensure_bash_tool_in_tools()
-
-        # And for the dedicated memory tools (main agents only; sub-agents skip).
-        self._ensure_memory_tool_in_tools()
+        # Mount the lazily injected skill/bash/memory tools.
+        self._ensure_lazy_tools_mounted()
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -1080,6 +1085,21 @@ class AgenticNode(Node):
         base_prompt = self._inject_response_language(base_prompt)
 
         return base_prompt
+
+    def _ensure_lazy_tools_mounted(self) -> None:
+        """Mount the lazily injected skill/bash/memory tools into ``self.tools``.
+
+        Normally a side effect of :meth:`_finalize_system_prompt` during the
+        prompt build. A snapshot cache hit skips that build entirely, so the
+        hit path calls this directly — the replayed prompt advertises these
+        capabilities and a fresh node instance (API per-request, ``/resume``)
+        must actually have them mounted. All three are idempotent; subclass
+        gating overrides (e.g. artifact-ask nodes) are honored via virtual
+        dispatch.
+        """
+        self._ensure_skill_tools_in_tools()
+        self._ensure_bash_tool_in_tools()
+        self._ensure_memory_tool_in_tools()
 
     def _runtime_context_current_date(self) -> str:
         """Session-start date rendered into the shared runtime-context block.
@@ -2846,6 +2866,12 @@ class AgenticNode(Node):
         (which various subclasses already define with ``(user_input, …)``
         signatures); subclasses that need template context override this hook
         and typically delegate: ``return self._prepare_template_context(ctx.user_input)``.
+
+        Contract: the returned values are rendered into the system prompt,
+        which is frozen into the per-session snapshot and replayed on later
+        turns — so they must be **session-stable** (tool wiring, execution
+        mode), never per-turn (current datasource, user input). Per-turn
+        values belong in :meth:`_build_enhanced_message`.
         """
         return None
 

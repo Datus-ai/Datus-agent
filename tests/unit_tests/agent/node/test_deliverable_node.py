@@ -154,3 +154,60 @@ class TestRetryLoopDrivenByOnEnd:
         output = last.output or {}
         assert output.get("success") is False
         assert output["validation_report"]["checks"][0]["error"] == "synthetic blocking failure for retry-loop test"
+
+
+class TestDeliverableDatasourceContext:
+    """The frozen system prompt is datasource-free; the live selection rides per turn.
+
+    Mirrors the chat-node design: ``_prepare_template_context`` (rendered into
+    the per-session snapshot) carries only session-stable values, while the
+    current datasource/dialect arrives in each user message via
+    ``_build_datasource_reminder``.
+    """
+
+    def _make_node(self, *, db_func_tool=None, current_datasource=None, services=None):
+        from types import SimpleNamespace
+
+        from datus.agent.node.deliverable_node import DeliverableAgenticNode
+
+        node = DeliverableAgenticNode.__new__(DeliverableAgenticNode)
+        node.agent_config = SimpleNamespace(current_datasource=current_datasource, services=services)
+        node.tools = []
+        node.mcp_servers = {}
+        node.ask_user_tool = None
+        node.db_func_tool = db_func_tool
+        return node
+
+    def test_template_context_has_no_datasource_keys(self):
+        from types import SimpleNamespace
+
+        node = self._make_node(current_datasource="main")
+        ctx = node._prepare_template_context(SimpleNamespace(user_message="create table t"))
+
+        assert set(ctx) == {"native_tools", "mcp_tools", "has_ask_user_tool"}
+
+    def test_enhanced_message_uses_datasource_reminder_with_db_tool(self):
+        from types import SimpleNamespace
+
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="duckdb")})
+        db_tool = SimpleNamespace(connector=SimpleNamespace(database_name="proddb"))
+        node = self._make_node(db_func_tool=db_tool, current_datasource="main", services=services)
+
+        user_input = SimpleNamespace(user_message="create table t", catalog="", database="", db_schema="")
+        message = node._build_enhanced_message(user_input)
+
+        # The merged reminder supersedes the legacy Context line entirely.
+        assert "Current datasource: main (dialect: duckdb, database: proddb)" in message
+        assert "Context:" not in message
+        assert "create table t" in message
+
+    def test_enhanced_message_falls_back_to_legacy_context_without_db_tool(self):
+        from types import SimpleNamespace
+
+        node = self._make_node(db_func_tool=None, current_datasource="main")
+
+        user_input = SimpleNamespace(user_message="make dashboard", catalog="c1", database="db1", db_schema="s1")
+        message = node._build_enhanced_message(user_input)
+
+        assert "Context: catalog: c1, database: db1, schema: s1" in message
+        assert "Current datasource:" not in message

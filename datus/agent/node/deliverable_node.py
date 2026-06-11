@@ -256,14 +256,15 @@ class DeliverableAgenticNode(AgenticNode):
             self._validation_hook = None
 
     def _prepare_template_context(self, user_input: Any) -> dict:
-        from datus.utils.node_utils import build_datasource_prompt_context
-
+        # Session-stable values only — this render is frozen into the
+        # per-session system-prompt snapshot. The current datasource and its
+        # dialect are deliberately absent: they arrive per turn in the user
+        # message (see ``_build_enhanced_message``).
         context = {
             "native_tools": ", ".join([tool.name for tool in self.tools]) if self.tools else "None",
             "mcp_tools": ", ".join(list(self.mcp_servers.keys())) if self.mcp_servers else "None",
             "has_ask_user_tool": self.ask_user_tool is not None,
         }
-        context.update(build_datasource_prompt_context(self.agent_config))
         logger.debug("Prepared template context: %s", context)
         return context
 
@@ -418,22 +419,31 @@ class DeliverableAgenticNode(AgenticNode):
         from datus.utils.node_utils import resolve_database_name_for_prompt
 
         enhanced_parts = []
-        catalog = getattr(user_input, "catalog", None)
-        db_schema = getattr(user_input, "db_schema", None)
-        database_raw = getattr(user_input, "database", None) or ""
-        effective_db = resolve_database_name_for_prompt(
-            self.db_func_tool.connector if self.db_func_tool else None,
-            database_raw,
-        )
-        if catalog or effective_db or db_schema:
-            context_parts = []
-            if catalog:
-                context_parts.append(f"catalog: {catalog}")
-            if effective_db:
-                context_parts.append(f"database: {effective_db}")
-            if db_schema:
-                context_parts.append(f"schema: {db_schema}")
-            enhanced_parts.append(f"Context: {', '.join(context_parts)}")
+        # Per-turn datasource/dialect line — the frozen system prompt never
+        # carries the current selection. The reminder already merges
+        # catalog/database/schema, superseding the legacy Context line; nodes
+        # without a DB tool (gen_dashboard, scheduler) get an empty reminder
+        # and keep the legacy fallback below.
+        datasource_reminder = self._build_datasource_reminder(user_input)
+        if datasource_reminder:
+            enhanced_parts.append(datasource_reminder)
+        else:
+            catalog = getattr(user_input, "catalog", None)
+            db_schema = getattr(user_input, "db_schema", None)
+            database_raw = getattr(user_input, "database", None) or ""
+            effective_db = resolve_database_name_for_prompt(
+                self.db_func_tool.connector if self.db_func_tool else None,
+                database_raw,
+            )
+            if catalog or effective_db or db_schema:
+                context_parts = []
+                if catalog:
+                    context_parts.append(f"catalog: {catalog}")
+                if effective_db:
+                    context_parts.append(f"database: {effective_db}")
+                if db_schema:
+                    context_parts.append(f"schema: {db_schema}")
+                enhanced_parts.append(f"Context: {', '.join(context_parts)}")
 
         if enhanced_parts:
             enhanced_context = "\n\n".join(enhanced_parts)

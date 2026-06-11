@@ -80,10 +80,6 @@ Return a concise result that states:
 - What validation / reconciliation checks were run, and pass / fail.
 - Any remaining issues or assumptions.
 
-{% if current_date -%}
-Current date: {{ current_date }}
-{% endif -%}
-
 Output format: Return a single valid JSON object (no prose, no Markdown fences, no comments). Fields:
 
 - `mode`: exactly one of the strings `"intra-db"` or `"cross-db"`.
