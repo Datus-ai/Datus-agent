@@ -44,8 +44,10 @@ def run_in_terminal_sync(func: Callable[[], None]) -> None:
       avoid; ``in_terminal()`` would blank the full-screen layout for
       every print, which is destructive.
     * **On the prompt_toolkit event loop of a non-full-screen
-      Application** (e.g. legacy modals): dispatch via
-      :func:`run_in_terminal` and return immediately.
+      Application** (e.g. legacy modals): if the app is still running,
+      dispatch via :func:`run_in_terminal` and return immediately; if
+      the app is shutting down (``_is_running`` is ``False``), invoke
+      directly to avoid orphaning a Task on the closing loop.
     * **Off-loop thread with a non-full-screen Application**: submit via
       :func:`asyncio.run_coroutine_threadsafe` and block on completion.
     """
@@ -70,8 +72,15 @@ def run_in_terminal_sync(func: Callable[[], None]) -> None:
         on_event_loop = False
 
     if on_event_loop:
-        # Fire and forget — the callback is scheduled on the same loop and
-        # will run before control returns to the key handler.
+        if not getattr(app, "_is_running", True):
+            # The app is tearing down: loop.close() will call _ready.clear(),
+            # discarding any newly scheduled Task's first __step before it
+            # runs and leaving the inner coroutine GC'd unawaited.
+            func()
+            return
+        # Fire and forget — run_in_terminal schedules its own Task internally
+        # and returns it; we do not await because blocking on the loop that
+        # must run the callback would deadlock.
         run_in_terminal(func)
         return
 

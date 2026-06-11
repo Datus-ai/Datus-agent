@@ -35,29 +35,55 @@ def test_runs_inline_when_no_application() -> None:
 
 
 def test_schedules_via_run_in_terminal_when_on_event_loop() -> None:
-    """On the prompt_toolkit event loop, dispatch fires-and-forgets.
+    """On the prompt_toolkit event loop with a live app, dispatch via run_in_terminal.
 
-    Fire-and-forget because blocking on the returned future would deadlock
-    the loop that has to run the scheduled callback. The no-await path is
-    taken only when ``asyncio.get_running_loop()`` succeeds on the calling
-    thread, so we simulate that with a patch.
+    Fire-and-forget because blocking on the returned awaitable would deadlock
+    the loop that has to run the scheduled callback. run_in_terminal already
+    schedules its own Task internally (ensure_future(run())) and returns it,
+    so no outer wrapping is needed.
     """
-    fake_future = mock.MagicMock()
     fake_app = mock.MagicMock()
     fake_app.full_screen = False  # legacy modal path; full_screen path is exercised separately
+    fake_app._is_running = True
     fake_loop = mock.MagicMock()
 
     with (
         mock.patch("datus.cli.tui.console_bridge.get_app_or_none", return_value=fake_app),
         mock.patch("datus.cli.tui.console_bridge.asyncio.get_running_loop", return_value=fake_loop),
-        mock.patch("datus.cli.tui.console_bridge.run_in_terminal", return_value=fake_future) as mocked_rit,
+        mock.patch("datus.cli.tui.console_bridge.run_in_terminal") as mocked_rit,
     ):
         fn = mock.MagicMock()
         run_in_terminal_sync(fn)
 
         mocked_rit.assert_called_once_with(fn)
-        # On-loop path must NOT block on the future — it would deadlock.
-        fake_future.result.assert_not_called()
+
+
+def test_calls_directly_when_app_is_shutting_down() -> None:
+    """On the event loop but with _is_running=False (app teardown), func must
+    be called inline rather than scheduled.
+
+    Root cause of #617: loop.close() calls _ready.clear(), discarding the
+    Task's pending first __step before it runs. The inner coroutine is then
+    GC'd unawaited, emitting RuntimeWarning. Detecting _is_running=False and
+    falling back to a direct call eliminates the race.
+    """
+    fake_app = mock.MagicMock()
+    fake_app.full_screen = False
+    fake_app._is_running = False
+    called = {"count": 0}
+
+    def _fn() -> None:
+        called["count"] += 1
+
+    with (
+        mock.patch("datus.cli.tui.console_bridge.get_app_or_none", return_value=fake_app),
+        mock.patch("datus.cli.tui.console_bridge.asyncio.get_running_loop", return_value=mock.MagicMock()),
+        mock.patch("datus.cli.tui.console_bridge.run_in_terminal") as mocked_rit,
+    ):
+        run_in_terminal_sync(_fn)
+
+    assert called["count"] == 1
+    mocked_rit.assert_not_called()
 
 
 def test_submits_coroutine_from_off_loop_thread() -> None:
