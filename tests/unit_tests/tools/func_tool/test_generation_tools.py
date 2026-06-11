@@ -900,6 +900,109 @@ class TestOsiSync:
         assert metric_obj["yaml_path"] == str(metric_file)
         assert result["metric_names"] == ["order_count"]
 
+    def test_sync_osi_metric_to_db_includes_derived_and_joined_dimensions(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
+            "      - name: order_count_prev\n"
+        )
+        orders = SimpleNamespace(
+            name="orders",
+            source=SimpleNamespace(table="orders"),
+            primary_key="order_id",
+            time_dimension=SimpleNamespace(name="order_date"),
+            dimensions=[],
+        )
+        customers = SimpleNamespace(
+            name="customers",
+            source=SimpleNamespace(table="customers"),
+            primary_key="customer_id",
+            time_dimension=None,
+            dimensions=[SimpleNamespace(name="region_id")],
+        )
+        regions = SimpleNamespace(
+            name="regions",
+            source=SimpleNamespace(table="regions"),
+            primary_key="region_id",
+            time_dimension=None,
+            dimensions=[SimpleNamespace(name="region_name")],
+        )
+        relationships = [
+            SimpleNamespace(
+                **{
+                    "from": "orders",
+                    "to": "customers",
+                    "from_columns": ["customer_id"],
+                    "to_columns": ["customer_id"],
+                },
+            ),
+            SimpleNamespace(
+                **{
+                    "from": "customers",
+                    "to": "regions",
+                    "from_columns": ["region_id"],
+                    "to_columns": ["region_id"],
+                },
+            ),
+        ]
+        base_metric = SimpleNamespace(
+            name="order_count",
+            description="Number of orders",
+            expression="COUNT(DISTINCT order_id)",
+            dataset="orders",
+            subject_path=None,
+            kind="aggregate",
+            inputs=[],
+            measures=[],
+        )
+        derived_metric = SimpleNamespace(
+            name="order_count_prev",
+            description="Previous-period order count",
+            expression="order_count_prev",
+            dataset=None,
+            subject_path=None,
+            kind="derived",
+            inputs=[
+                SimpleNamespace(
+                    name="order_count",
+                    alias="order_count_prev",
+                    offset_window="1 month",
+                )
+            ],
+            measures=[],
+        )
+        doc = SimpleNamespace(
+            datasets=[orders, customers, regions],
+            relationships=relationships,
+            metrics=[base_metric, derived_metric],
+        )
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file))
+
+        assert result["success"] is True
+        metric_objects = generation_tools.metric_rag.upsert_batch.call_args.args[0]
+        by_name = {obj["name"]: obj for obj in metric_objects}
+        assert by_name["order_count"]["dimensions"] == [
+            "order_date",
+            "customer_id__region_id",
+            "customer_id__region_id__region_name",
+        ]
+        assert by_name["order_count"]["entities"] == ["order_id"]
+        assert by_name["order_count_prev"]["semantic_model_name"] == "orders"
+        assert by_name["order_count_prev"]["dimensions"] == by_name["order_count"]["dimensions"]
+        assert by_name["order_count_prev"]["entities"] == ["order_id"]
+
     def test_sync_osi_metric_to_db_rejects_metric_file_without_metrics(self, generation_tools, tmp_path):
         metric_file = tmp_path / "empty_metrics.yml"
         metric_file.write_text(

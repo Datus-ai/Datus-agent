@@ -1061,6 +1061,178 @@ class GenerationTools:
             return ", ".join(str(getattr(item, "name", item)) for item in inputs)
         return ""
 
+    @staticmethod
+    def _dedupe_strings(values: Iterable[Any]) -> List[str]:
+        seen: set[str] = set()
+        result: List[str] = []
+        for value in values:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return result
+
+    @staticmethod
+    def _dataset_primary_keys(dataset: Any) -> List[str]:
+        primary_keys = getattr(dataset, "primary_key", None) or []
+        if isinstance(primary_keys, str):
+            primary_keys = [primary_keys]
+        return [str(key) for key in primary_keys if str(key)]
+
+    @staticmethod
+    def _relationship_endpoint(relationship: Any, core_name: str, normalized_name: str) -> str:
+        return str(getattr(relationship, normalized_name, None) or getattr(relationship, core_name, None) or "")
+
+    @staticmethod
+    def _first_relationship_column(relationship: Any, core_name: str, normalized_name: str) -> str:
+        columns = getattr(relationship, core_name, None)
+        if isinstance(columns, str):
+            return columns
+        if isinstance(columns, list) and columns:
+            return str(columns[0])
+        return str(getattr(relationship, normalized_name, None) or "")
+
+    @classmethod
+    def _relationship_join_name(cls, relationship: Any, to_dataset: Any) -> str:
+        from_column = cls._first_relationship_column(relationship, "from_columns", "from_identifier")
+        if from_column:
+            return from_column
+        to_column = cls._first_relationship_column(relationship, "to_columns", "to_identifier")
+        if to_column:
+            return to_column
+        primary_keys = cls._dataset_primary_keys(to_dataset)
+        return primary_keys[0] if primary_keys else ""
+
+    @classmethod
+    def _metric_dataset_names(
+        cls,
+        metric: Any,
+        *,
+        metrics_by_name: Dict[str, Any],
+        default_dataset: str = "",
+        seen_metrics: Optional[set[str]] = None,
+    ) -> List[str]:
+        dataset = getattr(metric, "dataset", None)
+        if dataset:
+            return [str(dataset)]
+
+        metric_name = str(getattr(metric, "name", "") or "")
+        seen_metrics = seen_metrics or set()
+        if metric_name in seen_metrics:
+            return []
+        if metric_name:
+            seen_metrics.add(metric_name)
+
+        dataset_names: List[str] = []
+        for input_metric in getattr(metric, "inputs", None) or []:
+            input_name = str(getattr(input_metric, "name", input_metric) or "")
+            referenced = metrics_by_name.get(input_name)
+            if referenced is None:
+                continue
+            dataset_names.extend(
+                cls._metric_dataset_names(
+                    referenced,
+                    metrics_by_name=metrics_by_name,
+                    default_dataset=default_dataset,
+                    seen_metrics=seen_metrics,
+                )
+            )
+
+        if dataset_names:
+            return cls._dedupe_strings(dataset_names)
+        if getattr(metric, "measures", None) and default_dataset:
+            return [default_dataset]
+        return []
+
+    @classmethod
+    def _dataset_dimensions_with_relationships(
+        cls,
+        doc: Any,
+        dataset_name: str,
+        *,
+        prefix: Optional[List[str]] = None,
+        visited: Optional[set[str]] = None,
+    ) -> List[str]:
+        datasets = cls._dataset_lookup(doc)
+        dataset = datasets.get(dataset_name)
+        if dataset is None:
+            return []
+
+        prefix = prefix or []
+        visited = visited or set()
+        visited.add(dataset_name)
+
+        dimensions: List[str] = []
+        time_dimension = getattr(dataset, "time_dimension", None)
+        if time_dimension and getattr(time_dimension, "name", None):
+            dimensions.append("__".join([*prefix, str(time_dimension.name)]) if prefix else str(time_dimension.name))
+        dimensions.extend(
+            "__".join([*prefix, str(dim.name)]) if prefix else str(dim.name)
+            for dim in getattr(dataset, "dimensions", [])
+            if getattr(dim, "name", None)
+        )
+
+        for relationship in getattr(doc, "relationships", []) or []:
+            if cls._relationship_endpoint(relationship, "from", "from_dataset") != dataset_name:
+                continue
+            to_dataset_name = cls._relationship_endpoint(relationship, "to", "to_dataset")
+            if not to_dataset_name or to_dataset_name in visited:
+                continue
+            to_dataset = datasets.get(to_dataset_name)
+            if to_dataset is None:
+                continue
+            join_name = cls._relationship_join_name(
+                relationship,
+                to_dataset,
+            )
+            if not join_name:
+                continue
+            dimensions.extend(
+                cls._dataset_dimensions_with_relationships(
+                    doc,
+                    to_dataset_name,
+                    prefix=[*prefix, join_name],
+                    visited=set(visited),
+                )
+            )
+        return cls._dedupe_strings(dimensions)
+
+    @classmethod
+    def _metric_query_dimensions(cls, doc: Any, metric: Any) -> List[str]:
+        metrics_by_name = {getattr(item, "name", ""): item for item in getattr(doc, "metrics", [])}
+        default_dataset = (
+            str(getattr(getattr(doc, "datasets", [None])[0], "name", "") or "")
+            if getattr(doc, "datasets", None)
+            else ""
+        )
+        dimensions: List[str] = []
+        for dataset_name in cls._metric_dataset_names(
+            metric,
+            metrics_by_name=metrics_by_name,
+            default_dataset=default_dataset,
+        ):
+            dimensions.extend(cls._dataset_dimensions_with_relationships(doc, dataset_name))
+        return cls._dedupe_strings(dimensions)
+
+    @classmethod
+    def _metric_entities(cls, doc: Any, metric: Any) -> List[str]:
+        datasets = cls._dataset_lookup(doc)
+        metrics_by_name = {getattr(item, "name", ""): item for item in getattr(doc, "metrics", [])}
+        default_dataset = (
+            str(getattr(getattr(doc, "datasets", [None])[0], "name", "") or "")
+            if getattr(doc, "datasets", None)
+            else ""
+        )
+        entities: List[str] = []
+        for dataset_name in cls._metric_dataset_names(
+            metric,
+            metrics_by_name=metrics_by_name,
+            default_dataset=default_dataset,
+        ):
+            entities.extend(cls._dataset_primary_keys(datasets.get(dataset_name)))
+        return cls._dedupe_strings(entities)
+
     def sync_osi_semantic_to_db(self, semantic_model_path: str) -> dict:
         """Sync OSI datasets into the semantic object store."""
         try:
@@ -1244,6 +1416,12 @@ class GenerationTools:
 
             doc = self._load_osi_document(metric_file=metric_file, semantic_model_file=semantic_model_file)
             datasets = self._dataset_lookup(doc)
+            metrics_by_name = {getattr(item, "name", ""): item for item in getattr(doc, "metrics", [])}
+            default_dataset = (
+                str(getattr(getattr(doc, "datasets", [None])[0], "name", "") or "")
+                if getattr(doc, "datasets", None)
+                else ""
+            )
             db_parts = self._current_db_parts(self.agent_config)
             metric_objects: List[dict] = []
             synced_items: List[str] = []
@@ -1254,22 +1432,16 @@ class GenerationTools:
                     continue
                 if metric_name not in target_metric_names:
                     continue
-                dataset_name = getattr(metric, "dataset", None) or ""
+                dataset_names = self._metric_dataset_names(
+                    metric,
+                    metrics_by_name=metrics_by_name,
+                    default_dataset=default_dataset,
+                )
+                dataset_name = getattr(metric, "dataset", None) or (dataset_names[0] if len(dataset_names) == 1 else "")
                 dataset = datasets.get(dataset_name)
                 table_name = self._dataset_table_name(dataset) if dataset else dataset_name or "Unknown"
-                dimensions: List[str] = []
-                entities: List[str] = []
-                if dataset:
-                    time_dimension = getattr(dataset, "time_dimension", None)
-                    if time_dimension and getattr(time_dimension, "name", None):
-                        dimensions.append(str(time_dimension.name))
-                    dimensions.extend(
-                        str(dim.name) for dim in getattr(dataset, "dimensions", []) if getattr(dim, "name", None)
-                    )
-                    primary_keys = getattr(dataset, "primary_key", None) or []
-                    if isinstance(primary_keys, str):
-                        primary_keys = [primary_keys]
-                    entities.extend(str(key) for key in primary_keys)
+                dimensions = self._metric_query_dimensions(doc, metric)
+                entities = self._metric_entities(doc, metric)
 
                 subject_path = self._metric_subject_path(metric)
                 measure_expr = self._metric_expression(metric)
