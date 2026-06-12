@@ -1562,6 +1562,8 @@ class TestExpandOffsetIdentityCandidates:
         assert alias_variant["source_sql_name"] == "sql_25"
         assert alias_variant["inputs"][0]["offset_window"] == "1 month"
         assert alias_variant["inputs"][0]["alias"] == "activity_count_previous_month"
+        assert expanded[0]["offset_identity_group"] == "activity_count_previous_month"
+        assert alias_variant["offset_identity_group"] == "activity_count_previous_month"
 
     def test_preserves_non_offset_items_and_dedupes(self):
         simple = {"name": "activity_count", "metric_type": "simple", "inputs": []}
@@ -1686,6 +1688,32 @@ class TestMissingOffsetDerivedCandidates:
         assert _missing_offset_derived_candidates(_offset_plan(), ambiguous_catalog) == []
         assert _missing_offset_derived_candidates(_offset_plan(), []) == []
         assert _missing_offset_derived_candidates({"available": False}, []) == []
+
+    def test_identity_group_satisfied_by_any_equivalent_name(self):
+        plan = _offset_plan()
+        plan["derived_metric_candidates"] = _expand_offset_identity_candidates(plan["derived_metric_candidates"])
+
+        catalog_canonical_name = [
+            {"name": "activity_count", "type": "measure_proxy"},
+            {"name": "activity_count_previous_month", "type": "derived"},
+            {"name": "activity_count_mom_delta", "type": "derived"},
+        ]
+        assert _missing_offset_derived_candidates(plan, catalog_canonical_name) == []
+
+        catalog_original_alias = [
+            {"name": "activity_count", "type": "measure_proxy"},
+            {"name": "previous_month_activity_count", "type": "derived"},
+            {"name": "activity_count_mom_delta", "type": "derived"},
+        ]
+        assert _missing_offset_derived_candidates(plan, catalog_original_alias) == []
+
+    def test_identity_group_reported_once_when_fully_missing(self):
+        plan = _offset_plan()
+        plan["derived_metric_candidates"] = _expand_offset_identity_candidates(plan["derived_metric_candidates"])
+
+        catalog = [{"name": "activity_count", "type": "measure_proxy"}]
+        missing_names = [candidate["name"] for candidate in _missing_offset_derived_candidates(plan, catalog)]
+        assert missing_names == ["previous_month_activity_count", "activity_count_mom_delta"]
 
 
 @pytest.mark.ci
