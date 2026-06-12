@@ -14,9 +14,9 @@ from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
+    _annotate_offset_identity_candidates,
     _build_candidate_plan,
     _ensure_offset_derived_metrics,
-    _expand_offset_identity_candidates,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _is_offset_derived_candidate,
@@ -1548,35 +1548,31 @@ class TestExpandOffsetIdentityCandidates:
             ],
         }
 
-    def test_appends_alias_variant_for_identity_candidate(self):
-        expanded = _expand_offset_identity_candidates([self._identity_candidate(), self._delta_candidate()])
+    def test_annotates_identity_candidate_with_equivalent_names(self):
+        annotated = _annotate_offset_identity_candidates([self._identity_candidate(), self._delta_candidate()])
 
-        names = [candidate["name"] for candidate in expanded]
+        names = [candidate["name"] for candidate in annotated]
         assert names == [
             "previous_month_activity_count",
-            "activity_count_previous_month",
             "activity_count_mom_delta",
         ]
-        alias_variant = expanded[1]
-        assert alias_variant["expression"] == "activity_count_previous_month"
-        assert alias_variant["source_sql_name"] == "sql_25"
-        assert alias_variant["inputs"][0]["offset_window"] == "1 month"
-        assert alias_variant["inputs"][0]["alias"] == "activity_count_previous_month"
-        assert expanded[0]["offset_identity_group"] == "activity_count_previous_month"
-        assert alias_variant["offset_identity_group"] == "activity_count_previous_month"
+        identity = annotated[0]
+        assert identity["equivalent_names"] == ["activity_count_previous_month"]
+        assert identity["expression"] == "previous_month_activity_count"
+        assert identity["source_sql_name"] == "sql_25"
+        assert "equivalent_names" not in annotated[1]
 
-    def test_preserves_non_offset_items_and_dedupes(self):
+    def test_preserves_non_offset_items(self):
         simple = {"name": "activity_count", "metric_type": "simple", "inputs": []}
-        duplicate = dict(self._identity_candidate())
-        expanded = _expand_offset_identity_candidates(["not-a-dict", simple, self._identity_candidate(), duplicate])
+        annotated = _annotate_offset_identity_candidates(["not-a-dict", simple, self._identity_candidate()])
 
-        names = [candidate["name"] for candidate in expanded if isinstance(candidate, dict)]
+        names = [candidate["name"] for candidate in annotated if isinstance(candidate, dict)]
         assert names == [
             "activity_count",
             "previous_month_activity_count",
-            "activity_count_previous_month",
         ]
-        assert "not-a-dict" in expanded
+        assert "equivalent_names" not in annotated[1]
+        assert "not-a-dict" in annotated
 
     def test_build_candidate_plan_applies_expansion(self, monkeypatch):
         class FakeDiscovery:
@@ -1618,8 +1614,9 @@ class TestExpandOffsetIdentityCandidates:
             SimpleNamespace(),
         )
 
-        names = [candidate["name"] for candidate in plan["derived_metric_candidates"]]
-        assert names == ["previous_month_activity_count", "activity_count_previous_month"]
+        candidates = plan["derived_metric_candidates"]
+        assert [candidate["name"] for candidate in candidates] == ["previous_month_activity_count"]
+        assert candidates[0]["equivalent_names"] == ["activity_count_previous_month"]
 
 
 # ---------------------------------------------------------------------------
@@ -1689,9 +1686,9 @@ class TestMissingOffsetDerivedCandidates:
         assert _missing_offset_derived_candidates(_offset_plan(), []) == []
         assert _missing_offset_derived_candidates({"available": False}, []) == []
 
-    def test_identity_group_satisfied_by_any_equivalent_name(self):
+    def test_identity_candidate_satisfied_by_any_equivalent_name(self):
         plan = _offset_plan()
-        plan["derived_metric_candidates"] = _expand_offset_identity_candidates(plan["derived_metric_candidates"])
+        plan["derived_metric_candidates"] = _annotate_offset_identity_candidates(plan["derived_metric_candidates"])
 
         catalog_canonical_name = [
             {"name": "activity_count", "type": "measure_proxy"},
@@ -1707,9 +1704,9 @@ class TestMissingOffsetDerivedCandidates:
         ]
         assert _missing_offset_derived_candidates(plan, catalog_original_alias) == []
 
-    def test_identity_group_reported_once_when_fully_missing(self):
+    def test_identity_candidate_reported_once_when_fully_missing(self):
         plan = _offset_plan()
-        plan["derived_metric_candidates"] = _expand_offset_identity_candidates(plan["derived_metric_candidates"])
+        plan["derived_metric_candidates"] = _annotate_offset_identity_candidates(plan["derived_metric_candidates"])
 
         catalog = [{"name": "activity_count", "type": "measure_proxy"}]
         missing_names = [candidate["name"] for candidate in _missing_offset_derived_candidates(plan, catalog)]

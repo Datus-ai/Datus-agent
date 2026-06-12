@@ -345,7 +345,7 @@ def _build_candidate_plan(
         plan = dict(result.result or {})
         plan["available"] = True
         plan["sql_to_table_lineage"] = _build_sql_to_table_lineage(sql_entries, agent_config)
-        plan["derived_metric_candidates"] = _expand_offset_identity_candidates(plan.get("derived_metric_candidates"))
+        plan["derived_metric_candidates"] = _annotate_offset_identity_candidates(plan.get("derived_metric_candidates"))
         return plan
     except Exception as exc:  # pragma: no cover - defensive; agent can still infer from SQL prompt
         logger.warning("Metric candidate extraction raised; continuing without a candidate plan: %s", exc)
@@ -553,40 +553,28 @@ def _candidate_input_metric_names(candidate: dict[str, Any]) -> set[str]:
     return names
 
 
-def _expand_offset_identity_candidates(derived_candidates: Any) -> list[Any]:
-    """Expand offset derived candidates with previous-period identity alias variants.
+def _annotate_offset_identity_candidates(derived_candidates: Any) -> list[Any]:
+    """Annotate offset identity candidates with their canonical equivalent names.
 
     Identity candidates mined from SQL keep their historical alias (e.g.
-    ``previous_month_activity_count``); the canonical ``{base}_previous_{grain}``
-    variant is added alongside so the generation agent sees both names. Operates
-    purely on structured candidates, independent of any authoring format.
+    ``previous_month_activity_count``) as the metric name the agent should
+    publish; the canonical ``{base}_previous_{grain}`` variant is recorded in
+    ``equivalent_names`` so the completeness check accepts either name without
+    tempting the agent to rename the metric. Operates purely on structured
+    candidates, independent of any authoring format.
     """
-    expanded: list[Any] = []
-    seen: set[str] = set()
+    annotated: list[Any] = []
     for candidate in derived_candidates or []:
         if not isinstance(candidate, dict):
-            expanded.append(candidate)
+            annotated.append(candidate)
             continue
-        variants = [candidate]
         if candidate.get("name") and _is_offset_derived_candidate(candidate):
             alias_variants = _offset_identity_alias_candidates(candidate)
-            if alias_variants:
-                # Mark equivalent names as one group: the generation agent may
-                # publish the metric under any of them, and the completeness
-                # check treats the group as satisfied once one name exists.
-                group_name = _normalize_metric_name(alias_variants[0].get("name"))
-                candidate = {**candidate, "offset_identity_group": group_name}
-                for alias_variant in alias_variants:
-                    alias_variant["offset_identity_group"] = group_name
-                variants = [candidate, *alias_variants]
-        for variant in variants:
-            normalized = _normalize_metric_name(variant.get("name"))
-            if normalized:
-                if normalized in seen:
-                    continue
-                seen.add(normalized)
-            expanded.append(variant)
-    return expanded
+            equivalent_names = [str(variant.get("name")).strip() for variant in alias_variants if variant.get("name")]
+            if equivalent_names:
+                candidate = {**candidate, "equivalent_names": equivalent_names}
+        annotated.append(candidate)
+    return annotated
 
 
 def _offset_identity_alias_candidates(candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -663,19 +651,8 @@ def _missing_offset_derived_candidates(
         return []
 
     existing_by_name, ambiguous_existing_names = _unique_metric_catalog_by_name(existing_metric_catalog)
-
-    identity_group_names: dict[str, set[str]] = {}
-    for candidate in derived_candidates:
-        if not isinstance(candidate, dict):
-            continue
-        group = _normalize_metric_name(candidate.get("offset_identity_group"))
-        normalized_name = _normalize_metric_name(candidate.get("name"))
-        if group and normalized_name:
-            identity_group_names.setdefault(group, set()).add(normalized_name)
-
     missing: list[dict[str, Any]] = []
     seen: set[str] = set()
-    satisfied_or_reported_groups: set[str] = set()
     for candidate in derived_candidates:
         if not (isinstance(candidate, dict) and candidate.get("name") and _is_offset_derived_candidate(candidate)):
             continue
@@ -683,25 +660,19 @@ def _missing_offset_derived_candidates(
         if not normalized_name or normalized_name in seen:
             continue
         seen.add(normalized_name)
-        if normalized_name in ambiguous_existing_names or normalized_name in existing_by_name:
+        # Equivalent names (mined alias vs canonical {base}_previous_{grain})
+        # describe one metric; any of them existing satisfies the candidate.
+        candidate_names = {normalized_name} | {
+            _normalize_metric_name(name) for name in candidate.get("equivalent_names") or [] if name
+        }
+        if candidate_names & ambiguous_existing_names or candidate_names & set(existing_by_name):
             continue
-        group = _normalize_metric_name(candidate.get("offset_identity_group"))
-        if group:
-            if group in satisfied_or_reported_groups:
-                continue
-            # Equivalent names (mined alias vs canonical {base}_previous_{grain})
-            # describe one metric; any of them existing satisfies the group.
-            if identity_group_names.get(group, set()) & set(existing_by_name):
-                satisfied_or_reported_groups.add(group)
-                continue
         input_names = _candidate_input_metric_names(candidate)
         if not input_names or input_names & ambiguous_existing_names:
             continue
         if not input_names <= set(existing_by_name):
             continue
         missing.append(candidate)
-        if group:
-            satisfied_or_reported_groups.add(group)
     return missing
 
 
