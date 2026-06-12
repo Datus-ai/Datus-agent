@@ -23,6 +23,8 @@ logger = get_logger(__name__)
     availability_property="has_reference_template_tools",
 )
 class ReferenceTemplateTools:
+    permission_category = "reference_template_tools"
+
     @classmethod
     def create_dynamic(
         cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None

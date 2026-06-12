@@ -222,6 +222,8 @@ def _run_async(coro):
 class SemanticTools:
     """Function tool wrapper for semantic layer operations."""
 
+    permission_category = "semantic_tools"
+
     MAX_QUERY_METRICS_RESULT_CACHE_SIZE = 100
 
     @classmethod

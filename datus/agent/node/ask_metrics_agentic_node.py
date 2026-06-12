@@ -51,15 +51,6 @@ class AskMetricsAgenticNode(AgenticNode):
         "semantic_tools.attribution_analyze",
         "context_search_tools.list_subject_tree",
     )
-    _TOOL_NAMES_BY_CATEGORY = {
-        "db_tools": set(DBFuncTool.all_tools_name()),
-        "context_search_tools": set(ContextSearchTools.all_tools_name()),
-        "semantic_tools": set(SemanticTools.all_tools_name()),
-        "reference_template_tools": set(ReferenceTemplateTools.all_tools_name()),
-        "date_parsing_tools": {"parse_temporal_expressions"},
-        "filesystem_tools": set(FilesystemFuncTool.all_tools_name()),
-        "platform_doc_tools": set(PlatformDocSearchTool.all_tools_name()),
-    }
 
     def __init__(
         self,
@@ -632,14 +623,6 @@ class AskMetricsAgenticNode(AgenticNode):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"ask_metrics is unavailable: {self.startup_error}"},
             )
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        mapping = super()._tool_category_map()
-        for category, names in self._TOOL_NAMES_BY_CATEGORY.items():
-            category_tools = [tool for tool in self.tools if getattr(tool, "name", "") in names]
-            if category_tools:
-                mapping[category] = category_tools
-        return mapping
 
     def _runtime_context_current_date(self) -> str:
         """Honor the per-input ``reference_date`` in the frozen runtime context."""

@@ -112,6 +112,34 @@ class TestNormalProfile:
         assert _resolve(config, "semantic_tools", "attribution_analyze") == PermissionLevel.ALLOW
         assert _resolve(config, "semantic_tools", "future_semantic_tool") == PermissionLevel.ALLOW
 
+    def test_reference_template_tools_allowed(self):
+        """All reference-template helpers are read-only end to end —
+        ``execute_reference_template`` renders Jinja then runs
+        ``db_tools.read_query``."""
+        config = NORMAL
+        assert _resolve(config, "reference_template_tools", "search_reference_template") == PermissionLevel.ALLOW
+        assert _resolve(config, "reference_template_tools", "get_reference_template") == PermissionLevel.ALLOW
+        assert _resolve(config, "reference_template_tools", "render_reference_template") == PermissionLevel.ALLOW
+        assert _resolve(config, "reference_template_tools", "execute_reference_template") == PermissionLevel.ALLOW
+
+    def test_artifact_tools_allowed(self):
+        """Artifact authoring helpers are subagent-internal state mutations;
+        the user reviews the artifact as a whole via the rendered preview."""
+        config = NORMAL
+        assert _resolve(config, "artifact_tools", "start_new_report") == PermissionLevel.ALLOW
+        assert _resolve(config, "artifact_tools", "bind_existing_dashboard") == PermissionLevel.ALLOW
+        assert _resolve(config, "artifact_tools", "save_query_template") == PermissionLevel.ALLOW
+        assert _resolve(config, "artifact_tools", "validate_render") == PermissionLevel.ALLOW
+
+    def test_platform_doc_reads_allowed_web_search_asks(self):
+        """Doc lookups are local reads; ``web_search_document`` reaches the
+        network (Tavily) and stays at the profile default."""
+        config = NORMAL
+        assert _resolve(config, "platform_doc_tools", "list_document_nav") == PermissionLevel.ALLOW
+        assert _resolve(config, "platform_doc_tools", "get_document") == PermissionLevel.ALLOW
+        assert _resolve(config, "platform_doc_tools", "search_document") == PermissionLevel.ALLOW
+        assert _resolve(config, "platform_doc_tools", "web_search_document") == PermissionLevel.ASK
+
 
 class TestAutoProfile:
     def test_inherits_normal_reads(self):

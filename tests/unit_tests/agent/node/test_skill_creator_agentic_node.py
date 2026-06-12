@@ -175,7 +175,7 @@ class TestSkillCreatorAgenticNodeTools:
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
 
-    def test_tool_category_map_splits_filesystem_db_and_skills(self, real_agent_config, mock_llm_create):
+    def test_tool_registry_splits_filesystem_db_and_skills(self, real_agent_config, mock_llm_create):
         """Filesystem, db, and skill-loading tools must each land in their own
         permission category so profile rules route correctly."""
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
@@ -187,11 +187,11 @@ class TestSkillCreatorAgenticNodeTools:
             agent_config=real_agent_config,
             node_name="gen_skill",
         )
-        mapping = node._tool_category_map()
-        assert "filesystem_tools" in mapping
-        assert "db_tools" in mapping
-        skill_names = {t.name for t in mapping.get("skills", [])}
-        assert "load_skill" in skill_names
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry.get("write_file") == "filesystem_tools"
+        assert registry.get("read_query") == "db_tools"
+        assert registry.get("load_skill") == "skills"
 
     def test_has_ask_user_tool(self, real_agent_config, mock_llm_create):
         """Node should have ask_user tool."""

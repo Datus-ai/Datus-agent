@@ -294,6 +294,8 @@ class ReportArtifactTools:
        subagent stops on its first success.
     """
 
+    permission_category = "artifact_tools"
+
     def __init__(
         self,
         *,

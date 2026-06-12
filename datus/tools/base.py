@@ -54,6 +54,13 @@ class BaseTool(ABC):
 
     tool_name = "base_tool"
     tool_description = "Base tool class"
+    # Permission category for the unified permission system. Profile rules in
+    # ``datus.tools.permission.profiles`` match on ``(category, tool_name)``;
+    # ``AgenticNode._populate_tool_registry`` reads this attribute from every
+    # tool-group instance mounted on a node. Subclasses whose tools are governed
+    # by a dedicated rule set (``db_tools``, ``filesystem_tools``, ...) must
+    # override it; the default lands in the ``tools`` catch-all bucket.
+    permission_category = "tools"
 
     def __init__(self, **kwargs):
         """Initialize the tool with common parameters.

@@ -69,6 +69,8 @@ class FilesystemFuncTool(BaseTool):
       is responsible for asking the user first.
     """
 
+    permission_category = "filesystem_tools"
+
     def __init__(
         self,
         root_path: str = None,

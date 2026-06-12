@@ -10,7 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
@@ -251,40 +251,6 @@ class ChatAgenticNode(AgenticNode):
             logger.debug(f"Setup skill tools: {self.skill_manager.get_skill_count()} skills discovered")
         except Exception as e:
             logger.error(f"Failed to setup skill tools: {e}")
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Declare chat-specific tool categories for permission registration.
-
-        Picked up by ``AgenticNode._populate_tool_registry`` so the base
-        ``_ensure_permission_hooks`` can build ``PermissionHooks`` with the
-        full registry. The base implementation already covers ``skills`` and
-        ``bash_tools``; this override extends with chat's own tool surface.
-        Tools that aren't tied to a profile category (``ask_user_tool``,
-        ``_platform_doc_tool``) land in the ``tools`` catch-all so explicit
-        ``tools.*`` rules can still match them.
-        """
-        mapping = super()._tool_category_map()
-        if self.db_func_tool:
-            mapping["db_tools"] = list(self.db_func_tool.available_tools())
-        if self.context_search_tools:
-            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
-        if self.reference_template_tools:
-            mapping["reference_template_tools"] = list(self.reference_template_tools.available_tools())
-        if self.date_parsing_tools:
-            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
-        if self.filesystem_func_tool:
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        # ``memory_tools`` is registered by the base ``_tool_category_map``.
-        if self.sub_agent_task_tool:
-            mapping["sub_agent_tools"] = list(self.sub_agent_task_tool.available_tools())
-        catch_all: List[Any] = []
-        if self.ask_user_tool:
-            catch_all.extend(self.ask_user_tool.available_tools())
-        if self._platform_doc_tool:
-            catch_all.extend(self._platform_doc_tool.available_tools())
-        if catch_all:
-            mapping["tools"] = catch_all
-        return mapping
 
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances including skills."""

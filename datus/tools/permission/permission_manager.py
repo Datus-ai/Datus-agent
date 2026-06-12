@@ -218,15 +218,17 @@ class PermissionManager:
         Args:
             tools: List of available tools
             node_name: Name of the current agentic node
-            tool_category: Optional explicit tool category (auto-detected if not provided)
+            tool_category: Optional explicit tool category. Callers that know
+                the category (e.g. from ``ToolRegistry``) should pass it;
+                otherwise the ``tools`` catch-all applies, matching the
+                fallback in ``PermissionHooks._get_category_and_pattern``.
 
         Returns:
             Filtered list of tools (DENY removed)
         """
         filtered = []
         for tool in tools:
-            # Use provided category or determine from tool name
-            category = tool_category if tool_category else self._get_tool_category(tool.name)
+            category = tool_category or "tools"
 
             permission = self.check_permission(category, tool.name, node_name)
 
@@ -379,46 +381,6 @@ class PermissionManager:
             f"{len(self.global_config.rules)} effective rules, "
             f"session approvals cleared"
         )
-
-    def _get_tool_category(self, tool_name: str) -> str:
-        """Determine tool category from tool name.
-
-        Args:
-            tool_name: Name of the tool
-
-        Returns:
-            Tool category string
-        """
-        # Common tool name prefixes to categories
-        if tool_name.startswith("db_") or tool_name in (
-            "execute_sql",
-            "list_tables",
-            "describe_table",
-            "get_table_schema",
-            "get_sample_data",
-        ):
-            return "db_tools"
-        elif tool_name == "load_skill" or tool_name.startswith("skill_"):
-            return "skills"
-        elif tool_name.startswith("search_") or tool_name in ("search_metrics", "search_tables", "search_documents"):
-            return "context_search_tools"
-        elif tool_name.startswith("fs_") or tool_name in (
-            "read_file",
-            "write_file",
-            "edit_file",
-            "glob",
-            "grep",
-        ):
-            return "filesystem_tools"
-        elif tool_name.startswith("date_") or tool_name in ("parse_date", "parse_temporal_expressions"):
-            return "date_parsing_tools"
-        elif tool_name in ("add_memory", "edit_memory"):
-            return "memory_tools"
-        else:
-            # For MCP tools, the category might be in the format "server.tool"
-            if "." in tool_name:
-                return "mcp"
-            return "tools"
 
     def get_permission_summary(self, node_name: str) -> Dict[str, Any]:
         """Get a summary of permissions for debugging.

@@ -59,6 +59,8 @@ class AskUserTool:
         broker: InteractionBroker instance (shared with permission hooks).
     """
 
+    permission_category = "tools"
+
     MAX_QUESTIONS = 10
     MAX_OPTIONS_PER_QUESTION = 10
     MIN_OPTIONS_PER_QUESTION = 2

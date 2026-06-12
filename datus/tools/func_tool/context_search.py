@@ -38,6 +38,8 @@ _NAME_TEMPLATE_RENDER = "reference_template_tools.render_reference_template"
     availability_property="has_context_tools",
 )
 class ContextSearchTools:
+    permission_category = "context_search_tools"
+
     @classmethod
     def create_dynamic(cls, agent_config: AgentConfig, sub_agent_name: Optional[str] = None) -> "ContextSearchTools":
         """

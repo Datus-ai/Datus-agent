@@ -29,6 +29,8 @@ class SemanticDiscoveryTools:
     to help generate semantic models and MetricFlow metrics.
     """
 
+    permission_category = "semantic_tools"
+
     _AGGREGATE_CLASSES = ()
 
     def __init__(self, db_tool: DBFuncTool):

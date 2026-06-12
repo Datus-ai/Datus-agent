@@ -661,8 +661,15 @@ class TestAskMetricsAgenticNode:
         db_tools = Mock()
         db_tools.read_query = Mock(name="read_query")
         db_tools.to_function_tool.side_effect = _fake_function_tool
+        # Plain-string category + name list so the registry scanner picks the
+        # mock up (Mock auto-attributes are excluded by the isinstance(str)
+        # guard in ``AgenticNode._iter_tool_groups``).
+        db_tools.permission_category = "db_tools"
+        db_tools.all_tools_name = lambda: ["read_query"]
         date_parsing_tools = Mock()
         date_parsing_tools.parse_temporal_expressions = Mock(name="parse_temporal_expressions")
+        date_parsing_tools.permission_category = "date_parsing_tools"
+        date_parsing_tools.all_tools_name = lambda: ["parse_temporal_expressions"]
 
         with (
             patch("datus.agent.node.ask_metrics_agentic_node.DBFuncTool", return_value=db_tools),
@@ -679,9 +686,10 @@ class TestAskMetricsAgenticNode:
             )
 
         assert [tool.name for tool in node.tools] == ["read_query", "parse_temporal_expressions"]
-        mapping = node._tool_category_map()
-        assert [tool.name for tool in mapping["db_tools"]] == ["read_query"]
-        assert [tool.name for tool in mapping["date_parsing_tools"]] == ["parse_temporal_expressions"]
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry.get("read_query") == "db_tools"
+        assert registry.get("parse_temporal_expressions") == "date_parsing_tools"
 
     def test_setup_tools_handles_context_search_failure(self, real_agent_config, mock_llm_create):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -844,18 +852,21 @@ class TestAskMetricsAgenticNode:
         assert result.response == "{'value': 10}"
         assert result.markdown_report == "{'value': 10}"
 
-    def test_tool_category_map_is_narrow(self, real_agent_config, mock_llm_create):
+    def test_mounted_tool_surface_is_narrow(self, real_agent_config, mock_llm_create):
+        """The mounted tool surface stays the DEFAULT_TOOLS whitelist.
+
+        The registry intentionally registers each class's full name surface
+        (superset, name -> category lookup only); narrowness is enforced by
+        ``node.tools``, so assert on the mounted names instead.
+        """
         tree = {"Sales": {"metrics": ["revenue"]}}
         node, _, _ = _make_node(real_agent_config, tree=tree)
 
-        mapping = node._tool_category_map()
-        assert {tool.name for tool in mapping["semantic_tools"]} == {
+        assert {tool.name for tool in node.tools} == {
             "list_metrics",
             "get_dimensions",
             "query_metrics",
             "attribution_analyze",
-        }
-        assert {tool.name for tool in mapping["context_search_tools"]} == {
             "search_metrics",
             "get_metrics",
         }

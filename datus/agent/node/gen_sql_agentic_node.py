@@ -10,7 +10,7 @@ SQL generation with support for limited context, enhanced template variables,
 and flexible configuration through agent.yml.
 """
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -783,31 +783,6 @@ class GenSQLAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to update SQL generation context: {e}")
             return {"success": False, "message": str(e)}
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register tools under their canonical categories so permission rules fire.
-
-        Without this override the bound tools fall through to the ``tools.*``
-        catch-all (default ASK on normal/auto profiles), which would block at
-        ``InteractionBroker.request`` whenever a caller wires permission hooks
-        but does not also run an interactive broker listener.
-        """
-        mapping = super()._tool_category_map()
-        if getattr(self, "db_func_tool", None):
-            mapping["db_tools"] = list(self.db_func_tool.available_tools())
-        if getattr(self, "context_search_tools", None):
-            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
-        if getattr(self, "semantic_tools", None):
-            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
-        if getattr(self, "reference_template_tools", None):
-            mapping["semantic_tools"] = mapping.get("semantic_tools", []) + list(
-                self.reference_template_tools.available_tools()
-            )
-        if getattr(self, "date_parsing_tools", None):
-            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
-        if getattr(self, "filesystem_func_tool", None):
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        return mapping
 
     def _extract_sql_and_output_from_response(self, output: dict) -> tuple[Optional[str], Optional[str]]:
         """

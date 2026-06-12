@@ -2386,43 +2386,6 @@ class AgenticNode(Node):
             node_class=self.get_node_class_name(),
         )
 
-    def _get_tool_category(self, tool_name: str) -> str:
-        """
-        Determine tool category from tool name for permission checking.
-
-        Args:
-            tool_name: Name of the tool
-
-        Returns:
-            Tool category string: "db_tools", "mcp", "skills", or "tools"
-        """
-        # Check for skill-related tools
-        if tool_name == "load_skill" or tool_name.startswith("skill_"):
-            return "skills"
-
-        # Check for database tools
-        if tool_name.startswith("db_") or tool_name in [
-            "list_tables",
-            "describe_table",
-            "execute_ddl",
-            "execute_write",
-            "transfer_query_result",
-            "execute_sql",
-            "get_sample_data",
-        ]:
-            return "db_tools"
-
-        # Check for MCP tools (usually have mcp_ prefix or are in mcp_servers)
-        mcp_tool_names = set()
-        for server_name in self.mcp_servers.keys():
-            mcp_tool_names.add(f"{server_name}_")
-        for mcp_prefix in mcp_tool_names:
-            if tool_name.startswith(mcp_prefix):
-                return "mcp"
-
-        # Default to generic tools category
-        return "tools"
-
     def setup_input(self, workflow: "Workflow") -> Dict:
         """
         Setup input for agentic node from workflow context.
@@ -3315,44 +3278,66 @@ class AgenticNode(Node):
     # never fired for anything other than ``chat``. These helpers let
     # every subclass participate in the permission system with one call.
 
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Return ``{category: tools}`` for permission registration.
+    def _iter_tool_groups(self) -> List[Any]:
+        """Collect tool-group instances mounted as attributes on this node.
 
-        Subclasses override this to declare which of ``self.tools`` belong
-        to which permission category (``bi_tools``, ``scheduler_tools``,
-        ``db_tools``, etc.). Categories not declared here fall back to the
-        ``tools`` catch-all, which only matches explicit ``tools.*`` rules.
-
-        The base implementation registers ``skill_func_tool`` under
-        ``skills`` and ``bash_tool`` under ``bash_tools`` so the
-        ``skills.*`` and ``bash_tools.*`` profile rules apply to every
-        subagent that exposes them — overrides should ``super()`` +
-        extend.
+        A tool group is any object that declares both ``permission_category``
+        (the class-level category from ``BaseTool`` or a plain class attribute)
+        and ``available_tools()``. Category declaration lives at the tool's
+        definition site, so nodes no longer maintain hand-written
+        category maps that silently drift when a tool is added or renamed.
         """
-        mapping: Dict[str, List[Any]] = {}
-        if self.skill_func_tool:
-            mapping["skills"] = list(self.skill_func_tool.available_tools())
-        bash_tool = getattr(self, "bash_tool", None)
-        if bash_tool:
-            bash_tools = list(bash_tool.available_tools())
-            if bash_tools:
-                mapping["bash_tools"] = bash_tools
-        # Dedicated memory tools are mounted on every main agent (and the
-        # feedback node), so classify them here in the base map — otherwise
-        # nodes without a ``_tool_category_map`` override (e.g. feedback) would
-        # fall back to the ``tools`` catch-all and the ``memory_tools.*`` profile
-        # rules would never govern ``add_memory`` / ``edit_memory``.
-        memory_func_tool = getattr(self, "memory_func_tool", None)
-        if memory_func_tool:
-            mapping["memory_tools"] = list(memory_func_tool.available_tools())
-        return mapping
+        groups: List[Any] = []
+        seen: set = set()
+        for attr_name in sorted(vars(self)):
+            value = getattr(self, attr_name, None)
+            if value is None or id(value) in seen:
+                continue
+            if isinstance(value, type):
+                continue
+            # ``permission_category`` must be a plain string — this also keeps
+            # ``Mock()`` stand-ins in tests out of the registry unless they
+            # explicitly declare a category.
+            category = getattr(value, "permission_category", None)
+            if isinstance(category, str) and callable(getattr(value, "available_tools", None)):
+                seen.add(id(value))
+                groups.append(value)
+        return groups
+
+    @staticmethod
+    def _tool_group_names(group: Any) -> List[str]:
+        """Return every permission-relevant tool name a group can expose.
+
+        Prefers ``all_tools_name()`` (the full surface, independent of
+        runtime availability) over ``available_tools()`` so the registry
+        also covers method-level wrappers some nodes mount directly (e.g.
+        ``DBFuncTool.execute_ddl`` on gen_job) and conditional tools that
+        appear only with certain configs. Registering a superset is safe:
+        the registry is a name → category lookup consulted per call, so
+        names that are never mounted are never queried.
+        """
+        all_names = getattr(group, "all_tools_name", None)
+        if callable(all_names):
+            try:
+                return [str(name) for name in all_names()]
+            except Exception:
+                logger.debug("all_tools_name() failed for %s", type(group).__name__, exc_info=True)
+        try:
+            return [getattr(tool, "name", str(tool)) for tool in group.available_tools()]
+        except Exception:
+            logger.debug("available_tools() failed for %s", type(group).__name__, exc_info=True)
+            return []
 
     def _populate_tool_registry(self) -> None:
-        """Register every tool in :meth:`_tool_category_map` into
-        :attr:`tool_registry`.
+        """Register every mounted tool group's names into :attr:`tool_registry`.
+
+        Categories come from each tool class's ``permission_category``
+        declaration (see :meth:`_iter_tool_groups`), so the mapping is
+        deterministic across nodes — the same tool name always lands in the
+        same category no matter which node mounts it.
 
         Decoupled from :meth:`_ensure_permission_hooks` so callers that
-        need the category map filled *before* the first LLM turn — most
+        need the registry filled *before* the first LLM turn — most
         importantly :func:`apply_proxy_tools`, which inspects the
         registry to honour the ``_FS_DEPENDENT_NODES`` exclusion — can
         trigger it eagerly. Safe to call multiple times because
@@ -3363,9 +3348,10 @@ class AgenticNode(Node):
         a ``permission_manager`` and never builds ``PermissionHooks``.
         """
         try:
-            for category, tools in self._tool_category_map().items():
-                if tools:
-                    self.tool_registry.register_tools(category, tools)
+            for group in self._iter_tool_groups():
+                names = self._tool_group_names(group)
+                if names:
+                    self.tool_registry.register_tools(group.permission_category, names)
         except Exception:
             logger.debug(
                 "Failed to populate tool_registry for %s; falling back to lazy registration.",

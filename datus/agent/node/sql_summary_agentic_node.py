@@ -11,7 +11,7 @@ generation tools, and hooks.
 """
 
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -170,19 +170,6 @@ class SqlSummaryAgenticNode(AgenticNode):
             logger.info("Setup hooks: generation_hooks")
         except Exception as e:
             logger.error(f"Failed to setup generation_hooks: {e}")
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Route filesystem/generation helpers to permission categories."""
-        from datus.tools.func_tool import trans_to_function_tool
-
-        mapping = super()._tool_category_map()
-        if self.filesystem_func_tool:
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        if self.generation_tools:
-            mapping.setdefault("semantic_tools", []).append(
-                trans_to_function_tool(self.generation_tools.generate_sql_summary_id)
-            )
-        return mapping
 
     def _get_existing_subject_trees(self) -> list:
         """

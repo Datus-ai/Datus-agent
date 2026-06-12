@@ -24,6 +24,8 @@ logger = get_logger(__name__)
 class SchedulerTools(BaseTool):
     """Function tools for interacting with the configured scheduler platform (e.g. Airflow)."""
 
+    permission_category = "scheduler_tools"
+
     tool_name = "scheduler_tools"
     tool_description = "Tools for submitting and managing scheduled jobs via Airflow"
 

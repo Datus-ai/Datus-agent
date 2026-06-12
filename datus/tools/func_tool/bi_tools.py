@@ -38,6 +38,8 @@ class BIFuncTool:
     - dataset_db set on the service config: get_bi_serving_target
     """
 
+    permission_category = "bi_tools"
+
     def __init__(
         self,
         agent_config: Optional["AgentConfig"] = None,

@@ -36,6 +36,8 @@ class SkillValidateTool:
     - Directory structure is correct
     """
 
+    permission_category = "tools"
+
     def validate_skill(self, skill_path: str) -> FuncToolResult:
         """Validate a SKILL.md file and report any issues.
 

@@ -203,25 +203,6 @@ class GenReportAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup tool pattern '{pattern}': {e}")
 
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register tools under their canonical categories so permission rules fire.
-
-        Without this override the bound tools fall through to the ``tools.*``
-        catch-all (default ASK on normal/auto profiles), which would block at
-        ``InteractionBroker.request`` whenever a caller wires permission hooks
-        but does not also run an interactive broker listener.
-        """
-        mapping = super()._tool_category_map()
-        if getattr(self, "db_func_tool", None):
-            mapping["db_tools"] = list(self.db_func_tool.available_tools())
-        if getattr(self, "semantic_tools", None):
-            mapping["semantic_tools"] = list(self.semantic_tools.available_tools())
-        if getattr(self, "context_search_tools", None):
-            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
-        if getattr(self, "filesystem_func_tool", None):
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        return mapping
-
     def _setup_db_tools(self):
         """Setup database tools."""
         try:

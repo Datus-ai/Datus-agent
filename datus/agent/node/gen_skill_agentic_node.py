@@ -12,7 +12,7 @@ higher max_turns budget for extended multi-step interactions.
 """
 
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -208,29 +208,6 @@ class SkillCreatorAgenticNode(AgenticNode):
             logger.debug(f"Setup session search tool with sessions_dir: {sessions_dir}")
         except Exception as e:
             logger.warning(f"Failed to setup session search tool, continuing without: {e}")
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register filesystem / db / skill-loading tools for permission rules."""
-        mapping = super()._tool_category_map()
-        if getattr(self, "filesystem_func_tool", None):
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        if getattr(self, "db_func_tool", None):
-            mapping["db_tools"] = list(self.db_func_tool.available_tools())
-        # Skill loader is a second ``SkillFuncTool`` instance distinct from
-        # the base ``skill_func_tool`` (authoring flow). Register it under
-        # ``skills`` so ``skills.*`` rules still apply.
-        if getattr(self, "skill_func_tool_instance", None):
-            mapping.setdefault("skills", []).extend(self.skill_func_tool_instance.available_tools())
-        catchall: List[Any] = []
-        if self.ask_user_tool:
-            catchall.extend(self.ask_user_tool.available_tools())
-        if getattr(self, "skill_validate_tool", None):
-            catchall.extend(self.skill_validate_tool.available_tools())
-        if getattr(self, "_session_search_tool", None):
-            catchall.extend(self._session_search_tool.available_tools())
-        if catchall:
-            mapping.setdefault("tools", []).extend(catchall)
-        return mapping
 
     # Companion skills loaded into system prompt
     COMPANION_SKILLS = ("create-skill", "optimize-skill")

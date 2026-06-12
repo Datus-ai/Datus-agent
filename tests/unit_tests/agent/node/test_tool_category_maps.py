@@ -2,29 +2,28 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""``_tool_category_map`` coverage for write-capable subagent nodes.
+"""Tool registry population coverage for the permission system.
 
-These methods are pure routing — no setup needed beyond hand-stubbed
-attributes. Covering them at this tier keeps the regression surface
-for ``db_tools.*`` / ``filesystem_tools.*`` / ``scheduler_tools.*``
-profile rules under unit tests that finish in milliseconds, instead of
-only through nightly-marked flows that spin up real DB
-connectors and drive the OpenAI Agents SDK tool loop.
+Categories are declared once at each tool class's definition site via
+``permission_category``; ``AgenticNode._populate_tool_registry`` introspects
+node attributes and registers every group's full name surface
+(``all_tools_name()`` preferred over ``available_tools()``). These tests pin
+both halves of that contract:
 
-``trans_to_function_tool`` (the OpenAI Agents SDK wrapper) introspects
-``func.__name__`` / the docstring, so any attribute wrapped via it must
-be a *real* callable — a bare ``MagicMock`` raises ``AttributeError``.
+* the declaration table — a tool class drifting to the wrong category would
+  silently re-route its profile rules;
+* the introspection — a mounted group that the scanner misses falls back to
+  the ``tools`` catch-all at hook time (default ASK on normal/auto), which is
+  exactly the historical ``task``-tool bug this design removes.
 """
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 
-def _stub(*names):
-    """Stub tool registry returning named FunctionTool-like instances."""
-    bucket = MagicMock()
-    bucket.available_tools = MagicMock(return_value=[_named(n) for n in names])
-    return bucket
+from datus.agent.node.agentic_node import AgenticNode
+from datus.tools.registry.tool_registry import ToolRegistry
 
 
 def _named(name):
@@ -33,207 +32,215 @@ def _named(name):
     return t
 
 
-def _fn(name):
-    """Real callable with ``__name__`` set — required by ``trans_to_function_tool``.
+def _group(category, *names, with_all_tools_name=False):
+    """Tool-group stand-in with an explicit string category.
 
-    Parameter names must be public: Pydantic treats leading-underscore
-    names as private attributes and rejects them when ``function_schema``
-    builds its input model from the signature.
+    ``permission_category`` must be a plain string for the scanner to pick
+    the group up — Mock auto-attributes are excluded by design.
     """
+    group = SimpleNamespace(
+        permission_category=category,
+        available_tools=lambda: [_named(n) for n in names],
+    )
+    if with_all_tools_name:
+        group.all_tools_name = lambda: list(names)
+    return group
 
-    def _impl() -> None:
-        return None
 
-    _impl.__name__ = name
-    _impl.__doc__ = f"{name} stub"
-    return _impl
+def _bare_node():
+    node = AgenticNode.__new__(AgenticNode)
+    node.tool_registry = ToolRegistry()
+    return node
 
 
-class TestGenTableToolCategoryMap:
-    def test_db_and_filesystem_buckets_with_ddl_helper(self):
-        from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
+class TestPermissionCategoryDeclarations:
+    """Every tool class declares its category at the definition site."""
 
-        node = GenTableAgenticNode.__new__(GenTableAgenticNode)
-        node.skill_func_tool = None
-        node.ask_user_tool = _stub("ask_user")
-        node.filesystem_func_tool = _stub("read_file", "write_file")
+    @pytest.mark.parametrize(
+        "import_path,class_name,expected_category",
+        [
+            ("datus.tools.func_tool.database", "DBFuncTool", "db_tools"),
+            ("datus.tools.func_tool.semantic_tools", "SemanticTools", "semantic_tools"),
+            ("datus.tools.func_tool.generation_tools", "GenerationTools", "semantic_tools"),
+            ("datus.tools.func_tool.semantic_discovery_tools", "SemanticDiscoveryTools", "semantic_tools"),
+            ("datus.tools.func_tool.context_search", "ContextSearchTools", "context_search_tools"),
+            (
+                "datus.tools.func_tool.reference_template_tools",
+                "ReferenceTemplateTools",
+                "reference_template_tools",
+            ),
+            ("datus.tools.func_tool.filesystem_tools", "FilesystemFuncTool", "filesystem_tools"),
+            ("datus.tools.func_tool.memory_filesystem_tools", "MemoryFilesystemFuncTool", "filesystem_tools"),
+            ("datus.tools.func_tool.metric_filesystem_tools", "MetricFilesystemFuncTool", "filesystem_tools"),
+            ("datus.tools.func_tool.memory_tools", "MemoryFuncTool", "memory_tools"),
+            ("datus.tools.func_tool.scheduler_tools", "SchedulerTools", "scheduler_tools"),
+            ("datus.tools.func_tool.bash_tool", "BashTool", "bash_tools"),
+            ("datus.tools.func_tool.date_parsing_tools", "DateParsingTools", "date_parsing_tools"),
+            ("datus.tools.func_tool.sub_agent_task_tool", "SubAgentTaskTool", "sub_agent_tools"),
+            ("datus.tools.func_tool.ask_user_tools", "AskUserTool", "tools"),
+            ("datus.tools.func_tool.platform_doc_search", "PlatformDocSearchTool", "platform_doc_tools"),
+            ("datus.tools.func_tool.plan_tools", "PlanTool", "tools"),
+            ("datus.tools.func_tool.plan_tools", "ConfirmPlanTool", "tools"),
+            ("datus.tools.func_tool.session_search_tool", "SessionSearchTool", "tools"),
+            ("datus.tools.func_tool.skill_validate_tool", "SkillValidateTool", "tools"),
+            ("datus.tools.func_tool.orchestrator_tools", "OrchestratorIssueTools", "tools"),
+            ("datus.tools.func_tool.dashboard_artifact_tools", "DashboardArtifactTools", "artifact_tools"),
+            ("datus.tools.func_tool.report_artifact_tools", "ReportArtifactTools", "artifact_tools"),
+            ("datus.tools.skill_tools.skill_func_tool", "SkillFuncTool", "skills"),
+        ],
+    )
+    def test_class_declares_category(self, import_path, class_name, expected_category):
+        module = __import__(import_path, fromlist=[class_name])
+        cls = getattr(module, class_name)
+        assert cls.permission_category == expected_category
 
-        # ``db_func_tool`` needs ``execute_ddl`` as a real callable — the node
-        # wraps it via ``trans_to_function_tool`` which introspects ``__name__``.
-        node.db_func_tool = SimpleNamespace(
+    def test_artifact_filesystem_subclasses_inherit_filesystem_category(self):
+        """Artifact/report fs tools inherit ``filesystem_tools`` so the
+        PathZone gate in ``PermissionHooks._handle_filesystem_zone`` engages."""
+        from datus.tools.func_tool.dashboard_artifact_tools import DashboardFilesystemFuncTool
+        from datus.tools.func_tool.report_artifact_tools import ReportFilesystemFuncTool
+
+        assert DashboardFilesystemFuncTool.permission_category == "filesystem_tools"
+        assert ReportFilesystemFuncTool.permission_category == "filesystem_tools"
+
+    def test_base_tool_defaults_to_catch_all(self):
+        from datus.tools.base import BaseTool
+
+        assert BaseTool.permission_category == "tools"
+
+
+class TestPopulateToolRegistry:
+    def test_registers_groups_under_declared_categories(self):
+        node = _bare_node()
+        node.db_func_tool = _group("db_tools", "read_query", "execute_ddl", with_all_tools_name=True)
+        node.filesystem_func_tool = _group("filesystem_tools", "read_file", "write_file")
+        node.ask_user_tool = _group("tools", "ask_user")
+
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry["read_query"] == "db_tools"
+        assert registry["execute_ddl"] == "db_tools"
+        assert registry["read_file"] == "filesystem_tools"
+        assert registry["write_file"] == "filesystem_tools"
+        assert registry["ask_user"] == "tools"
+
+    def test_task_tool_registered_outside_chat(self):
+        """The historical bug: only chat declared ``sub_agent_tools``, so the
+        ``task`` tool fell into the catch-all (default ASK) on gen_sql,
+        gen_report, feedback and the visual artifact nodes. Declaration-site
+        categories make the mapping node-independent."""
+        node = _bare_node()
+        node.sub_agent_task_tool = _group("sub_agent_tools", "task")
+
+        node._populate_tool_registry()
+        assert node.tool_registry.to_dict()["task"] == "sub_agent_tools"
+
+    def test_prefers_all_tools_name_superset(self):
+        """``all_tools_name()`` wins over ``available_tools()`` so method-level
+        wrappers (e.g. gen_job mounting ``DBFuncTool.execute_write`` directly)
+        and conditionally-hidden tools are still classified."""
+        node = _bare_node()
+        group = SimpleNamespace(
+            permission_category="db_tools",
             available_tools=lambda: [_named("read_query")],
-            execute_ddl=_fn("execute_ddl"),
+            all_tools_name=lambda: ["read_query", "execute_write", "transfer_query_result"],
         )
+        node.db_func_tool = group
 
-        mapping = node._tool_category_map()
-        assert [t.name for t in mapping["db_tools"] if hasattr(t, "name")][0] == "read_query"
-        assert len(mapping["db_tools"]) == 2
-        assert [t.name for t in mapping["filesystem_tools"]] == ["read_file", "write_file"]
-        assert mapping["tools"][0].name == "ask_user"
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry["execute_write"] == "db_tools"
+        assert registry["transfer_query_result"] == "db_tools"
 
+    def test_falls_back_to_available_tools_when_all_tools_name_raises(self):
+        node = _bare_node()
 
-class TestSchedulerToolCategoryMap:
-    def test_scheduler_bucket_plus_ask_user(self):
-        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
+        def _boom():
+            raise RuntimeError("no introspection")
 
-        node = SchedulerAgenticNode.__new__(SchedulerAgenticNode)
-        node.skill_func_tool = None
-        node.scheduler_tools = _stub("list_jobs", "delete_job")
-        node.ask_user_tool = _stub("ask_user")
-
-        mapping = node._tool_category_map()
-        assert [t.name for t in mapping["scheduler_tools"]] == ["list_jobs", "delete_job"]
-        assert mapping["tools"][0].name == "ask_user"
-
-    def test_missing_scheduler_tools_omits_bucket(self):
-        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-        node = SchedulerAgenticNode.__new__(SchedulerAgenticNode)
-        node.skill_func_tool = None
-        node.scheduler_tools = None
-        node.ask_user_tool = None
-
-        assert node._tool_category_map() == {}
-
-
-class TestSqlSummaryToolCategoryMap:
-    def test_filesystem_and_semantic_helpers(self):
-        from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
-
-        node = SqlSummaryAgenticNode.__new__(SqlSummaryAgenticNode)
-        node.skill_func_tool = None
-        node.filesystem_func_tool = _stub("read_file")
-        # ``generate_sql_summary_id`` gets wrapped — needs ``__name__``.
-        node.generation_tools = SimpleNamespace(
-            generate_sql_summary_id=_fn("generate_sql_summary_id"),
+        group = SimpleNamespace(
+            permission_category="scheduler_tools",
+            available_tools=lambda: [_named("list_scheduler_jobs")],
+            all_tools_name=_boom,
         )
+        node.scheduler_tools = group
 
-        mapping = node._tool_category_map()
-        assert mapping["filesystem_tools"][0].name == "read_file"
-        assert len(mapping["semantic_tools"]) == 1
+        node._populate_tool_registry()
+        assert node.tool_registry.to_dict()["list_scheduler_jobs"] == "scheduler_tools"
 
+    def test_skips_groups_without_string_category(self):
+        """Mock auto-attributes are not strings, so bare mocks (common in node
+        tests) never pollute the registry with bogus categories."""
+        node = _bare_node()
+        node.some_mock = MagicMock()
+        node.real_group = _group("memory_tools", "add_memory")
 
-class TestGenJobToolCategoryMap:
-    def test_db_bucket_includes_write_helpers(self):
-        from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry == {"add_memory": "memory_tools"}
 
-        node = GenJobAgenticNode.__new__(GenJobAgenticNode)
-        node.skill_func_tool = None
-        node.ask_user_tool = _stub("ask_user")
-        node.filesystem_func_tool = _stub("read_file")
-
-        # All wrapped helpers must have real ``__name__``.
-        node.db_func_tool = SimpleNamespace(
-            available_tools=lambda: [_named("read_query")],
-            execute_ddl=_fn("execute_ddl"),
-            execute_write=_fn("execute_write"),
-            transfer_query_result=_fn("transfer_query_result"),
-            get_migration_capabilities=_fn("get_migration_capabilities"),
-            suggest_table_layout=_fn("suggest_table_layout"),
-            validate_ddl=_fn("validate_ddl"),
-        )
-
-        mapping = node._tool_category_map()
-        # 1 available + 6 wrapped helpers = 7.
-        assert len(mapping["db_tools"]) == 7
-        assert mapping["filesystem_tools"][0].name == "read_file"
-        assert mapping["tools"][0].name == "ask_user"
-
-
-class TestGenMetricsToolCategoryMap:
-    def test_semantic_bucket_combines_adapters_and_generation_helpers(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-        node.skill_func_tool = None
-        node.db_func_tool = _stub("read_query")
-        node.semantic_tools = _stub("query_metrics")
-        node.generation_tools = SimpleNamespace(
-            check_semantic_object_exists=_fn("check_semantic_object_exists"),
-            end_metric_generation=_fn("end_metric_generation"),
-            end_semantic_model_generation=_fn("end_semantic_model_generation"),
-        )
-        node.semantic_discovery_tools = _stub("build_measure")
-        node.filesystem_func_tool = _stub("read_file")
-        node.ask_user_tool = _stub("ask_user")
-
-        mapping = node._tool_category_map()
-        # 1 (query_metrics) + 3 (generation helpers) + 1 (build_measure) = 5.
-        assert len(mapping["semantic_tools"]) == 5
-        assert mapping["db_tools"][0].name == "read_query"
-        assert mapping["filesystem_tools"][0].name == "read_file"
-        assert mapping["tools"][0].name == "ask_user"
-
-    def test_semantic_bucket_omitted_when_empty(self):
-        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
-
-        node = GenMetricsAgenticNode.__new__(GenMetricsAgenticNode)
-        node.skill_func_tool = None
+    def test_skips_none_and_class_attributes(self):
+        node = _bare_node()
         node.db_func_tool = None
-        node.semantic_tools = None
-        node.generation_tools = None
-        node.semantic_discovery_tools = None
-        node.filesystem_func_tool = None
-        node.ask_user_tool = None
+        node.tool_cls = SimpleNamespace  # a type, not an instance
 
-        assert node._tool_category_map() == {}
+        node._populate_tool_registry()
+        assert node.tool_registry.to_dict() == {}
 
+    def test_same_group_referenced_twice_registered_once(self):
+        """Aliased attributes (e.g. ``semantic_func_tool`` aliasing
+        ``semantic_tools`` on gen_semantic_model) must not double-register."""
+        node = _bare_node()
+        group = _group("semantic_tools", "list_metrics")
+        node.semantic_tools = group
+        node.semantic_func_tool = group
 
-class TestSkillCreatorToolCategoryMap:
-    def test_registers_filesystem_db_skill_loader_and_catchall(self):
-        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
+        node._populate_tool_registry()
+        assert node.tool_registry.to_dict() == {"list_metrics": "semantic_tools"}
 
-        node = SkillCreatorAgenticNode.__new__(SkillCreatorAgenticNode)
-        node.skill_func_tool = None
-        node.filesystem_func_tool = _stub("read_file")
-        node.db_func_tool = _stub("read_query")
-        node.skill_func_tool_instance = _stub("load_skill")
-        node.ask_user_tool = _stub("ask_user")
-        node.skill_validate_tool = _stub("validate_skill")
-        node._session_search_tool = _stub("search_sessions")
+    def test_real_classes_register_via_class_level_introspection(self):
+        """End-to-end over real classes: ``all_tools_name()`` is class-level
+        on the core tools, so bare instances classify their full surface."""
+        from datus.tools.func_tool.database import DBFuncTool
+        from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
-        mapping = node._tool_category_map()
-        assert mapping["filesystem_tools"][0].name == "read_file"
-        assert mapping["db_tools"][0].name == "read_query"
-        assert mapping["skills"][0].name == "load_skill"
-        assert {t.name for t in mapping["tools"]} == {"ask_user", "validate_skill", "search_sessions"}
+        node = _bare_node()
+        node.db_func_tool = DBFuncTool.__new__(DBFuncTool)
+        node.filesystem_func_tool = FilesystemFuncTool.__new__(FilesystemFuncTool)
 
-    def test_catchall_omitted_when_nothing_to_add(self):
-        from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
-
-        node = SkillCreatorAgenticNode.__new__(SkillCreatorAgenticNode)
-        node.skill_func_tool = None
-        node.filesystem_func_tool = None
-        node.db_func_tool = None
-        node.skill_func_tool_instance = None
-        node.ask_user_tool = None
-        node.skill_validate_tool = None
-        node._session_search_tool = None
-
-        assert node._tool_category_map() == {}
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry["read_query"] == "db_tools"
+        assert registry["execute_ddl"] == "db_tools"
+        assert registry["execute_write"] == "db_tools"
+        assert registry["read_file"] == "filesystem_tools"
+        assert registry["write_file"] == "filesystem_tools"
+        assert registry["delete_file"] == "filesystem_tools"
 
 
-class TestBaseMemoryToolCategoryMap:
-    """The base map classifies the dedicated memory tools so nodes without a
-    ``_tool_category_map`` override (notably the feedback node, which mounts
-    ``add_memory`` / ``edit_memory`` for its caller) are governed by the
-    ``memory_tools.*`` profile rules rather than the ``tools`` catch-all."""
+class TestFeedbackMemoryRegistration:
+    """The feedback node mounts ``add_memory`` / ``edit_memory`` for its
+    caller; the scanner must classify them under ``memory_tools`` so the
+    ``memory_tools.*`` ALLOW rule governs them rather than the catch-all."""
 
     def test_feedback_registers_memory_tools(self):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
         node = FeedbackAgenticNode.__new__(FeedbackAgenticNode)
-        node.skill_func_tool = None
-        node.memory_func_tool = _stub("add_memory", "edit_memory")
+        node.tool_registry = ToolRegistry()
+        node.memory_func_tool = _group("memory_tools", "add_memory", "edit_memory")
 
-        mapping = node._tool_category_map()
-        assert {t.name for t in mapping["memory_tools"]} == {"add_memory", "edit_memory"}
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry["add_memory"] == "memory_tools"
+        assert registry["edit_memory"] == "memory_tools"
 
-    def test_memory_bucket_omitted_when_tool_absent(self):
+    def test_memory_entries_absent_when_tool_absent(self):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
         node = FeedbackAgenticNode.__new__(FeedbackAgenticNode)
-        node.skill_func_tool = None
+        node.tool_registry = ToolRegistry()
         node.memory_func_tool = None
 
-        assert "memory_tools" not in node._tool_category_map()
+        node._populate_tool_registry()
+        assert "memory_tools" not in node.tool_registry.to_dict().values()

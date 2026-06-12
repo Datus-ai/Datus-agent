@@ -42,6 +42,8 @@ class MemoryFuncTool(BaseTool):
     system prompt; children that may not write simply do not mount this tool.
     """
 
+    permission_category = "memory_tools"
+
     tool_name = "memory"
     tool_description = "Append to or edit the agent's persistent memory (single MEMORY.md, hard byte cap)."
 

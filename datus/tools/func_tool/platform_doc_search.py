@@ -29,6 +29,8 @@ class PlatformDocSearchTool:
     - web_search_document: Web search via Tavily
     """
 
+    permission_category = "platform_doc_tools"
+
     def __init__(self, agent_config: AgentConfig):
         self.agent_config = agent_config
 

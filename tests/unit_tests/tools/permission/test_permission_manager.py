@@ -215,6 +215,33 @@ class TestPermissionManagerFilterTools:
         # ASK tools should be included (only DENY is filtered)
         assert len(filtered) == 2
 
+    def test_filter_tools_without_category_uses_catch_all(self):
+        """Without an explicit category the ``tools`` catch-all applies.
+
+        The old name-prefix auto-detection was removed when categories moved
+        to the tool classes' ``permission_category`` declarations; callers
+        that know the category must pass it explicitly.
+        """
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ALLOW,
+            rules=[
+                PermissionRule(tool="tools", pattern="execute_sql", permission=PermissionLevel.DENY),
+                PermissionRule(tool="db_tools", pattern="list_tables", permission=PermissionLevel.DENY),
+            ],
+        )
+        manager = PermissionManager(global_config=config)
+
+        class MockTool:
+            def __init__(self, name):
+                self.name = name
+
+        tools = [MockTool("execute_sql"), MockTool("list_tables")]
+        filtered = manager.filter_available_tools(tools, "chatbot")
+
+        # ``tools.execute_sql`` DENY matches via the catch-all; the
+        # ``db_tools.list_tables`` rule does NOT (no prefix guessing).
+        assert [t.name for t in filtered] == ["list_tables"]
+
 
 class TestPermissionManagerFilterSkills:
     """Tests for PermissionManager.filter_available_skills()."""

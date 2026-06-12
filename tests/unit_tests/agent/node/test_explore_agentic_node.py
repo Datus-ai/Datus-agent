@@ -172,8 +172,8 @@ class TestExploreAgenticNodeTools:
         )
         assert node.mcp_servers == {}
 
-    def test_tool_category_map_registers_categories(self, real_agent_config, mock_llm_create):
-        """``_tool_category_map`` must split read-only tools into the right
+    def test_tool_registry_registers_categories(self, real_agent_config, mock_llm_create):
+        """The tool registry must classify read-only tools into the right
         categories so ``db_tools.read_*`` ALLOW rules match under normal profile."""
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode
 
@@ -184,10 +184,11 @@ class TestExploreAgenticNodeTools:
             agent_config=real_agent_config,
             node_name="explore",
         )
-        mapping = node._tool_category_map()
-        assert "db_tools" in mapping
-        assert "filesystem_tools" in mapping
-        assert "date_parsing_tools" in mapping
+        node._populate_tool_registry()
+        registry = node.tool_registry.to_dict()
+        assert registry.get("read_query") == "db_tools"
+        assert registry.get("read_file") == "filesystem_tools"
+        assert registry.get("parse_temporal_expressions") == "date_parsing_tools"
 
     def test_context_search_prompt_only_lists_available_tools(self, real_agent_config, mock_llm_create):
         """Explore prompt should not advertise context tools that are not exposed."""

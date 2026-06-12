@@ -286,33 +286,6 @@ class TestGetSystemPromptWorkspaceRoot:
 
 
 # ---------------------------------------------------------------------------
-# TestGetToolCategory
-# ---------------------------------------------------------------------------
-
-
-class TestGetToolCategory:
-    def test_skill_tool(self):
-        node = _make_node()
-        assert node._get_tool_category("load_skill") == "skills"
-        assert node._get_tool_category("skill_something") == "skills"
-
-    def test_db_tool(self):
-        node = _make_node()
-        assert node._get_tool_category("list_tables") == "db_tools"
-        assert node._get_tool_category("execute_sql") == "db_tools"
-        assert node._get_tool_category("db_custom_tool") == "db_tools"
-
-    def test_generic_tool(self):
-        node = _make_node()
-        assert node._get_tool_category("some_random_tool") == "tools"
-
-    def test_mcp_tool(self):
-        node = _make_node()
-        node.mcp_servers = {"myserver": MagicMock()}
-        assert node._get_tool_category("myserver_do_something") == "mcp"
-
-
-# ---------------------------------------------------------------------------
 # TestSetupInput (default implementation)
 # ---------------------------------------------------------------------------
 
@@ -1056,35 +1029,6 @@ class TestParseNodeConfigExtended:
 
 # ---------------------------------------------------------------------------
 # _get_tool_category
-# ---------------------------------------------------------------------------
-
-
-class TestGetToolCategoryExtended:
-    def test_load_skill_is_skills(self):
-        node = _make_simple_node()
-        assert node._get_tool_category("load_skill") == "skills"
-
-    def test_skill_prefix_is_skills(self):
-        node = _make_simple_node()
-        assert node._get_tool_category("skill_run_query") == "skills"
-
-    def test_db_prefix_is_db_tools(self):
-        node = _make_simple_node()
-        assert node._get_tool_category("db_execute") == "db_tools"
-
-    def test_list_tables_is_db_tools(self):
-        node = _make_simple_node()
-        assert node._get_tool_category("list_tables") == "db_tools"
-
-    def test_execute_sql_is_db_tools(self):
-        node = _make_simple_node()
-        assert node._get_tool_category("execute_sql") == "db_tools"
-
-    def test_unknown_tool_is_tools(self):
-        node = _make_simple_node()
-        assert node._get_tool_category("my_custom_tool") == "tools"
-
-
 # ---------------------------------------------------------------------------
 # _resolve_workspace_root
 # ---------------------------------------------------------------------------

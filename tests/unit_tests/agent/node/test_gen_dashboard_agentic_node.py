@@ -420,7 +420,7 @@ class TestGenDashboardToolSetup:
 class TestGenDashboardPermissionWiring:
     """Without proper wiring ``bi_tools.delete_*`` DENY rules silently leak."""
 
-    def test_tool_category_map_registers_bi_tools(self, real_agent_config, mock_llm_create):
+    def test_tool_registry_registers_bi_tools(self, real_agent_config, mock_llm_create):
         """Every BI tool must land in the ``bi_tools`` category.
 
         Falling back to the ``tools`` catch-all would prevent
@@ -434,10 +434,10 @@ class TestGenDashboardPermissionWiring:
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            mapping = node._tool_category_map()
-            assert "bi_tools" in mapping
-            bi_names = {t.name for t in mapping["bi_tools"]}
-            assert {"delete_chart", "delete_dataset", "delete_dashboard"}.issubset(bi_names)
+            node._populate_tool_registry()
+            registry = node.tool_registry.to_dict()
+            for name in ("delete_chart", "delete_dataset", "delete_dashboard"):
+                assert registry.get(name) == "bi_tools"
 
     def test_compose_hooks_yields_permission_hooks(self, real_agent_config, mock_llm_create):
         """``generate_with_tools_stream`` must receive a real hook, not None.

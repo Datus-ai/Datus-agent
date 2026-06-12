@@ -43,6 +43,8 @@ class SkillFuncTool:
         # LLM calls load_skill(skill_name="sql-optimization")
     """
 
+    permission_category = "skills"
+
     def __init__(
         self,
         manager: SkillManager,

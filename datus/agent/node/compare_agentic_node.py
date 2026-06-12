@@ -109,19 +109,6 @@ class CompareAgenticNode(AgenticNode):
             logger.error(f"Failed to initialize tools for CompareAgenticNode: {exc}")
             self.tools = self.tools or []
 
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register the db tools under ``db_tools`` so permission rules fire.
-
-        Without this override the bound ``read_query`` lookup falls through to
-        the ``tools.*`` catch-all (default ASK on normal/auto profiles), which
-        would block at ``InteractionBroker.request`` whenever a caller wires
-        permission hooks but does not also run an interactive broker listener.
-        """
-        mapping = super()._tool_category_map()
-        if getattr(self, "db_func_tool", None):
-            mapping["db_tools"] = list(self.db_func_tool.available_tools())
-        return mapping
-
     @staticmethod
     def _prepare_prompt_components(
         input_data: CompareInput, agent_config: Optional[Any] = None

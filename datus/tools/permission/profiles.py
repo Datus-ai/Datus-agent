@@ -121,6 +121,24 @@ _NORMAL_RULES = [
     # subagent's own PermissionHooks instance. Double-prompting here would
     # fire on nearly every chat interaction for zero safety benefit.
     _rule("sub_agent_tools", "*", PermissionLevel.ALLOW),
+    # reference templates: read-only end to end — search/get/render are pure
+    # lookups and ``execute_reference_template`` renders Jinja then runs
+    # ``db_tools.read_query`` (never a write). Historically gen_sql lumped
+    # these into ``semantic_tools`` (ALLOW) while chat left them in the
+    # catch-all (ASK); the dedicated category unifies on ALLOW.
+    _rule("reference_template_tools", "*", PermissionLevel.ALLOW),
+    # artifact authoring helpers (``start_new_*`` / ``bind_existing_*`` /
+    # ``save_query*`` / ``validate_render``) are subagent-internal state
+    # mutations confined to the artifact tree; users review the artifact as
+    # a whole via the rendered preview, not per-call prompts. Mirrors the
+    # historical lumping into ``semantic_tools``.
+    _rule("artifact_tools", "*", PermissionLevel.ALLOW),
+    # platform doc lookups are read-only; ``web_search_document`` reaches
+    # the network (Tavily) and stays at the profile default (ASK in
+    # normal/auto).
+    _rule("platform_doc_tools", "list_*", PermissionLevel.ALLOW),
+    _rule("platform_doc_tools", "get_*", PermissionLevel.ALLOW),
+    _rule("platform_doc_tools", "search_*", PermissionLevel.ALLOW),
     # mcp: ASK; skill loading ALLOW, but skill script execution still ASK.
     _rule("mcp.*", "*", PermissionLevel.ASK),
     _rule("skills", "*", PermissionLevel.ALLOW),

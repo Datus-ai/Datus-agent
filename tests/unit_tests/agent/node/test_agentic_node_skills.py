@@ -1035,9 +1035,10 @@ class TestBashToolToggle:
         node.tools = []
         node._ensure_bash_tool_in_tools()
         assert node.tools == []
-        # Category map must drop the ``bash_tools`` bucket so profile
-        # rules don't inherit a phantom entry.
-        assert "bash_tools" not in node._tool_category_map()
+        # The registry must not carry a phantom ``bash_tools`` entry when
+        # the bash tool is disabled.
+        node._populate_tool_registry()
+        assert "bash_tools" not in node.tool_registry.to_dict().values()
 
     def test_bash_tool_skipped_without_permission_manager(self, mock_agent_config):
         """Without permission enforcement, BashTool must NOT be created.

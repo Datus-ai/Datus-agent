@@ -11,7 +11,7 @@ SQL generation. It exposes only read-only tools and runs with a low max_turns
 budget for fast, focused exploration.
 """
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -173,33 +173,6 @@ class ExploreAgenticNode(AgenticNode):
             self.tools.extend(self.date_parsing_tools.available_tools())
         except Exception as e:
             logger.warning(f"Failed to setup date parsing tools, continuing without: {e}")
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register read-only tool surface so ``db_tools.read_*`` ALLOW rules fire."""
-        mapping = super()._tool_category_map()
-        if getattr(self, "db_func_tool", None):
-            # Mirror the subset actually exposed by this node — describe/read
-            # always, the rest only when scoped_tables isn't set.
-            db_bucket = [
-                self.db_func_tool.to_function_tool(self.db_func_tool.describe_table),
-                self.db_func_tool.to_function_tool(self.db_func_tool.read_query),
-            ]
-            scoped = isinstance(self.input, ExploreNodeInput) and self.input.scoped_tables
-            if not scoped:
-                db_bucket = list(self.db_func_tool.available_tools())
-            mapping["db_tools"] = db_bucket
-        if getattr(self, "context_search_tools", None):
-            mapping["context_search_tools"] = list(self.context_search_tools.available_tools())
-        if getattr(self, "filesystem_func_tool", None):
-            fs_bucket: List[Any] = []
-            for method_name in READONLY_FILESYSTEM_METHODS:
-                if hasattr(self.filesystem_func_tool, method_name):
-                    fs_bucket.append(trans_to_function_tool(getattr(self.filesystem_func_tool, method_name)))
-            if fs_bucket:
-                mapping["filesystem_tools"] = fs_bucket
-        if getattr(self, "date_parsing_tools", None):
-            mapping["date_parsing_tools"] = list(self.date_parsing_tools.available_tools())
-        return mapping
 
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
         """Get the system prompt for the explore node."""

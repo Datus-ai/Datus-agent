@@ -12,7 +12,7 @@ tool set (``execute_ddl`` on top of the read-only DB tools) and the permission
 profile category map.
 """
 
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import ClassVar, Optional
 
 from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.node_type import NodeType
@@ -56,19 +56,3 @@ class GenTableAgenticNode(DeliverableAgenticNode):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Failed to setup database tools for {self.NODE_NAME}: {e}"},
             ) from e
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register db / filesystem tools so write/destructive rules fire."""
-        mapping = super()._tool_category_map()
-        db_bucket: List[Any] = []
-        if getattr(self, "db_func_tool", None):
-            db_bucket.extend(self.db_func_tool.available_tools())
-            if hasattr(self.db_func_tool, "execute_ddl"):
-                db_bucket.append(trans_to_function_tool(self.db_func_tool.execute_ddl))
-        if db_bucket:
-            mapping["db_tools"] = db_bucket
-        if getattr(self, "filesystem_func_tool", None):
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        if self.ask_user_tool:
-            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
-        return mapping

@@ -73,6 +73,8 @@ class GenerationTools:
     completing the generation process.
     """
 
+    permission_category = "semantic_tools"
+
     def __init__(self, agent_config: AgentConfig, generation_evidence: Optional[GenerationEvidence] = None):
         self.agent_config = agent_config
         self.generation_evidence = generation_evidence or GenerationEvidence()

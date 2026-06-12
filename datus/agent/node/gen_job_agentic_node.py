@@ -17,7 +17,7 @@ Post-transfer reconciliation is driven by the ``transfer-reconciliation``
 validator skill via :class:`ValidationHook`, not by this node directly.
 """
 
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import ClassVar, Optional
 
 from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.node_type import NodeType
@@ -76,33 +76,3 @@ class GenJobAgenticNode(DeliverableAgenticNode):
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": f"Failed to setup database tools for {self.NODE_NAME}: {e}"},
             ) from e
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Register db / filesystem tools for permission profile rule matching.
-
-        DB writes (``execute_ddl`` / ``execute_write`` / ``transfer_query_result``)
-        should ASK in ``normal`` and ``auto`` profiles — without this
-        mapping they'd fall into the ``tools`` catch-all and bypass
-        ``db_tools.*`` rules entirely.
-        """
-        mapping = super()._tool_category_map()
-        db_bucket: List[Any] = []
-        if getattr(self, "db_func_tool", None):
-            db_bucket.extend(self.db_func_tool.available_tools())
-            for attr in (
-                "execute_ddl",
-                "execute_write",
-                "transfer_query_result",
-                "get_migration_capabilities",
-                "suggest_table_layout",
-                "validate_ddl",
-            ):
-                if hasattr(self.db_func_tool, attr):
-                    db_bucket.append(trans_to_function_tool(getattr(self.db_func_tool, attr)))
-        if db_bucket:
-            mapping["db_tools"] = db_bucket
-        if getattr(self, "filesystem_func_tool", None):
-            mapping["filesystem_tools"] = list(self.filesystem_func_tool.available_tools())
-        if self.ask_user_tool:
-            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
-        return mapping

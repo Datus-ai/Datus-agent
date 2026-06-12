@@ -266,6 +266,8 @@ class SessionTodoStorage:
 class PlanTool:
     """Main tool for todo list management with read, write, and update capabilities"""
 
+    permission_category = "tools"
+
     def __init__(
         self,
         session: SQLiteSession,
@@ -496,6 +498,8 @@ class ConfirmPlanTool:
     exits plan mode; any free-text response is returned to the LLM as
     feedback so it can iterate.
     """
+
+    permission_category = "tools"
 
     def __init__(self, node: "AgenticNode"):
         self.node = node

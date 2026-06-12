@@ -12,7 +12,7 @@ workflow skill injection, and the domain result shape.
 
 from __future__ import annotations
 
-from typing import Any, ClassVar, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Literal, Optional
 
 from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -209,21 +209,6 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
         if len(msg) > 300:
             msg = msg[:300] + "..."
         return f"{type(exc).__name__}: {msg}" if msg else type(exc).__name__
-
-    def _tool_category_map(self) -> Dict[str, List[Any]]:
-        """Declare categories so ``bi_tools.delete_*`` DENY rules fire.
-
-        Without this mapping ``PermissionHooks`` falls back to the catch-all
-        ``tools`` category for every BI tool, so no ``bi_tools.*`` rule can
-        ever match — every profile (even ``normal``) silently lets
-        ``delete_chart`` / ``delete_dataset`` through.
-        """
-        mapping = super()._tool_category_map()
-        if self.bi_func_tool:
-            mapping["bi_tools"] = list(self.bi_func_tool.available_tools())
-        if self.ask_user_tool:
-            mapping.setdefault("tools", []).extend(self.ask_user_tool.available_tools())
-        return mapping
 
     # ── template context ──────────────────────────────────────────────
 
