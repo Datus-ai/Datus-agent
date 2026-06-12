@@ -46,7 +46,7 @@ class MemoryFilesystemFuncTool(BaseTool):
     ``"/"`` is stripped, and ``"."`` is treated as the bundle root.
     """
 
-    permission_category = "filesystem_tools"
+    permission_category: str = "filesystem_tools"
 
     tool_name = "memory_filesystem"
     tool_description = "Read-only filesystem operations over an in-memory bundle."

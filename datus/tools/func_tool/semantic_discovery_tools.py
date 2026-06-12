@@ -29,7 +29,7 @@ class SemanticDiscoveryTools:
     to help generate semantic models and MetricFlow metrics.
     """
 
-    permission_category = "semantic_tools"
+    permission_category: str = "semantic_tools"
 
     _AGGREGATE_CLASSES = ()
 

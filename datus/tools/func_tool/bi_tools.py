@@ -38,7 +38,7 @@ class BIFuncTool:
     - dataset_db set on the service config: get_bi_serving_target
     """
 
-    permission_category = "bi_tools"
+    permission_category: str = "bi_tools"
 
     def __init__(
         self,

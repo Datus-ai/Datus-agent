@@ -60,7 +60,7 @@ class BaseTool(ABC):
     # tool-group instance mounted on a node. Subclasses whose tools are governed
     # by a dedicated rule set (``db_tools``, ``filesystem_tools``, ...) must
     # override it; the default lands in the ``tools`` catch-all bucket.
-    permission_category = "tools"
+    permission_category: str = "tools"
 
     def __init__(self, **kwargs):
         """Initialize the tool with common parameters.

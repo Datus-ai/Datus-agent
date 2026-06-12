@@ -666,10 +666,17 @@ class TestAskMetricsAgenticNode:
         # guard in ``AgenticNode._iter_tool_groups``).
         db_tools.permission_category = "db_tools"
         db_tools.all_tools_name = lambda: ["read_query"]
+        # Model available_tools() explicitly instead of relying on Mock
+        # auto-creation, so the double mirrors the full production contract
+        # (permission_category + available_tools() + all_tools_name()).
+        db_tools.available_tools.return_value = [_fake_function_tool(db_tools.read_query)]
         date_parsing_tools = Mock()
         date_parsing_tools.parse_temporal_expressions = Mock(name="parse_temporal_expressions")
         date_parsing_tools.permission_category = "date_parsing_tools"
         date_parsing_tools.all_tools_name = lambda: ["parse_temporal_expressions"]
+        date_parsing_tools.available_tools.return_value = [
+            _fake_function_tool(date_parsing_tools.parse_temporal_expressions)
+        ]
 
         with (
             patch("datus.agent.node.ask_metrics_agentic_node.DBFuncTool", return_value=db_tools),

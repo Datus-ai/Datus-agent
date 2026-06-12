@@ -19,7 +19,7 @@ logger = get_logger(__name__)
 class DateParsingTools:
     """Function tool wrapper for date parsing operations."""
 
-    permission_category = "date_parsing_tools"
+    permission_category: str = "date_parsing_tools"
 
     def __init__(self, agent_config: AgentConfig, model: LLMBaseModel):
         self.agent_config = agent_config

@@ -81,7 +81,7 @@ class DBFuncTool:
     repeated lookups while limiting memory usage.
     """
 
-    permission_category = "db_tools"
+    permission_category: str = "db_tools"
 
     DEFAULT_CONNECTOR_CACHE_SIZE = 8
 

@@ -58,7 +58,7 @@ class BashTool:
     - ``shell=False`` subprocess invocation (argv via ``shlex.split``)
     """
 
-    permission_category = "bash_tools"
+    permission_category: str = "bash_tools"
 
     def __init__(
         self,

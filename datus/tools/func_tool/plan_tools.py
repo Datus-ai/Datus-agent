@@ -266,7 +266,7 @@ class SessionTodoStorage:
 class PlanTool:
     """Main tool for todo list management with read, write, and update capabilities"""
 
-    permission_category = "tools"
+    permission_category: str = "tools"
 
     def __init__(
         self,
@@ -499,7 +499,7 @@ class ConfirmPlanTool:
     feedback so it can iterate.
     """
 
-    permission_category = "tools"
+    permission_category: str = "tools"
 
     def __init__(self, node: "AgenticNode"):
         self.node = node

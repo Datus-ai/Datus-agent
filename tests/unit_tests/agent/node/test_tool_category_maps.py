@@ -64,6 +64,7 @@ class TestPermissionCategoryDeclarations:
             ("datus.tools.func_tool.generation_tools", "GenerationTools", "semantic_tools"),
             ("datus.tools.func_tool.semantic_discovery_tools", "SemanticDiscoveryTools", "semantic_tools"),
             ("datus.tools.func_tool.context_search", "ContextSearchTools", "context_search_tools"),
+            ("datus.tools.func_tool.bi_tools", "BIFuncTool", "bi_tools"),
             (
                 "datus.tools.func_tool.reference_template_tools",
                 "ReferenceTemplateTools",

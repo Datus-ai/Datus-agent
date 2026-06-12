@@ -29,7 +29,7 @@ class SessionSearchTool:
     records for analysis.
     """
 
-    permission_category = "tools"
+    permission_category: str = "tools"
 
     def __init__(self, sessions_dir: Optional[str] = None):
         self.sessions_dir = sessions_dir

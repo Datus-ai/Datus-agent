@@ -647,8 +647,13 @@ class AgenticNode(Node):
         # Lambda resolves session_id lazily — at setup time it's still None,
         # ``_get_or_create_session`` allocates it on the first turn. Snapshot
         # would leave the storage permanently unbound and never persist.
-        tools: List[Tool] = list(PlanTool(self._session, session_id=lambda: self.session_id).available_tools())
-        tools.extend(ConfirmPlanTool(self).available_tools())
+        # Keep both instances on the node so ``_iter_tool_groups`` registers
+        # their ``permission_category`` — locals would silently fall back to
+        # the ``tools`` catch-all at hook time.
+        self.plan_tool = PlanTool(self._session, session_id=lambda: self.session_id)
+        self.confirm_plan_tool = ConfirmPlanTool(self)
+        tools: List[Tool] = list(self.plan_tool.available_tools())
+        tools.extend(self.confirm_plan_tool.available_tools())
         return tools
 
     def _register_plan_mode_tools(self) -> None:
