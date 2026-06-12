@@ -114,6 +114,7 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
 - Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
 - For period-over-period SQL that projects both a prior-period value and a delta/rate, generate both derived metrics. The prior-period value metric should use the shifted input alias as its `expr` (for example `{metric_name}_previous_period`), and the delta/rate metric should reference both the current metric and shifted input alias (for example `{metric_name}_period_delta`).
+- Materialize EVERY `derived_metric_candidates` entry whose inputs carry `offset_window`, including previous-period identity candidates whose `expr` is just the shifted input alias (for example `activity_count_previous_month`). A delta metric that references the same shifted alias does NOT replace the identity metric — publish both. The bootstrap host verifies offset candidate completeness after all batches and re-runs generation for anything missing.
 - Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
 - Natural-language fields in the candidate plan (`question`, `name`, `summary`, or `source_context`) are naming and business-meaning evidence only. They should never override the SQL expression structure or turn a detail query into a metric by themselves.
 
@@ -345,6 +346,32 @@ metric:
   locked_metadata:
     tags:
       - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+Period-over-period example — a MoM SQL like `LAG(activity_count) OVER (ORDER BY month)` yields TWO derived metrics, an identity metric for the prior-period value and a delta metric:
+```yaml
+metric:
+  name: activity_count_previous_month
+  description: "Activity count of the previous month"
+  type: derived
+  type_params:
+    metrics:
+      - name: activity_count
+        alias: activity_count_previous_month
+        offset_window: 1 month
+    expr: "activity_count_previous_month"
+---
+metric:
+  name: activity_count_mom_delta
+  description: "Month-over-month activity count delta"
+  type: derived
+  type_params:
+    metrics:
+      - name: activity_count
+      - name: activity_count
+        alias: activity_count_previous_month
+        offset_window: 1 month
+    expr: "activity_count - activity_count_previous_month"
 ```
 
 **cumulative** (running total over time):

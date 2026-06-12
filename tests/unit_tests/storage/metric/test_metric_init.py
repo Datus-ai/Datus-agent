@@ -14,14 +14,13 @@ from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
     _action_status_value,
-    _append_auto_offset_result,
-    _append_metric_docs,
-    _auto_generate_offset_derived_metrics,
-    _derived_metric_doc,
+    _build_candidate_plan,
+    _ensure_offset_derived_metrics,
+    _expand_offset_identity_candidates,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _is_offset_derived_candidate,
-    _load_metric_doc_names,
+    _missing_offset_derived_candidates,
     _offset_grain,
     _offset_identity_alias_candidates,
     _source_provenance_from_row,
@@ -1192,50 +1191,9 @@ class TestBatchHasNoMetricCandidates:
         assert _batch_has_no_metric_candidates(plan) is False
 
 
-class TestAutoGenerateOffsetDerivedMetrics:
-    def _config(self, tmp_path):
-        semantic_root = tmp_path / "subject" / "semantic_models" / "starrocks"
-        path_manager = SimpleNamespace(semantic_model_path=lambda datasource: semantic_root)
-        return SimpleNamespace(current_datasource="starrocks", path_manager=path_manager)
-
-    def _candidate_plan(self):
-        return {
-            "available": True,
-            "derived_metric_candidates": [
-                {
-                    "name": "previous_month_activity_count",
-                    "metric_type": "derived",
-                    "expression": "previous_month_activity_count",
-                    "inputs": [
-                        {
-                            "name": "activity_count",
-                            "alias": "previous_month_activity_count",
-                            "offset_window": "1 month",
-                        }
-                    ],
-                    "offset_window": "1 month",
-                },
-                {
-                    "name": "activity_count_mom_delta",
-                    "metric_type": "derived",
-                    "expression": "activity_count - previous_month_activity_count",
-                    "inputs": [
-                        {"name": "activity_count"},
-                        {
-                            "name": "activity_count",
-                            "alias": "previous_month_activity_count",
-                            "offset_window": "1 month",
-                        },
-                    ],
-                    "offset_window": "1 month",
-                },
-            ],
-        }
-
-    def _metric_file(self, tmp_path):
-        return tmp_path / "subject" / "semantic_models" / "starrocks" / "metrics" / "auto_offset_derived_metrics.yml"
-
-    def test_offset_helper_defensive_branches(self, tmp_path):
+@pytest.mark.ci
+class TestOffsetCandidateHelpers:
+    def test_offset_grain_and_candidate_shape_guards(self):
         assert _offset_grain(None) is None
         assert _offset_grain("1 centuries") is None
         assert _offset_grain("1 months") == "month"
@@ -1243,6 +1201,8 @@ class TestAutoGenerateOffsetDerivedMetrics:
             _is_offset_derived_candidate({"metric_type": "simple", "inputs": [{"offset_window": "1 month"}]}) is False
         )
         assert _is_offset_derived_candidate({"metric_type": "derived", "inputs": []}) is False
+
+    def test_identity_alias_guards(self):
         assert _offset_identity_alias_candidates({"inputs": []}) == []
         assert (
             _offset_identity_alias_candidates(
@@ -1267,38 +1227,7 @@ class TestAutoGenerateOffsetDerivedMetrics:
             == []
         )
 
-        metric_doc = _derived_metric_doc(
-            {
-                "name": "activity_count_previous_month",
-                "expression": "activity_count_previous_month",
-                "inputs": [
-                    "not-dict",
-                    {},
-                    {
-                        "name": "activity_count",
-                        "alias": "activity_count_previous_month",
-                        "offset_window": "1 month",
-                        "offset_to_grain": "month",
-                    },
-                ],
-            },
-            {"activity_count": {"subject_path": ["ac_manage", "campaign"]}},
-        )
-        metric_input = metric_doc["metric"]["type_params"]["metrics"][0]
-        assert metric_input["offset_to_grain"] == "month"
-        assert metric_doc["metric"]["locked_metadata"]["tags"] == [
-            "ac_manage/campaign",
-            "subject_tree: ac_manage/campaign",
-        ]
-
-        malformed_metric_file = tmp_path / "bad.yml"
-        malformed_metric_file.write_text("metric: [", encoding="utf-8")
-        assert _load_metric_doc_names(malformed_metric_file) == set()
-
-        empty_metric_file = tmp_path / "empty.yml"
-        _append_metric_docs(empty_metric_file, [])
-        assert not empty_metric_file.exists()
-
+    def test_unique_metric_catalog_by_name(self):
         unique, ambiguous = _unique_metric_catalog_by_name(
             [
                 "not-dict",
@@ -1309,245 +1238,6 @@ class TestAutoGenerateOffsetDerivedMetrics:
         )
         assert unique == {"order_count": {"name": "order_count"}}
         assert ambiguous == {"activity_count"}
-
-    def test_generates_and_syncs_offset_derived_metrics(self, tmp_path, monkeypatch):
-        synced = {}
-
-        class FakeSemanticTools:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def validate_semantic(self, scope="all"):
-                return FuncToolResult(result={"valid": True, "scope": scope})
-
-            def query_metrics(self, metrics, dimensions=None, time_granularity=None, dry_run=False, **kwargs):
-                return FuncToolResult(result={"metadata": {"sql": f"SELECT {metrics[0]}"}})
-
-        class FakeGenerationTools:
-            def __init__(self, agent_config):
-                self.agent_config = agent_config
-
-            def _sync_metric_to_db(self, metric_file, metric_sqls=None, metric_names_to_sync=None):
-                synced["metric_file"] = metric_file
-                synced["metric_sqls"] = metric_sqls
-                synced["metric_names_to_sync"] = metric_names_to_sync
-                return {"success": True}
-
-        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
-        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", FakeGenerationTools)
-
-        result = _auto_generate_offset_derived_metrics(
-            self._candidate_plan(),
-            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
-            self._config(tmp_path),
-        )
-
-        assert result["generated_metric_names"] == [
-            "previous_month_activity_count",
-            "activity_count_previous_month",
-            "activity_count_mom_delta",
-        ]
-        assert result["metric_artifact_ids"] == [
-            "metric:previous_month_activity_count",
-            "metric:activity_count_previous_month",
-            "metric:activity_count_mom_delta",
-        ]
-        assert synced["metric_names_to_sync"] == {
-            "previous_month_activity_count",
-            "activity_count_previous_month",
-            "activity_count_mom_delta",
-        }
-        metric_file = (
-            tmp_path / "subject" / "semantic_models" / "starrocks" / "metrics" / "auto_offset_derived_metrics.yml"
-        )
-        text = metric_file.read_text()
-        assert "name: activity_count_previous_month" in text
-        assert "offset_window: 1 month" in text
-        assert "expr: activity_count - previous_month_activity_count" in text
-
-    def test_skips_ambiguous_existing_input_metric_names(self, tmp_path, monkeypatch):
-        class UnexpectedSemanticTools:
-            def __init__(self, *args, **kwargs):
-                raise AssertionError("semantic tools should not be constructed")
-
-        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", UnexpectedSemanticTools)
-
-        result = _auto_generate_offset_derived_metrics(
-            self._candidate_plan(),
-            [
-                {"name": "activity_count", "type": "measure_proxy", "subject_path": ["a"]},
-                {"name": "activity_count", "type": "measure_proxy", "subject_path": ["b"]},
-            ],
-            self._config(tmp_path),
-        )
-
-        assert result == {"generated_metric_names": [], "metric_artifact_ids": []}
-
-    def test_rolls_back_metric_file_when_validation_fails(self, tmp_path, monkeypatch):
-        metric_file = self._metric_file(tmp_path)
-        metric_file.parent.mkdir(parents=True)
-        original_content = "metric:\n  name: existing_metric\n"
-        metric_file.write_text(original_content, encoding="utf-8")
-
-        class FakeSemanticTools:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def validate_semantic(self, scope="all"):
-                return FuncToolResult(success=0, error="bad model")
-
-        class UnexpectedGenerationTools:
-            def __init__(self, *args, **kwargs):
-                raise AssertionError("generation tools should not be constructed")
-
-        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
-        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", UnexpectedGenerationTools)
-
-        result = _auto_generate_offset_derived_metrics(
-            self._candidate_plan(),
-            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
-            self._config(tmp_path),
-        )
-
-        assert result["error"] == "bad model"
-        assert metric_file.read_text(encoding="utf-8") == original_content
-
-    def test_rolls_back_metric_file_when_sync_fails(self, tmp_path, monkeypatch):
-        metric_file = self._metric_file(tmp_path)
-
-        class FakeSemanticTools:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def validate_semantic(self, scope="all"):
-                return FuncToolResult(result={"valid": True, "scope": scope})
-
-            def query_metrics(self, metrics, dimensions=None, time_granularity=None, dry_run=False, **kwargs):
-                return FuncToolResult(result={"metadata": {"sql": f"SELECT {metrics[0]}"}})
-
-        class FakeGenerationTools:
-            def __init__(self, agent_config):
-                self.agent_config = agent_config
-
-            def _sync_metric_to_db(self, metric_file, metric_sqls=None, metric_names_to_sync=None):
-                return {"success": False, "error": "sync failed"}
-
-        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
-        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", FakeGenerationTools)
-
-        result = _auto_generate_offset_derived_metrics(
-            self._candidate_plan(),
-            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
-            self._config(tmp_path),
-        )
-
-        assert result["error"] == "sync failed"
-        assert not metric_file.exists()
-
-    def test_resyncs_file_backed_metric_missing_from_catalog(self, tmp_path, monkeypatch):
-        synced = {}
-        metric_file = self._metric_file(tmp_path)
-        metric_file.parent.mkdir(parents=True)
-        metric_file.write_text(
-            "metric:\n"
-            "  name: activity_count_previous_month\n"
-            "  type: derived\n"
-            "  type_params:\n"
-            "    expr: activity_count_previous_month\n"
-            "    metrics:\n"
-            "      - name: activity_count\n"
-            "        alias: activity_count_previous_month\n"
-            "        offset_window: 1 month\n",
-            encoding="utf-8",
-        )
-
-        class FakeSemanticTools:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            def validate_semantic(self, scope="all"):
-                return FuncToolResult(result={"valid": True, "scope": scope})
-
-        class FakeGenerationTools:
-            def __init__(self, agent_config):
-                self.agent_config = agent_config
-
-            def _sync_metric_to_db(self, metric_file, metric_sqls=None, metric_names_to_sync=None):
-                synced["metric_file"] = metric_file
-                synced["metric_sqls"] = metric_sqls
-                synced["metric_names_to_sync"] = metric_names_to_sync
-                return {"success": True}
-
-        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", FakeSemanticTools)
-        monkeypatch.setattr("datus.tools.func_tool.generation_tools.GenerationTools", FakeGenerationTools)
-
-        result = _auto_generate_offset_derived_metrics(
-            {
-                "available": True,
-                "derived_metric_candidates": [
-                    {
-                        "name": "activity_count_previous_month",
-                        "metric_type": "derived",
-                        "expression": "activity_count_previous_month",
-                        "inputs": [
-                            {
-                                "name": "activity_count",
-                                "alias": "activity_count_previous_month",
-                                "offset_window": "1 month",
-                            }
-                        ],
-                    }
-                ],
-            },
-            [{"name": "activity_count", "type": "measure_proxy", "subject_path": ["ac_manage", "campaign"]}],
-            self._config(tmp_path),
-        )
-
-        assert result["generated_metric_names"] == ["activity_count_previous_month"]
-        assert result["metric_artifact_ids"] == ["metric:activity_count_previous_month"]
-        assert synced["metric_sqls"] == {}
-        assert synced["metric_names_to_sync"] == {"activity_count_previous_month"}
-        assert metric_file.read_text(encoding="utf-8").count("name: activity_count_previous_month") == 1
-
-    def test_skips_when_input_metric_missing(self, tmp_path, monkeypatch):
-        class UnexpectedSemanticTools:
-            def __init__(self, *args, **kwargs):
-                raise AssertionError("semantic tools should not be constructed")
-
-        monkeypatch.setattr("datus.tools.func_tool.semantic_tools.SemanticTools", UnexpectedSemanticTools)
-
-        result = _auto_generate_offset_derived_metrics(self._candidate_plan(), [], self._config(tmp_path))
-
-        assert result == {"generated_metric_names": [], "metric_artifact_ids": []}
-
-    def test_append_auto_offset_result_merges_without_duplicates(self):
-        batch_result = {
-            "auto_generated_offset_derived_metrics": ["previous_month_activity_count"],
-            "_synced_metric_artifact_ids": ["metric:previous_month_activity_count"],
-            "provenance_entries": 1,
-        }
-
-        _append_auto_offset_result(
-            batch_result,
-            {
-                "generated_metric_names": ["previous_month_activity_count", "activity_count_mom_delta"],
-                "metric_artifact_ids": [
-                    "metric:previous_month_activity_count",
-                    "metric:activity_count_mom_delta",
-                ],
-            },
-            provenance_entries=2,
-        )
-
-        assert batch_result["auto_generated_offset_derived_metrics"] == [
-            "previous_month_activity_count",
-            "activity_count_mom_delta",
-        ]
-        assert batch_result["_synced_metric_artifact_ids"] == [
-            "metric:previous_month_activity_count",
-            "metric:activity_count_mom_delta",
-        ]
-        assert batch_result["provenance_entries"] == 3
 
 
 @pytest.mark.ci
@@ -1818,3 +1508,320 @@ class TestAllCandidateMetricsSatisfied:
         }
         existing = [{"name": "revenue_total", "type": "measure_proxy", "base_measures": ["revenue"]}]
         assert _all_candidate_metrics_satisfied(plan, existing) is False
+
+
+# ---------------------------------------------------------------------------
+# Offset derived candidate expansion (format-agnostic LLM path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestExpandOffsetIdentityCandidates:
+    def _identity_candidate(self):
+        return {
+            "name": "previous_month_activity_count",
+            "metric_type": "derived",
+            "expression": "previous_month_activity_count",
+            "source_sql_name": "sql_25",
+            "inputs": [
+                {
+                    "name": "activity_count",
+                    "alias": "previous_month_activity_count",
+                    "offset_window": "1 month",
+                }
+            ],
+        }
+
+    def _delta_candidate(self):
+        return {
+            "name": "activity_count_mom_delta",
+            "metric_type": "derived",
+            "expression": "activity_count - previous_month_activity_count",
+            "source_sql_name": "sql_25",
+            "inputs": [
+                {"name": "activity_count"},
+                {
+                    "name": "activity_count",
+                    "alias": "previous_month_activity_count",
+                    "offset_window": "1 month",
+                },
+            ],
+        }
+
+    def test_appends_alias_variant_for_identity_candidate(self):
+        expanded = _expand_offset_identity_candidates([self._identity_candidate(), self._delta_candidate()])
+
+        names = [candidate["name"] for candidate in expanded]
+        assert names == [
+            "previous_month_activity_count",
+            "activity_count_previous_month",
+            "activity_count_mom_delta",
+        ]
+        alias_variant = expanded[1]
+        assert alias_variant["expression"] == "activity_count_previous_month"
+        assert alias_variant["source_sql_name"] == "sql_25"
+        assert alias_variant["inputs"][0]["offset_window"] == "1 month"
+        assert alias_variant["inputs"][0]["alias"] == "activity_count_previous_month"
+
+    def test_preserves_non_offset_items_and_dedupes(self):
+        simple = {"name": "activity_count", "metric_type": "simple", "inputs": []}
+        duplicate = dict(self._identity_candidate())
+        expanded = _expand_offset_identity_candidates(["not-a-dict", simple, self._identity_candidate(), duplicate])
+
+        names = [candidate["name"] for candidate in expanded if isinstance(candidate, dict)]
+        assert names == [
+            "activity_count",
+            "previous_month_activity_count",
+            "activity_count_previous_month",
+        ]
+        assert "not-a-dict" in expanded
+
+    def test_build_candidate_plan_applies_expansion(self, monkeypatch):
+        class FakeDiscovery:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def analyze_metric_candidates_from_history(self, **kwargs):
+                return FuncToolResult(
+                    result={
+                        "derived_metric_candidates": [
+                            {
+                                "name": "previous_month_activity_count",
+                                "metric_type": "derived",
+                                "expression": "previous_month_activity_count",
+                                "inputs": [
+                                    {
+                                        "name": "activity_count",
+                                        "alias": "previous_month_activity_count",
+                                        "offset_window": "1 month",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                )
+
+        monkeypatch.setattr(
+            "datus.tools.func_tool.semantic_discovery_tools.SemanticDiscoveryTools",
+            FakeDiscovery,
+        )
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._build_sql_to_table_lineage",
+            lambda sql_entries, agent_config: [],
+        )
+
+        plan = _build_candidate_plan(
+            [{"name": "sql_25", "sql": "SELECT 1", "question": "q"}],
+            "[]",
+            SimpleNamespace(),
+        )
+
+        names = [candidate["name"] for candidate in plan["derived_metric_candidates"]]
+        assert names == ["previous_month_activity_count", "activity_count_previous_month"]
+
+
+# ---------------------------------------------------------------------------
+# Offset derived completeness check + retry
+# ---------------------------------------------------------------------------
+
+
+def _offset_plan():
+    return {
+        "available": True,
+        "derived_metric_candidates": [
+            {
+                "name": "previous_month_activity_count",
+                "metric_type": "derived",
+                "expression": "previous_month_activity_count",
+                "source_sql_name": "sql_25",
+                "inputs": [
+                    {
+                        "name": "activity_count",
+                        "alias": "previous_month_activity_count",
+                        "offset_window": "1 month",
+                    }
+                ],
+            },
+            {
+                "name": "activity_count_mom_delta",
+                "metric_type": "derived",
+                "expression": "activity_count - previous_month_activity_count",
+                "source_sql_name": "sql_25",
+                "inputs": [
+                    {"name": "activity_count"},
+                    {
+                        "name": "activity_count",
+                        "alias": "previous_month_activity_count",
+                        "offset_window": "1 month",
+                    },
+                ],
+            },
+        ],
+    }
+
+
+@pytest.mark.ci
+class TestMissingOffsetDerivedCandidates:
+    def test_detects_missing_when_inputs_exist(self):
+        catalog = [{"name": "activity_count", "type": "measure_proxy"}]
+        missing = _missing_offset_derived_candidates(_offset_plan(), catalog)
+        assert [candidate["name"] for candidate in missing] == [
+            "previous_month_activity_count",
+            "activity_count_mom_delta",
+        ]
+
+    def test_empty_when_all_candidates_exist(self):
+        catalog = [
+            {"name": "activity_count", "type": "measure_proxy"},
+            {"name": "previous_month_activity_count", "type": "derived"},
+            {"name": "activity_count_mom_delta", "type": "derived"},
+        ]
+        assert _missing_offset_derived_candidates(_offset_plan(), catalog) == []
+
+    def test_skips_ambiguous_and_unresolved_inputs(self):
+        ambiguous_catalog = [
+            {"name": "activity_count", "type": "measure_proxy", "subject_path": ["a"]},
+            {"name": "activity_count", "type": "measure_proxy", "subject_path": ["b"]},
+        ]
+        assert _missing_offset_derived_candidates(_offset_plan(), ambiguous_catalog) == []
+        assert _missing_offset_derived_candidates(_offset_plan(), []) == []
+        assert _missing_offset_derived_candidates({"available": False}, []) == []
+
+
+@pytest.mark.ci
+class TestEnsureOffsetDerivedMetrics:
+    def _records(self):
+        return [
+            {
+                "source_sql_name": "sql_25",
+                "query": "Query 25:\nQuestion: q\nSQL:\nSELECT 1",
+                "source": {"source_id": "seed:24"},
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_retries_missing_candidates_once(self, monkeypatch):
+        catalogs = iter(
+            [
+                [{"name": "activity_count", "type": "measure_proxy"}],
+                [
+                    {"name": "activity_count", "type": "measure_proxy"},
+                    {"name": "previous_month_activity_count", "type": "derived"},
+                    {"name": "activity_count_previous_month", "type": "derived"},
+                    {"name": "activity_count_mom_delta", "type": "derived"},
+                ],
+            ]
+        )
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._build_existing_metric_catalog",
+            lambda agent_config: next(catalogs),
+        )
+        batch_calls = {}
+
+        async def fake_generate(batch_queries, batch_idx, *args, **kwargs):
+            batch_calls["queries"] = batch_queries
+            batch_calls["batch_idx"] = batch_idx
+            batch_calls["extra_instructions"] = args[2] if len(args) > 2 else kwargs.get("extra_instructions")
+            return True, "", {"processed_queries": len(batch_queries)}
+
+        monkeypatch.setattr("datus.storage.metric.metric_init._generate_metrics_batch", fake_generate)
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._sync_metric_provenance",
+            lambda agent_config, artifact_ids, source_entries: 0,
+        )
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._metric_ids_in_storage",
+            lambda agent_config: set(),
+        )
+
+        result = await _ensure_offset_derived_metrics(
+            candidate_plan=_offset_plan(),
+            agent_config=SimpleNamespace(),
+            subject_tree=None,
+            extra_instructions=None,
+            event_helper=None,
+            action_callback=None,
+            all_query_records=self._records(),
+            total_batches=3,
+        )
+
+        assert result["retried"] is True
+        assert result["missing"] == []
+        assert sorted(result["generated"]) == [
+            "activity_count_mom_delta",
+            "previous_month_activity_count",
+        ]
+        assert batch_calls["batch_idx"] == 3
+        assert batch_calls["queries"] == ["Query 25:\nQuestion: q\nSQL:\nSELECT 1"]
+        instructions = batch_calls["extra_instructions"] or ""
+        assert "previous_month_activity_count" in instructions
+        assert "activity_count_mom_delta" in instructions
+
+    @pytest.mark.asyncio
+    async def test_no_retry_when_complete(self, monkeypatch):
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._build_existing_metric_catalog",
+            lambda agent_config: [
+                {"name": "activity_count", "type": "measure_proxy"},
+                {"name": "previous_month_activity_count", "type": "derived"},
+                {"name": "activity_count_previous_month", "type": "derived"},
+                {"name": "activity_count_mom_delta", "type": "derived"},
+            ],
+        )
+
+        async def unexpected_generate(*args, **kwargs):
+            raise AssertionError("retry batch must not run when candidates are satisfied")
+
+        monkeypatch.setattr("datus.storage.metric.metric_init._generate_metrics_batch", unexpected_generate)
+
+        result = await _ensure_offset_derived_metrics(
+            candidate_plan=_offset_plan(),
+            agent_config=SimpleNamespace(),
+            subject_tree=None,
+            extra_instructions=None,
+            event_helper=None,
+            action_callback=None,
+            all_query_records=self._records(),
+            total_batches=3,
+        )
+
+        assert result == {"generated": [], "missing": [], "retried": False}
+
+    @pytest.mark.asyncio
+    async def test_reports_unresolved_after_retry(self, monkeypatch):
+        catalog = [{"name": "activity_count", "type": "measure_proxy"}]
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._build_existing_metric_catalog",
+            lambda agent_config: list(catalog),
+        )
+
+        async def fake_generate(*args, **kwargs):
+            return False, "llm failed", None
+
+        monkeypatch.setattr("datus.storage.metric.metric_init._generate_metrics_batch", fake_generate)
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._sync_metric_provenance",
+            lambda agent_config, artifact_ids, source_entries: 0,
+        )
+        monkeypatch.setattr(
+            "datus.storage.metric.metric_init._metric_ids_in_storage",
+            lambda agent_config: set(),
+        )
+
+        result = await _ensure_offset_derived_metrics(
+            candidate_plan=_offset_plan(),
+            agent_config=SimpleNamespace(),
+            subject_tree=None,
+            extra_instructions=None,
+            event_helper=None,
+            action_callback=None,
+            all_query_records=self._records(),
+            total_batches=3,
+        )
+
+        assert result["retried"] is True
+        assert result["generated"] == []
+        assert sorted(result["missing"]) == [
+            "activity_count_mom_delta",
+            "previous_month_activity_count",
+        ]

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import pandas as pd
-import yaml
 
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.configuration.agent_config import AgentConfig
@@ -346,6 +345,7 @@ def _build_candidate_plan(
         plan = dict(result.result or {})
         plan["available"] = True
         plan["sql_to_table_lineage"] = _build_sql_to_table_lineage(sql_entries, agent_config)
+        plan["derived_metric_candidates"] = _expand_offset_identity_candidates(plan.get("derived_metric_candidates"))
         return plan
     except Exception as exc:  # pragma: no cover - defensive; agent can still infer from SQL prompt
         logger.warning("Metric candidate extraction raised; continuing without a candidate plan: %s", exc)
@@ -553,48 +553,31 @@ def _candidate_input_metric_names(candidate: dict[str, Any]) -> set[str]:
     return names
 
 
-def _candidate_subject_tags(candidate: dict[str, Any], existing_by_name: dict[str, dict[str, Any]]) -> list[str]:
-    tags: list[str] = []
-    for input_name in _candidate_input_metric_names(candidate):
-        subject_path = existing_by_name.get(input_name, {}).get("subject_path")
-        if isinstance(subject_path, list) and subject_path:
-            joined = "/".join(str(part) for part in subject_path if str(part).strip())
-            if joined:
-                tags.extend([joined, f"subject_tree: {joined}"])
-                break
-    return tags
+def _expand_offset_identity_candidates(derived_candidates: Any) -> list[Any]:
+    """Expand offset derived candidates with previous-period identity alias variants.
 
-
-def _derived_metric_doc(candidate: dict[str, Any], existing_by_name: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    metric_inputs: list[dict[str, Any]] = []
-    for item in candidate.get("inputs") or []:
-        if not isinstance(item, dict) or not item.get("name"):
+    Identity candidates mined from SQL keep their historical alias (e.g.
+    ``previous_month_activity_count``); the canonical ``{base}_previous_{grain}``
+    variant is added alongside so the generation agent sees both names. Operates
+    purely on structured candidates, independent of any authoring format.
+    """
+    expanded: list[Any] = []
+    seen: set[str] = set()
+    for candidate in derived_candidates or []:
+        if not isinstance(candidate, dict):
+            expanded.append(candidate)
             continue
-        metric_input = {"name": str(item["name"]).strip()}
-        alias = str(item.get("alias") or "").strip()
-        offset_window = str(item.get("offset_window") or "").strip()
-        offset_to_grain = str(item.get("offset_to_grain") or "").strip()
-        if alias:
-            metric_input["alias"] = alias
-        if offset_window:
-            metric_input["offset_window"] = offset_window
-        if offset_to_grain:
-            metric_input["offset_to_grain"] = offset_to_grain
-        metric_inputs.append(metric_input)
-
-    metric: dict[str, Any] = {
-        "name": str(candidate["name"]).strip(),
-        "description": str(candidate.get("description") or candidate.get("source_alias") or candidate["name"]).strip(),
-        "type": "derived",
-        "type_params": {
-            "metrics": metric_inputs,
-            "expr": str(candidate.get("expression") or candidate["name"]).strip(),
-        },
-    }
-    tags = _candidate_subject_tags(candidate, existing_by_name)
-    if tags:
-        metric["locked_metadata"] = {"tags": tags}
-    return {"metric": metric}
+        variants = [candidate]
+        if candidate.get("name") and _is_offset_derived_candidate(candidate):
+            variants.extend(_offset_identity_alias_candidates(candidate))
+        for variant in variants:
+            normalized = _normalize_metric_name(variant.get("name"))
+            if normalized:
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+            expanded.append(variant)
+    return expanded
 
 
 def _offset_identity_alias_candidates(candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -638,50 +621,6 @@ def _offset_identity_alias_candidates(candidate: dict[str, Any]) -> list[dict[st
     return [equivalent]
 
 
-def _load_metric_doc_names(metric_file: Path) -> set[str]:
-    if not metric_file.exists():
-        return set()
-    try:
-        docs = list(yaml.safe_load_all(metric_file.read_text(encoding="utf-8")))
-    except Exception:
-        return set()
-    names: set[str] = set()
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        metric = doc.get("metric")
-        if isinstance(metric, dict):
-            normalized = _normalize_metric_name(metric.get("name"))
-            if normalized:
-                names.add(normalized)
-    return names
-
-
-def _append_metric_docs(metric_file: Path, docs: list[dict[str, Any]]) -> None:
-    metric_file.parent.mkdir(parents=True, exist_ok=True)
-    rendered = "\n---\n".join(
-        yaml.safe_dump(doc, allow_unicode=True, sort_keys=False).strip() for doc in docs if isinstance(doc, dict)
-    )
-    if not rendered:
-        return
-    if metric_file.exists() and metric_file.read_text(encoding="utf-8").strip():
-        with metric_file.open("a", encoding="utf-8") as handle:
-            handle.write("\n\n---\n")
-            handle.write(rendered)
-            handle.write("\n")
-    else:
-        metric_file.write_text(f"{rendered}\n", encoding="utf-8")
-
-
-def _restore_metric_file(metric_file: Path, previous_content: Optional[str]) -> None:
-    if previous_content is None:
-        if metric_file.exists():
-            metric_file.unlink()
-        return
-    metric_file.parent.mkdir(parents=True, exist_ok=True)
-    metric_file.write_text(previous_content, encoding="utf-8")
-
-
 def _unique_metric_catalog_by_name(
     existing_metric_catalog: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], set[str]]:
@@ -698,160 +637,127 @@ def _unique_metric_catalog_by_name(
     return unique, ambiguous
 
 
-def _auto_generate_offset_derived_metrics(
+def _missing_offset_derived_candidates(
     candidate_plan: dict[str, Any],
     existing_metric_catalog: list[dict[str, Any]],
-    agent_config: AgentConfig,
-) -> dict[str, Any]:
-    """Deterministically materialize MetricFlow offset-window derived metrics from mined SQL evidence."""
+) -> list[dict[str, Any]]:
+    """Return offset derived candidates whose inputs exist but which are absent from the catalog.
+
+    Pure completeness check over structured candidates and the metric catalog;
+    it never inspects or renders authoring YAML, so it is independent of the
+    authoring format (MetricFlow, OSI, ...).
+    """
     if not candidate_plan or not candidate_plan.get("available"):
-        return {"generated_metric_names": [], "metric_artifact_ids": []}
+        return []
     derived_candidates = candidate_plan.get("derived_metric_candidates")
     if not isinstance(derived_candidates, list):
-        return {"generated_metric_names": [], "metric_artifact_ids": []}
-    offset_candidates = [
-        candidate
-        for candidate in derived_candidates
-        if isinstance(candidate, dict) and candidate.get("name") and _is_offset_derived_candidate(candidate)
-    ]
-    if not offset_candidates:
-        return {"generated_metric_names": [], "metric_artifact_ids": []}
-    expanded_offset_candidates: list[dict[str, Any]] = []
-    seen_candidate_names: set[str] = set()
-    for candidate in offset_candidates:
-        for expanded_candidate in [candidate, *_offset_identity_alias_candidates(candidate)]:
-            normalized = _normalize_metric_name(expanded_candidate.get("name"))
-            if not normalized or normalized in seen_candidate_names:
-                continue
-            expanded_offset_candidates.append(expanded_candidate)
-            seen_candidate_names.add(normalized)
+        return []
 
     existing_by_name, ambiguous_existing_names = _unique_metric_catalog_by_name(existing_metric_catalog)
-    metric_file = (
-        agent_config.path_manager.semantic_model_path(agent_config.current_datasource)
-        / "metrics"
-        / "auto_offset_derived_metrics.yml"
-    )
-    file_metric_names = _load_metric_doc_names(metric_file)
-
-    docs: list[dict[str, Any]] = []
-    generated_names: list[str] = []
-    resync_names: set[str] = set()
-    for candidate in expanded_offset_candidates:
+    missing: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for candidate in derived_candidates:
+        if not (isinstance(candidate, dict) and candidate.get("name") and _is_offset_derived_candidate(candidate)):
+            continue
         normalized_name = _normalize_metric_name(candidate.get("name"))
-        if not normalized_name:
+        if not normalized_name or normalized_name in seen:
             continue
-        if normalized_name in ambiguous_existing_names:
-            logger.warning("Skipping auto offset metric %s because existing metric name is ambiguous", normalized_name)
-            continue
-        if normalized_name in existing_by_name:
+        if normalized_name in ambiguous_existing_names or normalized_name in existing_by_name:
             continue
         input_names = _candidate_input_metric_names(candidate)
-        if not input_names:
-            continue
-        if input_names & ambiguous_existing_names:
-            logger.warning(
-                "Skipping auto offset metric %s because input metric names are ambiguous: %s",
-                normalized_name,
-                sorted(input_names & ambiguous_existing_names),
-            )
+        if not input_names or input_names & ambiguous_existing_names:
             continue
         if not input_names <= set(existing_by_name):
             continue
-        if normalized_name in file_metric_names:
-            resync_names.add(normalized_name)
-            continue
-        docs.append(_derived_metric_doc(candidate, existing_by_name))
-        generated_names.append(str(candidate["name"]).strip())
-        file_metric_names.add(normalized_name)
+        missing.append(candidate)
+        seen.add(normalized_name)
+    return missing
 
-    if not docs and not resync_names:
-        return {"generated_metric_names": [], "metric_artifact_ids": []}
 
-    previous_metric_file_content = metric_file.read_text(encoding="utf-8") if metric_file.exists() else None
-    if docs:
-        _append_metric_docs(metric_file, docs)
+async def _ensure_offset_derived_metrics(
+    candidate_plan: dict[str, Any],
+    agent_config: AgentConfig,
+    subject_tree: Optional[list],
+    extra_instructions: Optional[str],
+    event_helper: Optional[BatchEventHelper],
+    action_callback: Optional[Callable[["ActionHistory"], None]],
+    all_query_records: list[dict[str, Any]],
+    total_batches: int,
+) -> dict[str, Any]:
+    """Verify offset derived candidates landed in the metric store; retry the missing ones once.
 
-    from datus.tools.func_tool.generation_tools import GenerationTools
-    from datus.tools.func_tool.semantic_tools import SemanticTools
+    The retry re-runs the regular gen_metrics agent with a focused instruction,
+    so the metric YAML is always authored by the LLM in whatever format the
+    node is configured for. Candidates still missing afterwards are reported,
+    never silently dropped.
+    """
+    catalog = _build_existing_metric_catalog(agent_config)
+    missing = _missing_offset_derived_candidates(candidate_plan, catalog)
+    if not missing:
+        return {"generated": [], "missing": [], "retried": False}
 
-    semantic_tools = SemanticTools(agent_config=agent_config, sub_agent_name=METRICS_NODE_NAME)
-    validation = semantic_tools.validate_semantic(scope="all")
-    if not validation.success:
-        logger.warning(
-            "Auto-generated offset derived metrics failed validation: %s",
-            validation.error,
+    missing_names = [str(candidate.get("name")).strip() for candidate in missing]
+    missing_sources: set[str] = set()
+    for candidate in missing:
+        missing_sources |= _source_names(
+            candidate.get("source_sql_name") or candidate.get("source") or candidate.get("sql_name")
         )
-        if docs:
-            _restore_metric_file(metric_file, previous_metric_file_content)
-        return {"generated_metric_names": [], "metric_artifact_ids": [], "error": validation.error}
+    retry_records = [record for record in all_query_records if record.get("source_sql_name") in missing_sources]
+    retry_queries = [record["query"] for record in retry_records] or [
+        "Materialize the missing offset derived metric candidates listed in the candidate plan."
+    ]
 
-    metric_sqls: dict[str, str] = {}
-    for name in generated_names:
-        candidate = next(
-            (item for item in expanded_offset_candidates if item.get("name") == name),
-            {},
-        )
-        grain = _offset_grain(candidate.get("offset_window"))
-        dimensions = [f"metric_time__{grain}"] if grain else []
-        dry_run = semantic_tools.query_metrics(
-            metrics=[name],
-            dimensions=dimensions,
-            time_granularity=grain,
-            dry_run=True,
-        )
-        if dry_run.success and isinstance(dry_run.result, dict):
-            metadata = dry_run.result.get("metadata") if isinstance(dry_run.result.get("metadata"), dict) else {}
-            sql = metadata.get("sql")
-            if isinstance(sql, str) and sql.strip():
-                metric_sqls[name] = sql
-
-    metric_names_to_sync = set(generated_names) | resync_names
-    sync = GenerationTools(agent_config=agent_config)._sync_metric_to_db(
-        str(metric_file),
-        metric_sqls=metric_sqls,
-        metric_names_to_sync=metric_names_to_sync,
+    retry_plan = dict(candidate_plan)
+    retry_plan["derived_metric_candidates"] = missing
+    retry_plan["summary"] = f"Offset completeness retry for {len(missing)} derived metric candidate(s)."
+    retry_instructions = (
+        "Offset completeness retry: the following offset derived metric candidates were mined from the "
+        f"success-story SQL but are still missing from the metric store: {', '.join(missing_names)}. "
+        "Materialize EVERY one of them as a derived metric over its existing input metrics, including "
+        "previous-period identity metrics whose expression is just the offset input alias."
     )
-    if not sync.get("success"):
-        logger.warning("Auto-generated offset derived metrics failed to sync: %s", sync.get("error"))
-        if docs:
-            _restore_metric_file(metric_file, previous_metric_file_content)
-        return {"generated_metric_names": [], "metric_artifact_ids": [], "error": sync.get("error")}
+    if extra_instructions:
+        retry_instructions = f"{extra_instructions}\n\n{retry_instructions}"
 
-    synced_names = [*generated_names, *sorted(resync_names)]
-    artifact_ids = [f"metric:{name}" for name in synced_names]
-    logger.info("Auto-generated/resynced %d offset derived metric(s): %s", len(synced_names), synced_names)
-    return {
-        "generated_metric_names": synced_names,
-        "metric_artifact_ids": artifact_ids,
-        "metric_file": str(metric_file),
-        "metric_sqls": metric_sqls,
-        "sync": sync,
+    logger.info("Retrying %d missing offset derived metric(s): %s", len(missing_names), missing_names)
+    source_entries = [record["source"] for record in retry_records if record.get("source")]
+    metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
+    success, error, batch_result = await _generate_metrics_batch(
+        retry_queries,
+        total_batches,
+        agent_config,
+        subject_tree,
+        retry_instructions,
+        event_helper,
+        action_callback,
+        candidate_plan_json=_json_dump_compact(retry_plan),
+        existing_metric_catalog_json=_json_dump_compact(catalog),
+    )
+    if not success:
+        logger.warning("Offset completeness retry batch failed: %s", error)
+
+    provenance_entries = 0
+    if source_entries:
+        new_artifact_ids = sorted(_metric_ids_in_storage(agent_config) - metric_ids_before)
+        if new_artifact_ids:
+            provenance_entries = _sync_metric_provenance(agent_config, new_artifact_ids, source_entries)
+
+    refreshed_catalog = _build_existing_metric_catalog(agent_config)
+    still_missing_names = {
+        _normalize_metric_name(candidate.get("name"))
+        for candidate in _missing_offset_derived_candidates(candidate_plan, refreshed_catalog)
     }
-
-
-def _append_auto_offset_result(
-    batch_result: dict[str, Any],
-    auto_derived_result: dict[str, Any],
-    provenance_entries: int = 0,
-) -> None:
-    """Attach deterministic offset-derived metric artifacts to a batch result."""
-    generated_names = list(auto_derived_result.get("generated_metric_names") or [])
-    artifact_ids = list(auto_derived_result.get("metric_artifact_ids") or [])
-    if generated_names:
-        existing_names = batch_result.setdefault("auto_generated_offset_derived_metrics", [])
-        if isinstance(existing_names, list):
-            for name in generated_names:
-                if name not in existing_names:
-                    existing_names.append(name)
-    if artifact_ids:
-        existing_ids = batch_result.setdefault("_synced_metric_artifact_ids", [])
-        if isinstance(existing_ids, list):
-            for artifact_id in artifact_ids:
-                if artifact_id not in existing_ids:
-                    existing_ids.append(artifact_id)
-    if provenance_entries:
-        batch_result["provenance_entries"] = batch_result.get("provenance_entries", 0) + provenance_entries
+    generated = [name for name in missing_names if _normalize_metric_name(name) not in still_missing_names]
+    unresolved = [name for name in missing_names if _normalize_metric_name(name) in still_missing_names]
+    if unresolved:
+        logger.warning("Offset derived metric(s) still missing after completeness retry: %s", unresolved)
+    return {
+        "generated": generated,
+        "missing": unresolved,
+        "retried": True,
+        "provenance_entries": provenance_entries,
+        "batch_result": batch_result if isinstance(batch_result, dict) else None,
+    }
 
 
 async def _generate_metrics_batch(
@@ -1098,26 +1004,9 @@ async def init_success_story_metrics_async(
 
         logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_queries)} queries)")
 
-        auto_derived_result = _auto_generate_offset_derived_metrics(
-            batch_candidate_plan,
-            existing_metric_catalog,
-            agent_config,
-        )
-        auto_metric_artifact_ids = list(auto_derived_result.get("metric_artifact_ids") or [])
-        if auto_metric_artifact_ids:
-            batch_provenance_entries = _sync_metric_provenance(agent_config, auto_metric_artifact_ids, source_entries)
-            provenance_entries += batch_provenance_entries
-            auto_derived_result["provenance_entries"] = batch_provenance_entries
-            existing_metric_catalog = _build_existing_metric_catalog(agent_config)
-            existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
-
         metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
 
-        auto_satisfied = bool(auto_metric_artifact_ids) and _all_candidate_metrics_satisfied(
-            batch_candidate_plan,
-            existing_metric_catalog,
-        )
-        if (build_mode == "incremental" or auto_satisfied) and _all_candidate_metrics_satisfied(
+        if build_mode == "incremental" and _all_candidate_metrics_satisfied(
             batch_candidate_plan,
             existing_metric_catalog,
         ):
@@ -1151,12 +1040,6 @@ async def init_success_story_metrics_async(
                 "skipped_queries": len(batch_records),
                 "skipped_metric_candidates": skipped_names,
             }
-            if auto_metric_artifact_ids:
-                batch_result["auto_generated_offset_derived_metrics"] = auto_derived_result.get(
-                    "generated_metric_names", []
-                )
-                batch_result["_synced_metric_artifact_ids"] = auto_metric_artifact_ids
-                batch_result["provenance_entries"] = auto_derived_result.get("provenance_entries", 0)
             if merged_result is None:
                 merged_result = batch_result
             elif isinstance(merged_result, dict):
@@ -1238,29 +1121,6 @@ async def init_success_story_metrics_async(
                     batch_result.get("provenance_entries", 0) + batch_provenance_entries
                 )
 
-            if isinstance(batch_result, dict):
-                refreshed_catalog = _build_existing_metric_catalog(agent_config)
-                post_auto_derived_result = _auto_generate_offset_derived_metrics(
-                    batch_candidate_plan,
-                    refreshed_catalog,
-                    agent_config,
-                )
-                post_auto_metric_artifact_ids = list(post_auto_derived_result.get("metric_artifact_ids") or [])
-                if post_auto_metric_artifact_ids:
-                    post_auto_provenance_entries = _sync_metric_provenance(
-                        agent_config,
-                        post_auto_metric_artifact_ids,
-                        source_entries,
-                    )
-                    provenance_entries += post_auto_provenance_entries
-                    _append_auto_offset_result(
-                        batch_result,
-                        post_auto_derived_result,
-                        provenance_entries=post_auto_provenance_entries,
-                    )
-                    existing_metric_catalog = _build_existing_metric_catalog(agent_config)
-                    existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
-
             if merged_result is None:
                 merged_result = batch_result
             elif isinstance(merged_result, dict) and isinstance(batch_result, dict):
@@ -1301,6 +1161,21 @@ async def init_success_story_metrics_async(
         logger.warning(f"Metrics extraction partially succeeded: {partial_error}")
 
     if isinstance(merged_result, dict):
+        offset_completeness = await _ensure_offset_derived_metrics(
+            candidate_plan=candidate_plan,
+            agent_config=agent_config,
+            subject_tree=subject_tree,
+            extra_instructions=extra_instructions,
+            event_helper=event_helper,
+            action_callback=action_callback,
+            all_query_records=all_query_records,
+            total_batches=total_batches,
+        )
+        if offset_completeness.get("retried"):
+            provenance_entries += offset_completeness.get("provenance_entries", 0)
+            merged_result["offset_retry_generated_metrics"] = offset_completeness.get("generated", [])
+        if offset_completeness.get("missing"):
+            merged_result["missing_offset_derived_metrics"] = offset_completeness["missing"]
         if provenance_entries:
             merged_result["provenance_entries"] = provenance_entries
         final_metrics_count = _final_metric_count(agent_config)
