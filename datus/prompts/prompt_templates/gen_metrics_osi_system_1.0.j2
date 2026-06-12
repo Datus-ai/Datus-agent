@@ -62,8 +62,18 @@ Datus execution hints such as `dataset`, `time_dimension`, `filters`, `metric_ki
              data: '{"dataset":"orders","time_dimension":"order_date","window":"7 days"}'
      ```
    - Period-over-period (`LAG() OVER`, MoM/YoY): write a derived metric over a base metric with an input `offset_window`. Do NOT write `LAG`/`OVER` in the OSI expression. If `analyze_metric_candidates_from_history` returns a `derived_metric_candidates` item with `metric_kind: derived`, `inputs`, and `offset_window`, encode that shape in DATUS extension JSON.
+   - Materialize EVERY offset `derived_metric_candidates` entry, including the previous-period identity candidate whose expression is just the shifted input alias. A delta/rate metric referencing the same shifted alias does NOT replace the identity metric — publish both. Use the candidate's `name` exactly as the metric name; `equivalent_names` are aliases of the same metric, publish only one. The bootstrap host verifies offset candidate completeness after all batches and re-runs generation for anything missing.
+     A MoM SQL like `LAG(revenue) OVER (ORDER BY month) AS revenue_prev` yields TWO derived metrics:
      ```yaml
      metrics:
+       - name: revenue_prev
+         expression:
+           dialects:
+             - dialect: ANSI_SQL
+               expression: "revenue_prev"
+         custom_extensions:
+           - vendor_name: DATUS
+             data: '{"metric_kind":"derived","inputs":[{"name":"revenue","alias":"revenue_prev","offset_window":"1 month"}]}'
        - name: revenue_mom
          expression:
            dialects:
