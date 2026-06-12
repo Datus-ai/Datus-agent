@@ -54,16 +54,6 @@
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
-  
-
-
-  
-  
-
-<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-8HMXHZDV7F"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-8HMXHZDV7F",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-8HMXHZDV7F",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
-  
-    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
-  
 
     
     
@@ -996,6 +986,8 @@
       
         
       
+        
+      
     
     
     
@@ -1166,6 +1158,34 @@
     
   
     Generate Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ask_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ask Metrics
   
 
     
@@ -1584,8 +1604,6 @@
       
         
       
-        
-      
     
     
     
@@ -1644,34 +1662,6 @@
     
   
     Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    External Knowledge
   
 
     
@@ -4082,7 +4072,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/configuration/agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.4/docs/configuration/agent.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4154,7 +4144,7 @@
 <p><strong>Required Parameters per custom entry:</strong></p>
 <ul>
 <li><strong>Entry key (<code>models.&lt;key&gt;</code>)</strong> — Logical identifier, referenced by <code>target: {custom: &lt;key&gt;}</code> or node <code>model</code> fields</li>
-<li><strong><code>type</code></strong> — Interface type (<code>openai</code>, <code>claude</code>, <code>deepseek</code>, <code>kimi</code>, <code>gemini</code>, <code>minimax</code>, <code>glm</code>, <code>codex</code>)</li>
+<li><strong><code>type</code></strong> — Interface type (<code>openai</code>, <code>claude</code>, <code>deepseek</code>, <code>kimi</code>, <code>gemini</code>, <code>minimax</code>, <code>glm</code>, <code>codex</code>, <code>openrouter</code>)</li>
 <li><strong><code>base_url</code></strong> — API endpoint URL</li>
 <li><strong><code>api_key</code></strong> — API key (supports <code>${ENV_VAR}</code> substitution)</li>
 <li><strong><code>model</code></strong> — Model name / SKU</li>
@@ -4243,8 +4233,21 @@
 <td><code>glm</code></td>
 <td>API key</td>
 </tr>
+<tr>
+<td><code>openrouter</code></td>
+<td><code>anthropic/claude-sonnet-4</code>, <code>openai/gpt-4o</code></td>
+<td><code>openrouter</code></td>
+<td>API key</td>
+</tr>
 </tbody>
 </table>
+<div class="admonition tip">
+<p class="admonition-title">OpenRouter — one key, 300+ models</p>
+<p><code>openrouter</code> is a unified gateway: a single <code>OPENROUTER_API_KEY</code> routes to any
+vendor. Its model names use the <code>vendor/slug</code> form (e.g. <code>google/gemini-2.5-pro</code>).
+The <code>/model</code> picker fetches the full live catalog from OpenRouter and lets you
+type to filter it.</p>
+</div>
 <h3 id="special-auth-providers">Special-auth providers<a class="headerlink" href="#special-auth-providers" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -4323,7 +4326,7 @@
 <p>All providers support environment-variable references in <code>api_key</code>, for example:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPENAI_API_KEY}</span>
 </span></code></pre></div>
-<p>For OpenAI, DeepSeek, Claude, Kimi, Qwen, and Gemini, the configuration wizard can prompt with provider-specific environment variable hints. For <code>minimax</code>, <code>glm</code>, and the <code>*_coding</code> providers, you can still enter values such as <code>${MINIMAX_API_KEY}</code>, <code>${GLM_API_KEY}</code>, <code>${KIMI_API_KEY}</code>, or <code>${DASHSCOPE_API_KEY}</code> directly.</p>
+<p>For OpenAI, DeepSeek, Claude, Kimi, Qwen, Gemini, and OpenRouter, the configuration wizard can prompt with provider-specific environment variable hints (e.g. <code>${OPENROUTER_API_KEY}</code>). For <code>minimax</code>, <code>glm</code>, and the <code>*_coding</code> providers, you can still enter values such as <code>${MINIMAX_API_KEY}</code>, <code>${GLM_API_KEY}</code>, <code>${KIMI_API_KEY}</code>, or <code>${DASHSCOPE_API_KEY}</code> directly.</p>
 <p>The current implementation also auto-applies fixed parameter overrides for a few models:</p>
 <ul>
 <li><code>kimi-k2.5</code>: <code>temperature: 1.0</code>, <code>top_p: 0.95</code></li>
@@ -4348,6 +4351,8 @@
 </span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${KIMI_API_KEY}</span>
 </span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="w">    </span><span class="nt">qwen</span><span class="p">:</span>
 </span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DASHSCOPE_API_KEY}</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="w">    </span><span class="nt">openrouter</span><span class="p">:</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${OPENROUTER_API_KEY}</span>
 </span></code></pre></div>
 </div>
 <div class="tabbed-block">
@@ -4514,8 +4519,6 @@
 
 
 
-  
-
 
 
 
@@ -4653,6 +4656,8 @@
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/analytics.js"></script>
       
     
   </body>

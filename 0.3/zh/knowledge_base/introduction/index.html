@@ -14,7 +14,7 @@
         <link rel="prev" href="../../gateway/feishu/">
       
       
-        <link rel="next" href="../ext_knowledge/">
+        <link rel="next" href="../platform_doc/">
       
       
         
@@ -54,16 +54,6 @@
     <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
-  
-
-
-  
-  
-
-<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-8HMXHZDV7F"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-8HMXHZDV7F",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-8HMXHZDV7F",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
-  
-    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
-  
 
     
     
@@ -996,6 +986,8 @@
       
         
       
+        
+      
     
     
     
@@ -1166,6 +1158,34 @@
     
   
     生成指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ask_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标问答
   
 
     
@@ -1586,8 +1606,6 @@
       
         
       
-        
-      
     
     
     
@@ -1779,18 +1797,7 @@
   <a href="#6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. 外部知识
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. 平台文档
+        6. 平台文档
       
     </span>
   </a>
@@ -1867,34 +1874,6 @@
   
 </nav>
       
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    外部知识
-  
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -3791,18 +3770,7 @@
   <a href="#6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        6. 外部知识
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        7. 平台文档
+        6. 平台文档
       
     </span>
   </a>
@@ -3892,7 +3860,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/knowledge_base/introduction.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.4/docs/knowledge_base/introduction.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3945,14 +3913,7 @@
 <li><strong>能力</strong>：按意图搜索模板、获取含参数元数据的模板、服务端渲染</li>
 <li><strong>用途</strong>：生产环境稳定 SQL 输出、参数化报表查询、基于模板的 SQL 生成</li>
 </ul>
-<h3 id="6">6. <a href="../ext_knowledge/">外部知识</a><a class="headerlink" href="#6" title="Permanent link">&para;</a></h3>
-<p><strong>目的</strong>：处理和索引领域特定业务知识，实现智能搜索。</p>
-<ul>
-<li><strong>存储</strong>：业务术语、规则、概念、层级分类</li>
-<li><strong>能力</strong>：业务术语语义搜索、上下文增强、术语解析</li>
-<li><strong>用途</strong>：Agent 上下文增强、术语标准化、知识传承</li>
-</ul>
-<h3 id="7">7. <a href="../platform_doc/">平台文档</a><a class="headerlink" href="#7" title="Permanent link">&para;</a></h3>
+<h3 id="6">6. <a href="../platform_doc/">平台文档</a><a class="headerlink" href="#6" title="Permanent link">&para;</a></h3>
 <p><strong>目的</strong>：提供权威的平台文档，用于 SQL 生成与语法校验。</p>
 <ul>
 <li><strong>存储</strong>：按平台与版本组织的官方文档分块</li>
@@ -4004,8 +3965,6 @@
 
 
 
-  
-
 
 
 
@@ -4043,13 +4002,13 @@
         
         
           
-          <a href="../ext_knowledge/" class="md-footer__link md-footer__link--next" aria-label="下一页: 外部知识">
+          <a href="../platform_doc/" class="md-footer__link md-footer__link--next" aria-label="下一页: 平台文档">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                外部知识
+                平台文档
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -4143,6 +4102,8 @@
     
     
       <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../../javascripts/analytics.js"></script>
       
     
   </body>

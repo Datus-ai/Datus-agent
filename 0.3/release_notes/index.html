@@ -52,16 +52,6 @@
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
-  
-
-
-  
-  
-
-<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-8HMXHZDV7F"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-8HMXHZDV7F",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-8HMXHZDV7F",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
-  
-    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
-  
 
     
     
@@ -989,6 +979,8 @@
       
         
       
+        
+      
     
     
     
@@ -1159,6 +1151,34 @@
     
   
     Generate Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/ask_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ask Metrics
   
 
     
@@ -1577,8 +1597,6 @@
       
         
       
-        
-      
     
     
     
@@ -1637,34 +1655,6 @@
     
   
     Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    External Knowledge
   
 
     
@@ -3513,6 +3503,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#034" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#033" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3774,6 +3775,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#034" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#033" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4005,7 +4017,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.4/docs/release_notes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4015,6 +4027,30 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="034">0.3.4<a class="headerlink" href="#034" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>AskMetrics Subagent</strong> - A dedicated metric QA agent for KPI, trend, group-by, and attribution questions that reaches for metric-specific tools and prompts instead of raw SQL, with customizable routing, templates, and tools. <a href="https://github.com/Datus-ai/Datus-agent/pull/954">#954</a> <a href="../subagent/ask_metrics/">docs</a></li>
+<li><strong>OpenRouter Provider</strong> - Point a single <code>OPENROUTER_API_KEY</code> at the full vendor/model catalog; the <code>/model</code> picker now has search filtering and hides the non-canonical <code>-fast</code> Claude aliases. <a href="https://github.com/Datus-ai/Datus-agent/pull/973">#973</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/936">#936</a> <a href="../cli/model_command/">docs</a></li>
+<li><strong>Self-Update Commands</strong> - <code>datus upgrade</code> / <code>datus update</code> check for and install new versions of your <code>datus-*</code> packages from the CLI; interactive sessions flag new versions on startup, and <code>--check</code> looks without installing. <a href="https://github.com/Datus-ai/Datus-agent/pull/949">#949</a></li>
+<li><strong>Orchestrator Tools in Print Mode</strong> - <code>--orchestrator-tools</code> lets an external orchestrator request issue comments, status updates, human input, blocked flags, and mission completion through proxy tools, with each tool's strict JSON schema preserved. <a href="https://github.com/Datus-ai/Datus-agent/pull/950">#950</a></li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Queryable Metrics by Default</strong> - Metric generation now extracts a queryability contract and validates it with <code>query_metrics(dry_run=True)</code>, so you no longer get metrics that are structurally valid but cannot actually be queried at the original grain. <a href="https://github.com/Datus-ai/Datus-agent/pull/943">#943</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/962">#962</a></li>
+<li><strong>Scoped Agent Memory</strong> - Each agent gets a per-agent 2000-byte <code>MEMORY.md</code> that is write-only through <code>add_memory</code> / <code>edit_memory</code>; sub-agents inherit it read-only. <a href="https://github.com/Datus-ai/Datus-agent/pull/975">#975</a> <a href="../integration/memory/">docs</a></li>
+<li><strong>Built-in Knowledge Extraction</strong> - External knowledge generation moved off the old <code>ext_knowledge</code> vector subsystem to the built-in <code>extract-knowledge</code> skill, trimming legacy storage and tooling while keeping the knowledge-base API. <a href="https://github.com/Datus-ai/Datus-agent/pull/932">#932</a></li>
+<li><strong>Stronger Snowflake Support</strong> - Snowflake setups now accept inline PEM private keys, reject unsupported catalog params, and normalize time-grain queries across the DB and MetricFlow adapters; docs clarify that password and private key are mutually exclusive, warehouse is required, and catalog usually should not be set. <a href="https://github.com/Datus-ai/Datus-agent/pull/937">#937</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/70">datus-db-adapters#70</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/72">datus-db-adapters#72</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/27">datus-semantic-adapter#27</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/28">datus-semantic-adapter#28</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/29">datus-semantic-adapter#29</a> <a href="../configuration/datasources/">docs</a></li>
+<li><strong>Unified <code>gen_sql</code> Naming</strong> - The SQL-generation node, workflow, config, CLI command (<code>/gen_sql</code>), prompt templates, and sub-agent name now share one consistent <code>gen_sql</code> naming; projects on the old <code>generate_sql</code> / <code>sql_system</code> config should migrate. <a href="https://github.com/Datus-ai/Datus-agent/pull/935">#935</a> <a href="../configuration/nodes/">docs</a></li>
+<li><strong>Configurable Metrics Batch Size</strong> - <code>bootstrap-kb --components metrics</code> adds <code>--metrics-batch-size</code>; set it to <code>1</code> when you need per-success-story provenance, or keep the default of <code>5</code> for the original throughput. <a href="https://github.com/Datus-ai/Datus-agent/pull/976">#976</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Datasource-Isolated Metrics Bootstrap</strong> - Metrics bootstrap now isolates rows per datasource in multi-datasource projects, so <code>overwrite</code> no longer deletes another datasource's KB data, with hardened MetricFlow YAML merge, batch refresh, final metric de-duplication, and CLI long-output truncation. <a href="https://github.com/Datus-ai/Datus-agent/pull/974">#974</a></li>
+<li><strong>Robust Semantic Metric Query &amp; Validation</strong> - Snowflake table coordinates now reach semantic-model generation prompts, multi-metric dimension compatibility gets a preflight with split suggestions, temporary YAML validation no longer scans unrelated parent directories, and non-string / nullable PyArrow results display safely. <a href="https://github.com/Datus-ai/Datus-agent/pull/941">#941</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/946">#946</a></li>
+<li><strong>Cross-Datasource Subject Node Migration</strong> - Upgrading older SQLite storage migrates the stale <code>subject_nodes</code> UNIQUE constraint so same-named subject nodes can coexist across datasources while staying de-duplicated within one. <a href="https://github.com/Datus-ai/Datus-agent/pull/964">#964</a></li>
+<li><strong>One Datasource, Multiple Databases</strong> - A single datasource can now route to multiple databases — file-glob datasources, benchmark tasks, <code>/database</code> switching, DB tools, and node execution all select the connection by <code>(datasource, database)</code>, and benchmark SQL tasks can name their datasource explicitly. <a href="https://github.com/Datus-ai/Datus-agent/pull/961">#961</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/934">#934</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/71">datus-db-adapters#71</a></li>
+</ul>
 <h3 id="033">0.3.3<a class="headerlink" href="#033" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
@@ -4174,7 +4210,6 @@
 </ul>
 <p><strong>Enhancements</strong></p>
 <ul>
-<li><strong>Knowledge Generation Iteration</strong> - Enhanced the external knowledge node with improved knowledge storage and more accurate context search. <a href="../knowledge_base/ext_knowledge/">docs</a></li>
 <li><strong>Semantic Tools Optimization</strong> - Optimized semantic tools and context search for faster, more relevant results in the CLI.</li>
 <li><strong>Generation Prompt String Validation</strong> - Strengthened string validation across multiple prompt templates for more reliable generation output.</li>
 <li><strong>Action-Based User Interaction Model</strong> - Redesigned the CLI interaction layer to use a unified action-based model for execution, generation, and planning.</li>
@@ -4374,8 +4409,6 @@
 
 
 
-  
-
 
 
 
@@ -4497,6 +4530,8 @@
     
     
       <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../javascripts/analytics.js"></script>
       
     
   </body>

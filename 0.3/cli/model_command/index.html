@@ -50,16 +50,6 @@
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
-  
-
-
-  
-  
-
-<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-8HMXHZDV7F"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-8HMXHZDV7F",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-8HMXHZDV7F",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
-  
-    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
-  
 
     
     
@@ -985,6 +975,8 @@
       
         
       
+        
+      
     
     
     
@@ -1155,6 +1147,34 @@
     
   
     Generate Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../subagent/ask_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ask Metrics
   
 
     
@@ -1573,8 +1593,6 @@
       
         
       
-        
-      
     
     
     
@@ -1633,34 +1651,6 @@
     
   
     Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    External Knowledge
   
 
     
@@ -3515,6 +3505,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Interactive Picker">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#filtering-the-model-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filtering the model list
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3700,7 +3707,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/cli/model_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.4/docs/cli/model_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3742,6 +3749,8 @@
 </tbody>
 </table>
 <p>Use <strong>Up/Down</strong> arrows to navigate, <strong>Enter</strong> to select, and <strong>Esc</strong> / <strong>q</strong> to cancel.</p>
+<h4 id="filtering-the-model-list">Filtering the model list<a class="headerlink" href="#filtering-the-model-list" title="Permanent link">&para;</a></h4>
+<p>After drilling into a provider, the model list shows a <strong>Search</strong> box at the top — just start typing to filter the list by substring (case-insensitive). This is especially handy for gateways like <strong>OpenRouter</strong> that expose 300+ models. <strong>Up/Down</strong> and <strong>Enter</strong> keep operating on the filtered list; <strong>Esc</strong> clears the filter first, then a second <strong>Esc</strong> returns to the provider list. The list height adapts to the available terminal space and scrolls when it overflows.</p>
 <h3 id="direct-shortcuts">Direct Shortcuts<a class="headerlink" href="#direct-shortcuts" title="Permanent link">&para;</a></h3>
 <p>Switch without opening the picker:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a># Switch to a specific provider + model
@@ -3758,7 +3767,7 @@
 <hr />
 <h2 id="provider-authentication">Provider Authentication<a class="headerlink" href="#provider-authentication" title="Permanent link">&para;</a></h2>
 <h3 id="api-key-providers">API Key Providers<a class="headerlink" href="#api-key-providers" title="Permanent link">&para;</a></h3>
-<p>For providers that require an API key (OpenAI, DeepSeek, Claude API, Kimi, Qwen, Gemini, etc.):</p>
+<p>For providers that require an API key (OpenAI, DeepSeek, Claude API, Kimi, Qwen, Gemini, OpenRouter, etc.):</p>
 <ol>
 <li>Select the provider in the picker</li>
 <li>If no credentials are configured, a credential form appears</li>
@@ -3789,7 +3798,7 @@
 <li>Select <strong>+ Add custom model</strong></li>
 <li>Fill in the form fields:</li>
 <li><strong>Name</strong> — Unique identifier (used as <code>agent.models.&lt;name&gt;</code> key)</li>
-<li><strong>Type</strong> — Interface type (<code>openai</code>, <code>claude</code>, <code>deepseek</code>, <code>kimi</code>, <code>gemini</code>, etc.)</li>
+<li><strong>Type</strong> — Interface type (<code>openai</code>, <code>claude</code>, <code>deepseek</code>, <code>kimi</code>, <code>gemini</code>, <code>openrouter</code>, etc.)</li>
 <li><strong>Base URL</strong> — API endpoint URL</li>
 <li><strong>API Key</strong> — Authentication credential (masked)</li>
 <li><strong>Model</strong> — Model name / SKU</li>
@@ -3869,8 +3878,6 @@
 
 
 
-
-  
 
 
 
@@ -3971,6 +3978,8 @@
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/analytics.js"></script>
       
     
   </body>

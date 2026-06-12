@@ -52,16 +52,6 @@
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
-  
-
-
-  
-  
-
-<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-8HMXHZDV7F"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-8HMXHZDV7F",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-8HMXHZDV7F",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
-  
-    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
-  
 
     
     
@@ -989,6 +979,8 @@
       
         
       
+        
+      
     
     
     
@@ -1159,6 +1151,34 @@
     
   
     生成指标
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/ask_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    指标问答
   
 
     
@@ -1577,8 +1597,6 @@
       
         
       
-        
-      
     
     
     
@@ -1637,34 +1655,6 @@
     
   
     介绍
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    外部知识
   
 
     
@@ -3513,6 +3503,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#034" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#033" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3774,6 +3775,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#034" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#033" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4005,7 +4017,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/release_notes.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.4/docs/release_notes.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4015,6 +4027,30 @@
 
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="034">0.3.4<a class="headerlink" href="#034" title="Permanent link">&para;</a></h3>
+<p><strong>新功能</strong></p>
+<ul>
+<li><strong>AskMetrics 子代理</strong> - 面向 KPI、趋势、group-by 和 attribution 问题的专属 metric QA agent，会优先使用 metric 专用工具与提示词而非裸 SQL，并支持自定义路由、模板和工具。<a href="https://github.com/Datus-ai/Datus-agent/pull/954">#954</a> <a href="../subagent/ask_metrics/">文档</a></li>
+<li><strong>OpenRouter Provider</strong> - 用一个 <code>OPENROUTER_API_KEY</code> 即可访问完整的 vendor/model 目录；<code>/model</code> 选择器新增搜索过滤，并隐藏 Anthropic Claude 的非 canonical <code>-fast</code> 别名。<a href="https://github.com/Datus-ai/Datus-agent/pull/973">#973</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/936">#936</a> <a href="../cli/model_command/">文档</a></li>
+<li><strong>自更新命令</strong> - <code>datus upgrade</code> / <code>datus update</code> 可在 CLI 中检查并安装 <code>datus-*</code> 包的新版本；交互式会话启动时会提示可用新版本，<code>--check</code> 则只查看不安装。<a href="https://github.com/Datus-ai/Datus-agent/pull/949">#949</a></li>
+<li><strong>Print 模式 Orchestrator 工具</strong> - <code>--orchestrator-tools</code> 让外部 orchestrator 通过代理工具请求 issue 评论、状态更新、人工输入、blocked 标记和 mission 完成，且每个工具的 strict JSON schema 都被完整保留。<a href="https://github.com/Datus-ai/Datus-agent/pull/950">#950</a></li>
+</ul>
+<p><strong>增强</strong></p>
+<ul>
+<li><strong>默认可查询的指标</strong> - 指标生成现在会提取一份 queryability contract，并用 <code>query_metrics(dry_run=True)</code> 校验，因此不再产出结构合法、却无法按原始粒度查询的指标。<a href="https://github.com/Datus-ai/Datus-agent/pull/943">#943</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/962">#962</a></li>
+<li><strong>隔离的 Agent Memory</strong> - 每个 agent 拥有一份独立的 2000 字节 <code>MEMORY.md</code>，仅能通过 <code>add_memory</code> / <code>edit_memory</code> 写入；sub-agent 只以只读方式继承。<a href="https://github.com/Datus-ai/Datus-agent/pull/975">#975</a> <a href="../integration/memory/">文档</a></li>
+<li><strong>内置知识抽取</strong> - 外部知识生成从旧的 <code>ext_knowledge</code> 向量子系统切换为内置的 <code>extract-knowledge</code> skill，精简了遗留存储与工具面，同时保留 knowledge-base API。<a href="https://github.com/Datus-ai/Datus-agent/pull/932">#932</a></li>
+<li><strong>更强的 Snowflake 支持</strong> - Snowflake 现支持 inline PEM 私钥、拒绝不支持的 catalog 参数，并在 DB 与 MetricFlow adapter 中规范化 time-grain 查询；文档也明确 password 与私钥二选一、warehouse 必填，且通常不应设置 catalog。<a href="https://github.com/Datus-ai/Datus-agent/pull/937">#937</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/70">datus-db-adapters#70</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/72">datus-db-adapters#72</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/27">datus-semantic-adapter#27</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/28">datus-semantic-adapter#28</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/29">datus-semantic-adapter#29</a> <a href="../configuration/datasources/">文档</a></li>
+<li><strong>统一的 <code>gen_sql</code> 命名</strong> - SQL 生成节点、工作流、配置、CLI 命令（<code>/gen_sql</code>）、prompt 模板和 sub-agent 名称统一为同一套 <code>gen_sql</code> 命名；使用旧 <code>generate_sql</code> / <code>sql_system</code> 配置的项目需要迁移。<a href="https://github.com/Datus-ai/Datus-agent/pull/935">#935</a> <a href="../configuration/nodes/">文档</a></li>
+<li><strong>可配置的指标批量大小</strong> - <code>bootstrap-kb --components metrics</code> 新增 <code>--metrics-batch-size</code>；需要逐条 success-story provenance 时设为 <code>1</code>，否则保留默认值 <code>5</code> 以维持原有吞吐。<a href="https://github.com/Datus-ai/Datus-agent/pull/976">#976</a></li>
+</ul>
+<p><strong>Bug 修复</strong></p>
+<ul>
+<li><strong>按 Datasource 隔离的指标 Bootstrap</strong> - 多 datasource 项目中指标 bootstrap 现按 datasource 做行级隔离，<code>overwrite</code> 不再删除其他 datasource 的 KB 数据，同时加固了 MetricFlow YAML merge、批次刷新、最终指标去重和 CLI 长输出截断。<a href="https://github.com/Datus-ai/Datus-agent/pull/974">#974</a> <a href="../qa/metric-bootstrap-generation-qa/">文档</a></li>
+<li><strong>更稳健的语义指标查询与校验</strong> - Snowflake 表坐标现能正确进入 semantic model 生成提示，多指标维度兼容性有 preflight 与拆分建议，临时 YAML 校验不再扫描无关父目录，非字符串/可空 PyArrow 结果也能安全展示。<a href="https://github.com/Datus-ai/Datus-agent/pull/941">#941</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/946">#946</a></li>
+<li><strong>跨 Datasource 的 Subject 节点迁移</strong> - 升级旧版 SQLite 存储时会迁移陈旧的 <code>subject_nodes</code> UNIQUE 约束，使同名 subject 节点可在不同 datasource 间共存，同时保持同一 datasource 内的去重。<a href="https://github.com/Datus-ai/Datus-agent/pull/964">#964</a></li>
+<li><strong>一个 Datasource 路由到多个 Database</strong> - 单个 datasource 现可路由到多个 database——文件 glob datasource、benchmark 任务、<code>/database</code> 切换、DB 工具和节点执行都按 <code>(datasource, database)</code> 选择连接，benchmark SQL 任务也可显式指定 datasource。<a href="https://github.com/Datus-ai/Datus-agent/pull/961">#961</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/934">#934</a> <a href="https://github.com/Datus-ai/datus-db-adapters/pull/71">datus-db-adapters#71</a></li>
+</ul>
 <h3 id="033">0.3.3<a class="headerlink" href="#033" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
 <ul>
@@ -4174,7 +4210,6 @@
 </ul>
 <p><strong>增强</strong></p>
 <ul>
-<li><strong>知识生成迭代</strong> - 增强 external knowledge node，改进知识存储并提升 context search 准确率。<a href="../knowledge_base/ext_knowledge/">文档</a></li>
 <li><strong>语义工具优化</strong> - 优化语义工具与 context search，在 CLI 中获得更快、更相关的结果。</li>
 <li><strong>生成 Prompt 字符串校验</strong> - 加强多个 prompt template 的字符串校验，提升生成结果可靠性。</li>
 <li><strong>基于 Action 的用户交互模型</strong> - 重做 CLI 交互层，统一以 action-based 模型驱动 execution、generation 与 planning。</li>
@@ -4374,8 +4409,6 @@
 
 
 
-  
-
 
 
 
@@ -4497,6 +4530,8 @@
     
     
       <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/analytics.js"></script>
       
     
   </body>

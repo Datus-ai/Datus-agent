@@ -50,16 +50,6 @@
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
-  
-
-
-  
-  
-
-<script id="__analytics">function __md_analytics(){function e(){dataLayer.push(arguments)}window.dataLayer=window.dataLayer||[],e("js",new Date),e("config","G-8HMXHZDV7F"),document.addEventListener("DOMContentLoaded",(function(){document.forms.search&&document.forms.search.query.addEventListener("blur",(function(){this.value&&e("event","search",{search_term:this.value})}));document$.subscribe((function(){var t=document.forms.feedback;if(void 0!==t)for(var a of t.querySelectorAll("[type=submit]"))a.addEventListener("click",(function(a){a.preventDefault();var n=document.location.pathname,d=this.getAttribute("data-md-value");e("event","feedback",{page:n,data:d}),t.firstElementChild.disabled=!0;var r=t.querySelector(".md-feedback__note [data-md-value='"+d+"']");r&&(r.hidden=!1)})),t.hidden=!1})),location$.subscribe((function(t){e("config","G-8HMXHZDV7F",{page_path:t.pathname})}))}));var t=document.createElement("script");t.async=!0,t.src="https://www.googletagmanager.com/gtag/js?id=G-8HMXHZDV7F",document.getElementById("__analytics").insertAdjacentElement("afterEnd",t)}</script>
-  
-    <script>"undefined"!=typeof __md_analytics&&__md_analytics()</script>
-  
 
     
     
@@ -985,6 +975,8 @@
       
         
       
+        
+      
     
     
     
@@ -1155,6 +1147,34 @@
     
   
     Generate Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../subagent/ask_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Ask Metrics
   
 
     
@@ -1573,8 +1593,6 @@
       
         
       
-        
-      
     
     
     
@@ -1633,34 +1651,6 @@
     
   
     Introduction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../knowledge_base/ext_knowledge/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    External Knowledge
   
 
     
@@ -3572,6 +3562,34 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#self-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Upgrade
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Self-Upgrade">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#datus-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        datus upgrade
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3589,7 +3607,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.3/docs/cli-commands.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.4/docs/cli-commands.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3670,6 +3688,18 @@ for the same datasource CRUD operations (handy in scripts or CI).</p>
 - Otherwise, a list of available databases is shown</p>
 <p>The old database-selection flag is no longer accepted by the current CLI; use <code>--datasource</code>.</p>
 <hr />
+<h2 id="self-upgrade">Self-Upgrade<a class="headerlink" href="#self-upgrade" title="Permanent link">&para;</a></h2>
+<h3 id="datus-upgrade"><code>datus upgrade</code><a class="headerlink" href="#datus-upgrade" title="Permanent link">&para;</a></h3>
+<p>Upgrade <code>datus-agent</code> and every installed <code>datus-*</code> adapter package to the
+latest release in one <code>uv</code> / <code>pip</code> run. Third-party dependencies are bumped only
+when a new datus release requires it; editable / source (<code>git</code>) checkouts are
+skipped. Add <code>--check</code> to report the latest version without installing.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>upgrade
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>upgrade<span class="w"> </span>--check
+</span></code></pre></div>
+<p>On an interactive launch, <code>datus</code> also prints a one-line hint when a newer
+release is available. Set <code>DATUS_DISABLE_VERSION_CHECK=1</code> to silence it.</p>
+<hr />
 
 
 
@@ -3678,8 +3708,6 @@ for the same datasource CRUD operations (handy in scripts or CI).</p>
 
 
 
-
-  
 
 
 
@@ -3780,6 +3808,8 @@ for the same datasource CRUD operations (handy in scripts or CI).</p>
     
     
       <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../javascripts/analytics.js"></script>
       
     
   </body>
