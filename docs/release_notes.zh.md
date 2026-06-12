@@ -2,6 +2,31 @@
 
 ## 0.3
 
+### 0.3.4
+
+**新功能**
+
+- **AskMetrics 子代理** - 面向 KPI、趋势、group-by 和 attribution 问题的专属 metric QA agent，会优先使用 metric 专用工具与提示词而非裸 SQL，并支持自定义路由、模板和工具。[#954](https://github.com/Datus-ai/Datus-agent/pull/954) [文档](subagent/ask_metrics.zh.md)
+- **OpenRouter Provider** - 用一个 `OPENROUTER_API_KEY` 即可访问完整的 vendor/model 目录；`/model` 选择器新增搜索过滤，并隐藏 Anthropic Claude 的非 canonical `-fast` 别名。[#973](https://github.com/Datus-ai/Datus-agent/pull/973) [#936](https://github.com/Datus-ai/Datus-agent/pull/936) [文档](cli/model_command.zh.md)
+- **自更新命令** - `datus upgrade` / `datus update` 可在 CLI 中检查并安装 `datus-*` 包的新版本；交互式会话启动时会提示可用新版本，`--check` 则只查看不安装。[#949](https://github.com/Datus-ai/Datus-agent/pull/949)
+- **Print 模式 Orchestrator 工具** - `--orchestrator-tools` 让外部 orchestrator 通过代理工具请求 issue 评论、状态更新、人工输入、blocked 标记和 mission 完成，且每个工具的 strict JSON schema 都被完整保留。[#950](https://github.com/Datus-ai/Datus-agent/pull/950)
+
+**增强**
+
+- **默认可查询的指标** - 指标生成现在会提取一份 queryability contract，并用 `query_metrics(dry_run=True)` 校验，因此不再产出结构合法、却无法按原始粒度查询的指标。[#943](https://github.com/Datus-ai/Datus-agent/pull/943) [#962](https://github.com/Datus-ai/Datus-agent/pull/962)
+- **隔离的 Agent Memory** - 每个 agent 拥有一份独立的 2000 字节 `MEMORY.md`，仅能通过 `add_memory` / `edit_memory` 写入；sub-agent 只以只读方式继承。[#975](https://github.com/Datus-ai/Datus-agent/pull/975) [文档](integration/memory.zh.md)
+- **内置知识抽取** - 外部知识生成从旧的 `ext_knowledge` 向量子系统切换为内置的 `extract-knowledge` skill，精简了遗留存储与工具面，同时保留 knowledge-base API。[#932](https://github.com/Datus-ai/Datus-agent/pull/932)
+- **更强的 Snowflake 支持** - Snowflake 现支持 inline PEM 私钥、拒绝不支持的 catalog 参数，并在 DB 与 MetricFlow adapter 中规范化 time-grain 查询；文档也明确 password 与私钥二选一、warehouse 必填，且通常不应设置 catalog。[#937](https://github.com/Datus-ai/Datus-agent/pull/937) [datus-db-adapters#70](https://github.com/Datus-ai/datus-db-adapters/pull/70) [datus-db-adapters#72](https://github.com/Datus-ai/datus-db-adapters/pull/72) [datus-semantic-adapter#27](https://github.com/Datus-ai/datus-semantic-adapter/pull/27) [datus-semantic-adapter#28](https://github.com/Datus-ai/datus-semantic-adapter/pull/28) [datus-semantic-adapter#29](https://github.com/Datus-ai/datus-semantic-adapter/pull/29) [文档](configuration/datasources.zh.md)
+- **统一的 `gen_sql` 命名** - SQL 生成节点、工作流、配置、CLI 命令（`/gen_sql`）、prompt 模板和 sub-agent 名称统一为同一套 `gen_sql` 命名；使用旧 `generate_sql` / `sql_system` 配置的项目需要迁移。[#935](https://github.com/Datus-ai/Datus-agent/pull/935) [文档](configuration/nodes.zh.md)
+- **可配置的指标批量大小** - `bootstrap-kb --components metrics` 新增 `--metrics-batch-size`；需要逐条 success-story provenance 时设为 `1`，否则保留默认值 `5` 以维持原有吞吐。[#976](https://github.com/Datus-ai/Datus-agent/pull/976)
+
+**Bug 修复**
+
+- **按 Datasource 隔离的指标 Bootstrap** - 多 datasource 项目中指标 bootstrap 现按 datasource 做行级隔离，`overwrite` 不再删除其他 datasource 的 KB 数据，同时加固了 MetricFlow YAML merge、批次刷新、最终指标去重和 CLI 长输出截断。[#974](https://github.com/Datus-ai/Datus-agent/pull/974) [文档](qa/metric-bootstrap-generation-qa.zh.md)
+- **更稳健的语义指标查询与校验** - Snowflake 表坐标现能正确进入 semantic model 生成提示，多指标维度兼容性有 preflight 与拆分建议，临时 YAML 校验不再扫描无关父目录，非字符串/可空 PyArrow 结果也能安全展示。[#941](https://github.com/Datus-ai/Datus-agent/pull/941) [#946](https://github.com/Datus-ai/Datus-agent/pull/946)
+- **跨 Datasource 的 Subject 节点迁移** - 升级旧版 SQLite 存储时会迁移陈旧的 `subject_nodes` UNIQUE 约束，使同名 subject 节点可在不同 datasource 间共存，同时保持同一 datasource 内的去重。[#964](https://github.com/Datus-ai/Datus-agent/pull/964)
+- **一个 Datasource 路由到多个 Database** - 单个 datasource 现可路由到多个 database——文件 glob datasource、benchmark 任务、`/database` 切换、DB 工具和节点执行都按 `(datasource, database)` 选择连接，benchmark SQL 任务也可显式指定 datasource。[#961](https://github.com/Datus-ai/Datus-agent/pull/961) [#934](https://github.com/Datus-ai/Datus-agent/pull/934) [datus-db-adapters#71](https://github.com/Datus-ai/datus-db-adapters/pull/71)
+
 ### 0.3.3
 
 **新功能**
