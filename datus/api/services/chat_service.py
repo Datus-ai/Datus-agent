@@ -7,7 +7,7 @@ read from disk each time (no in-memory state).
 """
 
 import uuid
-from typing import AsyncGenerator, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.api.models.base_models import Result
@@ -62,6 +62,7 @@ class ChatService:
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        principal: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[SSEEvent, None]:
         """Start a background chat task and yield SSE events."""
         task_manager = self._task_manager
@@ -71,6 +72,7 @@ class ChatService:
                 request,
                 sub_agent_id=sub_agent_id,
                 user_id=user_id,
+                principal=principal,
             )
         except (ValueError, DatusException) as e:
             error_code = e.code.name if isinstance(e, DatusException) else ErrorCode.COMMON_VALIDATION_FAILED.name

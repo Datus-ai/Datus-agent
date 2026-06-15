@@ -1,7 +1,7 @@
 """Application context — request authentication and configuration."""
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from datus.configuration.agent_config import AgentConfig
 
@@ -16,8 +16,12 @@ class AppContext:
       (default) project.
     - ``config``: optional preloaded ``AgentConfig``; when ``None``,
       ``get_datus_service`` loads it on demand.
+    - ``principal``: request-scoped data-access attributes consumed by
+      data-access policies. This is separate from ``user_id`` because one
+      authenticated identity can carry many business scopes.
     """
 
     user_id: Optional[str] = None
     project_id: Optional[str] = None
     config: Optional[AgentConfig] = None
+    principal: Dict[str, Any] = field(default_factory=dict)

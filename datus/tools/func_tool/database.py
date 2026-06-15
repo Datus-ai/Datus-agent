@@ -109,6 +109,7 @@ class DBFuncTool:
         default_database: Optional[str] = None,
         sub_agent_name: Optional[str] = None,
         scoped_tables: Optional[Iterable[str]] = None,
+        principal: Optional[Dict[str, Any]] = None,
         connector_cache_size: int = DEFAULT_CONNECTOR_CACHE_SIZE,
     ):
         """
@@ -124,6 +125,8 @@ class DBFuncTool:
                               configured for its datasource); defaults to the datasource config's ``database``.
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
+            principal: Request-scoped data-access attributes. When omitted,
+                       falls back to ``agent_config.principal`` if present.
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
         """
         if connector_or_manager is None:
@@ -150,6 +153,8 @@ class DBFuncTool:
         model_name = agent_config.active_model().model if agent_config else "gpt-3.5-turbo"
         self.compressor = DataCompressor(model_name=model_name)
         self.agent_config = agent_config
+        principal_source = principal if principal is not None else getattr(agent_config, "principal", {})
+        self.principal: Dict[str, Any] = dict(principal_source) if isinstance(principal_source, dict) else {}
         self.sub_agent_name = sub_agent_name
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
@@ -1161,6 +1166,11 @@ class DBFuncTool:
                 )
 
             logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
+            sql = self._enforce_data_access_policy(
+                sql,
+                datasource=datasource or self._default_datasource or "default",
+                dialect=connector.dialect,
+            )
             result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
             if result.success:
                 data = result.sql_return
@@ -1169,6 +1179,30 @@ class DBFuncTool:
                 return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
+
+    def _enforce_data_access_policy(self, sql: str, datasource: str, dialect: str) -> str:
+        if not self.agent_config:
+            return sql
+        data_access_config = getattr(self.agent_config, "data_access_config", None)
+        if not data_access_config or not getattr(data_access_config, "enabled", False):
+            return sql
+        from datus.tools.data_access_policy import load_data_access_enforcer
+
+        enforced = load_data_access_enforcer(data_access_config).enforce_read(
+            sql,
+            datasource=datasource,
+            dialect=dialect,
+            principal=self.principal,
+        )
+        if not enforced.allowed:
+            raise PermissionError(enforced.reason or "SQL data-access policy denied the query")
+        if enforced.applied_policies:
+            logger.info(
+                "Applied SQL data-access policies",
+                policies=enforced.applied_policies,
+                datasource=datasource,
+            )
+        return enforced.sql or sql
 
     @mcp_tool()
     def get_table_ddl(

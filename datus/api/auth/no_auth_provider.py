@@ -41,7 +41,8 @@ class NoAuthProvider:
                         ),
                     )
                 user_id = candidate
-        return AppContext(user_id=user_id, project_id=None, config=None)
+        principal = {"user_id": user_id} if user_id else {}
+        return AppContext(user_id=user_id, project_id=None, config=None, principal=principal)
 
     def on_evict(self, callback: EvictCallback) -> None:
         """Register eviction callback (no-op for no-auth provider)."""

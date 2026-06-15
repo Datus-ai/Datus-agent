@@ -11,7 +11,7 @@ import asyncio
 import copy
 import uuid
 from datetime import datetime
-from typing import AsyncGenerator, Dict, List, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.api.models.cli_models import (
@@ -301,6 +301,7 @@ class ChatTaskManager:
         request: StreamChatInput,
         sub_agent_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        principal: Optional[Dict[str, Any]] = None,
     ) -> ChatTask:
         """Create a background task for the agentic loop.
             :param sub_agent_id: builtin name or custom sub-agent DB ID
@@ -308,6 +309,7 @@ class ChatTaskManager:
         """
         # Clone config to avoid cross-request mutation of shared AgentConfig
         agent_config = copy.deepcopy(agent_config)
+        agent_config.principal = dict(principal or {})
         # API surface has no interactive broker to confirm EXTERNAL file
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
@@ -357,7 +359,13 @@ class ChatTaskManager:
         self._tasks[session_id] = task
 
         asyncio_task = asyncio.create_task(
-            self._run_loop(task, agent_config, request, sub_agent_id=sub_agent_id, user_id=user_id)
+            self._run_loop(
+                task,
+                agent_config,
+                request,
+                sub_agent_id=sub_agent_id,
+                user_id=user_id,
+            )
         )
         task.asyncio_task = asyncio_task
         return task

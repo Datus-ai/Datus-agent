@@ -111,7 +111,7 @@ async def stream_chat(
 
     async def generate_sse():
         async for chunk in _stream_with_post_hook(
-            svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id),
+            svc.chat.stream_chat(request, sub_agent_id=sub_agent_id, user_id=ctx.user_id, principal=ctx.principal),
             http_request=http_request,
             request=request,
             user_id=ctx.user_id,
@@ -154,7 +154,9 @@ async def stream_chat_feedback(
     )
 
     async def generate_sse():
-        async for event in svc.chat.stream_chat(stream_input, sub_agent_id="feedback", user_id=ctx.user_id):
+        async for event in svc.chat.stream_chat(
+            stream_input, sub_agent_id="feedback", user_id=ctx.user_id, principal=ctx.principal
+        ):
             yield f"id: {event.id}\nevent: {event.event}\ndata: {event.data.model_dump_json()}\n\n"
 
     return StreamingResponse(generate_sse(), media_type="text/event-stream", headers=_sse_headers())

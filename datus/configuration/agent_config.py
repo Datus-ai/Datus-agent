@@ -905,6 +905,14 @@ class AgentConfig:
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
 
+        # Data access policies are enforced at the DB tool boundary. The config
+        # is static, while the request-scoped principal is attached later by
+        # API/gateway callers to the per-request AgentConfig copy.
+        from datus.tools.data_access_policy import DataAccessConfig
+
+        self.data_access_config = DataAccessConfig.from_dict(kwargs.get("data_access", {}))
+        self.principal: Dict[str, Any] = {}
+
         # Initialize skills configuration
         self.skills_config = self._init_skills_config(kwargs.get("skills", {}))
 
