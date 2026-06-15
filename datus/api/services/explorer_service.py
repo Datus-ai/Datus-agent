@@ -725,8 +725,10 @@ class ExplorerService:
                         errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
                     )
                 # The datasource id (logical key) is not a physical database; return the
-                # datasource's real default database so callers can run the SQL as-is.
-                database = self.agent_config.current_db_config().database or None
+                # bound datasource's real default database so callers can run the SQL as-is.
+                # Pin the lookup to this service's datasource_id (not the implicit "current")
+                # so a multi-datasource config can never return another datasource's database.
+                database = self.agent_config.current_db_config(self.datasource_id).database or None
                 return Result[MetricPreviewData](
                     success=True,
                     data=MetricPreviewData(metric=metric_name, sql=sql, database=database),
