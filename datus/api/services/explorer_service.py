@@ -724,9 +724,12 @@ class ExplorerService:
                         errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                         errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
                     )
+                # The datasource id (logical key) is not a physical database; return the
+                # datasource's real default database so callers can run the SQL as-is.
+                database = self.agent_config.current_db_config().database or None
                 return Result[MetricPreviewData](
                     success=True,
-                    data=MetricPreviewData(metric=metric_name, sql=sql, datasource=self.datasource_id or None),
+                    data=MetricPreviewData(metric=metric_name, sql=sql, database=database),
                 )
 
             # A dimension preflight failure carries structured detail; surface it

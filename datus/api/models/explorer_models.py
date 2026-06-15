@@ -160,7 +160,7 @@ class MetricPreviewData(BaseModel):
 
     metric: str = Field(..., description="Metric name")
     sql: Optional[str] = Field(None, description="Runnable SQL compiled from the metric definition")
-    datasource: Optional[str] = Field(None, description="Datasource the SQL should run against")
+    database: Optional[str] = Field(None, description="Physical database the SQL should run against")
     preflight_error: Optional[MetricDimensionPreflight] = Field(
         None, description="Set instead of sql when the requested dimensions are invalid"
     )
