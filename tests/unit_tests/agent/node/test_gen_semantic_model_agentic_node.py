@@ -465,6 +465,25 @@ class TestPrepareTemplateContext:
         assert "test_tool" in context["native_tools"]
 
 
+class TestGetSystemPrompt:
+    def test_osi_authoring_uses_osi_prompt_template(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.node_config["authoring_format"] = "osi"
+
+        with (
+            patch("datus.agent.node.semantic_authoring.osi_prompt_version", return_value="osi-latest") as version_mock,
+            patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm,
+        ):
+            mock_pm.return_value.render_template.return_value = "osi prompt"
+
+            node._get_system_prompt(prompt_version="1.2", template_context={})
+
+        version_mock.assert_called_once_with(real_agent_config, "gen_semantic_model", "1.2")
+        call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
+        assert call_kwargs["template_name"] == "gen_semantic_model_osi_system"
+        assert call_kwargs["version"] == "osi-latest"
+
+
 # ---------------------------------------------------------------------------
 # TestGetNodeName
 # ---------------------------------------------------------------------------
@@ -760,6 +779,49 @@ class TestSaveToDb:
         with patch("datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db") as sync_mock:
             node._save_to_db("semantic_models/other_db/orders.yml")
             sync_mock.assert_not_called()
+
+    def test_osi_save_to_db_uses_generation_tools_sync(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.node_config["authoring_format"] = "osi"
+        datasource = real_agent_config.current_datasource
+        semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
+        semantic_dir.mkdir(parents=True, exist_ok=True)
+        semantic_file = semantic_dir / "orders.yml"
+        semantic_file.write_text("version: 0.2.0.dev0\nsemantic_model: []\n", encoding="utf-8")
+        node.generation_tools.sync_osi_semantic_to_db = MagicMock(return_value={"success": True, "message": "synced"})
+
+        assert node._save_to_db(f"subject/semantic_models/{datasource}/orders.yml") is True
+
+        node.generation_tools.sync_osi_semantic_to_db.assert_called_once_with(str(semantic_file))
+        assert node.generation_evidence.semantic_kb_sync_passed is True
+
+    def test_osi_save_to_db_fails_without_generation_tools(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.node_config["authoring_format"] = "osi"
+        datasource = real_agent_config.current_datasource
+        semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
+        semantic_dir.mkdir(parents=True, exist_ok=True)
+        (semantic_dir / "orders.yml").write_text("version: 0.2.0.dev0\nsemantic_model: []\n", encoding="utf-8")
+        node.generation_tools = None
+
+        assert node._save_to_db(f"subject/semantic_models/{datasource}/orders.yml") is False
+
+    def test_osi_save_to_db_reports_sync_failure(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.node_config["authoring_format"] = "osi"
+        datasource = real_agent_config.current_datasource
+        semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
+        semantic_dir.mkdir(parents=True, exist_ok=True)
+        semantic_file = semantic_dir / "orders.yml"
+        semantic_file.write_text("version: 0.2.0.dev0\nsemantic_model: []\n", encoding="utf-8")
+        node.generation_tools.sync_osi_semantic_to_db = MagicMock(
+            return_value={"success": False, "error": "sync failed"}
+        )
+
+        assert node._save_to_db(f"subject/semantic_models/{datasource}/orders.yml") is False
+
+        node.generation_tools.sync_osi_semantic_to_db.assert_called_once_with(str(semantic_file))
+        assert node.generation_evidence.semantic_kb_sync_passed is False
 
 
 class TestGenSemanticModelFilesystemRootPath:

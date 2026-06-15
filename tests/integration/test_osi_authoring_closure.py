@@ -6,13 +6,16 @@ which compiles OSI -> IR -> MetricFlow YAML and returns business-semantic errors
 This test drives that adapter the same way SemanticTools does (via the registry),
 proving the loop closes without the LLM ever writing MetricFlow syntax.
 
-Uses the ``native`` execution backend so it runs in the agent's no-optional-package
-CI (no MetricFlow needed). Skipped when ``datus_semantic_osi`` is not installed.
+Skipped when ``datus_semantic_osi`` or its MetricFlow backend dependency is not
+installed.
 """
 
 import pytest
+import sqlglot
+from sqlglot import expressions as exp
 
 pytest.importorskip("datus_semantic_osi")
+pytest.importorskip("metricflow")
 
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 
@@ -71,8 +74,17 @@ def _make_adapter(osi_dir):
     from datus_semantic_osi.config import DatusOSIConfig
 
     register()
-    config = DatusOSIConfig(semantic_models_path=str(osi_dir), datasource="orders", execution_backend="native")
+    config = DatusOSIConfig(semantic_models_path=str(osi_dir), datasource="orders", execution_backend="metricflow")
     return semantic_adapter_registry.create_adapter("osi", config)
+
+
+def _has_count_distinct_order_id(sql: str) -> bool:
+    parsed = sqlglot.parse_one(sql)
+    for count in parsed.find_all(exp.Count):
+        normalized = count.sql(dialect="mysql").lower().replace("`", "").replace('"', "")
+        if "count(distinct order_id)" in normalized:
+            return True
+    return False
 
 
 @pytest.mark.asyncio
@@ -88,7 +100,7 @@ async def test_good_osi_validates_and_dry_runs(tmp_path):
     assert "order_count" in metrics
 
     q = await adapter.query_metrics(["order_count"], dry_run=True)
-    assert "COUNT(DISTINCT order_id)" in q.metadata["sql"]
+    assert _has_count_distinct_order_id(q.metadata["sql"])
 
 
 @pytest.mark.asyncio

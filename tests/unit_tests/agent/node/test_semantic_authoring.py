@@ -1,6 +1,7 @@
 """Unit tests for semantic authoring format resolution."""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_METRICFLOW,
@@ -46,6 +47,18 @@ def test_resolution_is_resilient_to_agent_config_errors():
     assert resolve_authoring_format(bad, None) == AUTHORING_FORMAT_METRICFLOW
 
 
+def test_resolution_logs_agent_config_errors():
+    def _boom(_requested=None):
+        raise RuntimeError("no semantic layer")
+
+    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
+    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
+        assert resolve_authoring_format(bad, {"semantic_adapter": "osi"}) == AUTHORING_FORMAT_METRICFLOW
+
+    mock_logger.debug.assert_called_once()
+    assert "Failed to resolve semantic adapter" in mock_logger.debug.call_args.args[0]
+
+
 def test_osi_template_name_is_isolated_from_metricflow_template():
     # Separate template_name so the default `{node}_system` latest scan is unaffected.
     assert osi_template_name("gen_metrics") == "gen_metrics_osi_system"
@@ -60,6 +73,20 @@ def test_osi_prompt_version_ignores_injected_metricflow_version():
     assert osi_prompt_version(None, "gen_metrics", None) is None
     # a real OSI template version is honored
     assert osi_prompt_version(None, "gen_metrics", "1.0") == "1.0"
+
+
+def test_osi_prompt_version_logs_template_lookup_errors():
+    with (
+        patch(
+            "datus.prompts.prompt_manager.get_prompt_manager",
+            side_effect=RuntimeError("template registry unavailable"),
+        ),
+        patch("datus.agent.node.semantic_authoring.logger") as mock_logger,
+    ):
+        assert osi_prompt_version(None, "gen_metrics", "1.2") is None
+
+    mock_logger.debug.assert_called_once()
+    assert "Failed to list OSI prompt template versions" in mock_logger.debug.call_args.args[0]
 
 
 def test_osi_metrics_template_renders_despite_injected_metricflow_version():

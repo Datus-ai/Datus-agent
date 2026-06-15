@@ -466,8 +466,7 @@ class GenerationTools:
                 )
 
             if self._is_osi_authoring():
-                primary_semantic_file = abs_semantic_files[0] if abs_semantic_files else ""
-                sync_result = self._sync_osi_metric_to_db(abs_metric, primary_semantic_file, metric_sqls)
+                sync_result = self._sync_osi_metric_to_db(abs_metric, abs_semantic_files, metric_sqls)
                 if not sync_result.get("success"):
                     return FuncToolResult(
                         success=0,
@@ -1405,16 +1404,24 @@ class GenerationTools:
     def _sync_osi_metric_to_db(
         self,
         metric_file: str,
-        semantic_model_file: Optional[str] = None,
+        semantic_model_file: Optional[str | List[str]] = None,
         metric_sqls: Optional[Dict[str, str]] = None,
     ) -> dict:
         """Sync OSI metrics into MetricRAG using the OSI document as source of truth."""
         try:
+            semantic_model_files = (
+                list(semantic_model_file)
+                if isinstance(semantic_model_file, list)
+                else ([semantic_model_file] if semantic_model_file else [])
+            )
             target_metric_names = set(self.extract_osi_metric_names(metric_file))
             if not target_metric_names:
                 return {"success": False, "error": f"No OSI metrics found in metric file to sync: {metric_file}"}
 
-            doc = self._load_osi_document(metric_file=metric_file, semantic_model_file=semantic_model_file)
+            doc = self._load_osi_document(
+                metric_file=metric_file,
+                semantic_model_file=semantic_model_files[0] if semantic_model_files else None,
+            )
             datasets = self._dataset_lookup(doc)
             metrics_by_name = {getattr(item, "name", ""): item for item in getattr(doc, "metrics", [])}
             default_dataset = (
@@ -1474,12 +1481,12 @@ class GenerationTools:
                     ),
                 }
 
-            semantic_synced = False
-            if semantic_model_file:
-                sem_result = self.sync_osi_semantic_to_db(semantic_model_file)
+            synced_semantic_files: List[str] = []
+            for current_semantic_file in semantic_model_files:
+                sem_result = self.sync_osi_semantic_to_db(current_semantic_file)
                 if not sem_result.get("success"):
                     return sem_result
-                semantic_synced = True
+                synced_semantic_files.append(current_semantic_file)
 
             self.metric_rag.upsert_batch(metric_objects)
             self.metric_rag.create_indices()
@@ -1488,7 +1495,8 @@ class GenerationTools:
                 "message": f"Synced {len(metric_objects)} OSI metric(s): {', '.join(synced_items[:5])}",
                 "metric_artifact_ids": [obj["id"] for obj in metric_objects],
                 "metric_names": [obj["name"] for obj in metric_objects],
-                "semantic_synced": semantic_synced,
+                "semantic_synced": bool(synced_semantic_files),
+                "semantic_model_files_synced": synced_semantic_files,
             }
         except Exception as e:
             logger.error(f"Error syncing OSI metrics to DB: {e}", exc_info=True)

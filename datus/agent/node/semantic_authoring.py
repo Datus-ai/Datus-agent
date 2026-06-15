@@ -27,8 +27,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from datus.utils.loggings import get_logger
+
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
+
+logger = get_logger(__name__)
 
 
 def resolve_authoring_format(
@@ -50,7 +54,14 @@ def resolve_authoring_format(
     if agent_config is not None and hasattr(agent_config, "resolve_semantic_adapter"):
         try:
             adapter = agent_config.resolve_semantic_adapter(adapter_type)
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "Failed to resolve semantic adapter for authoring format; "
+                "falling back to metricflow. adapter_type=%r agent_config=%r error=%s",
+                adapter_type,
+                agent_config,
+                exc,
+            )
             adapter = None
 
     if adapter and str(adapter).strip().lower() == AUTHORING_FORMAT_OSI:
@@ -83,6 +94,14 @@ def osi_prompt_version(agent_config: Any, node_name: str, requested: Optional[st
         from datus.prompts.prompt_manager import get_prompt_manager
 
         available = get_prompt_manager(agent_config=agent_config).list_template_versions(osi_template_name(node_name))
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            "Failed to list OSI prompt template versions; falling back to latest. "
+            "node_name=%r template_name=%r agent_config=%r error=%s",
+            node_name,
+            osi_template_name(node_name),
+            agent_config,
+            exc,
+        )
         available = []
     return requested if requested in available else None
