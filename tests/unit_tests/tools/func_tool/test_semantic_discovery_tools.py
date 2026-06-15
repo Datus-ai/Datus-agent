@@ -629,6 +629,76 @@ class TestAnalyzeMetricCandidatesFromHistory:
             },
         ]
 
+    def test_period_shift_source_lookup_accepts_legacy_from_key(self):
+        from sqlglot import parse_one
+
+        tools = _make_tools()
+        select = parse_one("SELECT order_id FROM fact_orders")
+        from_clause = select.args.pop("from_", None)
+        if from_clause is None:
+            from_clause = select.args.get("from")
+        select.args["from"] = from_clause
+
+        assert tools._direct_source_names(select) == ["fact_orders"]
+
+    def test_baisheng_seed_24_generates_previous_month_and_delta_metrics(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_entries_json=json.dumps(
+                [
+                    {
+                        "name": "metric:seed:24",
+                        "question": "4月到10月活动数量月环比",
+                        "sql": """
+                        WITH monthly AS (
+                            SELECT
+                                DATE_TRUNC('month', start_date) AS start_month,
+                                COUNT(DISTINCT ac_code) AS activity_count
+                            FROM v_udata_ac_info
+                            WHERE start_date >= '2025-04-01' AND start_date <= '2025-10-31'
+                            GROUP BY DATE_TRUNC('month', start_date)
+                        ),
+                        compared AS (
+                            SELECT
+                                start_month,
+                                activity_count,
+                                LAG(activity_count) OVER (ORDER BY start_month)
+                                    AS previous_month_activity_count
+                            FROM monthly
+                        )
+                        SELECT
+                            start_month,
+                            activity_count,
+                            previous_month_activity_count,
+                            activity_count - previous_month_activity_count AS activity_count_mom_delta
+                        FROM compared
+                        ORDER BY start_month
+                        """,
+                    }
+                ]
+            ),
+            existing_metric_catalog_json=json.dumps([{"name": "activity_count", "type": "aggregate"}]),
+        )
+
+        assert result.success == 1
+        derived = {candidate["name"]: candidate for candidate in result.result["derived_metric_candidates"]}
+        assert sorted(derived) == ["activity_count_mom_delta", "previous_month_activity_count"]
+        assert derived["previous_month_activity_count"]["inputs"] == [
+            {
+                "name": "activity_count",
+                "alias": "previous_month_activity_count",
+                "offset_window": "1 month",
+            }
+        ]
+        assert derived["activity_count_mom_delta"]["inputs"] == [
+            {"name": "activity_count"},
+            {
+                "name": "activity_count",
+                "alias": "previous_month_activity_count",
+                "offset_window": "1 month",
+            },
+        ]
+
     def test_inline_lag_metric_math_uses_source_time_grain_context(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(

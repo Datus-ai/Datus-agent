@@ -105,6 +105,9 @@ class TestAskMetricsAgenticNode:
         assert "Previous-period aliases inside a derived metric are calculation inputs" in prompt
         assert "first period" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
+        assert "Query complete metric results by default" in prompt
+        assert "Do not pass `limit` just to preview data" in prompt
+        assert "also pass `order_by`" in prompt
         assert "full result is cached" in prompt
         assert node.subject_tree_prompt_limit == 100
 

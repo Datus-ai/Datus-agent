@@ -897,7 +897,7 @@ class SemanticDiscoveryTools:
             if name and name not in names:
                 names.append(name)
 
-        from_clause = select.args.get("from_")
+        from_clause = select.args.get("from_") or select.args.get("from")
         if from_clause is not None:
             if getattr(from_clause, "this", None) is not None:
                 add_source(from_clause.this)

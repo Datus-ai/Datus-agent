@@ -417,6 +417,14 @@ class AskMetricsAgenticNode(AgenticNode):
         """
         Query metric values.
 
+        Return complete metric results by default. Do not pass limit just to
+        preview data, reduce output size, or be conservative; the system
+        compresses visible tool output and caches the full result. Use limit
+        only when the user explicitly asks for Top N, first N, maximum N rows,
+        a preview, or another row-count restriction. When using limit for Top
+        N/Bottom N, also pass order_by so the truncation has stable business
+        meaning.
+
         For period-over-period derived metrics, AskMetrics expands the request
         to include the base and previous-period metrics when those metrics are
         already present in the executable catalog.

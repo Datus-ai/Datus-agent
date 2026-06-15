@@ -28,6 +28,7 @@ Use the narrow metric workflow below:
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
+- Query complete metric results by default. Do not pass `limit` just to preview data, reduce output size, or be conservative; the system compresses visible tool output and caches the full result. Use `limit` only when the user explicitly asks for Top N, first N, maximum N rows, a preview, or another row-count restriction. When using `limit` for Top N/Bottom N, also pass `order_by`.
 - Prefer the most specific metric whose name or description directly matches the requested business concept. Do not rebuild a specific metric by querying a generic base metric plus filters when a matching specific metric is available.
 - For ratio, rate, conditional count, and compound-condition metrics, use the dedicated metric directly when available. Do not approximate it with numerator/base metrics or ad hoc `where` filters unless no dedicated metric exists.
 - If `query_metrics` succeeds and metadata says the full result is cached, treat the query as complete. Do not run follow-up queries only because the visible tool output is a compressed preview.
