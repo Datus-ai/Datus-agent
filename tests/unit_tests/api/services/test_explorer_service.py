@@ -998,7 +998,8 @@ class TestExplorerServicePreviewMetric:
         assert result.success is True
         assert result.data.metric == "revenue"
         assert result.data.sql == "SELECT 1 AS revenue"
-        assert result.data.datasource == svc.datasource_id
+        # Carries the bound datasource's physical database, not the logical datasource id.
+        assert result.data.database == (real_agent_config.current_db_config(svc.datasource_id).database or None)
         assert result.data.preflight_error is None
         # dry_run must be requested so nothing actually executes.
         assert query_metrics.call_args.kwargs["dry_run"] is True
