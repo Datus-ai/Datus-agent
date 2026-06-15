@@ -66,7 +66,15 @@ def summarize_queryability_contracts(contracts: Iterable[Dict[str, Any]]) -> str
         dimensions = ", ".join(contract.get("dimension_hints") or [])
         metrics = ", ".join(contract.get("metric_hints") or [])
         if dimensions:
-            parts.append(f"{contract.get('source') or 'source SQL'} group-by [{dimensions}] metrics [{metrics}]")
+            part = f"{contract.get('source') or 'source SQL'} group-by [{dimensions}] metrics [{metrics}]"
+            grains = [
+                h.get("grain")
+                for h in (contract.get("time_group_hints") or [])
+                if isinstance(h, dict) and h.get("grain")
+            ]
+            if grains:
+                part += f" (dry-run with time_granularity='{', '.join(dict.fromkeys(grains))}')"
+            parts.append(part)
     return "; ".join(parts)
 
 

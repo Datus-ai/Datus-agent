@@ -293,3 +293,61 @@ class TestGenerationEvidence:
         result = {"success": 1, "result": {"metadata": {"sql": "SELECT 1"}}}
         ev.record_metric_dry_run(["revenue_total"], result)
         assert "revenue_total" in ev.metric_sqls
+
+
+class TestMetricTimeCanonicalizationContract:
+    """Regression: a day-grain dry-run must satisfy a metric_date time-group contract."""
+
+    # MetricFlow day-grain output: groups by metric_time via CAST, no date_trunc.
+    COMPILED_SQL = (
+        "SELECT metric_time, "
+        "CAST(gross_order_value AS DOUBLE) / CAST(NULLIF(order_count, 0) AS DOUBLE) "
+        "AS average_gross_order_value "
+        "FROM ("
+        "  SELECT metric_time, SUM(gross_order_value) AS gross_order_value, "
+        "  SUM(order_count) AS order_count "
+        "  FROM ("
+        "    SELECT CAST(ordered_at AS DATETIME) AS metric_time, "
+        "    order_total / 100.0 AS gross_order_value, 1 AS order_count "
+        "    FROM jeff_shop.raw_orders raw_orders_src_26"
+        "  ) subq_94 "
+        "  GROUP BY metric_time"
+        ") subq_95"
+    )
+
+    def _evidence_with_contract(self):
+        ev = GenerationEvidence()
+        ev.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "dimension_hints": ["metric_date"],
+                    "metric_hints": ["average_gross_order_value"],
+                    "time_group_hints": [{"alias": "metric_date", "base_expr": "ordered_at", "grain": "day"}],
+                }
+            ]
+        )
+        return ev
+
+    def test_grain_dry_run_satisfies_time_group_contract(self):
+        ev = self._evidence_with_contract()
+        ev.record_metric_dry_run(
+            ["average_gross_order_value"],
+            {"success": 1, "result": {"metadata": {"explain": True, "sql": self.COMPILED_SQL}}},
+            dimensions=["metric_date"],
+            time_granularity="day",
+        )
+        assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is True
+        assert ev.missing_queryability_contracts(["average_gross_order_value"]) == []
+
+    def test_grain_dry_run_does_not_satisfy_unrelated_time_column(self):
+        # A metric_time dry-run built from a different base column must not match.
+        ev = self._evidence_with_contract()
+        unrelated_sql = self.COMPILED_SQL.replace("ordered_at", "shipped_at")
+        ev.record_metric_dry_run(
+            ["average_gross_order_value"],
+            {"success": 1, "result": {"metadata": {"explain": True, "sql": unrelated_sql}}},
+            dimensions=["metric_date"],
+            time_granularity="day",
+        )
+        assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is False
