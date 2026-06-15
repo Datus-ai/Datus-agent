@@ -26,7 +26,6 @@ sql_processing_errors.log
 *.duckdb.wal
 *.duckdb.tmp
 /save
-uv.lock
 uv.toml
 /logs
 /tests/output

@@ -21,7 +21,8 @@ class TestCreateApp:
         """create_app registers expected route paths."""
         args = argparse.Namespace(config="", datasource="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
-        route_paths = [route.path for route in app.routes]
+        # fastapi>=0.137.0 adds a pathless _IncludedRouter to app.routes; skip it.
+        route_paths = [route.path for route in app.routes if hasattr(route, "path")]
         assert "/" in route_paths
         assert "/health" in route_paths
 
@@ -44,7 +45,7 @@ class TestCreateApp:
         """create_app registers API v1 route prefixes."""
         args = argparse.Namespace(config="", datasource="default", output_dir="./output", log_level="INFO")
         app = create_app(args)
-        route_paths = {route.path for route in app.routes}
+        route_paths = {route.path for route in app.routes if hasattr(route, "path")}
         # Check that at least some v1 routes are registered
         has_api_routes = any("/api/" in p for p in route_paths)
         assert has_api_routes

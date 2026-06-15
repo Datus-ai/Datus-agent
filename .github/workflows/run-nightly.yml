@@ -113,11 +113,18 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
 
       - name: Install dependencies
         run: |
-          uv sync
-          uv pip install --upgrade --no-cache-dir \
+          uv sync --locked
+          # No --upgrade: keep the locked framework packages; adapters only add
+          # their own missing deps instead of bumping fastapi/starlette/etc.
+          uv pip install --no-cache-dir \
             --reinstall-package datus-semantic-core \
             --reinstall-package datus-semantic-metricflow \
             --reinstall-package datus-snowflake \
