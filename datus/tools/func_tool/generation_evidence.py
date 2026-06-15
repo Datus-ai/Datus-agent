@@ -446,8 +446,17 @@ def _sql_contains_time_group(sql: str, base_expr: str, grain: str) -> bool:
 def _sql_contains_base_expr_text(sql: str, base_expr: str) -> bool:
     normalized_sql = _normalize_sql_text(sql)
     normalized_base = _normalize_sql_text(base_expr)
-    if normalized_base and normalized_base in normalized_sql:
-        return True
+    if normalized_base:
+        # A bare identifier must match on identifier boundaries (against the
+        # whitespace-preserving SQL, since _normalize_sql_text would fuse it with
+        # the next token) so e.g. ``ordered_at`` matches a real column reference
+        # but not ``preordered_at`` / ``ordered_at_utc``. Richer expressions
+        # (containing parens/operators) are safe to match as a substring.
+        if re.fullmatch(r"[a-z_][a-z0-9_]*", normalized_base):
+            if re.search(rf"\b{re.escape(normalized_base)}\b", str(sql or "").lower()):
+                return True
+        elif normalized_base in normalized_sql:
+            return True
     leaf = _last_identifier(base_expr)
     normalized_leaf = _normalize_sql_text(leaf)
     return bool(

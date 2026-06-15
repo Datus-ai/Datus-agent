@@ -11,6 +11,7 @@ from datus.tools.func_tool.generation_evidence import (
     _normalized_metric_alias_map,
     _result_payload,
     _result_success,
+    _sql_contains_base_expr_text,
 )
 
 
@@ -351,3 +352,16 @@ class TestMetricTimeCanonicalizationContract:
             time_granularity="day",
         )
         assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is False
+
+
+class TestSqlContainsBaseExprText:
+    def test_bare_identifier_matches_standalone_occurrence(self):
+        assert _sql_contains_base_expr_text("SELECT CAST(ordered_at AS DATETIME) AS m", "ordered_at") is True
+
+    def test_bare_identifier_does_not_match_partial_identifier(self):
+        assert _sql_contains_base_expr_text("SELECT preordered_at AS m", "ordered_at") is False
+        assert _sql_contains_base_expr_text("SELECT ordered_at_utc AS m", "ordered_at") is False
+
+    def test_complex_expression_matches_via_substring(self):
+        sql = "SELECT CAST(ordered_at AS DATETIME) AS metric_time GROUP BY metric_time"
+        assert _sql_contains_base_expr_text(sql, "CAST(ordered_at AS DATETIME)") is True
