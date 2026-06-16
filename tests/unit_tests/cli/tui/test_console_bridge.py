@@ -44,7 +44,7 @@ def test_schedules_via_run_in_terminal_when_on_event_loop() -> None:
     """
     fake_app = mock.MagicMock()
     fake_app.full_screen = False  # legacy modal path; full_screen path is exercised separately
-    fake_app._is_running = True
+    fake_app.is_running = True
     fake_loop = mock.MagicMock()
 
     with (
@@ -59,17 +59,17 @@ def test_schedules_via_run_in_terminal_when_on_event_loop() -> None:
 
 
 def test_calls_directly_when_app_is_shutting_down() -> None:
-    """On the event loop but with _is_running=False (app teardown), func must
+    """On the event loop but with is_running=False (app teardown), func must
     be called inline rather than scheduled.
 
     Root cause of #617: loop.close() calls _ready.clear(), discarding the
     Task's pending first __step before it runs. The inner coroutine is then
-    GC'd unawaited, emitting RuntimeWarning. Detecting _is_running=False and
+    GC'd unawaited, emitting RuntimeWarning. Detecting is_running=False and
     falling back to a direct call eliminates the race.
     """
     fake_app = mock.MagicMock()
     fake_app.full_screen = False
-    fake_app._is_running = False
+    fake_app.is_running = False
     called = {"count": 0}
 
     def _fn() -> None:
@@ -115,6 +115,7 @@ def test_submits_coroutine_from_off_loop_thread() -> None:
     mocked_submit.assert_called_once()
     _coro, loop_arg = mocked_submit.call_args.args
     assert loop_arg is fake_app.loop
+    _coro.close()
     fake_cf.result.assert_called_once()
 
 
@@ -143,6 +144,8 @@ def test_swallows_future_exceptions() -> None:
     # The bridge both scheduled the callback and awaited its result even
     # though the result raised — the exception was swallowed, not re-raised.
     mocked_submit.assert_called_once()
+    _coro, _loop_arg = mocked_submit.call_args.args
+    _coro.close()
     fake_cf.result.assert_called_once()
 
 
