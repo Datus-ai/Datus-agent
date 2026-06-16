@@ -92,6 +92,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/benchmark/benchmark_manual/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/cli/build_kb_command/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/build_kb_command/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/build_kb_command/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/cli/chat_command/</loc>
         <lastmod>2026-06-16</lastmod>
         <changefreq>daily</changefreq>
@@ -643,6 +650,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/benchmark/benchmark_manual/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devbenchmark/benchmark_manual/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/cli/build_kb_command/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/build_kb_command/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/build_kb_command/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/cli/chat_command/</loc>

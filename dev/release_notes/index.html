@@ -3533,6 +3533,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#035" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#034" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3805,6 +3816,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#035" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#034" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4057,6 +4079,11 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="035">0.3.5<a class="headerlink" href="#035" title="Permanent link">&para;</a></h3>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Lightweight <code>/init</code> + new <code>/build-kb</code></strong> - <code>/init</code> is now a fast, confirmation-free pass that scans the project and writes an <code>AGENTS.md</code> inventory plus the file-based stores (atomic facts to <code>./knowledge/*.md</code>, durable preferences to memory), stopping short of the expensive vector stores. The heavy knowledge-base construction moved to the new <code>/build-kb</code> command, which builds semantic models / metrics / reference SQL, accepts an optional free-text file/table/domain scope, and refreshes the <code>AGENTS.md</code> KB index. <a href="../cli/build_kb_command/">docs</a></li>
+</ul>
 <h3 id="034">0.3.4<a class="headerlink" href="#034" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>

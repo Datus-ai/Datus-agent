@@ -3533,6 +3533,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#035" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#034" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3805,6 +3816,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#035" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.5
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#034" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4057,6 +4079,11 @@
 
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="035">0.3.5<a class="headerlink" href="#035" title="Permanent link">&para;</a></h3>
+<p><strong>增强</strong></p>
+<ul>
+<li><strong>轻量化 <code>/init</code> + 全新 <code>/build-kb</code></strong> - <code>/init</code> 现在是一次快速、无确认门的流程:扫描项目并写出 <code>AGENTS.md</code> 清单,以及文件类存储(原子事实写入 <code>./knowledge/*.md</code>,持久偏好写入 memory),不再触及昂贵的向量存储。重型知识库构建迁移到全新的 <code>/build-kb</code> 命令——它构建 semantic models / metrics / reference SQL,接受可选的自由文本文件/库表/业务域范围,并刷新 <code>AGENTS.md</code> 的 KB 索引。<a href="../cli/build_kb_command/">文档</a></li>
+</ul>
 <h3 id="034">0.3.4<a class="headerlink" href="#034" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
 <ul>

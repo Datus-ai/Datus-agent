@@ -3667,7 +3667,11 @@
 </tr>
 <tr>
 <td><a href="../cli/init_command/"><code>/init</code></a></td>
-<td>Initialize the project workspace end-to-end (scans files + database metadata, builds the knowledge base after you confirm a generation manifest, writes <code>AGENTS.md</code>); accepts optional free-text goal/scope hints</td>
+<td>Lightweight init: scans files + database metadata, writes an <code>AGENTS.md</code> inventory plus file-based knowledge/memory (no vector KB, no confirmation gate); accepts optional free-text goal/scope hints</td>
+</tr>
+<tr>
+<td><a href="../cli/build_kb_command/"><code>/build-kb</code></a></td>
+<td>Build the vector-indexed KB — semantic models / metrics / reference SQL — after you confirm a generation manifest, then refresh the <code>AGENTS.md</code> index; accepts optional free-text file/table/domain scope</td>
 </tr>
 </tbody>
 </table>

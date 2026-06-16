@@ -3858,8 +3858,14 @@
 <tr>
 <td><code>/init</code></td>
 <td></td>
-<td>Initialize the project workspace end-to-end and generate <code>AGENTS.md</code>; optional free text adds goal/scope hints</td>
+<td>Lightweight init: scan + write <code>AGENTS.md</code> inventory and file-based knowledge/memory (no vector KB); optional free text adds goal/scope hints</td>
 <td><a href="../init_command/">Init Command</a></td>
+</tr>
+<tr>
+<td><code>/build-kb</code></td>
+<td></td>
+<td>Build the vector-indexed KB (semantic models / metrics / reference SQL) and refresh the <code>AGENTS.md</code> index; optional free text scopes files/tables/domains</td>
+<td><a href="../build_kb_command/">Build KB Command</a></td>
 </tr>
 <tr>
 <td><code>/session-summarize</code></td>
