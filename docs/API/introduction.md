@@ -25,6 +25,7 @@ X-Datus-User-Id: alice
 Data-access policies use a separate request principal. When `agent.data_access.enabled` is `true`, send business
 scope fields in `X-Datus-Principal` as a JSON object, for example `{"market_code":"MKT300"}`. `X-Datus-User-Id`
 does not populate data-access principal fields. See [Data Access Policy](../configuration/data_access_policy.md).
+Do not include `user_id` in `X-Datus-Principal`; that field is reserved for `X-Datus-User-Id` and will be rejected.
 
 Datasource isolation is controlled separately by the `--datasource` CLI flag (or `DATUS_DATASOURCE` env var) and selects
 which datasource from `agent.yml` is used to load databases and knowledge.

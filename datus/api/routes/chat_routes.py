@@ -11,7 +11,7 @@ asyncio.Task so that client disconnects do not cancel the computation.
 """
 
 import asyncio
-from typing import Annotated, Any, AsyncGenerator, Optional
+from typing import TYPE_CHECKING, Annotated, Any, AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
@@ -51,6 +51,10 @@ from datus.utils.time_utils import now_utc_iso
 
 logger = get_logger(__name__)
 
+if TYPE_CHECKING:
+    from datus.api.auth.context import AppContext
+    from datus.api.services.datus_service import DatusService
+
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 
@@ -77,7 +81,7 @@ def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
     return False
 
 
-def _data_access_principal_pre_check(svc, ctx) -> Optional[ChatPreCheckOutcome]:
+def _data_access_principal_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
     """Fail fast when enabled data-access policies need missing principal fields."""
     agent_config = getattr(svc, "agent_config", None)
     data_access_config = getattr(agent_config, "data_access_config", None)
@@ -87,7 +91,7 @@ def _data_access_principal_pre_check(svc, ctx) -> Optional[ChatPreCheckOutcome]:
     principal = getattr(ctx, "principal", None) or {}
     required_paths = _required_principal_paths(data_access_config.raw)
     missing_paths = _missing_principal_paths(principal, required_paths)
-    if not missing_paths and (principal or required_paths):
+    if not missing_paths:
         return None
 
     detail = ""

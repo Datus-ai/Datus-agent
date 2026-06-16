@@ -261,6 +261,32 @@ class TestStreamChatDataAccessPreCheck:
         assert svc.chat.stream_chat.call_args.kwargs["principal"] == {"market_code": "MKT300"}
 
     @pytest.mark.asyncio
+    async def test_enabled_data_access_without_principal_paths_allows_service_call(self):
+        async def empty_stream(*_args, **_kwargs):
+            if False:
+                yield
+
+        svc = _mock_svc_with_nodes()
+        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+            {
+                "enabled": True,
+                "provider": "x:Y",
+                "policies": [{"name": "static_policy", "condition": {"value_from": "literal.MKT300"}}],
+            }
+        )
+        svc.chat.stream_chat = MagicMock(return_value=empty_stream())
+        ctx = MagicMock(user_id=None)
+        ctx.principal = {}
+        request = StreamChatInput(message="hi")
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+        async for _ in response.body_iterator:
+            pass
+
+        svc.chat.stream_chat.assert_called_once()
+        assert svc.chat.stream_chat.call_args.kwargs["principal"] == {}
+
+    @pytest.mark.asyncio
     async def test_user_id_only_does_not_satisfy_required_business_principal(self):
         svc = _mock_svc_with_nodes()
         svc.agent_config.data_access_config = DataAccessConfig.from_dict(

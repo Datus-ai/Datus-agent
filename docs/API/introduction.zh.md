@@ -22,6 +22,7 @@ X-Datus-User-Id: alice
 
 数据访问策略使用单独的请求 principal。启用 `agent.data_access.enabled` 后，请通过 `X-Datus-Principal` 传入业务范围字段，
 header 值必须是 JSON object，例如 `{"market_code":"MKT300"}`。`X-Datus-User-Id` 不会写入 data-access principal。
+注意：`X-Datus-Principal` 中不允许包含 `user_id` 字段；该字段保留给 `X-Datus-User-Id`，否则会触发 400 校验错误。
 详见[数据访问策略](../configuration/data_access_policy.zh.md)。
 
 Datasource 隔离由 `--datasource` CLI 参数(或 `DATUS_DATASOURCE` 环境变量)单独控制,决定加载 `agent.yml`
