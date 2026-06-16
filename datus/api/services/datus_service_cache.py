@@ -22,6 +22,13 @@ class DatusServiceCache:
         self._cache: collections.OrderedDict[str, DatusService] = collections.OrderedDict()
         self._futures: dict[str, asyncio.Future[DatusService]] = {}
         self._lock = asyncio.Lock()
+        self._pending_tasks: set[asyncio.Task] = set()
+
+    def _track(self, task: asyncio.Task) -> asyncio.Task:
+        """Register a background task so drain()/shutdown() can await it."""
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
+        return task
 
     async def get_or_create(
         self,
@@ -103,7 +110,7 @@ class DatusServiceCache:
         # Shutdown evicted services outside the lock
         for old_pid, old_svc in evicted:
             logger.info(f"LRU evicting DatusService for project {old_pid}")
-            asyncio.create_task(old_svc.shutdown())
+            self._track(asyncio.create_task(old_svc.shutdown()))
 
         return svc
 
@@ -123,7 +130,7 @@ class DatusServiceCache:
         """Shutdown a service, deferring if it still has active tasks."""
         if svc.has_active_tasks():
             logger.info(f"Evicting DatusService for project {project_id} (deferring shutdown — active tasks)")
-            asyncio.create_task(self._deferred_shutdown(project_id, svc))
+            self._track(asyncio.create_task(self._deferred_shutdown(project_id, svc)))
         else:
             logger.info(f"Evicting DatusService for project {project_id}")
             await svc.shutdown()
@@ -138,8 +145,17 @@ class DatusServiceCache:
         except Exception:
             logger.exception(f"Error in deferred shutdown for project {project_id}")
 
+    async def drain(self) -> None:
+        """Await all pending background shutdown tasks before the loop closes."""
+        if self._pending_tasks:
+            results = await asyncio.gather(*list(self._pending_tasks), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    logger.warning("Background shutdown task failed", exc_info=result)
+
     async def shutdown(self) -> None:
         """Shutdown all cached DatusService instances (application exit)."""
+        await self.drain()
         async with self._lock:
             items = list(self._cache.items())
             self._cache.clear()

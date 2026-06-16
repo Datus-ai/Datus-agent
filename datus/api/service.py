@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from datus.agent.agent import Agent
 from datus.api.auth import load_auth_provider
 from datus.api.deps import init_deps
+from datus.api.services.background_drain import drain_background_tasks
 from datus.api.services.datus_service_cache import DatusServiceCache
 from datus.configuration.agent_config_loader import load_agent_config, parse_config_path
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
@@ -452,9 +453,14 @@ async def lifespan(app: FastAPI):
     )
 
     logger.info("Datus API Service started")
-    yield
-    # Shutdown
-    logger.info("Datus API Service shutting down")
+    try:
+        yield
+    finally:
+        logger.info("Datus API Service shutting down")
+        try:
+            await drain_background_tasks()
+        finally:
+            await service_cache.shutdown()
 
 
 def create_app(agent_args: argparse.Namespace) -> FastAPI:

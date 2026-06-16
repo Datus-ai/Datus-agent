@@ -44,6 +44,7 @@ from datus.api.models.cli_models import (
     StreamChatInput,
     UserInteractionInput,
 )
+from datus.api.services.background_drain import track_background_task
 from datus.tools.data_access_policy import DataAccessConfig
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
@@ -56,7 +57,6 @@ if TYPE_CHECKING:
     from datus.api.services.datus_service import DatusService
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
-
 
 # Additional builtin subagents accepted by ``stream_chat`` beyond the canonical
 # ``BUILTIN_SUBAGENTS`` set — these are wired directly in
@@ -651,10 +651,11 @@ async def _stream_with_post_hook(
             )
 
             try:
-                asyncio.create_task(
+                _task = asyncio.create_task(
                     _safe_post_chat(hooks, http_request, request, ctx),
                     name=f"chat-post-hook:{session_id_value or '-'}",
                 )
+                track_background_task(_task)
             except Exception:  # pragma: no cover — defensive
                 logger.error("Failed to schedule post_chat hook", exc_info=True)
 
