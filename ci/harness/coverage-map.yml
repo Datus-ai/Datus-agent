@@ -353,6 +353,49 @@ flow_groups:
             notes: Baisheng weekly benchmark runs Datus queries against StarRocks.
         gaps: []
 
+      - id: data_access.policy_enforcement
+        title: Request-scoped data-access policy enforcement
+        priority: p0
+        quality_sensitive: true
+        docs:
+          - docs/configuration/data_access_policy.md
+          - docs/API/introduction.md
+        entrypoints:
+          - "REST API: /api/v1/chat/stream"
+          - "REST API header: X-Datus-Principal"
+          - DBFuncTool data-access enforcement
+        contracts:
+          - The default API auth provider parses request principals from X-Datus-Principal JSON.
+          - X-Datus-User-Id remains session identity and does not satisfy data-access principal fields.
+          - Enabled data-access policies fail fast when required principal fields are missing.
+          - Custom data-access providers can rewrite or deny protected read queries before database execution.
+        coverage:
+          pr_acceptance:
+            status: covered
+            nodeids:
+              - tests/unit_tests/api/auth/test_no_auth_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatDataAccessPreCheck
+              - tests/unit_tests/tools/test_data_access_policy.py
+          merge_queue:
+            status: covered
+            nodeids:
+              - tests/unit_tests/api/auth/test_no_auth_provider.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatDataAccessPreCheck
+              - tests/unit_tests/tools/test_data_access_policy.py
+          nightly:
+            status: covered
+            notes: >
+              Nightly API and adapter jobs exercise chat streaming and database reads; deterministic unit
+              tests cover request-principal parsing and the open-source provider contract without requiring
+              a live private policy provider deployment.
+            nodeids:
+              - tests/integration/api/test_api_chat.py
+              - tests/integration/adapters/test_starrocks.py
+          weekly_benchmark:
+            status: covered
+            notes: Baisheng weekly benchmark can run against StarRocks with request-scoped market filters.
+        gaps: []
+
       - id: data_access.adapter_contracts
         title: DB, BI, scheduler, and semantic adapter contracts
         priority: p0

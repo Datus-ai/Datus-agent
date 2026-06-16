@@ -4,12 +4,14 @@
 
 """Unit tests for POST /api/v1/chat/feedback endpoint."""
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
 
 from datus.api.models.cli_models import FeedbackChatInput, StreamChatInput
 from datus.api.routes.chat_routes import stream_chat_feedback
+from datus.tools.data_access_policy import DataAccessConfig
 
 
 def _build_svc():
@@ -27,6 +29,7 @@ def _build_svc():
 def _build_ctx(user_id="tester"):
     ctx = MagicMock()
     ctx.user_id = user_id
+    ctx.principal = {}
     return ctx
 
 
@@ -106,3 +109,36 @@ async def test_feedback_endpoint_appends_optional_reaction_msg():
     stream_input: StreamChatInput = svc.chat.stream_chat.call_args.args[0]
     assert stream_input.message.endswith("Please recheck the metric definition")
     assert "[thumbsdown]" in stream_input.message
+
+
+@pytest.mark.asyncio
+async def test_feedback_endpoint_denies_when_data_access_enabled_without_principal():
+    svc = _build_svc()
+    svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+        {
+            "enabled": True,
+            "provider": "x:Y",
+            "policies": [{"condition": {"value_from": "principal.market_code"}}],
+        }
+    )
+    svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
+    ctx = _build_ctx(user_id=None)
+    request = FeedbackChatInput(
+        source_session_id="chat_session_abc",
+        reaction_emoji="thumbsup",
+        reference_msg="Here is your SQL result",
+    )
+
+    response = await stream_chat_feedback(request, svc, ctx)
+    chunks = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+    assert len(chunks) == 1
+    assert "event: error" in chunks[0]
+    payload = json.loads(next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :])
+    assert payload["error_type"] == "DATA_ACCESS_PRINCIPAL_REQUIRED"
+    assert "principal.market_code" in payload["error"]
+    assert "provider that populates principal fields" in payload["error"]
+    assert "agent.data_access policies" in payload["error"]
+    svc.chat.stream_chat.assert_not_called()

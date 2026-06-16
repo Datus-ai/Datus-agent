@@ -4,6 +4,7 @@
 
 """Unit tests for datus/api/routes/chat_routes.py — submit_user_interaction endpoint."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,6 +17,7 @@ from datus.api.routes.chat_routes import (
     stream_chat,
     submit_user_interaction,
 )
+from datus.tools.data_access_policy import DataAccessConfig
 
 
 def _mock_svc(task=None):
@@ -195,6 +197,96 @@ class TestStreamChat404Gate:
         assert isinstance(response, StreamingResponse)
         assert response.status_code == 200
         assert response.media_type == "text/event-stream"
+
+
+class TestStreamChatDataAccessPreCheck:
+    """Data-access enabled chat requests must carry required request principal fields."""
+
+    @pytest.mark.asyncio
+    async def test_enabled_data_access_without_principal_returns_sse_error(self):
+        svc = _mock_svc_with_nodes()
+        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+            {
+                "enabled": True,
+                "provider": "x:Y",
+                "policies": [{"condition": {"value_from": "principal.market_code"}}],
+            }
+        )
+        svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
+        ctx = MagicMock(user_id=None)
+        ctx.principal = {}
+        request = StreamChatInput(message="hi")
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        assert len(chunks) == 1
+        assert "event: error" in chunks[0]
+        payload = json.loads(
+            next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
+        )
+        assert payload["error_type"] == "DATA_ACCESS_PRINCIPAL_REQUIRED"
+        assert "principal.market_code" in payload["error"]
+        assert "provider that populates principal fields" in payload["error"]
+        assert "agent.data_access policies" in payload["error"]
+        svc.chat.stream_chat.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_enabled_data_access_with_required_principal_allows_service_call(self):
+        async def empty_stream(*_args, **_kwargs):
+            if False:
+                yield
+
+        svc = _mock_svc_with_nodes()
+        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+            {
+                "enabled": True,
+                "provider": "x:Y",
+                "policies": [{"condition": {"value_from": "principal.market_code"}}],
+            }
+        )
+        svc.chat.stream_chat = MagicMock(return_value=empty_stream())
+        ctx = MagicMock(user_id=None)
+        ctx.principal = {"market_code": "MKT300"}
+        request = StreamChatInput(message="hi")
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+        async for _ in response.body_iterator:
+            pass
+
+        svc.chat.stream_chat.assert_called_once()
+        assert svc.chat.stream_chat.call_args.kwargs["principal"] == {"market_code": "MKT300"}
+
+    @pytest.mark.asyncio
+    async def test_user_id_only_does_not_satisfy_required_business_principal(self):
+        svc = _mock_svc_with_nodes()
+        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+            {
+                "enabled": True,
+                "provider": "x:Y",
+                "policies": [{"condition": {"value_from": "principal.market_code"}}],
+            }
+        )
+        svc.chat.stream_chat = MagicMock(side_effect=AssertionError("upstream invoked"))
+        ctx = MagicMock(user_id="alice")
+        ctx.principal = {}
+        request = StreamChatInput(message="hi")
+
+        response = await stream_chat(request, svc, ctx, MagicMock())
+
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        payload = json.loads(
+            next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
+        )
+        assert payload["error_type"] == "DATA_ACCESS_PRINCIPAL_REQUIRED"
+        assert "principal.market_code" in payload["error"]
+        svc.chat.stream_chat.assert_not_called()
 
 
 @pytest.mark.acceptance

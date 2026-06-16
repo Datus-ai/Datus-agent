@@ -6,7 +6,7 @@ import pytest
 
 from datus.api.auth.context import AppContext
 from datus.api.auth.no_auth_provider import NoAuthProvider
-from datus.api.constants import HEADER_USER_ID
+from datus.api.constants import HEADER_PRINCIPAL, HEADER_USER_ID
 from datus.utils.exceptions import DatusException
 
 
@@ -32,6 +32,7 @@ class TestNoAuthProviderAuthenticate:
         assert ctx.user_id is None
         assert ctx.project_id is None
         assert ctx.config is None
+        assert ctx.principal == {}
 
     async def test_valid_header_populates_user_id(self):
         """Valid header → user_id reflects the header value."""
@@ -39,17 +40,46 @@ class TestNoAuthProviderAuthenticate:
         ctx = await provider.authenticate(_make_request({HEADER_USER_ID: "alice"}))
         assert ctx.user_id == "alice"
         assert ctx.project_id is None
+        assert ctx.principal == {}
 
     async def test_whitespace_header_treated_as_missing(self):
         provider = NoAuthProvider()
         ctx = await provider.authenticate(_make_request({HEADER_USER_ID: "   "}))
         assert ctx.user_id is None
+        assert ctx.principal == {}
+
+    async def test_principal_header_populates_request_principal(self):
+        provider = NoAuthProvider()
+        ctx = await provider.authenticate(
+            _make_request({HEADER_PRINCIPAL: '{"market_code": "MKT300", "market_codes": ["MKT300", "MKT301"]}'})
+        )
+        assert ctx.user_id is None
+        assert ctx.principal == {"market_code": "MKT300", "market_codes": ["MKT300", "MKT301"]}
+
+    async def test_user_id_header_does_not_populate_data_access_principal(self):
+        provider = NoAuthProvider()
+        ctx = await provider.authenticate(
+            _make_request({HEADER_USER_ID: "alice", HEADER_PRINCIPAL: '{"market_code": "MKT300"}'})
+        )
+        assert ctx.user_id == "alice"
+        assert ctx.principal == {"market_code": "MKT300"}
 
     async def test_invalid_header_raises(self):
         """Header with disallowed characters → DatusException."""
         provider = NoAuthProvider()
         with pytest.raises(DatusException):
             await provider.authenticate(_make_request({HEADER_USER_ID: "bad user!"}))
+
+    async def test_invalid_principal_header_raises(self):
+        provider = NoAuthProvider()
+        with pytest.raises(DatusException):
+            await provider.authenticate(_make_request({HEADER_PRINCIPAL: "not-json"}))
+
+        with pytest.raises(DatusException):
+            await provider.authenticate(_make_request({HEADER_PRINCIPAL: '["MKT300"]'}))
+
+        with pytest.raises(DatusException):
+            await provider.authenticate(_make_request({HEADER_PRINCIPAL: '{"user_id": "alice"}'}))
 
 
 class TestNoAuthProviderOnEvict:

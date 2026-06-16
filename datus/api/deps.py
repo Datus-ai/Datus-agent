@@ -2,13 +2,14 @@
 
 from typing import Annotated, Optional
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
 from datus.api.auth.context import AppContext
 from datus.api.auth.provider import AuthProvider
 from datus.api.services.datus_service import DatusService
 from datus.api.services.datus_service_cache import DatusServiceCache
 from datus.configuration.agent_config_loader import load_agent_config
+from datus.utils.exceptions import DatusException
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -60,7 +61,10 @@ async def get_datus_service(request: Request) -> DatusService:
     if _service_cache is None:
         raise RuntimeError("Service cache not initialized. Call init_deps() in lifespan.")
 
-    ctx: AppContext = await _auth_provider.authenticate(request)
+    try:
+        ctx: AppContext = await _auth_provider.authenticate(request)
+    except DatusException as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     request.state.app_context = ctx
 
     expected_fp = DatusService.compute_fingerprint(ctx.config) if ctx.config is not None else None

@@ -63,6 +63,7 @@ nav:
       - Context Compaction: configuration/compact.md
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
+      - Data Access Policy: configuration/data_access_policy.md
       - Services:
         - Datasources: configuration/datasources.md
         - Semantic Layer: configuration/semantic_layer.md
@@ -163,6 +164,7 @@ plugins:
             BI Adapters: BI 适配器
             Scheduler Adapters: Scheduler 适配器
             Benchmark: 基准测试
+            Data Access Policy: 数据访问策略
             Metricflow: MetricFlow
             Integration: 集成
             MCP: MCP

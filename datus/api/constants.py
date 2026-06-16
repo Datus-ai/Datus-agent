@@ -7,6 +7,9 @@ from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
 # Header carrying the caller's user identifier for the open-source default auth.
 HEADER_USER_ID = "X-Datus-User-Id"
 
+# Header carrying JSON request principal fields for data-access policies.
+HEADER_PRINCIPAL = "X-Datus-Principal"
+
 # Allowed characters for header-provided user_id (also used as SessionManager scope).
 USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 

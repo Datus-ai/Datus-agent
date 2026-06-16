@@ -3,11 +3,13 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 from datus.api import deps
 from datus.api.auth.context import AppContext
 from datus.api.deps import get_datus_service, init_deps
 from datus.api.services.datus_service_cache import DatusServiceCache
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @pytest.fixture(autouse=True)
@@ -134,6 +136,31 @@ class TestGetDatusService:
         call_args = mock_cache.get_or_create.call_args
         assert call_args[0][0] == "proj-1"
         assert call_args.kwargs["expected_fingerprint"] == "fp-xyz"
+
+    async def test_auth_validation_error_returns_bad_request(self):
+        """Auth-provider request validation errors are API 400s, not internal errors."""
+        mock_auth = MagicMock()
+        mock_auth.authenticate = AsyncMock(
+            side_effect=DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                message="Invalid X-Datus-Principal header value: expected a JSON object.",
+            )
+        )
+        mock_cache = MagicMock(spec=DatusServiceCache)
+        mock_cache.get_or_create = AsyncMock()
+
+        deps._auth_provider = mock_auth
+        deps._service_cache = mock_cache
+
+        request = MagicMock()
+        request.state = MagicMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_datus_service(request)
+
+        assert exc_info.value.status_code == 400
+        assert "Invalid X-Datus-Principal header value" in exc_info.value.detail
+        mock_cache.get_or_create.assert_not_called()
 
     async def test_no_fingerprint_when_config_is_none(self):
         """When ctx.config is None, expected_fingerprint passed as None."""
