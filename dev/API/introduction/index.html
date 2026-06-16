@@ -2329,6 +2329,8 @@
       
         
       
+        
+      
     
     
     
@@ -2518,6 +2520,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../configuration/data_access_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data Access Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -2540,10 +2570,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_10_7" >
         
           
-          <label class="md-nav__link" for="__nav_1_10_6" id="__nav_1_10_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_10_7" id="__nav_1_10_7_label" tabindex="0">
             
   
   
@@ -2561,8 +2591,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_10_6">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_10_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_10_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3679,6 +3709,10 @@ by sending a <code>X-Datus-User-Id</code> header whose value matches <code>^[A-Z
 default unscoped session; when present, the user id is used to isolate chat sessions and tool state per user.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>X-Datus-User-Id: alice
 </span></code></pre></div>
+<p>Data-access policies use a separate request principal. When <code>agent.data_access.enabled</code> is <code>true</code>, send business
+scope fields in <code>X-Datus-Principal</code> as a JSON object, for example <code>{"market_code":"MKT300"}</code>. <code>X-Datus-User-Id</code>
+does not populate data-access principal fields. See <a href="../../configuration/data_access_policy/">Data Access Policy</a>.
+Do not include <code>user_id</code> in <code>X-Datus-Principal</code>; that field is reserved for <code>X-Datus-User-Id</code> and will be rejected.</p>
 <p>Datasource isolation is controlled separately by the <code>--datasource</code> CLI flag (or <code>DATUS_DATASOURCE</code> env var) and selects
 which datasource from <code>agent.yml</code> is used to load databases and knowledge.</p>
 <h2 id="response-envelope">Response envelope<a class="headerlink" href="#response-envelope" title="Permanent link">&para;</a></h2>

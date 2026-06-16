@@ -211,6 +211,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/configuration/compact/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/configuration/data_access_policy/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/data_access_policy/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/configuration/data_access_policy/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/configuration/datasources/</loc>
         <lastmod>2026-06-16</lastmod>
         <changefreq>daily</changefreq>
@@ -755,6 +762,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/configuration/compact/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devconfiguration/compact/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/configuration/data_access_policy/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/configuration/data_access_policy/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devconfiguration/data_access_policy/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/configuration/datasources/</loc>
