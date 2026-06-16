@@ -13,26 +13,35 @@ from __future__ import annotations
 
 import importlib
 from copy import deepcopy
-from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Protocol
 
+from pydantic import BaseModel, ConfigDict, Field
 
-@dataclass(frozen=True)
-class DataAccessConfig:
+from datus.utils.exceptions import DatusException, ErrorCode
+
+
+class DataAccessConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     enabled: bool = False
     provider: Optional[str] = None
-    raw: Dict[str, Any] = field(default_factory=dict)
+    raw: Dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "DataAccessConfig":
-        if not raw:
+        if raw is None:
             return cls()
         if not isinstance(raw, dict):
-            raise ValueError("agent.data_access must be a mapping")
+            raise DatusException(ErrorCode.COMMON_FIELD_INVALID, message="agent.data_access must be a mapping")
+        if not raw:
+            return cls()
 
         enabled = raw.get("enabled", False)
         if not isinstance(enabled, bool):
-            raise ValueError("agent.data_access.enabled must be a boolean")
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message="agent.data_access.enabled must be a boolean",
+            )
 
         provider = raw.get("provider")
         provider_name = str(provider).strip() if provider is not None else None
@@ -43,12 +52,13 @@ class DataAccessConfig:
         )
 
 
-@dataclass(frozen=True)
-class EnforcementResult:
+class EnforcementResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     allowed: bool
     sql: Optional[str] = None
     reason: Optional[str] = None
-    applied_policies: list[str] = field(default_factory=list)
+    applied_policies: list[str] = Field(default_factory=list)
 
 
 class DataAccessEnforcer(Protocol):
@@ -63,8 +73,11 @@ class DataAccessEnforcer(Protocol):
         """Return a rewritten SQL statement or a denial."""
 
 
-class DataAccessProviderError(RuntimeError):
+class DataAccessProviderError(DatusException):
     """Raised when enabled data-access policy cannot load its provider."""
+
+    def __init__(self, message: str):
+        super().__init__(ErrorCode.COMMON_CONFIG_ERROR, message_args={"config_error": message})
 
 
 class NoopDataAccessEnforcer:
@@ -97,7 +110,8 @@ def load_data_access_enforcer(config: Optional[DataAccessConfig]) -> DataAccessE
     except TypeError as e:
         raise DataAccessProviderError(f"Failed to initialize data-access provider {config.provider!r}: {e}") from e
 
-    if not hasattr(provider, "enforce_read"):
+    enforce_read = getattr(provider, "enforce_read", None)
+    if not callable(enforce_read):
         raise DataAccessProviderError(f"Data-access provider {config.provider!r} must implement enforce_read")
     return provider
 

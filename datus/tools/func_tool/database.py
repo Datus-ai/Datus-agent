@@ -1118,59 +1118,27 @@ class DBFuncTool:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
             underlying error message from the connector.
         """
-        from datus.utils.sql_utils import _first_statement, parse_sql_type
-
         try:
             # Support SQL file path: if sql is a simple path ending with .sql, read from file
             sql_stripped = sql.strip()
             if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
                 sql = self._read_sql_from_file(sql_stripped)
 
-            # Reject multi-statement SQL to prevent read-only bypass (e.g. "SELECT 1; DELETE ...")
-            from datus.utils.sql_utils import strip_sql_comments
-
-            cleaned = strip_sql_comments(sql).strip()
-            normalized_sql = cleaned.rstrip(";").strip()
-            if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
-                return FuncToolResult(
-                    success=0,
-                    error="Multi-statement SQL is not allowed. Please submit one query at a time.",
-                )
-
-            # Enforce read-only: only SELECT, SHOW/DESCRIBE, and EXPLAIN are allowed
             connector = self._get_connector(datasource, database)
-            sql_type = parse_sql_type(sql, connector.dialect)
-            _READONLY_SQL_TYPES = {SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN}
-            if sql_type not in _READONLY_SQL_TYPES:
-                return FuncToolResult(
-                    success=0,
-                    error=f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
-                    f"Detected SQL type: {sql_type.value}",
-                )
-
-            # Reject writable PRAGMAs (e.g. "PRAGMA journal_mode=WAL")
-            if sql_type == SQLType.METADATA_SHOW:
-                first_word = cleaned.split()[0].upper() if cleaned else ""
-                if first_word == "PRAGMA" and "=" in cleaned:
-                    return FuncToolResult(
-                        success=0,
-                        error="Writable PRAGMA statements are not allowed in read-only mode.",
-                    )
-
-            # Check table scope — reject queries referencing out-of-scope tables
-            out_of_scope = self._check_sql_table_scope(sql)
-            if out_of_scope:
-                return FuncToolResult(
-                    success=0,
-                    error=f"Query references tables outside scoped context: {', '.join(out_of_scope)}",
-                )
+            validation_error, sql_type = self._validate_read_sql(sql, connector)
+            if validation_error:
+                return validation_error
 
             logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
+            effective_datasource = self._resolve_effective_datasource(datasource)
             sql = self._enforce_data_access_policy(
                 sql,
-                datasource=datasource or self._default_datasource or "default",
+                datasource=effective_datasource,
                 dialect=connector.dialect,
             )
+            validation_error, _ = self._validate_read_sql(sql, connector)
+            if validation_error:
+                return validation_error
             result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
             if result.success:
                 data = result.sql_return
@@ -1180,13 +1148,69 @@ class DBFuncTool:
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
+    def _resolve_effective_datasource(self, datasource: Optional[str]) -> str:
+        effective_datasource = datasource or self._default_datasource
+        if not effective_datasource and self.agent_config:
+            services = getattr(self.agent_config, "services", None)
+            effective_datasource = getattr(services, "default_datasource", "") or ""
+        return effective_datasource or "default"
+
+    def _validate_read_sql(self, sql: str, connector: BaseSqlConnector) -> tuple[Optional[FuncToolResult], SQLType]:
+        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+
+        cleaned = strip_sql_comments(sql).strip()
+        normalized_sql = cleaned.rstrip(";").strip()
+        if normalized_sql and _first_statement(normalized_sql) != normalized_sql:
+            return (
+                FuncToolResult(
+                    success=0,
+                    error="Multi-statement SQL is not allowed. Please submit one query at a time.",
+                ),
+                SQLType.UNKNOWN,
+            )
+
+        sql_type = parse_sql_type(sql, connector.dialect)
+        readonly_sql_types = {SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN}
+        if sql_type not in readonly_sql_types:
+            return (
+                FuncToolResult(
+                    success=0,
+                    error=f"Only read-only queries (SELECT, SHOW, DESCRIBE, EXPLAIN) are allowed. "
+                    f"Detected SQL type: {sql_type.value}",
+                ),
+                sql_type,
+            )
+
+        if sql_type == SQLType.METADATA_SHOW:
+            first_word = cleaned.split()[0].upper() if cleaned else ""
+            if first_word == "PRAGMA" and "=" in cleaned:
+                return (
+                    FuncToolResult(
+                        success=0,
+                        error="Writable PRAGMA statements are not allowed in read-only mode.",
+                    ),
+                    sql_type,
+                )
+
+        out_of_scope = self._check_sql_table_scope(sql)
+        if out_of_scope:
+            return (
+                FuncToolResult(
+                    success=0,
+                    error=f"Query references tables outside scoped context: {', '.join(out_of_scope)}",
+                ),
+                sql_type,
+            )
+        return None, sql_type
+
     def _enforce_data_access_policy(self, sql: str, datasource: str, dialect: str) -> str:
         if not self.agent_config:
             return sql
         data_access_config = getattr(self.agent_config, "data_access_config", None)
-        if not data_access_config or not getattr(data_access_config, "enabled", False):
+        from datus.tools.data_access_policy import DataAccessConfig, load_data_access_enforcer
+
+        if not isinstance(data_access_config, DataAccessConfig) or not data_access_config.enabled:
             return sql
-        from datus.tools.data_access_policy import load_data_access_enforcer
 
         enforced = load_data_access_enforcer(data_access_config).enforce_read(
             sql,
@@ -1195,7 +1219,10 @@ class DBFuncTool:
             principal=self.principal,
         )
         if not enforced.allowed:
-            raise PermissionError(enforced.reason or "SQL data-access policy denied the query")
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message=enforced.reason or "SQL data-access policy denied the query",
+            )
         if enforced.applied_policies:
             logger.info(
                 "Applied SQL data-access policies",
