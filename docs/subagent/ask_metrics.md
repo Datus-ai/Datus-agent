@@ -17,7 +17,7 @@ AskMetrics is intentionally narrow. If no existing metric can answer the questio
 
 AskMetrics needs a configured semantic layer and published metrics.
 
-For MetricFlow, configure the semantic adapter in `agent.yml`:
+Configure a semantic adapter in `agent.yml`. For example, MetricFlow:
 
 ```yaml
 agent:
@@ -28,7 +28,7 @@ agent:
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for full semantic adapter options.
 
-Metrics can come from existing MetricFlow YAML or from the [Generate Metrics](gen_metrics.md) subagent. A metric subject tree is optional, but recommended because AskMetrics uses it as a routing catalog before searching.
+Metrics can come from existing semantic-layer assets or from the [Generate Metrics](gen_metrics.md) subagent. With OSI, `ask_metrics` uses the same adapter tools but queries OSI-authored metrics through the configured execution backend. A metric subject tree is optional, but recommended because AskMetrics uses it as a routing catalog before searching.
 
 ## Quick Start
 

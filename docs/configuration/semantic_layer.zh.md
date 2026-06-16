@@ -15,6 +15,9 @@ agent:
         config_path: ./conf/agent.yml   # 可选的高级覆盖项
         default: true                   # 全局默认:无 project pin 时被选用
 
+      osi:
+        execution_backend: metricflow   # 可选 OSI authoring 适配器
+
   agentic_nodes:
     gen_semantic_model:
       semantic_adapter: metricflow
@@ -44,15 +47,22 @@ agent:
 - MetricFlow 验证会直接读取配置中的项目语义模型目录，包括位于 gitignore 项目路径下的生成 YAML。
 - 仅当你需要 MetricFlow 直接读取某个指定的 `agent.yml` 时才需要设置 `config_path`。
 
+## OSI 说明
+
+- OSI 是和 MetricFlow 并列的 semantic adapter。
+- OSI 模式编写 strict OSI core YAML，并把 Datus 执行提示放在 `custom_extensions` 中。
+- 当前 OSI 执行后端是 MetricFlow，通过 `execution_backend: metricflow` 配置。
+- 在 `gen_semantic_model`、`gen_metrics` 或 `ask_metrics` 上设置 `semantic_adapter: osi` 即可选择该路径。
+
 ## 通过 CLI 配置（`/services`）
 
 在 Datus REPL 中运行 `/services semantic`（或者从其他 tab 按 `Tab` 切过来）会进入配置 TUI 的 **Semantic** tab。该 tab 支持：
 
-- 在尾部的 `+ Add new semantic` 行按 `Enter` 新增一个语义层。目前仅支持 `metricflow`（`datus-semantic-metricflow`），并且**无需任何参数** —— 在 type picker 中选中它即可。如果适配器包尚未安装，Datus 会自动执行 `pip install datus-semantic-metricflow` 并热加载注册表，无需重启进程。
+- 在尾部的 `+ Add new semantic` 行按 `Enter` 新增一个语义层。选择 adapter type，例如 `metricflow` 或 `osi`。如果适配器包尚未安装，请先安装对应包，例如 `datus-semantic-metricflow` 或 `datus-semantic-osi`。
 - 用 `x` 删除条目；用 `t` 触发一次注册探测。
 - `d` 切换**全局** `default: true`:按 `d` 把光标项设为默认,并自动清掉其他条目的 default。
 - `p` 设置**项目级** default:值写入 `./.datus/config.yml` 的 `semantic: <name>`,只对当前项目生效,优先级高于全局标记。在已 pin 的行上再按一次 `p` 清除。
-- 此 tab 不显示 `e edit`:metricflow 当前没有可编辑字段。
+- 对没有可编辑字段的 adapter，此 tab 不显示 `e edit`。
 
 新建条目会写入 `~/.datus/conf/agent.yml`，形态为 `services.semantic_layer.<type>: {type: <type>}`。
 

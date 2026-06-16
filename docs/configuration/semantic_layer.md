@@ -23,6 +23,9 @@ agent:
         config_path: ./conf/agent.yml   # optional advanced override
         default: true                   # global default — picked when no project pin set
 
+      osi:
+        execution_backend: metricflow   # optional OSI authoring adapter
+
   agentic_nodes:
     gen_semantic_model:
       semantic_adapter: metricflow
@@ -61,6 +64,13 @@ Comparison is case-insensitive and trims surrounding whitespace.
 - MetricFlow validation reads YAML files from the configured project semantic model directory directly, including generated files under gitignored project paths.
 - `config_path` is only needed when you want MetricFlow to read a specific `agent.yml` file directly.
 
+## OSI Notes
+
+- OSI is a peer semantic adapter to MetricFlow.
+- OSI mode authors strict OSI core YAML and stores Datus execution hints in `custom_extensions`.
+- The current OSI execution backend is MetricFlow, configured with `execution_backend: metricflow`.
+- Use `semantic_adapter: osi` on `gen_semantic_model`, `gen_metrics`, or `ask_metrics` to select this path.
+
 ## Configuring through the CLI (`/services`)
 
 Run `/services semantic` inside the Datus REPL (or press `Tab` from any
@@ -68,11 +78,10 @@ other tab) to enter the configuration TUI on the **Semantic** tab. The
 tab lets you:
 
 - Add a new semantic layer by pressing `Enter` on the trailing `+ Add
-  new semantic` row. Only `metricflow` (`datus-semantic-metricflow`)
-  ships today and **takes no parameters** — picking it from the type
-  picker is enough. If the adapter package isn't installed, Datus runs
-  `pip install datus-semantic-metricflow` for you and hot-reloads the
-  registry — no restart needed.
+  new semantic` row. Choose the adapter type, such as `metricflow` or
+  `osi`. If the adapter package isn't installed, install the matching
+  package first, for example `datus-semantic-metricflow` or
+  `datus-semantic-osi`.
 - Delete an entry with `x` and run a registration probe with `t`.
 - Toggle the **global** `default: true` flag with `d`. Pressing `d`
   marks the current row as default and clears the flag from every other
@@ -81,7 +90,7 @@ tab lets you:
   `./.datus/config.yml` as `semantic: <name>` and outranks the global
   flag for the current project only. Press `p` again on the pinned row
   to clear it.
-- `e edit` is hidden on this tab: metricflow has no editable fields.
+- `e edit` is hidden for adapters that have no editable fields.
 
 Service definitions are written to `~/.datus/conf/agent.yml` as
 `services.semantic_layer.<type>: {type: <type>}`.

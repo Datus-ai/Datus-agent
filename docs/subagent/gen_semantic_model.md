@@ -2,7 +2,7 @@
 
 ## Overview
 
-The semantic model generation feature helps you create MetricFlow semantic models from database tables through an AI-powered assistant. The assistant analyzes your table structure and generates comprehensive YAML configuration files that define metrics, dimensions, and relationships.
+The semantic model generation feature helps you create semantic models from database tables through an AI-powered assistant. The authored YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow YAML, while `osi` generates strict OSI core YAML. The assistant analyzes your table structure and generates configuration files for the selected adapter.
 
 ## What is a Semantic Model?
 
@@ -29,7 +29,7 @@ When you request a semantic model, the AI assistant:
 1. Retrieves your table's DDL (structure)
 2. Checks if a semantic model already exists
 3. Generates a comprehensive YAML file
-4. Validates the configuration using MetricFlow
+4. Validates the configuration using the configured semantic adapter
 5. Syncs it to the Knowledge Base after validation passes
 
 ### Generation Workflow
@@ -64,10 +64,12 @@ agent:
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the full set of options.
 
+For OSI authoring, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.md).
+
 **Built-in configurations** (automatically enabled):
 - **Tools**: Database tools, generation tools, and filesystem tools
 - **Hooks**: Validation evidence tracking and Knowledge Base sync
-- **MCP Server**: MetricFlow validation server
+- **Semantic Adapter**: validation through the configured semantic layer
 - **System Prompt**: Built-in template; the latest available version is used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/semantic_models`
 
@@ -129,4 +131,4 @@ The semantic model generation feature provides:
 - ✓ Automatic sync after validation passes
 - ✓ Knowledge Base integration
 - ✓ Duplicate prevention
-- ✓ MetricFlow compatibility
+- ✓ Semantic adapter compatibility

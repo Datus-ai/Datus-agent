@@ -2,7 +2,7 @@
 
 ## 概览
 
-指标生成功能帮助你将 SQL 查询转换为可复用的 MetricFlow 指标定义。使用 AI 助手，你可以分析 SQL 业务逻辑并自动生成标准化的 YAML 指标配置，组织内可一致查询。
+指标生成功能帮助你将 SQL 查询转换为可复用的指标定义。具体 YAML authoring format 由配置的 semantic adapter 决定：`metricflow` 生成 MetricFlow metric YAML，`osi` 生成 strict OSI core metrics，并把 Datus 执行提示写入 `custom_extensions`。使用 AI 助手，你可以分析 SQL 业务逻辑并自动生成标准化的指标配置，组织内可一致查询。
 
 ## 什么是指标？
 
@@ -17,21 +17,24 @@
 
 ## 重要限制
 
-**⚠️ 仅支持单表查询**
+**⚠️ SQL 覆盖范围取决于适配器**
 
-当前版本**仅支持从单表 SQL 查询生成指标**。不支持多表 JOIN。
+指标生成面向聚合指标定义。明细列表、排名行、TopN per group 这类行级结果不应强行生成为指标。
 
-**支持**：
+MetricFlow authoring 对单表聚合 SQL 最可靠。OSI authoring 在语义模型定义了 OSI relationships 时，可以表达 join 维度。
+
+**适合生成指标的输入**：
 ```sql
 SELECT SUM(revenue) FROM transactions WHERE status = 'completed'
 SELECT COUNT(DISTINCT customer_id) / COUNT(*) FROM orders
 ```
 
-**不支持**：
+**不要强行生成为指标**：
 ```sql
-SELECT SUM(o.amount)
-FROM orders o
-JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
+SELECT customer_id, order_id, revenue
+FROM orders
+ORDER BY revenue DESC
+LIMIT 100
 ```
 
 ## 工作原理
@@ -55,7 +58,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 发布前会经过两项检查：
 
 - `validate_semantic()` 校验语义模型和指标 YAML。
-- `query_metrics(..., dry_run=True)` 确认 MetricFlow 能为生成的指标编译 SQL。
+- `query_metrics(..., dry_run=True)` 确认配置的 semantic adapter 能为生成的指标编译 SQL。
 
 两项检查都通过后，`end_metric_generation` 会自动把指标同步到知识库。
 
@@ -79,10 +82,12 @@ agent:
 
 完整配置项见 [语义层配置](../configuration/semantic_layer.zh.md)。
 
+OSI authoring 见 [OSI 语义适配器](../adapters/osi_semantic_adapter.zh.md)。
+
 **内置配置**（自动启用）：
 - **工具**：生成工具和文件系统工具
 - **Hooks**：验证证据记录和知识库同步
-- **MCP 服务器**：MetricFlow 验证服务器
+- **Semantic Adapter**：通过配置的语义层进行验证
 - **系统提示**：内置模板；未显式设置 `prompt_version` 时使用最新可用版本
 - **工作空间**：`~/.datus/data/{datasource}/semantic_models`
 
@@ -253,11 +258,11 @@ metric:
 
 指标生成功能提供：
 
-✅ **SQL 到指标转换**：分析 SQL 查询并生成 MetricFlow 指标
+✅ **SQL 到指标转换**：分析 SQL 查询并生成语义指标
 ✅ **智能类型检测**：自动选择正确的指标类型
 ✅ **防止重复**：生成前检查现有指标
 ✅ **主题树支持**：按 domain/layer1/layer2 组织，支持预定义或学习模式
-✅ **验证**：MetricFlow 验证确保正确性
+✅ **验证**：semantic adapter 校验确保正确性
 ✅ **发布门禁**：语义验证和 dry-run SQL 通过后才同步
 ✅ **知识库集成**：语义搜索以发现指标
 ✅ **文件管理**：将指标组织在独立于语义模型的专用文件中

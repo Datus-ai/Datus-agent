@@ -2,7 +2,7 @@
 
 ## 概览
 
-语义模型生成功能帮助你通过 AI 助手从数据库表创建 MetricFlow 语义模型。助手分析你的表结构并生成全面的 YAML 配置文件，定义指标、维度和关系。
+语义模型生成功能帮助你通过 AI 助手从数据库表创建语义模型。具体 YAML authoring format 由配置的 semantic adapter 决定：`metricflow` 生成 MetricFlow YAML，`osi` 生成 strict OSI core YAML。助手会分析表结构，并按所选适配器生成配置文件。
 
 ## 什么是语义模型？
 
@@ -29,7 +29,7 @@
 1. 检索你的表的 DDL（结构）
 2. 检查是否已存在语义模型
 3. 生成全面的 YAML 文件
-4. 使用 MetricFlow 验证配置
+4. 使用配置的 semantic adapter 验证配置
 5. 验证通过后同步到知识库
 
 ### 生成工作流
@@ -62,10 +62,12 @@ agent:
 
 完整配置项见 [语义层配置](../configuration/semantic_layer.zh.md)。
 
+OSI authoring 见 [OSI 语义适配器](../adapters/osi_semantic_adapter.zh.md)。
+
 **内置配置**（自动启用）：
 - **工具**：数据库工具、生成工具和文件系统工具
 - **Hooks**：验证证据记录和知识库同步
-- **MCP 服务器**：MetricFlow 验证服务器
+- **Semantic Adapter**：通过配置的语义层进行验证
 - **系统提示**：内置模板；未显式设置 `prompt_version` 时使用最新可用版本
 - **工作空间**：`~/.datus/data/{datasource}/semantic_models`
 
@@ -120,4 +122,4 @@ data_source:
 - ✓ 验证通过后自动同步
 - ✓ 知识库集成
 - ✓ 防止重复
-- ✓ MetricFlow 兼容性
+- ✓ Semantic adapter 兼容性

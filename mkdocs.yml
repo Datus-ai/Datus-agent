@@ -73,13 +73,14 @@ nav:
       - Nodes: configuration/nodes.md
     - Adapters:
       - Database Adapters: adapters/db_adapters.md
-      - Semantic Adapters: adapters/semantic_adapters.md
+      - Semantic Adapters:
+        - Overview: adapters/semantic_adapters.md
+        - MetricFlow Semantic Adapter: adapters/metricflow_semantic_adapter.md
+        - OSI Semantic Adapter: adapters/osi_semantic_adapter.md
       - BI Adapters: adapters/bi_adapters.md
       - Scheduler Adapters: adapters/scheduler_adapters.md
     - Benchmark:
       - Introduction: benchmark/benchmark_manual.md
-    - Metricflow:
-      - Introduction: metricflow/introduction.md
     - Integration:
       - MCP: integration/mcp.md
       - Skills: integration/skills.md
@@ -161,11 +162,12 @@ plugins:
             Adapters: 适配器
             Database Adapters: 数据库适配器
             Semantic Adapters: 语义层适配器
+            MetricFlow Semantic Adapter: MetricFlow 语义适配器
+            OSI Semantic Adapter: OSI 语义适配器
             BI Adapters: BI 适配器
             Scheduler Adapters: Scheduler 适配器
             Benchmark: 基准测试
             Data Access Policy: 数据访问策略
-            Metricflow: MetricFlow
             Integration: 集成
             MCP: MCP
             Skills: Skills

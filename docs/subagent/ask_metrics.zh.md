@@ -17,7 +17,7 @@ AskMetrics 的能力边界刻意保持较窄。如果没有现有指标能够回
 
 AskMetrics 需要已配置的语义层和已发布的指标。
 
-以 MetricFlow 为例，在 `agent.yml` 中配置语义层：
+在 `agent.yml` 中配置语义层。以 MetricFlow 为例：
 
 ```yaml
 agent:
@@ -28,7 +28,7 @@ agent:
 
 完整配置见 [语义层配置](../configuration/semantic_layer.zh.md)。
 
-指标可以来自已有 MetricFlow YAML，也可以由 [Generate Metrics](gen_metrics.zh.md) subagent 生成。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
+指标可以来自已有语义层资产，也可以由 [Generate Metrics](gen_metrics.zh.md) subagent 生成。使用 OSI 时，`ask_metrics` 仍然使用同一组 adapter tools，但会通过配置的执行后端查询 OSI-authored metrics。主题树不是必需的，但建议使用，因为 AskMetrics 会先把主题树作为指标路由目录，再决定是否搜索指标。
 
 ## 快速开始
 

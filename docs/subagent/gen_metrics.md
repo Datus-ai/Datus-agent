@@ -2,7 +2,7 @@
 
 ## Overview
 
-The metrics generation feature helps you convert SQL queries into reusable MetricFlow metric definitions. Using an AI assistant, you can analyze SQL business logic and automatically generate standardized YAML metric configurations that can be queried consistently across your organization.
+The metrics generation feature helps you convert SQL queries into reusable metric definitions. The authored YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow metric YAML, while `osi` generates strict OSI core metrics with Datus execution hints in `custom_extensions`. Using an AI assistant, you can analyze SQL business logic and automatically generate standardized metric configurations that can be queried consistently across your organization.
 
 ## What is a Metric?
 
@@ -17,21 +17,24 @@ A **metric** is a reusable business calculation built on top of semantic models.
 
 ## Important Limitations
 
-**⚠️ Single Table Queries Only**
+**⚠️ Adapter-dependent SQL coverage**
 
-The current version **only supports generating metrics from single-table SQL queries**. Multi-table JOINs are not supported.
+Metric generation is intended for aggregate metric definitions. Detail lists, ranking rows, and TopN-per-group row lists should not be forced into metrics.
 
-**Supported**:
+MetricFlow authoring is most reliable for single-table aggregate SQL. OSI authoring can express joined dimensions when the semantic model defines OSI relationships.
+
+**Good metric-generation inputs**:
 ```sql
 SELECT SUM(revenue) FROM transactions WHERE status = 'completed'
 SELECT COUNT(DISTINCT customer_id) / COUNT(*) FROM orders
 ```
 
-**Not Supported**:
+**Do not force into metrics**:
 ```sql
-SELECT SUM(o.amount)
-FROM orders o
-JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
+SELECT customer_id, order_id, revenue
+FROM orders
+ORDER BY revenue DESC
+LIMIT 100
 ```
 
 ## How It Works
@@ -55,7 +58,7 @@ Runs dry-run SQL → Syncs to Knowledge Base
 Before publishing, the agent must pass both checks:
 
 - `validate_semantic()` validates the semantic model and metric YAML.
-- `query_metrics(..., dry_run=True)` verifies that MetricFlow can compile SQL for the generated metric.
+- `query_metrics(..., dry_run=True)` verifies that the configured semantic adapter can compile SQL for the generated metric.
 
 After those checks pass, `end_metric_generation` syncs the generated metric to the Knowledge Base automatically.
 
@@ -81,10 +84,12 @@ agent:
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the full set of options.
 
+For OSI authoring, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.md).
+
 **Built-in configurations** (automatically enabled):
 - **Tools**: Generation tools and filesystem tools
 - **Hooks**: Validation evidence tracking and Knowledge Base sync
-- **MCP Server**: MetricFlow validation server
+- **Semantic Adapter**: validation through the configured semantic layer
 - **System Prompt**: Built-in template; the latest available version is used unless `prompt_version` is set
 - **Workspace**: `~/.datus/data/{datasource}/semantic_models`
 
@@ -262,10 +267,10 @@ After validation and dry-run SQL succeed, the metric is synced to the Knowledge 
 
 The metrics generation feature provides:
 
-✅ **SQL-to-Metric Conversion**: Analyze SQL queries and generate MetricFlow metrics
+✅ **SQL-to-Metric Conversion**: Analyze SQL queries and generate semantic metrics
 ✅ **Intelligent Type Detection**: Automatically selects the right metric type
 ✅ **Duplicate Prevention**: Checks for existing metrics before generation
-✅ **Validation**: MetricFlow validation ensures correctness
+✅ **Validation**: Semantic adapter validation ensures correctness
 ✅ **Publish Gate**: Syncs only after semantic validation and dry-run SQL succeed
 ✅ **Knowledge Base Integration**: Semantic search for metric discovery
 ✅ **File Management**: Organizes metrics in dedicated files separate from semantic models
