@@ -71,6 +71,20 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/adapters/db_adapters/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/adapters/metricflow_semantic_adapter/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/adapters/metricflow_semantic_adapter/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/adapters/metricflow_semantic_adapter/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/adapters/osi_semantic_adapter/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/adapters/osi_semantic_adapter/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/adapters/osi_semantic_adapter/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/adapters/scheduler_adapters/</loc>
         <lastmod>2026-06-16</lastmod>
         <changefreq>daily</changefreq>
@@ -629,6 +643,20 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/adapters/db_adapters/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devadapters/db_adapters/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/adapters/metricflow_semantic_adapter/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/adapters/metricflow_semantic_adapter/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devadapters/metricflow_semantic_adapter/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/adapters/osi_semantic_adapter/</loc>
+        <lastmod>2026-06-16</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/adapters/osi_semantic_adapter/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devadapters/osi_semantic_adapter/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/adapters/scheduler_adapters/</loc>
