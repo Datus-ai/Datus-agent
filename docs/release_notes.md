@@ -2,6 +2,12 @@
 
 ## 0.3
 
+### 0.3.5
+
+**Enhancements**
+
+- **Lightweight `/init` + new `/build-kb`** - `/init` is now a fast, confirmation-free pass that scans the project and writes an `AGENTS.md` inventory plus the file-based stores (atomic facts to `./knowledge/*.md`, durable preferences to memory), stopping short of the expensive vector stores. The heavy knowledge-base construction moved to the new `/build-kb` command, which builds semantic models / metrics / reference SQL, accepts an optional free-text file/table/domain scope, and refreshes the `AGENTS.md` KB index. [docs](cli/build_kb_command.md)
+
 ### 0.3.4
 
 **New Features**

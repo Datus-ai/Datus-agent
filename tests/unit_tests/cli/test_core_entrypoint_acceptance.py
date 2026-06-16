@@ -17,6 +17,7 @@ from rich.console import Console
 from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
 from datus.cli.bootstrap_bi_picker import BootstrapBiPlan, DashboardCliOptions
 from datus.cli.bootstrap_streams import stream_metrics, stream_semantic_model
+from datus.cli.build_kb_commands import BuildKbCommands
 from datus.cli.datasource_commands import DatasourceCommands
 from datus.cli.init_commands import _INIT_PROMPT, InitCommands
 from datus.cli.model_commands import ModelCommands
@@ -89,6 +90,7 @@ def _build_core_cli() -> DatusCLI:
     cli.language_commands = MagicMock()
     cli.effort_commands = MagicMock()
     cli.init_commands = InitCommands(cli)
+    cli.build_kb_commands = BuildKbCommands(cli)
     cli.datasource_commands = DatasourceCommands(cli)
     cli._cmd_help = MagicMock()
     cli._cmd_exit = MagicMock()

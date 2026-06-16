@@ -327,6 +327,15 @@ class TestBuiltinSkillsResolution:
             "datus/resources/skills directory without any bootstrap copy"
         )
 
+    def test_default_config_discovers_build_kb_skill(self):
+        """With the default SkillConfig, the bundled ``build-kb`` skill is discoverable."""
+        registry = SkillRegistry(config=SkillConfig())
+        registry.scan_directories()
+        assert registry.skill_exists("build-kb"), (
+            "Built-in 'build-kb' skill must resolve via the packaged "
+            "datus/resources/skills directory without any bootstrap copy"
+        )
+
     def test_user_override_shadows_builtin(self, tmp_path):
         """A same-named SKILL.md in a user dir takes precedence over the packaged one."""
         override_root = tmp_path / "user-skills"

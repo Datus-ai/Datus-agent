@@ -83,7 +83,12 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("bootstrap-bi", "Extract BI dashboard assets for sub-agent context", "system"),
     SlashSpec("model", "Switch LLM provider/model", "system", aliases=("models",)),
     SlashSpec("effort", "Set reasoning effort (off|minimal|low|medium|high)", "system"),
-    SlashSpec("init", "Generate AGENTS.md for the current project", "system"),
+    SlashSpec("init", "Lightweight init: AGENTS.md inventory + knowledge/memory (no vector KB)", "system"),
+    SlashSpec(
+        "build-kb",
+        "Build vector KB (semantic models / metrics / reference SQL); optional file/table scope",
+        "system",
+    ),
     SlashSpec("session-summarize", "Summarize the current session into persistent stores", "system"),
     SlashSpec("memory-organize", "Audit and reorganize all persistent stores", "system"),
     SlashSpec("services", "Configure dashboards/schedulers (TUI) or list read-only methods", "system"),

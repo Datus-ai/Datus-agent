@@ -48,7 +48,8 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 |------|------|------|------|
 | `/model` | `/models` | 运行时切换 LLM 提供商/模型 | [Model 命令](model_command.zh.md) |
 | `/effort` | | 设置 reasoning 强度（off/minimal/low/medium/high） | [Effort 命令](effort_command.zh.md) |
-| `/init` | | 端到端初始化项目工作区并生成 `AGENTS.md`；可附加自由文本作为目标/范围提示 | [Init 命令](init_command.zh.md) |
+| `/init` | | 轻量初始化:扫描并写出 `AGENTS.md` 清单与文件类 knowledge/memory（不建向量库）；可附加自由文本作为目标/范围提示 | [Init 命令](init_command.zh.md) |
+| `/build-kb` | | 构建向量索引 KB（semantic models / metrics / reference SQL）并刷新 `AGENTS.md` 索引；可附加自由文本限定文件/库表/业务域范围 | [Build KB 命令](build_kb_command.zh.md) |
 | `/session-summarize` | | 把当前会话总结进各持久化存储（先出 manifest,确认后执行）；可附加自由文本作为关注点提示 | |
 | `/memory-organize` | | 审计并整理所有持久化存储（先出整改计划,确认后执行）；可附加自由文本作为关注点提示 | |
 | `/mcp` | | 管理 MCP 服务器（列表/添加/删除/检查/调用/过滤） | [MCP 扩展](mcp_extensions.zh.md) |

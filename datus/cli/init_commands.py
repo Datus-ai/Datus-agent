@@ -8,9 +8,14 @@ The actual project-initialization logic lives in the ``init`` skill bundled
 at ``datus/resources/skills/init/SKILL.md`` and loaded directly from the
 package (no copy to ``~/.datus/skills`` required). Users can override it by
 dropping a same-named SKILL.md into ``./.datus/skills/init/`` (project-level)
-or ``~/.datus/skills/init/`` (user-level). The skill walks the agent through
-``ask_user`` → ``filesystem_tools.list`` → ``db_tools.list_tables`` →
-``filesystem_tools.write_file`` to produce ``AGENTS.md``.
+or ``~/.datus/skills/init/`` (user-level).
+
+``/init`` is the lightweight pass: it scans the files and database metadata,
+writes an ``AGENTS.md`` inventory skeleton, and files the cheap file-based
+stores (atomic facts to ``./knowledge/*.md``, durable preferences to memory).
+It deliberately stops short of the expensive vector-indexed stores
+(``semantic_models`` / ``metrics`` / ``reference_sql``) — those are built by
+the ``build-kb`` skill behind ``/build-kb`` (see ``build_kb_commands.py``).
 
 Rather than reimplement that flow in Python, ``/init`` injects a
 deterministic chat message that tells the active agent to load and follow
@@ -36,8 +41,6 @@ logger = get_logger(__name__)
 _INIT_PROMPT = (
     "Initialize this project workspace by following the `init` skill. "
     'Call `load_skill(skill_name="init")` first and execute its steps in order. '
-    "The skill infers the project goal and in-scope datasources and surfaces them "
-    "in the Generation Manifest for my confirmation. "
     "If `AGENTS.md` already exists, confirm before overwriting it."
     "{user_context}"
 )

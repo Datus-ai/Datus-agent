@@ -2,6 +2,12 @@
 
 ## 0.3
 
+### 0.3.5
+
+**增强**
+
+- **轻量化 `/init` + 全新 `/build-kb`** - `/init` 现在是一次快速、无确认门的流程:扫描项目并写出 `AGENTS.md` 清单,以及文件类存储(原子事实写入 `./knowledge/*.md`,持久偏好写入 memory),不再触及昂贵的向量存储。重型知识库构建迁移到全新的 `/build-kb` 命令——它构建 semantic models / metrics / reference SQL,接受可选的自由文本文件/库表/业务域范围,并刷新 `AGENTS.md` 的 KB 索引。[文档](cli/build_kb_command.zh.md)
+
 ### 0.3.4
 
 **新功能**

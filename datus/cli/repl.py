@@ -47,6 +47,7 @@ from datus.cli.autocomplete import (
     SlashCommandCompleter,
 )
 from datus.cli.bootstrap_bi_commands import BootstrapBiCommands
+from datus.cli.build_kb_commands import BuildKbCommands
 from datus.cli.chat_commands import ChatCommands
 from datus.cli.cli_styles import (
     PASTE_COLLAPSE_THRESHOLD,
@@ -271,6 +272,7 @@ class DatusCLI:
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
         self.init_commands = InitCommands(self)
+        self.build_kb_commands = BuildKbCommands(self)
         self.session_summarize_commands = SessionSummarizeCommands(self)
         self.memory_organize_commands = MemoryOrganizeCommands(self)
         self.service_commands = ServiceCommands(self)
@@ -356,6 +358,7 @@ class DatusCLI:
             "model": self.model_commands.cmd_model,
             "effort": self.effort_commands.cmd_effort,
             "init": self.init_commands.cmd_init,
+            "build-kb": self.build_kb_commands.cmd_build_kb,
             "session-summarize": self.session_summarize_commands.cmd_session_summarize,
             "memory-organize": self.memory_organize_commands.cmd_memory_organize,
             "services": self.service_commands.cmd_services,

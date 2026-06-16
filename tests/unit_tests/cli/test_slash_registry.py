@@ -139,3 +139,11 @@ def test_memory_organize_command_registered_in_system_group():
     spec = next(s for s in SLASH_COMMANDS if s.name == "memory-organize")
     assert spec.group == "system"
     assert spec.summary
+
+
+def test_build_kb_command_registered_in_system_group():
+    from datus.cli.slash_registry import SLASH_COMMANDS
+
+    spec = next(s for s in SLASH_COMMANDS if s.name == "build-kb")
+    assert spec.group == "system"
+    assert spec.summary  # non-empty and autocomplete-relevant

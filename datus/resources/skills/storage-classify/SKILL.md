@@ -104,9 +104,11 @@ Because you edit `AGENTS.md` yourself, keep its sections consistent and minimal.
 
 **AGENTS.md is the KB entry point.** It is injected into every node's `<project_context>`, so it is the one reliable place that tells a downstream agent *what KB exists and how to reach it*. Index retrieval-backed stores (semantic_models/metrics/reference_sql) by **count + which search tool**; index `knowledge` by **file links**. Never inline the stores' contents.
 
+**Write only sections that have real content.** Omit any section you have nothing concrete to put in — never write empty "none yet" / "not built yet" placeholder lines. A section is added later (per the handling order below) when content for it actually exists.
+
 Handling order:
 
-1. **`AGENTS.md` missing** → `write_file` a minimal skeleton (`# <project dir name>` plus the relevant section); leave the rest for `/init` to fill in. Do not block on the user running `/init` first.
+1. **`AGENTS.md` missing** → `write_file` a minimal skeleton (`# <project dir name>` plus the relevant section); leave the inventory + knowledge/memory sections for `/init` to fill in and the vector-index sections (`## Semantic Models` / `## Metrics` / `## Reference SQL`) for `/build-kb`. Do not block on the user running `/init` first.
 2. **Exists but missing the target section** → insert it in the canonical order above (Knowledge goes last).
 3. **Exists with the section** → prefer a minimal `edit_file`. Never rewrite the whole file when a scoped edit suffices, and never touch `## Knowledge` entries owned by `extract-knowledge`.
 
