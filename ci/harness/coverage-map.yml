@@ -31,8 +31,6 @@ docs_coverage_policy:
       reason: Configuration section overview, not a discrete flow.
     - path: docs/knowledge_base/introduction.md
       reason: Knowledge base section overview, not a discrete flow.
-    - path: docs/metricflow/introduction.md
-      reason: MetricFlow section overview; the semantic layer flow owns the concrete pages.
 flow_groups:
   onboarding:
     description: First-run and documented bootstrap flows.
@@ -536,6 +534,8 @@ flow_groups:
           - docs/subagent/gen_metrics.md
           - docs/subagent/ask_metrics.md
           - docs/configuration/semantic_layer.md
+          - docs/adapters/metricflow_semantic_adapter.md
+          - docs/adapters/osi_semantic_adapter.md
         entrypoints:
           - CLI bootstrap
           - Gen semantic model subagent
