@@ -145,8 +145,8 @@ def create_test_node(node_id, mock_agent_config):
 class TestFinalizeSystemPrompt:
     """Test suite for _finalize_system_prompt method."""
 
-    def test_no_skill_func_tool_returns_prompt_unchanged(self, mock_agent_config, monkeypatch):
-        """When skill_func_tool is None, returns base_prompt as-is (memory injection mocked out)."""
+    def test_no_skill_func_tool_only_appends_runtime_context(self, mock_agent_config, monkeypatch):
+        """Without skill_func_tool, finalization still appends shared runtime context."""
         node = MinimalAgenticNode(
             node_id="test1",
             description="Test node",
@@ -160,7 +160,12 @@ class TestFinalizeSystemPrompt:
         base_prompt = "This is the base system prompt."
         result = node._finalize_system_prompt(base_prompt)
 
-        assert result == base_prompt
+        assert result.startswith(base_prompt)
+        assert "Current context:" in result
+        assert "Current date:" in result
+        assert "Available datasources:" not in result
+        assert "Current sql files root directory:" not in result
+        assert "<available_skills>" not in result
 
     def test_with_skill_func_tool_appends_xml(self, mock_agent_config, skill_manager):
         """When skill_func_tool exists and _get_available_skills_context() returns XML, it's appended."""

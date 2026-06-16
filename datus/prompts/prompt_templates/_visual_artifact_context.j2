@@ -1,7 +1,8 @@
-{# Shared runtime-context blocks for both gen_visual_report and
+{# Shared context blocks for both gen_visual_report and
    gen_visual_dashboard system prompts: project rules injected by the
    subagent config, the agent's role override (when set), and the
-   datasource / current-date / conversation-summary footer.
+   datasource / conversation-summary footer. Current date is injected by the
+   shared runtime_context partial during prompt finalization.
 
    Kept in lockstep with the inline blocks that used to live at the end of
    each parent prompt — moved here to eliminate verbatim duplication
@@ -19,9 +20,6 @@
 {% endif %}
 
 ## Context
-{% if current_date -%}
-- Current date: {{ current_date }}
-{% endif -%}
 {% if datasource -%}
 {% if current_datasource_dialect -%}
 - Current datasource: {{ datasource }} ({{ current_datasource_dialect }})

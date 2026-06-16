@@ -1062,11 +1062,10 @@ class AgenticNode(Node):
         Returns:
             Prompt with skills XML and memory context appended
         """
-        # Inject the shared runtime-context block (session-start date,
-        # datasource catalog, sql files root) for DB-capable nodes. Replaces
-        # the per-template "Current context" stanzas; the *current* datasource
+        # Inject session-stable runtime context. The current datasource
         # selection lives in the per-turn user message instead.
         base_prompt = self._inject_runtime_context(base_prompt)
+        base_prompt = self._inject_datasource_runtime_context(base_prompt)
 
         # Inject AGENTS.md project context if present in cwd
         agents_md = self._load_agents_md()
@@ -1107,7 +1106,7 @@ class AgenticNode(Node):
         self._ensure_memory_tool_in_tools()
 
     def _runtime_context_current_date(self) -> str:
-        """Session-start date rendered into the shared runtime-context block.
+        """Current-date reference rendered into the shared runtime-context block.
 
         Defaults to today. Subclasses with a reference-date concept (e.g.
         GenSQL/AskMetrics, which honor a benchmark/replay ``reference_date``)
@@ -1119,16 +1118,30 @@ class AgenticNode(Node):
         return get_default_current_date(None)
 
     def _inject_runtime_context(self, base_prompt: str) -> str:
-        """Append the shared runtime-context block for DB-capable nodes.
+        """Append the shared runtime-context block.
 
-        Renders ``runtime_context_1.0.j2`` with the session-stable values that
-        used to be duplicated inline across the node templates: the
-        session-start date, the configured datasource catalog, and the sql
-        files root. Gated on ``db_func_tool`` so non-DB nodes (e.g.
-        report/dashboard writers without a connector) are unaffected. The
-        *current* datasource selection and its dialect are NOT here — they are
-        injected per turn into the user message (see
-        :meth:`_build_datasource_reminder`).
+        Renders ``runtime_context_1.0.j2`` with date-only session-stable
+        context. Date context is runtime input, not DB-tool capability.
+        """
+        agent_config = getattr(self, "agent_config", None)
+        try:
+            section = get_prompt_manager(agent_config=agent_config).render_template(
+                template_name="runtime_context",
+                version=None,
+                current_date=self._runtime_context_current_date(),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to inject runtime context: {e}")
+            return base_prompt
+        if section and section.strip():
+            base_prompt = base_prompt + "\n\n" + section.strip()
+        return base_prompt
+
+    def _inject_datasource_runtime_context(self, base_prompt: str) -> str:
+        """Append datasource/sql-root context for DB-tool-capable nodes.
+
+        This preserves the old scope for datasource catalog and sql-root hints
+        while allowing date context to be injected independently.
         """
         if getattr(self, "db_func_tool", None) is None:
             return base_prompt
@@ -1138,14 +1151,13 @@ class AgenticNode(Node):
 
             ds_ctx = build_datasource_prompt_context(agent_config) if agent_config else {}
             section = get_prompt_manager(agent_config=agent_config).render_template(
-                template_name="runtime_context",
+                template_name="datasource_runtime_context",
                 version=None,
-                current_date=self._runtime_context_current_date(),
                 available_datasources=ds_ctx.get("available_datasources") or {},
                 workspace_root=self._resolve_workspace_root(),
             )
         except Exception as e:
-            logger.warning(f"Failed to inject runtime context: {e}")
+            logger.warning(f"Failed to inject datasource runtime context: {e}")
             return base_prompt
         if section and section.strip():
             base_prompt = base_prompt + "\n\n" + section.strip()

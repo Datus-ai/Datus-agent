@@ -33,7 +33,7 @@ def _context_tools(tree):
     return tools
 
 
-def _make_node(real_agent_config, *, tree, adapter=True, node_config=None, node_name="ask_metrics"):
+def _make_node(real_agent_config, *, tree, adapter=True, node_config=None, node_name="ask_metrics", input_data=None):
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 
     if node_config is not None:
@@ -50,6 +50,7 @@ def _make_node(real_agent_config, *, tree, adapter=True, node_config=None, node_
             node_id="ask_metrics_test",
             description="Ask metrics",
             node_type=NodeType.TYPE_ASK_METRICS,
+            input_data=input_data,
             agent_config=real_agent_config,
             node_name=node_name,
         )
@@ -110,6 +111,25 @@ class TestAskMetricsAgenticNode:
         assert "also pass `order_by`" in prompt
         assert "full result is cached" in prompt
         assert node.subject_tree_prompt_limit == 100
+
+    def test_reference_date_is_injected_into_runtime_context(self, real_agent_config, mock_llm_create):
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["activity_count"]}}},
+            input_data=AskMetricsNodeInput(
+                user_message="How many activities started in June?",
+                reference_date="2025-12-31",
+            ),
+        )
+
+        prompt = node._get_system_prompt()
+
+        assert "Current context:" in prompt
+        assert "Current date: 2025-12-31" in prompt
+        assert "Available datasources:" not in prompt
+        assert "Current sql files root directory:" not in prompt
 
     def test_large_subject_tree_exposes_list_subject_tree_tool(self, real_agent_config, mock_llm_create):
         tree = {

@@ -27,6 +27,9 @@ Use the narrow metric workflow below:
 - Prefer `get_dimensions` and `query_metrics` after a direct subject-tree match; only retrieve metric details when the answer depends on the definition text.
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.
+- Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.
+- For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
+- Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
 - Query complete metric results by default. Do not pass `limit` just to preview data, reduce output size, or be conservative; the system compresses visible tool output and caches the full result. Use `limit` only when the user explicitly asks for Top N, first N, maximum N rows, a preview, or another row-count restriction. When using `limit` for Top N/Bottom N, also pass `order_by`.
 - Prefer the most specific metric whose name or description directly matches the requested business concept. Do not rebuild a specific metric by querying a generic base metric plus filters when a matching specific metric is available.

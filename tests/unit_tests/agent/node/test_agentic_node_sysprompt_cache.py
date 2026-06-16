@@ -13,9 +13,11 @@ Covers:
 - ``_build_datasource_reminder``: live per-turn datasource + dialect line for
   the user-message ``<system_reminder>`` envelope; never mentions the
   permission profile.
-- ``_inject_runtime_context``: gated on ``db_func_tool``; renders the shared
-  ``runtime_context`` partial (session-start date + datasource catalog +
-  workspace root) WITHOUT the current datasource selection.
+- ``_inject_runtime_context``: renders date-only shared runtime context
+  WITHOUT requiring a DB tool.
+- ``_inject_datasource_runtime_context``: renders datasource catalog +
+  workspace root only for DB-tool-capable nodes and WITHOUT the current
+  datasource selection.
 - Template hygiene: the active node templates no longer inline the per-turn
   volatile variables.
 
@@ -328,38 +330,107 @@ class TestDatasourceReminder:
 
 
 class TestInjectRuntimeContext:
-    def test_skipped_without_db_tool(self, session_manager):
+    def test_appends_date_without_db_tool(self, session_manager):
         node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
-        assert node._inject_runtime_context("BASE") == "BASE"
+        out = node._inject_runtime_context("BASE")
+        assert out.startswith("BASE")
+        assert "Current context:" in out
+        assert re.search(r"Current date: \d{4}-\d{2}-\d{2}", out)
+        assert "Available datasources:" not in out
+        assert "Current sql files root directory:" not in out
 
-    def test_appends_date_catalog_and_workspace_for_db_node(self, session_manager):
+    def test_runtime_context_render_failure_returns_base_prompt(self, session_manager, monkeypatch):
+        from datus.agent.node import agentic_node as agentic_node_module
+
+        calls = []
+
+        class RaisingPromptManager:
+            def render_template(self, **kwargs):
+                calls.append(kwargs)
+                raise RuntimeError("template unavailable")
+
+        monkeypatch.setattr(
+            agentic_node_module,
+            "get_prompt_manager",
+            lambda **_: RaisingPromptManager(),
+        )
+
+        node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
+        node._runtime_context_current_date = lambda: "2024-06-15"
+
+        assert node._inject_runtime_context("BASE") == "BASE"
+        assert calls == [
+            {
+                "template_name": "runtime_context",
+                "version": None,
+                "current_date": "2024-06-15",
+            }
+        ]
+
+    def test_skips_datasource_runtime_context_without_db_tool(self, session_manager):
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="snowflake")})
+        cfg = _agent_config(current_datasource="main", services=services)
+        node = _SnapshotNode(session_manager, cfg, db_func_tool=None)
+        assert node._inject_datasource_runtime_context("BASE") == "BASE"
+
+    def test_appends_datasource_catalog_and_workspace_for_db_tool(self, session_manager):
         services = SimpleNamespace(
             datasources={"main": SimpleNamespace(type="snowflake"), "dev": SimpleNamespace(type="duckdb")}
         )
         cfg = _agent_config(current_datasource="main", services=services)
         node = _SnapshotNode(session_manager, cfg, db_func_tool=object())
-        out = node._inject_runtime_context("BASE")
+        out = node._inject_datasource_runtime_context("BASE")
         assert out.startswith("BASE")
-        assert "Current context:" in out
-        assert re.search(r"Current date: \d{4}-\d{2}-\d{2}", out)
+        assert "Datasource context:" in out
+        assert "Current date:" not in out
         assert "Available datasources:" in out
         assert "main (snowflake)" in out
         assert "dev (duckdb)" in out
         assert "/tmp/ws" in out
+
+    def test_datasource_runtime_context_render_failure_returns_base_prompt(self, session_manager, monkeypatch):
+        from datus.agent.node import agentic_node as agentic_node_module
+
+        calls = []
+
+        class RaisingPromptManager:
+            def render_template(self, **kwargs):
+                calls.append(kwargs)
+                raise RuntimeError("template unavailable")
+
+        monkeypatch.setattr(
+            agentic_node_module,
+            "get_prompt_manager",
+            lambda **_: RaisingPromptManager(),
+        )
+
+        services = SimpleNamespace(datasources={"main": SimpleNamespace(type="snowflake")})
+        cfg = _agent_config(current_datasource="main", services=services)
+        node = _SnapshotNode(session_manager, cfg, db_func_tool=object())
+
+        assert node._inject_datasource_runtime_context("BASE") == "BASE"
+        assert calls == [
+            {
+                "template_name": "datasource_runtime_context",
+                "version": None,
+                "available_datasources": {"main": "snowflake"},
+                "workspace_root": "/tmp/ws",
+            }
+        ]
 
     def test_does_not_pin_current_datasource_selection(self, session_manager):
         """The frozen prompt lists the catalog but never the live selection."""
         services = SimpleNamespace(datasources={"main": SimpleNamespace(type="snowflake")})
         cfg = _agent_config(current_datasource="main", services=services)
         node = _SnapshotNode(session_manager, cfg, db_func_tool=object())
-        out = node._inject_runtime_context("BASE")
+        out = node._inject_datasource_runtime_context("BASE")
         assert "Current datasource:" not in out
 
     def test_runtime_context_date_hook_is_overridable(self, session_manager):
         """Subclasses (GenSQL/AskMetrics) pin a reference date into the snapshot."""
         services = SimpleNamespace(datasources={"main": SimpleNamespace(type="duckdb")})
         cfg = _agent_config(current_datasource="main", services=services)
-        node = _SnapshotNode(session_manager, cfg, db_func_tool=object())
+        node = _SnapshotNode(session_manager, cfg, db_func_tool=None)
         node._runtime_context_current_date = lambda: "1999-12-31"
         out = node._inject_runtime_context("BASE")
         assert "Current date: 1999-12-31" in out
@@ -399,5 +470,13 @@ class TestTemplateHygiene:
     def test_runtime_context_partial_has_no_current_selection(self):
         source = (TEMPLATE_DIR / "runtime_context_1.0.j2").read_text(encoding="utf-8")
         assert "{{ current_date }}" in source
+        assert "available_datasources" not in source
+        assert "workspace_root" not in source
+        assert "Current datasource: {{ datasource }}" not in source
+
+    def test_datasource_runtime_context_partial_has_no_current_selection(self):
+        source = (TEMPLATE_DIR / "datasource_runtime_context_1.0.j2").read_text(encoding="utf-8")
+        assert "{{ current_date }}" not in source
         assert "available_datasources" in source
+        assert "workspace_root" in source
         assert "Current datasource: {{ datasource }}" not in source

@@ -1,0 +1,14 @@
+{# Datasource-scoped runtime context appended only for nodes whose tool surface
+   can act on database/sql-file context. These values are frozen into the
+   per-session system-prompt snapshot. The *current* datasource selection and
+   its dialect are NOT here - they are live per-turn values injected into the
+   user message's ``<system_reminder>`` envelope so a mid-session switch stays
+   correct without invalidating the cached prefix. #}
+Datasource context:
+{% if available_datasources and available_datasources|length > 0 -%}
+- Available datasources: {% for ds_name, ds_type in available_datasources.items() %}{{ ds_name }} ({{ ds_type }}){% if not loop.last %}, {% endif %}{% endfor %}
+
+{% endif -%}
+{% if workspace_root -%}
+- Current sql files root directory: {{ workspace_root }}
+{% endif -%}
