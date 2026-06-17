@@ -16,8 +16,8 @@ class AppContext:
       (default) project.
     - ``config``: optional preloaded ``AgentConfig``; when ``None``,
       ``get_datus_service`` loads it on demand.
-    - ``principal``: request-scoped data-access attributes consumed by
-      data-access policies. This is separate from ``user_id`` because one
+    - ``principal``: request-scoped SQL policy attributes consumed by
+      SQL policies. This is separate from ``user_id`` because one
       authenticated identity can carry many business scopes.
     """
 

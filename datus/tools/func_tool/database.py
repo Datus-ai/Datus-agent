@@ -125,7 +125,7 @@ class DBFuncTool:
                               configured for its datasource); defaults to the datasource config's ``database``.
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
-            principal: Request-scoped data-access attributes. When omitted,
+            principal: Request-scoped SQL policy attributes. When omitted,
                        falls back to ``agent_config.principal`` if present.
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
         """
@@ -1131,7 +1131,7 @@ class DBFuncTool:
 
             logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
             effective_datasource = self._resolve_effective_datasource(datasource)
-            sql = self._enforce_data_access_policy(
+            sql = self._enforce_sql_policy(
                 sql,
                 datasource=effective_datasource,
                 dialect=connector.dialect,
@@ -1203,16 +1203,16 @@ class DBFuncTool:
             )
         return None, sql_type
 
-    def _enforce_data_access_policy(self, sql: str, datasource: str, dialect: str) -> str:
+    def _enforce_sql_policy(self, sql: str, datasource: str, dialect: str) -> str:
         if not self.agent_config:
             return sql
-        data_access_config = getattr(self.agent_config, "data_access_config", None)
-        from datus.tools.data_access_policy import DataAccessConfig, load_data_access_enforcer
+        sql_policy_config = getattr(self.agent_config, "sql_policy_config", None)
+        from datus.tools.sql_policy import SqlPolicyConfig, load_sql_policy_enforcer
 
-        if not isinstance(data_access_config, DataAccessConfig) or not data_access_config.enabled:
+        if not isinstance(sql_policy_config, SqlPolicyConfig) or not sql_policy_config.enabled:
             return sql
 
-        enforced = load_data_access_enforcer(data_access_config).enforce_read(
+        enforced = load_sql_policy_enforcer(sql_policy_config).enforce_read(
             sql,
             datasource=datasource,
             dialect=dialect,
@@ -1221,15 +1221,15 @@ class DBFuncTool:
         if not enforced.allowed:
             raise DatusException(
                 ErrorCode.TOOL_INVALID_INPUT,
-                message=enforced.reason or "SQL data-access policy denied the query",
+                message=enforced.reason or "SQL policy denied the query",
             )
         if enforced.applied_policies:
             logger.info(
-                "Applied SQL data-access policies",
+                "Applied SQL policies",
                 policies=enforced.applied_policies,
                 datasource=datasource,
             )
-        return enforced.sql or sql
+        return sql if enforced.sql is None else enforced.sql
 
     @mcp_tool()
     def get_table_ddl(

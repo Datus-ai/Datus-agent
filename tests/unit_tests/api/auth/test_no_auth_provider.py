@@ -56,7 +56,7 @@ class TestNoAuthProviderAuthenticate:
         assert ctx.user_id is None
         assert ctx.principal == {"market_code": "MKT300", "market_codes": ["MKT300", "MKT301"]}
 
-    async def test_user_id_header_does_not_populate_data_access_principal(self):
+    async def test_user_id_header_does_not_populate_sql_policy_principal(self):
         provider = NoAuthProvider()
         ctx = await provider.authenticate(
             _make_request({HEADER_USER_ID: "alice", HEADER_PRINCIPAL: '{"market_code": "MKT300"}'})
