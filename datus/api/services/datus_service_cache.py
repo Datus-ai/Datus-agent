@@ -52,7 +52,21 @@ class DatusServiceCache:
                 if expected_fingerprint is None or cached.config_fingerprint == expected_fingerprint:
                     self._cache.move_to_end(project_id)
                     return cached
-                # Fingerprint mismatch — evict stale entry and rebuild
+                # Fingerprint mismatch. Rebuilding now would orphan any in-flight
+                # chat task: its interaction broker lives in this instance's
+                # task_manager, so a later /chat/user_interaction answer would
+                # hit a fresh, empty manager and fail with "No active task found
+                # for this session". Defer the config swap while the instance is
+                # busy — keep serving it until its tasks drain, after which the
+                # next request rebuilds with the new config.
+                if cached.has_active_tasks():
+                    self._cache.move_to_end(project_id)
+                    logger.info(
+                        f"Deferring DatusService rebuild for project {project_id}: "
+                        f"AgentConfig fingerprint changed but tasks are still active"
+                    )
+                    return cached
+                # Idle instance — safe to evict and rebuild with the new config.
                 stale_svc = self._cache.pop(project_id)
                 logger.info(f"Evicting DatusService for project {project_id} due to AgentConfig fingerprint mismatch")
 
