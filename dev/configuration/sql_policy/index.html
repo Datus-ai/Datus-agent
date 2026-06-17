@@ -1,6 +1,6 @@
 
 <!doctype html>
-<html lang="zh" class="no-js">
+<html lang="en" class="no-js">
   <head>
     
       <meta charset="utf-8">
@@ -8,7 +8,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/zh/configuration/data_access_policy/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/sql_policy/">
       
       
         <link rel="prev" href="../benchmark/">
@@ -18,25 +18,25 @@
       
       
         
-          <link rel="alternate" href="../../../configuration/data_access_policy/" hreflang="en">
+          <link rel="alternate" href="./" hreflang="en">
         
-          <link rel="alternate" href="./" hreflang="zh">
+          <link rel="alternate" href="../../zh/configuration/sql_policy/" hreflang="zh">
         
       
       
-      <link rel="icon" href="../../../assets/logo-light.png">
+      <link rel="icon" href="../../assets/logo-light.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>数据访问策略 - Datus Docs</title>
+        <title>SQL Policy - Datus Docs</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,8 +76,8 @@
     <div data-md-component="skip">
       
         
-        <a href="#_1" class="md-skip">
-          跳转至
+        <a href="#sql-policy" class="md-skip">
+          Skip to content
         </a>
       
     </div>
@@ -93,10 +93,10 @@
       
 
 <header class="md-header" data-md-component="header">
-  <nav class="md-header__inner md-grid" aria-label="页眉">
-    <a href="../../" title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../../assets/logo-light.png" alt="logo">
+  <img src="../../assets/logo-light.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              数据访问策略
+              SQL Policy
             
           </span>
         </div>
@@ -163,20 +163,20 @@
       <div class="md-header__option">
   <div class="md-select">
     
-    <button class="md-header__button md-icon" aria-label="选择当前语言">
+    <button class="md-header__button md-icon" aria-label="Select language">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
     </button>
     <div class="md-select__inner">
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="../../../configuration/data_access_policy/" hreflang="en" class="md-select__link">
+            <a href="./" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
         
           <li class="md-select__item">
-            <a href="./" hreflang="zh" class="md-select__link">
+            <a href="../../zh/configuration/sql_policy/" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -197,16 +197,16 @@
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
       <label class="md-search__icon md-icon" for="__search">
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
       </label>
-      <nav class="md-search__options" aria-label="查找">
+      <nav class="md-search__options" aria-label="Search">
         
-        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
           
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
@@ -217,7 +217,7 @@
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
         <div class="md-search-result" data-md-component="search-result">
           <div class="md-search-result__meta">
-            正在初始化搜索引擎
+            Initializing search
           </div>
           <ol class="md-search-result__list" role="presentation"></ol>
         </div>
@@ -229,7 +229,7 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
+        <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -250,7 +250,7 @@
         
           
             
-<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
       
@@ -264,13 +264,13 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../" class="md-tabs__link">
+        <a href="../.." class="md-tabs__link">
           
   
   
     
   
-  首页
+  Home
 
         </a>
       </li>
@@ -290,7 +290,7 @@
   
     
   
-  发布说明
+  Release Notes
 
       </a>
     </li>
@@ -317,18 +317,18 @@
   
 
 
-<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../" title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+    <a href="../.." title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../../assets/logo-light.png" alt="logo">
+  <img src="../../assets/logo-light.png" alt="logo">
 
     </a>
     Datus Docs
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
+      <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -404,14 +404,14 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../" class="md-nav__link ">
+            <a href="../.." class="md-nav__link ">
               
   
   
   <span class="md-ellipsis">
     
   
-    首页
+    Home
   
 
     
@@ -433,7 +433,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    首页
+    Home
   
 
           </label>
@@ -479,7 +479,7 @@
   <span class="md-ellipsis">
     
   
-    入门指南
+    Getting Started
   
 
     
@@ -495,7 +495,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    入门指南
+    Getting Started
   
 
           </label>
@@ -515,7 +515,7 @@
   <span class="md-ellipsis">
     
   
-    快速开始
+    Quickstart
   
 
     
@@ -543,7 +543,7 @@
   <span class="md-ellipsis">
     
   
-    数据工程快速开始
+    Data Engineering Quickstart
   
 
     
@@ -571,7 +571,7 @@
   <span class="md-ellipsis">
     
   
-    上下文数据工程
+    Contextual Data Engineering
   
 
     
@@ -669,7 +669,7 @@
   <span class="md-ellipsis">
     
   
-    命令行
+    CLI
   
 
     
@@ -685,7 +685,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    命令行
+    CLI
   
 
           </label>
@@ -705,7 +705,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -733,7 +733,7 @@
   <span class="md-ellipsis">
     
   
-    聊天命令
+    Chat Command
   
 
     
@@ -761,7 +761,7 @@
   <span class="md-ellipsis">
     
   
-    上下文命令
+    Context Command
   
 
     
@@ -789,7 +789,7 @@
   <span class="md-ellipsis">
     
   
-    执行命令
+    Execution Command
   
 
     
@@ -817,7 +817,7 @@
   <span class="md-ellipsis">
     
   
-    MCP 扩展
+    MCP Extensions
   
 
     
@@ -845,7 +845,7 @@
   <span class="md-ellipsis">
     
   
-    SQL 执行
+    SQL Execution
   
 
     
@@ -873,7 +873,7 @@
   <span class="md-ellipsis">
     
   
-    技能命令
+    Skill Command
   
 
     
@@ -901,7 +901,7 @@
   <span class="md-ellipsis">
     
   
-    参考
+    Reference
   
 
     
@@ -929,7 +929,7 @@
   <span class="md-ellipsis">
     
   
-    计划模式
+    Plan Mode
   
 
     
@@ -1043,7 +1043,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -1071,7 +1071,7 @@
   <span class="md-ellipsis">
     
   
-    内置 subagent
+    Built-in subagents
   
 
     
@@ -1099,7 +1099,7 @@
   <span class="md-ellipsis">
     
   
-    自定义 subagent
+    Customized subagents
   
 
     
@@ -1127,7 +1127,7 @@
   <span class="md-ellipsis">
     
   
-    生成 Dashboard
+    Generate Dashboard
   
 
     
@@ -1155,7 +1155,7 @@
   <span class="md-ellipsis">
     
   
-    生成指标
+    Generate Metrics
   
 
     
@@ -1183,7 +1183,7 @@
   <span class="md-ellipsis">
     
   
-    指标问答
+    Ask Metrics
   
 
     
@@ -1211,7 +1211,7 @@
   <span class="md-ellipsis">
     
   
-    生成语义模型
+    Generate Semantic Model
   
 
     
@@ -1239,7 +1239,7 @@
   <span class="md-ellipsis">
     
   
-    调度器
+    Scheduler
   
 
     
@@ -1415,7 +1415,7 @@
   <span class="md-ellipsis">
     
   
-    chatbot
+    Chatbot
   
 
     
@@ -1465,7 +1465,7 @@
   <span class="md-ellipsis">
     
   
-    IM 网关
+    IM Gateway
   
 
     
@@ -1481,7 +1481,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    IM 网关
+    IM Gateway
   
 
           </label>
@@ -1501,7 +1501,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -1557,7 +1557,7 @@
   <span class="md-ellipsis">
     
   
-    飞书
+    Feishu
   
 
     
@@ -1623,7 +1623,7 @@
   <span class="md-ellipsis">
     
   
-    知识库
+    Knowledge Base
   
 
     
@@ -1639,7 +1639,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    知识库
+    Knowledge Base
   
 
           </label>
@@ -1659,7 +1659,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -1687,7 +1687,7 @@
   <span class="md-ellipsis">
     
   
-    平台文档
+    Platform Documentation
   
 
     
@@ -1715,7 +1715,7 @@
   <span class="md-ellipsis">
     
   
-    元数据
+    Metadata
   
 
     
@@ -1743,7 +1743,7 @@
   <span class="md-ellipsis">
     
   
-    语义模型
+    Semantic Models
   
 
     
@@ -1771,7 +1771,7 @@
   <span class="md-ellipsis">
     
   
-    指标
+    Metrics
   
 
     
@@ -1827,7 +1827,7 @@
   <span class="md-ellipsis">
     
   
-    SQL模板
+    Reference Template
   
 
     
@@ -1887,7 +1887,7 @@
   <span class="md-ellipsis">
     
   
-    工作流
+    Workflow
   
 
     
@@ -1903,7 +1903,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    工作流
+    Workflow
   
 
           </label>
@@ -1923,7 +1923,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -1951,7 +1951,7 @@
   <span class="md-ellipsis">
     
   
-    节点
+    Nodes
   
 
     
@@ -1979,7 +1979,7 @@
   <span class="md-ellipsis">
     
   
-    编排
+    Orchestration
   
 
     
@@ -2103,7 +2103,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2131,7 +2131,7 @@
   <span class="md-ellipsis">
     
   
-    部署
+    Deployment
   
 
     
@@ -2187,7 +2187,7 @@
   <span class="md-ellipsis">
     
   
-    知识库 API
+    Knowledge Base API
   
 
     
@@ -2259,7 +2259,7 @@
   <span class="md-ellipsis">
     
   
-    配置
+    Configuration
   
 
     
@@ -2275,7 +2275,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    配置
+    Configuration
   
 
           </label>
@@ -2295,7 +2295,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2351,7 +2351,7 @@
   <span class="md-ellipsis">
     
   
-    上下文压缩
+    Context Compaction
   
 
     
@@ -2379,7 +2379,7 @@
   <span class="md-ellipsis">
     
   
-    工作流
+    Workflow
   
 
     
@@ -2407,7 +2407,7 @@
   <span class="md-ellipsis">
     
   
-    基准测试
+    Benchmark
   
 
     
@@ -2444,7 +2444,7 @@
   <span class="md-ellipsis">
     
   
-    数据访问策略
+    SQL Policy
   
 
     
@@ -2462,7 +2462,7 @@
   <span class="md-ellipsis">
     
   
-    数据访问策略
+    SQL Policy
   
 
     
@@ -2474,7 +2474,7 @@
       
         
 
-<nav class="md-nav md-nav--secondary" aria-label="目录">
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
   
@@ -2483,15 +2483,15 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      目录
+      Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#agent" class="md-nav__link">
+  <a href="#framework-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        开源 Agent 提供什么
+        Framework Boundary
       
     </span>
   </a>
@@ -2499,10 +2499,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider" class="md-nav__link">
+  <a href="#runtime-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        实现 Provider
+        Runtime Flow
       
     </span>
   </a>
@@ -2510,10 +2510,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider_1" class="md-nav__link">
+  <a href="#configuration-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置 Provider
+        Configuration Contract
       
     </span>
   </a>
@@ -2521,10 +2521,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#principal" class="md-nav__link">
+  <a href="#plugin-interface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        发送请求 Principal
+        Plugin Interface
       
     </span>
   </a>
@@ -2532,10 +2532,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#request-principal" class="md-nav__link">
     <span class="md-ellipsis">
       
-        多值范围
+        Request Principal
       
     </span>
   </a>
@@ -2543,10 +2543,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#principal_1" class="md-nav__link">
+  <a href="#provider-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
-        嵌套 Principal 字段
+        Provider Contract
       
     </span>
   </a>
@@ -2554,10 +2554,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider_2" class="md-nav__link">
+  <a href="#error-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Provider 契约
+        Error Behavior
       
     </span>
   </a>
@@ -2565,21 +2565,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        错误行为
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        限制
+        Limits
       
     </span>
   </a>
@@ -2633,7 +2622,7 @@
   <span class="md-ellipsis">
     
   
-    服务
+    Services
   
 
     
@@ -2649,7 +2638,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    服务
+    Services
   
 
           </label>
@@ -2697,7 +2686,7 @@
   <span class="md-ellipsis">
     
   
-    语义层
+    Semantic Layer
   
 
     
@@ -2725,7 +2714,7 @@
   <span class="md-ellipsis">
     
   
-    BI 平台
+    BI Platforms
   
 
     
@@ -2753,7 +2742,7 @@
   <span class="md-ellipsis">
     
   
-    调度器
+    Schedulers
   
 
     
@@ -2817,7 +2806,7 @@
   <span class="md-ellipsis">
     
   
-    节点
+    Nodes
   
 
     
@@ -2877,7 +2866,7 @@
   <span class="md-ellipsis">
     
   
-    适配器
+    Adapters
   
 
     
@@ -2893,7 +2882,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    适配器
+    Adapters
   
 
           </label>
@@ -2913,7 +2902,7 @@
   <span class="md-ellipsis">
     
   
-    数据库适配器
+    Database Adapters
   
 
     
@@ -2963,7 +2952,7 @@
   <span class="md-ellipsis">
     
   
-    语义层适配器
+    Semantic Adapters
   
 
     
@@ -2979,7 +2968,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    语义层适配器
+    Semantic Adapters
   
 
           </label>
@@ -2999,7 +2988,7 @@
   <span class="md-ellipsis">
     
   
-    概览
+    Overview
   
 
     
@@ -3027,7 +3016,7 @@
   <span class="md-ellipsis">
     
   
-    MetricFlow 语义适配器
+    MetricFlow Semantic Adapter
   
 
     
@@ -3055,7 +3044,7 @@
   <span class="md-ellipsis">
     
   
-    OSI 语义适配器
+    OSI Semantic Adapter
   
 
     
@@ -3091,7 +3080,7 @@
   <span class="md-ellipsis">
     
   
-    BI 适配器
+    BI Adapters
   
 
     
@@ -3119,7 +3108,7 @@
   <span class="md-ellipsis">
     
   
-    Scheduler 适配器
+    Scheduler Adapters
   
 
     
@@ -3173,7 +3162,7 @@
   <span class="md-ellipsis">
     
   
-    基准测试
+    Benchmark
   
 
     
@@ -3189,7 +3178,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    基准测试
+    Benchmark
   
 
           </label>
@@ -3209,7 +3198,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -3269,7 +3258,7 @@
   <span class="md-ellipsis">
     
   
-    集成
+    Integration
   
 
     
@@ -3285,7 +3274,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    集成
+    Integration
   
 
           </label>
@@ -3361,7 +3350,7 @@
   <span class="md-ellipsis">
     
   
-    校验
+    Validation
   
 
     
@@ -3389,7 +3378,7 @@
   <span class="md-ellipsis">
     
   
-    自动记忆
+    Auto Memory
   
 
     
@@ -3538,7 +3527,7 @@
   <span class="md-ellipsis">
     
   
-    开发
+    Develop
   
 
     
@@ -3560,7 +3549,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    开发
+    Develop
   
 
           </label>
@@ -3582,7 +3571,7 @@
   <span class="md-ellipsis">
     
   
-    可观测性
+    Observability
   
 
     
@@ -3618,7 +3607,7 @@
   <span class="md-ellipsis">
     
   
-    VSCode 插件
+    VSCode Extension
   
 
     
@@ -3653,7 +3642,7 @@
   <span class="md-ellipsis">
     
   
-    发布说明
+    Release Notes
   
 
     
@@ -3679,7 +3668,7 @@
                   <div class="md-sidebar__inner">
                     
 
-<nav class="md-nav md-nav--secondary" aria-label="目录">
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
   
@@ -3688,15 +3677,15 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      目录
+      Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#agent" class="md-nav__link">
+  <a href="#framework-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        开源 Agent 提供什么
+        Framework Boundary
       
     </span>
   </a>
@@ -3704,10 +3693,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider" class="md-nav__link">
+  <a href="#runtime-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        实现 Provider
+        Runtime Flow
       
     </span>
   </a>
@@ -3715,10 +3704,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider_1" class="md-nav__link">
+  <a href="#configuration-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
-        配置 Provider
+        Configuration Contract
       
     </span>
   </a>
@@ -3726,10 +3715,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#principal" class="md-nav__link">
+  <a href="#plugin-interface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        发送请求 Principal
+        Plugin Interface
       
     </span>
   </a>
@@ -3737,10 +3726,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#request-principal" class="md-nav__link">
     <span class="md-ellipsis">
       
-        多值范围
+        Request Principal
       
     </span>
   </a>
@@ -3748,10 +3737,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#principal_1" class="md-nav__link">
+  <a href="#provider-contract" class="md-nav__link">
     <span class="md-ellipsis">
       
-        嵌套 Principal 字段
+        Provider Contract
       
     </span>
   </a>
@@ -3759,10 +3748,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider_2" class="md-nav__link">
+  <a href="#error-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Provider 契约
+        Error Behavior
       
     </span>
   </a>
@@ -3770,21 +3759,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       
-        错误行为
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        限制
+        Limits
       
     </span>
   </a>
@@ -3808,7 +3786,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/data_access_policy.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/sql_policy.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -3816,171 +3794,196 @@
   
 
 
-<h1 id="_1">数据访问策略<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>数据访问策略会在 SQL 到达数据库前限制读查询。适用于 API 需要按调用方的业务范围回答问题的场景，例如市场、租户、区域或门店列表。</p>
-<p>开源 Agent 提供 data-access 扩展点、配置加载、请求 principal 处理和 API fail-fast 检查。开源版不包含私有策略实现。要真正执行策略，需要实现并安装自己的 provider 包。</p>
-<h2 id="agent">开源 Agent 提供什么<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
-<p>当 <code>agent.data_access.enabled</code> 为 <code>true</code> 时，Datus 会：</p>
+<h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
+<p>SQL policy is an extension framework for enforcing request-scoped SQL read controls. It is useful when an API request should only access rows or tables within the caller's business scope, such as a tenant, market, region, or store list.</p>
+<p>The open-source agent provides the framework boundary and runtime hook points. It does not ship a concrete policy engine. Deployments that need enforcement should provide their own plugin package.</p>
+<h2 id="framework-boundary">Framework Boundary<a class="headerlink" href="#framework-boundary" title="Permanent link">&para;</a></h2>
+<p>The open-source agent owns these responsibilities:</p>
 <ul>
-<li>加载 <code>agent.data_access.provider</code> 配置的 Python class。</li>
-<li>将完整的 <code>agent.data_access</code> mapping 作为 <code>DataAccessConfig.raw</code> 传给 provider。</li>
-<li>在读查询执行前调用 provider。</li>
-<li>将 API 请求中的 request-scoped principal 字段传给 provider。</li>
-<li>当策略配置引用了缺失的 <code>principal.*</code> 字段时，在 Agent 启动前拒绝 chat 请求。</li>
+<li>Loading <code>agent.sql_policy</code> from agent configuration.</li>
+<li>Loading the configured plugin class from <code>agent.sql_policy.provider</code>.</li>
+<li>Passing the full raw <code>agent.sql_policy</code> mapping to the plugin.</li>
+<li>Parsing request principal fields into <code>AppContext.principal</code>.</li>
+<li>Running a generic API pre-check for required <code>principal.*</code> values.</li>
+<li>Calling the plugin before read queries reach the database.</li>
+<li>Revalidating SQL after a plugin rewrite.</li>
+<li>Returning policy denial reasons to the tool/model layer.</li>
 </ul>
-<p>provider 自己决定策略 schema 和 enforcement 行为。</p>
-<h2 id="provider">实现 Provider<a class="headerlink" href="#provider" title="Permanent link">&para;</a></h2>
-<p>创建一个能被 <code>datus-api</code> 所在 Python 环境 import 到的包。provider class 必须实现 <code>enforce_read(...)</code>。</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Optional</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.tools.data_access_policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataAccessConfig</span><span class="p">,</span> <span class="n">EnforcementResult</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyDataAccessProvider</span><span class="p">:</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">DataAccessConfig</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">DataAccessConfig</span><span class="p">()</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">policies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;policies&quot;</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[]</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">enforce_read</span><span class="p">(</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        <span class="bp">self</span><span class="p">,</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        <span class="n">sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="o">*</span><span class="p">,</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        <span class="n">datasource</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        <span class="n">dialect</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="n">principal</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EnforcementResult</span><span class="p">:</span>
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        <span class="n">principal</span> <span class="o">=</span> <span class="n">principal</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>        <span class="c1"># 在这里实现你的策略逻辑：</span>
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>        <span class="c1"># - 检查 datasource、sql 和 self.policies</span>
-</span><span id="__span-0-23"><a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>        <span class="c1"># - 从 principal 中解析策略值</span>
-</span><span id="__span-0-24"><a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>        <span class="c1"># - 用 SQL parser 改写 SQL，或拒绝查询</span>
-</span><span id="__span-0-25"><a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>        <span class="c1"># - 返回最终应该执行的 SQL</span>
-</span><span id="__span-0-26"><a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        <span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
+<p>The plugin owns these responsibilities:</p>
+<ul>
+<li>Defining the policy schema under <code>agent.sql_policy</code>.</li>
+<li>Validating plugin-specific policy fields.</li>
+<li>Matching policies to datasources, tables, columns, or other business concepts.</li>
+<li>Resolving values from the request principal.</li>
+<li>Rewriting read SQL or denying the query.</li>
+<li>Returning clear denial reasons that tell the model or caller what is missing.</li>
+</ul>
+<h2 id="runtime-flow">Runtime Flow<a class="headerlink" href="#runtime-flow" title="Permanent link">&para;</a></h2>
+<p>When SQL policy is enabled, request handling follows this flow:</p>
+<ol>
+<li>The API auth provider creates an <code>AppContext</code>.</li>
+<li>Request-scoped attributes are stored on <code>AppContext.principal</code>.</li>
+<li>Agent configuration is loaded, including <code>agent.sql_policy</code>.</li>
+<li>If the raw policy config references <code>value_from: principal.&lt;path&gt;</code>, the chat API checks that each referenced principal path is present before the agent starts.</li>
+<li>The agent runs normally until a database read tool is called.</li>
+<li><code>DBFuncTool.read_query</code> validates that the original SQL is read-only.</li>
+<li>The configured plugin is loaded and called through <code>enforce_read(...)</code>.</li>
+<li>If the plugin denies the query, the tool returns the plugin's reason and does not execute SQL.</li>
+<li>If the plugin returns rewritten SQL, the agent revalidates that rewritten SQL is still read-only.</li>
+<li>The validated SQL is executed against the target datasource.</li>
+</ol>
+<p>The pre-check in step 4 is intentionally generic. It scans the raw policy mapping for <code>value_from</code> strings that start with <code>principal.</code>. It does not assume a specific policy type, column name, or business field.</p>
+<h2 id="configuration-contract">Configuration Contract<a class="headerlink" href="#configuration-contract" title="Permanent link">&para;</a></h2>
+<p>The open-source agent only interprets these fields:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
 </span></code></pre></div>
-<p>返回值示例：</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">rewritten_sql</span><span class="p">,</span> <span class="n">applied_policies</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;market_scope&quot;</span><span class="p">])</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;Missing principal.market_code&quot;</span><span class="p">)</span>
+<p><code>enabled</code> turns on the framework. <code>provider</code> must be a Python class path in <code>module:Class</code> format.</p>
+<p>All other fields under <code>agent.sql_policy</code> are passed through unchanged as <code>SqlPolicyConfig.raw</code>. Your plugin can define any schema it needs:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">policies</span><span class="p">:</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_scope</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">applies_to</span><span class="p">:</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">          </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;warehouse&quot;</span><span class="p p-Indicator">]</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">          </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;orders&quot;</span><span class="p p-Indicator">]</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">          </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">          </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">          </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">        </span><span class="nt">enforcement</span><span class="p">:</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">          </span><span class="nt">on_read</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filter</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">          </span><span class="nt">on_unhandled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
 </span></code></pre></div>
-<p>改写 SQL 时建议使用 SQL parser 或数据库安全的 query builder，不要用简单字符串拼接来生成策略 SQL。</p>
-<h2 id="provider_1">配置 Provider<a class="headerlink" href="#provider_1" title="Permanent link">&para;</a></h2>
-<p>将 <code>agent.data_access.provider</code> 指向你自己的 provider class：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">data_access</span><span class="p">:</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.datus_policies:MyDataAccessProvider</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">policies</span><span class="p">:</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">market_scope</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">row_filter</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">        </span><span class="nt">applies_to</span><span class="p">:</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">          </span><span class="nt">datasources</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;starrocks&quot;</span><span class="p p-Indicator">]</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">          </span><span class="nt">tables</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;v_udata_ac_info&quot;</span><span class="p p-Indicator">]</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">        </span><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">          </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">market_code</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">          </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">          </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.market_code</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">        </span><span class="nt">enforcement</span><span class="p">:</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">          </span><span class="nt">on_read</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filter</span>
-</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">          </span><span class="nt">on_unhandled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
+<p>In this example, the open-source agent uses <code>enabled</code>, <code>provider</code>, and the <code>principal.tenant.id</code> reference for pre-checking. The plugin decides what <code>policies</code>, <code>type</code>, <code>applies_to</code>, <code>condition</code>, and <code>enforcement</code> mean.</p>
+<h2 id="plugin-interface">Plugin Interface<a class="headerlink" href="#plugin-interface" title="Permanent link">&para;</a></h2>
+<p>A plugin is a normal Python package installed in the same environment as <code>datus-api</code>. The provider class must accept a <code>SqlPolicyConfig</code> argument and implement <code>enforce_read(...)</code>.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Optional</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.tools.sql_policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">SqlPolicyConfig</span><span class="p">,</span> <span class="n">EnforcementResult</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">SqlPolicyProvider</span><span class="p">:</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">SqlPolicyConfig</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span> <span class="ow">or</span> <span class="n">SqlPolicyConfig</span><span class="p">()</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">policies</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">raw</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;policies&quot;</span><span class="p">,</span> <span class="p">[])</span> <span class="ow">or</span> <span class="p">[]</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_validate_policy_config</span><span class="p">()</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">enforce_read</span><span class="p">(</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>        <span class="bp">self</span><span class="p">,</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>        <span class="n">sql</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="o">*</span><span class="p">,</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>        <span class="n">datasource</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-2-17"><a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>        <span class="n">dialect</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="__span-2-18"><a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>        <span class="n">principal</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]],</span>
+</span><span id="__span-2-19"><a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">EnforcementResult</span><span class="p">:</span>
+</span><span id="__span-2-20"><a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>        <span class="n">principal</span> <span class="o">=</span> <span class="n">principal</span> <span class="ow">or</span> <span class="p">{}</span>
+</span><span id="__span-2-21"><a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>
+</span><span id="__span-2-22"><a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>        <span class="c1"># Implement policy selection and enforcement here:</span>
+</span><span id="__span-2-23"><a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>        <span class="c1"># - parse SQL and identify referenced tables</span>
+</span><span id="__span-2-24"><a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>        <span class="c1"># - match policies for the datasource and tables</span>
+</span><span id="__span-2-25"><a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>        <span class="c1"># - resolve configured values from principal</span>
+</span><span id="__span-2-26"><a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="c1"># - return a rewritten read query or deny with a clear reason</span>
+</span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
+</span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>
+</span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_validate_policy_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># Raise an exception if required plugin-specific config is invalid.</span>
+</span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>        <span class="k">pass</span>
 </span></code></pre></div>
-<p>开源 Agent 只解释 <code>enabled</code> 和 <code>provider</code>。其他 policy 结构会原样放进 <code>DataAccessConfig.raw</code>，由你的 provider 自己解释。</p>
-<p>如果策略配置中包含 <code>value_from: principal.market_code</code>，API pre-check 会要求请求 principal 中必须包含 <code>market_code</code>，然后才允许 Agent 启动。这个递归 <code>value_from</code> 扫描是通用逻辑，不依赖特定 policy type。</p>
-<h2 id="principal">发送请求 Principal<a class="headerlink" href="#principal" title="Permanent link">&para;</a></h2>
-<p>默认 API auth provider 通过 <code>X-Datus-Principal</code> header 接收 data-access 属性。header 值必须是 JSON object：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-N<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:8000/api/v1/chat/stream&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;X-Datus-Principal: {&quot;market_code&quot;:&quot;MKT300&quot;}&#39;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="s1">    &quot;message&quot;: &quot;查询6月新产品活动&quot;,</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="s1">    &quot;subagent_id&quot;: &quot;baisheng_metadata&quot;</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="s1">  }&#39;</span>
+<p>The result controls what happens next:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">sql</span><span class="o">=</span><span class="n">rewritten_sql</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">applied_policies</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;tenant_scope&quot;</span><span class="p">],</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="p">)</span>
 </span></code></pre></div>
-<p><code>X-Datus-Principal</code> 会变成 <code>AppContext.principal</code>：</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="s2">&quot;market_code&quot;</span><span class="p">:</span> <span class="s2">&quot;MKT300&quot;</span><span class="p">}</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">allowed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">reason</span><span class="o">=</span><span class="s2">&quot;Missing required principal path: principal.tenant.id&quot;</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
 </span></code></pre></div>
-<p>你的 provider 会在 <code>enforce_read(..., principal=...)</code> 中收到这个 dict。</p>
-<p><code>X-Datus-User-Id</code> 是另一件事。它是可选的调用者身份字段，只用于会话隔离；它不会写入 data-access principal，也不能满足 <code>principal.market_code</code>。</p>
-<h2 id="_2">多值范围<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<p>如果你的 provider 支持多值范围，可以使用 principal array：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">market_code</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">in</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.market_codes</span>
+<p>Use a SQL parser or database-safe query builder when rewriting SQL. Avoid string concatenation for policy predicates.</p>
+<h2 id="request-principal">Request Principal<a class="headerlink" href="#request-principal" title="Permanent link">&para;</a></h2>
+<p>The principal is the request-scoped input that policy plugins use for caller attributes. For the default API auth provider, principal fields are read from the <code>X-Datus-Principal</code> header as a JSON object:</p>
+<div class="language-http highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">X-Datus-Principal: {&quot;tenant&quot;:{&quot;id&quot;:&quot;tenant_001&quot;},&quot;market_codes&quot;:[&quot;MKT300&quot;,&quot;MKT301&quot;]}</span>
 </span></code></pre></div>
-<p>请求里发送：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-N<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:8000/api/v1/chat/stream&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;X-Datus-Principal: {&quot;market_codes&quot;:[&quot;MKT300&quot;,&quot;MKT301&quot;]}&#39;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;message&quot;:&quot;查询6月新产品活动&quot;}&#39;</span>
+<p>The plugin receives the parsed object:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">&quot;tenant&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;tenant_001&quot;</span><span class="p">},</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">&quot;market_codes&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;MKT300&quot;</span><span class="p">,</span> <span class="s2">&quot;MKT301&quot;</span><span class="p">],</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="p">}</span>
 </span></code></pre></div>
-<p>开源 Agent 只负责传递这个数组。<code>operator: in</code> 如何执行，由你的 provider 决定。</p>
-<h2 id="principal_1">嵌套 Principal 字段<a class="headerlink" href="#principal_1" title="Permanent link">&para;</a></h2>
-<p>request principal 可以包含嵌套 JSON object：</p>
-<div class="language-http highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="err">X-Datus-Principal: {&quot;tenant&quot;:{&quot;id&quot;:&quot;tenant_001&quot;}}</span>
+<p>Policy config can reference nested fields with <code>principal.&lt;path&gt;</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">condition</span><span class="p">:</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
 </span></code></pre></div>
-<p>策略配置可以引用这个路径：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">condition</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">column</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tenant_id</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span><span class="nt">operator</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">eq</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="nt">value_from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">principal.tenant.id</span>
-</span></code></pre></div>
-<p>API pre-check 会把空字符串、空数组和 <code>null</code> 当作缺失值。</p>
-<h2 id="provider_2">Provider 契约<a class="headerlink" href="#provider_2" title="Permanent link">&para;</a></h2>
+<p>The API pre-check treats missing keys, <code>null</code>, empty strings, and empty arrays as missing values.</p>
+<p><code>X-Datus-User-Id</code> is separate from the SQL policy principal. It identifies a caller for session isolation and is not copied into <code>AppContext.principal</code>.</p>
+<h2 id="provider-contract">Provider Contract<a class="headerlink" href="#provider-contract" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>项</th>
-<th>契约</th>
+<th>Item</th>
+<th>Contract</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>agent.data_access.enabled</code></td>
-<td>启用 data-access enforcement。</td>
+<td><code>agent.sql_policy.enabled</code></td>
+<td>Enables the SQL policy framework.</td>
 </tr>
 <tr>
-<td><code>agent.data_access.provider</code></td>
-<td>Python class path，格式为 <code>module:Class</code>。启用时必填。</td>
+<td><code>agent.sql_policy.provider</code></td>
+<td>Python class path in <code>module:Class</code> format. Required when enabled.</td>
 </tr>
 <tr>
-<td><code>DataAccessConfig.raw</code></td>
-<td>完整的原始 <code>agent.data_access</code> mapping，会传给 provider。</td>
+<td><code>SqlPolicyConfig.raw</code></td>
+<td>Full raw <code>agent.sql_policy</code> mapping passed to the plugin.</td>
 </tr>
 <tr>
 <td><code>enforce_read(sql, datasource, dialect, principal)</code></td>
-<td>在读查询执行前调用。</td>
+<td>Called before read SQL is executed.</td>
 </tr>
 <tr>
 <td><code>EnforcementResult.allowed=True</code></td>
-<td>查询可以继续。通过 <code>sql</code> 返回原始或改写后的 SQL。</td>
+<td>The query may continue. <code>sql</code> can contain the original or rewritten SQL.</td>
 </tr>
 <tr>
 <td><code>EnforcementResult.allowed=False</code></td>
-<td>查询被拒绝。通过 <code>reason</code> 返回给 tool/model 的错误原因。</td>
+<td>The query is denied. <code>reason</code> is returned to the tool/model layer.</td>
 </tr>
 <tr>
-<td><code>X-Datus-Principal</code></td>
-<td>API 请求中会被解析为 <code>AppContext.principal</code> 的 JSON object。</td>
+<td><code>applied_policies</code></td>
+<td>Optional policy names for logging and diagnostics.</td>
 </tr>
 <tr>
 <td><code>value_from: principal.*</code></td>
-<td>可选约定，用于 API pre-check 检查缺失的 principal 字段。</td>
+<td>Optional convention used by the API pre-check to detect missing principal fields.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_3">错误行为<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>如果 data access 已启用，而策略配置需要的 principal 字段缺失，chat API 会在 Agent 启动前失败：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>DATA_ACCESS_PRINCIPAL_REQUIRED
+<h2 id="error-behavior">Error Behavior<a class="headerlink" href="#error-behavior" title="Permanent link">&para;</a></h2>
+<p>If SQL policy is enabled but no provider is configured, enforcement fails before SQL is executed.</p>
+<p>If the configured provider class cannot be imported, initialized, or does not implement a callable <code>enforce_read</code>, enforcement fails with a SQL policy provider error.</p>
+<p>If policy config references a missing <code>principal.*</code> value, the chat API fails before the agent starts:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>SQL_POLICY_PRINCIPAL_REQUIRED
 </span></code></pre></div>
-<p>错误信息会包含缺失字段，例如 <code>principal.market_code</code>。</p>
-<p>如果 <code>X-Datus-Principal</code> 不是合法 JSON，API 会返回 HTTP 400，因为请求上下文本身格式错误。</p>
-<p>如果 provider 拒绝查询，tool 会把 provider 返回的 <code>reason</code> 传给 Agent。</p>
-<h2 id="_4">限制<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>The error message includes the missing principal path, for example <code>principal.tenant.id</code>.</p>
+<p>If the plugin denies a query, SQL is not executed and the tool returns the plugin's <code>reason</code>.</p>
+<p>If the plugin rewrites SQL into a non-read statement or a multi-statement query, the read-query validator rejects it before execution.</p>
+<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li>开源版 Datus 不包含内置 row-filter 实现。</li>
-<li>当前内置请求 principal 入口是 API header <code>X-Datus-Principal</code>。</li>
-<li>CLI 请求没有 HTTP header。需要请求级 data-access principal enforcement 时请使用 REST API，或者在部署中实现能填充 <code>AppContext.principal</code> 的 auth provider。</li>
-<li>不要把 <code>user_id</code> 放进 <code>X-Datus-Principal</code>；<code>user_id</code> 是 <code>X-Datus-User-Id</code> 的保留字段。</li>
+<li>The open-source agent does not include a built-in row-filter or SQL-injection review plugin.</li>
+<li>The framework does not define a required policy schema beyond <code>enabled</code>, <code>provider</code>, and the optional <code>principal.*</code> pre-check convention.</li>
+<li>CLI requests do not have HTTP headers. Request-scoped API principal input is available through the API auth context. For CLI or custom deployments, populate <code>AppContext.principal</code> through the relevant auth or runtime integration.</li>
+<li>Do not put <code>user_id</code> inside <code>X-Datus-Principal</code>; <code>user_id</code> is reserved for <code>X-Datus-User-Id</code>.</li>
 </ul>
 
 
@@ -4008,30 +4011,30 @@
   
     
       
-      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../benchmark/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 基准测试">
+          <a href="../benchmark/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Benchmark">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
             </div>
             <div class="md-footer__title">
               <span class="md-footer__direction">
-                上一页
+                Previous
               </span>
               <div class="md-ellipsis">
-                基准测试
+                Benchmark
               </div>
             </div>
           </a>
         
         
           
-          <a href="../datasources/" class="md-footer__link md-footer__link--next" aria-label="下一页: Datasources">
+          <a href="../datasources/" class="md-footer__link md-footer__link--next" aria-label="Next: Datasources">
             <div class="md-footer__title">
               <span class="md-footer__direction">
-                下一页
+                Next
               </span>
               <div class="md-ellipsis">
                 Datasources
@@ -4124,12 +4127,12 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../javascripts/analytics.js"></script>
+        <script src="../../javascripts/analytics.js"></script>
       
     
   </body>
