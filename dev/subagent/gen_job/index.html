@@ -4180,44 +4180,16 @@
 <td><code>read_query</code></td>
 <td>Execute read-only SQL queries</td>
 </tr>
-<tr>
-<td><code>get_table_ddl</code></td>
-<td>Get CREATE TABLE statement</td>
-</tr>
-<tr>
-<td><code>execute_ddl</code></td>
-<td>Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA)</td>
-</tr>
-<tr>
-<td><code>execute_write</code></td>
-<td>Execute DML (INSERT/UPDATE/DELETE)</td>
-</tr>
-<tr>
-<td><code>transfer_query_result</code></td>
-<td>Transfer data between databases</td>
-</tr>
-<tr>
-<td><code>get_migration_capabilities</code></td>
-<td>Read target dialect's requires/forbids/type_hints from adapter's <code>MigrationTargetMixin</code> (see Cross-DB section)</td>
-</tr>
-<tr>
-<td><code>suggest_table_layout</code></td>
-<td>Ask target adapter to suggest distribution/partition/order keys based on source columns</td>
-</tr>
-<tr>
-<td><code>validate_ddl</code></td>
-<td>Run target-dialect static validation (and optionally dry-run CREATE+DROP) before executing DDL</td>
-</tr>
-<tr>
-<td><code>read_file</code> / <code>write_file</code></td>
-<td>Read/write SQL artifact files</td>
-</tr>
-<tr>
-<td><code>ask_user</code></td>
-<td>Interactive confirmation (interactive mode only)</td>
-</tr>
 </tbody>
 </table>
+<p>| <code>execute_ddl</code> | Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA) |
+| <code>execute_write</code> | Execute DML (INSERT/UPDATE/DELETE) |
+| <code>transfer_query_result</code> | Transfer data between databases |
+| <code>get_migration_capabilities</code> | Read target dialect's requires/forbids/type_hints from adapter's <code>MigrationTargetMixin</code> (see Cross-DB section) |
+| <code>suggest_table_layout</code> | Ask target adapter to suggest distribution/partition/order keys based on source columns |
+| <code>validate_ddl</code> | Run target-dialect static validation (and optionally dry-run CREATE+DROP) before executing DDL |
+| <code>read_file</code> / <code>write_file</code> | Read/write SQL artifact files |
+| <code>ask_user</code> | Interactive confirmation (interactive mode only) |</p>
 <p>All database tools accept an optional <code>database</code> parameter for explicit routing to the target database.</p>
 <h2 id="workflow">Workflow<a class="headerlink" href="#workflow" title="Permanent link">&para;</a></h2>
 <h3 id="single-database-etl">Single-database ETL<a class="headerlink" href="#single-database-etl" title="Permanent link">&para;</a></h3>

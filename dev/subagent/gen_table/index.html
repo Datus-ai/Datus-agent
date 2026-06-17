@@ -4018,24 +4018,11 @@
 <td><code>read_query</code></td>
 <td>Execute read-only SQL (validation, row count)</td>
 </tr>
-<tr>
-<td><code>get_table_ddl</code></td>
-<td>Get existing CREATE TABLE statement</td>
-</tr>
-<tr>
-<td><code>execute_ddl</code></td>
-<td>Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA)</td>
-</tr>
-<tr>
-<td><code>read_file</code> / <code>write_file</code></td>
-<td>Read/write SQL artifact files</td>
-</tr>
-<tr>
-<td><code>ask_user</code></td>
-<td>Interactive confirmation (interactive mode only)</td>
-</tr>
 </tbody>
 </table>
+<p>| <code>execute_ddl</code> | Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA) |
+| <code>read_file</code> / <code>write_file</code> | Read/write SQL artifact files |
+| <code>ask_user</code> | Interactive confirmation (interactive mode only) |</p>
 <p>Note: gen_table uses <code>DBFuncTool.create_dynamic()</code> for multi-connector support, allowing table creation across different databases.</p>
 <h2 id="workflow">Workflow<a class="headerlink" href="#workflow" title="Permanent link">&para;</a></h2>
 <h3 id="sql-mode-ctas">SQL Mode (CTAS)<a class="headerlink" href="#sql-mode-ctas" title="Permanent link">&para;</a></h3>

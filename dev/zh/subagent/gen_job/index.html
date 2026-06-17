@@ -4201,44 +4201,16 @@
 <td><code>read_query</code></td>
 <td>执行只读 SQL 查询</td>
 </tr>
-<tr>
-<td><code>get_table_ddl</code></td>
-<td>获取建表语句</td>
-</tr>
-<tr>
-<td><code>execute_ddl</code></td>
-<td>执行 DDL（CREATE/ALTER/DROP TABLE/SCHEMA）</td>
-</tr>
-<tr>
-<td><code>execute_write</code></td>
-<td>执行 DML（INSERT/UPDATE/DELETE）</td>
-</tr>
-<tr>
-<td><code>transfer_query_result</code></td>
-<td>跨库数据传输</td>
-</tr>
-<tr>
-<td><code>get_migration_capabilities</code></td>
-<td>读取目标 adapter 的 <code>MigrationTargetMixin</code> 提示：requires / forbids / type_hints</td>
-</tr>
-<tr>
-<td><code>suggest_table_layout</code></td>
-<td>让目标 adapter 根据源列建议分布键 / 分区 / 排序键</td>
-</tr>
-<tr>
-<td><code>validate_ddl</code></td>
-<td>针对目标方言做静态校验（可选再做 dry-run CREATE+DROP），执行 DDL 前先过一遍</td>
-</tr>
-<tr>
-<td><code>read_file</code> / <code>write_file</code></td>
-<td>读写 SQL 文件</td>
-</tr>
-<tr>
-<td><code>ask_user</code></td>
-<td>交互确认（仅 interactive 模式）</td>
-</tr>
 </tbody>
 </table>
+<p>| <code>execute_ddl</code> | 执行 DDL（CREATE/ALTER/DROP TABLE/SCHEMA） |
+| <code>execute_write</code> | 执行 DML（INSERT/UPDATE/DELETE） |
+| <code>transfer_query_result</code> | 跨库数据传输 |
+| <code>get_migration_capabilities</code> | 读取目标 adapter 的 <code>MigrationTargetMixin</code> 提示：requires / forbids / type_hints |
+| <code>suggest_table_layout</code> | 让目标 adapter 根据源列建议分布键 / 分区 / 排序键 |
+| <code>validate_ddl</code> | 针对目标方言做静态校验（可选再做 dry-run CREATE+DROP），执行 DDL 前先过一遍 |
+| <code>read_file</code> / <code>write_file</code> | 读写 SQL 文件 |
+| <code>ask_user</code> | 交互确认（仅 interactive 模式） |</p>
 <p>所有数据库工具都支持 <code>database</code> 参数，用于显式路由到目标数据库。</p>
 <h2 id="_7">工作流<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <h3 id="etl">单库 ETL<a class="headerlink" href="#etl" title="Permanent link">&para;</a></h3>
