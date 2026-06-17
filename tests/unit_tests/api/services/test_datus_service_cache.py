@@ -178,18 +178,43 @@ class TestFingerprintEviction:
         old.shutdown.assert_awaited_once()
         assert cache._cache["p"] is new
 
-    async def test_mismatched_fingerprint_with_active_tasks_defers(self):
+    async def test_mismatched_fingerprint_with_active_tasks_defers_rebuild(self):
+        """Fingerprint changes are deferred while tasks are active.
+
+        Rebuilding would orphan the in-flight task's interaction broker, so the
+        existing instance must keep serving requests (e.g. a pending
+        /chat/user_interaction answer) until its tasks drain.
+        """
         cache = DatusServiceCache()
         old = _mock_service("p", has_active=True, fingerprint="fp-old")
         await cache.get_or_create("p", AsyncMock(return_value=old))
 
-        new = _mock_service("p", fingerprint="fp-new")
-        await cache.get_or_create("p", AsyncMock(return_value=new), expected_fingerprint="fp-new")
+        factory = AsyncMock()
+        result = await cache.get_or_create("p", factory, expected_fingerprint="fp-new")
 
-        # Old was not immediately shut down; deferred via active-tasks path
+        # No rebuild: the busy instance is preserved and returned as-is.
+        factory.assert_not_called()
         old.shutdown.assert_not_awaited()
-        await asyncio.sleep(0.05)
-        old.task_manager.wait_all_tasks.assert_awaited()
+        assert result is old
+        assert cache._cache["p"] is old
+
+    async def test_mismatched_fingerprint_rebuilds_after_tasks_drain(self):
+        """Once the busy instance goes idle, the next request rebuilds."""
+        cache = DatusServiceCache()
+        old = _mock_service("p", has_active=True, fingerprint="fp-old")
+        await cache.get_or_create("p", AsyncMock(return_value=old))
+
+        # First mismatched request is deferred (tasks still active).
+        await cache.get_or_create("p", AsyncMock(return_value=_mock_service("p")), expected_fingerprint="fp-new")
+        assert cache._cache["p"] is old
+
+        # Task drained — the next mismatched request evicts and rebuilds.
+        old.has_active_tasks.return_value = False
+        new = _mock_service("p", fingerprint="fp-new")
+        result = await cache.get_or_create("p", AsyncMock(return_value=new), expected_fingerprint="fp-new")
+
+        assert result is new
+        old.shutdown.assert_awaited_once()
         assert cache._cache["p"] is new
 
     async def test_none_fingerprint_preserves_legacy_behavior(self):
