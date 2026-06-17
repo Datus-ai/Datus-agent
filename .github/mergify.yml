@@ -2,14 +2,14 @@ commands_restrictions:
   backport:
     conditions:
       - or:
-        - sender-permission>=read
-        - sender=github-actions[bot]
+          - sender-permission>=read
+          - sender=github-actions[bot]
 
   rebase:
     conditions:
       - or:
-        - sender-permission>=read
-        - sender=github-actions[bot]
+          - sender-permission>=read
+          - sender=github-actions[bot]
 
 # Defaults apply to both file-defined rules and `@Mergifyio backport ...`
 # commands. Override the backport PR body so it carries only a reference to
@@ -27,15 +27,15 @@ pull_request_rules:
     actions:
       assign:
         add_users:
-          - "{{author}}"
+          - "{{ author }}"
 
   - name: close pr when conflict
     conditions:
       - label=conflicts
     actions:
       close:
-        message:
-          "@{{author}}: Conflict detected, please resolve the conflict and resubmit the PR"
+        message: "@{{author}}: Conflict detected, please resolve the conflict and resubmit the
+          PR"
 
 # Backport is triggered by a `@Mergifyio backport <branch>` comment posted by
 # github-actions[bot] after merge — see .github/workflows/trigger-backport-on-merge.yml.
