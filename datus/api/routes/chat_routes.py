@@ -45,7 +45,7 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
-from datus.tools.data_access_policy import DataAccessConfig
+from datus.tools.sql_policy import SqlPolicyConfig
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso
@@ -81,15 +81,15 @@ def _is_valid_subagent_id(svc, subagent_id: str) -> bool:
     return False
 
 
-def _data_access_principal_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
-    """Fail fast when enabled data-access policies need missing principal fields."""
+def _sql_policy_principal_pre_check(svc: "DatusService", ctx: "AppContext") -> Optional[ChatPreCheckOutcome]:
+    """Fail fast when enabled SQL policies need missing principal fields."""
     agent_config = getattr(svc, "agent_config", None)
-    data_access_config = getattr(agent_config, "data_access_config", None)
-    if not isinstance(data_access_config, DataAccessConfig) or not data_access_config.enabled:
+    sql_policy_config = getattr(agent_config, "sql_policy_config", None)
+    if not isinstance(sql_policy_config, SqlPolicyConfig) or not sql_policy_config.enabled:
         return None
 
     principal = getattr(ctx, "principal", None) or {}
-    required_paths = _required_principal_paths(data_access_config.raw)
+    required_paths = _required_principal_paths(sql_policy_config.raw)
     missing_paths = _missing_principal_paths(principal, required_paths)
     if not missing_paths:
         return None
@@ -101,12 +101,12 @@ def _data_access_principal_pre_check(svc: "DatusService", ctx: "AppContext") -> 
     return ChatPreCheckOutcome(
         allow=False,
         error=(
-            "Data access is enabled, but this request is missing principal data required by policy."
+            "SQL policy is enabled, but this request is missing principal data required by policy."
             f"{detail} "
             "Authenticate the request with a provider that populates principal fields required by "
-            "agent.data_access policies. The agent cannot infer or set request principal from SQL."
+            "agent.sql_policy. The agent cannot infer or set request principal from SQL."
         ),
-        error_type="DATA_ACCESS_PRINCIPAL_REQUIRED",
+        error_type="SQL_POLICY_PRINCIPAL_REQUIRED",
     )
 
 
@@ -165,10 +165,10 @@ async def stream_chat(
             detail=f"Subagent '{sub_agent_id}' not found",
         )
 
-    data_access_denial = _data_access_principal_pre_check(svc, ctx)
-    if data_access_denial:
+    sql_policy_denial = _sql_policy_principal_pre_check(svc, ctx)
+    if sql_policy_denial:
         return StreamingResponse(
-            _emit_pre_check_denial(request, data_access_denial),
+            _emit_pre_check_denial(request, sql_policy_denial),
             media_type="text/event-stream",
             headers=_sse_headers(),
         )
@@ -227,10 +227,10 @@ async def stream_chat_feedback(
         message=rendered_message,
         subagent_id="feedback",
     )
-    data_access_denial = _data_access_principal_pre_check(svc, ctx)
-    if data_access_denial:
+    sql_policy_denial = _sql_policy_principal_pre_check(svc, ctx)
+    if sql_policy_denial:
         return StreamingResponse(
-            _emit_pre_check_denial(stream_input, data_access_denial),
+            _emit_pre_check_denial(stream_input, sql_policy_denial),
             media_type="text/event-stream",
             headers=_sse_headers(),
         )

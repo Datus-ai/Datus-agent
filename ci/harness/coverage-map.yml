@@ -351,35 +351,35 @@ flow_groups:
             notes: Baisheng weekly benchmark runs Datus queries against StarRocks.
         gaps: []
 
-      - id: data_access.policy_enforcement
-        title: Request-scoped data-access policy enforcement
+      - id: data_access.sql_policy_enforcement
+        title: Request-scoped SQL policy enforcement
         priority: p0
         quality_sensitive: true
         docs:
-          - docs/configuration/data_access_policy.md
+          - docs/configuration/sql_policy.md
           - docs/API/introduction.md
         entrypoints:
           - "REST API: /api/v1/chat/stream"
           - "REST API header: X-Datus-Principal"
-          - DBFuncTool data-access enforcement
+          - DBFuncTool SQL policy enforcement
         contracts:
           - The default API auth provider parses request principals from X-Datus-Principal JSON.
-          - X-Datus-User-Id remains session identity and does not satisfy data-access principal fields.
-          - Enabled data-access policies fail fast when required principal fields are missing.
-          - Custom data-access providers can rewrite or deny protected read queries before database execution.
+          - X-Datus-User-Id remains session identity and does not satisfy SQL policy principal fields.
+          - Enabled SQL policies fail fast when required principal fields are missing.
+          - Custom SQL policy providers can rewrite or deny protected read queries before database execution.
         coverage:
           pr_acceptance:
             status: covered
             nodeids:
               - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatDataAccessPreCheck
-              - tests/unit_tests/tools/test_data_access_policy.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
+              - tests/unit_tests/tools/test_sql_policy.py
           merge_queue:
             status: covered
             nodeids:
               - tests/unit_tests/api/auth/test_no_auth_provider.py
-              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatDataAccessPreCheck
-              - tests/unit_tests/tools/test_data_access_policy.py
+              - tests/unit_tests/api/routes/test_chat_routes.py::TestStreamChatSqlPolicyPreCheck
+              - tests/unit_tests/tools/test_sql_policy.py
           nightly:
             status: covered
             notes: >

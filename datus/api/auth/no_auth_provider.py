@@ -19,7 +19,7 @@ class NoAuthProvider:
 
     ``X-Datus-User-Id`` is optional caller identity for per-user session
     isolation. ``X-Datus-Principal`` is an optional JSON object whose fields are
-    exposed to data-access policies as ``AppContext.principal``.
+    exposed to SQL policies as ``AppContext.principal``.
 
     Auth provider only handles identification, not config loading.
     Config is loaded on-demand by ``get_datus_service``.
@@ -68,7 +68,7 @@ class NoAuthProvider:
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 message=(
                     f"Invalid {HEADER_PRINCIPAL} header value: expected a JSON object with "
-                    f"data-access principal fields ({e.msg})."
+                    f"SQL policy principal fields ({e.msg})."
                 ),
             ) from e
 
@@ -76,8 +76,7 @@ class NoAuthProvider:
             raise DatusException(
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 message=(
-                    f"Invalid {HEADER_PRINCIPAL} header value: expected a JSON object with "
-                    "data-access principal fields."
+                    f"Invalid {HEADER_PRINCIPAL} header value: expected a JSON object with SQL policy principal fields."
                 ),
             )
         if "user_id" in principal:
@@ -85,7 +84,7 @@ class NoAuthProvider:
                 ErrorCode.COMMON_VALIDATION_FAILED,
                 message=(
                     f"Invalid {HEADER_PRINCIPAL} header value: field 'user_id' is reserved for "
-                    f"{HEADER_USER_ID}; use a business principal field for data-access policy."
+                    f"{HEADER_USER_ID}; use a business principal field for SQL policy."
                 ),
             )
         return principal

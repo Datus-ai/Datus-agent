@@ -11,7 +11,7 @@ import pytest
 
 from datus.api.models.cli_models import FeedbackChatInput, StreamChatInput
 from datus.api.routes.chat_routes import stream_chat_feedback
-from datus.tools.data_access_policy import DataAccessConfig
+from datus.tools.sql_policy import SqlPolicyConfig
 
 
 def _build_svc():
@@ -112,9 +112,9 @@ async def test_feedback_endpoint_appends_optional_reaction_msg():
 
 
 @pytest.mark.asyncio
-async def test_feedback_endpoint_denies_when_data_access_enabled_without_principal():
+async def test_feedback_endpoint_denies_when_sql_policy_enabled_without_principal():
     svc = _build_svc()
-    svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+    svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
         {
             "enabled": True,
             "provider": "x:Y",
@@ -137,8 +137,8 @@ async def test_feedback_endpoint_denies_when_data_access_enabled_without_princip
     assert len(chunks) == 1
     assert "event: error" in chunks[0]
     payload = json.loads(next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :])
-    assert payload["error_type"] == "DATA_ACCESS_PRINCIPAL_REQUIRED"
+    assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
     assert "principal.market_code" in payload["error"]
     assert "provider that populates principal fields" in payload["error"]
-    assert "agent.data_access policies" in payload["error"]
+    assert "agent.sql_policy" in payload["error"]
     svc.chat.stream_chat.assert_not_called()
