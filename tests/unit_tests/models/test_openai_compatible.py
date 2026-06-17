@@ -1102,13 +1102,6 @@ class TestFormatToolResultFromDict:
         data = {"success": 1, "result": {"columns": [{"name": "c"}] * 8}}
         assert self.model._format_tool_result_from_dict(data, tool_name="describe_table") == "8 cols"
 
-    def test_get_table_ddl_identifier(self):
-        data = {
-            "success": 1,
-            "result": {"identifier": "public.orders", "table_name": "orders", "definition": "CREATE TABLE ..."},
-        }
-        assert self.model._format_tool_result_from_dict(data, tool_name="get_table_ddl") == "DDL: public.orders"
-
     def test_load_skill_metadata_name(self):
         # Compact format: "+<skill_name>" clipped to SUMMARY_TEXT_MAX_CHARS.
         data = {"success": 1, "result": {"content": "...", "metadata": {"name": "sql-best-practices"}}}

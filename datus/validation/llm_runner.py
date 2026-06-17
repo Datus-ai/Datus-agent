@@ -51,7 +51,6 @@ VALIDATOR_READONLY_TOOL_NAMES = {
     "list_schemas",
     "list_tables",
     "describe_table",
-    "get_table_ddl",
     "search_table",
     "read_query",
     # BI read tools (gen_dashboard validators)

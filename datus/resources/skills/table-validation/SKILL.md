@@ -88,7 +88,7 @@ ambiguous.
 
 ## Tools
 
-Use `describe_table` and `get_table_ddl` to introspect the target. Do **not**
+Use `describe_table` to introspect the target. Do **not**
 run `read_query` for counting rows or sampling data — out of scope.
 
 ## Project-level validation examples

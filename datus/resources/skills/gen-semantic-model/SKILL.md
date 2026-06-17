@@ -20,7 +20,7 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
 
 1. **Understand target tables**
    - Identify the table or tables from the user request.
-   - Use `describe_table`, `get_table_ddl`, and relationship tools as needed.
+   - Use `describe_table` and relationship tools as needed.
    - Use `ask_user` only when a critical modeling choice cannot be inferred.
 
 2. **Model columns**

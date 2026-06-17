@@ -71,7 +71,6 @@ class TestGenTableAgenticNodeInit:
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
         assert "read_query" in tool_names
-        assert "get_table_ddl" in tool_names
 
     def test_setup_tools_includes_filesystem_tools(self, real_agent_config, mock_llm_create):
         """gen_table node should include filesystem tools for SQL artifact handling."""

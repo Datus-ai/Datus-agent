@@ -93,17 +93,6 @@ def test_describe_table_returns_expected_columns(db_tool: DBFuncTool) -> None:
     assert {"regionkey", "name", "comment"}.issubset(col_names), f"missing cols: {col_names}"
 
 
-def test_get_table_ddl_returns_create_statement(db_tool: DBFuncTool) -> None:
-    result = db_tool.get_table_ddl(TPCH_TABLE)
-    assert result.success == 1, f"get_table_ddl failed: {result.error}"
-    payload = result.result
-    assert isinstance(payload, dict), f"DDL payload must be dict, got {type(payload).__name__}"
-    assert payload.get("table_name") == TPCH_TABLE, f"table_name mismatch: {payload}"
-    definition = payload.get("definition") or ""
-    assert "create" in definition.lower(), f"definition missing CREATE: {definition!r}"
-    assert TPCH_TABLE in definition.lower(), f"definition missing {TPCH_TABLE}: {definition!r}"
-
-
 def test_read_query_executes_select(db_tool: DBFuncTool) -> None:
     # tpch.tiny.region has exactly 5 rows (standard TPC-H region count).
     result = db_tool.read_query("SELECT COUNT(*) AS cnt FROM region")

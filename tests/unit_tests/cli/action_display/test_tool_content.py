@@ -31,7 +31,6 @@ from datus.cli.action_display.tool_content import (
     _build_get_metrics,
     _build_get_multiple_ddl,
     _build_get_reference_sql,
-    _build_get_table_ddl,
     _build_glob,
     _build_grep,
     _build_list_databases,
@@ -60,7 +59,6 @@ from datus.cli.action_display.tool_content import (
     _build_write_file,
     _format_csv_preview,
     _format_describe_table_output_verbose,
-    _format_get_table_ddl_output_verbose,
     _format_read_query_output_verbose,
     _format_result_only_markup,
     _format_value_markup,
@@ -731,106 +729,6 @@ class TestFormatDescribeTableOutputVerbose:
         assert any("error: access denied" in line for line in lines)
 
 
-# ── _format_get_table_ddl_output_verbose ──────────────────────────
-
-
-@pytest.mark.ci
-class TestFormatGetTableDdlOutputVerbose:
-    """Tests for structured get_table_ddl verbose output."""
-
-    def test_full_ddl_output(self):
-        """Verify DDL output shows identifier, type, and multi-line definition."""
-        output = {
-            "raw_output": '{"success": 1, "result": '
-            '{"identifier": "db.schema.my_table", "table_type": "table", '
-            '"definition": "CREATE TABLE my_table (\\n  id INT,\\n  name VARCHAR(50)\\n)"}}'
-        }
-        lines = _format_get_table_ddl_output_verbose(output)
-        assert "success: 1" in lines[0]
-        assert "table: db.schema.my_table" in lines[1]
-        assert "type: table" in lines[2]
-        assert "definition:" in lines[3]
-        # DDL lines should be indented
-        assert "  CREATE TABLE my_table (" in lines[4]
-        assert "    id INT," in lines[5]
-
-    def test_no_identifier_no_type(self):
-        """Verify missing identifier and table_type are gracefully omitted."""
-        output = {"raw_output": '{"success": 1, "result": {"definition": "CREATE TABLE t (id INT)"}}'}
-        lines = _format_get_table_ddl_output_verbose(output)
-        assert "success: 1" in lines[0]
-        assert "definition:" in lines[1]
-        assert not any("table:" in line for line in lines)
-        assert not any("type:" in line for line in lines)
-
-    def test_non_dict_result(self):
-        """Verify non-dict result shows as raw value."""
-        output = {"raw_output": '{"success": 1, "result": "DDL not available"}'}
-        lines = _format_get_table_ddl_output_verbose(output)
-        assert any("result: DDL not available" in line for line in lines)
-
-    def test_error_output(self):
-        """Verify error is shown for failed DDL retrieval."""
-        output = {"raw_output": '{"success": 0, "error": "table not found", "result": null}'}
-        lines = _format_get_table_ddl_output_verbose(output)
-        assert any("error: table not found" in line for line in lines)
-
-    def test_unparseable_falls_back(self):
-        """Verify unparseable output falls back to generic format."""
-        lines = _format_get_table_ddl_output_verbose("not json")
-        assert lines == ["output: not json"]
-
-
-# ── _build_get_table_ddl ──────────────────────────────────────────
-
-
-@pytest.mark.ci
-class TestBuildGetTableDdl:
-    """Tests for the get_table_ddl builder function."""
-
-    def test_compact_shows_identifier(self):
-        """Verify compact mode shows table identifier."""
-        a = _make(
-            input_data={"function_name": "get_table_ddl"},
-            output_data={
-                "raw_output": '{"success": 1, "result": '
-                '{"identifier": "catalog.db.my_table", "definition": "CREATE TABLE ..."}}'
-            },
-        )
-        tc = _build_get_table_ddl(a, verbose=False)
-        assert "catalog.db.my_table" in tc.compact_result
-
-    def test_compact_no_identifier_fallback(self):
-        """When only the DDL body is present, show its character count."""
-        a = _make(
-            input_data={"function_name": "get_table_ddl"},
-            output_data={"raw_output": '{"success": 1, "result": {"definition": "CREATE TABLE ..."}}'},
-        )
-        tc = _build_get_table_ddl(a, verbose=False)
-        assert tc.compact_result == "16 chars"
-
-    def test_compact_no_data(self):
-        """Verify compact mode produces empty preview with no output."""
-        a = _make(input_data={"function_name": "get_table_ddl"})
-        tc = _build_get_table_ddl(a, verbose=False)
-        assert tc.output_preview == ""
-
-    def test_verbose_shows_ddl(self):
-        """Verify verbose mode formats DDL output with markup."""
-        a = _make(
-            input_data={"function_name": "get_table_ddl", "arguments": {"table_name": "t1"}},
-            output_data={
-                "raw_output": '{"success": 1, "result": '
-                '{"identifier": "db.t1", "table_type": "table", '
-                '"definition": "CREATE TABLE t1 (id INT)"}}'
-            },
-        )
-        tc = _build_get_table_ddl(a, verbose=True)
-        assert any("table_name" in line for line in tc.args_lines)
-        assert any("db.t1" in line for line in tc.output_lines)
-        assert any("definition" in line for line in tc.output_lines)
-
-
 # ── _build_write_file ─────────────────────────────────────────────
 
 
@@ -907,26 +805,10 @@ class TestBuildWriteFile:
 class TestNewToolsRegistered:
     """Verify newly added tools are registered in the builder."""
 
-    def test_get_table_ddl_registered(self):
-        """Verify get_table_ddl is auto-registered."""
-        builder = ToolCallContentBuilder()
-        assert "get_table_ddl" in builder._registry
-
     def test_write_file_registered(self):
         """Verify write_file is auto-registered."""
         builder = ToolCallContentBuilder()
         assert "write_file" in builder._registry
-
-    def test_get_table_ddl_dispatches_correctly(self):
-        """Verify get_table_ddl dispatched via builder produces correct output."""
-        a = _make(
-            input_data={"function_name": "get_table_ddl"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"identifier": "db.t", "definition": "CREATE TABLE t"}}'
-            },
-        )
-        tc = ToolCallContentBuilder().build(a, verbose=False)
-        assert "db.t" in tc.compact_result
 
     def test_write_file_dispatches_correctly(self):
         """Verify write_file dispatched via builder produces correct output."""
@@ -1832,7 +1714,6 @@ class TestAllToolsRegistered:
         "read_query",
         "query",
         "search_table",
-        "get_table_ddl",
         "list_databases",
         "list_schemas",
         # Context search

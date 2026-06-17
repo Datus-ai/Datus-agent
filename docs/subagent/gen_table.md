@@ -32,7 +32,7 @@ The chat agent can also automatically delegate to gen_table when it detects a ta
 | `list_schemas` | List schemas |
 | `describe_table` | Get column definitions and metadata |
 | `read_query` | Execute read-only SQL (validation, row count) |
-| `get_table_ddl` | Get existing CREATE TABLE statement |
+
 | `execute_ddl` | Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA) |
 | `read_file` / `write_file` | Read/write SQL artifact files |
 | `ask_user` | Interactive confirmation (interactive mode only) |

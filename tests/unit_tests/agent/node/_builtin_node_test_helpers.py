@@ -55,7 +55,6 @@ def check_standard_db_tools(node_cls, agent_config):
     assert "list_tables" in tool_names
     assert "describe_table" in tool_names
     assert "read_query" in tool_names
-    assert "get_table_ddl" in tool_names
 
 
 def check_filesystem_tools(node_cls, agent_config):

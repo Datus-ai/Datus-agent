@@ -79,7 +79,7 @@ Those are examples for user-defined strict validators.
 ## Tools
 
 You have read-only access to: `list_databases`, `list_schemas`, `list_tables`,
-`describe_table`, `get_table_ddl`, `search_table`, `read_query`. Any
+`describe_table`, `search_table`, `read_query`. Any
 write tool is explicitly excluded.
 
 ## Critical rules

@@ -355,7 +355,6 @@ class TestConstants:
     def test_valid_tool_methods_db_tools_has_methods(self):
         """db_tools category exposes core query methods."""
         assert "describe_table" in VALID_TOOL_METHODS["db_tools"]
-        assert "get_table_ddl" in VALID_TOOL_METHODS["db_tools"]
 
     def test_valid_tool_methods_filesystem_tools_contains_read_file(self):
         """filesystem_tools contains read_file."""

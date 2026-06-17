@@ -228,7 +228,7 @@ The MCP server exposes the following tools:
 
 | Category           | Tools                                                                                                                                                             |
 |--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Database**       | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `get_table_ddl`, `read_query`                                                  |
+| **Database**       | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `read_query`                                                                   |
 | **Context Search** | `list_subject_tree`, `search_metrics`, `get_metrics`, `search_reference_sql`, `get_reference_sql`, `search_semantic_objects`, `search_knowledge`, `get_knowledge` |
 
 ## Command Line Options

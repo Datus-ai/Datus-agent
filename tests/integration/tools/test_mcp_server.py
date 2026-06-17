@@ -48,7 +48,6 @@ STATIC_EXPECTED_TOOLS = {
     "describe_table",
     "read_query",
     "list_databases",
-    "get_table_ddl",
     "list_subject_tree",
 }
 DYNAMIC_EXPECTED_TOOLS = {"list_tables", "describe_table", "read_query"}
@@ -239,15 +238,6 @@ class StaticModeTestBase:
             result = await session.call_tool("list_databases", {})
             data = parse_tool_result(result)
             assert data["success"] == 1, f"list_databases failed: {data.get('error')}"
-
-    async def test_get_table_ddl(self):
-        """Verify get_table_ddl returns DDL for a known table."""
-        async with self._session() as session:
-            result = await session.call_tool("get_table_ddl", {"table_name": "customer"})
-            data = parse_tool_result(result)
-            assert data["success"] == 1, f"get_table_ddl failed: {data.get('error')}"
-            ddl_text = str(data["result"]).upper()
-            assert "CREATE" in ddl_text or "TABLE" in ddl_text
 
     async def test_list_subject_tree(self):
         """Verify list_subject_tree is callable and does not error."""

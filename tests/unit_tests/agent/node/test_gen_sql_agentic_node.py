@@ -63,7 +63,7 @@ class TestGenSQLAgenticNodeInit:
         assert isinstance(node.model, MockLLMModel)
 
     def test_gen_sql_has_db_tools(self, real_agent_config, mock_llm_create):
-        """After init, node has real db tools (list_tables, describe_table, read_query, get_table_ddl)."""
+        """After init, node has real db tools (list_tables, describe_table, read_query)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.tools.func_tool.database import DBFuncTool
 

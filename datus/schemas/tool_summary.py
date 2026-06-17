@@ -208,13 +208,6 @@ def _fmt_describe_table(result: Any) -> str:
     return ""
 
 
-def _fmt_get_table_ddl(result: Any) -> str:
-    if isinstance(result, dict) and result.get("definition"):
-        identifier = result.get("identifier") or result.get("table_name") or "table"
-        return f"DDL: {identifier}"
-    return ""
-
-
 def _fmt_list_tables(result: Any) -> str:
     if isinstance(result, list):
         return _list_count(result, "table", "tables")
@@ -1121,7 +1114,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "execute_write": _fmt_execute_write,
         "execute_ddl": _fmt_execute_ddl,
         "describe_table": _fmt_describe_table,
-        "get_table_ddl": _fmt_get_table_ddl,
         "list_tables": _fmt_list_tables,
         "table_overview": _fmt_list_tables,
         "list_databases": _fmt_list_databases,

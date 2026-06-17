@@ -228,7 +228,7 @@ MCP 服务暴露以下工具：
 
 | 类别           | 工具                                                                                                                                                              |
 |----------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **数据库**     | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `get_table_ddl`, `read_query`                                                  |
+| **数据库**     | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `read_query`                                                                   |
 | **上下文搜索** | `list_subject_tree`, `search_metrics`, `get_metrics`, `search_reference_sql`, `get_reference_sql`, `search_semantic_objects`, `search_knowledge`, `get_knowledge` |
 
 ## 命令行参数

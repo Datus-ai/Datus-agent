@@ -32,7 +32,7 @@ chat agent 检测到建表任务时也会自动委派给 gen_table。
 | `list_schemas` | 列出 schema |
 | `describe_table` | 获取列定义和元数据 |
 | `read_query` | 执行只读 SQL（验证、行数统计） |
-| `get_table_ddl` | 获取已有的建表语句 |
+
 | `execute_ddl` | 执行 DDL（CREATE/ALTER/DROP TABLE/SCHEMA） |
 | `read_file` / `write_file` | 读写 SQL 文件 |
 | `ask_user` | 交互确认（仅 interactive 模式） |

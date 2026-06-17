@@ -169,7 +169,7 @@ class TestBuildPrompt:
 
 class TestValidatorMaxTurns:
     def test_max_turns_is_20(self):
-        """Validator budget must accommodate describe_table + get_table_ddl +
+        """Validator budget must accommodate describe_table +
         multiple read_query probes on larger runs. Regression guard."""
         assert VALIDATOR_MAX_TURNS == 20
 

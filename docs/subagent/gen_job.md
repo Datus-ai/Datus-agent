@@ -71,7 +71,7 @@ gen_job comes with a comprehensive tool set:
 | `list_tables` | List tables in a database |
 | `describe_table` | Get column definitions and metadata |
 | `read_query` | Execute read-only SQL queries |
-| `get_table_ddl` | Get CREATE TABLE statement |
+
 | `execute_ddl` | Execute DDL (CREATE/ALTER/DROP TABLE/SCHEMA) |
 | `execute_write` | Execute DML (INSERT/UPDATE/DELETE) |
 | `transfer_query_result` | Transfer data between databases |

@@ -578,7 +578,7 @@ agent:
 
 | 工具类别 | 工具 | 用途 |
 |---------|------|------|
-| 数据库 | `list_databases`、`list_schemas`、`list_tables`、`search_table`、`describe_table`、`get_table_ddl`、`read_query` | Schema 发现和数据采样（只读） |
+| 数据库 | `list_databases`、`list_schemas`、`list_tables`、`search_table`、`describe_table`、`read_query` | Schema 发现和数据采样（只读） |
 | 上下文搜索 | `search_metrics`、`search_reference_sql`、`search_knowledge`、`search_semantic_objects`、`list_subject_tree`、`get_metrics`、`get_reference_sql`、`get_knowledge` | 知识库检索 |
 | 文件系统 | `read_file`、`glob`、`grep` | 只读文件浏览 |
 | 日期解析 | `get_current_date`、`parse_temporal_expressions` | 日期上下文 |

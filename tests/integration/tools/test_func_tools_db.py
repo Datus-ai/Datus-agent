@@ -76,27 +76,16 @@ class TestDBFuncToolIntegrationReal:
         assert result.success == 0
         assert result.error is not None
 
-    def test_sqlite_get_table_ddl_returns_definition(self, ssb_db_tool):
-        """Test that get_table_ddl returns CREATE statement."""
-        result = ssb_db_tool.get_table_ddl("customer")
-
-        assert result.success == 1
-        assert result.result is not None
-        # DDL should contain CREATE TABLE or similar
-        definition = result.result.get("definition", "")
-        assert "CREATE" in definition.upper() or "customer" in definition.lower()
-
     def test_sqlite_available_tools_correct_count(self, ssb_db_tool):
         """Test that SQLite returns correct number of tools."""
         tools = ssb_db_tool.available_tools()
 
-        # SQLite should have: list_tables, describe_table, read_query, get_table_ddl
+        # SQLite should have: list_tables, describe_table, read_query
         # No list_databases (single file), no list_schemas (SQLite doesn't have schemas)
         tool_names = {t.name for t in tools}
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
         assert "read_query" in tool_names
-        assert "get_table_ddl" in tool_names
 
     def test_sqlite_connector_dialect(self, ssb_db_tool):
         """Test that SQLite connector has correct dialect."""

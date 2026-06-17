@@ -161,17 +161,6 @@ def test_describe_table_returns_expected_columns(db_tool: DBFuncTool) -> None:
     assert col_names == ["r_regionkey", "r_name", "r_comment"], f"unexpected columns: {col_names}"
 
 
-def test_get_table_ddl_returns_create_statement(db_tool: DBFuncTool) -> None:
-    result = db_tool.get_table_ddl(REGION_TABLE)
-    assert result.success == 1, f"get_table_ddl failed: {result.error}"
-    payload = result.result
-    assert isinstance(payload, dict), f"DDL payload must be dict, got {type(payload).__name__}"
-    assert payload.get("table_name") == REGION_TABLE, f"table_name mismatch: {payload}"
-    definition = payload.get("definition") or ""
-    assert "create" in definition.lower(), f"definition missing CREATE: {definition!r}"
-    assert REGION_TABLE in definition, f"definition missing {REGION_TABLE}: {definition!r}"
-
-
 def test_read_query_executes_select(db_tool: DBFuncTool) -> None:
     result = db_tool.read_query(f"SELECT COUNT(*) AS cnt FROM {REGION_TABLE}")
     assert result.success == 1, f"read_query failed: {result.error}"

@@ -579,7 +579,7 @@ agent:
 
 | Tool Category | Tools | Purpose |
 |---------------|-------|---------|
-| Database | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `get_table_ddl`, `read_query` | Schema discovery and data sampling (read-only) |
+| Database | `list_databases`, `list_schemas`, `list_tables`, `search_table`, `describe_table`, `read_query` | Schema discovery and data sampling (read-only) |
 | Context Search | `search_metrics`, `search_reference_sql`, `search_knowledge`, `search_semantic_objects`, `list_subject_tree`, `get_metrics`, `get_reference_sql`, `get_knowledge` | Knowledge base retrieval |
 | Filesystem | `read_file`, `glob`, `grep` | Read-only file browsing |
 | Date Parsing | `get_current_date`, `parse_temporal_expressions` | Date context |

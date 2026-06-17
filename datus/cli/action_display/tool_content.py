@@ -236,7 +236,6 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "search_table": lambda a: _format_positional(a, "query_text", "query"),
     "read_query": lambda a: _format_positional(a, "query", "sql"),
     "query": lambda a: _format_positional(a, "query", "sql"),
-    "get_table_ddl": lambda a: _format_positional(a, "table_name", "name"),
     "list_databases": lambda _a: "",
     "list_schemas": lambda a: _format_positional(a, "database", "catalog"),
     # Filesystem tools
@@ -737,42 +736,6 @@ def _format_csv_preview_markup(csv_text: str, max_rows: int = 10, max_col_width:
     return lines
 
 
-def _format_get_table_ddl_output_markup(output_data) -> List[str]:
-    """Format get_table_ddl output with Rich markup and highlighted DDL."""
-    data = parse_output_data(output_data)
-    if data is None:
-        return format_output_verbose_markup(output_data)
-
-    lines: List[str] = []
-
-    if "success" in data:
-        lines.append(f"[bold]success[/bold]: {data['success']}")
-    if "error" in data and data["error"]:
-        lines.append(f"[bold red]error: {_escape_markup(str(data['error']))}[/bold red]")
-
-    result = data.get("result")
-    if not isinstance(result, dict):
-        if result is not None:
-            lines.append(f"[bold]result[/bold]: {_escape_markup(str(result))}")
-        return lines if lines else format_output_verbose_markup(output_data)
-
-    identifier = result.get("identifier")
-    if identifier:
-        lines.append(f"[bold]table[/bold]: [cyan]{_escape_markup(identifier)}[/cyan]")
-
-    table_type = result.get("table_type")
-    if table_type:
-        lines.append(f"[bold]type[/bold]: {_escape_markup(table_type)}")
-
-    definition = result.get("definition")
-    if isinstance(definition, str) and definition:
-        lines.append("[bold]definition[/bold]:")
-        for ddl_line in definition.split("\n"):
-            lines.append(f"  [bright_cyan]{_escape_markup(ddl_line)}[/bright_cyan]")
-
-    return lines if lines else format_output_verbose_markup(output_data)
-
-
 # ── Verbose format helpers for specific tools ─────────────────────
 
 
@@ -896,42 +859,6 @@ def _format_describe_table_output_verbose(output_data) -> List[str]:
             lines.append(f"  {col}")
 
     return lines
-
-
-def _format_get_table_ddl_output_verbose(output_data) -> List[str]:
-    """Format get_table_ddl output for verbose mode with formatted DDL."""
-    data = parse_output_data(output_data)
-    if data is None:
-        return format_output_verbose(output_data)
-
-    lines: List[str] = []
-
-    if "success" in data:
-        lines.append(f"success: {data['success']}")
-    if "error" in data and data["error"]:
-        lines.append(f"error: {data['error']}")
-
-    result = data.get("result")
-    if not isinstance(result, dict):
-        if result is not None:
-            lines.append(f"result: {result}")
-        return lines if lines else format_output_verbose(output_data)
-
-    identifier = result.get("identifier")
-    if identifier:
-        lines.append(f"table: {identifier}")
-
-    table_type = result.get("table_type")
-    if table_type:
-        lines.append(f"type: {table_type}")
-
-    definition = result.get("definition")
-    if isinstance(definition, str) and definition:
-        lines.append("definition:")
-        for ddl_line in definition.split("\n"):
-            lines.append(f"  {ddl_line}")
-
-    return lines if lines else format_output_verbose(output_data)
 
 
 # ── Per-tool builder functions ─────────────────────────────────────
@@ -1094,32 +1021,6 @@ def _build_search_generic(
         items = _get_items_from_output(action.output)
         count = len(items) if isinstance(items, list) else 0
         tc.compact_result = f"{count} {_plural_unit(count, unit_singular, unit_plural)} matched"
-    return tc
-
-
-def _build_get_table_ddl(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """get_table_ddl: show the table identifier and DDL size."""
-    tc = make_base_content(action)
-    if verbose:
-        tc.args_lines = extract_args_markup(action)
-        if action.output:
-            tc.output_lines = _format_get_table_ddl_output_markup(action.output)
-    else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                identifier = result.get("identifier", "")
-                definition = result.get("definition") or ""
-                chars = len(definition) if isinstance(definition, str) else 0
-                if identifier and chars:
-                    tc.compact_result = f"{identifier} \u00b7 {chars:,} chars"
-                elif chars:
-                    tc.compact_result = f"{chars:,} chars"
-                elif identifier:
-                    tc.compact_result = str(identifier)
-                else:
-                    tc.compact_result = "DDL retrieved"
     return tc
 
 
@@ -2082,7 +1983,6 @@ class ToolCallContentBuilder:
         self._registry["read_query"] = _build_read_query
         self._registry["query"] = _build_read_query
         self._registry["search_table"] = _build_search_table
-        self._registry["get_table_ddl"] = _build_get_table_ddl
         self._registry["list_databases"] = _build_list_databases
         self._registry["list_schemas"] = _build_list_schemas
 

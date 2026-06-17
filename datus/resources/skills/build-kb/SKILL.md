@@ -16,7 +16,7 @@ user_invocable: true
 
 You are building the project's **vector-indexed knowledge base** — `semantic_models`, `metrics`, and `reference_sql` (the LanceDB-backed stores) — from the project's files and database metadata. This is the heavy companion to the lightweight `/init`: `/init` already produces the `AGENTS.md` inventory and the file-based stores (`./knowledge/*.md`, `memory`); **this skill owns the expensive generation** that writes the vector stores and then refreshes `AGENTS.md`'s KB index sections.
 
-This is an orchestration skill running in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `get_table_ddl`, `search_table`, `read_query`).
+This is an orchestration skill running in the main agent context, so you may call `task`, `todo_write`/`todo_list`/`todo_read`/`todo_update`, `ask_user`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), and the database tools (`list_databases`, `list_tables`, `describe_table`, `search_table`, `read_query`).
 
 **Routing authority is `storage-classify`.** This skill decides *what to scan and explore within scope*; the `storage-classify` skill owns *which content goes to which store, written with which mechanism*. Do NOT re-invent storage routing rules here — load and follow `storage-classify` in Step 3.
 
@@ -47,7 +47,7 @@ Gather the raw material **inside the resolved scope**, then classify it into a *
 
 **Database side (for each in-scope datasource):**
 - `list_databases` → `list_tables` to enumerate tables/views; restrict to in-scope tables when the scope names them.
-- For representative in-scope tables: `describe_table` (or `get_table_ddl`) for **desc** (column names/types/comments), `search_table` (its `sample_data`) or `read_query("SELECT * FROM <t> LIMIT 5")` for **sample**, and `read_query("SELECT COUNT(*) AS rows, COUNT(DISTINCT <key>) AS card FROM <t>")` for key **statistics** (row count, key-column cardinality). There is no dedicated statistics tool — compute it with `read_query`.
+- For representative in-scope tables: `describe_table` for **desc** (column names/types/comments), `search_table` (its `sample_data`) or `read_query("SELECT * FROM <t> LIMIT 5")` for **sample**, and `read_query("SELECT COUNT(*) AS rows, COUNT(DISTINCT <key>) AS card FROM <t>")` for key **statistics** (row count, key-column cardinality). There is no dedicated statistics tool — compute it with `read_query`.
 - For large databases (>50 in-scope tables), sample representative tables per naming pattern rather than describing every table.
 
 **Classify** every in-scope file and table into the domain taxonomy. A single domain may contain both files and tables.

@@ -120,7 +120,7 @@ class TestDBFuncTool:
         tools = db_func_tool.available_tools()
 
         # Should have base tools plus dialect-specific tools
-        expected_tool_count = 4  # list_tables, describe_table, read_query, get_table_ddl
+        expected_tool_count = 3  # list_tables, describe_table, read_query
         if connector_registry.support_database(mock_connector.dialect):
             expected_tool_count += 1
         if connector_registry.support_schema(mock_connector.dialect):
@@ -130,7 +130,7 @@ class TestDBFuncTool:
 
         # Verify tool names
         tool_names = {tool.name for tool in tools}
-        expected_base_tools = {"list_tables", "describe_table", "read_query", "get_table_ddl"}
+        expected_base_tools = {"list_tables", "describe_table", "read_query"}
 
         assert expected_base_tools.issubset(tool_names)
         # Tool presence must exactly match dialect dispatch — no silent branch skipping.
@@ -753,7 +753,7 @@ class TestDBFuncTool:
         tool = DBFuncTool(connector)
         tools_by_name = {item.name: item for item in tool.available_tools()}
 
-        for tool_name in ("list_databases", "list_schemas", "list_tables", "describe_table", "get_table_ddl"):
+        for tool_name in ("list_databases", "list_schemas", "list_tables", "describe_table"):
             assert "catalog" not in tools_by_name[tool_name].params_json_schema.get("properties", {})
 
     def test_snowflake_catalog_argument_aliases_to_database_for_describe_table(self):
@@ -1221,7 +1221,7 @@ class TestDBFuncToolEdgeCases:
             tool = DBFuncTool(mock_connector)
             tools = tool.available_tools()
 
-            expected_tool_count = 4
+            expected_tool_count = 3  # list_tables, describe_table, read_query
             if connector_registry.support_database(dialect):
                 expected_tool_count += 1
             if connector_registry.support_schema(dialect):

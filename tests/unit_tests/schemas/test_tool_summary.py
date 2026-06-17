@@ -184,7 +184,6 @@ class TestRegistryRouting:
             "execute_write",
             "execute_ddl",
             "describe_table",
-            "get_table_ddl",
             "list_tables",
             "list_databases",
             "list_schemas",
@@ -258,13 +257,6 @@ class TestDatabaseFormatters:
     def test_describe_table(self):
         cols = [{"name": "id"}, {"name": "name"}, {"name": "email"}]
         assert _summarize("describe_table", {"success": 1, "result": {"columns": cols}}) == "3 cols"
-
-    def test_get_table_ddl(self):
-        out = _summarize(
-            "get_table_ddl",
-            {"success": 1, "result": {"identifier": "public.orders", "definition": "CREATE TABLE..."}},
-        )
-        assert out == "DDL: public.orders"
 
     def test_list_tables_no_preview(self):
         out = _summarize(
@@ -856,7 +848,6 @@ def test_failure_path_uniform(tool: str):
         # Database fallbacks
         ("read_query", [1, 2, 3], "3 rows"),
         ("describe_table", {"schema": [{"name": "id"}, {"name": "v"}]}, "2 cols"),
-        ("get_table_ddl", {"table_name": "orders", "definition": "CREATE TABLE..."}, "DDL: orders"),
         ("list_tables", [{"name": "orders"}], "1 table"),
         ("list_databases", ["mydb"], "1 db"),
         # Semantic fallbacks
@@ -930,7 +921,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("execute_write", {"row_count": 9999999}),
     ("execute_ddl", {"message": "ok"}),
     ("describe_table", {"columns": [{"name": str(i)} for i in range(99)]}),
-    ("get_table_ddl", {"identifier": "very_long_schema.very_long_table_name", "definition": "CREATE..."}),
     ("list_tables", [{"name": str(i)} for i in range(50)]),
     ("table_overview", [{"name": str(i)} for i in range(50)]),
     ("list_databases", [str(i) for i in range(99)]),

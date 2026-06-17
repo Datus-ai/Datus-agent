@@ -1887,7 +1887,7 @@ class TestToolsWhitelist:
         when the whitelist omits ``db_tools``."""
         node = _make_ask_report_with_tools(real_agent_config, _NO_DB_WHITELIST)
         names = _tool_names(node)
-        for db_tool in ("read_query", "list_tables", "describe_table", "get_table_ddl"):
+        for db_tool in ("read_query", "list_tables", "describe_table"):
             assert db_tool not in names, f"{db_tool} leaked despite not being whitelisted"
 
     def test_whitelisted_tools_are_exposed(self, real_agent_config):
@@ -1913,7 +1913,7 @@ class TestToolsWhitelist:
         # Listed → present.
         assert "read_query" in names
         # Not listed (other DBFuncTool methods) → absent.
-        for other in ("list_tables", "describe_table", "get_table_ddl"):
+        for other in ("list_tables", "describe_table"):
             assert other not in names, f"{other} should not be exposed by a method-level whitelist"
 
     def test_filesystem_tools_require_whitelist(self, real_agent_config):

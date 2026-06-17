@@ -61,8 +61,7 @@ only by `ValidationHook` at the end of a matching subagent run.
 
 Validator subagents receive only a read-only tool surface:
 
-- database read tools such as `describe_table`, `get_table_ddl`, and
-  `read_query`
+- database read tools such as `describe_table` and `read_query`
 - BI read tools such as `get_dashboard`, `get_chart`, `get_chart_data`, and
   `get_dataset`
 - scheduler read tools such as `get_scheduler_job`, `list_job_runs`, and

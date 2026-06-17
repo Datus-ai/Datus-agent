@@ -675,12 +675,7 @@ class DBFuncTool:
         if self.has_schema:
             methods_to_convert.append(self.search_table)
 
-        methods_to_convert.extend(
-            [
-                self.read_query,
-                self.get_table_ddl,
-            ]
-        )
+        methods_to_convert.append(self.read_query)
 
         if any(connector_registry.support_database(dialect) for dialect in configured_dialects):
             bound_tools.append(self.to_function_tool(self.list_databases))
@@ -1231,7 +1226,6 @@ class DBFuncTool:
             )
         return enforced.sql or sql
 
-    @mcp_tool()
     def get_table_ddl(
         self,
         table_name: str,

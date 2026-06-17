@@ -69,7 +69,6 @@ that the agent actually calls:
 
 - `list_tables` — returns seeded tables
 - `describe_table` — returns column metadata
-- `get_table_ddl` — returns a valid `CREATE TABLE`
 - `read_query` — executes a SELECT and returns compressed rows
 - `read_query` read-only guard — rejects DML / multi-statement injection
 

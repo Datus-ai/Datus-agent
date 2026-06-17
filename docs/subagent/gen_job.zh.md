@@ -69,7 +69,7 @@ agent:
 | `list_tables` | 列出数据库中的表 |
 | `describe_table` | 获取列定义和元数据 |
 | `read_query` | 执行只读 SQL 查询 |
-| `get_table_ddl` | 获取建表语句 |
+
 | `execute_ddl` | 执行 DDL（CREATE/ALTER/DROP TABLE/SCHEMA） |
 | `execute_write` | 执行 DML（INSERT/UPDATE/DELETE） |
 | `transfer_query_result` | 跨库数据传输 |
