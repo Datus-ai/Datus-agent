@@ -68,13 +68,13 @@ class ExploreAgenticNode(AgenticNode):
         # otherwise block on a missing broker listener.
         self.execution_mode = execution_mode
 
-        # Default max_turns = 15, can be overridden by agent.yml
-        self.max_turns = 15
+        # Default max_turns = 50, can be overridden by agent.yml
+        self.max_turns = 50
         config_key = node_name or self.NODE_NAME
         if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[config_key]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 15)
+                self.max_turns = agentic_node_config.get("max_turns", 50)
 
         # Initialize tool attributes before parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None

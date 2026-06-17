@@ -51,11 +51,11 @@ class FeedbackAgenticNode(AgenticNode):
         self.configured_node_name = "feedback"
 
         # Get max_turns from agentic_nodes configuration
-        self.max_turns = 30
+        self.max_turns = 50
         if agent_config and hasattr(agent_config, "agentic_nodes") and "feedback" in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes["feedback"]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.max_turns = agentic_node_config.get("max_turns", 50)
 
         # Tool holders BEFORE super().__init__()
         self.sub_agent_task_tool = None

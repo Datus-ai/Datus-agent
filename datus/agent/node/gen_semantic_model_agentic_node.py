@@ -62,12 +62,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
         """
         self.execution_mode = execution_mode
 
-        # Get max_turns from agentic_nodes configuration, default to 30
-        self.max_turns = 40
+        # Get max_turns from agentic_nodes configuration, default to 50
+        self.max_turns = 50
         if agent_config and hasattr(agent_config, "agentic_nodes") and self.NODE_NAME in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[self.NODE_NAME]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 40)
+                self.max_turns = agentic_node_config.get("max_turns", 50)
 
         self.semantic_model_dir = str(agent_config.path_manager.semantic_model_path(agent_config.current_datasource))
         # ``knowledge_base_dir`` is the sandbox root for FilesystemFuncTool. It

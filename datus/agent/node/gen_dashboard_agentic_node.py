@@ -38,7 +38,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
     ACTION_TYPE: ClassVar[str] = "gen_dashboard_response"
     result_class = GenDashboardNodeResult
     PROMPT_TEMPLATE: ClassVar[str] = "gen_dashboard_system"
-    DEFAULT_MAX_TURNS: ClassVar[int] = 30
+    DEFAULT_MAX_TURNS: ClassVar[int] = 50
     # Dashboard skills are injected dynamically by ``_setup_dashboard_skills``
     # based on the configured BI platform — leave ``DEFAULT_SKILLS`` empty so
     # the base-class fallback does not over-expose unrelated platforms.

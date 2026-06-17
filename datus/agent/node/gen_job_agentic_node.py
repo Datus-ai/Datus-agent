@@ -44,7 +44,7 @@ class GenJobAgenticNode(DeliverableAgenticNode):
     DEFAULT_SKILLS: ClassVar[Optional[str]] = "gen-table, data-migration"
     PROMPT_TEMPLATE: ClassVar[str] = "gen_job_system"
     ACTION_TYPE: ClassVar[str] = "gen_job_response"
-    DEFAULT_MAX_TURNS: ClassVar[int] = 40
+    DEFAULT_MAX_TURNS: ClassVar[int] = 50
 
     def _setup_domain_tools(self) -> None:
         """Register read tools + DDL + DML + transfer + migration mixin wrappers."""

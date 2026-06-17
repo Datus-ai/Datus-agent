@@ -69,13 +69,13 @@ class SkillCreatorAgenticNode(AgenticNode):
         self._configured_node_name = node_name or self.NODE_NAME
         self.execution_mode = execution_mode
 
-        # Default max_turns = 30, can be overridden by agent.yml
-        self.max_turns = 30
+        # Default max_turns = 50, can be overridden by agent.yml
+        self.max_turns = 50
         config_key = self._configured_node_name
         if agent_config and hasattr(agent_config, "agentic_nodes") and config_key in (agent_config.agentic_nodes or {}):
             agentic_node_config = agent_config.agentic_nodes.get(config_key, {})
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.max_turns = agentic_node_config.get("max_turns", 50)
 
         # Initialize tool attributes before parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None

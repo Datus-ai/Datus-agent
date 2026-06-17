@@ -32,7 +32,7 @@ class SchedulerAgenticNode(DeliverableAgenticNode):
     ACTION_TYPE: ClassVar[str] = "scheduler_response"
     result_class = SchedulerNodeResult
     PROMPT_TEMPLATE: ClassVar[str] = "scheduler_system"
-    DEFAULT_MAX_TURNS: ClassVar[int] = 30
+    DEFAULT_MAX_TURNS: ClassVar[int] = 50
     # Scheduler workflow + validation skills are injected dynamically based
     # on the configured platform. Leave ``DEFAULT_SKILLS`` empty so the
     # base-class fallback does not over-expose unrelated platforms.

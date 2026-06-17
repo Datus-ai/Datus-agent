@@ -78,11 +78,11 @@ class ChatAgenticNode(AgenticNode):
         self.configured_node_name = "chat"
 
         # Max turns from config
-        self.max_turns = 30
+        self.max_turns = 50
         if agent_config and hasattr(agent_config, "agentic_nodes") and "chat" in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes["chat"]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.max_turns = agentic_node_config.get("max_turns", 50)
 
         # Initialize tool attributes BEFORE calling parent constructor
         self.db_func_tool: Optional[DBFuncTool] = None

@@ -37,7 +37,7 @@ class GenTableAgenticNode(DeliverableAgenticNode):
     DEFAULT_SKILLS: ClassVar[Optional[str]] = "gen-table"
     PROMPT_TEMPLATE: ClassVar[str] = "gen_table_system"
     ACTION_TYPE: ClassVar[str] = "gen_table_response"
-    DEFAULT_MAX_TURNS: ClassVar[int] = 20
+    DEFAULT_MAX_TURNS: ClassVar[int] = 50
 
     def _setup_domain_tools(self) -> None:
         """DDL-only: read tools + ``execute_ddl``. No DML / no transfer."""

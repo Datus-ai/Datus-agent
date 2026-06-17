@@ -127,7 +127,7 @@ class DeliverableAgenticNode(AgenticNode):
     NODE_TYPE: ClassVar[str] = ""
 
     #: Default max_turns cap; subclasses override when the flow is deeper.
-    DEFAULT_MAX_TURNS: ClassVar[int] = 20
+    DEFAULT_MAX_TURNS: ClassVar[int] = 50
 
     # Default ``result_class`` — gen_table / gen_job use SemanticNodeResult;
     # gen_dashboard / scheduler override with their specialised models.

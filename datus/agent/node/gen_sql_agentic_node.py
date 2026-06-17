@@ -75,11 +75,11 @@ class GenSQLAgenticNode(AgenticNode):
         # Determine node name from node_type if not provided
         self.configured_node_name = node_name
 
-        self.max_turns = 30
+        self.max_turns = 50
         if agent_config and hasattr(agent_config, "agentic_nodes") and node_name in agent_config.agentic_nodes:
             agentic_node_config = agent_config.agentic_nodes[node_name]
             if isinstance(agentic_node_config, dict):
-                self.max_turns = agentic_node_config.get("max_turns", 30)
+                self.max_turns = agentic_node_config.get("max_turns", 50)
 
         # Initialize tool attributes BEFORE calling parent constructor
         # This is required because parent's __init__ calls _get_system_prompt()
