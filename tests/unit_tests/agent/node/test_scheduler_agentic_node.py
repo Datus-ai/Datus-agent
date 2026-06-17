@@ -204,7 +204,7 @@ class TestSchedulerAgenticNodeInit:
             assert node.max_turns == 25
 
     def test_max_turns_default(self, real_agent_config, mock_llm_create):
-        """Default max_turns is 30 when scheduler not in agentic_nodes."""
+        """Default max_turns is 50 when scheduler not in agentic_nodes."""
         # Add scheduler service config but no scheduler agentic node config
         real_agent_config.services.schedulers = {"airflow_local": _scheduler_service_config()}
         real_agent_config.init_scheduler_services(real_agent_config.services.schedulers)
@@ -212,7 +212,7 @@ class TestSchedulerAgenticNodeInit:
             from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
 
             node = SchedulerAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            assert node.max_turns == 30
+            assert node.max_turns == 50
 
 
 # ---------------------------------------------------------------------------

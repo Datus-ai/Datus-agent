@@ -169,7 +169,7 @@ class TestFeedbackAgenticNodeInit:
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode
 
         node = FeedbackAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        assert node.max_turns == 30
+        assert node.max_turns == 50
 
     def test_execution_mode_stored(self, real_agent_config, mock_llm_create):
         from datus.agent.node.feedback_agentic_node import FeedbackAgenticNode

@@ -96,7 +96,7 @@ class TestGenTableAgenticNodeInit:
         original = real_agent_config.agentic_nodes.pop("gen_table", None)
         try:
             node = GenTableAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-            assert node.max_turns == 20
+            assert node.max_turns == 50
         finally:
             if original is not None:
                 real_agent_config.agentic_nodes["gen_table"] = original

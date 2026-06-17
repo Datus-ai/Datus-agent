@@ -93,7 +93,7 @@ class TestGenMetricsAgenticNodeInit:
         assert node.max_turns == 5
 
     def test_metrics_max_turns_default(self, real_agent_config, mock_llm_create):
-        """Test default max_turns is 30 when not configured."""
+        """Test default max_turns is 50 when not configured."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         # Remove gen_metrics from agentic_nodes to test default
@@ -103,7 +103,7 @@ class TestGenMetricsAgenticNodeInit:
                 agent_config=real_agent_config,
                 execution_mode="workflow",
             )
-            assert node.max_turns == 40
+            assert node.max_turns == 50
         finally:
             if original is not None:
                 real_agent_config.agentic_nodes["gen_metrics"] = original

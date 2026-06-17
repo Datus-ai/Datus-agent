@@ -116,7 +116,7 @@ class TestGenReportAgenticNodeInit:
         assert node.max_turns == 5
 
     def test_report_max_turns_default(self, real_agent_config, mock_llm_create):
-        """Test default max_turns is 30 when node_name not in agentic_nodes."""
+        """Test default max_turns is 50 when node_name not in agentic_nodes."""
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
         node = GenReportAgenticNode(
@@ -127,7 +127,7 @@ class TestGenReportAgenticNodeInit:
             node_name="nonexistent_report_node",  # Not in agentic_nodes
         )
 
-        assert node.max_turns == 30
+        assert node.max_turns == 50
 
     def test_report_node_name_configurable(self, real_agent_config, mock_llm_create):
         """Test that node_name is configurable and affects get_node_name()."""

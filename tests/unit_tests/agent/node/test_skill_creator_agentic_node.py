@@ -54,8 +54,8 @@ class TestSkillCreatorAgenticNodeInit:
         )
         assert node.get_node_name() == "gen_skill"
 
-    def test_default_max_turns_30(self, real_agent_config, mock_llm_create):
-        """Default max_turns should be 30."""
+    def test_default_max_turns_50(self, real_agent_config, mock_llm_create):
+        """Default max_turns should be 50."""
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode
 
         node = SkillCreatorAgenticNode(
@@ -65,7 +65,7 @@ class TestSkillCreatorAgenticNodeInit:
             agent_config=real_agent_config,
             node_name="gen_skill",
         )
-        assert node.max_turns == 30
+        assert node.max_turns == 50
 
     def test_model_is_mock(self, real_agent_config, mock_llm_create):
         """Model should be the mock model."""

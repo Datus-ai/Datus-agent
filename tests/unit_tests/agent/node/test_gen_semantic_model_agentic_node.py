@@ -113,7 +113,7 @@ class TestGenSemanticModelAgenticNodeInit:
         assert node.max_turns == 5
 
     def test_semantic_model_max_turns_default(self, real_agent_config, mock_llm_create):
-        """Test default max_turns is 30 when not configured."""
+        """Test default max_turns is 50 when not configured."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
         # Remove gen_semantic_model from agentic_nodes to test default
@@ -123,7 +123,7 @@ class TestGenSemanticModelAgenticNodeInit:
                 agent_config=real_agent_config,
                 execution_mode="workflow",
             )
-            assert node.max_turns == 40
+            assert node.max_turns == 50
         finally:
             if original is not None:
                 real_agent_config.agentic_nodes["gen_semantic_model"] = original
