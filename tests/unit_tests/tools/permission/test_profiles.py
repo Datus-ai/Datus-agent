@@ -70,7 +70,7 @@ class TestNormalProfile:
         config = NORMAL
         assert _resolve(config, "mcp.filesystem", "read_file") == PermissionLevel.ASK
         assert _resolve(config, "skills", "any-skill") == PermissionLevel.ALLOW
-        assert _resolve(config, "skills", "skill_execute_command") == PermissionLevel.ASK
+        assert _resolve(config, "skills", "load_skill") == PermissionLevel.ALLOW
 
     def test_sub_agent_delegation_allowed(self):
         """``task()`` delegation is ALLOW — the subagent's own hooks gate its calls."""
@@ -185,7 +185,7 @@ class TestAutoProfile:
         config = AUTO
         assert _resolve(config, "mcp.filesystem", "read_file") == PermissionLevel.ASK
         assert _resolve(config, "skills", "any-skill") == PermissionLevel.ALLOW
-        assert _resolve(config, "skills", "skill_execute_command") == PermissionLevel.ASK
+        assert _resolve(config, "skills", "load_skill") == PermissionLevel.ALLOW
 
 
 class TestDangerousProfile:

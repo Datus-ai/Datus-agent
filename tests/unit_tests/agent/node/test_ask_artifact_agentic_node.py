@@ -2178,7 +2178,7 @@ class TestChatDecoupling:
             real_agent_config, "date_parsing_tools.*,filesystem_tools.*", name="ask_noskill", slug="noskill"
         )
         node._get_system_prompt()
-        leaked = {"load_skill", "skill_execute_command"} & _tool_names(node)
+        leaked = {"load_skill"} & _tool_names(node)
         assert not leaked, f"skill tools leaked via prompt-build lazy injection: {sorted(leaked)}"
 
     def test_bash_present_when_whitelisted(self, real_agent_config):

@@ -90,32 +90,6 @@ class TestSkillValidateTool:
         assert result.result["status"] == "PASS with warnings"
         assert any("lowercase" in w for w in result.result["details"])
 
-    def test_bad_allowed_commands_pattern(self, tool, tmp_path):
-        """Invalid allowed_commands pattern should produce warning."""
-        skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        f = skill_dir / "SKILL.md"
-        f.write_text(
-            "---\nname: my-skill\ndescription: A valid test skill description here\n"
-            "allowed_commands:\n  - 'bad pattern'\n---\n\nbody\n"
-        )
-        result = tool.validate_skill(str(f))
-        assert result.success == 1
-        assert any("prefix:glob" in w for w in result.result["details"])
-
-    def test_allowed_commands_without_scripts_dir(self, tool, tmp_path):
-        """allowed_commands without scripts/ directory should warn."""
-        skill_dir = tmp_path / "my-skill"
-        skill_dir.mkdir()
-        f = skill_dir / "SKILL.md"
-        f.write_text(
-            "---\nname: my-skill\ndescription: A valid test skill description here\n"
-            "allowed_commands:\n  - 'python:scripts/*.py'\n---\n\nbody\n"
-        )
-        result = tool.validate_skill(str(f))
-        assert result.success == 1
-        assert any("scripts/" in w for w in result.result["details"])
-
     def test_agent_without_context_warns(self, tool, tmp_path):
         """agent field without context: fork should warn."""
         skill_dir = tmp_path / "my-skill"

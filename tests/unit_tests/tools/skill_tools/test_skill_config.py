@@ -125,7 +125,6 @@ class TestSkillMetadata:
             location=Path("/skills/advanced"),
             tags=["sql", "optimization"],
             version="1.0.0",
-            allowed_commands=["python:scripts/*.py", "sh:*.sh"],
             disable_model_invocation=False,
             user_invocable=True,
             context="fork",
@@ -134,7 +133,6 @@ class TestSkillMetadata:
         assert metadata.name == "advanced-skill"
         assert metadata.tags == ["sql", "optimization"]
         assert metadata.version == "1.0.0"
-        assert metadata.allowed_commands == ["python:scripts/*.py", "sh:*.sh"]
         assert metadata.context == "fork"
         assert metadata.agent == "Explore"
 
@@ -147,31 +145,11 @@ class TestSkillMetadata:
         )
         assert metadata.tags == []
         assert metadata.version is None
-        assert metadata.allowed_commands == []
         assert metadata.disable_model_invocation is False
         assert metadata.user_invocable is True
         assert metadata.context is None
         assert metadata.agent is None
         assert metadata.content is None
-
-    def test_skill_metadata_has_scripts(self):
-        """Test has_scripts method."""
-        # Skill without scripts
-        metadata_no_scripts = SkillMetadata(
-            name="no-scripts",
-            description="No scripts",
-            location=Path("/test"),
-        )
-        assert metadata_no_scripts.has_scripts() is False
-
-        # Skill with scripts
-        metadata_with_scripts = SkillMetadata(
-            name="with-scripts",
-            description="With scripts",
-            location=Path("/test"),
-            allowed_commands=["python:*.py"],
-        )
-        assert metadata_with_scripts.has_scripts() is True
 
     def test_skill_metadata_is_model_invocable(self):
         """Test is_model_invocable method."""
@@ -199,14 +177,12 @@ class TestSkillMetadata:
             "description": "SQL query optimization techniques",
             "tags": ["sql", "performance"],
             "version": "1.0.0",
-            "allowed_commands": ["python:scripts/*.py"],
         }
         metadata = SkillMetadata.from_frontmatter(frontmatter, Path("/skills/sql-optimization"))
         assert metadata.name == "sql-optimization"
         assert metadata.description == "SQL query optimization techniques"
         assert metadata.tags == ["sql", "performance"]
         assert metadata.version == "1.0.0"
-        assert metadata.allowed_commands == ["python:scripts/*.py"]
         assert metadata.location == Path("/skills/sql-optimization")
 
     def test_skill_metadata_from_frontmatter_rejects_string_tags(self):
@@ -231,7 +207,6 @@ class TestSkillMetadata:
         assert metadata.name == "simple"
         assert metadata.description == "Simple skill"
         assert metadata.tags == []
-        assert metadata.allowed_commands == []
 
     def test_skill_metadata_serialization(self):
         """Test SkillMetadata serialization."""

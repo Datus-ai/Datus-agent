@@ -1760,7 +1760,6 @@ class TestAllToolsRegistered:
         "analyze_metric_candidates_from_history",
         # Skill
         "execute_command",
-        "skill_execute_command",
         "load_skill",
         # Interaction
         "ask_user",
@@ -2017,12 +2016,6 @@ class TestToolArgsFormatters:
 
         fmt = _TOOL_ARGS_FORMATTERS["list_databases"]
         assert fmt({}) == ""
-
-    def test_skill_execute_command_kw(self):
-        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
-
-        fmt = _TOOL_ARGS_FORMATTERS["skill_execute_command"]
-        assert fmt(self._args(skill_name="s", command="c")) == 'skill_name: "s", command: "c"'
 
 
 @pytest.mark.ci

@@ -211,7 +211,7 @@ class ChatAgenticNode(AgenticNode):
     def _setup_skill_tools(self):
         """Setup skill discovery and loading tools with permission control."""
         try:
-            from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
+            from datus.tools.permission.permission_config import PermissionConfig
 
             base_config = self.agent_config.permissions_config
             if base_config is not None:
@@ -223,17 +223,6 @@ class ChatAgenticNode(AgenticNode):
                 global_config=base_config,
                 node_overrides=self._get_node_permission_overrides(),
                 active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
-            )
-            # Register bash ASK as a persistent rule so ``/profile dangerous``
-            # doesn't silently drop it on rebuild. ``add_persistent_rule``
-            # skips duplicates, so this is safe even if the profile base
-            # already contains the rule.
-            self.permission_manager.add_persistent_rule(
-                PermissionRule(
-                    tool="skills",
-                    pattern="skill_execute_command",
-                    permission=PermissionLevel.ASK,
-                )
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 

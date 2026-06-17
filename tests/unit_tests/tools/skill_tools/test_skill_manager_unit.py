@@ -258,7 +258,6 @@ class TestGenerateSkillsXml:
         xml = manager.generate_available_skills_xml("node")
         assert "<available_skills>" in xml
         assert "test-skill" in xml
-        assert "skill-owned scripts" in xml
         assert "native tool directly" in xml
 
     def test_generate_xml_empty_is_explicit(self):

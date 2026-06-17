@@ -10,7 +10,6 @@ Tests the load_skill native tool functionality.
 
 import pytest
 
-from datus.tools.func_tool.bash_tool import BashTool
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools.skill_config import SkillConfig
@@ -45,26 +44,6 @@ This is a simple skill for testing.
 2. Do that
 """
     )
-
-    # Create a skill with scripts
-    script_dir = skills_dir / "script-skill"
-    script_dir.mkdir()
-    (script_dir / "SKILL.md").write_text(
-        """---
-name: script-skill
-description: A skill with scripts
-allowed_commands:
-  - "python:scripts/*.py"
----
-
-# Script Skill
-
-Run scripts with: python scripts/analyze.py
-"""
-    )
-    scripts = script_dir / "scripts"
-    scripts.mkdir()
-    (scripts / "analyze.py").write_text("print('analyzing')")
 
     # Create a denied skill
     denied_dir = skills_dir / "internal-skill"
@@ -128,12 +107,10 @@ class TestSkillFuncToolBasic:
         assert tool.node_name == "chatbot"
 
     def test_available_tools(self, skill_func_tool):
-        """Test that available_tools returns load_skill and skill_execute_command tools."""
+        """Test that available_tools returns only load_skill."""
         tools = skill_func_tool.available_tools()
-        assert len(tools) == 2
-        tool_names = [tool.name for tool in tools]
-        assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
+        assert len(tools) == 1
+        assert tools[0].name == "load_skill"
 
     def test_set_tool_context(self, skill_func_tool):
         """Test setting tool context."""
@@ -212,65 +189,6 @@ class TestSkillFuncToolLoadSkill:
         assert result.success == 1
         assert "Scoped Table Skill" in result.result
 
-    def test_load_skill_with_scripts(self, skill_func_tool):
-        """Test loading a skill with scripts creates bash tool."""
-        result = skill_func_tool.load_skill("script-skill")
-
-        assert result.success == 1
-        assert "Script Skill" in result.result
-
-        # Check that bash tool was created
-        bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
-        assert isinstance(bash_tool, BashTool)
-        assert bash_tool.identity == "script-skill"
-
-
-class TestSkillFuncToolBashToolManagement:
-    """Tests for bash tool management."""
-
-    def test_get_skill_bash_tool_not_loaded(self, skill_func_tool):
-        """Test getting bash tool for unloaded skill."""
-        bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
-        assert bash_tool is None
-
-    def test_get_skill_bash_tool_after_load(self, skill_func_tool):
-        """Test getting bash tool after loading skill."""
-        skill_func_tool.load_skill("script-skill")
-        bash_tool = skill_func_tool.get_skill_bash_tool("script-skill")
-
-        assert isinstance(bash_tool, BashTool)
-        # The general-purpose BashTool exposes the originating skill via
-        # ``identity`` (SkillFuncTool sets it to the skill name on creation).
-        assert bash_tool.identity == "script-skill"
-
-    def test_get_all_skill_bash_tools(self, skill_func_tool):
-        """Test getting all bash tools."""
-        skill_func_tool.load_skill("script-skill")
-        all_tools = skill_func_tool.get_all_skill_bash_tools()
-
-        assert len(all_tools) == 1
-        assert "script-skill" in all_tools
-
-    def test_get_loaded_skill_tools(self, skill_func_tool):
-        """Test getting tools from loaded skills."""
-        # Before loading
-        tools_before = skill_func_tool.get_loaded_skill_tools()
-        assert len(tools_before) == 0
-
-        # After loading skill with scripts
-        skill_func_tool.load_skill("script-skill")
-        tools_after = skill_func_tool.get_loaded_skill_tools()
-
-        # Should have execute_command tool from bash tool
-        assert len(tools_after) == 1
-
-    def test_skill_without_scripts_no_bash_tool(self, skill_func_tool):
-        """Test that loading skill without scripts doesn't create bash tool."""
-        skill_func_tool.load_skill("simple-skill")
-        bash_tool = skill_func_tool.get_skill_bash_tool("simple-skill")
-
-        assert bash_tool is None
-
 
 class TestSkillFuncToolPermissionCallback:
     """Tests for permission callback integration."""
@@ -304,82 +222,3 @@ class TestSkillFuncToolEdgeCases:
         assert result2.success == 1
         # Content should be the same
         assert result1.result == result2.result
-
-    def test_load_multiple_skills_with_scripts(self, temp_skills_dir, skill_manager):
-        """Test loading multiple skills with scripts."""
-        # Create another skill with scripts
-        another_dir = temp_skills_dir / "another-script-skill"
-        another_dir.mkdir()
-        (another_dir / "SKILL.md").write_text(
-            """---
-name: another-script-skill
-description: Another script skill
-allowed_commands:
-  - "sh:*.sh"
----
-# Another
-"""
-        )
-
-        # Refresh manager to pick up new skill
-        skill_manager.refresh()
-
-        tool = SkillFuncTool(manager=skill_manager, node_name="chatbot")
-        tool.load_skill("script-skill")
-        tool.load_skill("another-script-skill")
-
-        all_tools = tool.get_all_skill_bash_tools()
-        assert len(all_tools) == 2
-        assert "script-skill" in all_tools
-        assert "another-script-skill" in all_tools
-
-
-class TestSkillExecuteCommand:
-    """Tests for skill_execute_command method."""
-
-    def test_execute_command_skill_not_loaded(self, skill_func_tool):
-        """Test executing command when skill is not loaded yet."""
-        result = skill_func_tool.skill_execute_command("script-skill", "python test.py")
-
-        assert result.success == 0
-        assert "not been loaded" in result.error
-        assert "load_skill" in result.error
-
-    def test_execute_command_skill_not_found(self, skill_func_tool):
-        """Test executing command for non-existent skill."""
-        result = skill_func_tool.skill_execute_command("nonexistent-skill", "python test.py")
-
-        assert result.success == 0
-        assert "not found" in result.error
-
-    def test_execute_command_skill_no_scripts(self, skill_func_tool):
-        """Test executing command for skill without allowed_commands."""
-        # simple-skill has no allowed_commands defined
-        result = skill_func_tool.skill_execute_command("simple-skill", "python test.py")
-
-        assert result.success == 0
-        assert "allowed_commands" in result.error
-        assert "native tool" in result.error
-        assert "skill-owned scripts" in result.error
-
-    def test_execute_command_after_load(self, skill_func_tool):
-        """Test executing command after loading skill with scripts."""
-        # First load the skill
-        load_result = skill_func_tool.load_skill("script-skill")
-        assert load_result.success == 1
-
-        result = skill_func_tool.skill_execute_command("script-skill", "python scripts/analyze.py")
-
-        assert result.success == 1
-        assert result.result.strip() == "analyzing"
-
-    def test_execute_command_not_allowed(self, skill_func_tool):
-        """Test executing command not in allowed patterns."""
-        # Load skill
-        skill_func_tool.load_skill("script-skill")
-
-        # Try a command not in allowed patterns
-        result = skill_func_tool.skill_execute_command("script-skill", "rm -rf /")
-
-        assert result.success == 0
-        assert "not allowed" in result.error.lower()

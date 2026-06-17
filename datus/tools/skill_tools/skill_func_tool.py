@@ -10,16 +10,13 @@ from the <available_skills> list in the system prompt.
 """
 
 import logging
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.skill_tools.skill_manager import SkillManager
-
-if TYPE_CHECKING:
-    from datus.tools.func_tool.bash_tool import BashTool
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +71,6 @@ class SkillFuncTool:
         self.authoring_mode = authoring_mode
         self._tool_context: Any = None
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
-
-        # Track loaded skills for bash tool creation
-        self._loaded_skills: Dict[str, "BashTool"] = {}
 
     def set_tool_context(self, ctx: Any) -> None:
         """Set tool context (called by framework before tool invocation).
@@ -153,11 +147,6 @@ class SkillFuncTool:
             if not success:
                 return FuncToolResult(success=0, error=message)
 
-            # Create bash tool if skill has scripts
-            skill = self.manager.get_skill(skill_name)
-            if skill and skill.has_scripts():
-                self._create_skill_bash_tool(skill)
-
             logger.info(f"Skill '{skill_name}' loaded successfully for node '{self.node_name}'")
             return FuncToolResult(
                 success=1,
@@ -171,129 +160,12 @@ class SkillFuncTool:
                 error=f"Failed to load skill: {str(e)}",
             )
 
-    def _create_skill_bash_tool(self, skill) -> None:
-        """Create a general-purpose ``BashTool`` scoped to a skill.
-
-        The skill's ``allowed_commands`` are forwarded as the BashTool
-        pattern whitelist, and ``SKILL_NAME``/``SKILL_DIR`` are injected
-        via ``extra_env`` so skill scripts can locate their own resources.
-
-        Args:
-            skill: SkillMetadata with allowed_commands
-        """
-        if skill.name in self._loaded_skills:
-            return
-
-        try:
-            from datus.tools.func_tool.bash_tool import BashTool
-
-            bash_tool = BashTool(
-                workspace_root=str(skill.location),
-                allowed_patterns=skill.allowed_commands,
-                extra_env={"SKILL_NAME": skill.name, "SKILL_DIR": str(skill.location)},
-                identity=skill.name,
-            )
-            self._loaded_skills[skill.name] = bash_tool
-            logger.debug(f"Created BashTool for skill '{skill.name}'")
-        except Exception as e:
-            logger.error(f"Failed to create BashTool for '{skill.name}': {e}")
-
-    def get_skill_bash_tool(self, skill_name: str) -> Optional["BashTool"]:
-        """Get the bash tool for a loaded skill.
-
-        Args:
-            skill_name: Name of the skill
-
-        Returns:
-            BashTool if skill has scripts and is loaded, None otherwise
-        """
-        return self._loaded_skills.get(skill_name)
-
-    def get_all_skill_bash_tools(self) -> Dict[str, "BashTool"]:
-        """Get all created skill bash tools.
-
-        Returns:
-            Dictionary of skill_name -> BashTool
-        """
-        return self._loaded_skills
-
-    def skill_execute_command(self, skill_name: str, command: str) -> FuncToolResult:
-        """Execute a command within a loaded skill's directory.
-
-        This tool executes shell commands within the context of a loaded skill.
-        The skill must have been loaded first using load_skill() and must have
-        allowed_commands defined in its frontmatter.
-
-        Commands are restricted to patterns defined in the skill's allowed_commands.
-        For example, if a skill allows "python:scripts/*.py", only Python scripts
-        in the scripts/ directory can be executed.
-        This tool is not a proxy for native tools named in skill instructions; call
-        available native tools directly.
-
-        Args:
-            skill_name: Name of the loaded skill (must have been loaded via load_skill)
-            command: The command to execute (e.g., "python scripts/analyze.py --input data.json")
-
-        Returns:
-            FuncToolResult with command output on success, error on failure
-
-        Example:
-            # First load the skill
-            load_skill(skill_name="data-analysis")
-
-            # Then execute a command within that skill
-            skill_execute_command(skill_name="data-analysis", command="python scripts/analyze.py")
-        """
-        # Check if skill is loaded
-        bash_tool = self._loaded_skills.get(skill_name)
-        if not bash_tool:
-            # Check if skill exists but hasn't been loaded
-            skill = self.manager.get_skill(skill_name)
-            if skill:
-                if not skill.has_scripts():
-                    return FuncToolResult(
-                        success=0,
-                        error=(
-                            f"Skill '{skill_name}' does not have any allowed_commands defined. "
-                            "This skill cannot execute shell commands through skill_execute_command. "
-                            "Use skill_execute_command only for skill-owned scripts explicitly permitted by "
-                            "allowed_commands; if the skill mentions an available native tool, call the native "
-                            "tool directly."
-                        ),
-                    )
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"Skill '{skill_name}' has not been loaded yet. "
-                        f"Call load_skill(skill_name='{skill_name}') first."
-                    ),
-                )
-            return FuncToolResult(
-                success=0,
-                error=f"Skill '{skill_name}' not found. Check available skills in <available_skills>.",
-            )
-
-        # Execute command via the skill's bash tool
-        return bash_tool.execute_command(command)
-
     def available_tools(self) -> List[Tool]:
         """Return the list of tools provided by this class.
 
         Returns:
-            List containing the load_skill and skill_execute_command tools
+            List containing the load_skill tool
         """
         return [
             trans_to_function_tool(self.load_skill),
-            trans_to_function_tool(self.skill_execute_command),
         ]
-
-    def get_loaded_skill_tools(self) -> List[Tool]:
-        """Get tools from all loaded skills (including bash tools).
-
-        Returns:
-            List of tools from loaded skills with script capabilities
-        """
-        tools = []
-        for bash_tool in self._loaded_skills.values():
-            tools.extend(bash_tool.available_tools())
-        return tools

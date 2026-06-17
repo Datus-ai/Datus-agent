@@ -6,8 +6,6 @@ version: "1.0.0"
 user_invocable: false
 allowed_agents:
   - gen_skill
-allowed_commands:
-  - "python:scripts/*.py"
 ---
 
 # Create Skill
@@ -47,8 +45,6 @@ name: skill-name                    # Required: lowercase-with-hyphens, unique
 description: What + when to trigger # Required: assertive, include trigger contexts
 tags: [tag1, tag2]                  # Optional: categorization
 version: "1.0.0"                    # Optional: semantic version
-allowed_commands:                   # Optional: script execution patterns
-  - "python:scripts/*.py"           #   Format: "prefix:glob_pattern"
 disable_model_invocation: false     # Optional: true = user-only trigger
 user_invocable: true                # Optional: false = LLM-only
 allowed_agents:                     # Optional: whitelist of agent node names
@@ -102,17 +98,11 @@ Use `write_file` from the filesystem tools. Paths must start with `.datus/skills
 write_file(path=".datus/skills/<skill-name>/SKILL.md", content=...)
 ```
 
-If the user explicitly requested scripts, also create scripts/:
-```text
-write_file(path=".datus/skills/<skill-name>/scripts/<script>.py", content=...)
-```
-
-**Default behavior**: Only create the SKILL.md file. Do NOT generate scripts or references unless the user specifically asks for them.
+**Default behavior**: Only create the SKILL.md file. Do NOT generate references unless the user specifically asks for them.
 
 ```
 skill-name/
 ├── SKILL.md          (always created)
-├── scripts/          (only if user requested)
 └── references/       (only if user requested)
 ```
 
@@ -159,11 +149,3 @@ agentic_nodes:
 
 Publish after creation: `.skill publish <skill-name>`
 
-### Script Execution
-
-Sandboxed environment:
-- Working directory: skill directory
-- Environment variables: `SKILL_NAME`, `SKILL_DIR`
-- Timeout: 60 seconds
-- Output limit: 50K characters
-- Commands validated against `allowed_commands` patterns

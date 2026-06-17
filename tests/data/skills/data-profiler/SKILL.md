@@ -6,8 +6,6 @@ tags:
   - profiling
   - quality
 version: 1.0.0
-allowed_commands:
-  - "python:scripts/*.py"
 ---
 
 # Data Profiler Skill

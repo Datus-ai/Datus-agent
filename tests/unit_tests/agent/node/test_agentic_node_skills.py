@@ -187,7 +187,6 @@ class TestFinalizeSystemPrompt:
         assert result.startswith(base_prompt)
         assert "<available_skills>" in result
         assert "sql-analysis" in result
-        assert "skill-owned scripts" in result
         assert "native tool directly" in result
 
     def test_with_skill_func_tool_empty_xml_appends_explicit_none_block(
@@ -274,10 +273,9 @@ class TestEnsureSkillToolsInTools:
         node._ensure_skill_tools_in_tools()
 
         # Should have added skill tools
-        assert len(node.tools) == 2  # load_skill and skill_execute_command
+        assert len(node.tools) == 1  # load_skill only
         tool_names = [t.name for t in node.tools]
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
 
     def test_idempotent_does_not_duplicate(self, mock_agent_config, skill_manager):
         """Calling twice doesn't add duplicate tools."""
@@ -321,10 +319,9 @@ class TestEnsureSkillToolsInTools:
 
         # Should have created tools list
         assert isinstance(node.tools, list)
-        assert len(node.tools) == 2
+        assert len(node.tools) == 1
         tool_names = [t.name for t in node.tools]
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
 
     def test_preserves_existing_tools(self, mock_agent_config, skill_manager):
         """When self.tools has existing tools, they are preserved."""
@@ -345,11 +342,10 @@ class TestEnsureSkillToolsInTools:
         node._ensure_skill_tools_in_tools()
 
         # Should have both existing and skill tools
-        assert len(node.tools) == 3
+        assert len(node.tools) == 2
         tool_names = [t.name for t in node.tools]
         assert "existing_tool" in tool_names
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
 
 
 class TestSetupSkillFuncTools:
@@ -773,15 +769,14 @@ class TestSkillIntegrationEdgeCases:
         base_prompt = "Base prompt"
         node._finalize_system_prompt(base_prompt)
 
-        # Should have all tools: 2 existing + 2 skill tools + 1 bash tool +
+        # Should have all tools: 2 existing + 1 skill tool + 1 bash tool +
         # 2 memory tools (this node is a main agent, so add_memory/edit_memory
         # are lazy-injected alongside skills and bash).
-        assert len(node.tools) == 7
+        assert len(node.tools) == 6
         tool_names = [t.name for t in node.tools]
         assert "tool1" in tool_names
         assert "tool2" in tool_names
         assert "load_skill" in tool_names
-        assert "skill_execute_command" in tool_names
         assert "execute_command" in tool_names
         assert "add_memory" in tool_names
         assert "edit_memory" in tool_names

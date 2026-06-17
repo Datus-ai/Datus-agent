@@ -10,12 +10,10 @@ Tests requiring real LLM APIs or agent config loading are in
 tests/integration/tools/test_skill.py (marked nightly).
 """
 
-import json
 from pathlib import Path
 
 import pytest
 
-from datus.tools.func_tool.bash_tool import BashTool
 from datus.tools.permission.permission_manager import PermissionManager
 from datus.tools.skill_tools import SkillConfig, SkillManager
 
@@ -107,67 +105,18 @@ class TestSkillDiscovery:
 class TestSkillLoadAndExecute:
     """Test the full load → execute → result pipeline with real scripts."""
 
-    def test_workflow_skill_loads_content_no_bash_tool(self, skill_func_tool):
-        """Workflow-only skill returns content but no BashTool."""
+    def test_workflow_skill_loads_content(self, skill_func_tool):
+        """Workflow skill returns content."""
         result = skill_func_tool.load_skill("sql-analysis")
         assert result.success == 1
         assert "Schema Discovery" in result.result
         assert "db_tools" in result.result
 
-        assert skill_func_tool.get_skill_bash_tool("sql-analysis") is None
-
-    def test_script_skill_loads_and_executes(self, skill_func_tool):
-        """Script skill creates bash tool; execute returns JSON output."""
+    def test_script_skill_loads_content(self, skill_func_tool):
+        """Script skill (with scripts dir) loads content successfully."""
         result = skill_func_tool.load_skill("report-generator")
         assert result.success == 1
         assert "python scripts/generate_report.py" in result.result
-
-        bash_tool = skill_func_tool.get_skill_bash_tool("report-generator")
-        assert isinstance(bash_tool, BashTool)
-
-        exec_result = bash_tool.execute_command("python scripts/generate_report.py --format json")
-        assert exec_result.success == 1
-        output = json.loads(exec_result.result.strip())
-        assert output["status"] == "success"
-        assert output["format"] == "json"
-        assert output["rows_processed"] == 42
-
-    def test_chained_workflow_then_execute(self, skill_func_tool):
-        """Load workflow skill first, then script skill, execute script."""
-        r1 = skill_func_tool.load_skill("sql-analysis")
-        assert r1.success == 1
-        assert skill_func_tool.get_skill_bash_tool("sql-analysis") is None
-
-        r2 = skill_func_tool.load_skill("data-profiler")
-        assert r2.success == 1
-
-        bash_tool = skill_func_tool.get_skill_bash_tool("data-profiler")
-        assert isinstance(bash_tool, BashTool)
-        exec_result = bash_tool.execute_command("python scripts/profile_data.py --table students")
-        assert exec_result.success == 1
-        output = json.loads(exec_result.result.strip())
-        assert output["table"] == "students"
-
-    def test_script_execution_error_propagates(self, skill_func_tool):
-        """Script that raises an error returns failure result."""
-        result = skill_func_tool.skill_execute_command("nonexistent-skill", "echo hello")
-        assert result.success == 0
-        assert "not found" in result.error.lower()
-
-    def test_denied_command_rejected(self, skill_func_tool):
-        """Commands not matching allowed_commands are rejected."""
-        skill_func_tool.load_skill("report-generator")
-        bash_tool = skill_func_tool.get_skill_bash_tool("report-generator")
-
-        result = bash_tool.execute_command("rm -rf /")
-        assert result.success == 0
-        assert "not allowed" in result.error.lower()
-
-    def test_skill_execute_command_before_load(self, skill_func_tool):
-        """Calling skill_execute_command before load_skill gives helpful error."""
-        result = skill_func_tool.skill_execute_command("report-generator", "python scripts/generate_report.py")
-        assert result.success == 0
-        assert "not been loaded" in result.error.lower()
 
 
 # ============================================================================
@@ -283,70 +232,7 @@ class TestSkillsAcceptance:
         assert "denied" in deny_message.lower()
         assert deny_content is None
 
-    def test_skill_execute_command_safe_path_and_denied_command(self, skill_func_tool):
-        loaded = skill_func_tool.load_skill("report-generator")
-        assert loaded.success == 1
-
-        executed = skill_func_tool.skill_execute_command(
-            "report-generator",
-            "python scripts/generate_report.py --format json",
-        )
-        assert executed.success == 1
-        output = json.loads(executed.result.strip())
-        assert output["status"] == "success"
-        assert output["format"] == "json"
-
-        denied = skill_func_tool.skill_execute_command("report-generator", "rm -rf /")
-        assert denied.success == 0
-        assert "not allowed" in denied.error.lower()
-
 
 # ============================================================================
 # 4. Multi-Skill Tool Accumulation Lifecycle
 # ============================================================================
-
-
-class TestSkillToolsAccumulation:
-    """Test multi-skill loading lifecycle and tool management."""
-
-    def test_loaded_tools_accumulate_across_skills(self, skill_func_tool):
-        """Loading multiple script skills accumulates bash tools."""
-        assert len(skill_func_tool.get_all_skill_bash_tools()) == 0
-
-        skill_func_tool.load_skill("report-generator")
-        assert len(skill_func_tool.get_all_skill_bash_tools()) == 1
-
-        skill_func_tool.load_skill("data-profiler")
-        assert len(skill_func_tool.get_all_skill_bash_tools()) == 2
-
-    def test_workflow_skill_does_not_add_to_bash_tools(self, skill_func_tool):
-        """Loading workflow-only skills doesn't create bash tools."""
-        skill_func_tool.load_skill("sql-analysis")
-        skill_func_tool.load_skill("sql-optimization")
-        assert len(skill_func_tool.get_all_skill_bash_tools()) == 0
-
-    def test_mixed_skills_only_script_ones_get_bash_tools(self, skill_func_tool):
-        """Loading mix of workflow + script skills: only script ones get bash tools."""
-        skill_func_tool.load_skill("sql-analysis")
-        skill_func_tool.load_skill("report-generator")
-        skill_func_tool.load_skill("sql-optimization")
-        skill_func_tool.load_skill("data-profiler")
-
-        tools = skill_func_tool.get_all_skill_bash_tools()
-        assert len(tools) == 2
-        assert "report-generator" in tools
-        assert "data-profiler" in tools
-
-    def test_duplicate_load_does_not_double_bash_tool(self, skill_func_tool):
-        """Loading the same script skill twice doesn't create duplicate bash tools."""
-        skill_func_tool.load_skill("report-generator")
-        skill_func_tool.load_skill("report-generator")
-        assert len(skill_func_tool.get_all_skill_bash_tools()) == 1
-
-    def test_loaded_skill_tools_returns_tool_objects(self, skill_func_tool):
-        """get_loaded_skill_tools returns Tool objects from loaded script skills."""
-        skill_func_tool.load_skill("report-generator")
-        skill_func_tool.load_skill("data-profiler")
-
-        tools = skill_func_tool.get_loaded_skill_tools()
-        assert len(tools) >= 2

@@ -198,12 +198,6 @@ class SkillMetadata(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Optional categorization tags")
     version: Optional[str] = Field(default=None, description="Optional version string")
 
-    # Script execution control (Claude Code compatible)
-    allowed_commands: List[str] = Field(
-        default_factory=list,
-        description="Patterns for allowed script execution (e.g., python:scripts/*.py)",
-    )
-
     # Invocation control
     disable_model_invocation: bool = Field(default=False, description="If true, only user can invoke via /skill-name")
     user_invocable: bool = Field(default=True, description="If false, hidden from menu, only model invokes")
@@ -306,7 +300,6 @@ class SkillMetadata(BaseModel):
             location=location,
             tags=frontmatter.get("tags", []),
             version=frontmatter.get("version"),
-            allowed_commands=frontmatter.get("allowed_commands", []),
             disable_model_invocation=frontmatter.get("disable_model_invocation", False),
             user_invocable=frontmatter.get("user_invocable", True),
             allowed_agents=frontmatter.get("allowed_agents", []),
@@ -319,14 +312,6 @@ class SkillMetadata(BaseModel):
             license=frontmatter.get("license"),
             compatibility=frontmatter.get("compatibility"),
         )
-
-    def has_scripts(self) -> bool:
-        """Check if this skill has script execution capabilities.
-
-        Returns:
-            True if allowed_commands is non-empty
-        """
-        return len(self.allowed_commands) > 0
 
     def is_model_invocable(self) -> bool:
         """Check if the model can invoke this skill.
@@ -386,7 +371,6 @@ class SkillMetadata(BaseModel):
             "location": str(self.location),
             "tags": self.tags,
             "version": self.version,
-            "allowed_commands": self.allowed_commands,
             "disable_model_invocation": self.disable_model_invocation,
             "user_invocable": self.user_invocable,
             "allowed_agents": self.allowed_agents,

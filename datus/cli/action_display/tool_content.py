@@ -267,8 +267,7 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "web_search_document": lambda a: _format_positional(a, "query", "query_text"),
     # Skill tools
     "load_skill": lambda a: _format_positional(a, "skill_name", "name"),
-    "skill_execute_command": lambda a: _format_kw(a, "skill_name", "command"),
-    "execute_command": lambda a: _format_kw(a, "skill_name", "command"),
+    "execute_command": lambda a: _format_kw(a, "command"),
 }
 
 
@@ -1859,7 +1858,7 @@ def _build_analyze_metric_candidates(action: ActionHistory, verbose: bool) -> To
 
 
 def _build_execute_command(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """execute_command / skill_execute_command: show success."""
+    """execute_command: show success."""
     return _build_simple_action(action, verbose, "Command executed")
 
 
@@ -2045,7 +2044,6 @@ class ToolCallContentBuilder:
 
         # Skill tools
         self._registry["execute_command"] = _build_execute_command
-        self._registry["skill_execute_command"] = _build_execute_command
         self._registry["load_skill"] = _build_load_skill
 
         # Interaction tools

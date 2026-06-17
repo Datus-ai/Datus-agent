@@ -78,9 +78,8 @@ class PermissionManager:
         self._session_approvals: Dict[str, bool] = {}
 
         # Rules injected at runtime that must survive profile switches.
-        # E.g. chat adds ``skills.skill_execute_command → ASK`` at setup time
-        # as a belt-and-braces safeguard; a ``/profile dangerous`` switch
-        # should not silently drop that safeguard.
+        # A ``/profile dangerous`` switch rebuilds ``global_config`` and would
+        # silently drop runtime-injected rules without this list.
         self._persistent_rules: List[PermissionRule] = []
 
         logger.debug(
@@ -321,10 +320,9 @@ class PermissionManager:
     def add_persistent_rule(self, rule: PermissionRule) -> None:
         """Register a rule that must survive future ``switch_profile`` calls.
 
-        Used by nodes that inject belt-and-braces safeguards after setup
-        (e.g. ``skills.skill_execute_command → ASK`` in chat). Without this,
-        a runtime ``/profile dangerous`` rebuild of ``global_config`` would
-        silently drop the injected rule and weaken the shell-command gate.
+        Used by nodes that inject belt-and-braces safeguards after setup.
+        Without this, a runtime ``/profile dangerous`` rebuild of
+        ``global_config`` would silently drop the injected rule.
         """
         self._persistent_rules.append(rule)
         # Also install immediately so the current session picks it up.
