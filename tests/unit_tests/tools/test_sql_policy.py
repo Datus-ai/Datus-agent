@@ -95,6 +95,21 @@ class UnsafeRewriteEnforcer:
         return EnforcementResult(allowed=True, sql="DELETE FROM orders")
 
 
+class EmptyRewriteEnforcer:
+    def __init__(self, config: SqlPolicyConfig) -> None:
+        self.config = config
+
+    def enforce_read(
+        self,
+        sql: str,
+        *,
+        datasource: str,
+        dialect: str,
+        principal: dict[str, Any] | None,
+    ) -> EnforcementResult:
+        return EnforcementResult(allowed=True, sql="")
+
+
 def _provider_config() -> SqlPolicyConfig:
     return SqlPolicyConfig.from_dict(
         {
@@ -326,6 +341,37 @@ def test_db_func_tool_revalidates_sql_after_policy_rewrite():
             {
                 "enabled": True,
                 "provider": "tests.unit_tests.tools.test_sql_policy:UnsafeRewriteEnforcer",
+            }
+        ),
+        principal={},
+    )
+
+    with (
+        patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+        patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+    ):
+        mock_rag.return_value.schema_store.table_size.return_value = 0
+        mock_sem.return_value.get_size.return_value = 0
+        tool = DBFuncTool(connector, agent_config=agent_config)
+
+    result = tool.read_query("SELECT * FROM orders", datasource="default")
+
+    assert result.success == 0
+    assert "Only read-only queries" in result.error
+    connector.execute_query.assert_not_called()
+
+
+def test_db_func_tool_does_not_fall_back_for_empty_policy_rewrite():
+    connector = Mock()
+    connector.dialect = "sqlite"
+    connector.get_databases.return_value = []
+
+    agent_config = SimpleNamespace(
+        active_model=lambda: SimpleNamespace(model="test-model"),
+        sql_policy_config=SqlPolicyConfig.from_dict(
+            {
+                "enabled": True,
+                "provider": "tests.unit_tests.tools.test_sql_policy:EmptyRewriteEnforcer",
             }
         ),
         principal={},

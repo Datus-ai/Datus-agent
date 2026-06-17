@@ -85,13 +85,13 @@ agent:
 plugin 是一个安装在 `datus-api` 同一 Python 环境中的普通 Python 包。provider class 必须接收 `SqlPolicyConfig` 参数，并实现 `enforce_read(...)`。
 
 ```python
-from typing import Any
+from typing import Any, Dict, Optional
 
 from datus.tools.sql_policy import SqlPolicyConfig, EnforcementResult
 
 
 class SqlPolicyProvider:
-    def __init__(self, config: SqlPolicyConfig | None = None) -> None:
+    def __init__(self, config: Optional[SqlPolicyConfig] = None) -> None:
         self.config = config or SqlPolicyConfig()
         self.policies = self.config.raw.get("policies", []) or []
         self._validate_policy_config()
@@ -102,7 +102,7 @@ class SqlPolicyProvider:
         *,
         datasource: str,
         dialect: str,
-        principal: dict[str, Any] | None,
+        principal: Optional[Dict[str, Any]],
     ) -> EnforcementResult:
         principal = principal or {}
 

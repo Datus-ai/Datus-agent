@@ -85,13 +85,13 @@ In this example, the open-source agent uses `enabled`, `provider`, and the `prin
 A plugin is a normal Python package installed in the same environment as `datus-api`. The provider class must accept a `SqlPolicyConfig` argument and implement `enforce_read(...)`.
 
 ```python
-from typing import Any
+from typing import Any, Dict, Optional
 
 from datus.tools.sql_policy import SqlPolicyConfig, EnforcementResult
 
 
 class SqlPolicyProvider:
-    def __init__(self, config: SqlPolicyConfig | None = None) -> None:
+    def __init__(self, config: Optional[SqlPolicyConfig] = None) -> None:
         self.config = config or SqlPolicyConfig()
         self.policies = self.config.raw.get("policies", []) or []
         self._validate_policy_config()
@@ -102,7 +102,7 @@ class SqlPolicyProvider:
         *,
         datasource: str,
         dialect: str,
-        principal: dict[str, Any] | None,
+        principal: Optional[Dict[str, Any]],
     ) -> EnforcementResult:
         principal = principal or {}
 

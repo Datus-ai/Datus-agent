@@ -76,12 +76,12 @@ class SqlPolicyEnforcer(Protocol):
 class SqlPolicyProviderError(DatusException):
     """Raised when enabled SQL policy cannot load its provider."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str) -> None:
         super().__init__(ErrorCode.COMMON_CONFIG_ERROR, message_args={"config_error": message})
 
 
 class NoopSqlPolicyEnforcer:
-    def __init__(self, config: Optional[SqlPolicyConfig] = None):
+    def __init__(self, config: Optional[SqlPolicyConfig] = None) -> None:
         self.config = config or SqlPolicyConfig()
 
     def enforce_read(

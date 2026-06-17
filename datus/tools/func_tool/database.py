@@ -1229,7 +1229,7 @@ class DBFuncTool:
                 policies=enforced.applied_policies,
                 datasource=datasource,
             )
-        return enforced.sql or sql
+        return sql if enforced.sql is None else enforced.sql
 
     @mcp_tool()
     def get_table_ddl(
