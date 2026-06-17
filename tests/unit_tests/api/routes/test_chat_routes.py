@@ -17,7 +17,7 @@ from datus.api.routes.chat_routes import (
     stream_chat,
     submit_user_interaction,
 )
-from datus.tools.data_access_policy import DataAccessConfig
+from datus.tools.sql_policy import SqlPolicyConfig
 
 
 def _mock_svc(task=None):
@@ -199,13 +199,13 @@ class TestStreamChat404Gate:
         assert response.media_type == "text/event-stream"
 
 
-class TestStreamChatDataAccessPreCheck:
-    """Data-access enabled chat requests must carry required request principal fields."""
+class TestStreamChatSqlPolicyPreCheck:
+    """SQL policy enabled chat requests must carry required request principal fields."""
 
     @pytest.mark.asyncio
-    async def test_enabled_data_access_without_principal_returns_sse_error(self):
+    async def test_enabled_sql_policy_without_principal_returns_sse_error(self):
         svc = _mock_svc_with_nodes()
-        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
             {
                 "enabled": True,
                 "provider": "x:Y",
@@ -228,20 +228,20 @@ class TestStreamChatDataAccessPreCheck:
         payload = json.loads(
             next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
         )
-        assert payload["error_type"] == "DATA_ACCESS_PRINCIPAL_REQUIRED"
+        assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
         assert "principal.market_code" in payload["error"]
         assert "provider that populates principal fields" in payload["error"]
-        assert "agent.data_access policies" in payload["error"]
+        assert "agent.sql_policy" in payload["error"]
         svc.chat.stream_chat.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_enabled_data_access_with_required_principal_allows_service_call(self):
+    async def test_enabled_sql_policy_with_required_principal_allows_service_call(self):
         async def empty_stream(*_args, **_kwargs):
             if False:
                 yield
 
         svc = _mock_svc_with_nodes()
-        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
             {
                 "enabled": True,
                 "provider": "x:Y",
@@ -261,13 +261,13 @@ class TestStreamChatDataAccessPreCheck:
         assert svc.chat.stream_chat.call_args.kwargs["principal"] == {"market_code": "MKT300"}
 
     @pytest.mark.asyncio
-    async def test_enabled_data_access_without_principal_paths_allows_service_call(self):
+    async def test_enabled_sql_policy_without_principal_paths_allows_service_call(self):
         async def empty_stream(*_args, **_kwargs):
             if False:
                 yield
 
         svc = _mock_svc_with_nodes()
-        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
             {
                 "enabled": True,
                 "provider": "x:Y",
@@ -289,7 +289,7 @@ class TestStreamChatDataAccessPreCheck:
     @pytest.mark.asyncio
     async def test_user_id_only_does_not_satisfy_required_business_principal(self):
         svc = _mock_svc_with_nodes()
-        svc.agent_config.data_access_config = DataAccessConfig.from_dict(
+        svc.agent_config.sql_policy_config = SqlPolicyConfig.from_dict(
             {
                 "enabled": True,
                 "provider": "x:Y",
@@ -310,7 +310,7 @@ class TestStreamChatDataAccessPreCheck:
         payload = json.loads(
             next(line for line in chunks[0].splitlines() if line.startswith("data: "))[len("data: ") :]
         )
-        assert payload["error_type"] == "DATA_ACCESS_PRINCIPAL_REQUIRED"
+        assert payload["error_type"] == "SQL_POLICY_PRINCIPAL_REQUIRED"
         assert "principal.market_code" in payload["error"]
         svc.chat.stream_chat.assert_not_called()
 
