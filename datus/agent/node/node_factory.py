@@ -8,10 +8,43 @@ Shared factory functions for creating interactive agentic nodes and their inputs
 Used by CLI print mode and interactive REPL to avoid duplicating node creation logic.
 """
 
+import logging
 from typing import TYPE_CHECKING, Literal, Optional
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
+
+
+logger = logging.getLogger(__name__)
+
+_BUILTIN_SUBAGENT_NAMES = frozenset(
+    {
+        "ask_dashboard",
+        "ask_metrics",
+        "ask_report",
+        "explore",
+        "feedback",
+        "gen_dashboard",
+        "gen_job",
+        "gen_metrics",
+        "gen_report",
+        "gen_semantic_model",
+        "gen_skill",
+        "gen_sql",
+        "gen_sql_summary",
+        "gen_table",
+        "gen_visual_dashboard",
+        "gen_visual_report",
+        "scheduler",
+    }
+)
+
+
+def _configured_agentic_node_names(agent_config: "AgentConfig") -> frozenset[str]:
+    agentic_nodes = getattr(agent_config, "agentic_nodes", None)
+    if not agentic_nodes or not hasattr(agentic_nodes, "keys"):
+        return frozenset()
+    return frozenset(str(name) for name in agentic_nodes.keys())
 
 
 def create_interactive_node(
@@ -265,6 +298,19 @@ def create_interactive_node(
             )
 
         else:
+            configured_agentic_node_names = _configured_agentic_node_names(agent_config)
+            if (
+                subagent_name not in _BUILTIN_SUBAGENT_NAMES
+                and subagent_name not in configured_agentic_node_names
+                and node_class_type not in _BUILTIN_SUBAGENT_NAMES
+            ):
+                available_names = ", ".join(sorted(_BUILTIN_SUBAGENT_NAMES | configured_agentic_node_names))
+                logger.warning(
+                    "Unknown subagent %r; falling back to gen_sql. Available subagents: %s",
+                    subagent_name,
+                    available_names,
+                )
+
             from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 
             return GenSQLAgenticNode(
