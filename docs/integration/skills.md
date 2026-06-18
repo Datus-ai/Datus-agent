@@ -29,9 +29,6 @@ name: report-generator
 description: Generate analysis reports from SQL query results with multiple output formats (HTML, Markdown, JSON)
 tags: [report, analysis, visualization, export]
 version: "1.0.0"
-allowed_commands:
-  - "python:scripts/*.py"
-  - "sh:scripts/*.sh"
 ---
 
 # Report Generator Skill
@@ -72,14 +69,10 @@ permissions:
     - tool: skills
       pattern: "*"
       permission: ask
-    # Require confirmation for skill script execution
-    - tool: skill_bash
-      pattern: "*"
-      permission: ask
 ```
 
 !!! tip
-    Using `ask` permission for skills and skill_bash requires manual confirmation before execution, which helps prevent accidental or dangerous operations.
+    Using `ask` permission for skills requires manual confirmation before loading, which helps prevent accidental or dangerous operations.
 
 ### Step 3: Use the Skill in a Chat Session
 
@@ -96,14 +89,7 @@ The agent will:
 
 2. **Execute SQL query** - Query the California Schools database to find the answer.
 
-3. **Generate report** - Execute the skill's script to create a report:
-
-    ```python
-    skill_execute_command(
-        skill_name="report-generator",
-        command="python scripts/generate_report.py --input results.json --format markdown --title 'Alameda County K-12 Free Rate Analysis'"
-    )
-    ```
+3. **Generate report** - Follow the loaded skill's instructions using native tools (e.g. `write_file`, `read_query`) to produce the report.
 
 ![Chat session showing skill loading and report generation](../assets/skills1.png)
 ![Chat session showing skill loading and report generation](../assets/skills3.png)
@@ -227,7 +213,7 @@ When a subagent has `skills` configured:
 1. **Skill discovery** — The system scans `skills.directories` (or defaults: `~/.datus/skills`, `./skills`) to find all `SKILL.md` files.
 2. **Pattern filtering** — Only skills matching the subagent's `skills` glob patterns are exposed.
 3. **Permission filtering** — The `permissions` rules further filter which skills are allowed, denied, or require confirmation.
-4. **System prompt injection** — Available skills are appended as `<available_skills>` XML to the subagent's system prompt, enabling the LLM to call `load_skill()` and `skill_execute_command()`.
+4. **System prompt injection** — Available skills are appended as `<available_skills>` XML to the subagent's system prompt, enabling the LLM to call `load_skill()`.
 
 **Example: Enable Report Generation Skill in a Subagent**
 
@@ -244,13 +230,10 @@ agentic_nodes:
     model: deepseek
 ```
 
-With this configuration, the `attribution_report` subagent will have access to built-in database tools and the `report-generator` skill. The LLM can call `load_skill(skill_name="report-generator")` to get instructions, then use `skill_execute_command()` to run scripts defined in the skill.
+With this configuration, the `attribution_report` subagent will have access to built-in database tools and the `report-generator` skill. The LLM can call `load_skill(skill_name="report-generator")` to get instructions, then follow them using native tools.
 
 !!! note
     If no global `skills:` section is present in `agent.yml`, the system automatically creates a default skill manager that scans `~/.datus/skills` and `./skills`.
-
-!!! tip
-    The `skill_execute_command` tool defaults to `ask` permission level. This means the user will be prompted for confirmation before any skill script executes, unless explicitly overridden in the `permissions` config.
 
 ### Running Skills in Isolated Subagent
 
@@ -295,29 +278,14 @@ Available subagent types for isolated execution:
 | `description` | Yes | Brief description shown in available skills list |
 | `tags` | No | List of tags for categorization |
 | `version` | No | Semantic version string |
-| `allowed_commands` | No | List of permitted script patterns |
 | `context` | No | Set to `"fork"` to run in subagent |
 | `agent` | No | Subagent type: `Explore`, `Plan`, `general-purpose` |
 | `disable_model_invocation` | No | If true, only user can invoke |
 | `user_invocable` | No | If false, hidden from CLI menu |
 
-### Command Pattern Format
-
-```
-prefix:glob_pattern
-```
-
-Examples:
-- `python:*` - Allow any python command
-- `python:scripts/*.py` - Allow scripts in scripts/ directory only
-- `sh:*.sh` - Allow shell scripts
-- `python:-c:*` - Allow python -c inline code
-
 ### Security Features
 
-- Commands only execute if they match allowed patterns
 - Working directory locked to skill location
-- Timeout enforcement (default: 60 seconds)
 - Environment variables: `SKILL_NAME`, `SKILL_DIR`
 
 ## Troubleshooting
@@ -328,11 +296,10 @@ Examples:
 2. Verify SKILL.md has valid YAML frontmatter (between `---` markers)
 3. Both `name` and `description` fields are required
 
-### Script Execution Denied
+### Skill Instructions Not Followed
 
-1. Verify command matches an `allowed_commands` pattern
-2. Ensure skill was loaded first via `load_skill()`
-3. Check pattern format: `prefix:glob_pattern`
+1. Ensure skill was loaded first via `load_skill()`
+2. Check that the loaded skill's instructions reference native tools that are available in the current node
 
 ### Debug Logging
 
@@ -465,7 +432,7 @@ Requirements:
 
 - The directory must contain a valid `SKILL.md` with YAML frontmatter
 - Required frontmatter fields: `name`, `description`
-- Recommended fields: `version`, `tags`, `allowed_commands`, `license`
+- Recommended fields: `version`, `tags`, `license`
 
 Example `SKILL.md`:
 
@@ -478,9 +445,6 @@ version: "1.0.0"
 license: Apache-2.0
 compatibility:
   datus: ">=0.2.0"
-allowed_commands:
-  - "python:scripts/*.py"
-  - "sh:scripts/*.sh"
 ---
 
 # SQL Optimization Skill
@@ -554,8 +518,6 @@ name: my-etl-helper
 description: Helper utilities for ETL pipeline development
 tags: [etl, pipeline, data-engineering]
 version: "1.0.0"
-allowed_commands:
-  - "python:scripts/*.py"
 ---
 
 # ETL Helper Skill

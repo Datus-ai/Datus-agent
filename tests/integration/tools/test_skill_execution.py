@@ -124,8 +124,7 @@ class TestRealLLMSkillExecution:
         assert len(all_actions) >= 2, f"Expected at least 2 actions, got {len(all_actions)}"
 
         action_types = [a.action_type for a in all_actions]
-        action_messages = " ".join(a.messages for a in all_actions)
-        has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
+        has_load_skill = "load_skill" in action_types
         assert has_load_skill, f"Agent should invoke load_skill for a local skill. Action types: {action_types}"
 
         final_action = all_actions[-1]

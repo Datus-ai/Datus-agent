@@ -182,8 +182,7 @@ class TestRealLLMSkillIntegration:
         failed_tools = [a for a in tool_actions if a.status == "failed"]
 
         action_types = [a.action_type for a in all_actions]
-        action_messages = " ".join(a.messages for a in all_actions)
-        has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
+        has_load_skill = "load_skill" in action_types
 
         logger.info(f"\n{separator}")
         logger.info("")
@@ -273,9 +272,8 @@ class TestRealLLMSkillIntegration:
         self._print_report(model_name, duration, all_actions)
 
         action_types = [a.action_type for a in all_actions]
-        action_messages = " ".join(a.messages for a in all_actions)
 
-        has_load_skill = "load_skill" in action_types or "load_skill" in action_messages
+        has_load_skill = "load_skill" in action_types
 
         assert has_load_skill, f"Expected load_skill in action history. Action types found: {action_types}"
 
