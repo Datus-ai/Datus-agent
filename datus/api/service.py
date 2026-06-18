@@ -452,6 +452,14 @@ async def lifespan(app: FastAPI):
         stream_thinking=getattr(args, "stream_thinking", False),
     )
 
+    # Install a SIGUSR1 handler so operators can dump async task stacks from a
+    # running (possibly daemonised) server: ``kill -USR1 <pid>`` writes the
+    # snapshot to the log. Useful when a request hangs on an interaction that
+    # never resolves — the loop is alive but a coroutine is parked.
+    from datus.utils.async_debug import install_task_dump_signal_handler
+
+    install_task_dump_signal_handler()
+
     logger.info("Datus API Service started")
     try:
         yield
