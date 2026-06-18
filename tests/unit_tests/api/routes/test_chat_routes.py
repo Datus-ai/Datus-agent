@@ -5,7 +5,7 @@
 """Unit tests for datus/api/routes/chat_routes.py — submit_user_interaction endpoint."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -22,6 +22,7 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.routes.chat_routes import (
+    _FUSE_IO_TIMEOUT,
     _is_valid_subagent_id,
     delete_session,
     get_chat_history,
@@ -30,6 +31,13 @@ from datus.api.routes.chat_routes import (
     submit_user_interaction,
 )
 from datus.tools.sql_policy import SqlPolicyConfig
+
+
+async def _timeout_wait_for(awaitable, timeout):
+    """Async stub for asyncio.wait_for that closes the awaitable before raising TimeoutError."""
+    if hasattr(awaitable, "close"):
+        awaitable.close()
+    raise TimeoutError
 
 
 def _mock_svc(task=None):
@@ -535,12 +543,13 @@ class TestListSessions:
         ctx = MagicMock()
         ctx.user_id = "user1"
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.chat_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await list_sessions(svc, ctx, subagent_id=None)
 
         assert result.success is False
         assert result.errorCode == "REQUEST_TIMEOUT"
         assert result.errorMessage == "Session list timed out"
+        mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)
 
     @pytest.mark.asyncio
     async def test_forwards_subagent_id_filter(self):
@@ -561,11 +570,12 @@ class TestListSessions:
         ctx = MagicMock()
         ctx.user_id = "u1"
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.chat_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await list_sessions(svc, ctx, subagent_id=None)
 
         assert isinstance(result, Result)
         assert result.data is None
+        mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)
 
 
 # ===========================================================================
@@ -596,12 +606,13 @@ class TestDeleteSession:
         ctx = MagicMock()
         ctx.user_id = "user1"
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.chat_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await delete_session("session123", svc, ctx)
 
         assert result.success is False
         assert result.errorCode == "REQUEST_TIMEOUT"
         assert result.errorMessage == "Session delete timed out"
+        mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)
 
     @pytest.mark.asyncio
     async def test_timeout_result_type_is_result(self):
@@ -609,11 +620,12 @@ class TestDeleteSession:
         ctx = MagicMock()
         ctx.user_id = "u1"
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.chat_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await delete_session("sid", svc, ctx)
 
         assert isinstance(result, Result)
         assert result.data is None
+        mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)
 
 
 # ===========================================================================
@@ -644,12 +656,13 @@ class TestGetChatHistory:
         ctx = MagicMock()
         ctx.user_id = "user1"
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.chat_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await get_chat_history(svc, ctx, session_id="sess1")
 
         assert result.success is False
         assert result.errorCode == "REQUEST_TIMEOUT"
         assert result.errorMessage == "History fetch timed out"
+        mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)
 
     @pytest.mark.asyncio
     async def test_timeout_result_type_is_result(self):
@@ -657,8 +670,9 @@ class TestGetChatHistory:
         ctx = MagicMock()
         ctx.user_id = "u1"
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.chat_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await get_chat_history(svc, ctx, session_id="s1")
 
         assert isinstance(result, Result)
         assert result.data is None
+        mock_wf.assert_called_once_with(ANY, timeout=_FUSE_IO_TIMEOUT)

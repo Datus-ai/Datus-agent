@@ -4,13 +4,14 @@
 
 """Unit tests for datus/api/routes/database_routes.py — list_catalogs endpoint."""
 
-from unittest.mock import MagicMock, patch
+from typing import Optional
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
 from datus.api.models.base_models import Result
 from datus.api.models.database_models import DatabaseInfo, DatabasesData, ListDatabasesData, ListDatabasesInput
-from datus.api.routes.database_routes import list_catalogs
+from datus.api.routes.database_routes import _DB_IO_TIMEOUT, list_catalogs
 
 
 def _make_db_info(name: str = "main") -> DatabaseInfo:
@@ -23,7 +24,10 @@ def _make_db_info(name: str = "main") -> DatabaseInfo:
     )
 
 
-def _make_svc(list_databases_return=None, current_datasource: str = "default_ds") -> MagicMock:
+def _make_svc(
+    list_databases_return: Optional[Result[ListDatabasesData]] = None,
+    current_datasource: str = "default_ds",
+) -> MagicMock:
     svc = MagicMock()
     svc.datasource.current_datasource = current_datasource
     if list_databases_return is not None:
@@ -31,7 +35,21 @@ def _make_svc(list_databases_return=None, current_datasource: str = "default_ds"
     return svc
 
 
-async def _call(svc, datasource_id="", catalog_name=None, database_name="", schema_name="", include_sys_schemas=False):
+async def _timeout_wait_for(awaitable, timeout):
+    """Async stub for asyncio.wait_for that closes the awaitable before raising TimeoutError."""
+    if hasattr(awaitable, "close"):
+        awaitable.close()
+    raise TimeoutError
+
+
+async def _call(
+    svc: MagicMock,
+    datasource_id: str = "",
+    catalog_name: Optional[str] = None,
+    database_name: str = "",
+    schema_name: str = "",
+    include_sys_schemas: bool = False,
+) -> Result[DatabasesData]:
     """Call list_catalogs with explicit defaults to bypass FastAPI Query() object resolution."""
     return await list_catalogs(
         svc,
@@ -80,22 +98,24 @@ class TestListCatalogs:
     async def test_timeout_returns_request_timeout_error(self):
         svc = _make_svc()
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.database_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await _call(svc)
 
         assert result.success is False
         assert result.errorCode == "REQUEST_TIMEOUT"
         assert result.errorMessage == "Datasource query timed out"
+        mock_wf.assert_called_once_with(ANY, timeout=_DB_IO_TIMEOUT)
 
     @pytest.mark.asyncio
     async def test_timeout_result_type_is_result(self):
         svc = _make_svc()
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError):
+        with patch("datus.api.routes.database_routes.asyncio.wait_for", side_effect=_timeout_wait_for) as mock_wf:
             result = await _call(svc)
 
         assert isinstance(result, Result)
         assert result.data is None
+        mock_wf.assert_called_once_with(ANY, timeout=_DB_IO_TIMEOUT)
 
     @pytest.mark.asyncio
     async def test_service_error_propagates_error_code(self):
