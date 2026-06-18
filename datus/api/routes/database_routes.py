@@ -2,6 +2,7 @@
 API routes for Database Management endpoints.
 """
 
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Query
@@ -46,7 +47,7 @@ async def list_catalogs(
         schema_name=schema_name,
         include_sys_schemas=include_sys_schemas,
     )
-    databases: Result[ListDatabasesData] = svc.datasource.list_databases(request)
+    databases: Result[ListDatabasesData] = await asyncio.to_thread(svc.datasource.list_databases, request)
     if not databases.success or databases.data is None:
         return Result(
             success=False,

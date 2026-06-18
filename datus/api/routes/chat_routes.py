@@ -330,7 +330,7 @@ async def list_sessions(
         description="Filter by subagent id; 'chat' selects the default chat agent",
     ),
 ) -> Result[ChatSessionData]:
-    return svc.chat.list_sessions(user_id=ctx.user_id, subagent_id=subagent_id)
+    return await asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id)
 
 
 @router.delete(
@@ -344,7 +344,7 @@ async def delete_session(
     svc: ServiceDep,
     ctx: AppContextDep,
 ) -> Result[ChatSessionData]:
-    return svc.chat.delete_session(session_id, user_id=ctx.user_id)
+    return await asyncio.to_thread(svc.chat.delete_session, session_id, user_id=ctx.user_id)
 
 
 # ========== Chat History (GET /api/v1/history/chat?session_id=xxx) ==========
@@ -361,7 +361,7 @@ async def get_chat_history(
     ctx: AppContextDep,
     session_id: str = Query(..., description="Session ID to retrieve history for"),
 ) -> Result[ChatHistoryData]:
-    return svc.chat.get_history(session_id, user_id=ctx.user_id)
+    return await asyncio.to_thread(svc.chat.get_history, session_id, user_id=ctx.user_id)
 
 
 # ========== User Interaction ==========
