@@ -2674,3 +2674,81 @@ class TestAcloseAsyncClients:
         assert any("async anthropic client" in w.lower() and "already closed" in w for w in warned), (
             f"Expected warning naming 'async anthropic client' with the underlying error, got: {warned}"
         )
+
+
+# ---------------------------------------------------------------------------
+# ssl_verify (private/self-signed CA support)
+# ---------------------------------------------------------------------------
+
+
+class TestSslVerify:
+    """``ssl_verify`` config wires into both the litellm path (SSL_VERIFY env
+    materialization) and the native Anthropic client (custom httpx http_client)."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_ssl_env(self):
+        import os
+
+        saved = {k: os.environ.get(k) for k in ("SSL_VERIFY", "SSL_CERT_FILE")}
+        os.environ.pop("SSL_VERIFY", None)
+        os.environ.pop("SSL_CERT_FILE", None)
+        yield
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_ca_path_builds_native_client_and_materializes_env(self):
+        import os
+
+        cfg = _make_model_config(base_url="https://internal.example.com")
+        cfg.ssl_verify = "/etc/ssl/internal-ca.pem"
+        # Patch the transports so we assert verify propagation without httpx
+        # eagerly validating the (fake) CA path on the filesystem.
+        with (
+            patch("httpx.HTTPTransport") as sync_tx,
+            patch("httpx.AsyncHTTPTransport") as async_tx,
+        ):
+            model = _make_claude_model(cfg)
+
+        assert model.ssl_verify == "/etc/ssl/internal-ca.pem"
+        # litellm path: materialized into the SSL_VERIFY env var.
+        assert os.environ["SSL_VERIFY"] == "/etc/ssl/internal-ca.pem"
+        # native path: a custom httpx client is built once with our verify value.
+        assert sync_tx.call_count == 1
+        assert async_tx.call_count == 1
+        assert sync_tx.call_args.kwargs.get("verify") == "/etc/ssl/internal-ca.pem"
+        assert async_tx.call_args.kwargs.get("verify") == "/etc/ssl/internal-ca.pem"
+        # no proxy configured -> the transport carries no proxy.
+        assert "proxy" not in sync_tx.call_args.kwargs
+
+    def test_ssl_verify_false_materializes_false(self):
+        import os
+
+        cfg = _make_model_config()
+        cfg.ssl_verify = False
+        with (
+            patch("httpx.HTTPTransport") as sync_tx,
+            patch("httpx.AsyncHTTPTransport"),
+        ):
+            model = _make_claude_model(cfg)
+
+        assert model.ssl_verify is False
+        assert os.environ["SSL_VERIFY"] == "false"
+        # verify=False still needs an explicit client carrying verify=False.
+        assert sync_tx.call_count == 1
+        assert sync_tx.call_args.kwargs.get("verify") is False
+
+    def test_unset_preserves_default_behavior(self):
+        import os
+
+        cfg = _make_model_config()
+        cfg.ssl_verify = None
+        model = _make_claude_model(cfg)
+
+        assert model.ssl_verify is None
+        # No proxy + no ssl_verify -> no custom client, env untouched.
+        assert model.proxy_client is None
+        assert model.async_proxy_client is None
+        assert "SSL_VERIFY" not in os.environ

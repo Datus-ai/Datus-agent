@@ -101,6 +101,7 @@ The `agent.models` section is used for self-hosted or private-deployment LLM end
 - **`base_url`** — API endpoint URL
 - **`api_key`** — API key (supports `${ENV_VAR}` substitution)
 - **`model`** — Model name / SKU
+- **`ssl_verify`** *(optional)* — TLS verification for this endpoint: `true` (default), `false` to disable (discouraged), or a path to a CA-bundle PEM to trust a private/self-signed gateway CA. Takes priority over the `SSL_VERIFY` / `SSL_CERT_FILE` environment variables. See [Private or self-signed certificates](#private-or-self-signed-certificates).
 
 ```yaml
 agent:
@@ -122,6 +123,49 @@ agent:
     # Not recommended for production
     api_key: "sk-your-actual-key-here"
     ```
+
+### Private or self-signed certificates {#private-or-self-signed-certificates}
+
+When pointing Datus at an internal LLM gateway or staging endpoint whose TLS
+certificate is signed by a **private CA** (one not in the public trust store),
+requests fail with:
+
+```
+litellm.InternalServerError: AnthropicException - [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: self-signed certificate in certificate chain
+```
+
+The cause is that Python's bundled `certifi` trust store only contains public
+CAs — it does not read the OS trust store — so a private CA is never trusted
+automatically. Point Datus at the CA bundle instead of disabling verification:
+
+```yaml
+agent:
+  models:
+    claude-staging:
+      type: claude
+      base_url: https://ai.internal.example.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-3-7-sonnet
+      ssl_verify: /etc/ssl/internal-ca.pem   # trust the private CA; verification stays ON
+```
+
+**Resolution precedence** (first match wins):
+
+```
+ssl_verify (agent.yml)  →  SSL_VERIFY env  →  SSL_CERT_FILE env  →  certifi default
+```
+
+- `ssl_verify` is the project-level setting and takes priority over the env vars.
+- The standard `SSL_CERT_FILE` / `SSL_VERIFY` environment variables work as a
+  no-config alternative (e.g. when IT provisions the CA path machine-wide).
+- To extract a server's CA chain:
+  `openssl s_client -showcerts -connect host:443 </dev/null | openssl x509 -outform PEM > ca.pem`
+
+!!! warning "Do not disable verification"
+    `ssl_verify: false` (or `SSL_VERIFY=false`) turns TLS certificate
+    verification **off** entirely, leaving the connection exposed to
+    man-in-the-middle attacks. Always prefer trusting the CA bundle.
 
 ## Supported LLM Providers
 

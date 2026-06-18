@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from datus.configuration.node_type import NodeType
 from datus.observability.config import ObservabilityConfig
@@ -338,6 +338,12 @@ class ModelConfig:
     top_p: Optional[float] = None  # Some models like kimi-k2.5 require top_p=0.95
     auth_type: str = "api_key"  # "api_key" | "oauth" | "subscription"
     use_native_api: bool = False  # Use native Anthropic client instead of LiteLLM
+    # SSL/TLS verification for this model's endpoint. Mirrors httpx/litellm `verify`:
+    #   True  -> verify against system/certifi CAs (default)
+    #   False -> disable verification (discouraged; MITM-exposed)
+    #   str   -> path to a CA bundle (PEM) to additionally trust (e.g. a private gateway CA)
+    # When set, takes priority over the SSL_VERIFY / SSL_CERT_FILE environment variables.
+    ssl_verify: Optional[Union[bool, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -2410,6 +2416,7 @@ def load_model_config(data: dict) -> ModelConfig:
         top_p=float(top_p) if top_p is not None else None,
         auth_type=data.get("auth_type", "api_key"),
         use_native_api=data.get("use_native_api", False),
+        ssl_verify=resolve_env(data["ssl_verify"]) if "ssl_verify" in data else None,
     )
 
 

@@ -518,6 +518,30 @@ class TestLoadModelConfig:
         assert d["type"] == "openai"
         assert d["model"] == "gpt-4"
 
+    def test_ssl_verify_defaults_none(self):
+        cfg = ModelConfig(type="openai", api_key="sk", model="gpt-4")
+        assert cfg.ssl_verify is None
+        assert cfg.to_dict()["ssl_verify"] is None
+
+    def test_load_ssl_verify_passthrough(self):
+        cfg = load_model_config({"type": "claude", "model": "claude", "ssl_verify": "/etc/ssl/ca.pem"})
+        assert cfg.ssl_verify == "/etc/ssl/ca.pem"
+
+    def test_load_ssl_verify_absent_is_none(self):
+        cfg = load_model_config({"type": "claude", "model": "claude"})
+        assert cfg.ssl_verify is None
+
+    def test_load_ssl_verify_env_substitution(self, monkeypatch):
+        monkeypatch.setenv("MY_CA", "/etc/ssl/from-env.pem")
+        cfg = load_model_config({"type": "claude", "model": "claude", "ssl_verify": "${MY_CA}"})
+        assert cfg.ssl_verify == "/etc/ssl/from-env.pem"
+
+    @pytest.mark.parametrize("value", ["/etc/ssl/ca.pem", True, False])
+    def test_ssl_verify_round_trips(self, value):
+        cfg = ModelConfig(type="claude", api_key="sk", model="claude", ssl_verify=value)
+        assert cfg.ssl_verify == value
+        assert cfg.to_dict()["ssl_verify"] == value
+
 
 class TestAgentConfigServiceSelectors:
     def _make(self, tmp_path, *, services=None, agentic_nodes=None):

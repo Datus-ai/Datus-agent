@@ -176,13 +176,21 @@ class ClaudeModel(OpenAICompatibleModel):
         self.proxy_client = None
         self.async_proxy_client = None
 
-        if proxy_url:
+        # SSL verification (e.g. a private gateway CA) resolved by the parent
+        # __init__. The native client takes no `verify` argument, so we must pass a
+        # custom http_client. Only do so when a proxy is set or ssl_verify is
+        # configured; otherwise leave http_client=None to preserve default behavior
+        # (the Anthropic SDK's httpx client honors the standard SSL_CERT_FILE env var).
+        verify = getattr(self, "ssl_verify", None)
+        if proxy_url or verify is not None:
+            verify_kwargs = {} if verify is None else {"verify": verify}
+            proxy_kwargs = {"proxy": httpx.Proxy(url=proxy_url)} if proxy_url else {}
             self.proxy_client = httpx.Client(
-                transport=httpx.HTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
+                transport=httpx.HTTPTransport(**verify_kwargs, **proxy_kwargs),
                 timeout=60.0,
             )
             self.async_proxy_client = httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(proxy=httpx.Proxy(url=proxy_url)),
+                transport=httpx.AsyncHTTPTransport(**verify_kwargs, **proxy_kwargs),
                 timeout=60.0,
             )
 
