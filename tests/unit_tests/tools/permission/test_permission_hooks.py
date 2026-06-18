@@ -1227,8 +1227,8 @@ class TestPermissionPromptLockPerLoop:
     A module-level ``asyncio.Lock()`` used to bind to whichever loop first
     awaited it, then raised ``Lock is bound to a different event loop`` on
     every subsequent ``asyncio.run()`` call (the CLI creates a fresh loop per
-    chat turn). These tests exercise the per-loop lock helper to make sure
-    the bug cannot silently regress.
+    chat turn). These tests exercise the lock helper's fallback (no-broker)
+    path to make sure the bug cannot silently regress.
     """
 
     def test_separate_asyncio_run_calls_do_not_reuse_lock(self):
@@ -1252,9 +1252,117 @@ class TestPermissionPromptLockPerLoop:
             return first, second
 
         first, second = asyncio.run(_collect())
-        # Within a single loop, concurrent tool calls must share one lock so
-        # the "one prompt at a time" invariant still holds.
+        # Within a single loop, the fallback (no-broker) lock is shared so the
+        # "one prompt at a time" invariant still holds for legacy callers.
         assert first is second
+
+
+class TestPermissionPromptLockPerBroker:
+    """The prompt lock is scoped per broker, not per event loop.
+
+    On a long-lived multi-session server every request shares one loop, so a
+    per-loop lock serialized prompts across independent sessions/sub-agents:
+    while one held the lock across its user-response ``await``, the others
+    blocked in ``on_tool_start`` and emitted the TOOL "processing" action but
+    never the INTERACTION event. Scoping per broker fixes that.
+    """
+
+    def test_same_broker_same_loop_returns_same_lock(self):
+        async def _collect():
+            broker = InteractionBroker()
+            first = permission_hooks_module._get_permission_prompt_lock(broker)
+            second = permission_hooks_module._get_permission_prompt_lock(broker)
+            return first, second
+
+        first, second = asyncio.run(_collect())
+        # Parallel tool calls within one run share a broker -> share a lock, so
+        # the "one prompt at a time" invariant still holds inside a run.
+        assert first is second
+
+    def test_distinct_brokers_same_loop_get_distinct_locks(self):
+        """The core fix: independent sessions must NOT share a prompt lock."""
+
+        async def _collect():
+            broker_a = InteractionBroker()
+            broker_b = InteractionBroker()
+            lock_a = permission_hooks_module._get_permission_prompt_lock(broker_a)
+            lock_b = permission_hooks_module._get_permission_prompt_lock(broker_b)
+            return lock_a, lock_b
+
+        lock_a, lock_b = asyncio.run(_collect())
+        assert lock_a is not lock_b
+
+    def test_concurrent_brokers_do_not_serialize(self):
+        """A broker holding its lock must not block a *different* broker's hook.
+
+        Reproduces the reported hang: session A parks while holding its prompt
+        lock; session B must still be able to acquire its own lock and proceed.
+        With the old per-loop lock, B's ``acquire`` would block on A forever.
+        """
+
+        async def _run():
+            broker_a = InteractionBroker()
+            broker_b = InteractionBroker()
+            b_acquired = asyncio.Event()
+
+            async def hold_a():
+                async with permission_hooks_module._get_permission_prompt_lock(broker_a):
+                    # Park "forever" while holding A's lock (mirrors awaiting a
+                    # user response that never arrives).
+                    await asyncio.sleep(3600)
+
+            async def acquire_b():
+                async with permission_hooks_module._get_permission_prompt_lock(broker_b):
+                    b_acquired.set()
+
+            holder = asyncio.create_task(hold_a())
+            await asyncio.sleep(0)  # let holder grab A's lock first
+            consumer = asyncio.create_task(acquire_b())
+            try:
+                # B must acquire its own lock despite A being parked.
+                await asyncio.wait_for(b_acquired.wait(), timeout=1.0)
+            finally:
+                holder.cancel()
+                consumer.cancel()
+                for t in (holder, consumer):
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
+            return b_acquired.is_set()
+
+        assert asyncio.run(_run()) is True
+
+    def test_same_broker_distinct_loops_rebinds_lock(self):
+        """A broker reused across CLI turns gets a loop-correct lock each turn."""
+        broker = InteractionBroker()
+
+        async def _acquire_once():
+            lock = permission_hooks_module._get_permission_prompt_lock(broker)
+            async with lock:  # would raise "bound to a different loop" if stale
+                return lock
+
+        lock_a = asyncio.run(_acquire_once())
+        lock_b = asyncio.run(_acquire_once())
+        assert lock_a is not lock_b
+
+    def test_unhashable_broker_falls_back_to_loop_lock(self):
+        """A non-weak-referenceable broker must not crash the helper."""
+
+        async def _collect():
+            # ``object()`` is weak-referenceable; use a type that is not by
+            # giving the helper something that raises in WeakKeyDictionary.
+            class _NoWeakref:
+                __slots__ = ()  # no __weakref__ slot -> not weak-referenceable
+
+            broker = _NoWeakref()
+            lock = permission_hooks_module._get_permission_prompt_lock(broker)
+            fallback = permission_hooks_module._get_permission_prompt_lock()
+            return lock, fallback
+
+        lock, fallback = asyncio.run(_collect())
+        # Falls back to the shared per-loop lock instead of raising.
+        assert lock is fallback
 
     def test_external_prompt_succeeds_across_separate_asyncio_runs(self, mock_broker, tmp_path):
         """End-to-end: two consecutive ``asyncio.run`` turns, each hitting the
