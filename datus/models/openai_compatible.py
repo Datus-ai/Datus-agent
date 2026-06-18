@@ -139,6 +139,15 @@ def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]
     """Classify OpenAI-compatible API errors and return error code and whether it's retryable."""
     error_msg = str(error).lower()
 
+    # TLS certificate failures must be detected first: the litellm SSL error
+    # string contains "internal" (from InternalServerError) and would otherwise
+    # be misclassified as a retryable MODEL_API_ERROR. Not retryable — retrying a
+    # cert mismatch never helps. The dedicated code carries the ssl_verify hint.
+    from datus.utils.ssl_utils import is_ssl_cert_verification_error
+
+    if is_ssl_cert_verification_error(error):
+        return ErrorCode.MODEL_SSL_CERT_ERROR, False
+
     if isinstance(error, APIError):
         # Handle specific HTTP status codes and error types
         if any(indicator in error_msg for indicator in ["401", "unauthorized", "authentication"]):

@@ -56,6 +56,13 @@ class ErrorCode(Enum):
         "300023",
         "Model returned response in illegal format. Response: '{response_preview}' (length: {response_length})",
     )
+    MODEL_SSL_CERT_ERROR = (
+        "300024",
+        "TLS certificate verification failed for the model endpoint. If it uses a private or "
+        "self-signed CA, set `ssl_verify: <path-to-ca.pem>` on the model in agent.yml (or export "
+        "SSL_CERT_FILE=<path-to-ca.pem>). Avoid `ssl_verify: false`, which disables verification. "
+        "See docs/configuration/agent.md (Private or self-signed certificates).",
+    )
 
     # OAuth authentication errors
     OAUTH_NOT_AUTHENTICATED = ("300030", "Not authenticated. Please run OAuth login first.")

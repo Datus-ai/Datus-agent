@@ -134,6 +134,20 @@ class TestClassifyOpenAICompatibleError:
         assert code == ErrorCode.MODEL_AUTHENTICATION_ERROR
         assert retryable is False
 
+    def test_ssl_cert_error_detected_and_not_retryable(self):
+        # The litellm SSL message contains "internal" (InternalServerError) and would
+        # otherwise be misclassified as retryable MODEL_API_ERROR — SSL must win first.
+        err = MagicMock(spec=APIError)
+        err.__str__ = lambda self: (
+            "litellm.InternalServerError: AnthropicException - Cannot connect to host "
+            "ai.staging.example:443 ssl:True [SSLCertVerificationError: [SSL: "
+            "CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate "
+            "in certificate chain]"
+        )
+        code, retryable = classify_openai_compatible_error(err)
+        assert code == ErrorCode.MODEL_SSL_CERT_ERROR
+        assert retryable is False
+
     def test_403_returns_permission_error(self):
         err = MagicMock(spec=APIError)
         err.__str__ = lambda self: "403 forbidden"

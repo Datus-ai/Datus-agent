@@ -17,7 +17,7 @@ paths (which only accept SSL configuration via env / module globals) honor the
 same setting as the native client path.
 """
 
-from typing import Union
+from typing import Optional, Union
 
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -80,6 +80,42 @@ def normalize_ssl_verify(value: Union[bool, str]) -> Union[bool, str]:
         logger.debug("ssl_verify resolved to custom CA bundle: %s", verify)
 
     return verify
+
+
+# Substrings that identify a TLS certificate-verification failure, regardless of
+# which layer (litellm, httpx, anthropic SDK, stdlib ssl) raised it.
+_SSL_CERT_ERROR_MARKERS = (
+    "certificate_verify_failed",
+    "certificate verify failed",
+    "self-signed certificate",
+    "self signed certificate",
+)
+
+
+def is_ssl_cert_verification_error(exc: BaseException) -> bool:
+    """Return True if ``exc`` (or anything in its cause/context chain) is a TLS
+    certificate-verification failure.
+
+    The chain is walked because higher layers wrap the original
+    ``SSLCertVerificationError`` — e.g. the native Anthropic client surfaces only
+    ``APIConnectionError("Connection error.")`` at the top level, with the SSL
+    detail nested in ``__cause__``.
+    """
+    seen: set[int] = set()
+    cur: Optional[BaseException] = exc
+    # Bound the walk: real exception chains are short, and the depth cap also
+    # protects against pathological/non-terminating chains (e.g. mock objects
+    # whose ``__cause__`` lazily yields a fresh child on every access).
+    for _ in range(20):
+        if cur is None or id(cur) in seen:
+            break
+        seen.add(id(cur))
+        text = str(cur).lower()
+        if any(marker in text for marker in _SSL_CERT_ERROR_MARKERS):
+            return True
+        nxt = cur.__cause__ or cur.__context__
+        cur = nxt if isinstance(nxt, BaseException) else None
+    return False
 
 
 def ssl_verify_to_env(value: Union[bool, str]) -> str:

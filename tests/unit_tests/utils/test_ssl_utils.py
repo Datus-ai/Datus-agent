@@ -7,7 +7,11 @@
 import pytest
 
 from datus.utils.exceptions import DatusException
-from datus.utils.ssl_utils import normalize_ssl_verify, ssl_verify_to_env
+from datus.utils.ssl_utils import (
+    is_ssl_cert_verification_error,
+    normalize_ssl_verify,
+    ssl_verify_to_env,
+)
 
 
 class TestNormalizeSslVerify:
@@ -62,3 +66,37 @@ class TestSslVerifyToEnv:
         # Rendering a normalized path and re-normalizing yields the same path.
         v = normalize_ssl_verify("/etc/ssl/ca.pem")
         assert normalize_ssl_verify(ssl_verify_to_env(v)) == "/etc/ssl/ca.pem"
+
+
+class TestIsSslCertVerificationError:
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate",
+            "litellm.InternalServerError: AnthropicException - ... CERTIFICATE_VERIFY_FAILED ...",
+            "certificate verify failed: self signed certificate in certificate chain",
+        ],
+    )
+    def test_direct_message_detected(self, msg):
+        assert is_ssl_cert_verification_error(Exception(msg)) is True
+
+    def test_detected_through_cause_chain(self):
+        # Native Anthropic path: top-level is generic, SSL detail nested in __cause__.
+        inner = Exception("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate")
+        try:
+            try:
+                raise inner
+            except Exception as cause:
+                raise ValueError("Connection error.") from cause
+        except Exception as wrapped:
+            assert is_ssl_cert_verification_error(wrapped) is True
+
+    @pytest.mark.parametrize("msg", ["429 rate limit exceeded", "Connection error.", "401 unauthorized"])
+    def test_unrelated_errors_not_detected(self, msg):
+        assert is_ssl_cert_verification_error(Exception(msg)) is False
+
+    def test_self_referential_chain_terminates(self):
+        # A cyclic __context__ must not loop forever.
+        e = Exception("boom")
+        e.__context__ = e
+        assert is_ssl_cert_verification_error(e) is False

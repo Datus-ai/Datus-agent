@@ -36,6 +36,7 @@ from datus.schemas.action_history import ActionHistory, ActionHistoryManager, Ac
 from datus.schemas.node_models import SQLContext
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.ssl_utils import is_ssl_cert_verification_error
 from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
@@ -428,6 +429,8 @@ class ClaudeModel(OpenAICompatibleModel):
             self._diagnose_oauth_401(e)  # raises specific DatusException for OAuth tokens
             raise
         except Exception as e:
+            if is_ssl_cert_verification_error(e):
+                raise DatusException(ErrorCode.MODEL_SSL_CERT_ERROR) from e
             logger.error(f"Error generating with Anthropic: {str(e)}")
             raise
 
@@ -966,6 +969,8 @@ class ClaudeModel(OpenAICompatibleModel):
             self._diagnose_oauth_401(e)
             raise
         except Exception as e:
+            if is_ssl_cert_verification_error(e):
+                raise DatusException(ErrorCode.MODEL_SSL_CERT_ERROR) from e
             logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
 
