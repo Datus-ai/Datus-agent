@@ -58,6 +58,10 @@ if TYPE_CHECKING:
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
+# Timeout for JuiceFS FUSE operations: os.listdir + sqlite3.connect per session file.
+# Slightly above fuse_meta_op's 10 s default to give directory scans extra headroom.
+_FUSE_IO_TIMEOUT = 15.0
+
 # Additional builtin subagents accepted by ``stream_chat`` beyond the canonical
 # ``BUILTIN_SUBAGENTS`` set — these are wired directly in
 # ``ChatTaskManager._create_node`` but are not listed as user-creatable agents
@@ -330,7 +334,15 @@ async def list_sessions(
         description="Filter by subagent id; 'chat' selects the default chat agent",
     ),
 ) -> Result[ChatSessionData]:
-    return await asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id),
+            timeout=_FUSE_IO_TIMEOUT,
+        )
+    except TimeoutError:
+        return Result[ChatSessionData](
+            success=False, errorCode="REQUEST_TIMEOUT", errorMessage="Session list timed out"
+        )
 
 
 @router.delete(
@@ -344,7 +356,15 @@ async def delete_session(
     svc: ServiceDep,
     ctx: AppContextDep,
 ) -> Result[ChatSessionData]:
-    return await asyncio.to_thread(svc.chat.delete_session, session_id, user_id=ctx.user_id)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(svc.chat.delete_session, session_id, user_id=ctx.user_id),
+            timeout=_FUSE_IO_TIMEOUT,
+        )
+    except TimeoutError:
+        return Result[ChatSessionData](
+            success=False, errorCode="REQUEST_TIMEOUT", errorMessage="Session delete timed out"
+        )
 
 
 # ========== Chat History (GET /api/v1/history/chat?session_id=xxx) ==========
@@ -361,7 +381,15 @@ async def get_chat_history(
     ctx: AppContextDep,
     session_id: str = Query(..., description="Session ID to retrieve history for"),
 ) -> Result[ChatHistoryData]:
-    return await asyncio.to_thread(svc.chat.get_history, session_id, user_id=ctx.user_id)
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(svc.chat.get_history, session_id, user_id=ctx.user_id),
+            timeout=_FUSE_IO_TIMEOUT,
+        )
+    except TimeoutError:
+        return Result[ChatHistoryData](
+            success=False, errorCode="REQUEST_TIMEOUT", errorMessage="History fetch timed out"
+        )
 
 
 # ========== User Interaction ==========

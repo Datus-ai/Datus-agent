@@ -17,6 +17,11 @@ from datus.api.models.database_models import (
 
 router = APIRouter(prefix="/api/v1", tags=["databases"])
 
+# Timeout for datasource network I/O (test_connection, get_databases, get_schemas,
+# get_tables). Matches the adapter-level timeout_seconds=30 so the connector gets
+# a chance to surface its own error before we give up at the route layer.
+_DB_IO_TIMEOUT = 30.0
+
 # Pre-configured parameters to avoid definition-time evaluation in defaults
 DATASOURCE_QUERY = Query("", description="Datasource to list databases from")
 DATABASE_NAME_QUERY = Query("", description="Database name")
@@ -47,7 +52,13 @@ async def list_catalogs(
         schema_name=schema_name,
         include_sys_schemas=include_sys_schemas,
     )
-    databases: Result[ListDatabasesData] = await asyncio.to_thread(svc.datasource.list_databases, request)
+    try:
+        databases: Result[ListDatabasesData] = await asyncio.wait_for(
+            asyncio.to_thread(svc.datasource.list_databases, request),
+            timeout=_DB_IO_TIMEOUT,
+        )
+    except TimeoutError:
+        return Result(success=False, errorCode="REQUEST_TIMEOUT", errorMessage="Datasource query timed out")
     if not databases.success or databases.data is None:
         return Result(
             success=False,
