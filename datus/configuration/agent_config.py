@@ -2416,7 +2416,29 @@ def load_model_config(data: dict) -> ModelConfig:
         top_p=float(top_p) if top_p is not None else None,
         auth_type=data.get("auth_type", "api_key"),
         use_native_api=data.get("use_native_api", False),
-        ssl_verify=resolve_env(data["ssl_verify"]) if "ssl_verify" in data else None,
+        ssl_verify=_load_ssl_verify(data),
+    )
+
+
+def _load_ssl_verify(data: dict) -> Optional[Union[bool, str]]:
+    """Resolve and type-check the optional ``ssl_verify`` model field.
+
+    Fails fast on invalid types (anything other than bool / str) rather than
+    silently dropping the value, so a misconfigured endpoint surfaces at load
+    time instead of as a confusing TLS error later.
+    """
+    if "ssl_verify" not in data:
+        return None
+    value = resolve_env(data["ssl_verify"])
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    raise DatusException(
+        ErrorCode.COMMON_FIELD_INVALID,
+        message_args={
+            "field_name": "ssl_verify",
+            "except_values": "bool or str (true/false or a CA bundle path)",
+            "your_value": type(value).__name__,
+        },
     )
 
 

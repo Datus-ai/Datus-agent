@@ -6,6 +6,7 @@
 
 import pytest
 
+from datus.utils.exceptions import DatusException
 from datus.utils.ssl_utils import normalize_ssl_verify, ssl_verify_to_env
 
 
@@ -38,7 +39,12 @@ class TestNormalizeSslVerify:
 
     @pytest.mark.parametrize("value", [1, 0, None, ["x"], {"a": 1}])
     def test_invalid_type_raises(self, value):
-        with pytest.raises(TypeError):
+        with pytest.raises(DatusException):
+            normalize_ssl_verify(value)
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_empty_string_raises(self, value):
+        with pytest.raises(DatusException):
             normalize_ssl_verify(value)
 
 

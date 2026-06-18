@@ -130,7 +130,7 @@ When pointing Datus at an internal LLM gateway or staging endpoint whose TLS
 certificate is signed by a **private CA** (one not in the public trust store),
 requests fail with:
 
-```
+```text
 litellm.InternalServerError: AnthropicException - [SSL: CERTIFICATE_VERIFY_FAILED]
 certificate verify failed: self-signed certificate in certificate chain
 ```
@@ -152,7 +152,7 @@ agent:
 
 **Resolution precedence** (first match wins):
 
-```
+```text
 ssl_verify (agent.yml)  →  SSL_VERIFY env  →  SSL_CERT_FILE env  →  certifi default
 ```
 

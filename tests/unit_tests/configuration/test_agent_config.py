@@ -536,6 +536,11 @@ class TestLoadModelConfig:
         cfg = load_model_config({"type": "claude", "model": "claude", "ssl_verify": "${MY_CA}"})
         assert cfg.ssl_verify == "/etc/ssl/from-env.pem"
 
+    @pytest.mark.parametrize("value", [123, ["x"], {"a": 1}])
+    def test_load_ssl_verify_invalid_type_raises(self, value):
+        with pytest.raises(DatusException):
+            load_model_config({"type": "claude", "model": "claude", "ssl_verify": value})
+
     @pytest.mark.parametrize("value", ["/etc/ssl/ca.pem", True, False])
     def test_ssl_verify_round_trips(self, value):
         cfg = ModelConfig(type="claude", api_key="sk", model="claude", ssl_verify=value)

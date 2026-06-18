@@ -2689,9 +2689,13 @@ class TestSslVerify:
     def _restore_ssl_env(self):
         import os
 
-        saved = {k: os.environ.get(k) for k in ("SSL_VERIFY", "SSL_CERT_FILE")}
-        os.environ.pop("SSL_VERIFY", None)
-        os.environ.pop("SSL_CERT_FILE", None)
+        # Clear proxy vars too: a stray HTTP(S)_PROXY in CI/dev shells would make
+        # the native path build a proxy transport and break the "no proxy" /
+        # "no custom client" assertions below.
+        keys = ("SSL_VERIFY", "SSL_CERT_FILE", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")
+        saved = {k: os.environ.get(k) for k in keys}
+        for k in keys:
+            os.environ.pop(k, None)
         yield
         for k, v in saved.items():
             if v is None:

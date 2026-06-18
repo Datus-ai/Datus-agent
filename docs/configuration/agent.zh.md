@@ -62,7 +62,7 @@ agent:
 
 当 Datus 连接的是内部 LLM 网关或测试环境，而其 TLS 证书由**私有 CA**（不在公共信任库中）签发时，请求会失败并报错：
 
-```
+```text
 litellm.InternalServerError: AnthropicException - [SSL: CERTIFICATE_VERIFY_FAILED]
 certificate verify failed: self-signed certificate in certificate chain
 ```
@@ -82,7 +82,7 @@ agent:
 
 **解析优先级**（取首个命中项）：
 
-```
+```text
 ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环境变量  →  certifi 默认
 ```
 

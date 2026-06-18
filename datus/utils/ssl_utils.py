@@ -19,6 +19,7 @@ same setting as the native client path.
 
 from typing import Union
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -42,6 +43,15 @@ def normalize_ssl_verify(value: Union[bool, str]) -> Union[bool, str]:
     elif isinstance(value, str):
         stripped = value.strip()
         lowered = stripped.lower()
+        if not stripped:
+            raise DatusException(
+                ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": "ssl_verify",
+                    "except_values": "true/false or a CA bundle path",
+                    "your_value": "(empty string)",
+                },
+            )
         if lowered in _TRUE_STRINGS:
             verify = True
         elif lowered in _FALSE_STRINGS:
@@ -51,7 +61,14 @@ def normalize_ssl_verify(value: Union[bool, str]) -> Union[bool, str]:
             # configuration errors surface as an explicit TLS error at call time.
             verify = stripped
     else:
-        raise TypeError(f"ssl_verify must be bool or str, got {type(value).__name__}")
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message_args={
+                "field_name": "ssl_verify",
+                "except_values": "bool or str",
+                "your_value": type(value).__name__,
+            },
+        )
 
     if verify is False:
         logger.warning(
