@@ -37,6 +37,7 @@ Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默�
 - `base_url`：接口基础地址
 - `api_key`：访问密钥（支持环境变量）
 - `model`：具体模型名
+- `ssl_verify`（可选）：该端点的 TLS 校验方式。`true`（默认）、`false`（关闭校验，不推荐），或指向 CA 证书包（PEM）的路径以信任私有/自签名网关 CA。优先级高于 `SSL_VERIFY` / `SSL_CERT_FILE` 环境变量。参见[私有或自签名证书](#private-or-self-signed-certificates)。
 
 ```yaml
 agent:
@@ -56,6 +57,42 @@ agent:
     # 不建议在生产中明文写入
     api_key: "sk-your-actual-key-here"
     ```
+
+### 私有或自签名证书 {#private-or-self-signed-certificates}
+
+当 Datus 连接的是内部 LLM 网关或测试环境，而其 TLS 证书由**私有 CA**（不在公共信任库中）签发时，请求会失败并报错：
+
+```
+litellm.InternalServerError: AnthropicException - [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: self-signed certificate in certificate chain
+```
+
+根因是 Python 自带的 `certifi` 信任库只包含公共 CA，且不会读取操作系统信任库，因此私有 CA 永远不会被自动信任。正确做法是让 Datus 信任该 CA 证书包，而不是关闭校验：
+
+```yaml
+agent:
+  models:
+    claude-staging:
+      type: claude
+      base_url: https://ai.internal.example.com
+      api_key: ${ANTHROPIC_API_KEY}
+      model: claude-3-7-sonnet
+      ssl_verify: /etc/ssl/internal-ca.pem   # 信任私有 CA，校验保持开启
+```
+
+**解析优先级**（取首个命中项）：
+
+```
+ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环境变量  →  certifi 默认
+```
+
+- `ssl_verify` 是项目级配置，优先级高于环境变量。
+- 标准的 `SSL_CERT_FILE` / `SSL_VERIFY` 环境变量可作为免配置的替代方案（例如 IT 在机器层面统一下发 CA 路径时）。
+- 提取服务端 CA 证书链：
+  `openssl s_client -showcerts -connect host:443 </dev/null | openssl x509 -outform PEM > ca.pem`
+
+!!! warning "请勿关闭校验"
+    `ssl_verify: false`（或 `SSL_VERIFY=false`）会**完全关闭** TLS 证书校验，使连接暴露于中间人攻击。请始终优先选择信任 CA 证书包。
 
 ## 支持的提供方
 
