@@ -4,9 +4,33 @@
 
 ### 0.3.5
 
+**新功能**
+
+- **SQL Policy Framework** - 新增请求级 SQL 读查询策略框架，支持从 API 请求的 `X-Datus-Principal` 读取结构化调用方身份，并在数据库读查询执行前调用自定义 provider 改写或拒绝 SQL；改写后的 SQL 会再次经过只读校验，生产部署可接入自有鉴权或策略服务。[#1020](https://github.com/Datus-ai/Datus-agent/pull/1020) [#1028](https://github.com/Datus-ai/Datus-agent/pull/1028) [文档](https://docs.datus.ai/zh/configuration/sql_policy/)
+- **Strict OSI 语义创作路径** - `gen_semantic_model` / `gen_metrics` 现可按 OSI adapter 自动进入严格 OSI authoring 模式，生成 OSI core YAML，通过 adapter 校验、dry-run 后发布，并把可查询指标同步回 Knowledge Base，避免 MetricFlow-only 字段泄漏到源语义模型中。[#1007](https://github.com/Datus-ai/Datus-agent/pull/1007) [文档](https://docs.datus.ai/zh/adapters/osi_semantic_adapter/)
+- **Metric Preview API** - 新增已保存指标的维度发现与 SQL 预览接口，SaaS metric editor 可在 UI 中列出可查询维度、dry-run 编译指标 SQL，并用结构化 preflight 错误提示不兼容维度组合。[#992](https://github.com/Datus-ai/Datus-agent/pull/992)
+- **轻量化 `/init` + 全新 `/build-kb`** - `/init` 现在只做快速项目扫描、`AGENTS.md` 清单和文件类 knowledge/memory 写入；重型向量知识库构建迁移到新的 `/build-kb` 命令，支持按文件、表、datasource 或业务域限定范围，并通过内置 `storage-classify` skill 路由 semantic models、metrics、reference SQL、knowledge、memory、skills 和 `AGENTS.md`。[#997](https://github.com/Datus-ai/Datus-agent/pull/997) [#1022](https://github.com/Datus-ai/Datus-agent/pull/1022) [文档](https://docs.datus.ai/zh/cli/build_kb_command/)
+
 **增强**
 
-- **轻量化 `/init` + 全新 `/build-kb`** - `/init` 现在是一次快速、无确认门的流程:扫描项目并写出 `AGENTS.md` 清单,以及文件类存储(原子事实写入 `./knowledge/*.md`,持久偏好写入 memory),不再触及昂贵的向量存储。重型知识库构建迁移到全新的 `/build-kb` 命令——它构建 semantic models / metrics / reference SQL,接受可选的自由文本文件/库表/业务域范围,并刷新 `AGENTS.md` 的 KB 索引。[文档](cli/build_kb_command.zh.md)
+- **系统 Prompt 前缀缓存** - AgenticNode 在 session 首次 LLM 调用时快照系统 prompt，后续轮次复用同一前缀以稳定命中 Anthropic ephemeral cache / OpenAI prompt cache；当前 datasource 等运行时信息改走 user turn 的 `<system_reminder>` 注入，切换模型时自动重建快照。[#996](https://github.com/Datus-ai/Datus-agent/pull/996)
+- **AskMetrics 查询流升级** - `ask_metrics` 支持可选的最终结果选择、完整 `query_metrics` 结果缓存和压缩预览展示，并能在同环比问题中自动扩展当前值、上一周期值和差值指标，提升 benchmark 与复杂指标问答的稳定性。[#1005](https://github.com/Datus-ai/Datus-agent/pull/1005) [文档](https://docs.datus.ai/zh/subagent/ask_metrics/)
+- **同环比指标生成与查询** - `gen_metrics` 可从 LAG SQL 自动生成 `offset_window` 派生指标，`ask_metrics` 会按 offset metadata 匹配正确时间粒度维度，减少因粒度不匹配导致的首期数据缺失。[#989](https://github.com/Datus-ai/Datus-agent/pull/989)
+- **非交互式 Plan Mode** - `datus -p` 新增 `--plan-mode`，print mode 与 benchmark 场景中计划生成后可自动确认执行，不再因等待人工确认而卡住。[#993](https://github.com/Datus-ai/Datus-agent/pull/993)
+
+**Bug 修复**
+
+- **并发权限弹窗不再互相阻塞** - 权限 prompt 锁从 event loop 作用域改为 broker 作用域，独立会话和 sub-agent 在同一 API worker 上不会再互相卡住，同时保留单次运行内一次只展示一个权限弹窗的行为。[#1035](https://github.com/Datus-ai/Datus-agent/pull/1035)
+- **交互式 API 会话保持在线** - 当 `AgentConfig` fingerprint 变化但旧 `DatusService` 仍有活跃任务时，缓存不再提前替换实例，避免用户回复 `/chat/user_interaction` 时命中新的空 task manager 并返回 `SESSION_NOT_FOUND`。[#1032](https://github.com/Datus-ai/Datus-agent/pull/1032)
+- **Claude 原生 SDK 路径完整执行 Hook 生命周期** - Claude 订阅 OAuth token 路径现在与 OpenAI Agents SDK Runner 路径一致，会完整触发 permission、compact、generation 等 hook，不再绕过权限策略或生命周期回调。[#980](https://github.com/Datus-ai/Datus-agent/pull/980)
+- **指标 queryability 与预览更稳** - 修复 metric preview 返回 datasource id 而不是物理 database、queryability publish gate 不接受 canonical `metric_time` evidence、period-offset metric discovery 不稳定，以及 offset-derived metric bootstrap 依赖 authoring format 的问题。[#1019](https://github.com/Datus-ai/Datus-agent/pull/1019) [#1018](https://github.com/Datus-ai/Datus-agent/pull/1018) [#1017](https://github.com/Datus-ai/Datus-agent/pull/1017) [#1011](https://github.com/Datus-ai/Datus-agent/pull/1011)
+- **Anthropic SDK 认证头冲突** - 修复环境变量凭证回退时 Anthropic SDK 发送双重 `Authorization` header 的问题。[#991](https://github.com/Datus-ai/Datus-agent/pull/991)
+- **Python 3.12 CLI 帮助显示恢复可读** - 将 `DBType`、`LLMProvider`、`EmbeddingProvider`、`SQLType` 迁移为 `StrEnum`，避免 argparse 在 Python 3.12 下把枚举候选值显示成原始类名。[#1001](https://github.com/Datus-ai/Datus-agent/pull/1001)
+- **非 DB 节点也能拿到当前日期** - 日期注入从 datasource catalog 注入中拆出，`gen_visual_report`、`skill_creator` 等没有数据库工具的节点也能在 system prompt 中获得当前日期上下文。[#1026](https://github.com/Datus-ai/Datus-agent/pull/1026)
+- **旧版 JSON 数组用户消息可正确解析** - `extract_user_input()` 现在能识别旧版本保存的 JSON 数组消息内容，Web 侧边栏不再直接显示原始 JSON 字符串。[#888](https://github.com/Datus-ai/Datus-agent/pull/888)
+- **API 关闭时不再丢弃后台任务** - 新增统一 background task 注册与 drain 机制，FastAPI lifespan shutdown 前会等待 fire-and-forget 任务完成并记录异常，同时补齐 `DatusServiceCache.shutdown()` 调用。[#1003](https://github.com/Datus-ai/Datus-agent/pull/1003)
+- **CLI 退出不再触发 RuntimeWarning** - 修复 prompt_toolkit teardown 期间 `run_in_terminal_sync()` 创建的 coroutine 被 loop close 丢弃导致的 `RuntimeWarning: coroutine was never awaited`。[#952](https://github.com/Datus-ai/Datus-agent/pull/952)
+- **DBManager 连接状态更健壮** - `DBManager` 现在能容忍被置空的 `_conn_dict` 条目，并在 `list_databases` 失败时记录 traceback，减少长会话或异常恢复中的连接状态崩溃。[#994](https://github.com/Datus-ai/Datus-agent/pull/994)
 
 ### 0.3.4
 
