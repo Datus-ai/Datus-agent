@@ -37,23 +37,59 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Per-event-loop locks to serialize permission prompts within a single loop.
-# A module-level ``asyncio.Lock()`` binds to the loop running on first ``await``
-# and then raises ``Lock is bound to a different event loop`` on every
-# subsequent ``asyncio.run()`` (the CLI creates a fresh loop per turn via
-# ``chat_commands.py``). Key the lock by the running loop so each turn gets its
-# own, while still serializing prompts from parallel tool calls inside one loop.
-_permission_prompt_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = (
+# Per-broker locks to serialize permission prompts within a single agent run.
+#
+# The lock exists so several parallel tool calls in one LLM turn don't fire
+# multiple permission prompts at once. Those parallel calls all share the node's
+# single ``InteractionBroker``, so the broker is the correct serialization
+# scope.
+#
+# Keying by the running event loop instead (the previous design) is WRONG on a
+# long-lived multi-session server: uvicorn runs every request on one shared
+# loop, so a per-loop lock serializes prompts across *independent* sessions and
+# sub-agents. Because the lock is held across the user-response ``await`` inside
+# ``broker.request()``, while session A waits for its answer, sessions B/C/D
+# block inside ``on_tool_start`` *before* reaching ``broker.request()`` — they
+# emit the TOOL "processing" action (claude_model yields it before the gate) but
+# never the INTERACTION event, so their clients hang with no prompt to answer.
+#
+# An ``asyncio.Lock`` binds to the loop of its first ``await`` and then raises
+# "bound to a different event loop" if reused on another loop (the CLI creates a
+# fresh loop per turn via ``chat_commands.py``). We therefore cache ``(loop,
+# lock)`` per broker and rebuild when the loop changes, so a broker reused
+# across CLI turns still gets a loop-correct lock.
+_permission_prompt_locks: "weakref.WeakKeyDictionary[Any, Tuple[asyncio.AbstractEventLoop, asyncio.Lock]]" = (
     weakref.WeakKeyDictionary()
 )
+# Fallback locks for callers without a (weak-referenceable) broker, keyed by the
+# running loop to preserve the legacy behavior in that narrow case.
+_loop_fallback_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
 
 
-def _get_permission_prompt_lock() -> asyncio.Lock:
+def _get_permission_prompt_lock(broker: Any = None) -> asyncio.Lock:
+    """Return the prompt-serialization lock for ``broker`` on the running loop.
+
+    Scoped per broker (i.e. per agent run / session) so concurrent sessions and
+    sub-agents on a shared event loop never block each other's permission
+    prompts. Falls back to a per-loop lock when ``broker`` is missing or not
+    weak-referenceable.
+    """
     loop = asyncio.get_running_loop()
-    lock = _permission_prompt_locks.get(loop)
+    if broker is not None:
+        try:
+            entry = _permission_prompt_locks.get(broker)
+            if entry is None or entry[0] is not loop:
+                lock = asyncio.Lock()
+                _permission_prompt_locks[broker] = (loop, lock)
+                return lock
+            return entry[1]
+        except TypeError:
+            # Broker is not weak-referenceable; fall through to a per-loop lock.
+            pass
+    lock = _loop_fallback_locks.get(loop)
     if lock is None:
         lock = asyncio.Lock()
-        _permission_prompt_locks[loop] = lock
+        _loop_fallback_locks[loop] = lock
     return lock
 
 
@@ -323,8 +359,11 @@ class PermissionHooks(AgentHooks):
                     logger.debug(f"Tool '{tool_name}' already approved for session (cache_key: {cache_key})")
                     return
 
-            # Use lock to prevent multiple prompts at once (for parallel tool calls)
-            async with _get_permission_prompt_lock():
+            # Use lock to prevent multiple prompts at once (for parallel tool
+            # calls within THIS run). Scoped per broker so concurrent sessions
+            # and sub-agents on a shared event loop don't serialize each other's
+            # prompts (see ``_get_permission_prompt_lock``).
+            async with _get_permission_prompt_lock(self.broker):
                 # Re-check cache after acquiring lock (another prompt may have approved it)
                 for cache_key in cache_keys:
                     if self.permission_manager._session_approvals.get(cache_key):
@@ -532,7 +571,7 @@ class PermissionHooks(AgentHooks):
             logger.debug("External path %s already approved for session", resolved.resolved)
             return True
 
-        async with _get_permission_prompt_lock():
+        async with _get_permission_prompt_lock(self.broker):
             if self.permission_manager._session_approvals.get(cache_key):
                 return True
 
