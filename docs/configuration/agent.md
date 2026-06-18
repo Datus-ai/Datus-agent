@@ -162,10 +162,11 @@ ssl_verify (agent.yml)  →  SSL_VERIFY env  →  SSL_CERT_FILE env  →  certif
 - To extract a server's CA chain:
   `openssl s_client -showcerts -connect host:443 </dev/null | openssl x509 -outform PEM > ca.pem`
 
-!!! warning "Do not disable verification"
+!!! warning "Never disable verification"
     `ssl_verify: false` (or `SSL_VERIFY=false`) turns TLS certificate
     verification **off** entirely, leaving the connection exposed to
-    man-in-the-middle attacks. Always prefer trusting the CA bundle.
+    man-in-the-middle attacks. **Do not disable verification** — always resolve
+    certificate problems by trusting the CA bundle instead.
 
 ## Supported LLM Providers
 

@@ -91,8 +91,8 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 - 提取服务端 CA 证书链：
   `openssl s_client -showcerts -connect host:443 </dev/null | openssl x509 -outform PEM > ca.pem`
 
-!!! warning "请勿关闭校验"
-    `ssl_verify: false`（或 `SSL_VERIFY=false`）会**完全关闭** TLS 证书校验，使连接暴露于中间人攻击。请始终优先选择信任 CA 证书包。
+!!! warning "切勿关闭校验"
+    `ssl_verify: false`（或 `SSL_VERIFY=false`）会**完全关闭** TLS 证书校验，使连接暴露于中间人攻击。**请勿关闭校验**，务必通过信任 CA 证书包来解决证书问题。
 
 ## 支持的提供方
 
