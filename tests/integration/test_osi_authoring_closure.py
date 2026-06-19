@@ -19,6 +19,12 @@ pytest.importorskip("metricflow")
 
 from datus.tools.semantic_tools.registry import semantic_adapter_registry
 
+# Deterministic adapter-closure test, but it depends on the optional
+# ``datus_semantic_osi`` / ``metricflow`` packages that are only guaranteed to be
+# installed in the nightly environment. Mark it nightly so the broad nightly suite
+# runs it (the importorskip above still skips gracefully when the deps are absent).
+pytestmark = pytest.mark.nightly
+
 GOOD_OSI = """
 version: 0.2.0.dev0
 semantic_model:
@@ -111,6 +117,7 @@ async def test_bad_osi_returns_business_semantic_error(tmp_path):
     result = await adapter.validate_semantic()
     assert not result.valid
     messages = " ".join(i.message for i in result.issues).lower()
-    # business-semantic phrasing, not MetricFlow YAML internals
-    assert "window" in messages or "ranking" in messages
+    # business-semantic phrasing, not MetricFlow YAML internals; either term
+    # signals the adapter surfaced a business-level error (intentional either-or).
+    assert "window" in messages or "ranking" in messages  # audit-noqa: or_assert
     assert "type_params" not in messages

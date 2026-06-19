@@ -1,0 +1,58 @@
+data_source:
+  name: frpm
+  description: "California Free or Reduced Price Meals (FRPM) data by school. Enrollment counts and free-meal / FRPM eligibility statistics for K-12 students."
+
+  # The frpm table's numeric columns contain spaces (e.g. "Enrollment (K-12)").
+  # MetricFlow wraps a measure's ``expr`` in its own identifier quotes, so a
+  # raw or self-quoted spaced name produces invalid SQL. Aliasing the spaced
+  # columns to clean snake_case names in the source query lets the measures
+  # reference plain identifiers that MetricFlow can quote and aggregate.
+  sql_query: |
+    SELECT
+      CDSCode,
+      "Enrollment (K-12)"       AS enrollment_k12,
+      "Free Meal Count (K-12)"  AS free_meal_count_k12,
+      "FRPM Count (K-12)"       AS frpm_count_k12
+    FROM frpm
+
+  identifiers:
+    - name: school
+      type: PRIMARY
+      expr: CDSCode
+      description: "County-District-School (CDS) code, the unique identifier for each school."
+
+  measures:
+    - name: total_enrollment_k12
+      agg: SUM
+      expr: enrollment_k12
+      description: "Total K-12 student enrollment count."
+      create_metric: true
+    - name: free_meal_count_k12
+      agg: SUM
+      expr: free_meal_count_k12
+      description: "Total number of K-12 students eligible for free meals."
+      create_metric: true
+    - name: frpm_count_k12
+      agg: SUM
+      expr: frpm_count_k12
+      description: "Total number of K-12 students eligible for Free or Reduced Price Meals (FRPM)."
+      create_metric: true
+    - name: school_count
+      agg: COUNT_DISTINCT
+      expr: CDSCode
+      description: "Total number of distinct schools in the FRPM dataset."
+      create_metric: true
+
+  dimensions:
+    # california_schools is a static snapshot with no real date column, but
+    # MetricFlow requires every data source to declare a primary TIME dimension.
+    # A constant date satisfies that contract without affecting metric totals.
+    - name: report_date
+      type: TIME
+      expr: "DATE('2013-07-01')"
+      type_params:
+        is_primary: true
+        time_granularity: DAY
+
+  mutability:
+    type: FULL_MUTATION

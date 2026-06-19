@@ -10,7 +10,7 @@ agent:
       type: deepseek
       base_url: https://api.deepseek.com
       api_key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+      model: deepseek-v4-flash
     deepseek-r1:
       type: deepseek
       base_url: https://api.deepseek.com
