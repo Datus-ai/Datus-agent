@@ -4110,9 +4110,33 @@
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
 <h3 id="035">0.3.5<a class="headerlink" href="#035" title="Permanent link">&para;</a></h3>
+<p><strong>新功能</strong></p>
+<ul>
+<li><strong>SQL Policy Framework</strong> - 新增请求级 SQL 读查询策略框架，支持从 API 请求的 <code>X-Datus-Principal</code> 读取结构化调用方身份，并在数据库读查询执行前调用自定义 provider 改写或拒绝 SQL；改写后的 SQL 会再次经过只读校验，生产部署可接入自有鉴权或策略服务。<a href="https://github.com/Datus-ai/Datus-agent/pull/1020">#1020</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1028">#1028</a> <a href="https://docs.datus.ai/zh/configuration/sql_policy/">文档</a></li>
+<li><strong>Strict OSI 语义创作路径</strong> - <code>gen_semantic_model</code> / <code>gen_metrics</code> 现可按 OSI adapter 自动进入严格 OSI authoring 模式，生成 OSI core YAML，通过 adapter 校验、dry-run 后发布，并把可查询指标同步回 Knowledge Base，避免 MetricFlow-only 字段泄漏到源语义模型中。<a href="https://github.com/Datus-ai/Datus-agent/pull/1007">#1007</a> <a href="https://docs.datus.ai/zh/adapters/osi_semantic_adapter/">文档</a></li>
+<li><strong>Metric Preview API</strong> - 新增已保存指标的维度发现与 SQL 预览接口，SaaS metric editor 可在 UI 中列出可查询维度、dry-run 编译指标 SQL，并用结构化 preflight 错误提示不兼容维度组合。<a href="https://github.com/Datus-ai/Datus-agent/pull/992">#992</a></li>
+<li><strong>轻量化 <code>/init</code> + 全新 <code>/build-kb</code></strong> - <code>/init</code> 现在只做快速项目扫描、<code>AGENTS.md</code> 清单和文件类 knowledge/memory 写入；重型向量知识库构建迁移到新的 <code>/build-kb</code> 命令，支持按文件、表、datasource 或业务域限定范围，并通过内置 <code>storage-classify</code> skill 路由 semantic models、metrics、reference SQL、knowledge、memory、skills 和 <code>AGENTS.md</code>。<a href="https://github.com/Datus-ai/Datus-agent/pull/997">#997</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1022">#1022</a> <a href="https://docs.datus.ai/zh/cli/build_kb_command/">文档</a></li>
+</ul>
 <p><strong>增强</strong></p>
 <ul>
-<li><strong>轻量化 <code>/init</code> + 全新 <code>/build-kb</code></strong> - <code>/init</code> 现在是一次快速、无确认门的流程:扫描项目并写出 <code>AGENTS.md</code> 清单,以及文件类存储(原子事实写入 <code>./knowledge/*.md</code>,持久偏好写入 memory),不再触及昂贵的向量存储。重型知识库构建迁移到全新的 <code>/build-kb</code> 命令——它构建 semantic models / metrics / reference SQL,接受可选的自由文本文件/库表/业务域范围,并刷新 <code>AGENTS.md</code> 的 KB 索引。<a href="../cli/build_kb_command/">文档</a></li>
+<li><strong>系统 Prompt 前缀缓存</strong> - AgenticNode 在 session 首次 LLM 调用时快照系统 prompt，后续轮次复用同一前缀以稳定命中 Anthropic ephemeral cache / OpenAI prompt cache；当前 datasource 等运行时信息改走 user turn 的 <code>&lt;system_reminder&gt;</code> 注入，切换模型时自动重建快照。<a href="https://github.com/Datus-ai/Datus-agent/pull/996">#996</a></li>
+<li><strong>AskMetrics 查询流升级</strong> - <code>ask_metrics</code> 支持可选的最终结果选择、完整 <code>query_metrics</code> 结果缓存和压缩预览展示，并能在同环比问题中自动扩展当前值、上一周期值和差值指标，提升 benchmark 与复杂指标问答的稳定性。<a href="https://github.com/Datus-ai/Datus-agent/pull/1005">#1005</a> <a href="https://docs.datus.ai/zh/subagent/ask_metrics/">文档</a></li>
+<li><strong>同环比指标生成与查询</strong> - <code>gen_metrics</code> 可从 LAG SQL 自动生成 <code>offset_window</code> 派生指标，<code>ask_metrics</code> 会按 offset metadata 匹配正确时间粒度维度，减少因粒度不匹配导致的首期数据缺失。<a href="https://github.com/Datus-ai/Datus-agent/pull/989">#989</a></li>
+<li><strong>非交互式 Plan Mode</strong> - <code>datus -p</code> 新增 <code>--plan-mode</code>，print mode 与 benchmark 场景中计划生成后可自动确认执行，不再因等待人工确认而卡住。<a href="https://github.com/Datus-ai/Datus-agent/pull/993">#993</a></li>
+</ul>
+<p><strong>Bug 修复</strong></p>
+<ul>
+<li><strong>并发权限弹窗不再互相阻塞</strong> - 权限 prompt 锁从 event loop 作用域改为 broker 作用域，独立会话和 sub-agent 在同一 API worker 上不会再互相卡住，同时保留单次运行内一次只展示一个权限弹窗的行为。<a href="https://github.com/Datus-ai/Datus-agent/pull/1035">#1035</a></li>
+<li><strong>交互式 API 会话保持在线</strong> - 当 <code>AgentConfig</code> fingerprint 变化但旧 <code>DatusService</code> 仍有活跃任务时，缓存不再提前替换实例，避免用户回复 <code>/chat/user_interaction</code> 时命中新的空 task manager 并返回 <code>SESSION_NOT_FOUND</code>。<a href="https://github.com/Datus-ai/Datus-agent/pull/1032">#1032</a></li>
+<li><strong>Claude 原生 SDK 路径完整执行 Hook 生命周期</strong> - Claude 订阅 OAuth token 路径现在与 OpenAI Agents SDK Runner 路径一致，会完整触发 permission、compact、generation 等 hook，不再绕过权限策略或生命周期回调。<a href="https://github.com/Datus-ai/Datus-agent/pull/980">#980</a></li>
+<li><strong>指标 queryability 与预览更稳</strong> - 修复 metric preview 返回 datasource id 而不是物理 database、queryability publish gate 不接受 canonical <code>metric_time</code> evidence、period-offset metric discovery 不稳定，以及 offset-derived metric bootstrap 依赖 authoring format 的问题。<a href="https://github.com/Datus-ai/Datus-agent/pull/1019">#1019</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1018">#1018</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1017">#1017</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1011">#1011</a></li>
+<li><strong>Anthropic SDK 认证头冲突</strong> - 修复环境变量凭证回退时 Anthropic SDK 发送双重 <code>Authorization</code> header 的问题。<a href="https://github.com/Datus-ai/Datus-agent/pull/991">#991</a></li>
+<li><strong>Python 3.12 CLI 帮助显示恢复可读</strong> - 将 <code>DBType</code>、<code>LLMProvider</code>、<code>EmbeddingProvider</code>、<code>SQLType</code> 迁移为 <code>StrEnum</code>，避免 argparse 在 Python 3.12 下把枚举候选值显示成原始类名。<a href="https://github.com/Datus-ai/Datus-agent/pull/1001">#1001</a></li>
+<li><strong>非 DB 节点也能拿到当前日期</strong> - 日期注入从 datasource catalog 注入中拆出，<code>gen_visual_report</code>、<code>skill_creator</code> 等没有数据库工具的节点也能在 system prompt 中获得当前日期上下文。<a href="https://github.com/Datus-ai/Datus-agent/pull/1026">#1026</a></li>
+<li><strong>旧版 JSON 数组用户消息可正确解析</strong> - <code>extract_user_input()</code> 现在能识别旧版本保存的 JSON 数组消息内容，Web 侧边栏不再直接显示原始 JSON 字符串。<a href="https://github.com/Datus-ai/Datus-agent/pull/888">#888</a></li>
+<li><strong>API 关闭时不再丢弃后台任务</strong> - 新增统一 background task 注册与 drain 机制，FastAPI lifespan shutdown 前会等待 fire-and-forget 任务完成并记录异常，同时补齐 <code>DatusServiceCache.shutdown()</code> 调用。<a href="https://github.com/Datus-ai/Datus-agent/pull/1003">#1003</a></li>
+<li><strong>CLI 退出不再触发 RuntimeWarning</strong> - 修复 prompt_toolkit teardown 期间 <code>run_in_terminal_sync()</code> 创建的 coroutine 被 loop close 丢弃导致的 <code>RuntimeWarning: coroutine was never awaited</code>。<a href="https://github.com/Datus-ai/Datus-agent/pull/952">#952</a></li>
+<li><strong>DBManager 连接状态更健壮</strong> - <code>DBManager</code> 现在能容忍被置空的 <code>_conn_dict</code> 条目，并在 <code>list_databases</code> 失败时记录 traceback，减少长会话或异常恢复中的连接状态崩溃。<a href="https://github.com/Datus-ai/Datus-agent/pull/994">#994</a></li>
 </ul>
 <h3 id="034">0.3.4<a class="headerlink" href="#034" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
