@@ -432,6 +432,31 @@ jobs:
             nightly-process-diagnostics.json
           retention-days: 7
 
+      - name: Check documented coverage gaps
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Rollout step 2 (see docs/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design.md):
+          # runs in --dry-run, so it only writes the digest artifact and makes no
+          # GitHub issue changes. To enable per-flow issue sync, create the
+          # `coverage-gap` label once and drop the --dry-run flag below.
+          uv run python ci/harness/check_nightly_coverage.py \
+            --coverage-map ci/harness/coverage-map.yml \
+            --nightly-manifest nightly-manifest.json \
+            --output coverage-gap-report.md \
+            --repo "${{ github.repository }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --dry-run
+
+      - name: Upload coverage gap report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-gap-report-${{ github.run_number }}
+          path: coverage-gap-report.md
+          retention-days: 7
+
       - name: Send Feishu notification
         if: always()
         uses: actions/github-script@v7
