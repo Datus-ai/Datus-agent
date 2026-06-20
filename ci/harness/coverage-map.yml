@@ -470,7 +470,7 @@ flow_groups:
             nodeids:
               - tests/integration/tools/test_context_search.py
               - tests/integration/tools/test_context_injection.py
-              - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_search_knowledge_returns_seeded_entry
+              - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_search_semantic_objects_surfaces_catalog_table
               - tests/integration/tools/test_context_injection.py::TestContextRetrievalInjection::test_list_subject_tree_nests_all_sources
               - tests/integration/tools/test_context_injection.py::TestContextInjectionRealLLM::test_context_tools_wired_into_node
               - tests/integration/tools/test_context_injection.py::TestContextInjectionRealLLM::test_execute_stream_invokes_context_tools
