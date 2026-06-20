@@ -243,6 +243,14 @@ class OpenAICompatibleModel(LLMBaseModel):
         # SSL_VERIFY so litellm honors it across both the agents-SDK LitellmModel path
         # (whose __init__ accepts no ssl argument) and direct litellm.completion calls.
         # The native Anthropic client (ClaudeModel) reads self.ssl_verify directly.
+        #
+        # Why a process-level env var and not a per-request kwarg: litellm does NOT
+        # thread a per-call ``ssl_verify`` into the Anthropic provider's HTTP client
+        # (verified — the kwarg is silently ignored), and a scoped set/restore around
+        # each call would break the agents-SDK streaming path (Runner.run_streamed does
+        # its network I/O after returning). A process global is the only mechanism that
+        # works across all paths. Blast radius is limited: ``SSL_VERIFY`` is a
+        # litellm-specific variable that standard libraries (requests/httpx/curl) ignore.
         from datus.utils.ssl_utils import normalize_ssl_verify, ssl_verify_to_env
 
         ssl_verify_cfg = getattr(self.model_config, "ssl_verify", None)
