@@ -99,12 +99,11 @@ async def test_dump_to_log_emits_warning_and_returns_text(caplog):
 async def test_install_captures_running_loop():
     """Installation records the running loop so later dumps can resolve it."""
     installed = install_task_dump_signal_handler()
-    if not hasattr(signal, "SIGUSR1"):
-        # Platform without SIGUSR1 (Windows): install must report False, no raise.
-        assert installed is False
-        return
-    assert installed is True
-    assert async_debug._dump_loop is asyncio.get_running_loop()
+    # On platforms without SIGUSR1 (e.g. Windows) install must report False and
+    # capture no loop; everywhere else it installs and captures the running loop.
+    has_sigusr1 = hasattr(signal, "SIGUSR1")
+    assert installed is has_sigusr1
+    assert (async_debug._dump_loop is asyncio.get_running_loop()) is has_sigusr1
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="SIGUSR1 unavailable on this platform")

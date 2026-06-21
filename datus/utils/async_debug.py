@@ -33,6 +33,11 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+# Resolved at import time so the default is safe on platforms lacking ``SIGUSR1``
+# (e.g. Windows): ``getattr`` yields ``None`` there instead of raising, letting
+# ``install_task_dump_signal_handler`` return ``False`` gracefully.
+DEFAULT_TASK_DUMP_SIGNAL: Optional[int] = getattr(signal, "SIGUSR1", None)
+
 # Loop captured at signal-handler install time. ``asyncio.all_tasks()`` needs a
 # loop reference, and a signal handler firing inside the running loop cannot
 # rely on ``get_running_loop()`` being callable, so we stash it here.
@@ -186,7 +191,7 @@ def dump_async_tasks_to_log(loop: Optional[asyncio.AbstractEventLoop] = None, li
 
 
 def install_task_dump_signal_handler(
-    loop: Optional[asyncio.AbstractEventLoop] = None, sig: int = signal.SIGUSR1
+    loop: Optional[asyncio.AbstractEventLoop] = None, sig: Optional[int] = DEFAULT_TASK_DUMP_SIGNAL
 ) -> bool:
     """Install a signal handler that dumps async task stacks to the log.
 
@@ -206,7 +211,7 @@ def install_task_dump_signal_handler(
         return False
     _dump_loop = resolved
 
-    if not hasattr(signal, "Signals") or sig is None:  # pragma: no cover - defensive
+    if sig is None or not hasattr(signal, "Signals"):  # pragma: no cover - defensive
         return False
 
     def _handler(*_args) -> None:
