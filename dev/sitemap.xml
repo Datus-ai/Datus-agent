@@ -526,6 +526,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/subagent/scheduler/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design/</loc>
+        <lastmod>2026-06-22</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/training/llm_trace_usage/</loc>
         <lastmod>2026-06-22</lastmod>
         <changefreq>daily</changefreq>
@@ -1104,6 +1111,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/subagent/scheduler/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devsubagent/scheduler/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design/</loc>
+        <lastmod>2026-06-22</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devsuperpowers/specs/2026-06-20-nightly-coverage-gap-detection-design/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/training/llm_trace_usage/</loc>
