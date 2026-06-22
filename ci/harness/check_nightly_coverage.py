@@ -417,21 +417,22 @@ def main(argv: list[str] | None = None) -> int:
 
     coverage_map = load_coverage_map(Path(args.coverage_map))
     manifest = load_json(Path(args.nightly_manifest))
-    # A missing/corrupt manifest yields an empty ran set, which would make every
-    # covered flow look like drift. Never act on that in live mode — it would
-    # create a wave of false issues when the manifest was merely unavailable.
-    manifest_available = bool(manifest.get("suites"))
     ran_set = build_ran_set(manifest)
+    # Gate on actually-executed nodeids, not just a truthy ``suites`` field: a
+    # missing / corrupt / skipped-only / malformed manifest yields an empty ran
+    # set, which would make every covered flow look like drift and (in live mode)
+    # create a wave of false issues. No executed nodeids → skip issue sync.
+    manifest_available = bool(ran_set)
     results = classify_all(coverage_map, ran_set)
 
     digest = render_digest(results)
     if not manifest_available:
-        digest = f"> ⚠️ nightly manifest unavailable or empty — drift results below are not reliable.\n\n{digest}"
+        digest = f"> ⚠️ no executed nodeids in the nightly manifest — drift results below are not reliable.\n\n{digest}"
     Path(args.output).write_text(digest + "\n", encoding="utf-8")
     print(digest)
 
     if not manifest_available:
-        print("\n[warn] nightly manifest unavailable or empty; skipping issue sync")
+        print("\n[warn] nightly manifest unavailable or had no executed nodeids; skipping issue sync")
         return 0
 
     if args.dry_run:

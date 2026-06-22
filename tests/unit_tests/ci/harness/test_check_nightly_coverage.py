@@ -316,10 +316,8 @@ def test_issue_body_includes_related_gaps() -> None:
     assert "issues/910" in body
 
 
-def test_main_skips_issue_sync_when_manifest_unavailable(tmp_path: Path) -> None:
-    # A missing manifest must NOT trigger issue sync (would mass-create issues).
-    cov_map = tmp_path / "coverage-map.yml"
-    cov_map.write_text(
+def _write_cov_map(path: Path) -> Path:
+    path.write_text(
         "flow_groups:\n"
         "  g:\n"
         "    flows:\n"
@@ -331,12 +329,29 @@ def test_main_skips_issue_sync_when_manifest_unavailable(tmp_path: Path) -> None
         "            nodeids: [t/a.py::t1]\n",
         encoding="utf-8",
     )
+    return path
+
+
+@pytest.mark.parametrize(
+    "manifest_text",
+    [
+        None,  # missing file
+        '{"suites": []}',  # empty
+        '{"suites": [{"status": "skipped", "collection": {"nodeids": ["t/a.py::t1"]}}]}',  # skipped-only
+        '{"suites": "bad"}',  # malformed but truthy
+    ],
+)
+def test_main_skips_issue_sync_without_executed_nodeids(tmp_path: Path, manifest_text: str | None) -> None:
+    # Any manifest that yields no *executed* nodeids must skip issue sync (else
+    # live mode would mass-create false-drift issues). No --dry-run: the guard
+    # must short-circuit before any GitHub client is constructed.
+    cov_map = _write_cov_map(tmp_path / "coverage-map.yml")
+    manifest = tmp_path / "manifest.json"
+    if manifest_text is not None:
+        manifest.write_text(manifest_text, encoding="utf-8")
     out = tmp_path / "report.md"
-    # No --dry-run: the guard (not the dry-run path) must short-circuit before
-    # any GitHub client is constructed.
-    rc = cnc.main(
-        ["--coverage-map", str(cov_map), "--nightly-manifest", str(tmp_path / "missing.json"), "--output", str(out)]
-    )
+
+    rc = cnc.main(["--coverage-map", str(cov_map), "--nightly-manifest", str(manifest), "--output", str(out)])
+
     assert rc == 0
-    report = out.read_text(encoding="utf-8")
-    assert "manifest unavailable" in report
+    assert "no executed nodeids" in out.read_text(encoding="utf-8")
