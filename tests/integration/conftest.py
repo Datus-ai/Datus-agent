@@ -239,15 +239,18 @@ NIGHTLY_SUB_AGENT_NAMES = ["nightly_test", "nightly_n7_test"]
 
 
 @pytest.fixture
-def nightly_agent_config() -> AgentConfig:
+def nightly_agent_config(tmp_path) -> AgentConfig:
     """Load acceptance config for nightly sub-agent tests.
 
     Function-scoped with deepcopy of agentic_nodes to prevent test mutations
-    from leaking into the configuration_manager cache.
+    from leaking into the configuration_manager cache. The SQLite benchmark
+    datasource is also function-scoped so adapters that create support tables
+    cannot mutate the shared ``~/benchmark`` fixture.
     """
-    from tests.conftest import load_acceptance_config
+    from tests.conftest import isolate_bird_sqlite_databases, load_acceptance_config
 
     config = load_acceptance_config(datasource="bird_school")
+    isolate_bird_sqlite_databases(config, tmp_path, ("california_schools",))
     config.rag_base_path = "tests/data"
     config.agentic_nodes = copy.deepcopy(config.agentic_nodes)
     return config

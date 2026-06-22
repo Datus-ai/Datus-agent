@@ -1,5 +1,7 @@
 import argparse
 import os
+import shutil
+import sqlite3
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -19,6 +21,8 @@ TEST_CONF_DIR = Path(__file__).parent / "conf"
 RERUN_LOG_MAX_LINES = int(os.getenv("DATUS_RERUN_LOG_MAX_LINES", "80"))
 RERUN_CAPTURE_LOG_MAX_LINES = int(os.getenv("DATUS_RERUN_CAPTURE_LOG_MAX_LINES", "40"))
 _DATUS_RERUN_REPORTS: list[dict[str, object]] = []
+_BIRD_DEV_DATABASES = Path("benchmark/bird/dev_20240627/dev_databases")
+_GENERATED_SQLITE_TABLES = ("mf_time_spine",)
 
 
 @pytest.fixture
@@ -146,6 +150,86 @@ def load_acceptance_config(datasource: str = "snowflake", home: str = "") -> Age
     return load_agent_config(
         config=str(TEST_CONF_DIR / "agent.yml"), datasource=datasource, home=home, reload=True, force=True, yes=True
     )
+
+
+def _sqlite_uri_to_path(uri: str) -> Path:
+    if uri.startswith("sqlite:///"):
+        return Path(uri.removeprefix("sqlite:///")).resolve()
+    return Path(uri).expanduser().resolve()
+
+
+def _sqlite_path_to_uri(path: Path) -> str:
+    return f"sqlite:///{path.resolve().as_posix()}"
+
+
+def _drop_generated_sqlite_tables(db_path: Path) -> None:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for table in _GENERATED_SQLITE_TABLES:
+            conn.execute(f'DROP TABLE IF EXISTS "{table}"')
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def isolate_bird_sqlite_databases(
+    agent_config: AgentConfig,
+    tmp_root: Path,
+    database_names: Iterable[str],
+    *,
+    reuse_existing: bool = False,
+) -> Path:
+    """Repoint BIRD SQLite datasources at isolated writable database copies.
+
+    Nightly/acceptance configs intentionally reference the developer or CI
+    benchmark checkout under ``~/benchmark``. Tests that initialize adapters
+    capable of DDL, such as MetricFlow, must not write support tables back into
+    that shared fixture. This helper copies the requested databases into a
+    tmp-root benchmark layout, removes known generated support tables from the
+    copies, and rewrites both the ``bird_sqlite`` glob datasource and any
+    single-file datasource that points at a copied database.
+    """
+    names = tuple(dict.fromkeys(database_names))
+    if not names:
+        raise ValueError("database_names must contain at least one database")
+
+    source_root = Path.home() / _BIRD_DEV_DATABASES
+    if not source_root.exists():
+        pytest.skip(f"BIRD benchmark database root not found: {source_root}")
+
+    dest_root = Path(tmp_root) / _BIRD_DEV_DATABASES
+    copied_paths: dict[str, Path] = {}
+    for name in names:
+        src = source_root / name / f"{name}.sqlite"
+        if not src.exists():
+            pytest.skip(f"BIRD benchmark SQLite database not found: {src}")
+        dst = dest_root / name / src.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if not reuse_existing or not dst.exists():
+            shutil.copy2(src, dst)
+        _drop_generated_sqlite_tables(dst)
+        copied_paths[name] = dst.resolve()
+
+    for cfg in agent_config.services.datasources.values():
+        if cfg.path_pattern:
+            pattern_path = Path(os.path.expanduser(cfg.path_pattern)).resolve()
+            if source_root in pattern_path.parents or pattern_path == source_root:
+                cfg.path_pattern = str(dest_root / "**/*.sqlite")
+
+        if not cfg.uri:
+            continue
+        try:
+            db_path = _sqlite_uri_to_path(cfg.uri)
+        except Exception:
+            continue
+        copied = copied_paths.get(db_path.stem)
+        if copied and source_root in db_path.parents:
+            cfg.uri = _sqlite_path_to_uri(copied)
+
+    from datus.tools.db_tools import db_manager as _db_manager
+
+    _db_manager._cli_cache.clear()
+    return dest_root
 
 
 def _tail_lines(text: str, max_lines: int) -> list[str]:

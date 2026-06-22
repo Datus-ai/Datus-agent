@@ -1,3 +1,4 @@
+import copy
 import glob
 import json
 import time
@@ -29,7 +30,7 @@ from datus.schemas.search_metrics_node_models import SearchMetricsInput, SearchM
 from datus.tools.func_tool import db_function_tools
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
-from tests.conftest import TEST_DATA_DIR, load_acceptance_config
+from tests.conftest import TEST_DATA_DIR, isolate_bird_sqlite_databases, load_acceptance_config
 from tests.unit_tests.mock_llm_model import (
     MockLLMResponse,
     MockToolCall,
@@ -105,14 +106,33 @@ def search_metrics_input() -> List[Dict[str, Any]]:
 #    }
 
 
+@pytest.fixture(scope="module")
+def isolated_bird_sqlite_root(tmp_path_factory) -> Path:
+    return tmp_path_factory.mktemp("bird_sqlite")
+
+
+@pytest.fixture(scope="module")
+def isolated_metricflow_duckdb_path(tmp_path_factory) -> Path:
+    return init_metricflow_db(tmp_path_factory.mktemp("metricflow_duckdb") / "duck.db")
+
+
 @pytest.fixture
-def agent_config() -> AgentConfig:
+def agent_config(isolated_bird_sqlite_root, isolated_metricflow_duckdb_path) -> AgentConfig:
     # Post-refactor (PR #542) legacy configs with `path_pattern` expand into
     # one database per matched file (keyed by logic name). The old "bird_sqlite" key is no
     # longer valid, so the loader drops it; individual tests override `current_datasource` as
     # needed. Seed a valid default here so fixtures that touch the DB (e.g. `function_tools`)
     # can initialize.
     agent_config = load_acceptance_config(datasource="bird_sqlite")
+    isolate_bird_sqlite_databases(
+        agent_config,
+        isolated_bird_sqlite_root,
+        ("california_schools", "financial", "toxicology", "card_games"),
+        reuse_existing=True,
+    )
+    if "duckdb" in agent_config.services.datasources:
+        agent_config.services.datasources["duckdb"].uri = str(isolated_metricflow_duckdb_path)
+    agent_config.agentic_nodes = copy.deepcopy(agent_config.agentic_nodes)
     if not agent_config.current_datasource and agent_config.services.datasources:
         agent_config.current_datasource = "bird_school"
     Path(agent_config.rag_storage_path()).mkdir(parents=True, exist_ok=True)
@@ -130,28 +150,29 @@ def function_tools(agent_config: AgentConfig) -> List[Tool]:
     return db_function_tools(agent_config)
 
 
-def init_metricflow_db() -> None:
-    db_dir = TEST_DATA_DIR / "datus_metricflow_db"
-    db_path = db_dir / "duck.db"
-    if not db_dir.exists():
-        db_dir.mkdir(parents=True, exist_ok=True)
+def init_metricflow_db(db_path: Path) -> Path:
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if db_path.exists():
+        db_path.unlink()
     csv_path: Path = Path(__file__).parent / "data/metricflow_csv" / "*.csv"
     conn = duckdb.connect(db_path)
-    conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
-    csv_files = glob.glob(str(csv_path))
-    for csv_file in csv_files:
-        full_file_name = Path(csv_file).name
-        file_name = full_file_name.split(".")[0]
-        table_name = f"mf_demo.{file_name}"
-        conn.execute(f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)")
-    conn.close()
+    try:
+        conn.execute("CREATE SCHEMA IF NOT EXISTS mf_demo;")
+        csv_files = glob.glob(str(csv_path))
+        for csv_file in csv_files:
+            full_file_name = Path(csv_file).name
+            file_name = full_file_name.split(".")[0]
+            table_name = f"mf_demo.{file_name}"
+            conn.execute(
+                f"CREATE OR REPLACE TABLE {table_name} AS SELECT * FROM read_csv_auto('{csv_file}', header=TRUE)"
+            )
+    finally:
+        conn.close()
+    return db_path
 
 
 class TestNodeFactory:
     """Test suite for Node class"""
-
-    def setup_method(self) -> None:
-        init_metricflow_db()
 
     def test_node_initialization(self, agent_config):
         """Test node initialization"""
