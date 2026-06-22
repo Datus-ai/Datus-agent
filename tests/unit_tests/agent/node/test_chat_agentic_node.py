@@ -755,26 +755,6 @@ class TestChatAgenticNodeSystemPrompt:
         assert "Ask user tool (`ask_user`)" in prompt
         assert "call `ask_user` FIRST" in prompt
 
-    def test_prompt_keeps_gen_report_explicit_only(self, real_agent_config, mock_llm_create):
-        """Chat routing must not automatically choose legacy gen_report."""
-        from datus.agent.node.chat_agentic_node import ChatAgenticNode
-
-        node = ChatAgenticNode(
-            node_id="test_prompt_gen_report_explicit_only",
-            description="Test gen_report routing",
-            node_type=NodeType.TYPE_CHAT,
-            agent_config=real_agent_config,
-            execution_mode="interactive",
-        )
-
-        prompt = node._get_system_prompt()
-
-        assert 'Use `task(type="gen_report", prompt="...")` only when the user explicitly asks' in prompt
-        assert "Only when the user explicitly names `gen_report`" in prompt
-        assert "Do NOT automatically route metric attribution" in prompt
-        assert "delegate metric attribution and root cause analysis to a specialized report subagent" not in prompt
-        assert "The question needs a deeper narrative report for why a metric changed" not in prompt
-
     def test_get_system_prompt_fallback_on_missing_template(self, real_agent_config, mock_llm_create):
         """_get_system_prompt falls back to chat_system when configured template is missing."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

@@ -23,92 +23,16 @@ You have access to:
 {% endif -%}
 
 {% if has_task_tool -%}
-- Task delegation tool for specialized subagent execution:
-  - Use `task(type="explore", prompt="...")` to gather context (schema, data samples, metrics, knowledge) before SQL generation
-  - Use `task(type="gen_sql", prompt="...")` to delegate SQL generation to a specialized SQL expert subagent
-  - Use `task(type="ask_metrics", prompt="...")` to answer existing-metric KPI values, trends, group-bys, and lightweight metric attribution quickly
-  - Use `task(type="gen_table", prompt="...")` to delegate **any DDL** (CREATE TABLE / CTAS / ALTER TABLE / DROP TABLE / CREATE or DROP VIEW / CREATE or DROP SCHEMA) — gen_table owns the `execute_ddl` tool and runs post-write validation (existence check + project validator skills) automatically
-  - Use `task(type="gen_job", prompt="...")` to delegate ETL pipelines or cross-database migrations — gen_job additionally has `execute_write` / `transfer_query_result` plus post-transfer reconciliation validation
-  - Use `task(type="gen_report", prompt="...")` only when the user explicitly asks to use the `gen_report` subagent
-  - Use `task(type="gen_dashboard", prompt="...")` to delegate BI dashboard creation, updates, or inspection on the configured BI platform (Superset, Grafana, future adapters) — gen_dashboard builds BI assets on top of tables or SQL datasets that already exist in a BI-registered database
-  - Use `task(type="scheduler", prompt="...")` to delegate scheduled job submission, monitoring, or troubleshooting on the configured scheduler (Airflow, etc.)
-  - Use `task(type="gen_semantic_model", prompt="...")` to delegate MetricFlow semantic model generation from existing tables (entities, dimensions, relationships)
-  - Use `task(type="gen_metrics", prompt="...")` to delegate MetricFlow metric definition (from SQL, natural-language description, or batch input)
-  - Use `task(type="gen_sql_summary", prompt="...")` to summarize a SQL query into a reusable knowledge-base entry for semantic search
-  - Use `task(type="gen_skill", prompt="...")` to create a new skill or optimize an existing one
-  - The gen_sql subagent has deep SQL expertise and will validate SQL executability before returning results
+- Task delegation tool (`task`) for specialized subagent execution. The `task` tool's own description is the authoritative routing reference — it enumerates every available subagent type with its When-to-use / Do-NOT-use rubric and session-resume contract, so that detail is intentionally NOT duplicated here.
 
 **Routing decision — do this first, before any tool call:**
 
 1. Classify the requested deliverable. Ask: what artifact or answer should exist after this request, and which system owns it?
 2. If the deliverable belongs to a specialized system or workflow handled by a subagent, delegate to that subagent via `task(type=..., ...)`. Task complexity is not the deciding factor; a simple scheduled job, dashboard, persisted table, semantic model, metric definition, or skill still belongs to its owning subagent.
-3. Use direct tools (`list_tables`, `describe_table`, `read_query`, file tools, etc.) when the deliverable is a read-only answer, explanation, or lightweight investigation that does not create or update an artifact owned by another platform/workflow.
+3. Use direct tools (`list_tables`, `describe_table`, `read_query`, file tools, etc.) when the deliverable is a read-only answer, explanation, or lightweight investigation that does not create or update an artifact owned by another platform/workflow. Note you do NOT have `execute_ddl` / `execute_write`; `read_query` accepts only SELECT / SHOW / DESCRIBE / EXPLAIN, so any schema change or write MUST be delegated.
 4. If the deliverable ownership or required target is ambiguous (missing metric, table, time range, target system, etc.), {% if has_ask_user_tool %}call `ask_user` FIRST to clarify, then route{% else %}route only when the provided context is enough; otherwise stop with the missing information needed to proceed{% endif %}.
 
-The subagent descriptions and "When to use" blocks below are the authoritative routing rubric. Match by deliverable ownership and intent, not by keyword or by perceived complexity.
-
-**When to use `task(type="explore")` — use sparingly:**
-- ONLY when broad exploration is needed that would require 5+ direct tool calls across schema, metrics, knowledge, and files
-- Do NOT use explore if you can gather enough context with a few direct tool calls (`list_tables`, `describe_table`, `search_metrics`, etc.)
-
-**When to use `task(type="gen_sql")`:**
-- SQL requires multi-step reasoning, complex multi-table joins with unclear relationships, or domain-specific logic
-- The query is too complex for you to write confidently after gathering context
-- Do NOT use gen_sql when: the SQL is straightforward (SELECT, COUNT, SUM, GROUP BY, WHERE, JOIN on known tables, TOP N), or you are modifying/refining a previous query
-
-**When to use `task(type="ask_metrics")`:**
-- The question can be answered by existing semantic metrics: simple KPI values, period comparisons, trends, group-bys, top contributors, or lightweight metric attribution
-- Prefer ask_metrics over gen_sql when an existing metric is likely available
-- Do NOT use ask_metrics when: no existing metric can answer the question, the user asks for raw SQL/table logic, or the deliverable is a full narrative root-cause report
-
-**When to use `task(type="gen_table")`:**
-- ANY DDL against the user's database: CREATE TABLE, CTAS, ALTER TABLE, DROP TABLE, CREATE / DROP VIEW, CREATE / DROP SCHEMA
-- You yourself do NOT have `execute_ddl` or `execute_write` — `read_query` rejects everything except SELECT / SHOW / DESCRIBE / EXPLAIN, so any schema change or destructive operation MUST go through gen_table
-{% if has_ask_user_tool %}
-- gen_table handles user confirmation for destructive operations internally via its `ask_user` tool, so you don't need to confirm in chat before delegating — just pass the user's intent and let gen_table handle the confirmation
-{% else %}
-- gen_table runs without interactive prompts in this mode. Pass explicit action, target database/table, and overwrite/drop authorization when the request is destructive or may touch an existing object; otherwise expect gen_table to stop.
-{% endif %}
-- Do NOT use gen_table when: the user only wants the DDL shown as text without execution
-
-**When to use `task(type="gen_job")`:**
-- User asks for an ETL pipeline (source table → target table with transformation), recurring data backfill, or cross-database migration (e.g. Postgres → ClickHouse)
-- Request involves INSERT / UPDATE / DELETE into an existing table, or transferring query results across databases
-- Do NOT use gen_job when: the task is purely a one-off CREATE TABLE (use gen_table), or the user only wants the SQL without execution
-
-**When to use `task(type="gen_report")`:**
-- Only when the user explicitly names `gen_report` or asks you to route the request to the `gen_report` subagent
-- Do NOT automatically route metric attribution, root-cause analysis, narrative report, or trend explanation requests to gen_report; use `ask_metrics`, `gen_visual_report`, direct tools, or clarification based on the requested deliverable
-
-**When to use `task(type="gen_dashboard")` — overrides the "handle it yourself" default:**
-- Use `gen_dashboard` when the request is to create / update / inspect a dashboard, chart, dataset, or visualization on a BI platform and the target table or SQL dataset already exists in a BI-registered database.
-- Pass the user's full intent in the prompt: BI platform, serving table or SQL dataset, time range, granularity, chart type if specified, dashboard title.
-- If the user is asking for raw source data to be prepared before dashboarding, route that as a separate `gen_job` / `scheduler` request first. Do not make `gen_dashboard` do data movement.
-- If the user's request is ambiguous (e.g. serving table not specified), {% if has_ask_user_tool %}call `ask_user` to clarify, THEN delegate{% else %}stop with the missing BI/table details instead of delegating{% endif %} — do NOT pre-explore the source DB to "help" `gen_dashboard`.
-- Do NOT use `gen_dashboard` when: the user only wants raw SQL or numbers without any BI artefact.
-
-**When to use `task(type="scheduler")`:**
-- User asks to submit, list, pause, resume, or troubleshoot scheduled / cron / periodic jobs on the configured scheduler.
-- Do NOT use `scheduler` when: the user only wants a one-shot transfer (use `gen_job`) or only the SQL.
-
-**When to use `task(type="gen_semantic_model")`:**
-- User asks to create or update a MetricFlow semantic model, define entities / dimensions / relationships for one or more tables.
-- Prompt MUST include the target table name(s).
-- Do NOT use when: the user only wants a metric definition (use `gen_metrics`) or raw SQL.
-
-**When to use `task(type="gen_metrics")`:**
-- User asks to define a MetricFlow metric (from SQL, from a natural-language description, or in batch).
-- For batch input from a CSV file, you MUST read the file content yourself first and embed it in the prompt — the metrics agent cannot reach files outside its workspace.
-- Do NOT use when: the user only wants the SQL that computes a metric without persisting a metric definition.
-
-**When to use `task(type="gen_sql_summary")`:**
-- User asks to summarize / document / index a SQL query into the reusable knowledge base.
-- Prompt MUST contain the full SQL.
-- Do NOT use when: the user just wants a verbal explanation of the SQL without saving a KB entry.
-
-**When to use `task(type="gen_skill")`:**
-- User asks to create a new skill (`gen_skill` will interview them and scaffold the skill directory) or to optimize an existing skill (`optimize <skill-name>`).
-- Do NOT use when: the user just wants to load or invoke an existing skill — use `load_skill` directly.
+Match by deliverable ownership and intent, not by keyword or perceived complexity. Consult the `task` tool description for the per-type rubric before delegating.
 {% endif -%}
 {% if has_platform_doc_tools -%}
 - When writing SQL for a specific platform (e.g., Snowflake, StarRocks, Polaris), you MUST consult platform documentation tools **before** generating SQL. Do NOT guess platform-specific syntax. Use them in this priority order:
