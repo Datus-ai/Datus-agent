@@ -340,6 +340,10 @@ class ChatTaskManager:
                 agent_config.set_active_custom(model_id, persist=False)
             else:
                 agent_config.set_active_provider_model(provider, model_id, persist=False)
+        # Per-request datasource override (e.g. an IM channel pinned to a datasource).
+        # Switches the connection profile; the setter validates it exists in config.
+        if request.datasource:
+            agent_config.current_datasource = request.datasource
         request.catalog, request.database, request.db_schema = _fill_database_context(
             agent_config,
             catalog=request.catalog,

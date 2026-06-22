@@ -396,7 +396,9 @@ class TestSchedulerRegistration:
             result = tool._build_node_input(node, "List all jobs")
             assert isinstance(result, SchedulerNodeInput)
             assert result.user_message == "List all jobs"
-            assert result.database == real_agent_config.current_datasource
+            # ``database`` is a physical-database context field, not a datasource slot; the
+            # builder leaves it unset rather than mislabeling it with current_datasource.
+            assert result.database is None
 
     def test_node_factory_with_input_data(self, real_agent_config, mock_llm_create):
         """Node.new_instance with input_data should set node.input."""

@@ -20,7 +20,7 @@ class SchedulerNodeInput(BaseInput):
     """Input model for SchedulerAgenticNode."""
 
     user_message: str = Field(..., description="User's scheduler request (required)")
-    database: Optional[str] = Field(None, description="Source datasource")
+    database: Optional[str] = Field(None, description="Database name for context")
     prompt_version: Optional[str] = Field(None, description="Prompt template version")
 
 

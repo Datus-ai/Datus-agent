@@ -217,10 +217,11 @@ def _table_to_target(
 
     datasource_key = datasource or None
     catalog: Optional[str] = None
-    # Default the *physical* database to the connector's active namespace,
-    # fall back to the datasource key only when active_database is empty
-    # (tests / adapters that don't expose one).
-    effective_db = active_database or datasource or ""
+    # The *physical* database is the connector's active namespace. We deliberately do NOT
+    # fall back to the datasource key: a datasource name is not a database, and feeding it
+    # into ``TableTarget.database`` (which flows to ``describe_table`` for existence checks)
+    # would query a bogus namespace. Connector routing already uses ``datasource_key``.
+    effective_db = active_database or ""
     effective_schema = schema
     if sql_catalog_slot:
         if _dialect_has_catalog(dialect):

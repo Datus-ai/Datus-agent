@@ -1951,8 +1951,10 @@ class DBFuncTool:
         ``TableTarget.database`` gets the *physical* database the transfer
         wrote into — taken from the parsed ``target_table`` identifier when
         it carries a ``db.schema.table`` qualifier, otherwise from the
-        target connector's active namespace (``target_active_database``),
-        with a final fallback to the datasource key for backward compat.
+        target connector's active namespace (``target_active_database``).
+        It is left empty when neither is available: the datasource key is a
+        connection profile, not a database, and must not stand in for one
+        (connector routing already uses ``target_datasource``).
         """
         from datus.utils.sql_utils import parse_table_name_parts
         from datus.validation.report import DBRef, TableTarget, TransferTarget
@@ -1961,7 +1963,7 @@ class DBFuncTool:
         parsed_db = parts.get("database_name") or parts.get("catalog_name") or None
         schema = parts.get("schema_name") or None
         table = parts.get("table_name") or target_table
-        effective_database = parsed_db or target_active_database or target_datasource
+        effective_database = parsed_db or target_active_database or ""
 
         tgt = TransferTarget(
             source=DBRef(name=source_datasource),

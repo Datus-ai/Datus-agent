@@ -151,6 +151,10 @@ class ChatInput(BaseModel):
     )
 
     # Database context fields
+    datasource: Optional[str] = Field(
+        None,
+        description="Datasource (connection profile) override; selects which configured datasource to use",
+    )
     catalog: Optional[str] = Field(None, description="Database catalog for context")
     database: Optional[str] = Field(None, description="Database name for context")
     db_schema: Optional[str] = Field(None, description="Database schema for context")

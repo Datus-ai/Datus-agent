@@ -1707,3 +1707,49 @@ class TestStartChatRemoteSourceHardening:
         assert cfg.filesystem_strict is True
         assert cfg.bash_tool_enabled is True
         assert cfg._client_source is None
+
+
+class TestStartChatDatasourceOverride:
+    """A per-request ``datasource`` (e.g. an IM channel override) switches the
+    connection profile without leaking into the physical ``database`` slot."""
+
+    @pytest.mark.asyncio
+    async def test_request_datasource_switches_current_datasource(self, real_agent_config, monkeypatch):
+        import copy as _copy
+
+        from datus.api.models.cli_models import StreamChatInput
+
+        # Inject a second datasource so the switch is observable (not a no-op).
+        sources = real_agent_config.services.datasources
+        sources["analytics"] = _copy.deepcopy(sources["california_schools"])
+        assert real_agent_config.current_datasource == "california_schools"
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["agent_config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", session_id="ds-override", datasource="analytics")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        cfg = captured["agent_config"]
+        # The cloned config switched datasource; the datasource name never landed in database
+        # (database, if filled by _fill_database_context, is the resolved physical db name).
+        assert cfg.current_datasource == "analytics"
+        assert request.database != "analytics"
+        # Original config untouched because start_chat deep-copies.
+        assert real_agent_config.current_datasource == "california_schools"
+
+    @pytest.mark.asyncio
+    async def test_invalid_request_datasource_raises(self, real_agent_config, monkeypatch):
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.utils.exceptions import DatusException
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", lambda *a, **k: None)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hi", session_id="ds-invalid", datasource="nonexistent")
+        with pytest.raises(DatusException):
+            await manager.start_chat(real_agent_config, request)

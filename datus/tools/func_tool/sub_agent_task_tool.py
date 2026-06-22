@@ -930,7 +930,13 @@ class SubAgentTaskTool:
     # ── input building ─────────────────────────────────────────────────
 
     def _build_node_input(self, node, prompt: str):
-        """Build the appropriate input object for the given node."""
+        """Build the appropriate input object for the given node.
+
+        The ``database`` context field is intentionally left unset: it denotes a physical
+        database name, not a datasource. Each node is constructed with ``agent_config`` and
+        routes through ``current_datasource``'s default database on its own, so stuffing the
+        datasource name into ``database`` here would only mislabel the context.
+        """
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
         from datus.schemas.explore_agentic_node_models import ExploreNodeInput
@@ -939,13 +945,11 @@ class SubAgentTaskTool:
         if isinstance(node, ExploreAgenticNode):
             return ExploreNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, GenSQLAgenticNode):
             return GenSQLNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -955,7 +959,6 @@ class SubAgentTaskTool:
 
             return AskMetricsNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         # Built-in system subagent input types
@@ -970,7 +973,6 @@ class SubAgentTaskTool:
 
             return SemanticNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, (GenSemanticModelAgenticNode, GenMetricsAgenticNode)):
@@ -978,7 +980,6 @@ class SubAgentTaskTool:
 
             return SemanticNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         if isinstance(node, SqlSummaryAgenticNode):
@@ -986,7 +987,6 @@ class SubAgentTaskTool:
 
             return SqlSummaryNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
@@ -996,7 +996,6 @@ class SubAgentTaskTool:
 
             return GenDashboardNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
@@ -1006,7 +1005,6 @@ class SubAgentTaskTool:
 
             return SchedulerNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
@@ -1016,7 +1014,6 @@ class SubAgentTaskTool:
 
             return GenReportNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_visual_report_agentic_node import GenVisualReportAgenticNode
@@ -1026,7 +1023,6 @@ class SubAgentTaskTool:
 
             return GenVisualReportNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_visual_dashboard_agentic_node import GenVisualDashboardAgenticNode
@@ -1036,7 +1032,6 @@ class SubAgentTaskTool:
 
             return GenVisualDashboardNodeInput(
                 user_message=prompt,
-                database=self.agent_config.current_datasource,
             )
 
         from datus.agent.node.gen_skill_agentic_node import SkillCreatorAgenticNode

@@ -282,8 +282,15 @@ class TestDbConfigName:
         assert result == "ns::myfile"
 
     def test_other(self):
-        result = db_config_name("ns", "mysql", "ignored")
-        assert result == "ns::ns"
+        # The physical database name is honored for every dialect; the datasource name is
+        # never duplicated into the database slot (no more "ns::ns").
+        result = db_config_name("ns", "mysql", "mydb")
+        assert result == "ns::mydb"
+
+    def test_other_without_name_leaves_database_empty(self):
+        # No physical database given → empty second component, not the datasource name.
+        result = db_config_name("ns", "mysql")
+        assert result == "ns::"
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +339,53 @@ class TestDBManager:
             connections = mgr.get_connections("ns")
         assert isinstance(connections, dict)
         assert set(connections.keys()) == {"a", "b"}
+
+    def test_get_connections_unconfigured_database_not_set_to_datasource_name(self):
+        # Regression: a single (server) datasource with no ``database`` configured must not
+        # have the datasource name leak into the connection's database. get_db_uris keys the
+        # map on the datasource name as a display fallback, but that label must not be fed
+        # back as a database override.
+        from datus.configuration.agent_config import DbConfig
+
+        configs = {"mypg": DbConfig(type="postgresql", host="h", port="5432", uri="postgresql://h:5432/")}
+        mgr = DBManager(configs)
+        built = {}
+
+        def _capture(cfg):
+            built["database"] = cfg.database
+            return MagicMock()
+
+        with patch.object(mgr, "_build_conn", side_effect=_capture):
+            connections = mgr.get_connections("mypg")
+        # Display key still reflects the datasource label.
+        assert set(connections.keys()) == {"mypg"}
+        # But the connector is built without the datasource name as its database.
+        assert built["database"] == ""
+
+    def test_first_conn_with_name_returns_database_name_not_datasource(self):
+        # Regression: first_conn_with_name must return the resolved *database* name, never the
+        # datasource name. A server datasource with no configured database yields an empty name.
+        from datus.configuration.agent_config import DbConfig
+
+        mgr = DBManager({"mypg": DbConfig(type="postgresql", host="h", uri="postgresql://h/")})
+        connector = MagicMock()
+        connector.database_name = ""
+        with patch.object(mgr, "_build_conn", return_value=connector):
+            name, conn = mgr.first_conn_with_name("mypg")
+        assert name == ""  # not "mypg"
+        assert conn is connector
+
+    def test_first_conn_with_name_prefers_connector_derived_name(self):
+        # SQLite/DuckDB derive the database name from the file path on the connector, which
+        # cfg.database does not carry; first_conn_with_name must surface that real name.
+        from datus.configuration.agent_config import DbConfig
+
+        mgr = DBManager({"school": DbConfig(type="sqlite", uri="sqlite:///x/california_schools.sqlite")})
+        connector = MagicMock()
+        connector.database_name = "california_schools"
+        with patch.object(mgr, "_build_conn", return_value=connector):
+            name, _ = mgr.first_conn_with_name("school")
+        assert name == "california_schools"  # not "school"
 
     def test_duckdb_config_includes_extra_runtime_options(self):
         mgr = DBManager({})

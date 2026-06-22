@@ -729,7 +729,9 @@ class TestGenDashboardRegistration:
             result = tool._build_node_input(node, "List all dashboards")
             assert isinstance(result, GenDashboardNodeInput)
             assert result.user_message == "List all dashboards"
-            assert result.database == real_agent_config.current_datasource
+            # ``database`` is a physical-database context field, not a datasource slot; the
+            # builder leaves it unset rather than mislabeling it with current_datasource.
+            assert result.database is None
 
 
 # ---------------------------------------------------------------------------

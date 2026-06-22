@@ -212,13 +212,32 @@ class DBManager:
         datasource yields its single configured database. Callers that probe health or list
         databases must iterate the map so multi-database datasources aren't reduced to one.
         """
-        return {db_name: self._init_connection(datasource, db_name) for db_name in self.get_db_uris(datasource)}
+        cfg = self._db_configs.get(datasource)
+        # Only a glob datasource's keys are genuine per-file database names safe to pass back
+        # as an override. A single datasource's key may be a display fallback (the datasource
+        # name when ``database`` is unconfigured); feeding that back would mis-set the
+        # connection's database to the datasource name, so resolve it via the default path.
+        if cfg is not None and cfg.path_pattern:
+            return {db_name: self._init_connection(datasource, db_name) for db_name in self.get_db_uris(datasource)}
+        return {db_name: self._init_connection(datasource, "") for db_name in self.get_db_uris(datasource)}
 
     def first_conn(self, datasource: str) -> BaseSqlConnector:
         return self._init_connection(datasource, "")
 
     def first_conn_with_name(self, datasource: str) -> Tuple[str, BaseSqlConnector]:
-        return datasource, self._init_connection(datasource, "")
+        """Default connector for ``datasource`` plus its resolved database name.
+
+        The name is the *database* name (a glob datasource's first file, or a server
+        datasource's configured ``database``), not the datasource name — empty when no
+        database is configured. Callers needing a display label must fall back to the
+        datasource name themselves rather than relying on this slot.
+        """
+        connector = self._init_connection(datasource, "")
+        resolved, _ = self._resolve_db_config(datasource, "")
+        # Prefer the connector's own database name (e.g. SQLite/DuckDB derive it from the
+        # file path, which ``cfg.database`` doesn't carry); fall back to the config-resolved
+        # name. Both are real database names — never the datasource name.
+        return (connector.database_name or resolved), connector
 
     def get_db_uris(self, datasource: str) -> Dict[str, str]:
         cfg = self._db_configs.get(datasource)
@@ -383,10 +402,10 @@ class DBManager:
 
 
 def db_config_name(datasource: str, db_type: str, name: str = "") -> str:
-    if db_type == DBType.SQLITE or db_type == DBType.DUCKDB:
-        return f"{datasource}::{name}"
-    # fix local snowflake
-    return f"{datasource}::{datasource}"
+    # ``datasource::<database>`` for every dialect. The second component is the physical
+    # database name (empty when unspecified); the datasource name is never duplicated into
+    # it — a datasource is a connection profile, not a database.
+    return f"{datasource}::{name}"
 
 
 # External factory for DBManager creation (used by SaaS backend for connection pooling)

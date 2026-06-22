@@ -269,7 +269,9 @@ class TestResolveNodeType:
             f"input builder returned wrong type: {type(node_input).__name__}"
         )
         assert node_input.user_message == prompt
-        assert node_input.database == "test_db"
+        # The ``database`` context field denotes a physical database, not a datasource, so the
+        # builder must not stuff the datasource name ("test_db") into it; it stays unset.
+        assert node_input.database is None
 
     def test_gen_visual_report_rejects_session_id(self, task_tool):
         """gen_visual_report has the same no-resume contract as
@@ -336,9 +338,9 @@ class TestResolveNodeType:
             f"input builder returned wrong type: {type(node_input).__name__}"
         )
         assert node_input.user_message == prompt
-        # ``database`` is sourced from ``agent_config.current_datasource``
-        # which the fixture pins to "test_db".
-        assert node_input.database == "test_db"
+        # ``database`` denotes a physical database, not a datasource, so the builder leaves it
+        # unset rather than stuffing in ``current_datasource`` ("test_db").
+        assert node_input.database is None
 
     def test_gen_visual_dashboard_rejects_session_id(self, task_tool):
         """``_create_builtin_node`` for gen_visual_dashboard MUST fail
@@ -576,7 +578,7 @@ class TestBuildNodeInput:
 
         assert isinstance(result, GenSQLNodeInput)
         assert result.user_message == "Show all users"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_ask_metrics_node_input(self, task_tool):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -587,7 +589,7 @@ class TestBuildNodeInput:
 
         assert isinstance(result, AskMetricsNodeInput)
         assert result.user_message == "Show revenue by month"
-        assert result.database == "test_db"
+        assert result.database is None
 
 
 # ── _convert_to_func_result ───────────────────────────────────────
@@ -761,7 +763,7 @@ class TestSubAgentTaskAcceptance:
         assert result.result["sql"] == "SELECT SUM(amount) FROM sales"
         create_node.assert_called_once_with("sales_analyst", session_id=None)
         assert mock_node.input.user_message == "Summarize sales"
-        assert mock_node.input.database == "test_db"
+        assert mock_node.input.database is None
 
 
 # ── task execution ─────────────────────────────────────────────────
@@ -1598,7 +1600,7 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "orders table")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "orders table"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_metrics_node_input(self, task_tool):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -1608,7 +1610,7 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "SELECT SUM(amount) FROM orders")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "SELECT SUM(amount) FROM orders"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_sql_summary_node_input(self, task_tool):
         from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
@@ -1618,7 +1620,7 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "SELECT * FROM users")
         assert isinstance(result, SqlSummaryNodeInput)
         assert result.user_message == "SELECT * FROM users"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_gen_table_node_input(self, task_tool):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode
@@ -1628,7 +1630,7 @@ class TestBuildNodeInputBuiltIn:
         result = task_tool._build_node_input(mock_node, "Create wide table from orders and customers")
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "Create wide table from orders and customers"
-        assert result.database == "test_db"
+        assert result.database is None
 
     def test_ask_metrics_node_input(self, task_tool):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
@@ -1639,7 +1641,7 @@ class TestBuildNodeInputBuiltIn:
 
         assert isinstance(result, AskMetricsNodeInput)
         assert result.user_message == "Show active users"
-        assert result.database == "test_db"
+        assert result.database is None
 
 
 # ── Built-in subagent: _build_task_description ─────────────────────
