@@ -434,6 +434,7 @@ jobs:
 
       - name: Check documented coverage gaps
         if: always()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

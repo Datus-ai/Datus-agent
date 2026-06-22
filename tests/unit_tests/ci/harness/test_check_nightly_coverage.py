@@ -281,3 +281,62 @@ def test_render_digest_counts_each_bucket() -> None:
     assert "drift (claimed covered, not run): **1**" in digest
     assert "declared gaps (gap/partial): **2**" in digest
     assert "ok / whitelisted: **1**" in digest
+
+
+def test_digest_includes_ok_whitelisted_section() -> None:
+    digest = cnc.render_digest([_result("kept.ok", "ok")])
+    assert "## OK / whitelisted" in digest
+    assert "`kept.ok`" in digest
+
+
+# ── review fixes ─────────────────────────────────────────────────────────────
+
+
+def test_build_ran_set_excludes_non_executed_status() -> None:
+    # Only passed/failed contribute; an unknown/errored status must not.
+    manifest = {
+        "suites": [
+            {"name": "ok", "status": "passed", "collection": {"nodeids": ["t/a.py::t1"]}},
+            {"name": "weird", "status": "errored", "collection": {"nodeids": ["t/b.py::t2"]}},
+        ]
+    }
+    assert cnc.build_ran_set(manifest) == {"t/a.py::t1"}
+
+
+def test_issue_body_includes_related_gaps() -> None:
+    flow = _flow(
+        "g.f",
+        "gap",
+        [],
+    )
+    result = cnc.classify_flow("g", flow, set())
+    result.gaps = ["https://github.com/Datus-ai/Datus-agent/issues/910"]
+    body = cnc.render_issue_body(result)
+    assert "Related gaps" in body
+    assert "issues/910" in body
+
+
+def test_main_skips_issue_sync_when_manifest_unavailable(tmp_path: Path) -> None:
+    # A missing manifest must NOT trigger issue sync (would mass-create issues).
+    cov_map = tmp_path / "coverage-map.yml"
+    cov_map.write_text(
+        "flow_groups:\n"
+        "  g:\n"
+        "    flows:\n"
+        "      - id: g.f\n"
+        "        title: F\n"
+        "        coverage:\n"
+        "          nightly:\n"
+        "            status: covered\n"
+        "            nodeids: [t/a.py::t1]\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "report.md"
+    # No --dry-run: the guard (not the dry-run path) must short-circuit before
+    # any GitHub client is constructed.
+    rc = cnc.main(
+        ["--coverage-map", str(cov_map), "--nightly-manifest", str(tmp_path / "missing.json"), "--output", str(out)]
+    )
+    assert rc == 0
+    report = out.read_text(encoding="utf-8")
+    assert "manifest unavailable" in report

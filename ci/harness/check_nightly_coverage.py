@@ -91,7 +91,9 @@ def build_ran_set(manifest: dict[str, Any]) -> set[str]:
     for suite in manifest.get("suites", []) or []:
         if not isinstance(suite, dict):
             continue
-        if suite.get("status") == "skipped":
+        # Only suites that were actually executed contribute nodeids; a
+        # whole-suite skip (or any non-executed status) does not.
+        if suite.get("status") not in ("passed", "failed"):
             continue
         collection = suite.get("collection")
         if not isinstance(collection, dict):
@@ -206,6 +208,10 @@ def render_issue_body(result: FlowResult, run_url: str = "") -> str:
     if result.notes:
         lines.append("")
         lines.append(f"**Map notes:** {result.notes}")
+    if result.gaps:
+        lines.append("")
+        lines.append("**Related gaps (from coverage-map):**")
+        lines.extend(f"- {gap}" for gap in result.gaps)
     if run_url:
         lines.append("")
         lines.append(f"Source nightly run: {run_url}")
@@ -238,6 +244,8 @@ def render_digest(results: list[FlowResult]) -> str:
         *table(drift),
         "## Declared gaps",
         *table(gaps),
+        "## OK / whitelisted",
+        *table(ok),
     ]
     return "\n".join(lines)
 
@@ -409,12 +417,22 @@ def main(argv: list[str] | None = None) -> int:
 
     coverage_map = load_coverage_map(Path(args.coverage_map))
     manifest = load_json(Path(args.nightly_manifest))
+    # A missing/corrupt manifest yields an empty ran set, which would make every
+    # covered flow look like drift. Never act on that in live mode — it would
+    # create a wave of false issues when the manifest was merely unavailable.
+    manifest_available = bool(manifest.get("suites"))
     ran_set = build_ran_set(manifest)
     results = classify_all(coverage_map, ran_set)
 
     digest = render_digest(results)
+    if not manifest_available:
+        digest = f"> ⚠️ nightly manifest unavailable or empty — drift results below are not reliable.\n\n{digest}"
     Path(args.output).write_text(digest + "\n", encoding="utf-8")
     print(digest)
+
+    if not manifest_available:
+        print("\n[warn] nightly manifest unavailable or empty; skipping issue sync")
+        return 0
 
     if args.dry_run:
         needs = [r for r in results if r.needs_issue]
