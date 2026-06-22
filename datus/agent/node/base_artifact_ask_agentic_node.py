@@ -856,6 +856,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # Ask consultants never carry the task() delegation tool; set it
         # explicitly so a shared partial can't advertise a tool they lack.
         context["has_task_tool"] = False
+        context["has_web_tools"] = bool({"web_search", "web_fetch"} & exposed)
         context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date
 

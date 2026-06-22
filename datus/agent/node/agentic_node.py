@@ -1104,6 +1104,7 @@ class AgenticNode(Node):
         self._ensure_skill_tools_in_tools()
         self._ensure_bash_tool_in_tools()
         self._ensure_memory_tool_in_tools()
+        self._ensure_web_tools_in_tools()
 
     def _runtime_context_current_date(self) -> str:
         """Current-date reference rendered into the shared runtime-context block.
@@ -2327,6 +2328,45 @@ class AgenticNode(Node):
             f"{[t.name for t in self.bash_tool.available_tools()]}"
         )
 
+    def _ensure_web_tools_in_tools(self) -> None:
+        """Mount the unified ``web_tool`` group per the active provider.
+
+        Mirrors :meth:`_ensure_skill_tools_in_tools`. The active model decides
+        whether each capability is served by a vendor-native tool (then the local
+        function tool is suppressed and the model layer injects the hosted tool)
+        or by the local backend. Re-runs per request so a runtime ``/model``
+        switch re-resolves the backends; stale local web tools are dropped first.
+        """
+        from datus.tools.func_tool.web_tool import WebTool
+
+        try:
+            model = self.model
+        except Exception:
+            model = None
+        search_builtin = bool(getattr(model, "supports_builtin_web_search", lambda: False)()) if model else False
+        fetch_builtin = bool(getattr(model, "supports_builtin_web_fetch", lambda: False)()) if model else False
+        self._builtin_web_tools = {"web_search": search_builtin, "web_fetch": fetch_builtin}
+
+        self._web_tool = WebTool(
+            self.agent_config,
+            sub_agent_name=getattr(self, "sub_agent_name", None),
+            expose_local_search=not search_builtin,
+            expose_local_fetch=not fetch_builtin,
+        )
+        desired = self._web_tool.available_tools()
+        web_names = set(WebTool.all_tools_name())
+
+        # Drop previously-mounted web tools so a provider switch can't leave a
+        # stale local backend behind, then mount the current desired set.
+        existing = [t for t in (getattr(self, "tools", None) or []) if getattr(t, "name", None) not in web_names]
+        existing.extend(desired)
+        self.tools = existing
+        if desired:
+            logger.info(
+                f"Web tools injected into node '{self.get_node_name()}': "
+                f"{[t.name for t in desired]} (builtin={self._builtin_web_tools})"
+            )
+
     def _ensure_memory_tool_in_tools(self) -> None:
         """Ensure ``add_memory`` / ``edit_memory`` are in ``self.tools`` for a main agent.
 
@@ -2778,6 +2818,7 @@ class AgenticNode(Node):
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=ctx.user_prompt,
                 tools=self.tools or [],
+                builtin_web_tools=getattr(self, "_builtin_web_tools", None),
                 mcp_servers=self.mcp_servers,
                 instruction=ctx.system_instruction,
                 max_turns=effective_max_turns,

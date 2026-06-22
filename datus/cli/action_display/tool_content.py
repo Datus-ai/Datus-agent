@@ -264,7 +264,8 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "list_document_nav": lambda _a: "",
     "get_document": lambda a: _format_positional(a, "doc_id", "doc_name", "name"),
     "search_document": lambda a: _format_positional(a, "query", "query_text"),
-    "web_search_document": lambda a: _format_positional(a, "query", "query_text"),
+    "web_search": lambda a: _format_positional(a, "keywords", "query", "query_text"),
+    "web_fetch": lambda a: _format_positional(a, "url"),
     # Skill tools
     "load_skill": lambda a: _format_positional(a, "skill_name", "name"),
     "execute_command": lambda a: _format_kw(a, "command"),
@@ -1199,8 +1200,85 @@ def _build_simple_action(action: ActionHistory, verbose: bool, success_label: st
     return tc
 
 
+def _build_web_search(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """web_search: compact = canonical shortDesc; verbose = full results list.
+
+    Renders the provider-agnostic ``web_search`` schema
+    (``{query, result_count, results: [{title, url, snippet, age}]}``) the same
+    way regardless of which backend (Tavily / Anthropic / OpenAI hosted) served
+    the call.
+    """
+    from datus.schemas.web_result import web_search_short_summary
+
+    tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, dict):
+        set_error_as_result(tc, action)
+        return tc
+
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        lines: List[str] = []
+        query = str(result.get("query") or "").strip()
+        if query:
+            lines.append(f"[bold]query[/bold]: {_escape_markup(query)}")
+        results = result.get("results") if isinstance(result.get("results"), list) else []
+        for idx, item in enumerate(results, 1):
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            url = str(item.get("url") or "").strip()
+            age = item.get("age")
+            header = f"{idx}. {_escape_markup(title)}" if title else f"{idx}. {_escape_markup(url)}"
+            if age:
+                header += f"  [dim]· {_escape_markup(str(age))}[/dim]"
+            lines.append(header)
+            if title and url:
+                lines.append(f"   [dim]{_escape_markup(url)}[/dim]")
+            snippet = str(item.get("snippet") or "").strip()
+            if snippet:
+                lines.append(f"   {_escape_markup(snippet)}")
+        tc.output_lines = lines or _format_result_only_markup(action.output)
+    else:
+        tc.compact_result = web_search_short_summary(result)
+    return tc
+
+
+def _build_web_fetch(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """web_fetch: compact = ``Title (N chars)``; verbose = title/url + full text."""
+    from datus.schemas.web_result import web_fetch_short_summary
+
+    tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, dict):
+        set_error_as_result(tc, action)
+        return tc
+
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        lines = []
+        title = str(result.get("title") or "").strip()
+        url = str(result.get("url") or "").strip()
+        if title:
+            lines.append(f"[bold]{_escape_markup(title)}[/bold]")
+        if url:
+            suffix = " [dim](truncated)[/dim]" if result.get("truncated") else ""
+            lines.append(f"[dim]{_escape_markup(url)}[/dim]{suffix}")
+        content = result.get("content")
+        if isinstance(content, str) and content:
+            lines.append("")
+            for line in content.split("\n"):
+                lines.append(_escape_markup(line))
+        tc.output_lines = lines or _format_result_only_markup(action.output)
+    else:
+        tc.compact_result = web_fetch_short_summary(result)
+    return tc
+
+
 def _build_doc_search_result(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """Shared builder for search_document / web_search_document — use result['doc_count']."""
+    """Shared builder for search_document / web_search — use result['doc_count']."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -2018,7 +2096,10 @@ class ToolCallContentBuilder:
         # Platform document tools
         self._registry["list_document_nav"] = _build_list_document_nav
         self._registry["get_document"] = _build_get_document
-        self._registry["web_search_document"] = _build_doc_search_result
+
+        # Web tool group (provider-agnostic canonical schema)
+        self._registry["web_search"] = _build_web_search
+        self._registry["web_fetch"] = _build_web_fetch
 
         # Plan tools
         self._registry["todo_list"] = _build_todo_list

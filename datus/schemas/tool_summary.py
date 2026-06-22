@@ -34,7 +34,10 @@ logger = get_logger(__name__)
 SUMMARY_TEXT_MAX_CHARS = 19
 SUMMARY_ERROR_MAX_CHARS = 19
 
-FS_TOOLS_NO_CLIP = frozenset({"read_file", "write_file", "edit_file", "glob", "grep"})
+# Filesystem tools want full path/count visibility; web tools want their
+# result titles / page label visible on the compact line rather than clipped
+# to a handful of characters.
+FS_TOOLS_NO_CLIP = frozenset({"read_file", "write_file", "edit_file", "glob", "grep", "web_search", "web_fetch"})
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -1018,7 +1021,13 @@ def _fmt_search_document(result: Any) -> str:
     return ""
 
 
-def _fmt_web_search_document(result: Any) -> str:
+def _fmt_web_search(result: Any) -> str:
+    # Canonical schema (datus.schemas.web_result): {query, result_count, results}.
+    from datus.schemas.web_result import web_search_short_summary
+
+    if isinstance(result, dict) and ("results" in result or "query" in result):
+        return web_search_short_summary(result)
+    # Legacy fallbacks (older docs/doc_count shape, or a bare list).
     if isinstance(result, list):
         return pluralize(len(result), "web result")
     if isinstance(result, dict):
@@ -1027,6 +1036,14 @@ def _fmt_web_search_document(result: Any) -> str:
             n = len(result["docs"])
         if isinstance(n, int):
             return pluralize(n, "web result")
+    return ""
+
+
+def _fmt_web_fetch(result: Any) -> str:
+    from datus.schemas.web_result import web_fetch_short_summary
+
+    if isinstance(result, dict) and isinstance(result.get("content"), str):
+        return web_fetch_short_summary(result)
     return ""
 
 
@@ -1206,7 +1223,8 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "list_document_nav": _fmt_list_document_nav,
         "get_document": _fmt_get_document,
         "search_document": _fmt_search_document,
-        "web_search_document": _fmt_web_search_document,
+        "web_search": _fmt_web_search,
+        "web_fetch": _fmt_web_fetch,
     }
     for name, fn in builtins.items():
         registry.register(name, fn)

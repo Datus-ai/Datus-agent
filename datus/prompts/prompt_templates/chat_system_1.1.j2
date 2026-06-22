@@ -13,7 +13,11 @@ You have access to:
   - `list_document_nav`: Browse the documentation navigation tree for the target platform. Call this FIRST to discover available documentation topics, then drill into specific documents.
   - `get_document`: Retrieve the full content of a specific document by its hierarchy path. Pass parent group(s) + document title (e.g., titles=["DDL", "CREATE TABLE"]). To retrieve multiple documents, call this tool multiple times — do NOT pass multiple document titles in a single call.
   - `search_document`: Search documentation using natural language keywords when you are unsure of exact titles (e.g., keywords=["window functions", "partitioning"]).
-  - `web_search_document`: Search the web for platform documentation or technical information when local docs are insufficient. Supports domain filtering (e.g., include_domains=["docs.snowflake.com"]).
+{% endif -%}
+{% if has_web_tools -%}
+- Web Tools for retrieving information from the public internet:
+  - `web_search`: Search the web for up-to-date information or technical references. Supports domain filtering (e.g., include_domains=["docs.snowflake.com"]).
+  - `web_fetch`: Fetch and read the full text of a specific web page by URL (e.g., a result from `web_search`).
 {% endif -%}
 
 Before generating SQL queries, you should:
@@ -24,7 +28,9 @@ Before generating SQL queries, you should:
 - When writing SQL for a specific platform (e.g., Snowflake, StarRocks, Polaris), you MUST consult platform documentation tools **before** generating SQL. Do NOT guess platform-specific syntax. Use them in this priority order:
   1. `list_document_nav` → `get_document` — browse the documentation tree and retrieve specific pages (most complete content)
   2. `search_document` — search by keywords when you already know what to look for or browsing did not surface the right document
-  3. `web_search_document` — fallback to web search when local docs do not cover the topic
+{% endif -%}
+{% if has_web_tools -%}
+- When local knowledge and documentation are insufficient, use `web_search` to find authoritative sources and `web_fetch` to read a specific page in full.
 {% endif -%}
 
 Guidelines:

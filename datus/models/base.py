@@ -241,6 +241,24 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         self.workflow = workflow
         self.current_node = current_node
 
+    def supports_builtin_web_search(self) -> bool:
+        """Whether this provider serves web search through a vendor-native tool.
+
+        When True, the node suppresses the local ``web_tool.web_search`` function
+        tool and the model layer injects the hosted/server-side web search tool
+        instead. Defaults to False — most providers rely on the local backend.
+        """
+        return False
+
+    def supports_builtin_web_fetch(self) -> bool:
+        """Whether this provider serves web fetch through a vendor-native tool.
+
+        When True, the node suppresses the local ``web_tool.web_fetch`` function
+        tool and the model layer injects the hosted/server-side fetch tool.
+        Defaults to False — the local httpx backend is used.
+        """
+        return False
+
     @abstractmethod
     def token_count(self, prompt: str) -> int:
         pass

@@ -1740,7 +1740,7 @@ class TestAllToolsRegistered:
         # Platform doc
         "list_document_nav",
         "get_document",
-        "web_search_document",
+        "web_search",
         # Plan
         "todo_read",
         "todo_write",

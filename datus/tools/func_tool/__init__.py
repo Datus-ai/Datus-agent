@@ -19,6 +19,7 @@ from datus.tools.func_tool.report_artifact_tools import ReportArtifactTools, Rep
 from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+from datus.tools.func_tool.web_tool import WebTool
 
 __all__ = [
     "trans_to_function_tool",
@@ -45,6 +46,7 @@ __all__ = [
     "PlatformDocSearchTool",
     "SubAgentTaskTool",
     "OrchestratorIssueTools",
+    "WebTool",
 ]
 
 try:

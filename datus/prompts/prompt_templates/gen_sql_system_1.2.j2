@@ -101,9 +101,10 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 {% if "search_document" in tools %}
 - Use `search_document` when you know the feature but not the document title.
 {% endif %}
-{% if "web_search_document" in tools %}
-- Use `web_search_document` only as a fallback when local documentation is insufficient.
 {% endif %}
+{% if "web_search" in tools or "web_fetch" in tools %}
+## Web
+- Use `web_search` to find authoritative sources and `web_fetch` to read a specific result page, only as a fallback when local knowledge and documentation are insufficient.
 {% endif %}
 
 ## SQL Generation

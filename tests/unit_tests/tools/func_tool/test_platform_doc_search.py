@@ -11,7 +11,6 @@ from datus.tools.func_tool.platform_doc_search import PlatformDocSearchTool
 
 # Patch targets for locally-imported symbols inside platform_doc_search.py methods
 _SEARCH_TOOL_PATH = "datus.tools.search_tools.search_tool.SearchTool"
-_TAVILY_PATH = "datus.tools.search_tools.search_tool.search_by_tavily"
 _LIST_PLATFORMS_PATH = "datus.storage.document.store.list_indexed_platforms"
 _TRANS_PATH = "datus.tools.func_tool.platform_doc_search.trans_to_function_tool"
 
@@ -34,13 +33,14 @@ class TestAllToolsName:
         assert "list_document_nav" in names
         assert "get_document" in names
         assert "search_document" in names
-        assert "web_search_document" in names
-        assert len(names) == 4
+        # web search moved to the unified web_tool group; no longer here.
+        assert "web_search_document" not in names
+        assert len(names) == 3
 
 
 class TestAvailableTools:
-    """Availability filter matrix: trio gated by indexed platforms,
-    web_search_document gated by tavily key (config OR env)."""
+    """Availability filter matrix: the doc trio is gated by indexed platforms.
+    Web search/fetch now live in the unified ``web_tool`` group, not here."""
 
     @staticmethod
     def _tool_names(tools):
@@ -58,7 +58,17 @@ class TestAvailableTools:
             mock_trans.side_effect = _fake
             yield mock_trans
 
-    def test_all_available(self, mock_agent_config, _patch_trans, monkeypatch):
+    def test_trio_available_with_platforms(self, mock_agent_config, _patch_trans, monkeypatch):
+        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
+
+        with patch(_LIST_PLATFORMS_PATH, return_value=["duckdb"]):
+            tools = tool.available_tools()
+
+        assert self._tool_names(tools) == ["list_document_nav", "get_document", "search_document"]
+
+    def test_no_web_search_document_even_with_tavily(self, mock_agent_config, _patch_trans, monkeypatch):
+        # A Tavily key must NOT resurrect web_search_document here anymore.
         mock_agent_config.tavily_api_key = "k"
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         tool = PlatformDocSearchTool(agent_config=mock_agent_config)
@@ -66,41 +76,9 @@ class TestAvailableTools:
         with patch(_LIST_PLATFORMS_PATH, return_value=["duckdb"]):
             tools = tool.available_tools()
 
-        names = self._tool_names(tools)
-        assert names == [
-            "list_document_nav",
-            "get_document",
-            "search_document",
-            "web_search_document",
-        ]
+        assert "web_search_document" not in self._tool_names(tools)
 
-    def test_only_web_when_no_platforms(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
-        mock_agent_config.tavily_api_key = "k"
-        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
-
-        with caplog.at_level(logging.INFO, logger="datus.tools.func_tool.platform_doc_search"):
-            with patch(_LIST_PLATFORMS_PATH, return_value=[]):
-                tools = tool.available_tools()
-
-        assert self._tool_names(tools) == ["web_search_document"]
-        assert any("no indexed docstore" in rec.message for rec in caplog.records)
-        assert not any("web_search_document" in rec.message and "Skipping" in rec.message for rec in caplog.records)
-
-    def test_only_trio_when_no_tavily(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
-        mock_agent_config.tavily_api_key = None
-        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
-
-        with caplog.at_level(logging.INFO, logger="datus.tools.func_tool.platform_doc_search"):
-            with patch(_LIST_PLATFORMS_PATH, return_value=["duckdb"]):
-                tools = tool.available_tools()
-
-        assert self._tool_names(tools) == ["list_document_nav", "get_document", "search_document"]
-        assert any("Skipping web_search_document" in rec.message for rec in caplog.records)
-
-    def test_empty_when_nothing_available(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
-        mock_agent_config.tavily_api_key = None
+    def test_empty_when_no_platforms(self, mock_agent_config, _patch_trans, monkeypatch, caplog):
         monkeypatch.delenv("TAVILY_API_KEY", raising=False)
         tool = PlatformDocSearchTool(agent_config=mock_agent_config)
 
@@ -109,19 +87,7 @@ class TestAvailableTools:
                 tools = tool.available_tools()
 
         assert tools == []
-        messages = " | ".join(rec.message for rec in caplog.records)
-        assert "no indexed docstore" in messages
-        assert "Skipping web_search_document" in messages
-
-    def test_tavily_env_fallback(self, mock_agent_config, _patch_trans, monkeypatch):
-        mock_agent_config.tavily_api_key = None
-        monkeypatch.setenv("TAVILY_API_KEY", "envkey")
-        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
-
-        with patch(_LIST_PLATFORMS_PATH, return_value=[]):
-            tools = tool.available_tools()
-
-        assert self._tool_names(tools) == ["web_search_document"]
+        assert any("no indexed docstore" in rec.message for rec in caplog.records)
 
 
 class TestListDocumentNav:
@@ -270,87 +236,3 @@ class TestSearchDocument:
 
         assert result.success == 0
         assert "timeout" in result.error
-
-
-class TestWebSearchDocument:
-    @pytest.fixture
-    def tavily_tool(self):
-        """Tool with tavily_api_key set so web_search_document reaches the Tavily call."""
-        config = Mock()
-        config.tavily_api_key = "test-tavily-key"
-        return PlatformDocSearchTool(agent_config=config)
-
-    def test_no_tavily_key_returns_empty(self, doc_search_tool):
-        """When tavily_api_key is None, should return early with empty result."""
-        result = doc_search_tool.web_search_document(keywords=["test"])
-        assert result.success == 1
-        assert result.result == []
-
-    def test_success(self, tavily_tool):
-        mock_result = Mock()
-        mock_result.success = True
-        mock_result.docs = ["doc1 content", "doc2 content"]
-        mock_result.doc_count = 2
-
-        with patch(_TAVILY_PATH, return_value=mock_result):
-            result = tavily_tool.web_search_document(keywords=["snowflake COPY INTO"], max_results=5)
-
-        assert result.success == 1
-        assert result.result["doc_count"] == 2
-
-    def test_success_with_include_domains(self, tavily_tool):
-        mock_result = Mock()
-        mock_result.success = True
-        mock_result.docs = ["content"]
-        mock_result.doc_count = 1
-
-        with patch(_TAVILY_PATH, return_value=mock_result) as mock_fn:
-            result = tavily_tool.web_search_document(
-                keywords=["query"],
-                max_results=3,
-                include_domains=["docs.snowflake.com"],
-            )
-
-        assert result.success == 1
-        mock_fn.assert_called_once_with(
-            keywords=["query"],
-            max_results=3,
-            search_depth="advanced",
-            include_answer="basic",
-            include_raw_content="markdown",
-            include_domains=["docs.snowflake.com"],
-            api_key="test-tavily-key",
-        )
-
-    def test_uses_tavily_key_from_config(self, mock_agent_config):
-        mock_agent_config.tavily_api_key = "my-tavily-key"
-        tool = PlatformDocSearchTool(agent_config=mock_agent_config)
-
-        mock_result = Mock()
-        mock_result.success = True
-        mock_result.docs = []
-        mock_result.doc_count = 0
-
-        with patch(_TAVILY_PATH, return_value=mock_result) as mock_fn:
-            tool.web_search_document(keywords=["test"])
-
-        call_kwargs = mock_fn.call_args.kwargs
-        assert call_kwargs["api_key"] == "my-tavily-key"
-
-    def test_search_fails(self, tavily_tool):
-        mock_result = Mock()
-        mock_result.success = False
-        mock_result.error = "Tavily API error"
-
-        with patch(_TAVILY_PATH, return_value=mock_result):
-            result = tavily_tool.web_search_document(keywords=["test"])
-
-        assert result.success == 0
-        assert result.error == "Tavily API error"
-
-    def test_exception_returns_failure(self, tavily_tool):
-        with patch(_TAVILY_PATH, side_effect=Exception("network error")):
-            result = tavily_tool.web_search_document(keywords=["test"])
-
-        assert result.success == 0
-        assert "network error" in result.error

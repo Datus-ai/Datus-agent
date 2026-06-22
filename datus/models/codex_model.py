@@ -12,7 +12,7 @@ import uuid
 from contextlib import nullcontext
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
-from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool
+from agents import Agent, ModelSettings, Runner, SQLiteSession, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded
 from agents.mcp import MCPServerStdio
 from agents.models.openai_responses import OpenAIResponsesModel
@@ -107,6 +107,14 @@ class CodexModel(LLMBaseModel):
         # conversation (with a real timestamp) and reused for every LLM call so
         # the backend routes them to one cache node. See _stable_prompt_cache_key.
         self._prompt_cache_keys: Dict[str, str] = {}
+
+    def supports_builtin_web_search(self) -> bool:
+        # OpenAI Responses API exposes a hosted ``web_search`` tool.
+        return True
+
+    def supports_builtin_web_fetch(self) -> bool:
+        # OpenAI Responses has no hosted fetch tool; web_fetch uses the local backend.
+        return False
 
     @staticmethod
     def _resolve_config_api_key(api_key: str | None) -> str | None:
@@ -436,6 +444,8 @@ class CodexModel(LLMBaseModel):
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
             if tools:
                 agent_kwargs["tools"] = tools
+            if (kwargs.get("builtin_web_tools") or {}).get("web_search"):
+                agent_kwargs["tools"] = [*(agent_kwargs.get("tools") or []), WebSearchTool()]
             if kwargs.get("hooks"):
                 agent_kwargs["hooks"] = kwargs["hooks"]
 
@@ -524,6 +534,8 @@ class CodexModel(LLMBaseModel):
                 agent_kwargs["mcp_servers"] = list(connected_servers.values())
             if tools:
                 agent_kwargs["tools"] = tools
+            if (kwargs.get("builtin_web_tools") or {}).get("web_search"):
+                agent_kwargs["tools"] = [*(agent_kwargs.get("tools") or []), WebSearchTool()]
             if hooks:
                 agent_kwargs["hooks"] = hooks
 
@@ -541,6 +553,10 @@ class CodexModel(LLMBaseModel):
             early_assistant_yielded = False
             thinking_stream_id: Optional[str] = None
             thinking_accumulated = ""
+            # Hosted web_search completions are deferred to stream end so we can
+            # attach the assistant message's url_citation results (the call item
+            # itself carries no results). See the flush after the stream loop.
+            pending_hosted_searches: List[dict] = []
 
             try:
                 while not result.is_complete:
@@ -640,13 +656,25 @@ class CodexModel(LLMBaseModel):
                             if raw_item:
                                 # Normalize access: raw_item can be dict (Responses API) or object
                                 if isinstance(raw_item, dict):
-                                    tool_name = raw_item.get("name", "unknown")
+                                    tool_name = raw_item.get("name")
                                     call_id = raw_item.get("call_id")
                                     arguments = raw_item.get("arguments", "{}")
                                 else:
-                                    tool_name = getattr(raw_item, "name", "unknown")
+                                    tool_name = getattr(raw_item, "name", None)
                                     call_id = getattr(raw_item, "call_id", None)
                                     arguments = getattr(raw_item, "arguments", "{}")
+                                is_hosted = False
+                                if not tool_name:
+                                    # Server-side hosted tools (web_search_call, …) carry no
+                                    # name/arguments; resolve a friendly label + query.
+                                    from datus.models.openai_compatible import describe_hosted_tool_item
+
+                                    hosted = describe_hosted_tool_item(raw_item)
+                                    if hosted:
+                                        tool_name, call_id, arguments = hosted
+                                        is_hosted = True
+                                    else:
+                                        tool_name = "unknown"
                                 if not call_id:
                                     call_id = f"tool_{uuid.uuid4().hex[:8]}"
                                 args_str = str(arguments)[:80]
@@ -668,6 +696,30 @@ class CodexModel(LLMBaseModel):
                                 )
                                 action_history_manager.add_action(action)
                                 yield action
+
+                                # Hosted tools run server-side with no separate
+                                # output item; their results arrive as url_citation
+                                # annotations on the assistant message, so defer the
+                                # completion until the stream ends (flush below).
+                                if is_hosted:
+                                    temp_tool_calls.pop(call_id, None)
+                                    from datus.schemas.web_result import extract_action_sources, hosted_action_query
+
+                                    raw_action = (
+                                        raw_item.get("action")
+                                        if isinstance(raw_item, dict)
+                                        else getattr(raw_item, "action", None)
+                                    )
+                                    pending_hosted_searches.append(
+                                        {
+                                            "call_id": call_id,
+                                            "tool_name": tool_name,
+                                            "arguments": arguments,
+                                            "args_str": args_str,
+                                            "query": str(hosted_action_query(raw_action) or ""),
+                                            "sources": extract_action_sources(raw_action),
+                                        }
+                                    )
 
                         elif item_type == "tool_call_output_item":
                             raw_item = getattr(event.item, "raw_item", None)
@@ -698,6 +750,12 @@ class CodexModel(LLMBaseModel):
                                 )
                                 action_history_manager.add_action(action)
                                 yield action
+
+                # Flush deferred hosted web_search completions with the canonical
+                # results read back from the assistant message's url_citations.
+                for hosted_done in self._build_hosted_search_completions(pending_hosted_searches, result):
+                    action_history_manager.add_action(hosted_done)
+                    yield hosted_done
             except MaxTurnsExceeded as e:
                 raise DatusException(ErrorCode.MODEL_MAX_TURNS_EXCEEDED, message_args={"max_turns": max_turns}) from e
             except Exception as e:
@@ -747,6 +805,55 @@ class CodexModel(LLMBaseModel):
             )
             action_history_manager.add_action(final_action)
             yield final_action
+
+    @staticmethod
+    def _build_hosted_search_completions(pending: List[dict], result) -> List[ActionHistory]:
+        """Build deferred completions for hosted ``web_search`` calls.
+
+        Results are not on the call item; the title+url pairs the model used
+        surface as ``url_citation`` annotations on the assistant message. We read
+        them back from ``result.to_input_list()`` and attach the turn's full
+        citation set as each hosted search's canonical results (falling back to
+        the call's own ``action.sources`` URLs when there were no citations).
+        """
+        from datus.schemas.web_result import (
+            collect_citations_from_input_list,
+            normalize_search_results,
+            web_search_short_summary,
+        )
+
+        if not pending:
+            return []
+
+        citations: List[dict] = []
+        try:
+            if hasattr(result, "to_input_list"):
+                citations = collect_citations_from_input_list(result.to_input_list())
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Failed to collect web_search citations: {e}")
+
+        actions: List[ActionHistory] = []
+        for call in pending:
+            items = citations or call.get("sources") or []
+            canonical = normalize_search_results(call.get("query", ""), items)
+            summary = web_search_short_summary(canonical)
+            actions.append(
+                ActionHistory(
+                    action_id=f"complete_{call['call_id']}",
+                    role=ActionRole.TOOL,
+                    messages=f"Tool call: {call['tool_name']}('{call['args_str']}...')",
+                    action_type=call["tool_name"],
+                    input={"function_name": call["tool_name"], "arguments": call["arguments"]},
+                    output={
+                        "success": True,
+                        "raw_output": {"success": True, "result": canonical},
+                        "summary": summary,
+                        "status_message": summary,
+                    },
+                    status=ActionStatus.SUCCESS,
+                )
+            )
+        return actions
 
     def _extract_usage_info(self, source) -> dict:
         """Extract usage info from an SDK ``RunResult`` or ``Usage`` object.

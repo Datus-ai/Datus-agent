@@ -771,8 +771,9 @@ class TestSkillIntegrationEdgeCases:
 
         # Should have all tools: 2 existing + 1 skill tool + 1 bash tool +
         # 2 memory tools (this node is a main agent, so add_memory/edit_memory
-        # are lazy-injected alongside skills and bash).
-        assert len(node.tools) == 6
+        # are lazy-injected alongside skills and bash) + 2 web tools
+        # (web_search/web_fetch, mounted unconditionally for the local backend).
+        assert len(node.tools) == 8
         tool_names = [t.name for t in node.tools]
         assert "tool1" in tool_names
         assert "tool2" in tool_names
@@ -780,6 +781,8 @@ class TestSkillIntegrationEdgeCases:
         assert "execute_command" in tool_names
         assert "add_memory" in tool_names
         assert "edit_memory" in tool_names
+        assert "web_search" in tool_names
+        assert "web_fetch" in tool_names
 
     def test_setup_exception_handling(self, mock_agent_config):
         """Test that setup exceptions are handled gracefully."""

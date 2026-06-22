@@ -16,17 +16,17 @@ _NAME = "platform_doc_search_tools"
 _NAME_LIST_NAV = "platform_doc_search_tools.list_document_nav"
 _NAME_GET_DOC = "platform_doc_search_tools.get_document"
 _NAME_SEARCH_DOC = "platform_doc_search_tools.search_document"
-_NAME_WEB_SEARCH = "platform_doc_search_tools.web_search"
 
 
 class PlatformDocSearchTool:
     """Function-call tool for platform documentation search.
 
-    Exposes four LLM-callable functions:
+    Exposes three LLM-callable functions:
     - list_document_nav: Browse the documentation navigation tree
     - get_document: Retrieve document chunks by title
     - search_document: Semantic search across documentation
-    - web_search_document: Web search via Tavily
+
+    Web search now lives in the unified ``web_tool`` group (``web_tool.web_search``).
     """
 
     permission_category: str = "platform_doc_tools"
@@ -36,20 +36,16 @@ class PlatformDocSearchTool:
 
     @staticmethod
     def all_tools_name() -> List[str]:
-        return ["list_document_nav", "get_document", "search_document", "web_search_document"]
+        return ["list_document_nav", "get_document", "search_document"]
 
     def available_tools(self) -> List[Tool]:
         """Return platform doc search tools, filtered by backing resource availability.
 
-        - Doc search trio (``list_document_nav`` / ``get_document`` /
-          ``search_document``) is exposed only when at least one platform
-          has an indexed docstore directory under the active project.
-        - ``web_search_document`` is exposed only when a Tavily key is
-          resolvable from ``agent_config.tavily_api_key`` or the
-          ``TAVILY_API_KEY`` environment variable.
+        The doc search trio (``list_document_nav`` / ``get_document`` /
+        ``search_document``) is exposed only when at least one platform has an
+        indexed docstore directory under the active project. Web search has moved
+        to the unified ``web_tool`` group.
         """
-        import os
-
         from datus.storage.document.store import list_indexed_platforms
 
         tools: List[Tool] = []
@@ -62,14 +58,6 @@ class PlatformDocSearchTool:
             logger.info(
                 "Skipping list_document_nav / get_document / search_document: "
                 "no indexed docstore found for the active project."
-            )
-
-        tavily_key = getattr(self.agent_config, "tavily_api_key", None) or os.environ.get("TAVILY_API_KEY")
-        if tavily_key:
-            tools.append(trans_to_function_tool(self.web_search_document))
-        else:
-            logger.info(
-                "Skipping web_search_document: neither agent.document.tavily_api_key nor TAVILY_API_KEY env var is set."
             )
 
         return tools
@@ -221,60 +209,4 @@ class PlatformDocSearchTool:
             )
         except Exception as e:
             logger.error(f"Failed to search documents for keywords {keywords}: {e}")
-            return FuncToolResult(success=0, error=str(e))
-
-    def web_search_document(
-        self,
-        keywords: List[str],
-        max_results: int = 5,
-        include_domains: Optional[List[str]] = None,
-    ) -> FuncToolResult:
-        """
-        Search the web for platform documentation or technical information using Tavily.
-
-        Use this tool when local documentation is insufficient or when you need
-        the latest information from official websites, blogs, or community resources.
-
-        Requires tavily_api_key in agent.document config or TAVILY_API_KEY env var.
-
-        Args:
-            keywords: Search queries (e.g., ["StarRocks materialized view syntax", "Snowflake COPY INTO options"])
-            max_results: Maximum number of results to return, 1-20 (default: 5)
-            include_domains: Restrict search to specific domains (optional),
-                e.g., ["docs.snowflake.com", "docs.starrocks.io"]
-
-        Returns:
-            FuncToolResult with search results as a list of text content
-        """
-        try:
-            from datus.tools.search_tools.search_tool import search_by_tavily
-
-            # Get tavily_api_key from config (priority) or fall back to env var
-            tavily_key = getattr(self.agent_config, "tavily_api_key", None)
-            if not tavily_key:
-                logger.warning("TAVILY_API_KEY env var not set")
-                return FuncToolResult(success=1, result=[])
-
-            result = search_by_tavily(
-                keywords=keywords,
-                max_results=max_results,
-                search_depth="advanced",
-                include_answer="basic",
-                include_raw_content="markdown",
-                include_domains=include_domains,
-                api_key=tavily_key,
-            )
-
-            if not result.success:
-                return FuncToolResult(success=0, error=result.error)
-
-            return FuncToolResult(
-                success=1,
-                result={
-                    "docs": result.docs,
-                    "doc_count": result.doc_count,
-                },
-            )
-        except Exception as e:
-            logger.error(f"Web search failed for keywords {keywords}: {e}")
             return FuncToolResult(success=0, error=str(e))

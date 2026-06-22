@@ -131,14 +131,15 @@ class TestNormalProfile:
         assert _resolve(config, "artifact_tools", "save_query_template") == PermissionLevel.ALLOW
         assert _resolve(config, "artifact_tools", "validate_render") == PermissionLevel.ALLOW
 
-    def test_platform_doc_reads_allowed_web_search_asks(self):
-        """Doc lookups are local reads; ``web_search_document`` reaches the
-        network (Tavily) and stays at the profile default."""
+    def test_platform_doc_reads_allowed_web_tool_asks(self):
+        """Doc lookups are local reads; ``web_tool`` reaches the network and
+        stays at the profile default (ASK)."""
         config = NORMAL
         assert _resolve(config, "platform_doc_tools", "list_document_nav") == PermissionLevel.ALLOW
         assert _resolve(config, "platform_doc_tools", "get_document") == PermissionLevel.ALLOW
         assert _resolve(config, "platform_doc_tools", "search_document") == PermissionLevel.ALLOW
-        assert _resolve(config, "platform_doc_tools", "web_search_document") == PermissionLevel.ASK
+        assert _resolve(config, "web_tool", "web_search") == PermissionLevel.ASK
+        assert _resolve(config, "web_tool", "web_fetch") == PermissionLevel.ASK
 
 
 class TestAutoProfile:

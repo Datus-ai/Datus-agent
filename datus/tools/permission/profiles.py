@@ -133,12 +133,17 @@ _NORMAL_RULES = [
     # a whole via the rendered preview, not per-call prompts. Mirrors the
     # historical lumping into ``semantic_tools``.
     _rule("artifact_tools", "*", PermissionLevel.ALLOW),
-    # platform doc lookups are read-only; ``web_search_document`` reaches
-    # the network (Tavily) and stays at the profile default (ASK in
-    # normal/auto).
+    # platform doc lookups are read-only local reads.
     _rule("platform_doc_tools", "list_*", PermissionLevel.ALLOW),
     _rule("platform_doc_tools", "get_*", PermissionLevel.ALLOW),
     _rule("platform_doc_tools", "search_*", PermissionLevel.ALLOW),
+    # web_tool reaches the network (Tavily search / httpx fetch), so it stays at
+    # ASK in normal/auto. NOTE: vendor-native web tools (Codex hosted web_search,
+    # Anthropic web_search_20250305 / web_fetch_20250910) run server-side and do
+    # NOT pass through local PermissionHooks — these rules gate only the local
+    # backends.
+    _rule("web_tool", "web_search", PermissionLevel.ASK),
+    _rule("web_tool", "web_fetch", PermissionLevel.ASK),
     # mcp: ASK; skill loading ALLOW.
     _rule("mcp.*", "*", PermissionLevel.ASK),
     _rule("skills", "*", PermissionLevel.ALLOW),

@@ -27,6 +27,15 @@ class OpenAIModel(OpenAICompatibleModel):
         """
         super().__init__(model_config, **kwargs)
 
+    def supports_builtin_web_search(self) -> bool:
+        # OpenAI Responses API exposes a hosted ``web_search`` tool (works with a
+        # standard API key, billed per call). Prefer it over the local Tavily backend.
+        return True
+
+    def supports_builtin_web_fetch(self) -> bool:
+        # OpenAI Responses has no hosted fetch tool; web_fetch uses the local backend.
+        return False
+
     def _get_api_key(self) -> str:
         """Get OpenAI API key from config or environment."""
         api_key = self.model_config.api_key or os.environ.get("OPENAI_API_KEY")

@@ -71,6 +71,83 @@ def wrap_prompt_cache(messages):
     return messages_copy
 
 
+def _extract_document_text(node, depth: int = 0) -> str:
+    """Best-effort recursive pull of readable text from a web_fetch document block.
+
+    Anthropic's ``web_fetch_result`` wraps the fetched page as a document block
+    whose text can sit at ``.source.data`` (text media type) or in a nested
+    ``.content[].text`` list, depending on the page. We probe both, bounded by
+    depth so a pathological structure can't recurse without end.
+    """
+    if node is None or depth > 6:
+        return ""
+
+    def _get(obj, key):
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    # Direct text payloads.
+    text = _get(node, "text")
+    if isinstance(text, str) and text:
+        return text
+    source = _get(node, "source")
+    if source is not None:
+        data = _get(source, "data")
+        if isinstance(data, str) and data and (_get(source, "type") in (None, "text")):
+            return data
+    # Recurse into a nested content list / single child.
+    child = _get(node, "content")
+    if isinstance(child, list):
+        return "\n".join(filter(None, (_extract_document_text(c, depth + 1) for c in child)))
+    if child is not None:
+        return _extract_document_text(child, depth + 1)
+    return ""
+
+
+def summarize_web_tool_result(res_block, query: str = ""):
+    """Normalize an Anthropic ``web_search_tool_result`` / ``web_fetch_tool_result``.
+
+    Returns ``(summary, canonical_result)`` where ``summary`` is the compact
+    one-liner (SSE ``shortDesc`` / TUI compact line) and ``canonical_result`` is
+    the provider-agnostic schema from :mod:`datus.schemas.web_result` — so a
+    Claude server-tool call renders identically to the local Tavily / httpx
+    backends and the OpenAI hosted path.
+    """
+    from datus.schemas.web_result import (
+        normalize_fetch_result,
+        normalize_search_results,
+        web_fetch_short_summary,
+        web_search_short_summary,
+    )
+
+    content = getattr(res_block, "content", None) if res_block is not None else None
+
+    # web_search: ``content`` is a list of result blocks (title/url/page_age).
+    if isinstance(content, list):
+        items = []
+        for item in content:
+            items.append(
+                {
+                    "title": getattr(item, "title", None) or "",
+                    "url": getattr(item, "url", None) or "",
+                    "snippet": "",  # Anthropic returns encrypted_content; no readable snippet.
+                    "age": getattr(item, "page_age", None),
+                }
+            )
+        canonical = normalize_search_results(query, items)
+        return web_search_short_summary(canonical), canonical
+
+    # web_fetch: ``content`` is a single document-bearing result block.
+    if content is not None:
+        url = getattr(content, "url", None) or getattr(res_block, "url", None) or ""
+        doc = getattr(content, "content", None)
+        title = getattr(doc, "title", None) or getattr(content, "title", None) or ""
+        text = _extract_document_text(doc)
+        canonical = normalize_fetch_result(url=url, title=title, content=text, truncated=False)
+        return web_fetch_short_summary(canonical), canonical
+
+    return "completed", {}
+
+
 def convert_tools_for_anthropic(mcp_tools):
     """Convert MCP tools to Anthropic tool format.
 
@@ -123,6 +200,10 @@ class ClaudeModel(OpenAICompatibleModel):
         "oauth-2025-04-20",
         "interleaved-thinking-2025-05-14",
         "prompt-caching-scope-2026-01-05",
+        # Enables the server-side ``web_fetch_20250910`` tool on the native path.
+        # Harmless when web_fetch isn't requested — Anthropic ignores betas for
+        # tools absent from the request. (web_search_20250305 is GA, no beta.)
+        "web-fetch-2025-09-10",
     ]
 
     # Claude Code client headers — required for subscription tokens to be accepted.
@@ -153,6 +234,15 @@ class ClaudeModel(OpenAICompatibleModel):
 
         # Initialize native Anthropic client (always available for prompt caching)
         self._init_anthropic_client()
+
+    def supports_builtin_web_search(self) -> bool:
+        # Anthropic web_search_20250305 (GA) runs server-side via the native path,
+        # which is available for both OAuth and API-key auth. Prefer it over Tavily.
+        return True
+
+    def supports_builtin_web_fetch(self) -> bool:
+        # Anthropic web_fetch_20250910 (beta) runs server-side via the native path.
+        return True
 
     def _get_api_key(self) -> str:
         """Get Anthropic API key from config or environment."""
@@ -321,7 +411,18 @@ class ClaudeModel(OpenAICompatibleModel):
                 "Async Anthropic client is not initialized; streaming unavailable",
             )
         if self._is_oauth_token:
+            # OAuth client already carries the OAuth + web-fetch betas in its
+            # default headers; beta.messages is required for that path.
             return self.async_anthropic_client.beta.messages.stream(**kwargs)
+        # API-key path: web_search_20250305 is GA, but web_fetch_20250910 is beta
+        # and must go through beta.messages with the web-fetch beta header (the
+        # API-key client carries no default betas).
+        tools = kwargs.get("tools") or []
+        if any(isinstance(t, dict) and t.get("type") == "web_fetch_20250910" for t in tools):
+            extra = dict(kwargs.pop("extra_headers", {}) or {})
+            existing_beta = extra.get("anthropic-beta")
+            extra["anthropic-beta"] = ",".join(filter(None, [existing_beta, "web-fetch-2025-09-10"]))
+            return self.async_anthropic_client.beta.messages.stream(extra_headers=extra, **kwargs)
         return self.async_anthropic_client.messages.stream(**kwargs)
 
     def _diagnose_oauth_401(self, original_error: Exception) -> None:
@@ -514,11 +615,23 @@ class ClaudeModel(OpenAICompatibleModel):
                             }
                         )
                         func_tool_map[ft.name] = ft
-                    # Re-apply cache control on last tool
-                    if tools:
-                        for t in tools:
-                            t.pop("cache_control", None)
-                        tools[-1]["cache_control"] = {"type": "ephemeral"}
+
+                # Append Anthropic server-side web tools when the node opts in.
+                # These run server-side (the results come back as
+                # web_search_tool_result / web_fetch_tool_result content blocks),
+                # so they are NOT registered in func_tool_map.
+                builtin_web = kwargs.get("builtin_web_tools") or {}
+                if builtin_web.get("web_search"):
+                    tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
+                if builtin_web.get("web_fetch"):
+                    tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5})
+
+                # Re-apply cache control so the ephemeral marker lands on the final
+                # tool, whatever its source (MCP / func / server-side web).
+                if tools:
+                    for t in tools:
+                        t.pop("cache_control", None)
+                    tools[-1]["cache_control"] = {"type": "ephemeral"}
                 # Load prior turns from the session so multi-turn chat works.
                 # Native Anthropic loop is not driven by openai-agents Runner, so
                 # we replay session history into ``messages`` ourselves.
@@ -582,6 +695,12 @@ class ClaudeModel(OpenAICompatibleModel):
                         temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
                     )
 
+                    # Track server-side web tool calls emitted in real time during
+                    # streaming so the post-stream scan (and the non-streaming
+                    # fallback) doesn't double-emit them.
+                    emitted_server_ids: set = set()
+                    server_tool_names: dict = {}
+                    server_tool_queries: dict = {}
                     if self.async_anthropic_client is not None:
                         # Streaming path: yield text deltas as ``thinking_delta``
                         # ActionHistory in real time (parity with
@@ -600,9 +719,54 @@ class ClaudeModel(OpenAICompatibleModel):
                                 event_type = getattr(event, "type", None)
                                 if event_type == "content_block_start":
                                     block_start = getattr(event, "content_block", None)
-                                    if block_start is not None and getattr(block_start, "type", None) == "text":
+                                    bs_type = getattr(block_start, "type", None) if block_start is not None else None
+                                    if bs_type == "text":
                                         thinking_stream_id = f"thinking_stream_{uuid.uuid4().hex[:8]}"
                                         thinking_accumulated = ""
+                                    elif bs_type == "server_tool_use":
+                                        # Server-side web tool call — surface it in real
+                                        # time (interleaved where it happens) instead of
+                                        # only after the stream completes.
+                                        sid = getattr(block_start, "id", None) or f"srv_{uuid.uuid4().hex[:8]}"
+                                        sname = getattr(block_start, "name", None) or "web_search"
+                                        server_tool_names[sid] = sname
+                                        emitted_server_ids.add(sid)
+                                        s_input = getattr(block_start, "input", {}) or {}
+                                        if isinstance(s_input, dict):
+                                            server_tool_queries[sid] = str(
+                                                s_input.get("query") or s_input.get("url") or ""
+                                            )
+                                        yield ActionHistory(
+                                            action_id=sid,
+                                            role=ActionRole.TOOL,
+                                            messages=f"Tool call: {sname}",
+                                            action_type=sname,
+                                            input={"function_name": sname, "arguments": s_input},
+                                            output={},
+                                            status=ActionStatus.PROCESSING,
+                                        )
+                                    elif bs_type in ("web_search_tool_result", "web_fetch_tool_result"):
+                                        tid = getattr(block_start, "tool_use_id", None)
+                                        sname = server_tool_names.get(tid, "web_search")
+                                        summary, canonical = summarize_web_tool_result(
+                                            block_start, query=server_tool_queries.get(tid, "")
+                                        )
+                                        complete = ActionHistory(
+                                            action_id=f"complete_{tid}",
+                                            role=ActionRole.TOOL,
+                                            messages=f"Tool call: {sname}",
+                                            action_type=sname,
+                                            input={"function_name": sname, "arguments": {}},
+                                            output={
+                                                "success": True,
+                                                "raw_output": {"success": True, "result": canonical},
+                                                "summary": summary,
+                                                "status_message": summary,
+                                            },
+                                            status=ActionStatus.SUCCESS,
+                                        )
+                                        complete.end_time = datetime.now()
+                                        yield complete
                                 elif event_type == "content_block_delta":
                                     delta = getattr(event, "delta", None)
                                     if delta is None or getattr(delta, "type", None) != "text_delta":
@@ -694,6 +858,60 @@ class ClaudeModel(OpenAICompatibleModel):
                         await self._invoke_hook(hooks, "on_llm_end", run_ctx, hook_agent, response)
 
                     message = response.content
+
+                    # Surface server-side tool calls (Anthropic web_search /
+                    # web_fetch) as TOOL ActionHistory. The streaming path already
+                    # emits these in real time (tracked in ``emitted_server_ids``);
+                    # this post-stream pass only covers the non-streaming fallback,
+                    # so it skips ids already emitted to avoid duplicates.
+                    server_results = {
+                        getattr(b, "tool_use_id", None): b
+                        for b in message
+                        if getattr(b, "type", None) in ("web_search_tool_result", "web_fetch_tool_result")
+                    }
+                    for block in message:
+                        if getattr(block, "type", None) != "server_tool_use":
+                            continue
+                        if block.id in emitted_server_ids:
+                            continue
+                        block_input = getattr(block, "input", {}) or {}
+                        s_args = json.dumps(block_input, ensure_ascii=False)[:80]
+                        q = (
+                            block_input.get("query") or block_input.get("url") or ""
+                            if isinstance(block_input, dict)
+                            else ""
+                        )
+                        summary, canonical = summarize_web_tool_result(server_results.get(block.id), query=q)
+                        start_action = ActionHistory(
+                            action_id=block.id,
+                            role=ActionRole.TOOL,
+                            messages=f"Tool call: {block.name}('{s_args}...')",
+                            action_type=block.name,
+                            input={"function_name": block.name, "arguments": block_input},
+                            output={},
+                            status=ActionStatus.PROCESSING,
+                        )
+                        if action_history_manager is not None:
+                            action_history_manager.add_action(start_action)
+                        yield start_action
+                        complete_action = ActionHistory(
+                            action_id=f"complete_{block.id}",
+                            role=ActionRole.TOOL,
+                            messages=f"Tool call: {block.name}('{s_args}...')",
+                            action_type=block.name,
+                            input={"function_name": block.name, "arguments": block_input},
+                            output={
+                                "success": True,
+                                "raw_output": {"success": True, "result": canonical},
+                                "summary": summary,
+                                "status_message": summary,
+                            },
+                            status=ActionStatus.SUCCESS,
+                        )
+                        complete_action.end_time = datetime.now()
+                        if action_history_manager is not None:
+                            action_history_manager.add_action(complete_action)
+                        yield complete_action
 
                     # If no tool calls, conversation is complete
                     if not any(block.type == "tool_use" for block in message):
@@ -853,6 +1071,15 @@ class ClaudeModel(OpenAICompatibleModel):
                                 }
                             )
                             tool_use_blocks.append(block)
+                        else:
+                            # Preserve server-side blocks (server_tool_use /
+                            # web_search_tool_result / web_fetch_tool_result) verbatim
+                            # so a mixed turn (server web tool + local tool_use) keeps a
+                            # valid assistant message when replayed to Anthropic next turn.
+                            try:
+                                content.append(block.model_dump(mode="json"))
+                            except Exception:
+                                logger.debug("Skipping non-serializable content block: %s", getattr(block, "type", "?"))
 
                     if content:
                         messages.append({"role": "assistant", "content": content})
@@ -1223,9 +1450,14 @@ class ClaudeModel(OpenAICompatibleModel):
         Routes to native Anthropic API for OAuth subscription tokens,
         otherwise uses parent class LiteLLM implementation.
         """
-        # For OAuth tokens, use native path (LiteLLM sends x-api-key which is incompatible)
-        # Directly iterate the async generator for real-time tool call display
-        if self.use_native_api and self._is_oauth_token:
+        # Route to the native Anthropic path for (a) OAuth subscription tokens
+        # (LiteLLM sends x-api-key which is incompatible with Bearer auth), or
+        # (b) whenever vendor-native web tools are requested — server tools can
+        # only be expressed as raw tool dicts on the native Messages API, not via
+        # the agents-SDK LiteLLM tool list. Non-web calls (e.g. compaction
+        # summarization, which passes no builtin_web_tools) stay on LiteLLM.
+        _want_builtin_web = any((kwargs.get("builtin_web_tools") or {}).values())
+        if (self.use_native_api and self._is_oauth_token) or _want_builtin_web:
             if action_history_manager is None:
                 action_history_manager = ActionHistoryManager()
             async for action in self._generate_with_mcp_stream(

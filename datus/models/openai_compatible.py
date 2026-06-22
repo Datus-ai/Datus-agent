@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import httpx
 import litellm
 import yaml
-from agents import Agent, ModelSettings, Runner, Tool
+from agents import Agent, ModelSettings, Runner, Tool, WebSearchTool
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.extensions.memory import AdvancedSQLiteSession
 from agents.mcp import MCPServerStdio
@@ -44,6 +44,37 @@ from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm
 from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
 
 logger = get_logger(__name__)
+
+
+def describe_hosted_tool_item(raw_item):
+    """Resolve display fields for an OpenAI Responses hosted tool run-item.
+
+    Hosted tools (``web_search_call`` / ``file_search_call`` / ``image_generation_call``
+    / ``code_interpreter_call`` …) are executed server-side, so their run-item is NOT
+    a ``function_call`` and carries no ``name``/``call_id``/``arguments`` — leaving the
+    stream converter to label them ``unknown``. Map them to a friendly tool name and
+    surface the query/url so the CLI/web event stream shows e.g. ``web_search(...)``.
+
+    Returns ``(name, call_id, arguments_json)`` for a hosted tool item, or ``None``
+    when the item is a regular function call (handled by the normal path).
+    """
+    itype = raw_item.get("type") if isinstance(raw_item, dict) else getattr(raw_item, "type", None)
+    if not itype or itype == "function_call" or not itype.endswith("_call"):
+        return None
+    name = itype[: -len("_call")]  # "web_search_call" -> "web_search"
+
+    def _get(obj, key):
+        return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
+
+    call_id = _get(raw_item, "id") or _get(raw_item, "call_id")
+    action = _get(raw_item, "action")
+    args: dict = {}
+    if action is not None:
+        query = _get(action, "query") or _get(action, "queries") or _get(action, "url")
+        if query:
+            args["query"] = query
+    return name, call_id, json.dumps(args, ensure_ascii=False)
+
 
 # LiteLLM configuration
 # Enable dropping unsupported parameters for providers that don't support them
@@ -732,6 +763,72 @@ class OpenAICompatibleModel(LLMBaseModel):
 
             return {"error": "Failed to parse JSON response", "raw_response": response_text}
 
+    @staticmethod
+    def _maybe_add_builtin_web_search(tools: Optional[List[Tool]], kwargs: dict) -> Optional[List[Tool]]:
+        """Append the OpenAI hosted ``WebSearchTool`` when the node opts in.
+
+        Only OpenAIModel sets ``supports_builtin_web_search`` (the node then passes
+        ``builtin_web_tools={"web_search": True}``), so this is a no-op for every
+        other OpenAI-compatible provider. The hosted tool is served by the OpenAI
+        Responses API; the local ``web_search`` function tool is suppressed by the
+        node when this is active. Idempotent.
+        """
+        if not (kwargs.get("builtin_web_tools") or {}).get("web_search"):
+            return tools
+        tools = list(tools or [])
+        if not any(isinstance(t, WebSearchTool) for t in tools):
+            tools.append(WebSearchTool())
+        return tools
+
+    @staticmethod
+    async def _flush_pending_hosted_searches(pending: List[dict], result, action_history_manager):
+        """Emit deferred completions for hosted ``web_search`` calls.
+
+        OpenAI's hosted search returns no results on the call item; the title+url
+        pairs the model used surface as ``url_citation`` annotations on the
+        assistant message. We read them back from ``result.to_input_list()``
+        (annotations preserved) and, per the agreed model, attach the turn's full
+        citation set as each hosted search's canonical results — falling back to
+        the call's own ``action.sources`` URLs when no citations were produced.
+        """
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+        from datus.schemas.web_result import (
+            collect_citations_from_input_list,
+            normalize_search_results,
+            web_search_short_summary,
+        )
+
+        citations: List[dict] = []
+        try:
+            if hasattr(result, "to_input_list"):
+                citations = collect_citations_from_input_list(result.to_input_list())
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Failed to collect web_search citations: {e}")
+
+        for call in pending:
+            items = citations or call.get("sources") or []
+            canonical = normalize_search_results(call.get("query", ""), items)
+            summary = web_search_short_summary(canonical)
+            done_action = ActionHistory(
+                action_id=f"complete_{call['call_id']}",
+                role=ActionRole.TOOL,
+                messages=f"Tool call: {call['tool_name']}('{call['args_str']}...')",
+                action_type=call["tool_name"],
+                input={"function_name": call["tool_name"], "arguments": call["arguments"]},
+                output={
+                    "success": True,
+                    "raw_output": {"success": True, "result": canonical},
+                    "summary": summary,
+                    "status_message": summary,
+                },
+                status=ActionStatus.SUCCESS,
+                start_time=call.get("start_time"),
+            )
+            done_action.end_time = datetime.now()
+            if action_history_manager is not None:
+                action_history_manager.add_action(done_action)
+            yield done_action
+
     async def generate_with_tools(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -764,6 +861,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Dict with content and sql_contexts
         """
+        tools = self._maybe_add_builtin_web_search(tools, kwargs)
         # Use the internal method that returns a Dict
         result = await self._generate_with_tools_internal(
             prompt,
@@ -829,6 +927,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         if action_history_manager is None:
             action_history_manager = ActionHistoryManager()
 
+        tools = self._maybe_add_builtin_web_search(tools, kwargs)
         async for action in self._generate_with_tools_stream_internal(
             prompt,
             mcp_servers,
@@ -1013,6 +1112,15 @@ class OpenAICompatibleModel(LLMBaseModel):
                 existing_extra_args = model_settings_kwargs.get("extra_args", {})
                 existing_extra_args["prompt_cache_key"] = prompt_cache_key
                 model_settings_kwargs["extra_args"] = existing_extra_args
+
+        # When the hosted web_search tool is in play, ask the Responses API to
+        # echo the per-call source URLs (``action.sources``). They are a fallback
+        # for the richer url_citation results we read off the assistant message.
+        if tools and any(isinstance(t, WebSearchTool) for t in tools):
+            existing_include = list(model_settings_kwargs.get("response_include") or [])
+            if "web_search_call.action.sources" not in existing_include:
+                existing_include.append("web_search_call.action.sources")
+            model_settings_kwargs["response_include"] = existing_include
 
         agent_kwargs["model_settings"] = ModelSettings(**model_settings_kwargs)
 
@@ -1229,6 +1337,10 @@ class OpenAICompatibleModel(LLMBaseModel):
                 tool_output_seen = False
                 final_assistant_yielded = False
                 last_assistant_text = ""
+                # Hosted web_search calls run server-side and expose no results on
+                # the call item; we defer their completion until after the stream
+                # so we can attach the assistant message's url_citation results.
+                pending_hosted_searches: List[dict] = []
 
                 # Streaming thinking state: accumulate text deltas for real-time output
                 thinking_stream_id: Optional[str] = None
@@ -1356,12 +1468,19 @@ class OpenAICompatibleModel(LLMBaseModel):
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item:
                                 tool_name = getattr(raw_item, "name", None)
-                                if not tool_name:
-                                    logger.warning(f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}")
-                                    tool_name = "unknown"
-
                                 arguments = getattr(raw_item, "arguments", "{}")
                                 call_id = getattr(raw_item, "call_id", None)
+                                is_hosted = False
+                                if not tool_name:
+                                    hosted = describe_hosted_tool_item(raw_item)
+                                    if hosted:
+                                        tool_name, call_id, arguments = hosted
+                                        is_hosted = True
+                                    else:
+                                        logger.warning(
+                                            f"Tool call has no name field: {type(raw_item)}, {dir(raw_item)}"
+                                        )
+                                        tool_name = "unknown"
 
                                 # Generate call_id if missing
                                 if not call_id:
@@ -1369,6 +1488,7 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     logger.warning(f"Tool call missing call_id, generated: {call_id}")
 
                                 # Try to format arguments
+                                args_dict: dict = {}
                                 try:
                                     args_dict = json.loads(arguments) if arguments else {}
                                     args_str = to_str(args_dict)[:80]
@@ -1396,6 +1516,31 @@ class OpenAICompatibleModel(LLMBaseModel):
                                 )
                                 action_history_manager.add_action(start_action)
                                 yield start_action
+
+                                # Hosted tools (web_search, …) run server-side and
+                                # emit no ``tool_call_output_item``. The results
+                                # are not on the call item — they arrive as
+                                # url_citation annotations on the assistant
+                                # message — so defer the completion until the
+                                # stream ends (see the pending-hosted flush below).
+                                if is_hosted:
+                                    temp_tool_calls.pop(call_id, None)
+                                    from datus.schemas.web_result import extract_action_sources, hosted_action_query
+
+                                    raw_action = getattr(raw_item, "action", None)
+                                    pending_hosted_searches.append(
+                                        {
+                                            "call_id": call_id,
+                                            "tool_name": tool_name,
+                                            "arguments": arguments,
+                                            "args_str": args_str,
+                                            "query": str(
+                                                hosted_action_query(raw_action) or args_dict.get("query") or ""
+                                            ),
+                                            "sources": extract_action_sources(raw_action),
+                                            "start_time": datetime.now(),
+                                        }
+                                    )
 
                         # Handle tool call completion
                         elif item_type == "tool_call_output_item":
@@ -1524,6 +1669,16 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     action_history_manager.add_action(thinking_action)
                                     yield thinking_action
                                     mark_assistant_response(text_content, is_thinking)
+
+                # Flush deferred hosted web_search completions. The url_citation
+                # results live on the assistant message(s); read them back from
+                # the final input list (which preserves annotations) and attach
+                # them as the canonical web_search result for the turn's calls.
+                if pending_hosted_searches:
+                    async for hosted_done in self._flush_pending_hosted_searches(
+                        pending_hosted_searches, result, action_history_manager
+                    ):
+                        yield hosted_done
 
                 final_output = getattr(result, "final_output", "") or ""
                 if not isinstance(final_output, str):
