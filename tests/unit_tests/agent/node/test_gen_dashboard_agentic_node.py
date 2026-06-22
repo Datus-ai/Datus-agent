@@ -453,11 +453,15 @@ class TestGenDashboardPermissionWiring:
         _bi_core_mock.adapter_registry.get.return_value = lambda **kwargs: FullMockAdapter()
         with patch.dict(sys.modules, _BI_MODULES_PATCH):
             from datus.agent.node.gen_dashboard_agentic_node import GenDashboardAgenticNode
+            from datus.tools.permission.permission_hooks import CompositeHooks, PermissionHooks
 
             node = GenDashboardAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
             hooks = node._compose_hooks()
-            assert hooks is not None
-            assert node.permission_hooks is not None
+            # Workflow mode wires permission + compact + token_usage hooks, so the
+            # result must be a CompositeHooks bundle, and the permission gate must
+            # be a real PermissionHooks (not None, not some other hook type).
+            assert isinstance(hooks, CompositeHooks)
+            assert isinstance(node.permission_hooks, PermissionHooks)
 
     def test_tool_registry_routes_delete_chart_to_bi_tools(self, real_agent_config, mock_llm_create):
         """After ``_ensure_permission_hooks`` runs, registry must classify ``delete_chart``.
