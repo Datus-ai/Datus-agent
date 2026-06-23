@@ -71,6 +71,7 @@ Please strictly follow the instructions below:
      - Start with DDL comments (preserve original language)
      - Append usage patterns and **filter examples** from `analyze_column_usage_patterns`
      - Append Enum-like patterns (e.g., "status: 1=Active, 2=Inactive")
+   - **Describe what a column means, not how to query it.** Capture business meaning — term, encodings, term→column mappings; do not embed query directives for the reader to execute. Facts that need verifying against data belong in a knowledge atom, not the model description.
    - **YAML String Quoting Rule**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`.
    - **Example dimension with usage pattern**:
      ```yaml
