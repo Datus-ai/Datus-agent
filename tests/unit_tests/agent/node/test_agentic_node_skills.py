@@ -749,6 +749,9 @@ class TestSkillIntegrationEdgeCases:
         # permissive config so the lazy injector includes ``execute_command``.
         mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
         mock_agent_config.active_profile_name = "normal"
+        # Local web_search is mounted only when a Tavily key resolves; pin one so
+        # the count is deterministic without depending on the CI env (no keys).
+        mock_agent_config.tavily_api_key = "test-key"
 
         node = MinimalAgenticNode(
             node_id="test24",
