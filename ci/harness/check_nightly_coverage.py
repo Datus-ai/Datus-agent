@@ -14,7 +14,8 @@ B. Per-flow issue sync — for every flow that is ``drift`` or a declared gap
 Whitelist: ``status in {manual, external, not_applicable}`` are deliberate,
 PR-reviewed non-coverage decisions and never produce an issue.
 
-See docs/superpowers/specs/2026-06-20-nightly-coverage-gap-detection-design.md.
+The script is intentionally self-contained so the nightly job can publish a
+digest artifact without relying on separate design documentation.
 """
 
 import argparse
