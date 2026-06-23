@@ -31,6 +31,8 @@ docs_coverage_policy:
       reason: Configuration section overview, not a discrete flow.
     - path: docs/knowledge_base/introduction.md
       reason: Knowledge base section overview, not a discrete flow.
+    - path: docs/API/debugging.md
+      reason: REST API diagnostics/troubleshooting reference (SIGUSR1 task dump), not a discrete product flow.
 flow_groups:
   onboarding:
     description: First-run and documented bootstrap flows.
@@ -162,9 +164,7 @@ flow_groups:
         docs:
           - docs/cli/introduction.md
           - docs/cli/chat_command.md
-          - docs/cli/model_command.md
-          - docs/cli/language_command.md
-          - docs/cli/effort_command.md
+          - docs/cli/other_commands.md
           - docs/cli/plan_mode.md
           - docs/configuration/compact.md
         entrypoints:
@@ -657,7 +657,7 @@ flow_groups:
         docs:
           - docs/subagent/introduction.md
           - docs/subagent/builtin_subagents.md
-          - docs/integration/skills.md
+          - docs/skills/introduction.md
         entrypoints:
           - CLI chat subagent routing
           - Agentic node registry
@@ -846,11 +846,18 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/cli/skill_command.md
-          - docs/integration/skills.md
+          - docs/skills/introduction.md
+          - docs/skills/init.md
+          - docs/skills/build_kb.md
+          - docs/skills/storage_classify.md
+          - docs/skills/extract_knowledge.md
+          - docs/skills/memory_organization.md
+          - docs/skills/session_summarize.md
         entrypoints:
           - CLI skill commands
           - Skill manager
           - Skill execution permissions
+          - "Built-in skills: /init, /build-kb, storage-classify, extract-knowledge, memory-organization, session-summarize"
         contracts:
           - Skills can be discovered, loaded, and executed within permission boundaries.
           - Project-local skill behavior and marketplace operations are tracked for stronger coverage.
@@ -1110,9 +1117,7 @@ flow_groups:
         quality_sensitive: false
         docs:
           - docs/configuration/agent.md
-          - docs/cli/model_command.md
-          - docs/cli/language_command.md
-          - docs/cli/effort_command.md
+          - docs/cli/other_commands.md
         entrypoints:
           - Provider catalog
           - Model command
