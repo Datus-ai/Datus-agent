@@ -32,21 +32,17 @@ Control the reasoning effort level for the LLM.
 
 ```text
 /effort                      # open the selector
-/effort high                 # set the level (asks for scope)
-/effort high --project       # persist to ./.datus/config.yml
-/effort high --global        # persist to agent.yml
-/effort off                  # disable reasoning
+/effort high                 # set directly
 ```
 
 | Level | Behavior |
 |-------|----------|
-| `off` | Disable reasoning |
 | `minimal` | Least reasoning, fastest |
-| `low` | Low effort |
+| `low` | Less reasoning |
 | `medium` | Balanced (default) |
 | `high` | Most thorough, slowest |
 
-Higher effort uses more tokens and takes longer. The level maps to each provider's native dialect, so one knob covers every provider; models without reasoning support ignore it. The selection is persisted at project scope (`./.datus/config.yml`) or global scope (`agent.yml`) — use `/effort --clear` to remove a project override, and `/effort status` to show the effective level.
+Higher effort uses more tokens and takes longer. Not all providers/models support effort levels; unsupported models ignore the setting. The selection persists for the session.
 
 ### `/language`
 
@@ -54,12 +50,10 @@ Set the language the assistant replies in.
 
 ```text
 /language                    # open the selector
-/language zh                 # set the language (asks for scope)
-/language zh --project       # persist to ./.datus/config.yml
-/language zh --global        # persist to agent.yml
+/language zh                 # set directly
 ```
 
-Accepts language codes such as `en`, `zh`, `ja`, `ko`, `es`, `fr`, `de`, `pt`, `ru`, `it`, plus `auto` to let the model decide. It affects only the assistant's natural-language responses, not SQL or code. The setting is persisted at project or global scope; use `/language --clear` to remove a project override.
+It affects only the assistant's natural-language responses, not SQL or code. The setting persists for the session.
 
 ## Setup & Service Commands
 

@@ -32,21 +32,17 @@ target:
 
 ```text
 /effort                      # 打开选择器
-/effort high                 # 设置级别（会询问作用域）
-/effort high --project       # 持久化到 ./.datus/config.yml
-/effort high --global        # 持久化到 agent.yml
-/effort off                  # 关闭推理
+/effort high                 # 直接设置
 ```
 
 | 级别 | 行为 |
 |------|------|
-| `off` | 关闭推理 |
 | `minimal` | 推理最少，最快 |
-| `low` | 低努力 |
+| `low` | 较少推理 |
 | `medium` | 平衡（默认） |
 | `high` | 最深入，最慢 |
 
-更高的努力级别消耗更多 token 且耗时更长。该级别会映射到各提供商的原生方言，因此一个开关覆盖所有提供商；不支持推理的模型会忽略它。选择会在项目作用域（`./.datus/config.yml`）或全局作用域（`agent.yml`）持久化——用 `/effort --clear` 移除项目级覆盖，用 `/effort status` 查看生效级别。
+更高的努力级别消耗更多 token 且耗时更长。并非所有提供商 / 模型都支持努力级别；不支持的模型会忽略此设置。该选择在会话期间持久化。
 
 ### `/language`
 
@@ -54,12 +50,10 @@ target:
 
 ```text
 /language                    # 打开选择器
-/language zh                 # 设置语言（会询问作用域）
-/language zh --project       # 持久化到 ./.datus/config.yml
-/language zh --global        # 持久化到 agent.yml
+/language zh                 # 直接设置
 ```
 
-接受语言代码，例如 `en`、`zh`、`ja`、`ko`、`es`、`fr`、`de`、`pt`、`ru`、`it`，以及 `auto`（由模型自行决定）。它仅影响助手的自然语言回复，不影响 SQL 或代码。设置会在项目或全局作用域持久化；用 `/language --clear` 移除项目级覆盖。
+它仅影响助手的自然语言回复，不影响 SQL 或代码。该设置在会话期间持久化。
 
 ## 设置与服务命令
 
