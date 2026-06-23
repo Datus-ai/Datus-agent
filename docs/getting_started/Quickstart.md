@@ -67,7 +67,7 @@ Common providers:
 | `claude` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
 
-Full provider list (Kimi / Qwen / GLM / MiniMax, Claude subscription, Codex OAuth, Coding Plan, …) lives in [Model Command](../cli/model_command.md).
+Full provider list (Kimi / Qwen / GLM / MiniMax, Claude subscription, Codex OAuth, Coding Plan, …) lives in [Model Command](../cli/other_commands.md#model).
 
 ### Init (optional)
 

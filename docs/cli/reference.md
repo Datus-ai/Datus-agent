@@ -40,16 +40,16 @@ All slash commands available in Datus-CLI, grouped by category.
 | `/agent` | Open the unified agent manager (built-in overrides / default). `/agent <name>` still sets the default directly. |
 | `/subagent` | Open the unified agent manager, seeded on the Custom tab |
 | `/datasource` | Switch the current datasource |
-| `/language` | Pin the response language for every agentic node ([Language Command](language_command.md)) |
+| `/language` | Pin the response language for every agentic node ([Language Command](other_commands.md#language)) |
 
 ## System
 
 | Command | Aliases | Description | Details |
 |---------|---------|-------------|---------|
-| `/model` | `/models` | Switch LLM provider/model at runtime | [Model Command](model_command.md) |
-| `/effort` | | Set reasoning effort level (off/minimal/low/medium/high) | [Effort Command](effort_command.md) |
-| `/init` | | Lightweight init: scan + write `AGENTS.md` inventory and file-based knowledge/memory (no vector KB); optional free text adds goal/scope hints | [Init Command](init_command.md) |
-| `/build-kb` | | Build the vector-indexed KB (semantic models / metrics / reference SQL) and refresh the `AGENTS.md` index; optional free text scopes files/tables/domains | [Build KB Command](build_kb_command.md) |
+| `/model` | `/models` | Switch LLM provider/model at runtime | [Model Command](other_commands.md#model) |
+| `/effort` | | Set reasoning effort level (off/minimal/low/medium/high) | [Effort Command](other_commands.md#effort) |
+| `/init` | | Lightweight init: scan + write `AGENTS.md` inventory and file-based knowledge/memory (no vector KB); optional free text adds goal/scope hints | [Init Command](../skills/init.md) |
+| `/build-kb` | | Build the vector-indexed KB (semantic models / metrics / reference SQL) and refresh the `AGENTS.md` index; optional free text scopes files/tables/domains | [Build KB Command](../skills/build_kb.md) |
 | `/session-summarize` | | Summarize the current session into persistent stores (manifest, then confirm); optional free text adds focus hints | |
 | `/memory-organize` | | Audit and reorganize all persistent stores (remediation plan, then confirm); optional free text adds focus hints | |
 | `/mcp` | | Manage MCP servers (list/add/remove/check/call/filter) | [MCP Extensions](mcp_extensions.md) |

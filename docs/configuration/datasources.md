@@ -262,4 +262,4 @@ password: "actual_password"
 - [Semantic Layer Configuration](semantic_layer.md) - Configure semantic adapters
 - [BI Platforms Configuration](bi_platforms.md) - Configure Superset or Grafana
 - [Scheduler Configuration](schedulers.md) - Configure Airflow services
-- [CLI Commands](../cli-commands.md) - Full CLI reference including configure, init, and service commands
+- [CLI Commands](../cli/other_commands.md) - Full CLI reference including configure, init, and service commands

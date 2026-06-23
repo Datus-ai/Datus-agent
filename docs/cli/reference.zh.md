@@ -40,16 +40,16 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 | `/agent` | 打开统一 agent 管理 TUI（Built-in 覆写 / 设为默认）。`/agent <name>` 仍可直接切换默认 agent |
 | `/subagent` | 打开统一 agent 管理 TUI（Custom Tab） |
 | `/datasource` | 切换当前数据源 |
-| `/language` | 固定所有 agentic 节点的响应语言（[Language 命令](language_command.zh.md)） |
+| `/language` | 固定所有 agentic 节点的响应语言（[Language 命令](other_commands.zh.md#language)） |
 
 ## 系统
 
 | 命令 | 别名 | 说明 | 详情 |
 |------|------|------|------|
-| `/model` | `/models` | 运行时切换 LLM 提供商/模型 | [Model 命令](model_command.zh.md) |
-| `/effort` | | 设置 reasoning 强度（off/minimal/low/medium/high） | [Effort 命令](effort_command.zh.md) |
-| `/init` | | 轻量初始化:扫描并写出 `AGENTS.md` 清单与文件类 knowledge/memory（不建向量库）；可附加自由文本作为目标/范围提示 | [Init 命令](init_command.zh.md) |
-| `/build-kb` | | 构建向量索引 KB（semantic models / metrics / reference SQL）并刷新 `AGENTS.md` 索引；可附加自由文本限定文件/库表/业务域范围 | [Build KB 命令](build_kb_command.zh.md) |
+| `/model` | `/models` | 运行时切换 LLM 提供商/模型 | [Model 命令](other_commands.zh.md#model) |
+| `/effort` | | 设置 reasoning 强度（off/minimal/low/medium/high） | [Effort 命令](other_commands.zh.md#effort) |
+| `/init` | | 轻量初始化:扫描并写出 `AGENTS.md` 清单与文件类 knowledge/memory（不建向量库）；可附加自由文本作为目标/范围提示 | [Init 命令](../skills/init.zh.md) |
+| `/build-kb` | | 构建向量索引 KB（semantic models / metrics / reference SQL）并刷新 `AGENTS.md` 索引；可附加自由文本限定文件/库表/业务域范围 | [Build KB 命令](../skills/build_kb.zh.md) |
 | `/session-summarize` | | 把当前会话总结进各持久化存储（先出 manifest,确认后执行）；可附加自由文本作为关注点提示 | |
 | `/memory-organize` | | 审计并整理所有持久化存储（先出整改计划,确认后执行）；可附加自由文本作为关注点提示 | |
 | `/mcp` | | 管理 MCP 服务器（列表/添加/删除/检查/调用/过滤） | [MCP 扩展](mcp_extensions.zh.md) |

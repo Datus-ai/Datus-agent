@@ -101,7 +101,7 @@ datus
 
 ### 设置模型
 
-`/bootstrap-bi` 会调用 LLM 生成 SQL Summary、语义模型与指标。开始之前先用 `/model` 选定要使用的模型，详见 [模型命令](../cli/model_command.md)。
+`/bootstrap-bi` 会调用 LLM 生成 SQL Summary、语义模型与指标。开始之前先用 `/model` 选定要使用的模型，详见 [模型命令](../cli/other_commands.zh.md#model)。
 
 ```text
 > /model

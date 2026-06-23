@@ -67,7 +67,7 @@ datus
 | `claude` | `claude-sonnet-4-5` | `ANTHROPIC_API_KEY` |
 | `gemini` | `gemini-2.5-pro` | `GEMINI_API_KEY` |
 
-完整 provider 列表（含 Kimi / Qwen / GLM / MiniMax、Claude 订阅、Codex OAuth、Coding Plan 等）见 [Model 命令](../cli/model_command.zh.md)。
+完整 provider 列表（含 Kimi / Qwen / GLM / MiniMax、Claude 订阅、Codex OAuth、Coding Plan 等）见 [Model 命令](../cli/other_commands.zh.md#model)。
 
 ### Init（可选）
 

@@ -20,6 +20,7 @@ nav:
       - Skill Command: cli/skill_command.md
       - Reference: cli/reference.md
       - Plan Mode: cli/plan_mode.md
+      - Other Commands: cli/other_commands.md
     - Subagent:
       - Introduction: subagent/introduction.md
       - Built-in subagents: subagent/builtin_subagents.md
@@ -34,6 +35,15 @@ nav:
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
       - HTML Report Generation: subagent/gen_visual_report.md
       - HTML Dashboard Generation: subagent/gen_visual_dashboard.md
+    - Skills:
+      - Introduction: skills/introduction.md
+      - Built-in Skills:
+        - Init: skills/init.md
+        - Build KB: skills/build_kb.md
+        - Storage Classify: skills/storage_classify.md
+        - Extract Knowledge: skills/extract_knowledge.md
+        - Memory Organization: skills/memory_organization.md
+        - Session Summarize: skills/session_summarize.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
@@ -83,7 +93,6 @@ nav:
       - Introduction: benchmark/benchmark_manual.md
     - Integration:
       - MCP: integration/mcp.md
-      - Skills: integration/skills.md
       - Validation: integration/validation.md
       - Auto Memory: integration/memory.md
     - Training:
@@ -124,6 +133,7 @@ plugins:
             Skill Command: 技能命令
             Reference: 参考
             Plan Mode: 计划模式
+            Other Commands: 其他命令
             Subagent: Subagent
             Built-in subagents: 内置 subagent
             Customized subagents: 自定义 subagent
@@ -171,6 +181,13 @@ plugins:
             Integration: 集成
             MCP: MCP
             Skills: Skills
+            Built-in Skills: 内置 Skills
+            Init: 初始化
+            Build KB: 构建知识库
+            Storage Classify: 存储分类
+            Extract Knowledge: 知识提取
+            Memory Organization: 记忆整理
+            Session Summarize: 会话总结
             Validation: 校验
             Auto Memory: 自动记忆
             Develop: 开发

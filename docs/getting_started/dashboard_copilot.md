@@ -101,7 +101,7 @@ datus
 
 ### Set the Model
 
-`/bootstrap-bi` calls the LLM to produce SQL summaries, the semantic model, and metrics. Pick the model first via `/model` — see [Model Command](../cli/model_command.md) for the full provider list.
+`/bootstrap-bi` calls the LLM to produce SQL summaries, the semantic model, and metrics. Pick the model first via `/model` — see [Model Command](../cli/other_commands.md#model) for the full provider list.
 
 ```text
 > /model

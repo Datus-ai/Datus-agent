@@ -269,4 +269,4 @@ password: "actual_password"
 - [语义层配置](semantic_layer.md) - 配置语义适配器
 - [BI 平台配置](bi_platforms.md) - 配置 Superset 或 Grafana
 - [调度器配置](schedulers.md) - 配置 Airflow 等调度器
-- [CLI 命令](../cli-commands.md) - 查看 `configure`、`init`、`service` 等完整命令说明
+- [CLI 命令](../cli/other_commands.zh.md) - 查看 `configure`、`init`、`service` 等完整命令说明

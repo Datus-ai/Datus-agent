@@ -10,7 +10,7 @@ LLM selection uses a two-tier system. Most users only need the provider-level co
 
 #### Provider-Level Configuration (Preferred)
 
-Configure credentials under `agent.providers.<name>`. Available models and metadata are loaded from `conf/providers.yml` automatically. Use the [`/model`](../cli/model_command.md) slash command in the CLI to switch between providers and models interactively.
+Configure credentials under `agent.providers.<name>`. Available models and metadata are loaded from `conf/providers.yml` automatically. Use the [`/model`](../cli/other_commands.md#model) slash command in the CLI to switch between providers and models interactively.
 
 ```yaml
 agent:
