@@ -57,7 +57,7 @@ It affects only the assistant's natural-language responses, not SQL or code. The
 
 ## Setup & Service Commands
 
-Datus is configured from inside the REPL with slash commands; a few datasource operations also have a non-interactive `datus-agent` surface for scripts and CI.
+Datus is configured from inside the REPL with slash commands.
 
 ### `/datasource`
 
@@ -66,27 +66,6 @@ Add, edit, delete, or switch datasources (DuckDB, SQLite, Snowflake, MySQL, Post
 ### `/init` and `/build-kb`
 
 `/init` and `/build-kb` bootstrap a project workspace — they delegate to built-in skills. `/init` does a fast, lightweight scan; `/build-kb` builds the vector-indexed knowledge base. See [Init](../skills/init.md) and [Build KB](../skills/build_kb.md) for details.
-
-### `datus-agent service`
-
-A non-interactive surface for the same datasource CRUD operations, handy in scripts or CI:
-
-```bash
-datus-agent service list      # show configured datasources, adapters, BI platforms, schedulers
-datus-agent service add       # add a datasource interactively
-datus-agent service delete    # remove a datasource interactively
-```
-
-### `--datasource` flag
-
-`datus-agent` subcommands require `--datasource` to pick which datasource to use:
-
-```bash
-datus-cli --datasource my_duckdb
-datus-agent run --datasource my_duckdb --task "show tables" --task_db_name demo
-```
-
-Interactive `datus-cli` can auto-select when the configuration is unambiguous: a datasource marked `default: true`, or the only one configured, is chosen automatically; otherwise you pick from a list.
 
 ### `datus upgrade`
 

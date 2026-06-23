@@ -57,7 +57,7 @@ target:
 
 ## 设置与服务命令
 
-Datus 在 REPL 内通过斜杠命令完成配置；部分数据源操作还提供非交互式的 `datus-agent` 接口，便于脚本和 CI 使用。
+Datus 在 REPL 内通过斜杠命令完成配置。
 
 ### `/datasource`
 
@@ -66,27 +66,6 @@ Datus 在 REPL 内通过斜杠命令完成配置；部分数据源操作还提�
 ### `/init` 和 `/build-kb`
 
 `/init` 和 `/build-kb` 用于初始化项目工作区——它们委托给内置 skill。`/init` 做一次快速的轻量扫描；`/build-kb` 构建向量索引知识库。详见 [Init](../skills/init.md) 和 [Build KB](../skills/build_kb.md)。
-
-### `datus-agent service`
-
-为同样的数据源增删改查提供非交互式接口，便于脚本或 CI：
-
-```bash
-datus-agent service list      # 显示已配置的数据源、适配器、BI 平台、调度器
-datus-agent service add       # 交互式添加数据源
-datus-agent service delete    # 交互式删除数据源
-```
-
-### `--datasource` 参数
-
-`datus-agent` 子命令需要 `--datasource` 来指定使用哪个数据源：
-
-```bash
-datus-cli --datasource my_duckdb
-datus-agent run --datasource my_duckdb --task "show tables" --task_db_name demo
-```
-
-当配置无歧义时，交互式 `datus-cli` 可以自动选择：标记了 `default: true` 的数据源，或唯一配置的数据源会被自动选中；否则会让你从列表中选择。
 
 ### `datus upgrade`
 
