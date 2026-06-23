@@ -58,9 +58,18 @@ Streaming endpoints (`/chat/stream`, `/chat/resume`) return `text/event-stream` 
 All v1 endpoints live under `/api/v1`. Health check (`/health`) and the OpenAPI/Swagger UI (`/docs`, `/openapi.json`)
 sit at the application root.
 
+## Troubleshooting
+
+Approaches for diagnosing a misbehaving server:
+
+- **Hung request** — a request that never returns even though `GET /health` still responds is almost always a
+  parked coroutine, not a blocked event loop. Send `SIGUSR1` to the server (`kill -USR1 <pid>`) to dump every
+  live async task and the innermost frame each is suspended on. See
+  [Debugging — SIGUSR1 task dump](debugging.md#sigusr1-task-dump).
+
 ## Next steps
 
 - [Deployment](deployment.md) — install and launch the API server
 - [Chat](chat.md) — chat endpoints and SSE streaming
 - [Knowledge Base](knowledge_base.md) — KB bootstrap and platform doc endpoints with SSE
-- [Models](models.md) — list available LLM models and provider metadata
+- [Debugging](debugging.md) — diagnose hung requests with the SIGUSR1 async task dump

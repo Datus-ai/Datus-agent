@@ -67,6 +67,7 @@ nav:
       - Deployment: API/deployment.md
       - Chat: API/chat.md
       - Knowledge Base API: API/knowledge_base.md
+      - Debugging: API/debugging.md
     - Configuration:
       - Introduction: configuration/introduction.md
       - Agent: configuration/agent.md
