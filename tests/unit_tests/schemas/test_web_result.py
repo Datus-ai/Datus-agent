@@ -86,6 +86,37 @@ def test_web_fetch_summary_truncated_and_domain_fallback():
 # ── OpenAI hosted extraction (objects and dicts) ────────────────────
 
 
+def test_normalize_search_results_skips_non_dict_items():
+    out = normalize_search_results("q", ["not-a-dict", {"title": "Ok", "url": "https://o", "snippet": "s"}])
+    assert out["result_count"] == 1
+    assert out["results"][0]["title"] == "Ok"
+
+
+def test_web_search_summary_non_dict_returns_empty():
+    assert web_search_short_summary("nope") == ""
+    assert web_search_short_summary(None) == ""
+
+
+def test_web_search_summary_results_without_labels():
+    # Results present but each lacks title/url -> count only, no label list.
+    result = {"result_count": 2, "results": [{"snippet": "a"}, {"snippet": "b"}]}
+    assert web_search_short_summary(result) == "2 web results"
+
+
+def test_web_search_summary_completed_when_empty():
+    assert web_search_short_summary({}) == "completed"
+
+
+def test_web_fetch_summary_non_dict_returns_empty():
+    assert web_fetch_short_summary(["x"]) == ""
+
+
+def test_web_fetch_summary_counts_content_when_char_count_missing():
+    # char_count absent -> derived from content length.
+    result = {"title": "", "url": "https://duckdb.org", "content": "abcd"}
+    assert web_fetch_short_summary(result) == "duckdb.org (4 chars)"
+
+
 def test_extract_url_citations_dedups_and_skips_non_citation():
     parts = [
         SimpleNamespace(

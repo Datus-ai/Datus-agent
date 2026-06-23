@@ -10,12 +10,17 @@ the methods as unbound functions against a stand-in ``self`` to avoid the OAuth
 exercised by nightly tests against real APIs.
 """
 
+from datetime import datetime
 from unittest.mock import Mock
+
+import pytest
 
 from datus.models.base import LLMBaseModel
 from datus.models.claude_model import ClaudeModel
 from datus.models.codex_model import CodexModel
 from datus.models.openai_model import OpenAIModel
+
+_NOW = datetime(2026, 1, 1, 0, 0, 0)
 
 
 def test_base_defaults_false():
@@ -194,6 +199,71 @@ def test_describe_hosted_tool_item_ignores_function_call():
         describe_hosted_tool_item({"type": "function_call", "name": "read_query", "call_id": "c1", "arguments": "{}"})
         is None
     )
+
+
+@pytest.mark.asyncio
+async def test_openai_flush_pending_hosted_searches_uses_citations():
+    """OpenAI deferred hosted web_search completion builds the canonical result
+    from the assistant message's url_citation annotations."""
+    from types import SimpleNamespace
+
+    from datus.models.openai_compatible import OpenAICompatibleModel
+
+    pending = [
+        {
+            "call_id": "ws_1",
+            "tool_name": "web_search",
+            "arguments": "{}",
+            "args_str": "",
+            "query": "duckdb latest",
+            "sources": [{"title": "", "url": "https://fallback", "snippet": ""}],
+            "start_time": _NOW,
+        }
+    ]
+    result = SimpleNamespace(
+        to_input_list=lambda: [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "annotations": [{"type": "url_citation", "title": "DuckDB", "url": "https://duckdb.org"}],
+                    }
+                ],
+            }
+        ]
+    )
+    actions = [a async for a in OpenAICompatibleModel._flush_pending_hosted_searches(pending, result, None)]
+    assert len(actions) == 1
+    done = actions[0]
+    assert done.action_id == "complete_ws_1"
+    canonical = done.output["raw_output"]["result"]
+    assert canonical["query"] == "duckdb latest"
+    assert canonical["results"] == [{"title": "DuckDB", "url": "https://duckdb.org", "snippet": "", "age": None}]
+
+
+@pytest.mark.asyncio
+async def test_openai_flush_pending_hosted_searches_falls_back_to_sources():
+    """With no assistant citations, the call's own action.sources become results."""
+    from types import SimpleNamespace
+
+    from datus.models.openai_compatible import OpenAICompatibleModel
+
+    pending = [
+        {
+            "call_id": "ws_2",
+            "tool_name": "web_search",
+            "arguments": "{}",
+            "args_str": "",
+            "query": "q",
+            "sources": [{"title": "", "url": "https://only-source", "snippet": ""}],
+            "start_time": _NOW,
+        }
+    ]
+    result = SimpleNamespace(to_input_list=lambda: [])
+    actions = [a async for a in OpenAICompatibleModel._flush_pending_hosted_searches(pending, result, None)]
+    canonical = actions[0].output["raw_output"]["result"]
+    assert canonical["results"] == [{"title": "", "url": "https://only-source", "snippet": "", "age": None}]
 
 
 def test_describe_hosted_tool_item_ignores_non_web_hosted_calls():

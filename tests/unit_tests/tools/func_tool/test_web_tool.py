@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from datus.tools.func_tool.web_tool import WebTool
+from datus.tools.func_tool.web_tool import WebTool, _is_public_web_target
 
 
 def _cfg(tavily=None):
@@ -51,6 +51,29 @@ def test_available_tools_builtin_both_empty():
 
 def test_all_tools_name_full_surface():
     assert WebTool.all_tools_name() == ["web_search", "web_fetch"]
+
+
+def test_create_dynamic_and_static_factories():
+    cfg = _cfg("k")
+    dyn = WebTool.create_dynamic(cfg, sub_agent_name="a")
+    stat = WebTool.create_static(cfg, sub_agent_name="b", database_name="db")
+    assert isinstance(dyn, WebTool) and dyn.sub_agent_name == "a"
+    assert isinstance(stat, WebTool) and stat.sub_agent_name == "b"
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://duckdb.org", True),
+        ("http://example.com/path", True),
+        ("ftp://example.com", False),  # non-http scheme
+        ("http://", False),  # no hostname
+        ("https://127.0.0.1", False),  # literal loopback
+        ("https://10.1.2.3", False),  # literal private
+    ],
+)
+def test_is_public_web_target_direct(url, expected):
+    assert _is_public_web_target(url) is expected
 
 
 def test_env_var_key_enables_search(monkeypatch):
@@ -105,6 +128,42 @@ def test_web_search_without_key_fails(monkeypatch):
     res = tool.web_search(["q"])
     assert res.success == 0
     assert "tavily" in res.error.lower()
+
+
+def test_web_search_falls_back_to_first_docs_value_when_query_key_absent():
+    # When the backend keys results by something other than the joined query,
+    # web_search falls back to the first docs value.
+    tool = WebTool(_cfg("key"))
+    fake = SimpleNamespace(
+        success=True,
+        docs={"some-other-key": [{"title": "T", "url": "https://u", "snippet": "s"}]},
+        doc_count=1,
+        error=None,
+    )
+    with patch("datus.tools.search_tools.search_tool.search_by_tavily", return_value=fake):
+        res = tool.web_search(["foo", "bar"])
+    assert res.success == 1
+    assert res.result["results"][0]["title"] == "T"
+
+
+def test_web_search_unexpected_exception_returns_error():
+    tool = WebTool(_cfg("key"))
+    with patch("datus.tools.search_tools.search_tool.search_by_tavily", side_effect=RuntimeError("kaboom")):
+        res = tool.web_search(["q"])
+    assert res.success == 0
+    assert "kaboom" in res.error
+
+
+def test_web_fetch_parse_error_returns_error():
+    tool = WebTool(_cfg())
+    html = "<html><body><p>hi</p></body></html>"
+    with (
+        patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp(html)),
+        patch("datus.tools.func_tool.web_tool.BeautifulSoup", side_effect=ValueError("bad parser")),
+    ):
+        res = tool.web_fetch("https://duckdb.org/x")
+    assert res.success == 0
+    assert "Failed to parse" in res.error
 
 
 # --- web_fetch (httpx backend) ------------------------------------------------------

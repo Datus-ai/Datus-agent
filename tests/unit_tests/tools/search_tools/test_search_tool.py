@@ -415,6 +415,42 @@ class TestSearchByTavily:
             result = search_by_tavily(["q"])
         assert result.success is True
 
+    def test_structured_maps_per_result_fields(self):
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "results": [
+                {"title": "DuckDB", "url": "https://duckdb.org", "content": "snip", "raw_content": "raw"},
+                {"title": "Notes", "url": "https://x.io", "content": "", "raw_content": None},
+            ],
+            "answer": None,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("requests.post", return_value=mock_response):
+            result = search_by_tavily(["a", "b"], api_key="key", structured=True)
+
+        assert result.success is True
+        items = result.docs["a\tb"]
+        assert items[0] == {"title": "DuckDB", "url": "https://duckdb.org", "snippet": "snip", "raw_content": "raw"}
+        assert items[1]["title"] == "Notes" and items[1]["raw_content"] == ""
+
+    def test_structured_does_not_count_answer_as_result(self):
+        # An answer must NOT be prepended as a synthetic row in structured mode
+        # (it would inflate result_count and diverge from provider-native backends).
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "results": [{"title": "Only", "url": "https://only", "content": "c"}],
+            "answer": "synthesized answer",
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("requests.post", return_value=mock_response):
+            result = search_by_tavily(["q"], api_key="key", include_answer="basic", structured=True)
+
+        assert result.doc_count == 1  # the answer is dropped, not counted
+        items = result.docs["q"]
+        assert all(it["url"] for it in items)  # no title-less/url-less answer row
+
     def test_include_domains_added_to_payload(self):
         mock_response = MagicMock()
         mock_response.json.return_value = {"results": [], "answer": None}

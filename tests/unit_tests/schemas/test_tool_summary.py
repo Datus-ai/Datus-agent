@@ -902,6 +902,12 @@ def test_failure_path_uniform(tool: str):
         ("list_document_nav", {"total_docs": 5}, "5 docs"),
         ("get_document", {"chunks": [1, 2, 3]}, "3 chunks"),
         ("search_document", {"docs": [1]}, "1 doc match"),
+        # Canonical web_search schema (query/results keys) → labelled summary.
+        (
+            "web_search",
+            {"query": "q", "result_count": 1, "results": [{"title": "T", "url": "https://u", "snippet": "s"}]},
+            "1 web result: T",
+        ),
         # web_search / web_fetch legacy fallbacks (bare list / docs shape, no
         # canonical query/results keys).
         ("web_search", [1, 2, 3], "3 web results"),

@@ -56,6 +56,8 @@ from datus.cli.action_display.tool_content import (
     _build_todo_update,
     _build_todo_write,
     _build_validate_semantic,
+    _build_web_fetch,
+    _build_web_search,
     _build_write_file,
     _format_csv_preview,
     _format_describe_table_output_verbose,
@@ -1330,6 +1332,123 @@ class TestBuildGetDocument:
         tc = _build_get_document(a, verbose=False)
         assert "Overview" in tc.compact_result
         assert "3 chunks" in tc.compact_result
+
+
+# ── Web tools ─────────────────────────────────────────────────────
+
+
+@pytest.mark.ci
+class TestBuildWebSearch:
+    def test_compact(self):
+        a = _make(
+            input_data={"function_name": "web_search"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "query": "duckdb release",
+                        "result_count": 2,
+                        "results": [
+                            {"title": "DuckDB", "url": "https://duckdb.org", "snippet": "db", "age": None},
+                            {"title": "Notes", "url": "https://x.io", "snippet": "", "age": "2d"},
+                        ],
+                    },
+                }
+            },
+        )
+        tc = _build_web_search(a, verbose=False)
+        assert "2 web results" in tc.compact_result
+        assert "DuckDB" in tc.compact_result
+
+    def test_verbose_lists_results(self):
+        a = _make(
+            input_data={"function_name": "web_search"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "query": "duckdb release",
+                        "result_count": 1,
+                        "results": [
+                            "not-a-dict-row",  # skipped by the builder
+                            {"title": "DuckDB", "url": "https://duckdb.org", "snippet": "fast db", "age": "2d"},
+                        ],
+                    },
+                }
+            },
+        )
+        tc = _build_web_search(a, verbose=True)
+        blob = "\n".join(tc.output_lines)
+        assert "query" in blob and "duckdb release" in blob
+        assert "DuckDB" in blob
+        assert "https://duckdb.org" in blob
+        assert "fast db" in blob
+        assert "2d" in blob
+
+    def test_error_when_result_missing(self):
+        a = _make(
+            status=ActionStatus.FAILED,
+            input_data={"function_name": "web_search"},
+            output_data={"raw_output": {"success": False, "error": "boom"}, "error": "boom"},
+        )
+        tc = _build_web_search(a, verbose=False)
+        # No canonical result dict -> error path surfaces the error message.
+        assert "boom" in tc.compact_result
+
+
+@pytest.mark.ci
+class TestBuildWebFetch:
+    def test_compact(self):
+        a = _make(
+            input_data={"function_name": "web_fetch"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "url": "https://duckdb.org",
+                        "title": "DuckDB",
+                        "content": "hello world",
+                        "truncated": False,
+                        "char_count": 11,
+                    },
+                }
+            },
+        )
+        tc = _build_web_fetch(a, verbose=False)
+        assert "DuckDB" in tc.compact_result
+        assert "11" in tc.compact_result
+
+    def test_verbose_shows_title_url_and_content(self):
+        a = _make(
+            input_data={"function_name": "web_fetch"},
+            output_data={
+                "raw_output": {
+                    "success": True,
+                    "result": {
+                        "url": "https://duckdb.org",
+                        "title": "DuckDB",
+                        "content": "line one\nline two",
+                        "truncated": True,
+                        "char_count": 17,
+                    },
+                }
+            },
+        )
+        tc = _build_web_fetch(a, verbose=True)
+        blob = "\n".join(tc.output_lines)
+        assert "DuckDB" in blob
+        assert "https://duckdb.org" in blob
+        assert "truncated" in blob
+        assert "line one" in blob and "line two" in blob
+
+    def test_error_when_result_missing(self):
+        a = _make(
+            status=ActionStatus.FAILED,
+            input_data={"function_name": "web_fetch"},
+            output_data={"raw_output": {"success": False, "error": "nope"}, "error": "nope"},
+        )
+        tc = _build_web_fetch(a, verbose=False)
+        assert "nope" in tc.compact_result
 
 
 # ── Plan tools ────────────────────────────────────────────────────
