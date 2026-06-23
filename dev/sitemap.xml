@@ -8,13 +8,6 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/cli-commands/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli-commands/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli-commands/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/release_notes/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -27,6 +20,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/API/chat/"/>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/API/chat/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/API/debugging/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/API/debugging/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/API/debugging/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/API/deployment/</loc>
@@ -106,13 +106,6 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/benchmark/benchmark_manual/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/cli/build_kb_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/build_kb_command/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/build_kb_command/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/cli/chat_command/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -127,25 +120,11 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/context_command/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/cli/effort_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/effort_command/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/effort_command/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/cli/execution_command/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/execution_command/"/>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/execution_command/"/>
-    </url>
-    <url>
-        <loc>https://docs.datus.ai/dev/cli/init_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/init_command/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/init_command/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/cli/introduction/</loc>
@@ -155,13 +134,6 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/introduction/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/cli/language_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/language_command/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/language_command/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/cli/mcp_extensions/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -169,11 +141,11 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/mcp_extensions/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/cli/model_command/</loc>
+        <loc>https://docs.datus.ai/dev/cli/other_commands/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/model_command/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/model_command/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/cli/other_commands/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/cli/other_commands/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/cli/plan_mode/</loc>
@@ -365,13 +337,6 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/integration/memory/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/integration/skills/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/integration/skills/"/>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/integration/skills/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/integration/validation/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -433,6 +398,55 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/metricflow/introduction/"/>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/metricflow/introduction/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/build_kb/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/build_kb/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/build_kb/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/extract_knowledge/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/extract_knowledge/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/extract_knowledge/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/init/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/init/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/init/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/introduction/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/introduction/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/introduction/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/memory_organization/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/memory_organization/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/memory_organization/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/session_summarize/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/session_summarize/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/session_summarize/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/skills/storage_classify/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/skills/storage_classify/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/skills/storage_classify/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/subagent/ask_metrics/</loc>
@@ -582,13 +596,6 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/zh/cli-commands/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli-commands/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli-commands/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/zh/release_notes/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -601,6 +608,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/API/chat/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devAPI/chat/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/API/debugging/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/API/debugging/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devAPI/debugging/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/API/deployment/</loc>
@@ -680,13 +694,6 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devbenchmark/benchmark_manual/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/zh/cli/build_kb_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/build_kb_command/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/build_kb_command/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/zh/cli/chat_command/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -701,25 +708,11 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/context_command/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/zh/cli/effort_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/effort_command/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/effort_command/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/zh/cli/execution_command/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/execution_command/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/execution_command/"/>
-    </url>
-    <url>
-        <loc>https://docs.datus.ai/dev/zh/cli/init_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/init_command/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/init_command/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/cli/introduction/</loc>
@@ -729,13 +722,6 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/introduction/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/zh/cli/language_command/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/language_command/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/language_command/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/zh/cli/mcp_extensions/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -743,11 +729,11 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/mcp_extensions/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/zh/cli/model_command/</loc>
+        <loc>https://docs.datus.ai/dev/zh/cli/other_commands/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/model_command/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/model_command/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/cli/other_commands/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devcli/other_commands/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/cli/plan_mode/</loc>
@@ -939,13 +925,6 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devintegration/memory/"/>
     </url>
     <url>
-        <loc>https://docs.datus.ai/dev/zh/integration/skills/</loc>
-        <lastmod>2026-06-23</lastmod>
-        <changefreq>daily</changefreq>
-        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/integration/skills/"/>
-        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devintegration/skills/"/>
-    </url>
-    <url>
         <loc>https://docs.datus.ai/dev/zh/integration/validation/</loc>
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
@@ -1013,6 +992,55 @@
         <lastmod>2026-06-23</lastmod>
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/qa/metric-bootstrap-generation-qa/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/build_kb/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/build_kb/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/build_kb/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/extract_knowledge/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/extract_knowledge/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/extract_knowledge/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/init/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/init/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/init/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/introduction/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/introduction/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/introduction/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/memory_organization/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/memory_organization/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/memory_organization/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/session_summarize/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/session_summarize/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/session_summarize/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/skills/storage_classify/</loc>
+        <lastmod>2026-06-23</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/skills/storage_classify/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devskills/storage_classify/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/subagent/ask_metrics/</loc>
