@@ -279,7 +279,9 @@ markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
   - pymdownx.betterem:
-      smart_enable: all
+      # `underscore` keeps smart emphasis for _ / __ but makes * / ** classic,
+      # so `**bold**` renders even when flanked by CJK characters (no spaces).
+      smart_enable: underscore
   - pymdownx.caret
   - pymdownx.details
   - pymdownx.emoji:
