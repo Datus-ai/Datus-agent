@@ -11,7 +11,7 @@ Run it with the `/build-kb` command inside the REPL.
 - After confirmation, generates and indexes each artifact: semantic models, metrics, and reference SQL.
 - Refreshes the knowledge-base index section of `AGENTS.md`.
 
-It is the **heavyweight** tier: slower than `init` (minutes), and it always asks for confirmation before generating.
+It is the **heavyweight** tier: slower than `init` (minutes), and by default it asks you to confirm a manifest before generating.
 
 ## When to use it
 
@@ -40,6 +40,37 @@ A typical run looks like this:
 
 With no hints, it proposes a manifest covering the main datasources. Re-running updates existing artifacts rather than duplicating them.
 
+## Examples
+
+The text after `/build-kb` is forwarded to the agent as instructions, so you can shape the run in plain language.
+
+### Limit the scope
+
+Restrict scanning and generation to specific tables, files, or business domains instead of all datasources:
+
+```text
+/build-kb only the orders and order_items tables
+/build-kb the sales domain, plus queries/*.sql
+```
+
+### Choose what to generate
+
+Build only some artifact types. Here it generates semantic models and metrics but leaves reference SQL out:
+
+```text
+/build-kb semantic models and metrics only, skip reference SQL
+```
+
+### Skip the confirmation
+
+Bypass the manifest review and generate right away — handy when you already know the scope and don't need to adjust the plan:
+
+```text
+/build-kb the orders table, skip the manifest confirmation and generate directly
+```
+
+These can be combined — for example, *"only the orders domain, semantic models only, skip confirmation"*.
+
 ## Build KB vs. Init
 
 Run [`/init`](init.md) first for an instant, lightweight inventory, then `/build-kb` for the vector-indexed knowledge base. See [Init](init.md#init-vs-build-kb) for the full comparison.
@@ -47,4 +78,4 @@ Run [`/init`](init.md) first for an instant, lightweight inventory, then `/build
 ## Notes
 
 - Generation only covers configured datasources.
-- The confirmation gate always runs — you decide what gets generated before any work happens.
+- By default the manifest confirmation runs so you decide what gets generated before any work happens; you can ask it to skip that gate (see [Examples](#skip-the-confirmation)).
