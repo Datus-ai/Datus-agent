@@ -19,8 +19,10 @@ This class deliberately does NOT inspect the provider; it only owns the local
 backends and exposes whichever ones the node asks for.
 """
 
+import ipaddress
 import os
 from typing import List, Optional
+from urllib.parse import urlparse
 
 import httpx
 from agents import Tool
@@ -41,6 +43,51 @@ _NAME_WEB_FETCH = "web_tool.web_fetch"
 _NOISE_TAGS = ("script", "style", "noscript", "nav", "footer", "header", "aside", "form")
 
 _DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; DatusAgent/1.0; +https://datus.ai) Python-httpx web_fetch"
+
+# Hard cap on a fetched response body (declared via Content-Length). Independent
+# of ``max_chars`` (which bounds the *extracted text*, not the raw HTML): a small
+# ``max_chars`` must still allow fetching a normal-sized page. Bodies larger than
+# this are refused before parsing to avoid memory exhaustion on hostile pages.
+_MAX_FETCH_BYTES = 10 * 1024 * 1024  # 10 MiB
+
+
+# Hostnames that always denote the local machine / an internal zone.
+_INTERNAL_HOSTNAMES = {"localhost", "ip6-localhost", "ip6-loopback"}
+_INTERNAL_HOST_SUFFIXES = (".localhost", ".local", ".internal")
+
+
+def _is_public_web_target(url: str) -> bool:
+    """True unless ``url`` targets an obviously non-public host.
+
+    Guards ``web_fetch`` against SSRF (CWE-918): the tool issues requests on
+    behalf of an LLM whose URL may be attacker-influenced. We block the realistic
+    vectors that need no resolver — **literal-IP** loopback, cloud metadata
+    (``169.254.169.254``), RFC1918 private ranges, reserved/multicast/unspecified
+    addresses — plus the internal hostnames (``localhost`` / ``*.local`` / …).
+
+    We deliberately do NOT pre-resolve hostnames via DNS: it is both TOCTOU-weak
+    (the resolver result can differ from the connection's) and unreliable behind
+    split / fake-ip proxies (which map every public domain to a private-looking
+    address), where it would block all legitimate fetches. The residual
+    DNS-rebinding gap (a hostname that resolves to a private IP) is accepted.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+
+    host = parsed.hostname
+    lowered = host.lower()
+    if lowered in _INTERNAL_HOSTNAMES or lowered.endswith(_INTERNAL_HOST_SUFFIXES):
+        return False
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # A hostname (resolved at fetch time, not here) — allow.
+        return True
+    return not (
+        ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    )
 
 
 class WebTool:
@@ -202,8 +249,17 @@ class WebTool:
             FuncToolResult with the canonical ``web_fetch`` result
             (``{"url", "title", "content", "truncated", "char_count"}``).
         """
+        if not isinstance(max_chars, int) or isinstance(max_chars, bool) or max_chars <= 0:
+            return FuncToolResult(success=0, error=f"Invalid max_chars: {max_chars!r}. Must be a positive integer.")
+
         if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
             return FuncToolResult(success=0, error=f"Invalid URL (must start with http:// or https://): {url!r}")
+
+        if not _is_public_web_target(url):
+            return FuncToolResult(
+                success=0,
+                error=f"Refusing to fetch non-public URL target (SSRF protection): {url!r}",
+            )
 
         try:
             response = httpx.get(
@@ -223,6 +279,19 @@ class WebTool:
             return FuncToolResult(
                 success=0,
                 error=f"Unsupported content-type '{content_type}' for {url}; web_fetch handles HTML/text only.",
+            )
+
+        # Refuse oversized bodies before parsing to bound memory use. Relies on a
+        # server-declared Content-Length; absent the header we fall through and
+        # let ``max_chars`` bound the extracted text.
+        content_length = response.headers.get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > _MAX_FETCH_BYTES:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"Response too large for {url}: {int(content_length):,} bytes "
+                    f"exceeds the {_MAX_FETCH_BYTES:,}-byte web_fetch limit."
+                ),
             )
 
         try:

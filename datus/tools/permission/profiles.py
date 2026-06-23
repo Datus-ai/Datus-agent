@@ -137,13 +137,15 @@ _NORMAL_RULES = [
     _rule("platform_doc_tools", "list_*", PermissionLevel.ALLOW),
     _rule("platform_doc_tools", "get_*", PermissionLevel.ALLOW),
     _rule("platform_doc_tools", "search_*", PermissionLevel.ALLOW),
-    # web_tool reaches the network (Tavily search / httpx fetch), so it stays at
-    # ASK in normal/auto. NOTE: vendor-native web tools (Codex hosted web_search,
-    # Anthropic web_search_20250305 / web_fetch_20250910) run server-side and do
-    # NOT pass through local PermissionHooks — these rules gate only the local
-    # backends.
-    _rule("web_tool", "web_search", PermissionLevel.ASK),
-    _rule("web_tool", "web_fetch", PermissionLevel.ASK),
+    # web_tool reaches the public network (Tavily search / httpx fetch), but it is
+    # read-only retrieval and ``web_fetch`` is hardened against SSRF (non-public
+    # targets are refused). ALLOW keeps it from prompting on every lookup. NOTE:
+    # vendor-native web tools (Codex hosted web_search, Anthropic web_search_20250305
+    # / web_fetch_20250910) run server-side and do NOT pass through local
+    # PermissionHooks at all — gating the local backends at ASK could not be
+    # enforced on the native ones anyway, so we keep both consistently at ALLOW.
+    _rule("web_tool", "web_search", PermissionLevel.ALLOW),
+    _rule("web_tool", "web_fetch", PermissionLevel.ALLOW),
     # mcp: ASK; skill loading ALLOW.
     _rule("mcp.*", "*", PermissionLevel.ASK),
     _rule("skills", "*", PermissionLevel.ALLOW),

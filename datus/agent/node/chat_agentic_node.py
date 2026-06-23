@@ -426,7 +426,10 @@ class ChatAgenticNode(AgenticNode):
         )
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         context["has_ask_user_tool"] = "ask_user" in exposed
-        context["has_web_tools"] = bool({"web_search", "web_fetch"} & exposed)
+        # Web tools (web_search / web_fetch) are NOT advertised in the system
+        # prompt: their own tool-schema descriptions document usage, and prompt
+        # advertisement can't track per-tool availability (builtin-only vs
+        # local-only, Tavily key absent) without drifting from the real tool set.
         # No per-turn values here: the current date lives in the shared
         # runtime-context block, the current datasource/dialect in the user
         # turn's <system_reminder>, and the permission profile is enforced by

@@ -179,3 +179,72 @@ def test_web_fetch_rejects_non_http_url(bad):
     res = tool.web_fetch(bad)
     assert res.success == 0
     assert "URL" in res.error
+
+
+@pytest.mark.parametrize(
+    "blocked",
+    [
+        "http://127.0.0.1",  # loopback
+        "http://127.0.0.1:8080/admin",
+        "http://[::1]/",  # IPv6 loopback
+        "http://169.254.169.254/latest/meta-data/",  # link-local (cloud metadata)
+        "http://10.0.0.1",  # private
+        "http://192.168.1.1",  # private
+        "http://172.16.0.5",  # private
+        "http://0.0.0.0",  # unspecified
+    ],
+)
+def test_web_fetch_rejects_ssrf_targets(blocked):
+    # Literal-IP hosts are validated directly (no DNS), so the request must be
+    # refused before any httpx call is made.
+    tool = WebTool(_cfg())
+    with patch("datus.tools.func_tool.web_tool.httpx.get") as m:
+        res = tool.web_fetch(blocked)
+    assert res.success == 0
+    assert "SSRF" in res.error
+    m.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "blocked_host",
+    ["http://localhost/x", "http://localhost:9000", "http://db.internal/q", "http://myhost.local/"],
+)
+def test_web_fetch_rejects_internal_hostnames(blocked_host):
+    # Internal hostnames are refused without any DNS resolution.
+    tool = WebTool(_cfg())
+    with patch("datus.tools.func_tool.web_tool.httpx.get") as m:
+        res = tool.web_fetch(blocked_host)
+    assert res.success == 0
+    assert "SSRF" in res.error
+    m.assert_not_called()
+
+
+def test_web_fetch_allows_public_hostname():
+    # Public hostnames are allowed (resolution happens at fetch time, not in the
+    # guard) — so the mocked httpx path runs normally.
+    html = "<html><head><title>OK</title></head><body><p>hi</p></body></html>"
+    tool = WebTool(_cfg())
+    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=_resp(html)):
+        res = tool.web_fetch("https://duckdb.org/")
+    assert res.success == 1
+    assert res.result["title"] == "OK"
+
+
+@pytest.mark.parametrize("bad_max", [0, -1, -100, 3.5, True, "20"])
+def test_web_fetch_rejects_invalid_max_chars(bad_max):
+    tool = WebTool(_cfg())
+    with patch("datus.tools.func_tool.web_tool.httpx.get") as m:
+        res = tool.web_fetch("http://e.com", max_chars=bad_max)
+    assert res.success == 0
+    assert "max_chars" in res.error
+    m.assert_not_called()
+
+
+def test_web_fetch_rejects_oversized_content_length():
+    tool = WebTool(_cfg())
+    r = _resp("<html><body><p>hi</p></body></html>")
+    r.headers = {"content-type": "text/html", "content-length": str(50 * 1024 * 1024)}
+    with patch("datus.tools.func_tool.web_tool.httpx.get", return_value=r):
+        res = tool.web_fetch("http://e.com/huge")
+    assert res.success == 0
+    assert "too large" in res.error.lower()

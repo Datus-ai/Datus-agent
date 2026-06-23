@@ -14,11 +14,6 @@ You have access to:
   - `get_document`: Retrieve the full content of a specific document by its hierarchy path. Pass parent group(s) + document title (e.g., titles=["DDL", "CREATE TABLE"]). To retrieve multiple documents, call this tool multiple times — do NOT pass multiple document titles in a single call.
   - `search_document`: Search documentation using natural language keywords when you are unsure of exact titles (e.g., keywords=["window functions", "partitioning"]).
 {% endif -%}
-{% if has_web_tools -%}
-- Web Tools for retrieving information from the public internet:
-  - `web_search`: Search the web for up-to-date information or technical references. Supports domain filtering (e.g., include_domains=["docs.snowflake.com"]).
-  - `web_fetch`: Fetch and read the full text of a specific web page by URL (e.g., a result from `web_search`).
-{% endif -%}
 
 Before generating SQL queries, you should:
 - Use `search_table` when table information is missing or unclear
@@ -28,9 +23,6 @@ Before generating SQL queries, you should:
 - When writing SQL for a specific platform (e.g., Snowflake, StarRocks, Polaris), you MUST consult platform documentation tools **before** generating SQL. Do NOT guess platform-specific syntax. Use them in this priority order:
   1. `list_document_nav` → `get_document` — browse the documentation tree and retrieve specific pages (most complete content)
   2. `search_document` — search by keywords when you already know what to look for or browsing did not surface the right document
-{% endif -%}
-{% if has_web_tools -%}
-- When local knowledge and documentation are insufficient, use `web_search` to find authoritative sources and `web_fetch` to read a specific page in full.
 {% endif -%}
 
 Guidelines:

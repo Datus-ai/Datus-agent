@@ -194,3 +194,13 @@ def test_describe_hosted_tool_item_ignores_function_call():
         describe_hosted_tool_item({"type": "function_call", "name": "read_query", "call_id": "c1", "arguments": "{}"})
         is None
     )
+
+
+def test_describe_hosted_tool_item_ignores_non_web_hosted_calls():
+    from datus.models.openai_compatible import describe_hosted_tool_item
+
+    # Only web_search_call is normalized through the hosted-search path. Other
+    # hosted *_call items must NOT be routed here (they would be force-fit into
+    # the web_search canonical schema by the deferred completion logic).
+    for itype in ("file_search_call", "image_generation_call", "code_interpreter_call", "computer_call"):
+        assert describe_hosted_tool_item({"type": itype, "id": "x"}) is None

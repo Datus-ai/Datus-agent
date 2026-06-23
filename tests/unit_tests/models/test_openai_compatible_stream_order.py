@@ -694,3 +694,36 @@ class TestRawEventEarlyCapture:
         ids = {a.action_id for a in delta_actions}
         assert len(ids) == 1  # All share same stream ID
         assert delta_actions[0].action_id.startswith("thinking_stream_")
+
+
+# ---------------------------------------------------------------------------
+# Tests: dict-shaped function_call run items (not just SDK objects)
+# ---------------------------------------------------------------------------
+
+
+def _make_dict_tool_call_event(call_id="call_dict", tool_name="read_query", arguments='{"sql":"select 1"}'):
+    """tool_call_item whose raw_item is a plain dict (e.g. replayed function_call)."""
+    raw = {"type": "function_call", "name": tool_name, "call_id": call_id, "arguments": arguments}
+    return FakeEvent(item=FakeItem(type="tool_call_item", raw_item=raw))
+
+
+@pytest.mark.ci
+class TestDictShapedFunctionCall:
+    """A dict-shaped function_call must preserve its name/call_id (not become 'unknown')."""
+
+    @pytest.mark.asyncio
+    async def test_dict_function_call_preserves_name_and_call_id(self):
+        events = [
+            _make_dict_tool_call_event(call_id="call_dict", tool_name="read_query"),
+            _make_tool_output_event(call_id="call_dict", output="rows"),
+        ]
+
+        actions = await _collect_actions(events)
+
+        start = next(a for a in actions if a.status == ActionStatus.PROCESSING)
+        assert start.action_type == "read_query"
+        assert start.action_id == "call_dict"
+
+        complete = next(a for a in actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS)
+        assert complete.action_type == "read_query"
+        assert complete.action_id == "complete_call_dict"

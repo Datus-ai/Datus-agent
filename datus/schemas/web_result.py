@@ -199,7 +199,13 @@ def collect_citations_from_input_list(input_list: Any) -> List[Dict[str, Any]]:
     for item in input_list or []:
         role = item.get("role") if isinstance(item, dict) else getattr(item, "role", None)
         itype = item.get("type") if isinstance(item, dict) else getattr(item, "type", None)
-        if role != "assistant" and itype != "message":
+        # Aggregate citations from assistant messages only. Accept across payload
+        # variants: when ``role`` is present it must be ``assistant``; when it is
+        # omitted upstream, fall back to the message type.
+        if role is not None:
+            if role != "assistant":
+                continue
+        elif itype != "message":
             continue
         content = item.get("content") if isinstance(item, dict) else getattr(item, "content", None)
         for row in extract_url_citations(content):

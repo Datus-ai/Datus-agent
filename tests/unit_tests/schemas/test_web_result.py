@@ -130,3 +130,37 @@ def test_collect_citations_from_input_list_folds_assistant_messages():
     ]
     rows = collect_citations_from_input_list(input_list)
     assert rows == [{"title": "DuckDB", "url": "https://duckdb.org", "snippet": ""}]
+
+
+def test_collect_citations_ignores_user_message_annotations():
+    # A user (non-assistant) message that itself carries url_citation annotations
+    # must NOT contribute to the hosted web_search canonical results.
+    input_list = [
+        {
+            "role": "user",
+            "type": "message",
+            "content": [
+                {
+                    "type": "output_text",
+                    "annotations": [
+                        {"type": "url_citation", "title": "Bad", "url": "https://example.com/bad"},
+                    ],
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "type": "message",
+            "content": [
+                {
+                    "type": "output_text",
+                    "annotations": [
+                        {"type": "url_citation", "title": "Good", "url": "https://duckdb.org"},
+                    ],
+                }
+            ],
+        },
+    ]
+    assert collect_citations_from_input_list(input_list) == [
+        {"title": "Good", "url": "https://duckdb.org", "snippet": ""}
+    ]

@@ -269,6 +269,10 @@ class CodexModel(LLMBaseModel):
         return ModelSettings(
             store=False,
             include_usage=True,
+            # Mirror the OpenAI Responses path: when the hosted web_search tool
+            # runs, echo the per-call source URLs (``action.sources``) so they are
+            # available as a fallback for the richer url_citation results.
+            response_include=["web_search_call.action.sources"],
             extra_args={"prompt_cache_key": key},
             extra_headers=extra_headers,
         )

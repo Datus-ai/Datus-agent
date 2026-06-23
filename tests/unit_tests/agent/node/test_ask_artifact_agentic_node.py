@@ -2199,6 +2199,28 @@ class TestChatDecoupling:
         node._get_system_prompt()
         assert "load_skill" in _tool_names(node)
 
+    def test_web_tools_not_reinjected_after_prompt_build(self, real_agent_config):
+        """web_search/web_fetch stay out across a prompt build when ``web_tool``
+        isn't whitelisted — the same lazy-injection / snapshot-replay leak as
+        bash and skills, on the unified web tool group."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "date_parsing_tools.*,filesystem_tools.*", name="ask_noweb", slug="noweb"
+        )
+        node._get_system_prompt()  # runs the lazy web-tool re-injection path
+        leaked = {"web_search", "web_fetch"} & _tool_names(node)
+        assert not leaked, f"web tools leaked via prompt-build lazy injection: {sorted(leaked)}"
+        assert node._web_tool is None
+        assert node._builtin_web_tools == {"web_search": False, "web_fetch": False}
+
+    def test_web_tools_present_when_whitelisted(self, real_agent_config):
+        """Symmetric to bash/skills: ``web_tool.*`` lets the web group mount
+        through the prompt build (the base injector resolves the backends)."""
+        node = _make_ask_report_with_tools(
+            real_agent_config, "web_tool.*,filesystem_tools.*", name="ask_web", slug="withweb"
+        )
+        node._get_system_prompt()
+        assert node._web_tool is not None  # gate passed through to the base injector
+
     def test_no_db_boundary_statement_gated_on_db_exposure(self, real_agent_config):
         """A db-less whitelist gets the explicit 'no live database access'
         boundary (countering DB-capability hallucination); a db whitelist omits

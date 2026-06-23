@@ -46,24 +46,29 @@ from datus.utils.trace_context import build_agents_run_config_kwargs, build_trac
 logger = get_logger(__name__)
 
 
-def describe_hosted_tool_item(raw_item):
-    """Resolve display fields for an OpenAI Responses hosted tool run-item.
+def describe_hosted_tool_item(raw_item: Any) -> Optional[tuple[str, Optional[str], str]]:
+    """Resolve display fields for an OpenAI Responses hosted ``web_search`` run-item.
 
-    Hosted tools (``web_search_call`` / ``file_search_call`` / ``image_generation_call``
-    / ``code_interpreter_call`` …) are executed server-side, so their run-item is NOT
-    a ``function_call`` and carries no ``name``/``call_id``/``arguments`` — leaving the
-    stream converter to label them ``unknown``. Map them to a friendly tool name and
-    surface the query/url so the CLI/web event stream shows e.g. ``web_search(...)``.
+    The hosted ``web_search`` tool runs server-side, so its run-item is NOT a
+    ``function_call`` and carries no ``name``/``call_id``/``arguments`` — leaving
+    the stream converter to label it ``unknown``. Map it to ``web_search`` and
+    surface the query/url so the CLI/web event stream shows ``web_search(...)``.
 
-    Returns ``(name, call_id, arguments_json)`` for a hosted tool item, or ``None``
-    when the item is a regular function call (handled by the normal path).
+    Restricted to ``web_search_call``: the downstream deferred path normalizes
+    every hosted completion through :func:`normalize_search_results`, so other
+    hosted ``*_call`` items (``file_search_call`` / ``image_generation_call`` /
+    ``code_interpreter_call`` …) must NOT be routed here until they get their own
+    completion handling.
+
+    Returns ``(name, call_id, arguments_json)`` for a hosted ``web_search`` item,
+    or ``None`` for anything else (handled by the normal function-call path).
     """
     itype = raw_item.get("type") if isinstance(raw_item, dict) else getattr(raw_item, "type", None)
-    if not itype or itype == "function_call" or not itype.endswith("_call"):
+    if itype != "web_search_call":
         return None
     name = itype[: -len("_call")]  # "web_search_call" -> "web_search"
 
-    def _get(obj, key):
+    def _get(obj: Any, key: str) -> Any:
         return obj.get(key) if isinstance(obj, dict) else getattr(obj, key, None)
 
     call_id = _get(raw_item, "id") or _get(raw_item, "call_id")
@@ -781,7 +786,11 @@ class OpenAICompatibleModel(LLMBaseModel):
         return tools
 
     @staticmethod
-    async def _flush_pending_hosted_searches(pending: List[dict], result, action_history_manager):
+    async def _flush_pending_hosted_searches(
+        pending: List[Dict[str, Any]],
+        result: Any,
+        action_history_manager: Optional[ActionHistoryManager],
+    ) -> AsyncGenerator[ActionHistory, None]:
         """Emit deferred completions for hosted ``web_search`` calls.
 
         OpenAI's hosted search returns no results on the call item; the title+url
@@ -1467,9 +1476,17 @@ class OpenAICompatibleModel(LLMBaseModel):
                             final_assistant_yielded = False
                             raw_item = getattr(event.item, "raw_item", None)
                             if raw_item:
-                                tool_name = getattr(raw_item, "name", None)
-                                arguments = getattr(raw_item, "arguments", "{}")
-                                call_id = getattr(raw_item, "call_id", None)
+                                # ``raw_item`` may be a dict (e.g. function_call
+                                # replayed from an input list) or an SDK object;
+                                # mirror the tool_call_output_item handling below.
+                                if isinstance(raw_item, dict):
+                                    tool_name = raw_item.get("name")
+                                    arguments = raw_item.get("arguments", "{}")
+                                    call_id = raw_item.get("call_id")
+                                else:
+                                    tool_name = getattr(raw_item, "name", None)
+                                    arguments = getattr(raw_item, "arguments", "{}")
+                                    call_id = getattr(raw_item, "call_id", None)
                                 is_hosted = False
                                 if not tool_name:
                                     hosted = describe_hosted_tool_item(raw_item)
@@ -1527,7 +1544,11 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     temp_tool_calls.pop(call_id, None)
                                     from datus.schemas.web_result import extract_action_sources, hosted_action_query
 
-                                    raw_action = getattr(raw_item, "action", None)
+                                    raw_action = (
+                                        raw_item.get("action")
+                                        if isinstance(raw_item, dict)
+                                        else getattr(raw_item, "action", None)
+                                    )
                                     pending_hosted_searches.append(
                                         {
                                             "call_id": call_id,

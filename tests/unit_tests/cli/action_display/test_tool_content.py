@@ -1741,6 +1741,7 @@ class TestAllToolsRegistered:
         "list_document_nav",
         "get_document",
         "web_search",
+        "web_fetch",
         # Plan
         "todo_read",
         "todo_write",

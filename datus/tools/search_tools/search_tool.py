@@ -553,11 +553,11 @@ def search_by_tavily(
 
         if structured:
             # Preserve per-result title/url/snippet so callers can build the
-            # canonical web_search schema. The answer (if any) leads as a
-            # title-less synthesized entry.
+            # canonical web_search schema. The synthesized ``answer`` is NOT a
+            # search result and is intentionally dropped here: including it as a
+            # title-less row would inflate ``result_count`` and diverge from
+            # provider-native backends (which surface only real results).
             items: List[Dict[str, Any]] = []
-            if answer:
-                items.append({"title": "", "url": "", "snippet": answer, "raw_content": answer})
             for item in raw_results:
                 items.append(
                     {

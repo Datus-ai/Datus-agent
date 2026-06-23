@@ -176,6 +176,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         "date_parsing_tools": "date_parsing_tools",
         "filesystem_tools": "filesystem_func_tool",
         "platform_doc_tools": "_platform_doc_tool",
+        "web_tool": "_web_tool",
         "bash_tools": "bash_tool",
         "skills": "skill_func_tool",
     }
@@ -452,6 +453,26 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         if not self._group_whitelisted("skills"):
             return
         super()._ensure_skill_tools_in_tools()
+
+    def _ensure_web_tools_in_tools(self) -> None:
+        """Gate :class:`AgenticNode`'s lazy web-tool re-injection on the whitelist.
+
+        Same prompt-build / snapshot-replay bypass as bash and skills (see
+        :meth:`_ensure_bash_tool_in_tools`): the base injector re-adds
+        ``web_search`` / ``web_fetch`` (and resolves provider-native builtins)
+        on every rebuild, which would silently grant web access to an ask_*
+        agent whose ``tools`` whitelist never requested ``web_tool``. Skip — and
+        scrub any stale local web tools + builtin flags — unless whitelisted.
+        """
+        if not self._group_whitelisted("web_tool"):
+            from datus.tools.func_tool.web_tool import WebTool
+
+            web_names = set(WebTool.all_tools_name())
+            self.tools = [t for t in (self.tools or []) if getattr(t, "name", None) not in web_names]
+            self._builtin_web_tools = {"web_search": False, "web_fetch": False}
+            self._web_tool = None
+            return
+        super()._ensure_web_tools_in_tools()
 
     def _get_available_skills_context(self) -> str:
         """Suppress the skills XML when ``skills`` isn't whitelisted.
@@ -856,7 +877,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # Ask consultants never carry the task() delegation tool; set it
         # explicitly so a shared partial can't advertise a tool they lack.
         context["has_task_tool"] = False
-        context["has_web_tools"] = bool({"web_search", "web_fetch"} & exposed)
+        # Web tools are not advertised in the prompt (see ChatAgenticNode):
+        # their tool-schema descriptions document usage on their own.
         context["active_profile"] = getattr(self.agent_config, "active_profile_name", None) or "normal"
         from datus.utils.time_utils import get_default_current_date
 
@@ -903,11 +925,12 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         otherwise), the skills XML (suppressed unless ``skills`` is
         whitelisted), and the response-language directive.
         """
-        # Re-inject whitelisted bash / skill tools (gated; no-op when the
+        # Re-inject whitelisted bash / skill / web tools (gated; no-op when the
         # whitelist didn't grant them). These add to ``self.tools``, not prompt
         # text — needed so a whitelist that DID grant them still works.
         self._ensure_skill_tools_in_tools()
         self._ensure_bash_tool_in_tools()
+        self._ensure_web_tools_in_tools()
         if self.skill_func_tool:
             skills_xml = self._get_available_skills_context()
             if skills_xml:

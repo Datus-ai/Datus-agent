@@ -102,10 +102,6 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 - Use `search_document` when you know the feature but not the document title.
 {% endif %}
 {% endif %}
-{% if "web_search" in tools or "web_fetch" in tools %}
-## Web
-- Use `web_search` to find authoritative sources and `web_fetch` to read a specific result page, only as a fallback when local knowledge and documentation are insufficient.
-{% endif %}
 
 ## SQL Generation
 - Generate only the columns needed to answer the user.
