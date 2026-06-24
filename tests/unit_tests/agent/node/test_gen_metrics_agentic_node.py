@@ -1121,8 +1121,43 @@ semantic_model:
         with pytest.raises(RuntimeError, match="validate_semantic failed"):
             node._finalize_metric_generation(None, "orders_metrics.yml", "generated")
 
+    def test_osi_final_metric_publish_passes_authoring_checks_and_baseline(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        datasource = real_agent_config.current_datasource
+        metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        (metric_dir / "orders_metrics.yml").write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n",
+            encoding="utf-8",
+        )
+        baseline = json.dumps({"version": "0.2.0.dev0", "semantic_model": [{"name": "shop", "datasets": []}]})
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.node_config["authoring_format"] = "osi"
+        node._osi_metrics_baseline_artifact_json = baseline
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT 1"}})
+        )
+        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        node._finalize_metric_generation(
+            None,
+            f"subject/semantic_models/{datasource}/metrics/orders_metrics.yml",
+            "generated",
+        )
+
+        node.semantic_tools.validate_semantic.assert_called_once_with(
+            checks=["authoring_quality", "mutation_guard"],
+            baseline_artifact_json=baseline,
+        )
+
     def test_osi_final_metric_publish_requires_query_metrics_tool(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
 
         datasource = real_agent_config.current_datasource
         metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
@@ -1134,8 +1169,9 @@ semantic_model:
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.node_config["authoring_format"] = "osi"
-        node.generation_evidence.validation_passed = True
-        node.semantic_tools = None
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        delattr(node.semantic_tools, "query_metrics")
 
         with pytest.raises(RuntimeError, match="query_metrics is unavailable"):
             node._finalize_metric_generation(

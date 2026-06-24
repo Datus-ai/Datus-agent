@@ -563,9 +563,71 @@ class TestAnalyzeMetricCandidatesFromHistory:
             ]
         )
 
-        candidate = result.result["metric_candidates"][0]
+        candidate = next(item for item in result.result["metric_candidates"] if item["name"] == "rolling_7d_revenue")
         assert candidate["name"] == "rolling_7d_revenue"
         assert candidate["metric_type"] == "cumulative"
+        assert candidate["window"] == "7 days"
+        assert candidate["window_aggregation"] == "sum"
+        assert candidate["expression"] == "SUM(revenue)"
+        assert candidate["base_metric_name"] == "revenue"
+
+    def test_window_aggregate_candidate_resolves_cte_base_metric(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', order_date) AS metric_time__month,
+                        COUNT(DISTINCT order_id) AS order_count
+                    FROM fact_orders
+                    WHERE order_date >= '2025-04-01'
+                    GROUP BY DATE_TRUNC('month', order_date)
+                )
+                SELECT
+                    metric_time__month,
+                    order_count,
+                    SUM(order_count) OVER (
+                        ORDER BY metric_time__month
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS running_order_count,
+                    AVG(order_count) OVER (
+                        ORDER BY metric_time__month
+                        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+                    ) AS moving_3_month_order_count_avg,
+                    COUNT(*) OVER (
+                        ORDER BY metric_time__month
+                        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+                    ) AS moving_window_month_count
+                FROM monthly
+                ORDER BY metric_time__month
+                """
+            ]
+        )
+
+        candidates = {candidate["name"]: candidate for candidate in result.result["metric_candidates"]}
+        assert {
+            "order_count",
+            "running_order_count",
+            "moving_3_month_order_count_avg",
+            "moving_window_month_count",
+        } <= set(candidates)
+        assert candidates["order_count"]["expression"] == "COUNT(DISTINCT order_id)"
+
+        running = candidates["running_order_count"]
+        assert running["expression"] == "COUNT(DISTINCT order_id)"
+        assert running["grain_to_date"] == "month"
+        assert running["window_aggregation"] == "sum"
+        assert running["base_metric_name"] == "order_count"
+
+        moving_avg = candidates["moving_3_month_order_count_avg"]
+        assert moving_avg["window"] == "3 months"
+        assert moving_avg["window_aggregation"] == "avg"
+        assert moving_avg["base_metric_name"] == "order_count"
+
+        row_count = candidates["moving_window_month_count"]
+        assert row_count["window"] == "3 months"
+        assert row_count["window_aggregation"] == "row_count"
 
     def test_lag_period_aggregation_becomes_previous_and_delta_metrics(self):
         tools = _make_tools()
@@ -641,60 +703,60 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
         assert tools._direct_source_names(select) == ["fact_orders"]
 
-    def test_baisheng_seed_24_generates_previous_month_and_delta_metrics(self):
+    def test_monthly_order_count_generates_previous_month_and_delta_metrics(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
             sql_entries_json=json.dumps(
                 [
                     {
-                        "name": "metric:seed:24",
-                        "question": "4月到10月活动数量月环比",
+                        "name": "monthly_order_count_mom",
+                        "question": "Month-over-month order count from April to October",
                         "sql": """
                         WITH monthly AS (
                             SELECT
-                                DATE_TRUNC('month', start_date) AS start_month,
-                                COUNT(DISTINCT ac_code) AS activity_count
-                            FROM v_udata_ac_info
-                            WHERE start_date >= '2025-04-01' AND start_date <= '2025-10-31'
-                            GROUP BY DATE_TRUNC('month', start_date)
+                                DATE_TRUNC('month', order_date) AS order_month,
+                                COUNT(DISTINCT order_id) AS order_count
+                            FROM fact_orders
+                            WHERE order_date >= '2025-04-01' AND order_date <= '2025-10-31'
+                            GROUP BY DATE_TRUNC('month', order_date)
                         ),
                         compared AS (
                             SELECT
-                                start_month,
-                                activity_count,
-                                LAG(activity_count) OVER (ORDER BY start_month)
-                                    AS previous_month_activity_count
+                                order_month,
+                                order_count,
+                                LAG(order_count) OVER (ORDER BY order_month)
+                                    AS previous_month_order_count
                             FROM monthly
                         )
                         SELECT
-                            start_month,
-                            activity_count,
-                            previous_month_activity_count,
-                            activity_count - previous_month_activity_count AS activity_count_mom_delta
+                            order_month,
+                            order_count,
+                            previous_month_order_count,
+                            order_count - previous_month_order_count AS order_count_mom_delta
                         FROM compared
-                        ORDER BY start_month
+                        ORDER BY order_month
                         """,
                     }
                 ]
             ),
-            existing_metric_catalog_json=json.dumps([{"name": "activity_count", "type": "aggregate"}]),
+            existing_metric_catalog_json=json.dumps([{"name": "order_count", "type": "aggregate"}]),
         )
 
         assert result.success == 1
         derived = {candidate["name"]: candidate for candidate in result.result["derived_metric_candidates"]}
-        assert sorted(derived) == ["activity_count_mom_delta", "previous_month_activity_count"]
-        assert derived["previous_month_activity_count"]["inputs"] == [
+        assert sorted(derived) == ["order_count_mom_delta", "previous_month_order_count"]
+        assert derived["previous_month_order_count"]["inputs"] == [
             {
-                "name": "activity_count",
-                "alias": "previous_month_activity_count",
+                "name": "order_count",
+                "alias": "previous_month_order_count",
                 "offset_window": "1 month",
             }
         ]
-        assert derived["activity_count_mom_delta"]["inputs"] == [
-            {"name": "activity_count"},
+        assert derived["order_count_mom_delta"]["inputs"] == [
+            {"name": "order_count"},
             {
-                "name": "activity_count",
-                "alias": "previous_month_activity_count",
+                "name": "order_count",
+                "alias": "previous_month_order_count",
                 "offset_window": "1 month",
             },
         ]
@@ -862,7 +924,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert measures_by_role["denominator"]["agg"] == "SUM"
         assert measures_by_role["denominator"]["expr"] == '"Enrollment (Ages 5-17)"'
 
-    def test_baisheng_like_success_story_keeps_detail_sql_non_metric(self):
+    def test_detail_success_story_keeps_detail_sql_non_metric(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
             sql_entries_json=json.dumps(
@@ -944,18 +1006,18 @@ class TestAnalyzeMetricCandidatesFromHistory:
         result = tools.analyze_metric_candidates_from_history(
             sql_queries=[
                 """
-                SELECT COUNT(*) AS product_row_count,
-                       COUNT(DISTINCT ac_code) AS activity_count
-                FROM v_udata_ac_info
-                WHERE request_name LIKE '%小罗%' AND FIND_IN_SET('1', ac_tags)
+                SELECT COUNT(*) AS order_row_count,
+                       COUNT(DISTINCT order_id) AS order_count
+                FROM fact_orders
+                WHERE buyer_name LIKE '%test%' AND FIND_IN_SET('priority', order_tags)
                 """
             ]
         )
 
         assert result.success == 1
-        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == ["activity_count"]
-        assert [candidate["name"] for candidate in result.result["metric_candidates"]] == ["activity_count"]
-        assert result.result["support_measure_candidates"][0]["name"] == "product_row_count"
+        assert [candidate["name"] for candidate in result.result["direct_metric_candidates"]] == ["order_count"]
+        assert [candidate["name"] for candidate in result.result["metric_candidates"]] == ["order_count"]
+        assert result.result["support_measure_candidates"][0]["name"] == "order_row_count"
         assert result.result["support_measure_candidates"][0]["evidence_kind"] == "support_measure"
         assert result.result["support_measure_candidates"][0]["base_measures"][0]["agg"] == "COUNT"
 

@@ -11,6 +11,7 @@ hooks, and metricflow MCP server integration.
 """
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -111,6 +112,7 @@ class GenMetricsAgenticNode(AgenticNode):
         self.ask_user_tool = None
         self.hooks = None
         self.generation_evidence = GenerationEvidence()
+        self._osi_metrics_baseline_artifact_json: Optional[str] = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -411,7 +413,32 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
         self._set_metric_queryability_contracts_from_input(ctx.user_input)
+        self._capture_osi_metrics_baseline_artifact()
         return self._prepare_template_context(ctx.user_input)
+
+    def _capture_osi_metrics_baseline_artifact(self) -> None:
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        self._osi_metrics_baseline_artifact_json = None
+        if not is_osi_authoring(self.agent_config, self.node_config):
+            return
+        try:
+            from datus_semantic_osi.profile import load_osi_path, to_core_schema_document
+
+            semantic_model_dir = Path(
+                self.agent_config.path_manager.semantic_model_path(self.agent_config.current_datasource)
+            )
+            if not semantic_model_dir.exists():
+                return
+            doc = load_osi_path(str(semantic_model_dir))
+            baseline = to_core_schema_document(doc)
+            self._osi_metrics_baseline_artifact_json = json.dumps(
+                baseline,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        except Exception as exc:
+            logger.info("Skipping OSI metric mutation guard baseline capture: %s", exc)
 
     def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
         response_content = ctx.response_content
@@ -656,9 +683,10 @@ class GenMetricsAgenticNode(AgenticNode):
             self.generation_evidence.metric_sqls,
         )
         if required_metric_names and not self.generation_evidence.has_metric_dry_run(required_metric_names):
-            if not getattr(self, "semantic_tools", None):
+            query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)
+            if not callable(query_metrics):
                 raise RuntimeError("Metric generation produced a metric_file, but query_metrics is unavailable.")
-            dry_run_result = self.semantic_tools.query_metrics(metrics=required_metric_names, dry_run=True)
+            dry_run_result = query_metrics(metrics=required_metric_names, dry_run=True)
             self.generation_evidence.record_metric_dry_run(required_metric_names, dry_run_result)
             if not self._tool_succeeded(dry_run_result):
                 raise RuntimeError(
@@ -718,15 +746,19 @@ class GenMetricsAgenticNode(AgenticNode):
             raise RuntimeError("Metric generation produced a metric_file, but generation tools are unavailable.")
         self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
 
-        if not self.generation_evidence.validation_passed:
-            if not getattr(self, "semantic_tools", None):
-                raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
-            validation_result = self.semantic_tools.validate_semantic()
-            self.generation_evidence.record_validation_result(validation_result)
-            if not self._tool_succeeded(validation_result):
-                raise RuntimeError(
-                    f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
-                )
+        if not getattr(self, "semantic_tools", None):
+            raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
+        validation_checks = ["authoring_quality"]
+        validation_kwargs: Dict[str, Any] = {"checks": validation_checks}
+        if self._osi_metrics_baseline_artifact_json:
+            validation_checks.append("mutation_guard")
+            validation_kwargs["baseline_artifact_json"] = self._osi_metrics_baseline_artifact_json
+        validation_result = self.semantic_tools.validate_semantic(**validation_kwargs)
+        self.generation_evidence.record_validation_result(validation_result)
+        if not self._tool_succeeded(validation_result):
+            raise RuntimeError(
+                f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
+            )
 
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
         if isinstance(semantic_model_files, str):
@@ -740,9 +772,10 @@ class GenMetricsAgenticNode(AgenticNode):
         ]
         metric_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
         if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
-            if not getattr(self, "semantic_tools", None):
+            query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)
+            if not callable(query_metrics):
                 raise RuntimeError("Metric generation produced a metric_file, but query_metrics is unavailable.")
-            dry_run_result = self.semantic_tools.query_metrics(metrics=metric_names, dry_run=True)
+            dry_run_result = query_metrics(metrics=metric_names, dry_run=True)
             self.generation_evidence.record_metric_dry_run(metric_names, dry_run_result)
             if not self._tool_succeeded(dry_run_result):
                 raise RuntimeError(

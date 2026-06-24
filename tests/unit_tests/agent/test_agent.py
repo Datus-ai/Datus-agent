@@ -1125,6 +1125,26 @@ class TestBootstrapKbMetrics:
 
         assert result["status"] == "success"
 
+    def test_metrics_overwrite_keeps_semantic_yaml_dir(self):
+        args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite")
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_metrics_size.return_value = 10
+        mock_dir = MagicMock()
+        mock_dir.exists.return_value = True
+        agent.global_config.path_manager.semantic_model_path.return_value = mock_dir
+
+        with (
+            patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
+            patch("datus.agent.agent.init_success_story_metrics", return_value=(True, None, {})),
+            patch("datus.agent.agent.safe_rmtree") as mock_safe_rmtree,
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        mock_safe_rmtree.assert_not_called()
+
     def test_metrics_with_semantic_yaml(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="incremental", semantic_yaml="metrics.yaml")
         agent = _make_agent_ext(args=args)

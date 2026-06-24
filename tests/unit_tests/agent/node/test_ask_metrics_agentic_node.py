@@ -117,7 +117,7 @@ class TestAskMetricsAgenticNode:
 
         node, _, _ = _make_node(
             real_agent_config,
-            tree={"Sales": {"Orders": {"metrics": ["activity_count"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
             input_data=AskMetricsNodeInput(
                 user_message="How many activities started in June?",
                 reference_date="2025-12-31",
@@ -283,46 +283,46 @@ class TestAskMetricsAgenticNode:
     def test_query_metrics_expands_period_over_period_bundle(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Marketing": {"Activity": {"metrics": ["activity_count_mom_delta"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["order_count_mom_delta"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={
                 "items": [
-                    {"name": "activity_count", "metadata": {"metric_kind": "measure_proxy"}},
+                    {"name": "order_count", "metadata": {"metric_kind": "measure_proxy"}},
                     {
-                        "name": "previous_month_activity_count",
+                        "name": "previous_month_order_count",
                         "metadata": {
-                            "expr": "previous_month_activity_count",
+                            "expr": "previous_month_order_count",
                             "inputs": [
                                 {
-                                    "name": "activity_count",
-                                    "alias": "previous_month_activity_count",
+                                    "name": "order_count",
+                                    "alias": "previous_month_order_count",
                                     "offset_window": "1 month",
                                 }
                             ],
                         },
                     },
                     {
-                        "name": "activity_count_previous_month",
+                        "name": "order_count_previous_month",
                         "metadata": {
-                            "expr": "activity_count_previous_month",
+                            "expr": "order_count_previous_month",
                             "inputs": [
                                 {
-                                    "name": "activity_count",
-                                    "alias": "activity_count_previous_month",
+                                    "name": "order_count",
+                                    "alias": "order_count_previous_month",
                                     "offset_window": "1 month",
                                 }
                             ],
                         },
                     },
                     {
-                        "name": "activity_count_mom_delta",
+                        "name": "order_count_mom_delta",
                         "metadata": {
                             "inputs": [
-                                {"name": "activity_count"},
+                                {"name": "order_count"},
                                 {
-                                    "name": "activity_count",
-                                    "alias": "previous_month_activity_count",
+                                    "name": "order_count",
+                                    "alias": "previous_month_order_count",
                                     "offset_window": "1 month",
                                 },
                             ]
@@ -335,50 +335,50 @@ class TestAskMetricsAgenticNode:
         semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
 
         result = node.query_metrics(
-            metrics=["activity_count", "activity_count_mom_delta"],
-            dimensions=["product_type", "metric_time__month"],
+            metrics=["order_count", "order_count_mom_delta"],
+            dimensions=["customer_segment", "metric_time__month"],
             time_start="2025-04-01",
             time_end="2025-10-31",
             time_granularity="month",
-            order_by=["metric_time__month", "product_type"],
+            order_by=["metric_time__month", "customer_segment"],
         )
 
         assert result.success == 1
         semantic_tools.query_metrics.assert_called_once_with(
             metrics=[
-                "activity_count",
-                "previous_month_activity_count",
-                "activity_count_previous_month",
-                "activity_count_mom_delta",
+                "order_count",
+                "previous_month_order_count",
+                "order_count_previous_month",
+                "order_count_mom_delta",
             ],
-            dimensions=["product_type", "metric_time__month"],
+            dimensions=["customer_segment", "metric_time__month"],
             path=None,
             time_start="2025-04-01",
             time_end="2025-10-31",
             time_granularity="month",
             where=None,
             limit=None,
-            order_by=["metric_time__month", "product_type"],
+            order_by=["metric_time__month", "customer_segment"],
             dry_run=False,
         )
 
     def test_query_metrics_does_not_invent_missing_previous_period_metric(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Marketing": {"Activity": {"metrics": ["activity_count_mom_delta"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["order_count_mom_delta"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={
                 "items": [
-                    {"name": "activity_count", "metadata": {}},
+                    {"name": "order_count", "metadata": {}},
                     {
-                        "name": "activity_count_mom_delta",
+                        "name": "order_count_mom_delta",
                         "metadata": {
                             "inputs": [
-                                {"name": "activity_count"},
+                                {"name": "order_count"},
                                 {
-                                    "name": "activity_count",
-                                    "alias": "previous_month_activity_count",
+                                    "name": "order_count",
+                                    "alias": "previous_month_order_count",
                                     "offset_window": "1 month",
                                 },
                             ]
@@ -390,10 +390,10 @@ class TestAskMetricsAgenticNode:
         )
         semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
 
-        node.query_metrics(metrics=["activity_count_mom_delta"])
+        node.query_metrics(metrics=["order_count_mom_delta"])
 
         semantic_tools.query_metrics.assert_called_once_with(
-            metrics=["activity_count", "activity_count_mom_delta"],
+            metrics=["order_count", "order_count_mom_delta"],
             dimensions=None,
             path=None,
             time_start=None,
@@ -408,7 +408,7 @@ class TestAskMetricsAgenticNode:
     def test_query_metrics_rejects_missing_metrics_without_raising(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Marketing": {"Activity": {"metrics": ["activity_count"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
         )
 
         result = node.query_metrics()
@@ -420,19 +420,19 @@ class TestAskMetricsAgenticNode:
     def test_query_metrics_does_not_expand_previous_period_metric_alone(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Marketing": {"Activity": {"metrics": ["previous_month_activity_count"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["previous_month_order_count"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={
                 "items": [
-                    {"name": "activity_count", "metadata": {}},
+                    {"name": "order_count", "metadata": {}},
                     {
-                        "name": "previous_month_activity_count",
+                        "name": "previous_month_order_count",
                         "metadata": {
                             "inputs": [
                                 {
-                                    "name": "activity_count",
-                                    "alias": "previous_month_activity_count",
+                                    "name": "order_count",
+                                    "alias": "previous_month_order_count",
                                     "offset_window": "1 month",
                                 }
                             ]
@@ -444,10 +444,10 @@ class TestAskMetricsAgenticNode:
         )
         semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
 
-        node.query_metrics(metrics=["previous_month_activity_count"])
+        node.query_metrics(metrics=["previous_month_order_count"])
 
         semantic_tools.query_metrics.assert_called_once_with(
-            metrics=["previous_month_activity_count"],
+            metrics=["previous_month_order_count"],
             dimensions=None,
             path=None,
             time_start=None,
@@ -462,19 +462,19 @@ class TestAskMetricsAgenticNode:
     def test_query_metrics_does_not_expand_plain_derived_metric(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Marketing": {"Activity": {"metrics": ["delivery_activity_ratio"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["delivery_activity_ratio"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={
                 "items": [
-                    {"name": "activity_count", "metadata": {}},
-                    {"name": "delivery_activity_count", "metadata": {}},
+                    {"name": "order_count", "metadata": {}},
+                    {"name": "delivery_order_count", "metadata": {}},
                     {
                         "name": "delivery_activity_ratio",
                         "metadata": {
                             "inputs": [
-                                {"name": "delivery_activity_count"},
-                                {"name": "activity_count"},
+                                {"name": "delivery_order_count"},
+                                {"name": "order_count"},
                             ]
                         },
                     },
@@ -499,24 +499,243 @@ class TestAskMetricsAgenticNode:
             dry_run=False,
         )
 
-    def test_query_metrics_passes_limit_through(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_expands_rolling_average_metric_bundle(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Marketing": {"Activity": {"metrics": ["activity_count"]}}},
+            tree={"Commerce": {"Orders": {"metrics": ["moving_3_month_order_count_avg"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
-            result={"items": [{"name": "activity_count", "metadata": {}}], "has_more": False}
+            result={
+                "items": [
+                    {
+                        "name": "order_count",
+                        "measures": ["orders.order_id"],
+                        "metadata": {
+                            "dataset": "orders",
+                            "expr": "COUNT(DISTINCT order_id)",
+                            "metric_kind": "aggregate",
+                            "measure": "order_id",
+                        },
+                    },
+                    {
+                        "name": "moving_window_month_count",
+                        "metadata": {
+                            "dataset": "orders",
+                            "time_dimension": "metric_time__month",
+                            "window": "3 months",
+                            "window_aggregation": "row_count",
+                            "metric_kind": "cumulative",
+                        },
+                    },
+                    {
+                        "name": "moving_3_month_order_count_avg",
+                        "measures": ["orders.order_id"],
+                        "metadata": {
+                            "dataset": "orders",
+                            "time_dimension": "metric_time__month",
+                            "window": "3 months",
+                            "window_aggregation": "avg",
+                            "metric_kind": "cumulative",
+                            "expr": "COUNT(DISTINCT order_id)",
+                            "measure": "order_id",
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(metrics=["moving_3_month_order_count_avg"], dimensions=[])
+
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["order_count", "moving_window_month_count", "moving_3_month_order_count_avg"],
+            dimensions=["metric_time__month"],
+            path=None,
+            time_start=None,
+            time_end=None,
+            time_granularity="month",
+            where=None,
+            limit=None,
+            order_by=["metric_time__month"],
+            dry_run=False,
+        )
+
+    def test_query_metrics_expands_running_extrema_metric_bundle(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={
+                "Commerce": {
+                    "Orders": {
+                        "metrics": [
+                            "average_order_amount",
+                            "running_min_average_order_amount",
+                            "running_max_average_order_amount",
+                        ]
+                    }
+                }
+            },
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={
+                "items": [
+                    {
+                        "name": "average_order_amount",
+                        "metadata": {
+                            "dataset": "orders",
+                            "expr": "AVG(order_amount)",
+                            "metric_kind": "aggregate",
+                            "measure": "order_amount",
+                        },
+                    },
+                    {
+                        "name": "running_min_average_order_amount",
+                        "metadata": {
+                            "dataset": "orders",
+                            "grain_to_date": "month",
+                            "time_dimension": "metric_time__month",
+                            "window_aggregation": "min",
+                            "metric_kind": "cumulative",
+                            "expr": "AVG(order_amount)",
+                            "measure": "order_amount",
+                        },
+                    },
+                    {
+                        "name": "running_max_average_order_amount",
+                        "metadata": {
+                            "dataset": "orders",
+                            "grain_to_date": "month",
+                            "time_dimension": "metric_time__month",
+                            "window_aggregation": "max",
+                            "metric_kind": "cumulative",
+                            "expr": "AVG(order_amount)",
+                            "measure": "order_amount",
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
         )
         semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
 
         node.query_metrics(
-            metrics=["activity_count"],
+            metrics=["running_min_average_order_amount", "running_max_average_order_amount"],
+            dimensions=["metric_time__month"],
+        )
+
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=[
+                "average_order_amount",
+                "running_min_average_order_amount",
+                "running_max_average_order_amount",
+            ],
+            dimensions=["metric_time__month"],
+            path=None,
+            time_start=None,
+            time_end=None,
+            time_granularity="month",
+            where=None,
+            limit=None,
+            order_by=["metric_time__month"],
+            dry_run=False,
+        )
+
+    def test_query_metrics_passes_limit_through(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(
+            metrics=["order_count"],
             dimensions=["ac_channel"],
             limit=10,
         )
 
         semantic_tools.query_metrics.assert_called_once()
         assert semantic_tools.query_metrics.call_args.kwargs["limit"] == 10
+
+    def test_query_metrics_keeps_joined_dimension_where_semantics(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(
+            metrics=["order_count"],
+            dimensions=["dimension_key__display_name"],
+            where="region = 'east'",
+        )
+
+        semantic_tools.query_metrics.assert_called_once()
+        assert semantic_tools.query_metrics.call_args.kwargs["where"] == "region = 'east'"
+
+    def test_query_metrics_passes_join_controls(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(
+            metrics=["order_count"],
+            dimensions=["dimension_key__display_name"],
+            join_policy="dimension_preserving",
+            zero_fill=True,
+        )
+
+        semantic_tools.query_metrics.assert_called_once()
+        assert semantic_tools.query_metrics.call_args.kwargs["join_policy"] == "dimension_preserving"
+        assert semantic_tools.query_metrics.call_args.kwargs["zero_fill"] is True
+
+    def test_query_metrics_aliases_joined_dimension_display_columns(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(
+            result={
+                "columns": ["dimension_key__display_name", "order_count"],
+                "data": {
+                    "compressed_data": "dimension_key__display_name,order_count\nknown,1\n",
+                    "original_rows": 1,
+                },
+                "metadata": {},
+            }
+        )
+
+        result = node.query_metrics(metrics=["order_count"], dimensions=["dimension_key__display_name"])
+
+        assert result.success == 1
+        assert result.result["columns"] == ["display_name", "order_count"]
+        assert result.result["metadata"]["_display_column_aliases"] == {"dimension_key__display_name": "display_name"}
+        assert result.result["data"]["compressed_data"].startswith("display_name,order_count")
 
     def test_update_context_defaults_to_last_query_metrics_result(
         self,
@@ -536,10 +755,10 @@ class TestAskMetricsAgenticNode:
                         "result": {
                             "columns": [
                                 "metric_time__month",
-                                "product_type",
-                                "activity_count",
-                                "previous_month_activity_count",
-                                "activity_count_mom_delta",
+                                "customer_segment",
+                                "order_count",
+                                "previous_month_order_count",
+                                "order_count_mom_delta",
                             ],
                             "data": {
                                 "original_rows": rows,
@@ -588,7 +807,7 @@ class TestAskMetricsAgenticNode:
                         "success": 1,
                         "result": {
                             "result_id": result_id,
-                            "columns": ["metric_time__month", "activity_count"],
+                            "columns": ["metric_time__month", "order_count"],
                             "data": {
                                 "original_rows": rows,
                                 "compressed_data": f"rows={rows}",
@@ -645,8 +864,8 @@ class TestAskMetricsAgenticNode:
                             "success": 1,
                             "result": {
                                 "result_id": "query_metrics:1",
-                                "columns": ["activity_count"],
-                                "data": {"original_rows": 1, "compressed_data": "activity_count\n1"},
+                                "columns": ["order_count"],
+                                "data": {"original_rows": 1, "compressed_data": "order_count\n1"},
                                 "metadata": {},
                             },
                         }
@@ -921,6 +1140,9 @@ class TestUpdateContext:
         node._selected_final_result_id_from_actions = AskMetricsAgenticNode._selected_final_result_id_from_actions
         node._select_query_metrics_action_by_result_id = AskMetricsAgenticNode._select_query_metrics_action_by_result_id
         node._query_result_payload = AskMetricsAgenticNode._query_result_payload
+        node._column_aliases_from_metadata = AskMetricsAgenticNode._column_aliases_from_metadata
+        node._apply_column_aliases_to_columns = AskMetricsAgenticNode._apply_column_aliases_to_columns
+        node._apply_column_aliases_to_csv = AskMetricsAgenticNode._apply_column_aliases_to_csv
         node.update_context = AskMetricsAgenticNode.update_context.__get__(node)
         return node
 
@@ -933,9 +1155,9 @@ class TestUpdateContext:
                     "raw_output": {
                         "success": 1,
                         "result": {
-                            "columns": ["metric_time__month", "activity_count"],
+                            "columns": ["metric_time__month", "order_count"],
                             "data": {
-                                "compressed_data": "index,metric_time__month,activity_count\n0,2025-06,100",
+                                "compressed_data": "index,metric_time__month,order_count\n0,2025-06,100",
                                 "original_rows": 1,
                                 "is_compressed": False,
                             },
@@ -954,7 +1176,7 @@ class TestUpdateContext:
         assert result["success"] is True
         assert len(workflow.context.sql_contexts) == 1
         ctx = workflow.context.sql_contexts[0]
-        assert "activity_count" in ctx.sql_return
+        assert "order_count" in ctx.sql_return
         assert ctx.sql_query == "SELECT COUNT(*) FROM t"
         assert ctx.row_count == 1
 
@@ -967,10 +1189,10 @@ class TestUpdateContext:
                     "raw_output": {
                         "success": 1,
                         "result": {
-                            "columns": ["metric_time__month", "activity_count"],
+                            "columns": ["metric_time__month", "order_count"],
                             "data": {
                                 "compressed_data": (
-                                    "metric_time__month,activity_count\n2025-01-01,1\n...,...\n2025-12-01,12"
+                                    "metric_time__month,order_count\n2025-01-01,1\n...,...\n2025-12-01,12"
                                 ),
                                 "original_rows": 21,
                                 "is_compressed": True,
@@ -985,7 +1207,7 @@ class TestUpdateContext:
         node = self._make_node_with_result(actions)
         node.semantic_tools = MagicMock()
         node.semantic_tools.get_cached_query_metrics_result.return_value = {
-            "csv": "metric_time__month,activity_count\n2025-01-01,1\n2025-02-01,2\n",
+            "csv": "metric_time__month,order_count\n2025-01-01,1\n2025-02-01,2\n",
             "row_count": 21,
         }
         workflow = MagicMock()
@@ -998,6 +1220,45 @@ class TestUpdateContext:
         assert "2025-02-01,2" in ctx.sql_return
         assert "..." not in ctx.sql_return
         assert ctx.row_count == 21
+
+    def test_captures_full_cached_data_with_display_column_aliases(self):
+        actions = [
+            {
+                "action_type": "query_metrics",
+                "status": "success",
+                "output": {
+                    "raw_output": {
+                        "success": 1,
+                        "result": {
+                            "columns": ["display_key__display_name", "order_count"],
+                            "data": {
+                                "compressed_data": "display_name,order_count\nknown,1\n",
+                                "original_rows": 1,
+                            },
+                            "metadata": {
+                                "_full_result_cache_key": "query_metrics:1",
+                                "_display_column_aliases": {"display_key__display_name": "display_name"},
+                            },
+                        },
+                    }
+                },
+            }
+        ]
+        node = self._make_node_with_result(actions)
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.get_cached_query_metrics_result.return_value = {
+            "csv": "display_key__display_name,order_count\nknown,1\n",
+            "row_count": 1,
+        }
+        workflow = MagicMock()
+        workflow.context.sql_contexts = []
+
+        result = node.update_context(workflow)
+
+        assert result["success"] is True
+        ctx = workflow.context.sql_contexts[0]
+        assert ctx.sql_return.startswith("display_name,order_count")
+        assert "display_key__display_name" not in ctx.sql_return
 
     def test_captures_list_data(self):
         actions = [
@@ -1037,7 +1298,7 @@ class TestUpdateContext:
                     "raw_output": {
                         "success": 1,
                         "result": {
-                            "columns": ["metric_time__month", "activity_count"],
+                            "columns": ["metric_time__month", "order_count"],
                             "data": [],
                             "metadata": {"sql": "SELECT month, count FROM t WHERE 1 = 0"},
                         },
@@ -1054,7 +1315,7 @@ class TestUpdateContext:
         assert result["success"] is True
         assert len(workflow.context.sql_contexts) == 1
         ctx = workflow.context.sql_contexts[0]
-        assert ctx.sql_return == "metric_time__month,activity_count\r\n"
+        assert ctx.sql_return == "metric_time__month,order_count\r\n"
         assert ctx.row_count == 0
         assert ctx.sql_query == "SELECT month, count FROM t WHERE 1 = 0"
 

@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import json
 import os
 import tempfile
 from collections.abc import Iterable
@@ -17,6 +18,7 @@ from datus_storage_base.conditions import And, eq
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG, build_metric_id, metric_definition_conflict, normalize_metric_name
 from datus.storage.semantic_model.store import SemanticModelRAG, _identifier_variants, _normalized_identifier
+from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
@@ -88,6 +90,12 @@ class GenerationTools:
         self.authoring_format = (authoring_format or "metricflow").strip().lower()
         self.metric_rag = MetricRAG(agent_config)
         self.semantic_rag = SemanticModelRAG(agent_config)
+        self.table_semantic_profile_rag = None
+        if isinstance(getattr(agent_config, "project_name", ""), str):
+            try:
+                self.table_semantic_profile_rag = TableSemanticProfileRAG(agent_config)
+            except Exception as exc:
+                logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
         self._semantic_object_exists_cache: Dict[tuple[str, str, str], FuncToolResult] = {}
         self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
 
@@ -1017,6 +1025,178 @@ class GenerationTools:
         return load_osi_path(self._osi_document_root(metric_file, semantic_model_file), normalize=True)
 
     @staticmethod
+    def _jsonable(value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json", exclude_none=True)
+        if isinstance(value, list):
+            return [GenerationTools._jsonable(item) for item in value]
+        if isinstance(value, tuple):
+            return [GenerationTools._jsonable(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): GenerationTools._jsonable(item) for key, item in value.items()}
+        return value
+
+    @classmethod
+    def _json_dumps(cls, value: Any) -> str:
+        cleaned = cls._jsonable(value)
+        if cleaned in (None, "", [], {}):
+            return ""
+        return json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+
+    @classmethod
+    def _profile_search_text(cls, *values: Any) -> str:
+        parts: List[str] = []
+        for value in values:
+            cleaned = cls._jsonable(value)
+            if cleaned in (None, "", [], {}):
+                continue
+            if isinstance(cleaned, (dict, list)):
+                text = json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+            else:
+                text = str(cleaned)
+            if text and text not in parts:
+                parts.append(text)
+        return "\n".join(parts)
+
+    @classmethod
+    def _osi_dataset_columns(cls, dataset: Any) -> List[dict]:
+        columns: List[dict] = []
+        primary_keys = getattr(dataset, "primary_key", None) or []
+        if isinstance(primary_keys, str):
+            primary_keys = [primary_keys]
+        for key in primary_keys:
+            key_name = str(key)
+            if not key_name:
+                continue
+            columns.append(
+                {
+                    "name": key_name,
+                    "expr": key_name,
+                    "role": "primary_key",
+                    "type": "identifier",
+                    "description": "Primary key",
+                }
+            )
+
+        time_dimension = getattr(dataset, "time_dimension", None)
+        if time_dimension and getattr(time_dimension, "name", None):
+            time_name = str(time_dimension.name)
+            columns.append(
+                {
+                    "name": time_name,
+                    "expr": getattr(time_dimension, "expr", None) or time_name,
+                    "role": "time_dimension",
+                    "type": "time",
+                    "granularity": getattr(time_dimension, "granularity", "") or "",
+                    "description": getattr(time_dimension, "description", "") or "",
+                    "ai_context": getattr(time_dimension, "ai_context", None),
+                }
+            )
+
+        for dim in getattr(dataset, "dimensions", []):
+            dim_name = getattr(dim, "name", "")
+            if not dim_name:
+                continue
+            columns.append(
+                {
+                    "name": str(dim_name),
+                    "expr": getattr(dim, "expr", None) or str(dim_name),
+                    "role": "dimension",
+                    "type": str(getattr(dim, "type", "") or ""),
+                    "granularity": getattr(dim, "granularity", "") or "",
+                    "description": getattr(dim, "description", "") or "",
+                    "ai_context": getattr(dim, "ai_context", None),
+                }
+            )
+        return [{key: value for key, value in item.items() if value not in (None, "", [], {})} for item in columns]
+
+    @classmethod
+    def _osi_dataset_relationships(cls, doc: Any, dataset_name: str) -> List[dict]:
+        relationships: List[dict] = []
+        for relationship in getattr(doc, "relationships", []) or []:
+            from_dataset = cls._relationship_endpoint(relationship, "from", "from_dataset")
+            to_dataset = cls._relationship_endpoint(relationship, "to", "to_dataset")
+            if dataset_name not in (from_dataset, to_dataset):
+                continue
+            from_column = cls._first_relationship_column(relationship, "from_columns", "from_identifier")
+            to_column = cls._first_relationship_column(relationship, "to_columns", "to_identifier")
+            relationships.append(
+                {
+                    "name": str(getattr(relationship, "name", "") or ""),
+                    "type": str(getattr(relationship, "type", "") or ""),
+                    "from_dataset": from_dataset,
+                    "to_dataset": to_dataset,
+                    "from_columns": [from_column] if from_column else [],
+                    "to_columns": [to_column] if to_column else [],
+                    "role": "from" if from_dataset == dataset_name else "to",
+                    "ai_context": getattr(relationship, "ai_context", None),
+                }
+            )
+        return [
+            {key: value for key, value in item.items() if value not in (None, "", [], {})} for item in relationships
+        ]
+
+    @classmethod
+    def _osi_table_semantic_profile(
+        cls,
+        *,
+        doc: Any,
+        dataset: Any,
+        table_name: str,
+        table_fq_name: str,
+        db_parts: dict[str, str],
+        yaml_path: str,
+    ) -> dict:
+        dataset_name = str(getattr(dataset, "name", "") or table_name)
+        columns = cls._osi_dataset_columns(dataset)
+        relationships = cls._osi_dataset_relationships(doc, dataset_name)
+        filters = getattr(dataset, "filters", None) or []
+        ai_context = getattr(dataset, "ai_context", None)
+        custom_extensions = getattr(dataset, "custom_extensions", None) or []
+        description = getattr(dataset, "description", "") or ""
+        semantic_model_name = str(getattr(doc, "name", "") or "")
+        physical_table = table_fq_name or table_name
+        return {
+            "id": f"osi:{physical_table}",
+            "format": "osi",
+            "physical_table_fq_name": physical_table,
+            "table_name": table_name,
+            "semantic_model_name": semantic_model_name,
+            "dataset_name": dataset_name,
+            "data_source_name": "",
+            "description": description,
+            "ai_context_json": cls._json_dumps(ai_context),
+            "columns_json": cls._json_dumps(columns),
+            "relationships_json": cls._json_dumps(relationships),
+            "filters_json": cls._json_dumps(filters),
+            "custom_extensions_json": cls._json_dumps(custom_extensions),
+            "yaml_path": yaml_path,
+            "search_text": cls._profile_search_text(
+                semantic_model_name,
+                dataset_name,
+                physical_table,
+                description,
+                ai_context,
+                columns,
+                relationships,
+                filters,
+            ),
+            "updated_at": datetime.now().replace(microsecond=0),
+            **db_parts,
+        }
+
+    def _upsert_table_semantic_profiles(self, profiles: List[dict]) -> int:
+        if not profiles or self.table_semantic_profile_rag is None:
+            return 0
+        try:
+            self.table_semantic_profile_rag.upsert_batch(profiles)
+            self.table_semantic_profile_rag.create_indices()
+            return len(profiles)
+        except Exception as exc:
+            logger.warning(f"Failed to sync table semantic profiles: {exc}")
+            return 0
+
+    @staticmethod
     def _current_db_parts(agent_config: AgentConfig) -> dict[str, str]:
         try:
             current_db_config = agent_config.current_db_config()
@@ -1245,6 +1425,7 @@ class GenerationTools:
             doc = self._load_osi_document(semantic_model_file=semantic_model_path)
             db_parts = self._current_db_parts(self.agent_config)
             semantic_objects: List[dict] = []
+            table_profiles: List[dict] = []
             synced_items: List[str] = []
 
             for dataset in getattr(doc, "datasets", []):
@@ -1255,6 +1436,16 @@ class GenerationTools:
                 fq_parts = [db_parts["catalog_name"], db_parts["database_name"], db_parts["schema_name"], table_name]
                 table_fq_name = ".".join(part for part in fq_parts if part)
                 yaml_path = semantic_model_path
+                table_profiles.append(
+                    self._osi_table_semantic_profile(
+                        doc=doc,
+                        dataset=dataset,
+                        table_name=table_name,
+                        table_fq_name=table_fq_name,
+                        db_parts=db_parts,
+                        yaml_path=yaml_path,
+                    )
+                )
 
                 semantic_objects.append(
                     {
@@ -1351,10 +1542,12 @@ class GenerationTools:
                 }
             self.semantic_rag.upsert_batch(semantic_objects)
             self.semantic_rag.create_indices()
+            profile_count = self._upsert_table_semantic_profiles(table_profiles)
             return {
                 "success": True,
                 "message": f"Synced {len(semantic_objects)} OSI semantic object(s): {', '.join(synced_items[:5])}",
                 "semantic_objects": len(semantic_objects),
+                "table_semantic_profiles": profile_count,
             }
         except Exception as e:
             logger.error(f"Error syncing OSI semantic objects to DB: {e}", exc_info=True)

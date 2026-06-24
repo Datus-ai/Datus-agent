@@ -497,6 +497,26 @@ class SemanticDiscoveryTools:
                     found_candidate = True
                     entry_candidates.append(candidate)
                     self._merge_metric_candidate(metric_candidates, candidate)
+                window_candidates = self._window_aggregate_metric_candidates(
+                    parsed_expressions,
+                    source_name,
+                    source_context,
+                    existing_metric_catalog,
+                )
+                for candidate in window_candidates["base_metric_candidates"]:
+                    entry_has_metric_evidence = True
+                    found_candidate = True
+                    entry_candidates.append(candidate)
+                    self._merge_metric_candidate(metric_candidates, candidate)
+                    for measure in candidate.get("base_measures", []):
+                        self._merge_base_measure(base_measures, measure)
+                for candidate in window_candidates["window_metric_candidates"]:
+                    entry_has_metric_evidence = True
+                    found_candidate = True
+                    entry_candidates.append(candidate)
+                    self._merge_metric_candidate(metric_candidates, candidate)
+                    for measure in candidate.get("base_measures", []):
+                        self._merge_base_measure(base_measures, measure)
 
                 for parsed in parsed_expressions:
                     for select in self._iter_selects(parsed):
@@ -849,6 +869,387 @@ class SemanticDiscoveryTools:
             "base_metric_candidates": sorted(base_candidates.values(), key=lambda item: item["name"]),
             "derived_metric_candidates": sorted(derived_candidates.values(), key=lambda item: item["name"]),
         }
+
+    def _window_aggregate_metric_candidates(
+        self,
+        parsed_expressions: List[Any],
+        source_name: str,
+        source_context: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Extract cumulative/rolling metric candidates from aggregate windows."""
+        from sqlglot import expressions as exp
+
+        base_candidates: Dict[str, Dict[str, Any]] = {}
+        window_candidates: Dict[str, Dict[str, Any]] = {}
+
+        for parsed in parsed_expressions:
+            projection_index = self._named_projection_index(parsed)
+            for select_name, select in self._named_selects_for_period_analysis(parsed):
+                source_names = self._direct_source_names(select)
+                for projection in select.expressions:
+                    expr = projection.this if isinstance(projection, exp.Alias) else projection
+                    alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+                    if not alias:
+                        continue
+                    windows = list(expr.find_all(exp.Window))
+                    if len(windows) != 1:
+                        continue
+                    detail = self._window_aggregate_output_detail(
+                        window=windows[0],
+                        alias=alias,
+                        source_name=source_name,
+                        select_name=select_name,
+                        source_names=source_names,
+                        projection_index=projection_index,
+                        fallback_tables=self._collect_tables(select),
+                        fallback_filters=self._collect_filters(select),
+                        fallback_dimensions=self._collect_dimensions(select),
+                    )
+                    if not detail:
+                        continue
+
+                    base_candidate = self._base_candidate_for_window_aggregate(
+                        detail=detail,
+                        source_name=source_name,
+                        source_context=source_context,
+                        existing_metric_catalog=existing_metric_catalog,
+                    )
+                    if base_candidate:
+                        base_candidates[self._metric_candidate_merge_key(base_candidate)] = base_candidate
+
+                    candidate = self._window_metric_candidate_from_detail(
+                        detail=detail,
+                        base_candidate=base_candidate,
+                        existing_metric_catalog=existing_metric_catalog,
+                    )
+                    if candidate:
+                        window_candidates[self._metric_candidate_merge_key(candidate)] = candidate
+
+        return {
+            "base_metric_candidates": sorted(base_candidates.values(), key=lambda item: item["name"]),
+            "window_metric_candidates": sorted(window_candidates.values(), key=lambda item: item["name"]),
+        }
+
+    def _window_aggregate_output_detail(
+        self,
+        window: Any,
+        alias: str,
+        source_name: str,
+        select_name: str,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+        fallback_tables: List[str],
+        fallback_filters: List[str],
+        fallback_dimensions: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Return executable metadata for one aggregate window projection."""
+        aggregate = window.this
+        if not isinstance(aggregate, self._aggregate_classes()):
+            return None
+        aggregation = self._window_aggregation_from_aggregate(aggregate)
+        if not aggregation:
+            return None
+        frame = self._window_frame_detail(window, source_names, projection_index)
+        if not frame:
+            return None
+
+        input_metric = self._window_input_metric(aggregate)
+        base_projection_info = self._window_base_projection(
+            input_metric=input_metric,
+            source_names=source_names,
+            projection_index=projection_index,
+        )
+        base_expr = ""
+        base_metric_name = input_metric
+        tables = fallback_tables
+        filters = fallback_filters
+        dimensions = list(fallback_dimensions)
+        base_select_name = ""
+        if base_projection_info:
+            base_expr = base_projection_info["expr"].sql()
+            base_metric_name = self._safe_name(input_metric)
+            base_select = base_projection_info["select"]
+            tables = self._collect_tables(base_select)
+            filters = self._collect_filters(base_select)
+            dimensions = self._collect_dimensions(base_select)
+            base_select_name = base_projection_info.get("select_name", "")
+        else:
+            base_expr = aggregate.sql()
+            if not base_metric_name:
+                base_metric_name = self._name_from_aggregate(aggregate)
+
+        for partition_expr in window.args.get("partition_by") or []:
+            partition_sql = partition_expr.sql()
+            if partition_sql not in dimensions:
+                dimensions.append(partition_sql)
+
+        return {
+            "name": self._metric_candidate_name(alias, window),
+            "source_alias": alias,
+            "source_sql_name": source_name,
+            "source_select": select_name,
+            "source_names": source_names,
+            "base_select": base_select_name,
+            "base_metric_name": self._safe_name(base_metric_name),
+            "base_expression": base_expr,
+            "base_projection_info": base_projection_info,
+            "aggregate": aggregate,
+            "window_aggregation": aggregation,
+            "window": frame.get("window", ""),
+            "grain_to_date": frame.get("grain_to_date", ""),
+            "time_grain": frame.get("time_grain", ""),
+            "window_order_by": self._window_order_by(window),
+            "window_frame": frame.get("frame", ""),
+            "tables": tables,
+            "filters": filters,
+            "dimensions": dimensions,
+        }
+
+    def _window_aggregation_from_aggregate(self, aggregate: Any) -> str:
+        """Map an aggregate function inside OVER() to DATUS window_aggregation."""
+        from sqlglot import expressions as exp
+
+        if isinstance(aggregate, exp.Sum):
+            return "sum"
+        if isinstance(aggregate, exp.Avg):
+            return "avg"
+        if isinstance(aggregate, exp.Min):
+            return "min"
+        if isinstance(aggregate, exp.Max):
+            return "max"
+        if isinstance(aggregate, exp.Count):
+            return "row_count" if self._is_count_star(aggregate) else "count"
+        return ""
+
+    def _window_input_metric(self, aggregate: Any) -> str:
+        """Return the aggregate input alias when a window is over a prior metric."""
+        from sqlglot import expressions as exp
+
+        inner = getattr(aggregate, "this", None)
+        if inner is None or isinstance(inner, exp.Star):
+            return ""
+        if isinstance(inner, exp.Distinct):
+            inner = inner.expressions[0] if inner.expressions else inner
+        if isinstance(inner, exp.Column):
+            return self._safe_name(inner.name)
+        return ""
+
+    def _window_base_projection(
+        self,
+        input_metric: str,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Find the upstream projection that produced a window input alias."""
+        if not input_metric:
+            return None
+        input_key = self._normalize_identifier(input_metric)
+        for source_name in source_names:
+            projection = projection_index.get(source_name, {}).get(input_key)
+            if projection:
+                return projection
+        return None
+
+    def _window_frame_detail(
+        self,
+        window: Any,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, str]]:
+        """Translate a SQL window frame into DATUS window/grain metadata."""
+        grain = self._window_order_grain(window, source_names, projection_index)
+        if not grain:
+            return None
+
+        spec = window.args.get("spec")
+        frame_sql = spec.sql() if spec is not None else ""
+        if spec is None:
+            return {
+                "grain_to_date": grain.lower(),
+                "time_grain": grain,
+                "frame": frame_sql,
+            }
+
+        start = spec.args.get("start")
+        start_side = str(spec.args.get("start_side") or "").upper()
+        end = str(spec.args.get("end") or "").upper()
+        end_side = str(spec.args.get("end_side") or "").upper()
+
+        if str(start).upper() == "UNBOUNDED" and start_side == "PRECEDING" and end == "CURRENT ROW":
+            return {
+                "grain_to_date": grain.lower(),
+                "time_grain": grain,
+                "frame": frame_sql,
+            }
+
+        if start_side == "PRECEDING" and end == "CURRENT ROW" and not end_side:
+            count = self._window_frame_preceding_count(start)
+            if count is None:
+                return None
+            size = count + 1
+            unit = grain.lower()
+            if size != 1 and not unit.endswith("s"):
+                unit = f"{unit}s"
+            return {
+                "window": f"{size} {unit}",
+                "time_grain": grain,
+                "frame": frame_sql,
+            }
+
+        return None
+
+    def _window_order_grain(
+        self,
+        window: Any,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> str:
+        """Infer the time grain used to order a window metric."""
+        order_items = self._window_order_by(window)
+        if not order_items:
+            return ""
+        order_expr = order_items[0].get("expr", "")
+        order_name = self._normalize_identifier(order_expr.split(".")[-1])
+        for source_name in source_names:
+            projection = projection_index.get(source_name, {}).get(order_name)
+            if projection:
+                grain = self._time_grain_for_expr(projection["expr"]) or self._time_grain_from_alias(order_name) or ""
+                if grain:
+                    return grain
+        try:
+            parsed_order = self._parse_sql(f"SELECT {order_expr} AS order_expr")[0]
+            order_projection = parsed_order.expressions[0]
+            expr = order_projection.this
+            return self._time_grain_for_expr(expr) or self._time_grain_from_alias(order_name) or ""
+        except Exception:
+            return self._time_grain_from_alias(order_name) or ""
+
+    def _window_frame_preceding_count(self, start: Any) -> Optional[int]:
+        """Return the N in ROWS BETWEEN N PRECEDING AND CURRENT ROW."""
+        try:
+            return max(int(getattr(start, "this", start)), 0)
+        except (TypeError, ValueError):
+            return None
+
+    def _base_candidate_for_window_aggregate(
+        self,
+        detail: Dict[str, Any],
+        source_name: str,
+        source_context: str,
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return the base aggregate metric required by a window metric."""
+        if detail.get("window_aggregation") == "row_count":
+            return None
+        base_metric_name = self._normalize_identifier(detail.get("base_metric_name", ""))
+        if not base_metric_name or base_metric_name in existing_metric_catalog:
+            return None
+
+        projection_info = detail.get("base_projection_info")
+        if projection_info:
+            select = projection_info["select"]
+            candidate = self._candidate_from_projection(
+                projection=projection_info["projection"],
+                source_name=source_name,
+                source_context=source_context,
+                tables=self._collect_tables(select),
+                filters=self._collect_filters(select),
+                dimensions=self._collect_dimensions(select),
+                existing_metric_catalog=existing_metric_catalog,
+            )
+            if candidate and candidate.get("evidence_kind") != "identity_metric_reference":
+                candidate["source_select"] = projection_info.get("select_name", "")
+                return candidate
+            return None
+
+        aggregate = detail.get("aggregate")
+        if aggregate is None:
+            return None
+        measure = self._measure_from_aggregate(aggregate, detail.get("base_metric_name", ""), aggregate)
+        return {
+            "evidence_kind": "metric_projection",
+            "candidate_classification": "exact_metric",
+            "expression_kind": "aggregate_expr",
+            "aggregation_scope": "aggregate",
+            "representable_as": "measure_proxy",
+            "equivalence": "exact",
+            "requires_validation": False,
+            "name": detail.get("base_metric_name", ""),
+            "metric_type": "measure_proxy",
+            "expression": detail.get("base_expression", ""),
+            "source_alias": detail.get("base_metric_name", ""),
+            "source_sql_name": source_name,
+            "source_select": detail.get("source_select", ""),
+            "base_measures": [measure],
+            "dimensions": detail.get("dimensions", []),
+            "filters": detail.get("filters", []),
+            "tables": detail.get("tables", []),
+            "confidence": "medium",
+            "score_reasons": [
+                "aggregate window requires a reusable base-period metric",
+            ],
+            "source_count": 1,
+            "referenced_metrics": [],
+        }
+
+    def _window_metric_candidate_from_detail(
+        self,
+        detail: Dict[str, Any],
+        base_candidate: Optional[Dict[str, Any]],
+        existing_metric_catalog: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Build the cumulative/rolling metric candidate from window metadata."""
+        base_metric_name = self._normalize_identifier(detail.get("base_metric_name", ""))
+        referenced_metric_names = {base_metric_name} & set(existing_metric_catalog)
+        base_measures = (
+            base_candidate.get("base_measures", [])
+            if base_candidate
+            else [self._measure_from_aggregate(detail["aggregate"], detail.get("name", ""), detail["aggregate"])]
+        )
+        score_reasons = [
+            "aggregate window maps to a cumulative metric over base-period values",
+            "window frame was extracted from SQL AST",
+        ]
+        if detail.get("grain_to_date"):
+            score_reasons.append("unbounded preceding frame maps to grain_to_date")
+        if detail.get("window"):
+            score_reasons.append("bounded preceding frame maps to a rolling window")
+
+        candidate = {
+            "evidence_kind": "window_metric_projection",
+            "candidate_classification": "exact_metric",
+            "expression_kind": "window_aggregate_expr",
+            "aggregation_scope": "window_over_aggregate",
+            "representable_as": "cumulative",
+            "equivalence": "exact",
+            "requires_validation": False,
+            "name": detail.get("name", ""),
+            "metric_type": "cumulative",
+            "metric_kind": "cumulative",
+            "expression": detail.get("base_expression", ""),
+            "source_alias": detail.get("source_alias", ""),
+            "source_sql_name": detail.get("source_sql_name", ""),
+            "source_select": detail.get("source_select", ""),
+            "base_metric_name": detail.get("base_metric_name", ""),
+            "base_measures": base_measures,
+            "dimensions": detail.get("dimensions", []),
+            "filters": detail.get("filters", []),
+            "tables": detail.get("tables", []),
+            "window_aggregation": detail.get("window_aggregation", ""),
+            "window_order_by": detail.get("window_order_by", []),
+            "window_frame": detail.get("window_frame", ""),
+            "time_grain": detail.get("time_grain", ""),
+            "confidence": "high",
+            "score_reasons": score_reasons,
+            "source_count": 1,
+            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
+        }
+        if detail.get("window"):
+            candidate["window"] = detail["window"]
+        if detail.get("grain_to_date"):
+            candidate["grain_to_date"] = detail["grain_to_date"]
+        return candidate
 
     def _named_selects_for_period_analysis(self, parsed: Any) -> List[tuple]:
         """Return outer and named inner SELECTs with stable names."""
@@ -1307,6 +1708,24 @@ class SemanticDiscoveryTools:
         normalized_alias = self._normalize_identifier(alias)
         if normalized_alias in {"dt", "ds", "date", "part_dt", "metric_time", "create_date", "created_date"}:
             return "DAY"
+        if normalized_alias.startswith("metric_time__"):
+            normalized_alias = normalized_alias.split("__", 1)[1]
+        grain_aliases = {
+            "second": "SECOND",
+            "minute": "MINUTE",
+            "hour": "HOUR",
+            "day": "DAY",
+            "date": "DAY",
+            "week": "WEEK",
+            "month": "MONTH",
+            "quarter": "QUARTER",
+            "year": "YEAR",
+        }
+        if normalized_alias in grain_aliases:
+            return grain_aliases[normalized_alias]
+        for suffix, grain in grain_aliases.items():
+            if normalized_alias.endswith(f"_{suffix}"):
+                return grain
         return None
 
     def _time_grain_for_expr(self, expr: Any) -> Optional[str]:
@@ -1766,7 +2185,7 @@ class SemanticDiscoveryTools:
         expr = projection.this if isinstance(projection, exp.Alias) else projection
         alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
         name = self._metric_candidate_name(alias or expr.alias_or_name, expr)
-        if any(self._is_period_shift_window(window) for window in expr.find_all(exp.Window)):
+        if list(expr.find_all(exp.Window)):
             return None
         aggregate_classes = self._aggregate_classes()
         aggregates = list(expr.find_all(*aggregate_classes))
@@ -2308,6 +2727,9 @@ class SemanticDiscoveryTools:
             [
                 candidate.get("expression", ""),
                 f"offset_window:{candidate.get('offset_window', '')}",
+                f"window:{candidate.get('window', '')}",
+                f"grain_to_date:{candidate.get('grain_to_date', '')}",
+                f"window_aggregation:{candidate.get('window_aggregation', '')}",
                 *[f"measure:{part}" for part in sorted(measure_parts)],
                 *[f"input:{part}" for part in sorted(input_parts)],
             ]

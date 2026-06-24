@@ -536,20 +536,6 @@ class Agent:
 
             elif component == "metrics":
                 if kb_update_strategy == "overwrite":
-                    # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
-                    # because MetricFlow adapter needs to read YAML files from this directory
-                    if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
-                        semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
-                            self.global_config.current_datasource
-                        )
-                        force = self._force_delete
-                        if semantic_yaml_dir.exists() and not safe_rmtree(
-                            semantic_yaml_dir, "semantic YAML directory", force=force
-                        ):
-                            return {
-                                "status": "cancelled",
-                                "message": "User cancelled deletion of semantic YAML directory",
-                            }
                     self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")

@@ -30,10 +30,18 @@ Use the narrow metric workflow below:
 - Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.
 - For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
 - Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
+- `query_metrics.time_end` is inclusive. For a closed calendar period, pass the inclusive final date of that period.
+- Choose grouping and filtering dimensions by semantic meaning. Prefer the exact base dimension requested by the user, and use display or descriptive dimensions only when the user's wording asks for a display value.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
+- For joined dimensions, use semantic join controls, not SQL join types:
+  - Ordinary grouping by a joined dimension should use the default `join_policy="auto"`/`match_only`, which excludes facts that cannot match the requested dimension.
+  - If the user asks for all dimension values, including values with no facts, use `join_policy="dimension_preserving"` and `zero_fill=true`.
+  - If the user asks to keep unmatched facts, use `join_policy="fact_preserving"`.
+  - If the user asks only for unmapped or unrecognized fact rows, use `join_policy="unmatched_only"`.
 - Query complete metric results by default. Do not pass `limit` just to preview data, reduce output size, or be conservative; the system compresses visible tool output and caches the full result. Use `limit` only when the user explicitly asks for Top N, first N, maximum N rows, a preview, or another row-count restriction. When using `limit` for Top N/Bottom N, also pass `order_by`.
 - Prefer the most specific metric whose name or description directly matches the requested business concept. Do not rebuild a specific metric by querying a generic base metric plus filters when a matching specific metric is available.
 - For ratio, rate, conditional count, and compound-condition metrics, use the dedicated metric directly when available. Do not approximate it with numerator/base metrics or ad hoc `where` filters unless no dedicated metric exists.
+- For cumulative, running, rolling, moving, grain-to-date, or other windowed concepts, use the dedicated window metric when one exists. Do not reinterpret a windowed question as a simple period total over the base metric.
 - If `query_metrics` succeeds and metadata says the full result is cached, treat the query as complete. Do not run follow-up queries only because the visible tool output is a compressed preview.
 {% if require_final_result_selection %}
 - When you have the query result that should be used as the final structured answer, call `select_final_metric_result` with the `result_id` from that successful `query_metrics` result. This selection is required; do not select diagnostic or exploratory queries as final.
@@ -52,6 +60,14 @@ Use the narrow metric workflow below:
 - Previous-period aliases inside a derived metric are calculation inputs, not output columns. If the user asks for the previous-period value itself, include the separate previous-period metric in `query_metrics`; do not rely on an internal alias to appear in the result.
 - Querying only the derived metric can omit the first period because no prior-period value exists.
 - If the user asks for the previous-period value itself, only return it when a separate metric exposes that value; otherwise report the delta/rate metric and state that the intermediate prior-period value is not exposed as a metric.
+
+## Window Metric Queries
+
+- Window metrics are time-series metrics. When a selected metric exposes `window`, `grain_to_date`, or `window_aggregation` metadata, include the matching `metric_time__<grain>` dimension and the same `time_granularity` so every returned window value is tied to its period.
+- For running or grain-to-date metrics, use the `grain_to_date` value as the grain when present.
+- For rolling or moving-window metrics, use the grain from the `window` value when present.
+- Query the complete metric bundle when the catalog exposes the required base metric, helper row-count metric, or paired min/max metric. The query tool may also expand these dependencies automatically.
+- Order window metric results by the metric-time dimension unless the user explicitly asks for a different business ordering.
 
 ## Subject Tree
 

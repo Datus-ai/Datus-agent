@@ -20,6 +20,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG, build_metric_id
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools import connector_registry
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.utils.constants import DBType
@@ -797,6 +798,139 @@ class GenerationHooks(AgentHooks):
         return None
 
     @staticmethod
+    def _jsonable(value):
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json", exclude_none=True)
+        if isinstance(value, list):
+            return [GenerationHooks._jsonable(item) for item in value]
+        if isinstance(value, tuple):
+            return [GenerationHooks._jsonable(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): GenerationHooks._jsonable(item) for key, item in value.items()}
+        return value
+
+    @staticmethod
+    def _json_dumps(value) -> str:
+        cleaned = GenerationHooks._jsonable(value)
+        if cleaned in (None, "", [], {}):
+            return ""
+        return json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def _profile_search_text(*values) -> str:
+        parts = []
+        for value in values:
+            cleaned = GenerationHooks._jsonable(value)
+            if cleaned in (None, "", [], {}):
+                continue
+            if isinstance(cleaned, (dict, list)):
+                text = json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+            else:
+                text = str(cleaned)
+            if text and text not in parts:
+                parts.append(text)
+        return "\n".join(parts)
+
+    @staticmethod
+    def _metricflow_profile_columns(data_source: dict) -> list[dict]:
+        columns = []
+
+        def add_columns(items, role):
+            for item in items or []:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                if not name:
+                    continue
+                raw_expr = item.get("expr") or name
+                raw_type = str(item.get("type", "")).lower()
+                resolved_role = "primary_key" if role == "identifier" and raw_type == "primary" else role
+                column = {
+                    "name": str(name),
+                    "expr": str(raw_expr).strip("`") if raw_expr else str(name),
+                    "role": resolved_role,
+                    "type": item.get("type", ""),
+                    "description": item.get("description", ""),
+                    "ai_context": item.get("ai_context"),
+                }
+                if role == "measure":
+                    column["agg"] = item.get("agg", "")
+                    column["agg_time_dimension"] = item.get("agg_time_dimension", "")
+                if role == "dimension":
+                    type_params = item.get("type_params") or {}
+                    column["time_granularity"] = type_params.get("time_granularity", "")
+                columns.append({key: value for key, value in column.items() if value not in (None, "", [], {})})
+
+        add_columns(data_source.get("identifiers"), "identifier")
+        add_columns(data_source.get("dimensions"), "dimension")
+        add_columns(data_source.get("measures"), "measure")
+        return columns
+
+    @staticmethod
+    def _metricflow_table_semantic_profile(
+        *,
+        data_source: dict,
+        table_name: str,
+        table_fq_name: str,
+        catalog_name: str,
+        database_name: str,
+        schema_name: str,
+        yaml_path: str,
+    ) -> dict:
+        columns = GenerationHooks._metricflow_profile_columns(data_source)
+        relationships = data_source.get("relationships") or data_source.get("joins") or []
+        filters = data_source.get("filters") or []
+        custom_extensions = data_source.get("custom_extensions") or data_source.get("meta") or {}
+        ai_context = data_source.get("ai_context")
+        description = data_source.get("description", "") or ""
+        data_source_name = data_source.get("name", "") or table_name
+        physical_table = table_fq_name or table_name
+        return {
+            "id": f"metricflow:{physical_table}",
+            "format": "metricflow",
+            "physical_table_fq_name": physical_table,
+            "catalog_name": catalog_name,
+            "database_name": database_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "semantic_model_name": data_source_name,
+            "dataset_name": "",
+            "data_source_name": data_source_name,
+            "description": description,
+            "ai_context_json": GenerationHooks._json_dumps(ai_context),
+            "columns_json": GenerationHooks._json_dumps(columns),
+            "relationships_json": GenerationHooks._json_dumps(relationships),
+            "filters_json": GenerationHooks._json_dumps(filters),
+            "custom_extensions_json": GenerationHooks._json_dumps(custom_extensions),
+            "yaml_path": yaml_path,
+            "search_text": GenerationHooks._profile_search_text(
+                data_source_name,
+                physical_table,
+                description,
+                ai_context,
+                columns,
+                relationships,
+                filters,
+            ),
+            "updated_at": datetime.now().replace(microsecond=0),
+        }
+
+    @staticmethod
+    def _sync_table_semantic_profiles(agent_config: AgentConfig, profiles: list[dict]) -> int:
+        if not profiles:
+            return 0
+        if not isinstance(getattr(agent_config, "project_name", ""), str):
+            return 0
+        try:
+            profile_rag = TableSemanticProfileRAG(agent_config)
+            profile_rag.upsert_batch(profiles)
+            profile_rag.create_indices()
+            return len(profiles)
+        except Exception as exc:
+            logger.warning(f"Failed to sync table semantic profiles: {exc}")
+            return 0
+
+    @staticmethod
     def _sync_semantic_to_db(
         file_path: str,
         agent_config: AgentConfig,
@@ -862,6 +996,7 @@ class GenerationHooks(AgentHooks):
 
             semantic_objects = []  # For tables, columns (goes to SemanticModelStorage)
             metric_objects = []  # For metrics (goes to MetricStorage)
+            table_profiles = []  # Physical-table semantic projections for describe_table
             synced_items = []
 
             current_db_config = agent_config.current_db_config()
@@ -920,6 +1055,18 @@ class GenerationHooks(AgentHooks):
                 # Build fully qualified name (excluding empty parts)
                 fq_parts = [p for p in [catalog_name, database_name, schema_name, table_name] if p]
                 table_fq_name = ".".join(fq_parts)
+                if include_semantic_objects:
+                    table_profiles.append(
+                        GenerationHooks._metricflow_table_semantic_profile(
+                            data_source=data_source,
+                            table_name=table_name,
+                            table_fq_name=table_fq_name,
+                            catalog_name=catalog_name,
+                            database_name=database_name,
+                            schema_name=schema_name,
+                            yaml_path=yaml_path_to_store,
+                        )
+                    )
 
             # 2. Create and store semantic objects (table/columns) only when requested
             if data_source and include_semantic_objects:
@@ -1212,6 +1359,7 @@ class GenerationHooks(AgentHooks):
                 if semantic_objects:
                     semantic_rag.upsert_batch(semantic_objects)
                     semantic_rag.create_indices()
+                profile_count = GenerationHooks._sync_table_semantic_profiles(agent_config, table_profiles)
 
                 if metric_objects:
                     metric_rag.upsert_batch(metric_objects)
@@ -1226,6 +1374,8 @@ class GenerationHooks(AgentHooks):
                 }
                 if metric_objects:
                     result["metric_artifact_ids"] = [obj["id"] for obj in metric_objects if obj.get("id")]
+                if profile_count:
+                    result["table_semantic_profiles"] = profile_count
                 return result
             else:
                 if include_metrics and not include_semantic_objects and metrics_list:

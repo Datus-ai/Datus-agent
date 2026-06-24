@@ -97,6 +97,43 @@ def _normalize_name_list(value) -> List[str]:
     return names
 
 
+def _normalize_validation_checks(value) -> Optional[List[str]]:
+    """Normalize optional adapter validation check names."""
+    value = normalize_null(value)
+    if value is None:
+        return None
+    candidates: List[Any]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                candidates = parsed
+            else:
+                candidates = [part.strip() for part in text.split(",")]
+        else:
+            candidates = [part.strip() for part in text.split(",")]
+    elif isinstance(value, (list, tuple, set)):
+        candidates = list(value)
+    else:
+        candidates = [value]
+
+    checks = []
+    for candidate in candidates:
+        candidate = normalize_null(candidate)
+        if candidate is None:
+            continue
+        check = str(candidate).strip()
+        if check:
+            checks.append(check)
+    return checks or None
+
+
 def _normalize_optional_path(value) -> Optional[List[str]]:
     """Normalize optional subject paths and drop null placeholders."""
     names = _normalize_name_list(value)
@@ -738,6 +775,10 @@ class SemanticTools:
         where: Optional[str] = None,
         limit: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        join_policy: Optional[
+            Literal["auto", "match_only", "fact_preserving", "dimension_preserving", "unmatched_only"]
+        ] = None,
+        zero_fill: bool = False,
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
@@ -755,6 +796,12 @@ class SemanticTools:
             order_by: Optional list of columns to sort by. Use column name for ascending,
                       prefix with '-' for descending. Examples: ['metric_time__day'] for ascending,
                       ['-message_count'] for descending. Do NOT use 'asc'/'desc' keywords.
+            join_policy: Optional relationship handling policy for joined dimensions:
+                      'auto'/'match_only' keeps only facts that match requested joined dimensions;
+                      'fact_preserving' keeps unmatched facts;
+                      'dimension_preserving' keeps all dimension values;
+                      'unmatched_only' returns only unmatched facts.
+            zero_fill: Fill missing metric values with 0 when join_policy='dimension_preserving'.
             dry_run: If True, only validate and return query plan
 
         Returns:
@@ -784,10 +831,11 @@ class SemanticTools:
         time_end = normalize_null(time_end)
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
+        join_policy = normalize_null(join_policy)
         logger.info(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
-            f"limit={limit}, dry_run={dry_run}"
+            f"limit={limit}, join_policy={join_policy}, zero_fill={zero_fill}, dry_run={dry_run}"
         )
 
         try:
@@ -796,20 +844,41 @@ class SemanticTools:
                 return preflight_result
 
             # Execute query via adapter
-            result = _run_async(
-                adapter.query_metrics(
-                    metrics=metrics,
-                    dimensions=dimensions,
-                    path=path or None,
-                    time_start=time_start,
-                    time_end=time_end,
-                    time_granularity=time_granularity,
-                    where=where,
-                    limit=limit,
-                    order_by=order_by or None,
-                    dry_run=dry_run,
+            adapter_query_kwargs = {
+                "metrics": metrics,
+                "dimensions": dimensions,
+                "path": path or None,
+                "time_start": time_start,
+                "time_end": time_end,
+                "time_granularity": time_granularity,
+                "where": where,
+                "limit": limit,
+                "order_by": order_by or None,
+                "dry_run": dry_run,
+            }
+            adapter_params = inspect.signature(adapter.query_metrics).parameters
+            requested_join_controls = bool(join_policy) or bool(zero_fill)
+            if "join_policy" in adapter_params:
+                adapter_query_kwargs["join_policy"] = join_policy
+            elif join_policy:
+                return FuncToolResult(
+                    success=0,
+                    error="query_metrics join_policy is not supported by the current semantic adapter.",
                 )
-            )
+            if "zero_fill" in adapter_params:
+                adapter_query_kwargs["zero_fill"] = zero_fill
+            elif zero_fill:
+                return FuncToolResult(
+                    success=0,
+                    error="query_metrics zero_fill is not supported by the current semantic adapter.",
+                )
+            if requested_join_controls and not ("join_policy" in adapter_params or "zero_fill" in adapter_params):
+                return FuncToolResult(
+                    success=0,
+                    error="query_metrics join controls are not supported by the current semantic adapter.",
+                )
+
+            result = _run_async(adapter.query_metrics(**adapter_query_kwargs))
 
             # Drop non-JSON-serializable metadata entries (MetricFlow puts a
             # ``DataflowPlan`` object under ``dataflow_plan``). ``str(v)`` on
@@ -861,7 +930,12 @@ class SemanticTools:
                 error=f"Failed to query metrics: {str(e)}",
             )
 
-    def validate_semantic(self, scope: Literal["all", "semantic_model"] = "all") -> FuncToolResult:
+    def validate_semantic(
+        self,
+        scope: Literal["all", "semantic_model"] = "all",
+        checks: Optional[List[str] | str] = None,
+        baseline_artifact_json: str = "",
+    ) -> FuncToolResult:
         """
         Validate semantic layer configuration (requires adapter).
 
@@ -874,6 +948,10 @@ class SemanticTools:
                 including metrics. Use "semantic_model" when generating semantic
                 models before metric definitions exist; this still fails on real
                 semantic model errors but ignores the expected no-metrics issue.
+            checks: Optional adapter-specific validation checks. Adapters that do
+                not support named checks ignore this argument.
+            baseline_artifact_json: Optional JSON-encoded semantic artifact used
+                by adapters that support mutation guard validation.
 
         Returns:
             FuncToolResult with validation status and issues
@@ -886,7 +964,26 @@ class SemanticTools:
                 result=None,
             )
 
-        logger.info(f"validate_semantic called scope={scope}")
+        checks_list = _normalize_validation_checks(checks)
+        baseline_artifact = None
+        baseline_artifact_text = normalize_null(baseline_artifact_json)
+        if baseline_artifact_text:
+            try:
+                baseline_artifact = json.loads(str(baseline_artifact_text))
+            except (TypeError, json.JSONDecodeError) as e:
+                return FuncToolResult(
+                    success=0,
+                    error=f"baseline_artifact_json must be valid JSON: {e}",
+                    result=None,
+                )
+            if not isinstance(baseline_artifact, dict):
+                return FuncToolResult(
+                    success=0,
+                    error="baseline_artifact_json must decode to a JSON object",
+                    result=None,
+                )
+
+        logger.info(f"validate_semantic called scope={scope} checks={checks_list}")
         adapter, error = self._require_adapter("validate_semantic")
         if error:
             error.result = None
@@ -895,15 +992,18 @@ class SemanticTools:
         try:
             validate_semantic = adapter.validate_semantic
             validation_kwargs = {}
-            if scope != "all":
-                try:
-                    signature = inspect.signature(validate_semantic)
-                    if "scope" in signature.parameters:
-                        validation_kwargs["scope"] = scope
-                    elif "validation_scope" in signature.parameters:
-                        validation_kwargs["validation_scope"] = scope
-                except (TypeError, ValueError):
-                    validation_kwargs = {}
+            try:
+                signature = inspect.signature(validate_semantic)
+                if "scope" in signature.parameters:
+                    validation_kwargs["scope"] = scope
+                elif scope != "all" and "validation_scope" in signature.parameters:
+                    validation_kwargs["validation_scope"] = scope
+                if checks_list is not None and "checks" in signature.parameters:
+                    validation_kwargs["checks"] = checks_list
+                if baseline_artifact is not None and "baseline_artifact" in signature.parameters:
+                    validation_kwargs["baseline_artifact"] = baseline_artifact
+            except (TypeError, ValueError):
+                validation_kwargs = {}
 
             validation_result = _run_async(validate_semantic(**validation_kwargs))
 
@@ -941,6 +1041,7 @@ class SemanticTools:
                     "valid": effective_valid,
                     "issues": effective_issues,
                     "scope": scope,
+                    "checks": checks_list,
                     "ignored_issues": ignored_issues,
                 },
                 error=None if effective_valid else _format_validation_error(effective_issues),

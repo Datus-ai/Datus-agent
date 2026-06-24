@@ -19,6 +19,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
@@ -161,9 +162,21 @@ class DBFuncTool:
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
 
         self._semantic_storage = SemanticModelRAG(agent_config, sub_agent_name) if agent_config else None
+        self._table_semantic_profiles = None
+        if agent_config and isinstance(getattr(agent_config, "project_name", ""), str):
+            try:
+                self._table_semantic_profiles = TableSemanticProfileRAG(agent_config, sub_agent_name)
+            except Exception as exc:
+                logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
         self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
 
         self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
+        try:
+            self.has_table_semantic_profiles = (
+                self._table_semantic_profiles is not None and self._table_semantic_profiles.get_size() > 0
+            )
+        except Exception:
+            self.has_table_semantic_profiles = False
 
     def _init_single_db_connector(self, connector: BaseSqlConnector):
         # Legacy single connector mode
@@ -352,6 +365,97 @@ class DBFuncTool:
         )
         logger.info(f"get_semantic_model result: {result}")
         return result if result is not None else {}
+
+    def _get_table_semantic_profile(
+        self, catalog: str = "", database: str = "", schema: str = "", table_name: str = ""
+    ) -> Dict[str, Any]:
+        if self._table_semantic_profiles is None:
+            return {}
+        result = self._table_semantic_profiles.get_profile(
+            catalog_name=catalog,
+            database_name=database,
+            schema_name=schema,
+            table_name=table_name,
+            select_fields=[
+                "table_name",
+                "semantic_model_name",
+                "dataset_name",
+                "data_source_name",
+                "description",
+                "ai_context_json",
+                "columns_json",
+                "relationships_json",
+                "filters_json",
+            ],
+        )
+        logger.info(f"get_table_semantic_profile result: {result}")
+        return result if result is not None else {}
+
+    @staticmethod
+    def _decode_profile_json(value: Any, default: Any) -> Any:
+        if value in (None, ""):
+            return default
+        if isinstance(value, (dict, list)):
+            return value
+        if not isinstance(value, str):
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _apply_table_semantic_profile(self, result_data: Dict[str, Any], profile: Dict[str, Any]) -> None:
+        """Attach a table semantic profile to describe_table output."""
+
+        columns = result_data.get("columns", [])
+        semantic_columns = self._decode_profile_json(profile.get("columns_json"), [])
+        relationships = self._decode_profile_json(profile.get("relationships_json"), [])
+        filters = self._decode_profile_json(profile.get("filters_json"), [])
+        ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
+
+        table = {
+            "name": (
+                profile.get("dataset_name")
+                or profile.get("data_source_name")
+                or profile.get("table_name")
+                or profile.get("semantic_model_name")
+                or ""
+            ),
+            "description": profile.get("description", ""),
+        }
+        if ai_context not in (None, "", [], {}):
+            table["ai_context"] = ai_context
+        result_data["table"] = table
+        result_data["semantic"] = {
+            "relationships": relationships,
+            "filters": filters,
+        }
+
+        if not isinstance(semantic_columns, list):
+            return
+        semantic_lookup = {}
+        for semantic_col in semantic_columns:
+            if not isinstance(semantic_col, dict):
+                continue
+            for key in ("expr", "name"):
+                value = semantic_col.get(key)
+                if value:
+                    semantic_lookup.setdefault(str(value).strip("`").lower(), semantic_col)
+
+        for col in columns:
+            col_name = str(col.get("name", "")).lower()
+            semantic_col = semantic_lookup.get(col_name)
+            if not semantic_col:
+                continue
+            role = semantic_col.get("role") or ""
+            description = semantic_col.get("description") or ""
+            col["semantic_role"] = role
+            col["is_dimension"] = role in ("dimension", "time_dimension")
+            if semantic_col.get("ai_context") not in (None, "", [], {}):
+                col["ai_context"] = semantic_col.get("ai_context")
+            if description:
+                col["semantic_description"] = description
+                col["comment"] = description
 
     def _enrich_fields_with_descriptions(
         self, field_list_json: str, ddl_columns: List[Dict[str, Any]], field_type: str
@@ -980,6 +1084,10 @@ class DBFuncTool:
             - table (dict, optional): Table-level metadata from semantic model (only if model exists):
               - name (str): Name of the table
               - description (str): Table description from semantic model
+              - ai_context (dict/list/str, optional): Extra LLM-facing business guidance
+            - semantic (dict, optional): LLM-facing semantic hints:
+              - relationships (list): Relevant dataset/data-source relationships
+              - filters (list): Dataset/data-source filter hints
         """
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
@@ -1034,6 +1142,22 @@ class DBFuncTool:
             # 3. Enrich with Semantic Model Info if available
             result_data = {"columns": columns}
 
+            try:
+                profile = self._get_table_semantic_profile(
+                    coordinate.catalog,
+                    coordinate.database,
+                    coordinate.schema,
+                    coordinate.table,
+                )
+                if profile:
+                    logger.debug(
+                        "Found table semantic profile: %s",
+                        profile.get("dataset_name") or profile.get("data_source_name") or "unknown",
+                    )
+                    self._apply_table_semantic_profile(result_data, profile)
+            except Exception as e:
+                logger.warning(f"Failed to get table semantic profile for {table_name}: {e}")
+
             if self.has_semantic_models:
                 try:
                     logger.debug("Checking for semantic models")
@@ -1048,11 +1172,15 @@ class DBFuncTool:
                     if model:
                         logger.debug(f"Found semantic model: {model.get('semantic_model_name', 'unknown')}")
 
-                        # Add table-level metadata
-                        result_data["table"] = {
-                            "name": model.get("semantic_model_name", ""),
-                            "description": model.get("description", ""),
-                        }
+                        # Add table-level metadata unless the authoring-format
+                        # profile already provided a richer table projection.
+                        result_data.setdefault(
+                            "table",
+                            {
+                                "name": model.get("semantic_model_name", ""),
+                                "description": model.get("description", ""),
+                            },
+                        )
 
                         # Create lookup map using expr (physical column) as key, fallback to name
                         # expr is the actual column name/expression, name is the semantic name
@@ -1072,9 +1200,10 @@ class DBFuncTool:
                                     dim_data = dim_map[col_name]
                                     col["is_dimension"] = True
                                     if dim_data.get("description"):
+                                        col.setdefault("semantic_description", dim_data.get("description"))
                                         col["comment"] = dim_data.get("description")
                                 else:
-                                    col["is_dimension"] = False
+                                    col.setdefault("is_dimension", False)
                         else:
                             logger.debug("No dimensions defined in model")
                     else:

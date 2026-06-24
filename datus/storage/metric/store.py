@@ -3,7 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Set
 
 import pyarrow as pa
 import yaml
@@ -20,12 +21,49 @@ logger = get_logger(__name__)
 
 METRIC_ID_PREFIX = "metric:"
 _METRIC_DEFINITION_FIELDS = ("semantic_model_name", "metric_type", "measure_expr", "base_measures")
+_METRIC_LOOKUP_MAX_QUERY_LENGTH = 120
+_METRIC_LOOKUP_TOKEN_PATTERN = re.compile(r"[^0-9a-zA-Z]+")
+_CJK_PATTERN = re.compile(r"[\u3400-\u9fff]")
 
 
 def normalize_metric_name(value: Any) -> str:
     """Return the datasource-local business key used for metric names."""
 
     return str(value or "").strip().lower()
+
+
+def metric_lookup_key(value: Any) -> str:
+    """Normalize metric names and ids for exact-name retrieval fallback."""
+
+    text = str(value or "").strip().lower()
+    if text.startswith(METRIC_ID_PREFIX):
+        text = text[len(METRIC_ID_PREFIX) :]
+    text = _METRIC_LOOKUP_TOKEN_PATTERN.sub("_", text).strip("_")
+    return re.sub(r"_+", "_", text)
+
+
+def metric_exact_query_keys(query_text: Any) -> Set[str]:
+    """Return lookup keys when the query is short enough for exact matching."""
+
+    text = str(query_text or "").strip()
+    if not text or len(text) > _METRIC_LOOKUP_MAX_QUERY_LENGTH:
+        return set()
+    if _CJK_PATTERN.search(text) and not re.search(r"[0-9a-zA-Z_:/.-]", text):
+        return set()
+
+    key = metric_lookup_key(text)
+    return {key} if key else set()
+
+
+def metric_matches_exact_query(metric: Dict[str, Any], query_keys: Set[str]) -> bool:
+    """Return true when a metric row exactly matches normalized query keys."""
+
+    if not query_keys:
+        return False
+    for field in ("name", "id"):
+        if metric_lookup_key(metric.get(field)) in query_keys:
+            return True
+    return False
 
 
 def build_metric_id(subject_path: List[str], name: str) -> str:
@@ -712,13 +750,63 @@ class MetricRAG:
         self, query_text: str, subject_path: Optional[List[str]] = None, top_n: int = 5
     ) -> List[Dict[str, Any]]:
         """Search metrics by query text with optional subject path filtering."""
-        results = self.storage.search_metrics(
+        exact_results = self._search_exact_metric_matches(query_text, subject_path)
+        vector_results = self.storage.search_metrics(
             query_text=query_text,
             subject_path=subject_path,
             top_n=top_n,
             extra_conditions=self._sub_agent_conditions(),
         )
+        results = self._merge_search_results(exact_results, vector_results, top_n)
         return self._enrich_metric_results(results)
+
+    def _search_exact_metric_matches(
+        self,
+        query_text: str,
+        subject_path: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        query_keys = metric_exact_query_keys(query_text)
+        if not query_keys:
+            return []
+
+        try:
+            candidates = self.storage.search_all_metrics(
+                subject_path=subject_path,
+                extra_conditions=self._sub_agent_conditions(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.debug("Unable to run exact metric-name fallback: %s", exc)
+            return []
+
+        return [metric for metric in candidates if metric_matches_exact_query(metric, query_keys)]
+
+    @classmethod
+    def _merge_search_results(
+        cls,
+        exact_results: List[Dict[str, Any]],
+        vector_results: List[Dict[str, Any]],
+        top_n: int,
+    ) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for metric in [*exact_results, *vector_results]:
+            key = cls._search_result_identity(metric)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(metric)
+            if top_n and len(merged) >= top_n:
+                break
+        return merged
+
+    @staticmethod
+    def _search_result_identity(metric: Dict[str, Any]) -> str:
+        metric_id = metric.get("id")
+        if metric_id:
+            return f"id:{metric_id}"
+        subject_path = metric.get("subject_path")
+        path_key = "/".join(str(item) for item in subject_path) if isinstance(subject_path, list) else ""
+        return f"name:{path_key}:{metric.get('name', '')}"
 
     def get_metrics_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
         """Get metrics detail by subject path and name."""

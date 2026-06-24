@@ -1108,6 +1108,7 @@ class TestOsiSync:
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
         )
+        generation_tools.table_semantic_profile_rag = Mock()
         semantic_file = tmp_path / "orders.yml"
         semantic_file.write_text(
             "version: 0.2.0.dev0\n"
@@ -1121,6 +1122,10 @@ class TestOsiSync:
         dataset = SimpleNamespace(
             name="orders",
             description="Orders table",
+            ai_context={
+                "instructions": "Use this dataset for order-level analytics.",
+                "synonyms": ["purchases"],
+            },
             source=SimpleNamespace(table="orders"),
             primary_key="order_id",
             time_dimension=SimpleNamespace(name="order_date", granularity="day"),
@@ -1154,6 +1159,14 @@ class TestOsiSync:
         assert objects[0]["name"] == "orders"
         assert objects[1]["name"] == "order_id"
         assert objects[1]["is_entity_key"] is True
+        generation_tools.table_semantic_profile_rag.upsert_batch.assert_called_once()
+        profiles = generation_tools.table_semantic_profile_rag.upsert_batch.call_args.args[0]
+        assert profiles[0]["format"] == "osi"
+        assert profiles[0]["dataset_name"] == "orders"
+        assert profiles[0]["description"] == "Orders table"
+        assert "order-level analytics" in profiles[0]["ai_context_json"]
+        assert '"name": "customer_segment"' in profiles[0]["columns_json"]
+        assert result["table_semantic_profiles"] == 1
 
 
 class TestGenerateSqlSummaryId:

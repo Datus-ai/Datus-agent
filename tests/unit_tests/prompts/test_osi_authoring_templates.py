@@ -29,6 +29,8 @@ def test_osi_metrics_template_is_backend_agnostic():
     assert "analyze_metric_candidates_from_history" in text
     assert "metric_generation_skips" in text
     assert "offset_window" in text
+    assert "window_aggregation" in text
+    assert "Allowed values are `sum`, `avg`, `min`, `max`, `count`, and `row_count`" in text
     assert "ROW_NUMBER()`, `RANK() OVER`, TopN per group" in text
 
 
@@ -43,6 +45,9 @@ def test_osi_semantic_model_template_is_backend_agnostic():
     assert "dialects:" in text
     assert "custom_extensions" in text
     assert "Dataset `source` is a string" in text
+    assert "Dataset description and AI context are required for every dataset" in text
+    assert "ai_context" in text
+    assert "row grain" in text
     assert "relationships:" in text
     assert "from_columns" in text
     assert "to_columns" in text

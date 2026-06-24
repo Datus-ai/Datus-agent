@@ -39,7 +39,7 @@ semantic_model:
             data: '{"dataset":"<existing_dataset_name>","time_dimension":"<date_column>","format":"0.00%","unit":"<unit>"}'
 ```
 
-Datus execution hints such as `dataset`, `time_dimension`, `filters`, `metric_kind`, `inputs`, `numerator`, `denominator`, `window`, `grain_to_date`, `offset_window`, `subject_path`, `format`, and `unit` MUST be encoded in the metric's DATUS `custom_extensions[].data` JSON string. They are not OSI core top-level metric fields.
+Datus execution hints such as `dataset`, `time_dimension`, `filters`, `metric_kind`, `inputs`, `numerator`, `denominator`, `window`, `grain_to_date`, `window_aggregation`, `offset_window`, `subject_path`, `format`, and `unit` MUST be encoded in the metric's DATUS `custom_extensions[].data` JSON string. They are not OSI core top-level metric fields.
 
 ## Authoring rules
 
@@ -50,6 +50,8 @@ Datus execution hints such as `dataset`, `time_dimension`, `filters`, `metric_ki
 5. **Ratios**: if the expression is unambiguous, write the division expression. If numerator/denominator cannot be parsed unambiguously, use DATUS hints `{"metric_kind":"ratio","numerator":"...","denominator":"..."}`.
 6. **Time-window metrics - do NOT simplify away.**
    - Rolling / cumulative: the OSI core metric expression is the base aggregate itself plus DATUS hints `window` or `grain_to_date`.
+   - If `analyze_metric_candidates_from_history` returns a cumulative/window candidate with `window`, `grain_to_date`, `window_aggregation`, `base_metric_name`, or `time_grain`, preserve those structured fields when authoring the metric.
+   - Every metric with `window` or `grain_to_date` MUST include `window_aggregation` in the DATUS extension JSON. This tells execution how to combine ordered base-period values. Allowed values are `sum`, `avg`, `min`, `max`, `count`, and `row_count`. Use `row_count` only when the business meaning is the number of rows or periods in the window, not when counting business entities.
      ```yaml
      metrics:
        - name: revenue_l7d
@@ -59,7 +61,7 @@ Datus execution hints such as `dataset`, `time_dimension`, `filters`, `metric_ki
                expression: "SUM(amount)"
          custom_extensions:
            - vendor_name: DATUS
-             data: '{"dataset":"orders","time_dimension":"order_date","window":"7 days"}'
+             data: '{"dataset":"orders","time_dimension":"order_date","window":"7 days","window_aggregation":"sum"}'
      ```
    - Period-over-period (`LAG() OVER`, MoM/YoY): write a derived metric over a base metric with an input `offset_window`. Do NOT write `LAG`/`OVER` in the OSI expression. If `analyze_metric_candidates_from_history` returns a `derived_metric_candidates` item with `metric_kind: derived`, `inputs`, and `offset_window`, encode that shape in DATUS extension JSON.
    - Materialize EVERY offset `derived_metric_candidates` entry, including the previous-period identity candidate whose expression is just the shifted input alias. A delta/rate metric referencing the same shifted alias does NOT replace the identity metric — publish both. Use the candidate's `name` exactly as the metric name; `equivalent_names` are aliases of the same metric, publish only one. The bootstrap host verifies offset candidate completeness after all batches and re-runs generation for anything missing.

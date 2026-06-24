@@ -27,6 +27,7 @@ from datus.cli.screen.base_widgets import FocusableStatic, InputWithLabel
 from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_pretty_str
@@ -51,9 +52,11 @@ class SemanticModelPanel(Vertical):
     def compose(self) -> ComposeResult:
         field_specs = [
             ("Description", "description", 3, "markdown", None),
+            ("AI Context", "ai_context", 8, "json", None),
             ("Identifiers", "identifiers", 8, "json", None),
             ("Dimensions", "dimensions", 12, "json", None),
-            ("Measures", "measures", 12, "json", None),
+            ("Relationships", "relationships", 8, "json", None),
+            ("Filters", "filters", 6, "json", None),
         ]
 
         for label, key, lines, lan, regex in field_specs:
@@ -315,6 +318,11 @@ class CatalogScreen(ContextScreen):
         self.db_connector: BaseSqlConnector = context_data.get("db_connector")
 
         self.semantic_storage: SemanticModelRAG = SemanticModelRAG(self._agent_config)
+        self.table_semantic_profiles: Optional[TableSemanticProfileRAG] = None
+        try:
+            self.table_semantic_profiles = TableSemanticProfileRAG(self._agent_config)
+        except Exception as exc:
+            logger.debug(f"Failed to initialize table semantic profile storage for catalog screen: {exc}")
 
         self.loading_nodes = set()  # Track which nodes are currently loading
         self._current_loading_task = None  # Track current async task
@@ -384,6 +392,7 @@ class CatalogScreen(ContextScreen):
         self._catalog_updater = None
         self._agent_config = None
         self.semantic_storage = None
+        self.table_semantic_profiles = None
         self.db_connector = None
 
     def _build_catalog_tree(self) -> None:
@@ -588,6 +597,9 @@ class CatalogScreen(ContextScreen):
         component = self.focused
         if component.id != "semantic-panel":
             return
+        if self._semantic_current_record and self._semantic_current_record.get("_source") == "table_semantic_profile":
+            self.app.notify("Table semantic profile is read-only in catalog.", severity="warning")
+            return
         if self._editing_semantic_panel and self._editing_semantic_panel != component:
             self.app.notify("Finish the active edit before starting a new one", severity="warning")
             return
@@ -698,10 +710,18 @@ class CatalogScreen(ContextScreen):
         table.add_column("Value", style="yellow", justify="left", ratio=3, no_wrap=False)
 
         table.add_row("Semantic Model Name", semantic_record.get("semantic_model_name", "") or "[dim]N/A[/dim]")
+        if semantic_record.get("format"):
+            table.add_row("Format", semantic_record.get("format", "") or "[dim]N/A[/dim]")
+        if semantic_record.get("dataset_name"):
+            table.add_row("Dataset", semantic_record.get("dataset_name", "") or "[dim]N/A[/dim]")
+        if semantic_record.get("data_source_name"):
+            table.add_row("Data Source", semantic_record.get("data_source_name", "") or "[dim]N/A[/dim]")
         table.add_row("Description", semantic_record.get("description", "") or "[dim]N/A[/dim]")
+        table.add_row("AI Context", self._create_nested_table_for_json(semantic_record.get("ai_context")))
         table.add_row("Identifiers", self._create_nested_table_for_json(semantic_record.get("identifiers")))
         table.add_row("Dimensions", self._create_nested_table_for_json(semantic_record.get("dimensions")))
-        table.add_row("Measures", self._create_nested_table_for_json(semantic_record.get("measures")))
+        table.add_row("Relationships", self._create_nested_table_for_json(semantic_record.get("relationships")))
+        table.add_row("Filters", self._create_nested_table_for_json(semantic_record.get("filters")))
 
         sections.append(table)
 
@@ -719,6 +739,7 @@ class CatalogScreen(ContextScreen):
             self._show_semantic_message(message or "No semantic model information available.", style=message_style)
             return
         self._semantic_original_values = record
+        self._semantic_current_record = dict(record)
         if self._semantic_readonly:
             panel = FocusableStatic(
                 self._render_readonly_panel(semantic_record=record),
@@ -884,6 +905,81 @@ class CatalogScreen(ContextScreen):
         return self.semantic_storage.get_semantic_model(
             catalog_name=catalog_name, database_name=database_name, schema_name=schema_name, table_name=table_name
         )
+
+    def _fetch_table_semantic_profile_record(
+        self,
+        *,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+        table_name: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        if not self.table_semantic_profiles:
+            return None
+        return self.table_semantic_profiles.get_profile(
+            catalog_name=catalog_name,
+            database_name=database_name,
+            schema_name=schema_name,
+            table_name=table_name,
+            select_fields=[
+                "format",
+                "table_name",
+                "semantic_model_name",
+                "dataset_name",
+                "data_source_name",
+                "description",
+                "ai_context_json",
+                "columns_json",
+                "relationships_json",
+                "filters_json",
+            ],
+        )
+
+    @staticmethod
+    def _decode_profile_json(value: Any, default: Any) -> Any:
+        if value in (None, ""):
+            return default
+        if isinstance(value, (dict, list)):
+            return value
+        if not isinstance(value, str):
+            return default
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _semantic_record_from_table_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        columns = self._decode_profile_json(profile.get("columns_json"), [])
+        relationships = self._decode_profile_json(profile.get("relationships_json"), [])
+        filters = self._decode_profile_json(profile.get("filters_json"), [])
+        ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
+
+        identifiers = []
+        dimensions = []
+        if isinstance(columns, list):
+            for column in columns:
+                if not isinstance(column, dict):
+                    continue
+                role = str(column.get("role") or "").lower()
+                if role in {"primary_key", "identifier", "entity"}:
+                    identifiers.append(column)
+                elif role in {"dimension", "time_dimension"}:
+                    dimensions.append(column)
+
+        return {
+            "_source": "table_semantic_profile",
+            "table_name": profile.get("table_name", ""),
+            "format": profile.get("format", ""),
+            "semantic_model_name": profile.get("semantic_model_name", ""),
+            "dataset_name": profile.get("dataset_name", ""),
+            "data_source_name": profile.get("data_source_name", ""),
+            "description": profile.get("description", ""),
+            "ai_context": ai_context,
+            "identifiers": identifiers,
+            "dimensions": dimensions,
+            "relationships": relationships,
+            "filters": filters,
+        }
 
     def action_cursor_down(self) -> None:
         """Move cursor down."""
@@ -1228,9 +1324,30 @@ class CatalogScreen(ContextScreen):
         message: Optional[str] = None
         message_style = "dim"
 
-        if not self.semantic_storage:
+        if self.table_semantic_profiles:
+            try:
+                profile_record = self._fetch_table_semantic_profile_record(
+                    catalog_name=catalog_name,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                )
+                if profile_record:
+                    semantic_record = self._semantic_record_from_table_profile(profile_record)
+            except Exception as storage_error:  # pragma: no cover - defensive logging
+                message = f"Failed to load table semantic profile: {storage_error}"
+                message_style = "red"
+                logger.error(
+                    (
+                        f"Failed to load table semantic profile: catalog_name={catalog_name}, "
+                        f"database_name={database_name}, schema_name={schema_name}, table_name={table_name}, "
+                        f"error_msg = {storage_error}"
+                    )
+                )
+
+        if not semantic_record and not self.semantic_storage:
             message = "Semantic model storage is not configured."
-        else:
+        elif not semantic_record:
             try:
                 semantic_record = self._fetch_semantic_model_record(
                     catalog_name=catalog_name,

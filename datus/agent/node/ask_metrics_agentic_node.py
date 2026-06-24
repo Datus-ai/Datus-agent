@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+import re
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 if TYPE_CHECKING:
@@ -412,6 +415,10 @@ class AskMetricsAgenticNode(AgenticNode):
         where: Optional[str] = None,
         limit: Optional[int] = None,
         order_by: Optional[List[str]] = None,
+        join_policy: Optional[
+            Literal["auto", "match_only", "fact_preserving", "dimension_preserving", "unmatched_only"]
+        ] = None,
+        zero_fill: bool = False,
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
@@ -425,14 +432,20 @@ class AskMetricsAgenticNode(AgenticNode):
         N/Bottom N, also pass order_by so the truncation has stable business
         meaning.
 
-        For period-over-period derived metrics, AskMetrics expands the request
-        to include the base and previous-period metrics when those metrics are
-        already present in the executable catalog.
+        For period-over-period and window metrics, AskMetrics expands the
+        request to include related executable metrics when they are already
+        present in the catalog.
+
+        For joined dimensions, use semantic join policies instead of SQL join
+        types: match_only for normal matched dimension grouping,
+        fact_preserving for unmatched fact analysis, dimension_preserving with
+        zero_fill for all dimension values including those with no facts, and
+        unmatched_only for only unmapped fact rows.
         """
         if not self.semantic_tools:
             return FuncToolResult(success=0, error="semantic tools unavailable")
 
-        expanded_metrics = self._expand_period_over_period_metrics(metrics)
+        expanded_metrics = self._expand_metric_dependencies(metrics)
         if not expanded_metrics:
             return FuncToolResult(
                 success=0,
@@ -441,18 +454,32 @@ class AskMetricsAgenticNode(AgenticNode):
                     "Call list_metrics first and pass one or more metric names exactly as returned."
                 ),
             )
-        return self.semantic_tools.query_metrics(
-            metrics=expanded_metrics,
-            dimensions=dimensions,
-            path=path,
-            time_start=time_start,
-            time_end=time_end,
-            time_granularity=time_granularity,
-            where=where,
-            limit=limit,
-            order_by=order_by,
-            dry_run=dry_run,
+        normalized_dimensions = None if dimensions is None else self._normalize_string_list(dimensions)
+        normalized_order_by = None if order_by is None else self._normalize_string_list(order_by)
+        normalized_dimensions, time_granularity, normalized_order_by = self._apply_window_time_grouping(
+            expanded_metrics,
+            normalized_dimensions,
+            time_granularity,
+            normalized_order_by,
         )
+        query_kwargs = {
+            "metrics": expanded_metrics,
+            "dimensions": normalized_dimensions,
+            "path": path,
+            "time_start": time_start,
+            "time_end": time_end,
+            "time_granularity": time_granularity,
+            "where": where,
+            "limit": limit,
+            "order_by": normalized_order_by,
+            "dry_run": dry_run,
+        }
+        if join_policy:
+            query_kwargs["join_policy"] = join_policy
+        if zero_fill:
+            query_kwargs["zero_fill"] = zero_fill
+        result = self.semantic_tools.query_metrics(**query_kwargs)
+        return self._apply_query_result_column_aliases(result)
 
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
@@ -495,6 +522,95 @@ class AskMetricsAgenticNode(AgenticNode):
 
         return expanded
 
+    def _expand_metric_dependencies(self, metrics: Optional[List[str]]) -> List[str]:
+        expanded_metrics = self._expand_period_over_period_metrics(metrics)
+        return self._expand_window_metrics(expanded_metrics)
+
+    def _expand_window_metrics(self, metrics: Optional[List[str]]) -> List[str]:
+        requested_metrics = self._normalize_string_list(metrics)
+        if not requested_metrics:
+            return []
+
+        catalog = self._metric_catalog()
+        if not catalog:
+            return requested_metrics
+
+        expanded: List[str] = []
+        for metric_name in requested_metrics:
+            metric = catalog.get(metric_name)
+            if not metric:
+                self._append_unique(expanded, metric_name)
+                continue
+
+            for bundled_metric in self._window_metric_bundle(metric_name, metric, catalog):
+                self._append_unique(expanded, bundled_metric)
+
+        return expanded
+
+    def _apply_window_time_grouping(
+        self,
+        metrics: List[str],
+        dimensions: Optional[List[str]],
+        time_granularity: Optional[str],
+        order_by: Optional[List[str]],
+    ) -> tuple[Optional[List[str]], Optional[str], Optional[List[str]]]:
+        catalog = self._metric_catalog()
+        if not catalog:
+            return dimensions, time_granularity, order_by
+
+        time_dimension = ""
+        inferred_grain = self._normalize_time_grain(time_granularity)
+        for metric_name in metrics:
+            metric = catalog.get(metric_name)
+            if not metric:
+                continue
+            metadata = self._metric_metadata(metric)
+            if not self._is_window_metric(metadata):
+                continue
+            inferred_grain = inferred_grain or self._infer_window_time_grain(metadata)
+            if inferred_grain:
+                time_dimension = f"metric_time__{inferred_grain}"
+                break
+
+        if not time_dimension:
+            return dimensions, time_granularity, order_by
+
+        updated_dimensions = list(dimensions or [])
+        if not any(str(dimension).startswith("metric_time__") for dimension in updated_dimensions):
+            self._append_unique(updated_dimensions, time_dimension)
+
+        updated_order_by = list(order_by or [])
+        if not updated_order_by:
+            updated_order_by = [time_dimension]
+
+        return updated_dimensions, time_granularity or inferred_grain, updated_order_by
+
+    @classmethod
+    def _window_metric_bundle(
+        cls,
+        metric_name: str,
+        metric: Dict[str, Any],
+        catalog: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        metadata = cls._metric_metadata(metric)
+        if not cls._is_window_metric(metadata):
+            return [metric_name]
+
+        if cls._metadata_text(metadata, "window_aggregation").lower() == "row_count":
+            return [metric_name]
+
+        bundle: List[str] = []
+        base_metric = cls._find_window_base_metric(metric_name, metric, catalog)
+        if base_metric:
+            cls._append_unique(bundle, base_metric)
+
+        if cls._window_metric_needs_window_count(metadata):
+            for count_metric in cls._matching_window_count_metrics(metric_name, metadata, catalog):
+                cls._append_unique(bundle, count_metric)
+
+        cls._append_unique(bundle, metric_name)
+        return bundle
+
     def _metric_catalog(self) -> Dict[str, Dict[str, Any]]:
         if self._metric_catalog_cache is not None:
             return self._metric_catalog_cache
@@ -531,6 +647,154 @@ class AskMetricsAgenticNode(AgenticNode):
 
         self._metric_catalog_cache = catalog
         return catalog
+
+    @classmethod
+    def _find_window_base_metric(
+        cls,
+        metric_name: str,
+        metric: Dict[str, Any],
+        catalog: Dict[str, Dict[str, Any]],
+    ) -> Optional[str]:
+        metadata = cls._metric_metadata(metric)
+        explicit_name = cls._first_metadata_text(
+            metadata,
+            ("base_metric", "base_metric_name", "source_metric", "source_metric_name"),
+        )
+        if explicit_name and explicit_name in catalog and explicit_name != metric_name:
+            return explicit_name
+
+        metric_signature = cls._metric_measure_signature(metric)
+        if not metric_signature:
+            return None
+
+        dataset = cls._metadata_text(metadata, "dataset")
+        for candidate_name, candidate in catalog.items():
+            if candidate_name == metric_name:
+                continue
+            candidate_metadata = cls._metric_metadata(candidate)
+            if cls._is_window_metric(candidate_metadata):
+                continue
+            if not cls._is_base_metric_candidate(candidate_metadata):
+                continue
+            candidate_dataset = cls._metadata_text(candidate_metadata, "dataset")
+            if dataset and candidate_dataset and dataset != candidate_dataset:
+                continue
+            if metric_signature.intersection(cls._metric_measure_signature(candidate)):
+                return candidate_name
+
+        return None
+
+    @classmethod
+    def _matching_window_count_metrics(
+        cls,
+        metric_name: str,
+        metadata: Dict[str, Any],
+        catalog: Dict[str, Dict[str, Any]],
+    ) -> List[str]:
+        matches: List[str] = []
+        dataset = cls._metadata_text(metadata, "dataset")
+        time_dimension = cls._metadata_text(metadata, "time_dimension")
+        window = cls._metadata_text(metadata, "window")
+        grain_to_date = cls._metadata_text(metadata, "grain_to_date")
+
+        for candidate_name, candidate in catalog.items():
+            if candidate_name == metric_name:
+                continue
+            candidate_metadata = cls._metric_metadata(candidate)
+            if cls._metadata_text(candidate_metadata, "window_aggregation").lower() != "row_count":
+                continue
+            if dataset and cls._metadata_text(candidate_metadata, "dataset") != dataset:
+                continue
+            if time_dimension and cls._metadata_text(candidate_metadata, "time_dimension") != time_dimension:
+                continue
+            if window and cls._metadata_text(candidate_metadata, "window") != window:
+                continue
+            if grain_to_date and cls._metadata_text(candidate_metadata, "grain_to_date") != grain_to_date:
+                continue
+            cls._append_unique(matches, candidate_name)
+
+        return matches
+
+    @classmethod
+    def _window_metric_needs_window_count(cls, metadata: Dict[str, Any]) -> bool:
+        aggregation = cls._metadata_text(metadata, "window_aggregation").lower()
+        return aggregation in {"avg", "average", "mean"}
+
+    @classmethod
+    def _is_window_metric(cls, metadata: Dict[str, Any]) -> bool:
+        if not metadata:
+            return False
+        if cls._metadata_text(metadata, "window") or cls._metadata_text(metadata, "grain_to_date"):
+            return True
+        return bool(cls._metadata_text(metadata, "window_aggregation"))
+
+    @classmethod
+    def _is_base_metric_candidate(cls, metadata: Dict[str, Any]) -> bool:
+        metric_kind = cls._metadata_text(metadata, "metric_kind").lower()
+        if not metric_kind:
+            return True
+        return metric_kind in {"aggregate", "measure_proxy", "simple"}
+
+    @classmethod
+    def _infer_window_time_grain(cls, metadata: Dict[str, Any]) -> str:
+        for key in ("time_granularity", "time_grain", "grain_to_date"):
+            grain = cls._normalize_time_grain(cls._metadata_text(metadata, key))
+            if grain:
+                return grain
+
+        window = cls._metadata_text(metadata, "window")
+        if window:
+            parts = re.findall(r"[a-zA-Z]+", window.lower())
+            if parts:
+                return cls._normalize_time_grain(parts[-1])
+        return ""
+
+    @staticmethod
+    def _normalize_time_grain(value: Optional[str]) -> str:
+        grain = str(value or "").strip().lower()
+        if grain.endswith("s"):
+            grain = grain[:-1]
+        return grain if grain in {"day", "week", "month", "quarter", "year"} else ""
+
+    @staticmethod
+    def _metric_metadata(metric: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = metric.get("metadata") if isinstance(metric, dict) else {}
+        return metadata if isinstance(metadata, dict) else {}
+
+    @classmethod
+    def _metric_measure_signature(cls, metric: Dict[str, Any]) -> set[str]:
+        metadata = cls._metric_metadata(metric)
+        values: List[str] = []
+        for key in ("measure", "measure_expr", "expr"):
+            value = metadata.get(key)
+            if isinstance(value, str):
+                values.append(value)
+
+        for key in ("measures", "base_measures"):
+            value = metric.get(key)
+            if isinstance(value, list):
+                values.extend(str(item) for item in value if str(item).strip())
+            elif isinstance(value, str):
+                values.append(value)
+
+        return {cls._normalize_metric_expression(value) for value in values if cls._normalize_metric_expression(value)}
+
+    @staticmethod
+    def _normalize_metric_expression(value: str) -> str:
+        return "".join(str(value or "").lower().split())
+
+    @staticmethod
+    def _metadata_text(metadata: Dict[str, Any], key: str) -> str:
+        value = metadata.get(key)
+        return value.strip() if isinstance(value, str) else ""
+
+    @classmethod
+    def _first_metadata_text(cls, metadata: Dict[str, Any], keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = cls._metadata_text(metadata, key)
+            if value:
+                return value
+        return ""
 
     @classmethod
     def _period_over_period_metric_bundle(
@@ -619,6 +883,97 @@ class AskMetricsAgenticNode(AgenticNode):
         else:
             return []
         return [str(item).strip() for item in values if str(item).strip()]
+
+    @staticmethod
+    def _is_joined_dimension(dimension: str) -> bool:
+        return "__" in dimension and not str(dimension).startswith("metric_time__")
+
+    @classmethod
+    def _apply_query_result_column_aliases(cls, result: FuncToolResult) -> FuncToolResult:
+        if not isinstance(result, FuncToolResult) or result.success == 0 or not isinstance(result.result, dict):
+            return result
+
+        payload = result.result
+        columns = payload.get("columns")
+        if not isinstance(columns, list):
+            return result
+
+        aliases = cls._query_metric_column_aliases(columns)
+        if not aliases:
+            return result
+
+        payload["columns"] = cls._apply_column_aliases_to_columns(columns, aliases)
+        metadata = payload.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        metadata["_display_column_aliases"] = aliases
+        payload["metadata"] = metadata
+
+        data = payload.get("data")
+        if isinstance(data, dict) and isinstance(data.get("compressed_data"), str):
+            aliased_data = dict(data)
+            aliased_data["compressed_data"] = cls._apply_column_aliases_to_csv(
+                aliased_data["compressed_data"],
+                aliases,
+            )
+            payload["data"] = aliased_data
+        return result
+
+    @classmethod
+    def _query_metric_column_aliases(cls, columns: List[Any]) -> Dict[str, str]:
+        normalized_columns = [str(column) for column in columns]
+        suffix_counts: Dict[str, int] = {}
+        for column in normalized_columns:
+            if not cls._is_joined_dimension(column):
+                continue
+            suffix = column.rsplit("__", 1)[-1]
+            if suffix:
+                suffix_counts[suffix] = suffix_counts.get(suffix, 0) + 1
+
+        existing_columns = set(normalized_columns)
+        aliases: Dict[str, str] = {}
+        for column in normalized_columns:
+            if not cls._is_joined_dimension(column):
+                continue
+            suffix = column.rsplit("__", 1)[-1]
+            if not suffix or suffix_counts.get(suffix) != 1 or suffix in existing_columns:
+                continue
+            aliases[column] = suffix
+        return aliases
+
+    @staticmethod
+    def _column_aliases_from_metadata(metadata: Dict[str, Any]) -> Dict[str, str]:
+        raw_aliases = metadata.get("_display_column_aliases")
+        if not isinstance(raw_aliases, dict):
+            return {}
+        return {str(source): str(target) for source, target in raw_aliases.items() if source and target}
+
+    @staticmethod
+    def _apply_column_aliases_to_columns(columns: List[Any], aliases: Dict[str, str]) -> List[str]:
+        if not aliases:
+            return [str(column) for column in columns]
+        return [aliases.get(str(column), str(column)) for column in columns]
+
+    @classmethod
+    def _apply_column_aliases_to_csv(cls, csv_text: str, aliases: Dict[str, str]) -> str:
+        if not aliases or not isinstance(csv_text, str) or not csv_text:
+            return csv_text
+
+        reader = csv.reader(io.StringIO(csv_text))
+        try:
+            header = next(reader)
+        except StopIteration:
+            return csv_text
+
+        aliased_header = cls._apply_column_aliases_to_columns(header, aliases)
+        if aliased_header == header:
+            return csv_text
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(aliased_header)
+        writer.writerows(reader)
+        return buf.getvalue()
 
     @staticmethod
     def _append_unique(values: List[str], value: str) -> None:
@@ -846,6 +1201,7 @@ class AskMetricsAgenticNode(AgenticNode):
                 return super().update_context(workflow)
 
             metadata = result.get("metadata", {}) or {}
+            column_aliases = self._column_aliases_from_metadata(metadata)
             cached_result = None
             cache_key = metadata.get("_full_result_cache_key")
             if cache_key and self.semantic_tools and hasattr(self.semantic_tools, "get_cached_query_metrics_result"):
@@ -856,15 +1212,14 @@ class AskMetricsAgenticNode(AgenticNode):
                 if isinstance(cached_result, dict) and cached_result.get("csv"):
                     sql_return = cached_result["csv"]
                     row_count = cached_result.get("row_count", row_count)
+                    sql_return = self._apply_column_aliases_to_csv(sql_return, column_aliases)
                 else:
                     sql_return = data["compressed_data"]
+                    sql_return = self._apply_column_aliases_to_csv(sql_return, column_aliases)
             elif isinstance(data, list):
-                import csv
-                import io
-
                 buf = io.StringIO()
                 writer = csv.writer(buf)
-                writer.writerow(columns)
+                writer.writerow(self._apply_column_aliases_to_columns(columns, column_aliases))
                 writer.writerows(data)
                 sql_return = buf.getvalue()
                 row_count = len(data)
