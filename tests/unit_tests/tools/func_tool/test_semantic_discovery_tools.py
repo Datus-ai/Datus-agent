@@ -571,6 +571,45 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert candidate["expression"] == "SUM(revenue)"
         assert candidate["base_metric_name"] == "revenue"
 
+    def test_window_candidate_uses_catalog_base_metric_without_synthetic_measure(self):
+        tools = _make_tools()
+        detail = {
+            "name": "running_order_count",
+            "base_metric_name": "order_count",
+            "base_expression": "COUNT(DISTINCT order_id)",
+            "aggregate": "SUM",
+            "window_aggregation": "sum",
+            "grain_to_date": "month",
+            "dimensions": ["metric_time__month"],
+        }
+
+        candidate = tools._window_metric_candidate_from_detail(
+            detail,
+            base_candidate=None,
+            existing_metric_catalog={"order_count": {"name": "order_count", "type": "aggregate"}},
+        )
+
+        assert candidate["base_measures"] == []
+        assert candidate["referenced_metrics"] == [{"name": "order_count", "type": "aggregate"}]
+
+    def test_window_candidate_signature_includes_order_by_and_time_grain(self):
+        tools = _make_tools()
+        base = {
+            "name": "running_order_count",
+            "metric_type": "cumulative",
+            "expression": "COUNT(DISTINCT order_id)",
+            "window_aggregation": "sum",
+            "window_order_by": ["metric_time__month"],
+            "time_grain": "month",
+        }
+        different_grain = {**base, "time_grain": "week"}
+        different_order = {**base, "window_order_by": ["created_month"]}
+
+        base_signature = tools._metric_candidate_formula_signature(base)
+
+        assert base_signature != tools._metric_candidate_formula_signature(different_grain)
+        assert base_signature != tools._metric_candidate_formula_signature(different_order)
+
     def test_window_aggregate_candidate_resolves_cte_base_metric(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(

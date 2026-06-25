@@ -1287,6 +1287,68 @@ class TestQueryMetricsCompression:
         assert adapter.query_kwargs["join_policy"] == "dimension_preserving"
         assert adapter.query_kwargs["zero_fill"] is True
 
+    def test_query_metrics_passes_join_controls_to_kwargs_adapter(self, semantic_tools):
+        query_result = QueryResult(columns=["x"], data=[{"x": 1}], metadata={})
+
+        class AdapterWithKwargs:
+            def __init__(self):
+                self.query_kwargs = None
+
+            def get_dimensions(self, metric_name, path=None):
+                return [{"name": "customer_id__customer_name"}]
+
+            def query_metrics(self, metrics, dimensions=None, path=None, **kwargs):
+                self.query_kwargs = kwargs
+                return query_result
+
+        adapter = AdapterWithKwargs()
+        semantic_tools._adapter = adapter
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[
+                [{"name": "customer_id__customer_name"}],
+                query_result,
+            ],
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["order_count"],
+                dimensions=["customer_id__customer_name"],
+                join_policy="dimension_preserving",
+                zero_fill=True,
+            )
+
+        assert result.success == 1
+        assert adapter.query_kwargs["join_policy"] == "dimension_preserving"
+        assert adapter.query_kwargs["zero_fill"] is True
+
+    def test_query_metrics_normalizes_false_zero_fill_before_adapter_gating(self, semantic_tools):
+        query_result = QueryResult(columns=["x"], data=[{"x": 1}], metadata={})
+
+        class AdapterWithoutJoinControls:
+            def get_dimensions(self, metric_name, path=None):
+                return []
+
+            def query_metrics(
+                self,
+                metrics,
+                dimensions=None,
+                path=None,
+                time_start=None,
+                time_end=None,
+                time_granularity=None,
+                where=None,
+                limit=None,
+                order_by=None,
+                dry_run=False,
+            ):
+                return query_result
+
+        semantic_tools._adapter = AdapterWithoutJoinControls()
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
+            result = semantic_tools.query_metrics(metrics=["order_count"], zero_fill="false")
+
+        assert result.success == 1
+
 
 # ---------------------------------------------------------------------------
 # Extended fixtures (no adapter_type)
@@ -1784,6 +1846,35 @@ class TestValidateSemantic:
         assert calls == {
             "scope": "all",
             "checks": ["authoring_quality", "mutation_guard"],
+            "baseline_artifact": baseline,
+        }
+
+    def test_passes_validation_options_to_kwargs_adapter(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        calls = {}
+
+        class _Adapter:
+            async def validate_semantic(self, **kwargs):
+                calls.update(kwargs)
+                result = Mock()
+                result.valid = True
+                result.issues = []
+                return result
+
+        tool._adapter = _Adapter()
+        baseline = {"semantic_model": [{"name": "commerce"}]}
+
+        with patch.object(tool, "_reload_adapter", return_value=True):
+            result = tool.validate_semantic(
+                scope="semantic_model",
+                checks=["authoring_quality"],
+                baseline_artifact_json=json.dumps(baseline),
+            )
+
+        assert result.success == 1
+        assert calls == {
+            "scope": "semantic_model",
+            "checks": ["authoring_quality"],
             "baseline_artifact": baseline,
         }
 

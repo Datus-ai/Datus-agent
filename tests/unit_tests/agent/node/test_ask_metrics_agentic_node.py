@@ -561,6 +561,54 @@ class TestAskMetricsAgenticNode:
             dry_run=False,
         )
 
+    def test_query_metrics_infers_window_grain_from_metric_time_dimension(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Commerce": {"Orders": {"metrics": ["running_order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={
+                "items": [
+                    {
+                        "name": "order_count",
+                        "measures": ["orders.order_id"],
+                        "metadata": {
+                            "dataset": "orders",
+                            "expr": "COUNT(DISTINCT order_id)",
+                            "metric_kind": "aggregate",
+                            "measure": "order_id",
+                        },
+                    },
+                    {
+                        "name": "running_order_count",
+                        "metadata": {
+                            "dataset": "orders",
+                            "time_dimension": "metric_time__month",
+                            "window_aggregation": "sum",
+                            "metric_kind": "cumulative",
+                        },
+                    },
+                ],
+                "has_more": False,
+            }
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
+
+        node.query_metrics(metrics=["running_order_count"], dimensions=[])
+
+        semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["running_order_count"],
+            dimensions=["metric_time__month"],
+            path=None,
+            time_start=None,
+            time_end=None,
+            time_granularity="month",
+            where=None,
+            limit=None,
+            order_by=["metric_time__month"],
+            dry_run=False,
+        )
+
     def test_query_metrics_expands_running_extrema_metric_bundle(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,

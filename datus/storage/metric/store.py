@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import json
 import os
 import re
 from typing import Any, Dict, List, Optional, Set
@@ -22,8 +23,8 @@ logger = get_logger(__name__)
 METRIC_ID_PREFIX = "metric:"
 _METRIC_DEFINITION_FIELDS = ("semantic_model_name", "metric_type", "measure_expr", "base_measures")
 _METRIC_LOOKUP_MAX_QUERY_LENGTH = 120
+_METRIC_EXACT_QUERY_PATTERN = re.compile(r"^[0-9A-Za-z_.:/-]+$")
 _METRIC_LOOKUP_TOKEN_PATTERN = re.compile(r"[^0-9a-zA-Z]+")
-_CJK_PATTERN = re.compile(r"[\u3400-\u9fff]")
 
 
 def normalize_metric_name(value: Any) -> str:
@@ -43,12 +44,12 @@ def metric_lookup_key(value: Any) -> str:
 
 
 def metric_exact_query_keys(query_text: Any) -> Set[str]:
-    """Return lookup keys when the query is short enough for exact matching."""
+    """Return lookup keys for identifier-like exact metric lookups."""
 
     text = str(query_text or "").strip()
     if not text or len(text) > _METRIC_LOOKUP_MAX_QUERY_LENGTH:
         return set()
-    if _CJK_PATTERN.search(text) and not re.search(r"[0-9a-zA-Z_:/.-]", text):
+    if not _METRIC_EXACT_QUERY_PATTERN.fullmatch(text):
         return set()
 
     key = metric_lookup_key(text)
@@ -804,9 +805,7 @@ class MetricRAG:
         metric_id = metric.get("id")
         if metric_id:
             return f"id:{metric_id}"
-        subject_path = metric.get("subject_path")
-        path_key = "/".join(str(item) for item in subject_path) if isinstance(subject_path, list) else ""
-        return f"name:{path_key}:{metric.get('name', '')}"
+        return f"row:{json.dumps(metric, sort_keys=True, default=str)}"
 
     def get_metrics_detail(self, subject_path: List[str], name: str) -> List[Dict[str, Any]]:
         """Get metrics detail by subject path and name."""

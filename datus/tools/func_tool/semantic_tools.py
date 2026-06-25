@@ -140,6 +140,27 @@ def _normalize_optional_path(value) -> Optional[List[str]]:
     return names or None
 
 
+def _normalize_optional_bool(value) -> bool:
+    """Normalize optional tool boolean arguments that may arrive as strings."""
+    value = normalize_null(value)
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "y", "on"}:
+            return True
+        if text in {"0", "false", "no", "n", "off"}:
+            return False
+    return bool(value)
+
+
+def _signature_accepts_parameter(parameters, name: str) -> bool:
+    """Return true when a callable explicitly accepts ``name`` or arbitrary kwargs."""
+    return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+
+
 _TIME_GRANULARITIES = {"day", "week", "month", "quarter", "year"}
 
 
@@ -832,6 +853,7 @@ class SemanticTools:
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
         join_policy = normalize_null(join_policy)
+        zero_fill = _normalize_optional_bool(zero_fill)
         logger.info(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
@@ -858,21 +880,23 @@ class SemanticTools:
             }
             adapter_params = inspect.signature(adapter.query_metrics).parameters
             requested_join_controls = bool(join_policy) or bool(zero_fill)
-            if "join_policy" in adapter_params:
+            supports_join_policy = _signature_accepts_parameter(adapter_params, "join_policy")
+            supports_zero_fill = _signature_accepts_parameter(adapter_params, "zero_fill")
+            if supports_join_policy and join_policy:
                 adapter_query_kwargs["join_policy"] = join_policy
             elif join_policy:
                 return FuncToolResult(
                     success=0,
                     error="query_metrics join_policy is not supported by the current semantic adapter.",
                 )
-            if "zero_fill" in adapter_params:
+            if supports_zero_fill and zero_fill:
                 adapter_query_kwargs["zero_fill"] = zero_fill
             elif zero_fill:
                 return FuncToolResult(
                     success=0,
                     error="query_metrics zero_fill is not supported by the current semantic adapter.",
                 )
-            if requested_join_controls and not ("join_policy" in adapter_params or "zero_fill" in adapter_params):
+            if requested_join_controls and not (supports_join_policy or supports_zero_fill):
                 return FuncToolResult(
                     success=0,
                     error="query_metrics join controls are not supported by the current semantic adapter.",
@@ -994,13 +1018,14 @@ class SemanticTools:
             validation_kwargs = {}
             try:
                 signature = inspect.signature(validate_semantic)
-                if "scope" in signature.parameters:
+                params = signature.parameters
+                if _signature_accepts_parameter(params, "scope"):
                     validation_kwargs["scope"] = scope
-                elif scope != "all" and "validation_scope" in signature.parameters:
+                elif scope != "all" and "validation_scope" in params:
                     validation_kwargs["validation_scope"] = scope
-                if checks_list is not None and "checks" in signature.parameters:
+                if checks_list is not None and _signature_accepts_parameter(params, "checks"):
                     validation_kwargs["checks"] = checks_list
-                if baseline_artifact is not None and "baseline_artifact" in signature.parameters:
+                if baseline_artifact is not None and _signature_accepts_parameter(params, "baseline_artifact"):
                     validation_kwargs["baseline_artifact"] = baseline_artifact
             except (TypeError, ValueError):
                 validation_kwargs = {}

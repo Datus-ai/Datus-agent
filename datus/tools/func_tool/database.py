@@ -176,6 +176,7 @@ class DBFuncTool:
                 self._table_semantic_profiles is not None and self._table_semantic_profiles.get_size() > 0
             )
         except Exception:
+            self._table_semantic_profiles = None
             self.has_table_semantic_profiles = False
 
     def _init_single_db_connector(self, connector: BaseSqlConnector):

@@ -1118,16 +1118,16 @@ class GenerationTools:
             to_dataset = cls._relationship_endpoint(relationship, "to", "to_dataset")
             if dataset_name not in (from_dataset, to_dataset):
                 continue
-            from_column = cls._first_relationship_column(relationship, "from_columns", "from_identifier")
-            to_column = cls._first_relationship_column(relationship, "to_columns", "to_identifier")
+            from_columns = cls._relationship_columns(relationship, "from_columns", "from_identifier")
+            to_columns = cls._relationship_columns(relationship, "to_columns", "to_identifier")
             relationships.append(
                 {
                     "name": str(getattr(relationship, "name", "") or ""),
                     "type": str(getattr(relationship, "type", "") or ""),
                     "from_dataset": from_dataset,
                     "to_dataset": to_dataset,
-                    "from_columns": [from_column] if from_column else [],
-                    "to_columns": [to_column] if to_column else [],
+                    "from_columns": from_columns,
+                    "to_columns": to_columns,
                     "role": "from" if from_dataset == dataset_name else "to",
                     "ai_context": getattr(relationship, "ai_context", None),
                 }
@@ -1261,13 +1261,19 @@ class GenerationTools:
         return str(getattr(relationship, normalized_name, None) or getattr(relationship, core_name, None) or "")
 
     @staticmethod
-    def _first_relationship_column(relationship: Any, core_name: str, normalized_name: str) -> str:
+    def _relationship_columns(relationship: Any, core_name: str, normalized_name: str) -> List[str]:
         columns = getattr(relationship, core_name, None)
         if isinstance(columns, str):
-            return columns
-        if isinstance(columns, list) and columns:
-            return str(columns[0])
-        return str(getattr(relationship, normalized_name, None) or "")
+            return [columns] if columns else []
+        if isinstance(columns, list):
+            return [str(column) for column in columns if str(column)]
+        normalized_column = str(getattr(relationship, normalized_name, None) or "")
+        return [normalized_column] if normalized_column else []
+
+    @classmethod
+    def _first_relationship_column(cls, relationship: Any, core_name: str, normalized_name: str) -> str:
+        columns = cls._relationship_columns(relationship, core_name, normalized_name)
+        return columns[0] if columns else ""
 
     @classmethod
     def _relationship_join_name(cls, relationship: Any, to_dataset: Any) -> str:

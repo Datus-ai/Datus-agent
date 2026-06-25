@@ -10,6 +10,7 @@ including table relationships, column usage evidence, and metric candidates
 mined from historical SQL.
 """
 
+import json
 from typing import Any, Dict, List, Optional
 
 from agents import Tool
@@ -1202,15 +1203,20 @@ class SemanticDiscoveryTools:
         """Build the cumulative/rolling metric candidate from window metadata."""
         base_metric_name = self._normalize_identifier(detail.get("base_metric_name", ""))
         referenced_metric_names = {base_metric_name} & set(existing_metric_catalog)
-        base_measures = (
-            base_candidate.get("base_measures", [])
-            if base_candidate
-            else [self._measure_from_aggregate(detail["aggregate"], detail.get("name", ""), detail["aggregate"])]
-        )
+        if base_candidate:
+            base_measures = base_candidate.get("base_measures", [])
+        elif referenced_metric_names:
+            base_measures = []
+        else:
+            base_measures = [
+                self._measure_from_aggregate(detail["aggregate"], detail.get("name", ""), detail["aggregate"])
+            ]
         score_reasons = [
             "aggregate window maps to a cumulative metric over base-period values",
             "window frame was extracted from SQL AST",
         ]
+        if referenced_metric_names:
+            score_reasons.append("base-period metric already exists in the metric catalog")
         if detail.get("grain_to_date"):
             score_reasons.append("unbounded preceding frame maps to grain_to_date")
         if detail.get("window"):
@@ -2729,7 +2735,9 @@ class SemanticDiscoveryTools:
                 f"offset_window:{candidate.get('offset_window', '')}",
                 f"window:{candidate.get('window', '')}",
                 f"grain_to_date:{candidate.get('grain_to_date', '')}",
+                f"time_grain:{candidate.get('time_grain', '')}",
                 f"window_aggregation:{candidate.get('window_aggregation', '')}",
+                f"window_order_by:{json.dumps(candidate.get('window_order_by', []), sort_keys=True, default=str)}",
                 *[f"measure:{part}" for part in sorted(measure_parts)],
                 *[f"input:{part}" for part in sorted(input_parts)],
             ]

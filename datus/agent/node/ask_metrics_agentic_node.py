@@ -742,6 +742,12 @@ class AskMetricsAgenticNode(AgenticNode):
             if grain:
                 return grain
 
+        time_dimension = cls._metadata_text(metadata, "time_dimension")
+        if time_dimension.startswith("metric_time__"):
+            grain = cls._normalize_time_grain(time_dimension.split("__", 1)[1])
+            if grain:
+                return grain
+
         window = cls._metadata_text(metadata, "window")
         if window:
             parts = re.findall(r"[a-zA-Z]+", window.lower())

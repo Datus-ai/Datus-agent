@@ -125,13 +125,47 @@ class TableSemanticProfileRAG:
 
         if not rows and (catalog_name or database_name or schema_name):
             broad_conds = [eq("table_name", table_name)] + base_conds
-            rows = self.storage._search_all(where=And(broad_conds), select_fields=select_fields).to_pylist()
+            broad_rows = self.storage._search_all(where=And(broad_conds), select_fields=select_fields).to_pylist()
+            rows = (
+                broad_rows
+                if len(broad_rows) == 1
+                and self._namespace_compatible(
+                    broad_rows[0],
+                    catalog_name=catalog_name,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                )
+                else []
+            )
 
         if not rows and table_name.lower() != table_name:
             lower_conds = [eq("table_name", table_name.lower())] + base_conds
+            if catalog_name:
+                lower_conds.append(eq("catalog_name", catalog_name))
+            if database_name:
+                lower_conds.append(eq("database_name", database_name))
+            if schema_name:
+                lower_conds.append(eq("schema_name", schema_name))
             rows = self.storage._search_all(where=And(lower_conds), select_fields=select_fields).to_pylist()
 
         return rows[0] if rows else None
+
+    @staticmethod
+    def _namespace_compatible(
+        row: Dict[str, Any],
+        *,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+    ) -> bool:
+        for field, requested in (
+            ("catalog_name", catalog_name),
+            ("database_name", database_name),
+            ("schema_name", schema_name),
+        ):
+            if requested and row.get(field) not in ("", None, requested):
+                return False
+        return True
 
     def get_size(self) -> int:
         try:

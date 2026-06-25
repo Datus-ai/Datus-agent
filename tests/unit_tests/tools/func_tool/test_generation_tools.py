@@ -1147,7 +1147,15 @@ class TestOsiSync:
             time_dimension=None,
             dimensions=[],
         )
-        doc = SimpleNamespace(datasets=[dataset, other_dataset], metrics=[])
+        relationship = SimpleNamespace(
+            **{
+                "from": "orders",
+                "to": "customers",
+                "from_columns": ["customer_id", "store_id"],
+                "to_columns": ["customer_id", "store_id"],
+            }
+        )
+        doc = SimpleNamespace(datasets=[dataset, other_dataset], relationships=[relationship], metrics=[])
 
         with patch.object(generation_tools, "_load_osi_document", return_value=doc):
             result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
@@ -1166,6 +1174,8 @@ class TestOsiSync:
         assert profiles[0]["description"] == "Orders table"
         assert "order-level analytics" in profiles[0]["ai_context_json"]
         assert '"name": "customer_segment"' in profiles[0]["columns_json"]
+        assert '"from_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
+        assert '"to_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
         assert result["table_semantic_profiles"] == 1
 
 

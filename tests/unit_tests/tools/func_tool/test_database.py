@@ -46,6 +46,29 @@ class TestDBFuncToolCompressorModelName:
 
         assert tool.compressor.model_name == "gpt-3.5-turbo"
 
+    def test_table_semantic_profile_store_disabled_when_size_probe_fails(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+
+        mock_config = Mock()
+        mock_config.active_model.return_value.model = "gpt-4o"
+        mock_config.project_name = "project"
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+            patch("datus.tools.func_tool.database.TableSemanticProfileRAG") as mock_profile,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            mock_profile.return_value.get_size.side_effect = RuntimeError("storage unavailable")
+
+            tool = DBFuncTool(mock_connector, agent_config=mock_config)
+
+        assert tool.has_table_semantic_profiles is False
+        assert tool._table_semantic_profiles is None
+
 
 class TestDBFuncToolExecuteDDL:
     """Tests for DBFuncTool.execute_ddl method."""

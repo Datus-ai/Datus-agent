@@ -737,10 +737,21 @@ class TestMetricRAGSearch:
         rag.storage.search_all_metrics.return_value = [exact_metric, vector_metric]
         rag.storage.search_metrics.return_value = [vector_metric, exact_metric]
 
-        result = rag.search_metrics("order count", top_n=2)
+        result = rag.search_metrics("order_count", top_n=2)
 
         assert result == [exact_metric, vector_metric]
         rag.storage.search_all_metrics.assert_called_once()
+        rag.storage.search_metrics.assert_called_once()
+
+    def test_search_metrics_does_not_scan_for_natural_language_queries(self):
+        rag = self._rag()
+        vector_metric = {"id": "metric:order_count", "name": "order_count"}
+        rag.storage.search_metrics.return_value = [vector_metric]
+
+        result = rag.search_metrics("show order count by month", top_n=2)
+
+        assert result == [vector_metric]
+        rag.storage.search_all_metrics.assert_not_called()
         rag.storage.search_metrics.assert_called_once()
 
     def test_search_metrics_does_not_scan_for_long_queries(self):
@@ -752,3 +763,13 @@ class TestMetricRAGSearch:
         assert result == [{"id": "metric:order_count", "name": "order_count"}]
         rag.storage.search_all_metrics.assert_not_called()
         rag.storage.search_metrics.assert_called_once()
+
+    def test_merge_search_results_preserves_distinct_idless_rows(self):
+        from datus.storage.metric.store import MetricRAG
+
+        first = {"name": "order_count", "subject_path": ["commerce"], "description": "Order count by order date"}
+        second = {"name": "order_count", "subject_path": ["commerce"], "description": "Order count by ship date"}
+
+        result = MetricRAG._merge_search_results([first], [second], top_n=5)
+
+        assert result == [first, second]
