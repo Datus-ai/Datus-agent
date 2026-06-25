@@ -2,6 +2,25 @@
 
 ## 0.3
 
+### 0.3.6
+
+**Enhancements**
+
+- **Scoped `/init` and `/build-kb` Runs** - `/init` now accepts optional scope text, and `/build-kb` can skip confirmation for clearly scoped or automated knowledge-base builds. [#1033](https://github.com/Datus-ai/Datus-agent/pull/1033) [init docs](https://docs.datus.ai/0.3/cli/init_command/) [build-kb docs](https://docs.datus.ai/0.3/cli/build_kb_command/)
+- **Model-Level SSL Verification** - Model providers can set `ssl_verify` to `true`, `false`, or a CA bundle path for private CA and self-signed LLM endpoints; the model-level setting takes precedence over `SSL_VERIFY` and `SSL_CERT_FILE`. [#1043](https://github.com/Datus-ai/Datus-agent/pull/1043) [docs](https://docs.datus.ai/0.3/configuration/agent/)
+- **Runtime Stack Dumps for API Diagnostics** - The API server can dump live async task stacks to logs with `SIGUSR1`, making production hangs easier to diagnose without stopping the process. [#1037](https://github.com/Datus-ai/Datus-agent/pull/1037)
+
+**Bug Fixes**
+
+- **Responsive Session and Catalog APIs** - Slow blocking filesystem or datasource calls in session and catalog endpoints now run off the event loop with bounded timeouts, so one slow request no longer stalls the API process. [#1036](https://github.com/Datus-ai/Datus-agent/pull/1036)
+- **Datasource Overrides Preserve Database Context** - Fixed datasource names being treated as physical database names; chat requests now carry datasource overrides and database context separately through connection, gateway, subagent, and validation paths. [#1048](https://github.com/Datus-ai/Datus-agent/pull/1048)
+- **Release and Test Stability** - The Prepare Release workflow now regenerates `uv.lock` before locked sync, and BIRD SQLite fixtures are isolated in temporary directories so tests no longer contaminate each other. [#1039](https://github.com/Datus-ai/Datus-agent/pull/1039) [#1047](https://github.com/Datus-ai/Datus-agent/pull/1047)
+
+**Upgrade Notes**
+
+- **Skill Execution** - Skills now execute through `load_skill`; the legacy `skill_execute_command` path and `allowed_commands` in skill config have been removed. [#1033](https://github.com/Datus-ai/Datus-agent/pull/1033)
+- **Database Schema Tools** - `get_table_ddl` is no longer exposed as an agent/MCP tool. Use `describe_table` and `read_query` for schema and sample-data inspection. [#1031](https://github.com/Datus-ai/Datus-agent/pull/1031)
+
 ### 0.3.5
 
 **New Features**
