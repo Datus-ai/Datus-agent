@@ -1185,13 +1185,9 @@ class GenerationTools:
     def _upsert_table_semantic_profiles(self, profiles: List[dict]) -> int:
         if not profiles or self.table_semantic_profile_rag is None:
             return 0
-        try:
-            self.table_semantic_profile_rag.upsert_batch(profiles)
-            self.table_semantic_profile_rag.create_indices()
-            return len(profiles)
-        except Exception as exc:
-            logger.warning(f"Failed to sync table semantic profiles: {exc}")
-            return 0
+        self.table_semantic_profile_rag.upsert_batch(profiles)
+        self.table_semantic_profile_rag.create_indices()
+        return len(profiles)
 
     @staticmethod
     def _current_db_parts(agent_config: AgentConfig) -> dict[str, str]:

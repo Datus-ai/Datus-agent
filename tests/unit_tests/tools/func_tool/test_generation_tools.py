@@ -1178,6 +1178,39 @@ class TestOsiSync:
         assert '"to_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
         assert result["table_semantic_profiles"] == 1
 
+    def test_sync_osi_semantic_to_db_fails_when_table_profile_sync_fails(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
+        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.table_semantic_profile_rag.upsert_batch.side_effect = RuntimeError("profile sync failed")
+        semantic_file = tmp_path / "orders.yml"
+        semantic_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "        primary_key: [order_id]\n"
+        )
+        dataset = SimpleNamespace(
+            name="orders",
+            description="Orders table",
+            ai_context={"instructions": "Use this dataset for order-level analytics."},
+            source=SimpleNamespace(table="orders"),
+            primary_key="order_id",
+            time_dimension=None,
+            dimensions=[],
+        )
+        doc = SimpleNamespace(datasets=[dataset], relationships=[], metrics=[])
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
+
+        assert result["success"] is False
+        assert "profile sync failed" in result["error"]
+
 
 class TestGenerateSqlSummaryId:
     def test_success(self, generation_tools):

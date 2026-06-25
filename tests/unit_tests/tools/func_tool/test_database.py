@@ -538,6 +538,8 @@ class TestDescribeTableSemanticProfile:
 
         tool = DBFuncTool(mock_connector)
         tool._table_semantic_profiles = Mock()
+        tool.has_semantic_models = True
+        tool._semantic_storage = Mock()
         tool._table_semantic_profiles.get_profile.return_value = {
             "format": "osi",
             "physical_table_fq_name": "main.orders",
@@ -561,6 +563,7 @@ class TestDescribeTableSemanticProfile:
         result = tool.describe_table("orders")
 
         assert result.success == 1
+        tool._semantic_storage.get_semantic_model.assert_not_called()
         assert result.result["table"] == {
             "name": "orders",
             "description": "Orders dataset",

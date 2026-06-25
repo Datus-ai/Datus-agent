@@ -1085,7 +1085,6 @@ class DBFuncTool:
               - ai_context (dict/list/str, optional): Extra LLM-facing business guidance
             - semantic (dict, optional): LLM-facing semantic hints:
               - relationships (list): Relevant dataset/data-source relationships
-              - filters (list): Dataset/data-source filter hints
         """
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
@@ -1139,6 +1138,7 @@ class DBFuncTool:
 
             # 3. Enrich with Semantic Model Info if available
             result_data = {"columns": columns}
+            profile_applied = False
 
             try:
                 profile = self._get_table_semantic_profile(
@@ -1153,10 +1153,11 @@ class DBFuncTool:
                         profile.get("dataset_name") or profile.get("data_source_name") or "unknown",
                     )
                     self._apply_table_semantic_profile(result_data, profile)
+                    profile_applied = True
             except Exception as e:
                 logger.warning(f"Failed to get table semantic profile for {table_name}: {e}")
 
-            if self.has_semantic_models:
+            if self.has_semantic_models and not profile_applied:
                 try:
                     logger.debug("Checking for semantic models")
                     # Use coordinate values (resolved and stripped) for lookup

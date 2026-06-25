@@ -1878,6 +1878,23 @@ class TestValidateSemantic:
             "baseline_artifact": baseline,
         }
 
+    def test_rejects_checks_when_adapter_does_not_support_them(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+
+        class _Adapter:
+            async def validate_semantic(self, scope="all"):
+                result = Mock()
+                result.valid = True
+                result.issues = []
+                return result
+
+        tool._adapter = _Adapter()
+
+        result = tool.validate_semantic(checks=["authoring_quality"])
+
+        assert result.success == 0
+        assert "checks are not supported" in result.error
+
     def test_rejects_invalid_baseline_json(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter
 

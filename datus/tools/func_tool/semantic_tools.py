@@ -973,7 +973,7 @@ class SemanticTools:
                 models before metric definitions exist; this still fails on real
                 semantic model errors but ignores the expected no-metrics issue.
             checks: Optional adapter-specific validation checks. Adapters that do
-                not support named checks ignore this argument.
+                not support named checks return an error when this is supplied.
             baseline_artifact_json: Optional JSON-encoded semantic artifact used
                 by adapters that support mutation guard validation.
 
@@ -1023,11 +1023,29 @@ class SemanticTools:
                     validation_kwargs["scope"] = scope
                 elif scope != "all" and "validation_scope" in params:
                     validation_kwargs["validation_scope"] = scope
-                if checks_list is not None and _signature_accepts_parameter(params, "checks"):
+                if checks_list is not None:
+                    if not _signature_accepts_parameter(params, "checks"):
+                        return FuncToolResult(
+                            success=0,
+                            error="validate_semantic checks are not supported by the current semantic adapter",
+                            result=None,
+                        )
                     validation_kwargs["checks"] = checks_list
-                if baseline_artifact is not None and _signature_accepts_parameter(params, "baseline_artifact"):
+                if baseline_artifact is not None:
+                    if not _signature_accepts_parameter(params, "baseline_artifact"):
+                        return FuncToolResult(
+                            success=0,
+                            error="validate_semantic baseline_artifact is not supported by the current semantic adapter",
+                            result=None,
+                        )
                     validation_kwargs["baseline_artifact"] = baseline_artifact
             except (TypeError, ValueError):
+                if checks_list is not None or baseline_artifact is not None:
+                    return FuncToolResult(
+                        success=0,
+                        error="validate_semantic validation options are not supported by the current semantic adapter",
+                        result=None,
+                    )
                 validation_kwargs = {}
 
             validation_result = _run_async(validate_semantic(**validation_kwargs))

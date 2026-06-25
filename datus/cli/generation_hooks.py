@@ -918,14 +918,10 @@ class GenerationHooks(AgentHooks):
             return 0
         if not isinstance(getattr(agent_config, "project_name", ""), str):
             return 0
-        try:
-            profile_rag = TableSemanticProfileRAG(agent_config)
-            profile_rag.upsert_batch(profiles)
-            profile_rag.create_indices()
-            return len(profiles)
-        except Exception as exc:
-            logger.warning(f"Failed to sync table semantic profiles: {exc}")
-            return 0
+        profile_rag = TableSemanticProfileRAG(agent_config)
+        profile_rag.upsert_batch(profiles)
+        profile_rag.create_indices()
+        return len(profiles)
 
     @staticmethod
     def _sync_semantic_to_db(
