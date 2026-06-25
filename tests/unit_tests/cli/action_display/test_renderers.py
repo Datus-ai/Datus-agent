@@ -852,6 +852,29 @@ class TestVerboseMarkupRendering:
         assert "SELECT SUM(revenue) FROM sales" in text
         assert "sql" in text
 
+    def test_tool_reported_failure_renders_cross_not_check(self):
+        """A tool that returns FuncToolResult(success=0) WITHOUT raising leaves
+        ``action.status == SUCCESS``; the compact ``└─`` line must still show ✗
+        (driven by the per-tool builder's status_mark), not a green ✓.
+
+        Regression: an unsupported/denied execute_sql statement showed ``✓``.
+        """
+        now = datetime.now()
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,  # no exception bubbled up
+            action_type="execute_sql",
+            messages="execute_sql",
+            input_data={"function_name": "execute_sql", "arguments": {"sql": "CREATE DATABASE x"}},
+            output_data={"success": 0, "error": "boom", "result": None},
+            start_time=now,
+            end_time=now + timedelta(seconds=0.1),
+        )
+        result = _renderer()._render_main_tool(action, verbose=False)
+        text = _plain(result)
+        assert "✗" in text or "×" in text
+        assert "✓" not in text
+
     def test_args_key_bold(self):
         """Argument keys are rendered with bold markup."""
         now = datetime.now()

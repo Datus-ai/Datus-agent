@@ -818,12 +818,16 @@ class ActionRenderer:
             result.append(Text(""))
             return result
         else:
-            status_dot = "[green]\u23fa[/green]" if action.status == ActionStatus.SUCCESS else "[red]\u23fa[/red]"
+            # Drive the dot/mark off ``tc.status_mark`` rather than
+            # ``action.status``: a tool that returns ``FuncToolResult(success=0)``
+            # without raising leaves ``action.status == SUCCESS``, but the
+            # per-tool builder flips ``status_mark`` to \u2717 for that failure shape.
+            # Recomputing from ``action.status`` here would mislabel a rejected
+            # call (e.g. an unsupported execute_sql statement) with a green \u2713.
+            failed = action.status != ActionStatus.SUCCESS or tc.status_mark == "\u2717"
+            status_dot = "[red]\u23fa[/red]" if failed else "[green]\u23fa[/green]"
             header = f"\U0001f527 {rich_escape(tc.label)}({rich_escape(tc.args_summary)})"
-            if action.status == ActionStatus.SUCCESS:
-                mark = "[green]\u2713[/green]"
-            else:
-                mark = "[red]\u00d7[/red]"
+            mark = "[red]\u00d7[/red]" if failed else "[green]\u2713[/green]"
             result_text = tc.compact_result or tc.output_preview
             dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
             dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""

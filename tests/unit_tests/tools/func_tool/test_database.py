@@ -180,6 +180,10 @@ class TestExecuteDDLStatementValidation:
             "CREATE SCHEMA IF NOT EXISTS staging",
             "DROP SCHEMA staging",
             "DROP SCHEMA IF EXISTS staging",
+            "CREATE DATABASE blockchain",
+            "CREATE DATABASE IF NOT EXISTS blockchain",
+            "DROP DATABASE blockchain",
+            "DROP DATABASE IF EXISTS blockchain",
             "  CREATE TABLE test (id INT)",
             "ALTER TABLE test ADD COLUMN name TEXT",
             "DROP TABLE test",
@@ -189,33 +193,35 @@ class TestExecuteDDLStatementValidation:
             "CREATE OR REPLACE VIEW v AS SELECT 1",
             "CREATE TEMPORARY TABLE tmp AS SELECT 1",
             "CREATE TEMP TABLE tmp (id INT)",
+            # Non-read, non-DML statements no longer pre-rejected — permission
+            # gates them, the tool executes whatever the engine accepts.
+            "TRUNCATE TABLE users",
+            "GRANT ALL ON users TO public",
+            "CREATE INDEX idx ON users (id)",
+            "MERGE INTO target t USING source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET name = s.name",
         ],
     )
     def test_allowed_ddl_statements(self, sql):
-        """Allowed DDL statement types should pass validation."""
+        """Non-read, non-DML statements pass validation and execute."""
         tool = self._make_tool()
         result = tool.execute_ddl(sql)
         assert result.success == 1
 
     @pytest.mark.parametrize(
-        "sql",
+        ("sql", "expected"),
         [
-            "SELECT * FROM users",
-            "INSERT INTO users VALUES (1, 'test')",
-            "UPDATE users SET name='x'",
-            "DELETE FROM users",
-            "TRUNCATE TABLE users",
-            "GRANT ALL ON users TO public",
-            "CREATE OR REPLACE FUNCTION test() RETURNS void",
-            "CREATE PROCEDURE test() BEGIN END",
+            ("SELECT * FROM users", "read path"),
+            ("INSERT INTO users VALUES (1, 'test')", "write path"),
+            ("UPDATE users SET name='x'", "write path"),
+            ("DELETE FROM users", "write path"),
         ],
     )
-    def test_rejected_non_ddl_statements(self, sql):
-        """Non-DDL statements should be rejected."""
+    def test_read_and_dml_rejected_from_ddl_path(self, sql, expected):
+        """Read-only and DML statements have dedicated paths and are refused here."""
         tool = self._make_tool()
         result = tool.execute_ddl(sql)
         assert result.success == 0
-        assert "Only DDL statements are allowed" in result.error
+        assert expected in result.error
 
     def test_rejected_multi_statement(self):
         """Multi-statement SQL should be rejected."""
@@ -1558,27 +1564,33 @@ class TestDBFuncToolExecuteSql:
         assert result.success == 0
         assert "above max_rows" in result.error
 
-    def test_rejects_merge_as_unsupported(self):
-        tool = self._make_tool()
-        result = tool.execute_sql(
-            "MERGE INTO target t USING source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET name = s.name"
-        )
-
-        assert result.success == 0
-        assert "Unsupported SQL type" in result.error
-
     @pytest.mark.parametrize(
         "sql",
         [
             "MERGE INTO target t USING source s ON t.id = s.id WHEN MATCHED THEN UPDATE SET name = s.name",
             "GRANT SELECT ON users TO bob",
-            "INSERT INTO a VALUES (1); DELETE FROM a",
+            "TRUNCATE TABLE users",
+            "CREATE DATABASE blockchain",
         ],
     )
-    def test_rejects_unsupported_or_unsafe_statements(self, sql):
-        """MERGE, privilege statements, and multi-statement scripts are all rejected."""
-        tool = self._make_tool()
+    def test_non_read_non_dml_routes_to_generic_execute(self, sql):
+        """MERGE / GRANT / TRUNCATE / CREATE DATABASE are not pre-rejected — the
+        permission layer gates them and the tool executes them generically."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.execute_ddl.return_value = Mock(success=True)
+
+        tool = self._make_tool(mock_connector)
         result = tool.execute_sql(sql)
+
+        assert result.success == 1
+        mock_connector.execute_ddl.assert_called_once()
+
+    def test_rejects_multi_statement(self):
+        """Multi-statement scripts are still refused — one statement per call."""
+        tool = self._make_tool()
+        result = tool.execute_sql("INSERT INTO a VALUES (1); DELETE FROM a")
 
         assert result.success == 0
 

@@ -1237,14 +1237,17 @@ class DBFuncTool:
         This is the unified entry point for running SQL. The statement type is
         detected automatically and routed accordingly:
 
-        * Read-only (SELECT, SHOW/DESCRIBE, EXPLAIN) — returns result rows.
+        * Read-only (SELECT, SHOW/DESCRIBE, EXPLAIN) — returns result rows; runs
+          without confirmation.
         * DML (INSERT, UPDATE, DELETE) — modifies data and returns write metadata.
-        * DDL (CREATE/DROP SCHEMA, CREATE TABLE/VIEW incl. CTAS, ALTER TABLE,
-          DROP TABLE/VIEW) — modifies the schema and returns DDL metadata.
+        * Any other statement — DDL (CREATE/ALTER/DROP TABLE/VIEW, CREATE/DROP
+          SCHEMA or DATABASE, CTAS), plus TRUNCATE, MERGE, GRANT, etc. — runs
+          generically and returns execution metadata.
 
-        CAUTION: Writes (INSERT/UPDATE/DELETE) and DDL modify the database. Only
-        run them when the task explicitly requires it; prefer a read-only SELECT
-        for inspection. Multi-statement SQL and MERGE are rejected.
+        CAUTION: Everything except a read-only query modifies the database and
+        requires user confirmation. Prefer a read-only SELECT for inspection, and
+        only run a write/DDL statement when the task explicitly requires it.
+        Multi-statement scripts are rejected — submit one statement per call.
 
         Args:
             sql: A single SQL statement, or a ``.sql`` file path
@@ -1275,8 +1278,6 @@ class DBFuncTool:
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
                 return self.read_query(sql, datasource=datasource, database=database)
-            if sql_type == SQLType.DDL:
-                return self.execute_ddl(sql, datasource=datasource, database=database)
             if sql_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
                 return self.execute_write(
                     sql,
@@ -1285,15 +1286,12 @@ class DBFuncTool:
                     min_rows=min_rows,
                     max_rows=max_rows,
                 )
-            return FuncToolResult(
-                success=0,
-                error=(
-                    f"Unsupported SQL type '{sql_type.value}' for execute_sql. Supported: "
-                    "SELECT/SHOW/DESCRIBE/EXPLAIN (read), INSERT/UPDATE/DELETE (write), and DDL "
-                    "(CREATE/DROP SCHEMA, CREATE TABLE/VIEW, ALTER TABLE, DROP TABLE/VIEW). "
-                    "MERGE and multi-statement scripts are not supported."
-                ),
-            )
+            # Any other statement — DDL (CREATE/ALTER/DROP, CREATE DATABASE, ...),
+            # MERGE, or engine-specific commands. The permission layer has already
+            # gated non-read SQL behind confirmation, so execute it generically
+            # rather than rejecting it by sub-type. Only multi-statement scripts
+            # are refused (one statement per call).
+            return self.execute_ddl(sql, datasource=datasource, database=database)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -1494,22 +1492,17 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=str(e))
 
     # Regex matching allowed DDL statement prefixes
-    _ALLOWED_DDL_RE = re.compile(
-        r"^\s*(CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMPORARY|TEMP)\s+)?(?:TABLE|VIEW)"
-        r"|CREATE\s+SCHEMA(?:\s+IF\s+NOT\s+EXISTS)?"
-        r"|DROP\s+SCHEMA(?:\s+IF\s+EXISTS)?"
-        r"|ALTER\s+TABLE"
-        r"|DROP\s+(?:TABLE|VIEW)(?:\s+IF\s+EXISTS)?)\b",
-        re.IGNORECASE,
-    )
-
     def execute_ddl(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
         """
-        Execute a DDL SQL statement (CREATE TABLE AS SELECT, ALTER TABLE, etc.).
+        Execute a single non-read, non-DML SQL statement (the generic write path).
 
         CAUTION: This modifies the database. Only use when explicitly instructed.
-        Supported statements: CREATE TABLE, CREATE TABLE AS SELECT (CTAS),
-        CREATE/DROP SCHEMA, ALTER TABLE, DROP TABLE, CREATE VIEW, DROP VIEW.
+        Handles DDL (CREATE/ALTER/DROP TABLE/VIEW, CREATE/DROP SCHEMA or DATABASE,
+        CTAS), as well as other non-query statements (TRUNCATE, MERGE, GRANT,
+        CREATE INDEX, engine-specific commands). Statement-type permission gating
+        lives in ``PermissionHooks._handle_sql_permission``; this method does not
+        re-gate by sub-type. Read-only and INSERT/UPDATE/DELETE statements have
+        dedicated paths and are rejected here.
 
         Args:
             sql: DDL SQL statement to execute
@@ -1518,7 +1511,7 @@ class DBFuncTool:
         Returns:
             Execution result with success status
         """
-        from datus.utils.sql_utils import strip_sql_comments
+        from datus.utils.sql_utils import parse_sql_type, strip_sql_comments
 
         # Validate: strip comments, reject multi-statement SQL
         cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
@@ -1528,25 +1521,35 @@ class DBFuncTool:
         if ";" in cleaned:
             return FuncToolResult(
                 success=0,
-                error="Multi-statement SQL is not allowed. Please submit one DDL statement at a time.",
+                error="Multi-statement SQL is not allowed. Please submit one statement at a time.",
             )
 
-        # Validate: only allow DDL statement types
-        if not self._ALLOWED_DDL_RE.match(cleaned):
+        connector = self._get_connector(datasource, database)
+
+        # Generic non-query execution path. There is NO sub-type allow-list:
+        # once the permission layer has approved a non-read statement, run it
+        # (CREATE/ALTER/DROP, CREATE DATABASE, TRUNCATE, MERGE, GRANT, ...). The
+        # only guard is defense-in-depth: read-only and DML statements have
+        # dedicated paths (read_query / execute_write) and must not land here.
+        stmt_type = parse_sql_type(cleaned, connector.dialect)
+        if stmt_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
             return FuncToolResult(
                 success=0,
-                error="Only DDL statements are allowed (CREATE/DROP SCHEMA, CREATE TABLE/VIEW, ALTER TABLE, "
-                "DROP TABLE/VIEW). DML statements (INSERT, UPDATE, DELETE, SELECT) are not permitted.",
+                error="Read-only statements (SELECT/SHOW/DESCRIBE/EXPLAIN) must run through the read path.",
+            )
+        if stmt_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
+            return FuncToolResult(
+                success=0,
+                error="DML statements (INSERT/UPDATE/DELETE) must run through the write path.",
             )
 
         out_of_scope = self._check_sql_table_scope(cleaned)
         if out_of_scope:
             return FuncToolResult(
                 success=0,
-                error=f"DDL statement references tables outside scoped context: {', '.join(out_of_scope)}",
+                error=f"Statement references tables outside scoped context: {', '.join(out_of_scope)}",
             )
 
-        connector = self._get_connector(datasource, database)
         if not hasattr(connector, "execute_ddl"):
             return FuncToolResult(success=0, error="Current database connector does not support DDL operations")
         try:
