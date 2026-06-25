@@ -3927,6 +3927,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#036" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#035" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4210,6 +4221,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#036" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#035" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4473,6 +4495,24 @@
 
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="036">0.3.6<a class="headerlink" href="#036" title="Permanent link">&para;</a></h3>
+<p><strong>增强</strong></p>
+<ul>
+<li><strong>可限定范围的 <code>/init</code> 与 <code>/build-kb</code></strong> - <code>/init</code> 现在支持传入可选 scope 文本，<code>/build-kb</code> 支持跳过确认步骤，便于在明确范围或自动化场景中更直接地构建知识库。<a href="https://github.com/Datus-ai/Datus-agent/pull/1033">#1033</a> <a href="https://docs.datus.ai/0.3/zh/cli/init_command/">init 文档</a> <a href="https://docs.datus.ai/0.3/zh/cli/build_kb_command/">build-kb 文档</a></li>
+<li><strong>模型级 SSL 校验配置</strong> - 模型 provider 可通过 <code>ssl_verify</code> 配置 <code>true</code>、<code>false</code> 或 CA bundle 路径，以连接私有 CA 或自签名证书的 LLM endpoint；模型级配置优先级高于 <code>SSL_VERIFY</code> 和 <code>SSL_CERT_FILE</code> 环境变量。<a href="https://github.com/Datus-ai/Datus-agent/pull/1043">#1043</a> <a href="https://docs.datus.ai/0.3/zh/configuration/agent/">文档</a></li>
+<li><strong>API 运行时堆栈诊断</strong> - API server 支持通过 <code>SIGUSR1</code> 将 live async task stack dump 到日志中，便于在不停止进程的情况下排查生产环境卡住问题。<a href="https://github.com/Datus-ai/Datus-agent/pull/1037">#1037</a></li>
+</ul>
+<p><strong>Bug 修复</strong></p>
+<ul>
+<li><strong>Session 与 Catalog API 响应更稳定</strong> - session 和 catalog endpoint 中较慢的同步文件系统或 datasource 调用会移出 event loop 并设置有界超时，避免单个慢请求拖住整个 API 进程。<a href="https://github.com/Datus-ai/Datus-agent/pull/1036">#1036</a></li>
+<li><strong>Datasource Override 保留 Database 上下文</strong> - 修复 datasource 名称被当作物理 database 名称使用的问题；Chat 请求现在会把 datasource override 与 database context 分开传递，connection、gateway、subagent 和 validation 路径都会保留这两个概念的区别。<a href="https://github.com/Datus-ai/Datus-agent/pull/1048">#1048</a></li>
+<li><strong>Release 与测试稳定性</strong> - Prepare Release workflow 现在会在 locked sync 前重新生成 <code>uv.lock</code>；BIRD SQLite fixtures 会隔离到临时目录，避免测试之间互相污染。<a href="https://github.com/Datus-ai/Datus-agent/pull/1039">#1039</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1047">#1047</a></li>
+</ul>
+<p><strong>升级说明</strong></p>
+<ul>
+<li><strong>Skill 执行方式</strong> - Skill 现在通过 <code>load_skill</code> 执行；旧的 <code>skill_execute_command</code> 路径和 skill config 中的 <code>allowed_commands</code> 字段已移除。<a href="https://github.com/Datus-ai/Datus-agent/pull/1033">#1033</a></li>
+<li><strong>数据库 Schema 工具</strong> - <code>get_table_ddl</code> 不再作为面向 agent/MCP 的工具暴露。用户侧 schema 和样例数据检查请使用 <code>describe_table</code> 和 <code>read_query</code>。<a href="https://github.com/Datus-ai/Datus-agent/pull/1031">#1031</a></li>
+</ul>
 <h3 id="035">0.3.5<a class="headerlink" href="#035" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
 <ul>

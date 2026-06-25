@@ -3927,6 +3927,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#036" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#035" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4210,6 +4221,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#036" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.6
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#035" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4473,6 +4495,24 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="036">0.3.6<a class="headerlink" href="#036" title="Permanent link">&para;</a></h3>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Scoped <code>/init</code> and <code>/build-kb</code> Runs</strong> - <code>/init</code> now accepts optional scope text, and <code>/build-kb</code> can skip confirmation for clearly scoped or automated knowledge-base builds. <a href="https://github.com/Datus-ai/Datus-agent/pull/1033">#1033</a> <a href="https://docs.datus.ai/0.3/cli/init_command/">init docs</a> <a href="https://docs.datus.ai/0.3/cli/build_kb_command/">build-kb docs</a></li>
+<li><strong>Model-Level SSL Verification</strong> - Model providers can set <code>ssl_verify</code> to <code>true</code>, <code>false</code>, or a CA bundle path for private CA and self-signed LLM endpoints; the model-level setting takes precedence over <code>SSL_VERIFY</code> and <code>SSL_CERT_FILE</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1043">#1043</a> <a href="https://docs.datus.ai/0.3/configuration/agent/">docs</a></li>
+<li><strong>Runtime Stack Dumps for API Diagnostics</strong> - The API server can dump live async task stacks to logs with <code>SIGUSR1</code>, making production hangs easier to diagnose without stopping the process. <a href="https://github.com/Datus-ai/Datus-agent/pull/1037">#1037</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Responsive Session and Catalog APIs</strong> - Slow blocking filesystem or datasource calls in session and catalog endpoints now run off the event loop with bounded timeouts, so one slow request no longer stalls the API process. <a href="https://github.com/Datus-ai/Datus-agent/pull/1036">#1036</a></li>
+<li><strong>Datasource Overrides Preserve Database Context</strong> - Fixed datasource names being treated as physical database names; chat requests now carry datasource overrides and database context separately through connection, gateway, subagent, and validation paths. <a href="https://github.com/Datus-ai/Datus-agent/pull/1048">#1048</a></li>
+<li><strong>Release and Test Stability</strong> - The Prepare Release workflow now regenerates <code>uv.lock</code> before locked sync, and BIRD SQLite fixtures are isolated in temporary directories so tests no longer contaminate each other. <a href="https://github.com/Datus-ai/Datus-agent/pull/1039">#1039</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1047">#1047</a></li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong>Skill Execution</strong> - Skills now execute through <code>load_skill</code>; the legacy <code>skill_execute_command</code> path and <code>allowed_commands</code> in skill config have been removed. <a href="https://github.com/Datus-ai/Datus-agent/pull/1033">#1033</a></li>
+<li><strong>Database Schema Tools</strong> - <code>get_table_ddl</code> is no longer exposed as an agent/MCP tool. Use <code>describe_table</code> and <code>read_query</code> for schema and sample-data inspection. <a href="https://github.com/Datus-ai/Datus-agent/pull/1031">#1031</a></li>
+</ul>
 <h3 id="035">0.3.5<a class="headerlink" href="#035" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
