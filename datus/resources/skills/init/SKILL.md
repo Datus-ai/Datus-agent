@@ -43,7 +43,7 @@ Record the resolved **goal**, **in-scope datasources**, and the **file / table /
 Gather the raw material **inside the resolved scope**, then classify it into a **multi-level taxonomy of business domains / subtopics** (e.g. `sales/orders`, `sales/refunds`, `infra/etl`). This taxonomy feeds the `AGENTS.md` inventory and helps you locate atomic facts worth filing as knowledge.
 
 **File side:**
-- Use `glob` / `grep` to collect candidate files **within scope**: `*.sql`, `*.md`, `*.yml` / `*.yaml`, scripts, configs, notebooks.
+- Use `glob` / `grep` to collect candidate files **within scope** — scan **all text files**, judged by content rather than extension. **Skip binary files** (images, executables, archives, compiled artifacts, parquet/db blobs, etc.) and **skip oversized files** (> ~1 MB) — if a large text file is clearly relevant, read its head/batches rather than the whole thing. When unsure whether a file is text, peek at the first bytes (`read_file` head) before committing to it.
 - **Note any validated-query corpus but do NOT enumerate it here.** A corpus of validated `(question, SQL)` pairs (a queries file, a golden/benchmark set, a saved-query catalog, a dbt/analysis SQL folder) feeds the vector-indexed `reference_sql` store, which is out of scope for this lightweight pass. You may mention its location under `## Data Assets` as a project asset, but do not generate `reference_sql` entries or a dedicated index section.
 
 **Database side (for each in-scope datasource):**
