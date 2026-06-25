@@ -17,6 +17,7 @@ from datus.storage.metric.metric_init import (
     _annotate_offset_identity_candidates,
     _build_candidate_plan,
     _ensure_offset_derived_metrics,
+    _ensure_semantic_models_for_metrics,
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _is_offset_derived_candidate,
@@ -572,6 +573,102 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
         assert success is True
         fake_rag_instance.truncate.assert_not_called()
         mock_exists.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# semantic model prerequisites for metric bootstrap
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestEnsureSemanticModelsForMetrics:
+    @pytest.mark.asyncio
+    async def test_osi_generates_domain_semantic_model_once(self, tmp_path):
+        from unittest.mock import patch
+
+        target_file = "subject/semantic_models/warehouse/warehouse.yml"
+        target_path = tmp_path / target_file
+        config = SimpleNamespace(
+            project_root=str(tmp_path),
+            current_datasource="warehouse",
+            agentic_nodes={"gen_metrics": {"semantic_adapter": "osi"}},
+            resolve_semantic_adapter=lambda requested=None: requested or "metricflow",
+        )
+        semantic_rag = MagicMock()
+        semantic_rag.get_size.return_value = 0
+        action_callback = MagicMock()
+        captured = {}
+
+        async def fake_init(agent_config, success_story, emit=None, build_mode="overwrite", action_callback=None):
+            target_path.parent.mkdir(parents=True)
+            target_path.write_text("version: 0.2.0.dev0\nsemantic_model:\n  - name: warehouse\n", encoding="utf-8")
+            captured["build_mode"] = build_mode
+            captured["action_callback"] = action_callback
+            return True, ""
+
+        with (
+            patch("datus.storage.semantic_model.store.SemanticModelRAG", return_value=semantic_rag),
+            patch(
+                "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
+                side_effect=fake_init,
+            ) as init_mock,
+            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list") as extract_mock,
+            patch("datus.storage.metric.metric_init.ensure_semantic_models_exist") as ensure_mock,
+        ):
+            ok, error, created = await _ensure_semantic_models_for_metrics(
+                config,
+                "success_story.csv",
+                [{"sql": "SELECT COUNT(*) FROM orders", "question": "How many orders?"}],
+                ["SELECT COUNT(*) FROM orders"],
+                action_callback=action_callback,
+            )
+
+        assert ok is True
+        assert error == ""
+        assert created == [target_file]
+        init_mock.assert_called_once()
+        extract_mock.assert_not_called()
+        ensure_mock.assert_not_called()
+        assert captured["build_mode"] == "incremental"
+        assert captured["action_callback"] is action_callback
+
+    @pytest.mark.asyncio
+    async def test_metricflow_keeps_per_table_semantic_model_auto_create(self):
+        from unittest.mock import patch
+
+        config = SimpleNamespace(
+            agentic_nodes={"gen_metrics": {"semantic_adapter": "metricflow"}},
+            resolve_semantic_adapter=lambda requested=None: requested or "metricflow",
+        )
+        records = [{"sql": "SELECT COUNT(*) FROM orders JOIN customers USING (customer_id)", "question": "Orders?"}]
+        sql_list = [records[0]["sql"]]
+
+        async def fake_ensure(tables, agent_config, emit=None, sql_evidence_by_table=None):
+            assert tables == ["customers", "orders"]
+            assert sql_evidence_by_table == {"orders": records}
+            return True, "", tables
+
+        with (
+            patch(
+                "datus.storage.metric.metric_init.extract_tables_from_sql_list",
+                return_value=["customers", "orders"],
+            ),
+            patch(
+                "datus.storage.metric.metric_init.extract_table_sql_evidence",
+                return_value={"orders": records},
+            ),
+            patch("datus.storage.metric.metric_init.ensure_semantic_models_exist", side_effect=fake_ensure),
+        ):
+            ok, error, created = await _ensure_semantic_models_for_metrics(
+                config,
+                "success_story.csv",
+                records,
+                sql_list,
+            )
+
+        assert ok is True
+        assert error == ""
+        assert created == ["customers", "orders"]
 
 
 # ---------------------------------------------------------------------------

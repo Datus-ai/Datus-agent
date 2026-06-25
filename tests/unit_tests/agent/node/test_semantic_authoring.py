@@ -6,6 +6,8 @@ from unittest.mock import patch
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_METRICFLOW,
     AUTHORING_FORMAT_OSI,
+    default_osi_semantic_model_file,
+    default_osi_semantic_model_name,
     osi_prompt_version,
     osi_template_name,
     resolve_authoring_format,
@@ -32,6 +34,16 @@ def test_derives_from_active_semantic_adapter():
 
 def test_derives_from_node_semantic_adapter():
     assert resolve_authoring_format(_agent_config("metricflow"), {"semantic_adapter": "osi"}) == AUTHORING_FORMAT_OSI
+
+
+def test_default_osi_semantic_model_name_uses_database_scope():
+    config = SimpleNamespace(
+        current_datasource="warehouse",
+        current_db_config=lambda: SimpleNamespace(database="Sales Domain", schema="", catalog=""),
+    )
+
+    assert default_osi_semantic_model_name(config) == "sales_domain"
+    assert default_osi_semantic_model_file(config) == "subject/semantic_models/warehouse/sales_domain.yml"
 
 
 def test_defaults_to_metricflow_when_unknown():

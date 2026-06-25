@@ -25,6 +25,7 @@ default ``{node}_system`` latest-version scan is never affected.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_logger
@@ -72,6 +73,53 @@ def resolve_authoring_format(
 def is_osi_authoring(agent_config: Any = None, node_config: Optional[Dict[str, Any]] = None) -> bool:
     """Return ``True`` when this node should author OSI instead of MetricFlow."""
     return resolve_authoring_format(agent_config, node_config) == AUTHORING_FORMAT_OSI
+
+
+def _normalize_model_name(value: Any) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"[^0-9A-Za-z_]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_").lower()
+    return text
+
+
+def default_osi_semantic_model_name(agent_config: Any = None) -> str:
+    """Return the default OSI semantic model name for the current authoring scope."""
+    candidates = []
+    if agent_config is not None:
+        try:
+            db_config = agent_config.current_db_config()
+        except Exception:
+            db_config = None
+        if db_config is not None:
+            candidates.extend(
+                [
+                    getattr(db_config, "database", ""),
+                    getattr(db_config, "schema", ""),
+                    getattr(db_config, "catalog", ""),
+                ]
+            )
+        candidates.extend(
+            [
+                getattr(agent_config, "current_datasource", ""),
+                getattr(agent_config, "project_name", ""),
+            ]
+        )
+
+    for candidate in candidates:
+        normalized = _normalize_model_name(candidate)
+        if normalized:
+            return normalized
+    return "semantic_model"
+
+
+def default_osi_semantic_model_file(agent_config: Any = None) -> str:
+    """Return the project-relative default YAML path for OSI domain authoring."""
+    datasource = ""
+    if agent_config is not None:
+        datasource = str(getattr(agent_config, "current_datasource", "") or "").strip()
+    if not datasource:
+        datasource = "default"
+    return f"subject/semantic_models/{datasource}/{default_osi_semantic_model_name(agent_config)}.yml"
 
 
 def osi_template_name(node_name: str) -> str:

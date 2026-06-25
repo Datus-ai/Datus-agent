@@ -11,6 +11,11 @@ from typing import Any, Callable, Optional
 import pandas as pd
 
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+from datus.agent.node.semantic_authoring import (
+    AUTHORING_FORMAT_OSI,
+    default_osi_semantic_model_file,
+    resolve_authoring_format,
+)
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import (
@@ -233,6 +238,80 @@ def _agent_config_dialect(agent_config: AgentConfig) -> str:
         return "snowflake"
     value = getattr(current_db_config, "db_type", "") or getattr(current_db_config, "dialect", "") or ""
     return value if isinstance(value, str) and value.strip() else "snowflake"
+
+
+def _metrics_node_config(agent_config: AgentConfig) -> dict[str, Any]:
+    nodes = getattr(agent_config, "agentic_nodes", None)
+    if not isinstance(nodes, dict):
+        return {}
+    node_config = nodes.get(METRICS_NODE_NAME) or {}
+    return node_config if isinstance(node_config, dict) else {}
+
+
+def _metrics_authoring_format(agent_config: AgentConfig) -> str:
+    return resolve_authoring_format(agent_config, _metrics_node_config(agent_config))
+
+
+def _project_relative_path(agent_config: AgentConfig, path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    project_root = Path(str(getattr(agent_config, "project_root", "") or ".")).expanduser()
+    return project_root / path
+
+
+async def _ensure_semantic_models_for_metrics(
+    agent_config: AgentConfig,
+    success_story: str,
+    success_story_records: list[dict[str, Any]],
+    sql_list: list[str],
+    action_callback: Optional[Callable[["ActionHistory"], None]] = None,
+) -> tuple[bool, str, list[str]]:
+    if _metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI:
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+        from datus.storage.semantic_model.store import SemanticModelRAG
+
+        target_file = default_osi_semantic_model_file(agent_config)
+        target_path = _project_relative_path(agent_config, target_file)
+        has_semantic_rows = SemanticModelRAG(agent_config).get_size() > 0
+        if has_semantic_rows and target_path.exists():
+            logger.info("Reusing existing OSI semantic model file for metric bootstrap: %s", target_file)
+            return True, "", []
+
+        logger.info("Generating OSI semantic model for metric bootstrap: %s", target_file)
+        success, error = await init_success_story_semantic_model_async(
+            agent_config,
+            success_story,
+            emit=None,
+            build_mode="incremental",
+            action_callback=action_callback,
+        )
+        if not success:
+            return False, error, []
+        if not target_path.exists():
+            return False, f"OSI semantic model generation did not create target file: {target_file}", []
+        return True, "", [target_file]
+
+    all_tables = extract_tables_from_sql_list(sql_list, agent_config)
+    if not all_tables:
+        return True, "", []
+
+    logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
+    sql_evidence_by_table = extract_table_sql_evidence(success_story_records, agent_config)
+
+    success, error, created_tables = await ensure_semantic_models_exist(
+        all_tables,
+        agent_config,
+        emit=None,
+        sql_evidence_by_table=sql_evidence_by_table,
+    )
+
+    if created_tables:
+        logger.info(f"Created semantic models for tables: {created_tables}")
+    if error:
+        logger.warning(f"Semantic model generation had partial failures: {error}")
+
+    return success, error, created_tables
 
 
 def _build_existing_metric_catalog(agent_config: AgentConfig) -> list[dict[str, Any]]:
@@ -933,30 +1012,19 @@ async def init_success_story_metrics_async(
         success_story_records.append({"sql": sql, "question": question})
         sql_entries.append({"name": f"sql_{idx + 1}", "sql": sql, "question": question})
     sql_list = [record["sql"] for record in success_story_records]
-    all_tables = extract_tables_from_sql_list(sql_list, agent_config)
+    success, error, _created_semantic_models = await _ensure_semantic_models_for_metrics(
+        agent_config,
+        success_story,
+        success_story_records,
+        sql_list,
+        action_callback=action_callback,
+    )
 
-    if all_tables:
-        logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
-        sql_evidence_by_table = extract_table_sql_evidence(success_story_records, agent_config)
-
-        # Check and create missing semantic models (per-table, partial failures tolerated)
-        success, error, created_tables = await ensure_semantic_models_exist(
-            all_tables,
-            agent_config,
-            emit=None,
-            sql_evidence_by_table=sql_evidence_by_table,
-        )
-
-        if not success:
-            error_msg = f"Failed to create semantic models: {error}"
-            logger.error(error_msg)
-            event_helper.task_failed(error=error_msg)
-            return False, error_msg, None
-
-        if created_tables:
-            logger.info(f"Created semantic models for tables: {created_tables}")
-        if error:
-            logger.warning(f"Semantic model generation had partial failures: {error}")
+    if not success:
+        error_msg = f"Failed to create semantic models: {error}"
+        logger.error(error_msg)
+        event_helper.task_failed(error=error_msg)
+        return False, error_msg, None
 
     existing_metric_catalog = _build_existing_metric_catalog(agent_config)
     existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)

@@ -32,6 +32,9 @@ def test_osi_metrics_template_is_backend_agnostic():
     assert "window_aggregation" in text
     assert "Allowed values are `sum`, `avg`, `min`, `max`, `count`, and `row_count`" in text
     assert "ROW_NUMBER()`, `RANK() OVER`, TopN per group" in text
+    assert "Target semantic model file: `subject/semantic_models/<datasource>/<model_name>.yml`" in text
+    assert '"metric_file": "subject/semantic_models/<datasource>/<model_name>.yml"' in text
+    assert "a separate metric file is allowed" not in text
 
 
 def test_osi_semantic_model_template_is_backend_agnostic():
@@ -53,6 +56,11 @@ def test_osi_semantic_model_template_is_backend_agnostic():
     assert "to_columns" in text
     assert "do NOT write MetricFlow" in text
     assert "never inside a dataset" in text
+    assert "business domain / semantic model scope" in text
+    assert "Target semantic model file: `subject/semantic_models/<datasource>/<model_name>.yml`" in text
+    assert '"semantic_model_files": ["subject/semantic_models/<datasource>/<model_name>.yml"]' in text
+    assert "One canonical dataset per physical table" not in text
+    assert "<table_name>.yml" not in text
 
 
 def test_default_metricflow_templates_are_unchanged():

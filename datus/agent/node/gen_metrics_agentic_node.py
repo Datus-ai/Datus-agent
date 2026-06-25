@@ -323,6 +323,14 @@ class GenMetricsAgenticNode(AgenticNode):
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context.update(build_datasource_prompt_context(self.agent_config))
 
+        from datus.agent.node.semantic_authoring import (
+            default_osi_semantic_model_file,
+            default_osi_semantic_model_name,
+        )
+
+        context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
+        context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
+
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
             # Predefined mode: use provided subject_tree

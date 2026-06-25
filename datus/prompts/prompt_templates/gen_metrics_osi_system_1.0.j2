@@ -5,10 +5,12 @@ Do NOT write legacy MetricFlow `metric:` blocks.
 
 CRITICAL MODEL RULE - **build the model once, then only add metrics**:
 - The datasets and relationships are owned by the semantic-model step and are ALREADY built.
-- A given physical table has one canonical dataset shared by all metrics. Never create a second dataset for the same table.
-- In OSI core, metrics live under `semantic_model[0].metrics`. Prefer editing the existing OSI core semantic-model file and appending metrics there.
-- If you create a separate metric YAML file, it must still be a complete valid OSI core document with `version` and `semantic_model`; copy the existing dataset definitions exactly so the file passes core schema. Do not invent or alter datasets in that file.
+- The semantic model file is the durable OSI domain document. Load it, preserve existing datasets and relationships, and append metrics under `semantic_model[0].metrics`.
+- A given logical dataset has one canonical definition shared by all metrics. Reuse that dataset by name in each metric's DATUS `dataset` hint.
 - This is the OSI authoring path. Do NOT load or follow generic MetricFlow `gen-metrics` / `gen-semantic-model` skills if they are visible; their file format is for the legacy MetricFlow authoring path.
+
+{% set target_model_name = default_osi_semantic_model_name | default('<model_name>', true) %}
+{% set target_model_file = default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) %}
 
 {% if native_tools %}- Native tools: {{ native_tools }}{% endif %}
 {% if mcp_tools %}- MCP servers: {{ mcp_tools }}{% endif %}
@@ -20,13 +22,13 @@ Metric definitions inside a valid OSI core document:
 ```yaml
 version: 0.2.0.dev0
 semantic_model:
-  - name: <existing_model_name>
+  - name: {{ target_model_name }}
     datasets:
       - name: <existing_dataset_name>
         source: <existing_source>
         primary_key: [<existing_primary_key>]
-        fields: [...]                         # copy exactly if this is a separate metric file
-    relationships: [...]                       # copy existing relationships exactly when needed
+        fields: [...]                         # preserve existing dataset definitions
+    relationships: [...]                       # preserve existing relationships
     metrics:
       - name: <metric_name>                    # globally unique snake_case
         description: "<business definition>"
@@ -111,7 +113,7 @@ Before writing any YAML, classify the source SQL:
 - Finish with:
   ```json
   {
-    "semantic_model_file": "{{ kind_subdir }}/<existing_model>.yml",
+    "semantic_model_file": "{{ target_model_file }}",
     "metric_file": null,
     "status": "skipped",
     "output": "No metric generated: the SQL is a detail/list query, not an aggregate metric definition."
@@ -121,8 +123,10 @@ Before writing any YAML, classify the source SQL:
 ## Workflow
 
 {% if current_datasource %}- Active datasource: `{{ current_datasource }}`{% endif %}
-{% if kind_subdir %}- Write OSI core YAML under `{{ kind_subdir }}/...` only. Prefer appending metrics to the existing semantic-model file; a separate metric file is allowed only if it is a complete OSI core document.{% endif %}
-- FIRST, load the existing model. Read the existing OSI core YAML in the datasource directory to learn dataset names, fields, time fields, and relationships. Call `list_metrics()` to see metrics that already exist.
+{% if kind_subdir %}- Write OSI core YAML under `{{ kind_subdir }}/...` only.{% endif %}
+- Target semantic model name: `{{ target_model_name }}`
+- Target semantic model file: `{{ target_model_file }}`
+- FIRST, load the existing model from `{{ target_model_file }}` to learn dataset names, fields, time fields, and relationships. Call `list_metrics()` to see metrics that already exist.
 - For provided SQL/history, call `analyze_metric_candidates_from_history` before writing files. Use `direct_metric_candidates` for base metrics and `derived_metric_candidates` for second-stage OSI metrics. If it returns `metric_generation_skips`, skip those SQLs instead of writing metric YAML.
 - Reference, reconcile, reuse: point each metric's DATUS `dataset` hint at an existing dataset. If a metric with the same meaning already exists (`check_semantic_object_exists(name, kind='metric')`), reuse/skip it. For a derived metric, make sure its input metrics already exist.
 - From SQL: find the table (FROM), aggregate expression(s), and business conditions vs query-time ranges. Anchor the metric on the aggregated table's existing dataset; encode metric-specific conditions with CASE inside the metric expression.
@@ -130,12 +134,12 @@ Before writing any YAML, classify the source SQL:
 - Produce valid OSI core YAML; the Datus OSI compiler validates it against OSI core schema, compiles Datus extensions into IR, and lowers it to the configured backend.
 - Call `validate_semantic(scope="all")` after writing OSI metrics and fix errors until it passes.
 - Call `query_metrics(metrics=[...], dry_run=True)` for every generated metric name before publishing.
-- After validation and dry-run pass, call `end_metric_generation(metric_file="<osi core file containing the new metrics>", semantic_model_file="<existing semantic model file>", metric_sqls_json="<dry-run SQL JSON>")`.
+- After validation and dry-run pass, call `end_metric_generation(metric_file="{{ target_model_file }}", semantic_model_file="{{ target_model_file }}", metric_sqls_json="<dry-run SQL JSON>")`.
 - Finish with JSON:
   ```json
   {
-    "semantic_model_file": "{{ kind_subdir }}/<existing_model>.yml",
-    "metric_file": "{{ kind_subdir }}/<file_containing_generated_metrics>.yml",
+    "semantic_model_file": "{{ target_model_file }}",
+    "metric_file": "{{ target_model_file }}",
     "status": "generated",
     "output": "<brief summary>"
   }
