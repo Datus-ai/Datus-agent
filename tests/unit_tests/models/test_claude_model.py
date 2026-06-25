@@ -808,6 +808,69 @@ class TestGenerateWithMcpStream:
         assert actions[2].role == ActionRole.ASSISTANT
 
     @pytest.mark.asyncio
+    async def test_structured_tool_result_preserves_provenance_in_action_output(self):
+        """Regression: search_reference_sql results carrying source_context_id must
+        be recorded as structured records under output["result"], not only as a
+        stringified raw_output. Benchmark trajectory evaluation reads this
+        provenance; when it was a JSON string only, every task became
+        source_context_id_missing and reference_sql ranking scored 0%.
+        """
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        tool_block = _make_tool_use_block(
+            name="search_reference_sql", block_id="call_1", input_data={"query": "orders"}
+        )
+        resp_tool = _make_response([tool_block])
+        resp_final = _make_response([_make_text_block("done")])
+        model.anthropic_client.messages.create.side_effect = [resp_tool, resp_final]
+
+        # Real shape: trans_to_function_tool returns FuncToolResult.model_dump(),
+        # an envelope dict whose records live under "result" — not a bare list.
+        records = [
+            {"name": "task:0", "sql": "SELECT 1", "summary": "x", "tags": [], "source_context_id": "refsql:task:0"},
+            {"name": "task:9", "sql": "SELECT 2", "summary": "y", "tags": [], "source_context_id": "refsql:task:9"},
+        ]
+        envelope = {"success": 1, "error": None, "result": records}
+        func_tool = MagicMock()
+        func_tool.name = "search_reference_sql"
+        func_tool.description = "Search reference SQL"
+        func_tool.params_json_schema = {"type": "object"}
+        func_tool.on_invoke_tool = AsyncMock(return_value=envelope)
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="test",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                func_tools=[func_tool],
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        success = [a for a in actions if a.role == ActionRole.TOOL and a.status == ActionStatus.SUCCESS]
+        assert len(success) == 1
+        output = success[0].output
+
+        # Must be the unwrapped records list (what the benchmark trajectory provider
+        # reads), not the envelope — a wrapped envelope has no source_context_id.
+        assert output.get("result") == records
+        ids = [item["source_context_id"] for item in output["result"]]
+        assert ids == ["refsql:task:0", "refsql:task:9"]
+
+        # Backward-compat: the stringified raw_output is still present for display
+        # and message reconstruction.
+        assert isinstance(output["raw_output"], str)
+        assert "refsql:task:0" in output["raw_output"]
+
+    @pytest.mark.asyncio
     async def test_func_tool_receives_tool_call_id_matching_block_id(self):
         """The func tool must be invoked with a context whose ``tool_call_id``
         equals the tool_use block id (== the PROCESSING action's ``action_id``).

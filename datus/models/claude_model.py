@@ -805,18 +805,30 @@ class ClaudeModel(OpenAICompatibleModel):
                             result_summary = (
                                 self._format_tool_result(result_text, block.name) if tool_executed else "Failed"
                             )
+                            tool_output = {
+                                "success": tool_executed,
+                                "raw_output": result_text,
+                                "summary": result_summary,
+                                "status_message": result_summary,
+                            }
+                            # Keep the structured records (raw_output is stringified
+                            # for the Anthropic message). Unwrap the FuncToolResult
+                            # envelope so benchmark trajectory evaluation can read
+                            # source_context_id provenance.
+                            structured_result = None
+                            if isinstance(hook_result, dict):
+                                structured_result = hook_result.get("result", hook_result)
+                            elif isinstance(hook_result, list):
+                                structured_result = hook_result
+                            if isinstance(structured_result, (dict, list)):
+                                tool_output["result"] = structured_result
                             complete_action = ActionHistory(
                                 action_id=f"complete_{block.id}",
                                 role=ActionRole.TOOL,
                                 messages=f"Tool call: {block.name}('{args_str}...')",
                                 action_type=block.name,
                                 input={"function_name": block.name, "arguments": block.input},
-                                output={
-                                    "success": tool_executed,
-                                    "raw_output": result_text,
-                                    "summary": result_summary,
-                                    "status_message": result_summary,
-                                },
+                                output=tool_output,
                                 status=ActionStatus.SUCCESS if tool_executed else ActionStatus.FAILED,
                             )
                             complete_action.end_time = datetime.now()
