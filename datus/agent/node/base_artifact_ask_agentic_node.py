@@ -1733,7 +1733,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         # which would mislead the LLM.
         has_insights = self._artifact_has_insights()
         # When the subagent whitelist drops db_tools, the model has no
-        # describe_table / read_query to call — promising them in the rules
+        # describe_table / execute_sql to call — promising them in the rules
         # makes it attempt unavailable tools ("Tool ... not found").
         db_exposed = self._db_tools_exposed()
         live_data_clause = (
@@ -1752,8 +1752,8 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             # model from offering to run queries. State it up front.
             lines.append(
                 "**This agent has NO live database access.** You cannot query "
-                "the database or introspect schema live (no `read_query`, "
-                "`list_tables`, or `describe_table`). Do NOT offer to run SQL "
+                "the database or introspect schema live (no SQL execution or "
+                "schema-introspection tools). Do NOT offer to run SQL "
                 "or fetch fresh data — answer only from the inlined data + "
                 "artifact files above, and say plainly when a question would "
                 "require a live query you can't run."

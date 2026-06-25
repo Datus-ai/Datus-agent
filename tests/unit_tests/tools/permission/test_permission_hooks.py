@@ -1575,3 +1575,127 @@ class TestVisualArtifactAutoAllow:
         )
 
         mock_broker.request.assert_not_called()
+
+
+class TestExecuteSqlPermission:
+    """Statement-type gating for ``db_tools.execute_sql`` via _handle_sql_permission."""
+
+    def _make_hooks(self, mock_broker, config, non_interactive=False):
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "execute_sql"
+        registry.register_tools("db_tools", [tool_mock])
+        manager = PermissionManager(global_config=config)
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+        )
+
+    @staticmethod
+    def _ctx(sql):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"sql": sql})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "execute_sql"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_read_auto_allows_under_normal_default_ask(self, mock_broker):
+        """A SELECT auto-allows even when the profile default is ASK — no prompt."""
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("SELECT * FROM users"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_metadata_show_auto_allows(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("SHOW TABLES"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_prompts_and_allows_on_yes(self, mock_broker):
+        """An INSERT defers to the normal ASK flow; user 'y' lets it through."""
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx("INSERT INTO users VALUES (1)"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_write_rejected_on_no(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value="n")
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("DELETE FROM users"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_ddl_prompts(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx("CREATE TABLE t (id INT)"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_or_unparseable_sql_prompts(self, mock_broker):
+        """A .sql file path / unparseable text is treated as non-read → ASK (fail safe)."""
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(self._ctx("sql/session_1/q.sql"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_read_respects_explicit_deny(self, mock_broker):
+        """An explicit DENY on execute_sql blocks even a read."""
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[PermissionRule(tool="db_tools", pattern="execute_sql", permission=PermissionLevel.DENY)],
+        )
+        hooks = self._make_hooks(mock_broker, config)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("SELECT 1"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_write_non_interactive_raises_without_prompt(self, mock_broker):
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config, non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("UPDATE users SET a = 1"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_allowed_under_dangerous_default(self, mock_broker):
+        """Dangerous profile (default ALLOW) lets writes through with no prompt."""
+        config = PermissionConfig(default_permission=PermissionLevel.ALLOW, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()

@@ -20,7 +20,7 @@ tool calls. Only outputs are archived.
 Two design properties matter:
 
 1. **Zero information loss** — the LLM can always ``read_file(<path>)`` to
-   reconstruct the original, including for execute_ddl SQL, write_file
+   reconstruct the original, including for execute_sql SQL, write_file
    content, or 50KB task subagent outputs.
 2. **Idempotent re-scan** — the in-session replacement starts with a fixed
    prefix (:data:`ARCHIVED_MARKER`) so a second compact pass detects the

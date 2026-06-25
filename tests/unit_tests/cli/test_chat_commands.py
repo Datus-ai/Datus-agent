@@ -1011,14 +1011,18 @@ class TestCmdChatInfo:
 class TestAddInSqlContext:
     """Tests for add_in_sql_context logic."""
 
-    def _make_tool_action(self, function_name, output_data, status=ActionStatus.SUCCESS):
-        """Helper to create a TOOL action."""
+    def _make_tool_action(self, function_name, output_data, status=ActionStatus.SUCCESS, sql="SELECT 1"):
+        """Helper to create a TOOL action.
+
+        ``sql`` is the statement carried in the action input; the chat SQL-context
+        seeder only considers read-type ``execute_sql`` calls.
+        """
         return ActionHistory(
             action_id=f"test_{function_name}",
             role=ActionRole.TOOL,
             messages=f"Tool call: {function_name}",
             action_type=function_name,
-            input={"function_name": function_name, "arguments": "{}"},
+            input={"function_name": function_name, "arguments": "{}", "sql": sql},
             output=output_data,
             status=status,
         )
@@ -1043,7 +1047,7 @@ class TestAddInSqlContext:
         actions = [
             self._make_tool_action("list_tables", {"success": True, "raw_output": "tables"}),
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1068,7 +1072,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1091,7 +1095,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "",
                     "error": "Permission denied",
@@ -1111,7 +1115,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": "plain text output",
@@ -1131,7 +1135,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": json.dumps(
@@ -1158,7 +1162,7 @@ class TestAddInSqlContext:
     def test_sql_action_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
         """read_query action output itself may be malformed; keep chat rendering alive."""
         cmds = _make_chat_commands(real_agent_config)
-        actions = [self._make_tool_action("read_query", "plain text output")]
+        actions = [self._make_tool_action("execute_sql", "plain text output")]
 
         cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
 
@@ -1172,7 +1176,7 @@ class TestAddInSqlContext:
         cmds = _make_chat_commands(real_agent_config)
         actions = [
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {
@@ -1182,7 +1186,7 @@ class TestAddInSqlContext:
                 },
             ),
             self._make_tool_action(
-                "read_query",
+                "execute_sql",
                 {
                     "success": "True",
                     "raw_output": {

@@ -234,6 +234,7 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "list_tables": lambda a: _format_kw(a, "catalog", "schema_name"),
     "describe_table": lambda a: _format_positional(a, "table_name", "name"),
     "search_table": lambda a: _format_positional(a, "query_text", "query"),
+    "execute_sql": lambda a: _format_positional(a, "query", "sql"),
     "read_query": lambda a: _format_positional(a, "query", "sql"),
     "query": lambda a: _format_positional(a, "query", "sql"),
     "list_databases": lambda _a: "",
@@ -904,7 +905,8 @@ def _build_describe_table(action: ActionHistory, verbose: bool) -> ToolCallConte
 
 
 def _build_read_query(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """read_query / query: show row × column count.
+    """execute_sql / read_query / query: show row × column count for reads,
+    or rows-affected / message for writes & DDL.
 
     Handles both raised-exception failures (``action.status == FAILED``) and
     tool-reported failures (``FuncToolResult(success=0)``). The latter leaves
@@ -954,9 +956,19 @@ def _build_read_query(action: ActionHistory, verbose: bool) -> ToolCallContent:
                 else:
                     tc.compact_result = f"{rows} rows"
             else:
-                items = _get_items_from_output(action.output)
-                if isinstance(items, list):
-                    tc.compact_result = f"{len(items)} items"
+                result = data.get("result")
+                # Write/DDL execute_sql payloads carry a message + optional
+                # row_count instead of a row set.
+                if isinstance(result, dict) and ("message" in result or "row_count" in result):
+                    row_count = result.get("row_count")
+                    if row_count is not None:
+                        tc.compact_result = f"{row_count} rows affected"
+                    else:
+                        tc.compact_result = str(result.get("message") or "OK")
+                else:
+                    items = _get_items_from_output(action.output)
+                    if isinstance(items, list):
+                        tc.compact_result = f"{len(items)} items"
     return tc
 
 
@@ -2057,6 +2069,7 @@ class ToolCallContentBuilder:
         self._registry["list_tables"] = _build_list_tables
         self._registry["table_overview"] = _build_list_tables
         self._registry["describe_table"] = _build_describe_table
+        self._registry["execute_sql"] = _build_read_query
         self._registry["read_query"] = _build_read_query
         self._registry["query"] = _build_read_query
         self._registry["search_table"] = _build_search_table

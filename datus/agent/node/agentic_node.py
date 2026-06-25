@@ -3369,7 +3369,7 @@ class AgenticNode(Node):
         Prefers ``all_tools_name()`` (the full surface, independent of
         runtime availability) over ``available_tools()`` so the registry
         also covers method-level wrappers some nodes mount directly (e.g.
-        ``DBFuncTool.execute_ddl`` on gen_job) and conditional tools that
+        ``DBFuncTool.transfer_query_result`` on gen_job) and conditional tools that
         appear only with certain configs. Registering a superset is safe:
         the registry is a name → category lookup consulted per call, so
         names that are never mounted are never queried.

@@ -43,8 +43,11 @@ logger = get_logger(__name__)
 
 
 # Whitelist of read-only tools exposed to validator sub-agents. Deliberately
-# narrow — any write tool is explicitly excluded, as is ``SubAgentTaskTool``
-# (to avoid recursive fork). See design doc §5.5.
+# narrow — dedicated write tools are excluded, as is ``SubAgentTaskTool``
+# (to avoid recursive fork). ``execute_sql`` is the unified SQL entry point;
+# validators run non-interactively, so its statement-type gate in
+# ``PermissionHooks._handle_sql_permission`` raises on any write/DDL — keeping
+# validators read-only in practice. See design doc §5.5.
 VALIDATOR_READONLY_TOOL_NAMES = {
     # Database read tools
     "list_databases",
@@ -52,7 +55,7 @@ VALIDATOR_READONLY_TOOL_NAMES = {
     "list_tables",
     "describe_table",
     "search_table",
-    "read_query",
+    "execute_sql",
     # BI read tools (gen_dashboard validators)
     "list_dashboards",
     "get_dashboard",

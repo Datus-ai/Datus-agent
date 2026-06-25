@@ -530,6 +530,18 @@ def _fallback_sql_type(statement: str) -> SQLType | None:
     return _KEYWORD_SQL_TYPE_MAP.get(keyword)
 
 
+def is_read_query_result(result: Any) -> bool:
+    """Return True if a ``FuncToolResult.result`` payload is a read-only query
+    result set.
+
+    ``execute_sql`` returns the compressor output (a dict carrying
+    ``compressed_data``) for SELECT/SHOW/EXPLAIN statements, and a metadata
+    payload (``message``/``sql``/...) for INSERT/UPDATE/DELETE/DDL. Consumers
+    that only want to seed query context from reads use this to skip writes.
+    """
+    return isinstance(result, dict) and "compressed_data" in result
+
+
 def parse_sql_type(sql: str, dialect: str) -> SQLType:
     """
     Determines the type of an SQL statement based on its first keyword.

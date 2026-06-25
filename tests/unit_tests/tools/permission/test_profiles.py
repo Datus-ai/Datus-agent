@@ -40,7 +40,12 @@ class TestNormalProfile:
         """Normal allows context search, date parsing, and DB/BI/FS reads."""
         config = NORMAL
         assert _resolve(config, "context_search_tools", "search_metrics") == PermissionLevel.ALLOW
-        assert _resolve(config, "db_tools", "read_query") == PermissionLevel.ALLOW
+        # ``execute_sql`` has no static rule — its read-vs-write gating lives in
+        # ``PermissionHooks._handle_sql_permission`` (read auto-allow, write ASK),
+        # so statically it resolves to the profile default (ASK). ``verify_sql``
+        # remains an explicit read ALLOW.
+        assert _resolve(config, "db_tools", "verify_sql") == PermissionLevel.ALLOW
+        assert _resolve(config, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(config, "db_tools", "list_tables") == PermissionLevel.ALLOW
         assert _resolve(config, "db_tools", "search_table") == PermissionLevel.ALLOW
         assert _resolve(config, "bi_tools", "list_dashboards") == PermissionLevel.ALLOW
@@ -55,7 +60,7 @@ class TestNormalProfile:
     def test_writes_ask(self):
         """Normal ASKs on all write-ish tools via default_permission."""
         config = NORMAL
-        assert _resolve(config, "db_tools", "execute_ddl") == PermissionLevel.ASK
+        assert _resolve(config, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ASK
         assert _resolve(config, "tools", "todo_write") == PermissionLevel.ASK
 
@@ -146,7 +151,7 @@ class TestNormalProfile:
 class TestAutoProfile:
     def test_inherits_normal_reads(self):
         config = AUTO
-        assert _resolve(config, "db_tools", "read_query") == PermissionLevel.ALLOW
+        assert _resolve(config, "db_tools", "verify_sql") == PermissionLevel.ALLOW
         assert _resolve(config, "context_search_tools", "search_metrics") == PermissionLevel.ALLOW
 
     def test_workspace_writes_allowed(self):
@@ -177,10 +182,11 @@ class TestAutoProfile:
         assert _resolve(config, "scheduler_tools", "delete_job") == PermissionLevel.ASK
 
     def test_db_writes_still_ask(self):
-        """No env detection in MVP — all DB writes always ASK."""
+        """No env detection in MVP — all DB writes always ASK. ``execute_sql``
+        writes resolve to the profile default ASK (the hook auto-allows only
+        reads); the standalone transfer tool keeps its explicit ASK rule."""
         config = AUTO
-        assert _resolve(config, "db_tools", "execute_ddl") == PermissionLevel.ASK
-        assert _resolve(config, "db_tools", "execute_write") == PermissionLevel.ASK
+        assert _resolve(config, "db_tools", "execute_sql") == PermissionLevel.ASK
         assert _resolve(config, "db_tools", "transfer_query_result") == PermissionLevel.ASK
 
     def test_mcp_still_asks_skill_loading_allowed(self):
@@ -193,7 +199,7 @@ class TestAutoProfile:
 class TestDangerousProfile:
     def test_everything_allowed_by_default(self):
         config = DANGEROUS
-        assert _resolve(config, "db_tools", "execute_ddl") == PermissionLevel.ALLOW
+        assert _resolve(config, "db_tools", "execute_sql") == PermissionLevel.ALLOW
         assert _resolve(config, "bi_tools", "delete_dashboard") == PermissionLevel.ALLOW
         assert _resolve(config, "scheduler_tools", "delete_job") == PermissionLevel.ALLOW
         assert _resolve(config, "mcp.anything", "whatever") == PermissionLevel.ALLOW
@@ -277,7 +283,7 @@ class TestBuildEffectiveConfig:
 
         effective = build_effective_config(
             "auto",
-            {"rules": [{"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"}]},
+            {"rules": [{"tool": "db_tools", "pattern": "execute_sql", "permission": "deny"}]},
         )
         # Auto's default is ASK; user didn't set default, so it stays ASK
         assert effective.default_permission == PermissionLevel.ASK

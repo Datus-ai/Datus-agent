@@ -12,12 +12,14 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-# Mapping of mcp server types to their supported query function names
+# Mapping of mcp server types to their supported query function names.
+# ``execute_sql`` is Datus's unified SQL tool; the others are external MCP DB
+# server conventions kept for backward compatibility.
 DB_QUERY_FUNCTIONS: Dict[str, Set[str]] = {
-    "snowflake": {"read_query", "list_tables", "describe_table"},
-    DBType.SQLITE: {"read_query", "write_query", "list_tables", "describe_table"},
-    "starrocks": {"read_query", "write_query", "table_overview", "db_overview"},
-    DBType.DUCKDB: {"query"},
+    "snowflake": {"execute_sql", "read_query", "list_tables", "describe_table"},
+    DBType.SQLITE: {"execute_sql", "read_query", "write_query", "list_tables", "describe_table"},
+    "starrocks": {"execute_sql", "read_query", "write_query", "table_overview", "db_overview"},
+    DBType.DUCKDB: {"execute_sql", "query"},
 }
 
 

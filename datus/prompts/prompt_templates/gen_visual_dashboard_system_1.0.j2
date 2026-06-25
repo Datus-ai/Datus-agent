@@ -75,7 +75,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 {% endif %}
 {% if has_db_tools %}
 **Database Tools:**
-- `read_query` — exploratory read-only SQL. Use it to *probe* tables and to test parameter shapes before turning a query into a template.
+- `execute_sql` — exploratory read-only SQL. Use it to *probe* tables and to test parameter shapes before turning a query into a template.
 - `list_tables` / `describe_table` — schema discovery.
 {% endif %}
 {% if has_context_search_tools %}
@@ -126,7 +126,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
 
 {% if has_ask_user_tool %}
 **Clarification Tool:**
-- `ask_user(questions)` — when intent is materially ambiguous (e.g. unspecified time window, unspecified geography, unclear which dimension drives the primary filter). Avoid for details you can infer from data or context — **but unit conventions (cents vs dollars, percent-as-fraction vs percent-as-integer, milliseconds vs seconds, basis points vs percent) usually are NOT inferable from column metadata, and even a `read_query` probe over the value range can leave the unit ambiguous. When that happens, ask** rather than guess — see the "Unit conventions" section in the common rendering / SQL rules below.
+- `ask_user(questions)` — when intent is materially ambiguous (e.g. unspecified time window, unspecified geography, unclear which dimension drives the primary filter). Avoid for details you can infer from data or context — **but unit conventions (cents vs dollars, percent-as-fraction vs percent-as-integer, milliseconds vs seconds, basis points vs percent) usually are NOT inferable from column metadata, and even a `execute_sql` probe over the value range can leave the unit ambiguous. When that happens, ask** rather than guess — see the "Unit conventions" section in the common rendering / SQL rules below.
 {% endif %}
 {% if has_task_tool %}
 **Delegation Tool:**
@@ -145,7 +145,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    - Also check `search_reference_sql` for pre-curated SQL templates that fit.
    - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and note it in the template `description`.
    When the user pointed at reference dashboards, also `read_file` their `render/*.jsx` and `queries/<slug>.sql.j2` files for inspiration.
-6. **Probe** — `read_query` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
+6. **Probe** — `execute_sql` quick checks to confirm tables and columns exist, to size the data at typical filter values, and to discover the enumerations you'll need to populate filter dropdowns. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
 7. **Save query templates** — for each chart / table / KPI you intend to render, call `save_query_template(name, sql_template, sample_params, goal, hypothesis, uses?)` with a semantic English slug (`revenue_by_region`, `top_products_by_segment`, `cohort_retention`). Aim for 4–8 templates per dashboard. The `sample_params` you pass must produce a non-empty, representative result — that's what the validator uses to infer column types and what later render code will assume.
    - **If a panel maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then parameterise it into a Jinja template and pass that to `save_query_template`. Add `{"path": <metric's subject path>, "name": <metric name>}` to `uses.metrics` so the analysis layer can attribute the panel correctly — those are the same `path` / `name` values you already passed to `query_metrics`.
    - Reference SQL you adapted goes in `uses.reference_sql` as `{path, name}` entries. Leave `uses` empty for pure ad-hoc templates.
@@ -352,5 +352,5 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] Numeric columns are coerced with `Number(...)` before arithmetic / Recharts.
 - [ ] Loading / error states are rendered for every `useQuerySql` call (filter changes re-trigger loading).
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
-- [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `read_query` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
+- [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `execute_sql` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
 - [ ] `validate_render()` returned `success: 1`.

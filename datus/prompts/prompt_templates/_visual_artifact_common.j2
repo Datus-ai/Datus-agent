@@ -243,7 +243,7 @@ Mandatory fix paths — pick the one that matches your intent:
 - **(b) Pre-aggregate the child in a CTE** so the post-CTE JOIN is 1:1. Right when you genuinely need per-parent rollups of child data.
 - **(c) `SUM(DISTINCT parent.col)`** is rarely correct — only valid when `parent.pk` is in the SELECT/GROUP BY and the SUM target is unique per parent. Do not reach for it as a shortcut.
 
-When uncertain about cardinality, verify with `read_query` before saving:
+When uncertain about cardinality, verify with `execute_sql` before saving:
 
 ```sql
 -- compare these two — if joined_rows >> parent_rows, every header aggregate is wrong by that ratio
@@ -257,7 +257,7 @@ Fan-out is a **bug to be fixed**, not a caveat to disclose. Do NOT save a query 
 
 Schemas almost never label the **unit** of a numeric column. The same `revenue` column can hold dollars, cents, basis points, or thousands; `latency` can be ms or s; `rate` can be 0.05 or 5.0. Guessing wrong silently propagates a 10× / 100× / 1000× error through every downstream KPI and chart, and no validator catches it because the SQL is syntactically perfect.
 
-**Mandatory probe** for any money / ratio / duration / count column whose name does **not** explicitly declare its unit (no `_cents` / `_usd` / `_pct` / `_bps` / `_ms` suffix, no schema comment, no enclosing semantic-model definition): run `read_query` to inspect the value range before authoring any aggregate over it.
+**Mandatory probe** for any money / ratio / duration / count column whose name does **not** explicitly declare its unit (no `_cents` / `_usd` / `_pct` / `_bps` / `_ms` suffix, no schema comment, no enclosing semantic-model definition): run `execute_sql` to inspect the value range before authoring any aggregate over it.
 
 ```sql
 SELECT MIN(<col>) AS lo, MAX(<col>) AS hi, AVG(<col>) AS mid FROM <table>;

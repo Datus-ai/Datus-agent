@@ -1860,15 +1860,23 @@ class ChatCommands:
             except json.JSONDecodeError:
                 return value
 
+        from datus.utils.constants import SQLType
+        from datus.utils.sql_utils import parse_sql_type
+
+        def _is_read_sql_action(act) -> bool:
+            # ``execute_sql`` is the unified entry point; only seed SQL context
+            # from read-type statements (by input SQL), so a write/DDL never
+            # clobbers the last query's context. Covers failed reads too.
+            if act.function_name() != "execute_sql":
+                return False
+            inp = _maybe_parse_json(act.input)
+            sql = inp.get("sql", "") if isinstance(inp, dict) else ""
+            return parse_sql_type(sql, "") in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+
         last_sql_action = None
         for i in range(len(incremental_actions) - 1, -1, -1):
             action = incremental_actions[i]
-            if (
-                action
-                and action.is_done()
-                and action.role == ActionRole.TOOL
-                and action.function_name() == "read_query"
-            ):
+            if action and action.is_done() and action.role == ActionRole.TOOL and _is_read_sql_action(action):
                 last_sql_action = action
                 break
 
@@ -1882,7 +1890,7 @@ class ChatCommands:
 
         action_output = _maybe_parse_json(last_sql_action.output)
         if not isinstance(action_output, dict):
-            logger.warning("read_query action output is not a dict; storing it as SQL context error")
+            logger.warning("execute_sql action output is not a dict; storing it as SQL context error")
             error = str(action_output or "")
             sql_return = None
             row_count = 0
@@ -1893,7 +1901,7 @@ class ChatCommands:
         else:
             tool_result = _maybe_parse_json(action_output.get("raw_output", {}))
             if not isinstance(tool_result, dict):
-                logger.warning("read_query raw_output is not a dict; storing it as SQL context error")
+                logger.warning("execute_sql raw_output is not a dict; storing it as SQL context error")
                 error = str(tool_result or "")
                 sql_return = ""
                 row_count = 0

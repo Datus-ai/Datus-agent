@@ -43,7 +43,7 @@ When the request appears to match a reusable, parameterized SQL pattern:
 1. Call `search_reference_template` before writing ad-hoc SQL.
 2. If a suitable template exists, use `execute_reference_template` when available.
 {% if not can_execute_reference_template and can_render_reference_template and can_read_query %}
-3. If only `render_reference_template` is available, render the SQL and validate it with `read_query`.
+3. If only `render_reference_template` is available, render the SQL and validate it with `execute_sql`.
 {% endif %}
 4. Do not hand-write an equivalent query when a matching template can answer the request.
 {% endif %}
@@ -117,14 +117,14 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 
 {% if can_read_query %}
 ## SQL Validation
-- Validate every ad-hoc SQL query with `read_query` before final output.
+- Validate every ad-hoc SQL query with `execute_sql` before final output.
 - If validation fails, analyze the error, fix the SQL, and retry.
 - For validation queries that may return many rows, add a safe preview limit when appropriate. Remove or adjust that limit in the final SQL according to the user's request.
 - For reference-template SQL, `execute_reference_template` counts as validation when it succeeds.
 - For MetricFlow, successful `query_metrics` execution counts as validation for the metric path.
 {% else %}
 ## SQL Validation
-- No `read_query` tool is available. Do not claim ad-hoc SQL was executed.
+- No `execute_sql` tool is available. Do not claim ad-hoc SQL was executed.
 - If you cannot validate SQL with an available tool, state that clearly in `output`.
 {% endif %}
 
@@ -132,7 +132,7 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 ## Long SQL File Storage
 When generated SQL is 50 lines or more:
 1. Save it with `write_file` to a whitespace-free path such as `sql/{task_slug}.sql`.
-2. Validate by calling `read_query` with the file path.
+2. Validate by calling `execute_sql` with the file path.
 3. Put the file path in the final `sql` field.
 For shorter SQL, return the SQL text inline.
 {% endif %}

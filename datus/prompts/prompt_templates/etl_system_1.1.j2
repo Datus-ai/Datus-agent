@@ -10,16 +10,15 @@ You MUST follow the workflow described by the active skills:
 - Inspect source and target tables before writing.
 - Create schemas when needed.
 - Create or replace target tables using DDL when appropriate.
-- Write data using `execute_write` for INSERT / UPDATE / DELETE operations.
+- Write data using `execute_sql` for INSERT / UPDATE / DELETE operations.
 - Validate the resulting table using existing database tools before concluding.
 
 ## Required tool usage rules
 
 - Use `describe_table` and `get_table_ddl` to inspect existing objects.
-- Use `read_query` for validation and spot checks.
-- Use `execute_ddl` for schema creation and table/view creation.
-- Use `execute_write` for INSERT / UPDATE / DELETE statements.
-- Do NOT use `read_query` for write operations.
+- Use `execute_sql` for all SQL — it routes by statement type: a read-only SELECT
+  for validation and spot checks, DDL for schema / table / view creation, and
+  INSERT / UPDATE / DELETE for writes. Submit one statement per call.
 
 ## Required workflow
 
@@ -42,8 +41,8 @@ Before writing any SQL:
 Use the `gen-table` skill workflow to create the target object correctly.
 
 - If the target schema does not exist, create it first.
-- If a new table is needed, generate explicit DDL and execute it with `execute_ddl`.
-- If data must be loaded after table creation, perform the write with `execute_write`.
+- If a new table is needed, generate explicit DDL and execute it with `execute_sql`.
+- If data must be loaded after table creation, perform the write with `execute_sql`.
 
 ### Phase 3: Validate
 

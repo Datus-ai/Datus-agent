@@ -7,11 +7,11 @@ GenJobAgenticNode implementation for ETL and cross-database migration jobs.
 
 This node builds target tables from source tables (single-database ETL) and
 migrates data across database engines (cross-database migration). Most of the
-plumbing lives in the shared :class:`DeliverableAgenticNode` base; this
-subclass adds DML (``execute_write``), cross-DB transfer
-(``transfer_query_result``), and the three ``MigrationTargetMixin`` wrappers
-(``get_migration_capabilities`` / ``suggest_table_layout`` / ``validate_ddl``)
-to the DDL-only default set.
+plumbing lives in the shared :class:`DeliverableAgenticNode` base. Read, DML,
+and DDL all flow through the unified ``execute_sql`` tool; this subclass adds
+cross-DB transfer (``transfer_query_result``) and the three
+``MigrationTargetMixin`` wrappers (``get_migration_capabilities`` /
+``suggest_table_layout`` / ``validate_ddl``).
 
 Post-transfer reconciliation is driven by the ``transfer-reconciliation``
 validator skill via :class:`ValidationHook`, not by this node directly.
@@ -32,9 +32,8 @@ logger = get_logger(__name__)
 class GenJobAgenticNode(DeliverableAgenticNode):
     """ETL / cross-DB migration subagent.
 
-    In addition to the base DDL + read tools it registers:
+    In addition to the base ``execute_sql`` tool (read + DML + DDL) it registers:
 
-    - ``execute_write`` — INSERT / UPDATE / DELETE
     - ``transfer_query_result`` — cross-DB data transfer
     - The three ``MigrationTargetMixin`` wrappers for dialect-aware DDL advice
     """
@@ -47,17 +46,18 @@ class GenJobAgenticNode(DeliverableAgenticNode):
     DEFAULT_MAX_TURNS: ClassVar[int] = 50
 
     def _setup_domain_tools(self) -> None:
-        """Register read tools + DDL + DML + transfer + migration mixin wrappers."""
+        """Register the unified ``execute_sql`` tool (via ``available_tools``) plus
+        cross-DB transfer and migration mixin wrappers.
+
+        Read/DML/DDL all flow through ``execute_sql``; per-statement-type
+        permission gating lives in ``PermissionHooks._handle_sql_permission``.
+        """
         try:
             self.db_func_tool = DBFuncTool(
                 agent_config=self.agent_config,
                 sub_agent_name=self.NODE_NAME,
             )
             self.tools.extend(self.db_func_tool.available_tools())
-            if hasattr(self.db_func_tool, "execute_ddl"):
-                self.tools.append(trans_to_function_tool(self.db_func_tool.execute_ddl))
-            if hasattr(self.db_func_tool, "execute_write"):
-                self.tools.append(trans_to_function_tool(self.db_func_tool.execute_write))
             if hasattr(self.db_func_tool, "transfer_query_result"):
                 self.tools.append(trans_to_function_tool(self.db_func_tool.transfer_query_result))
             if hasattr(self.db_func_tool, "get_migration_capabilities"):
@@ -67,8 +67,7 @@ class GenJobAgenticNode(DeliverableAgenticNode):
             if hasattr(self.db_func_tool, "validate_ddl"):
                 self.tools.append(trans_to_function_tool(self.db_func_tool.validate_ddl))
             logger.debug(
-                "Added database tools + execute_ddl + execute_write + transfer_query_result "
-                "+ migration Mixin wrappers from DBFuncTool"
+                "Added database tools (execute_sql) + transfer_query_result + migration Mixin wrappers from DBFuncTool"
             )
         except Exception as e:
             logger.exception("Failed to setup database tools")

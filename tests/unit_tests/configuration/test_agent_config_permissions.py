@@ -24,8 +24,9 @@ def _make_config(permissions_raw):
 def test_missing_permissions_yields_normal_profile():
     cfg = _make_config(None)
     assert cfg.active_profile_name == "normal"
-    # Normal profile has explicit read allows
-    assert any(r.tool == "db_tools" and r.pattern == "read_query" for r in cfg.permissions_config.rules)
+    # Normal profile has explicit read allows (execute_sql reads are gated by
+    # the hook, not a static rule; verify_sql remains an explicit ALLOW).
+    assert any(r.tool == "db_tools" and r.pattern == "verify_sql" for r in cfg.permissions_config.rules)
 
 
 def test_empty_permissions_yields_normal_profile():
@@ -59,21 +60,25 @@ def test_user_rules_layered_on_profile_base():
         {
             "profile": "auto",
             "rules": [
-                {"tool": "db_tools", "pattern": "execute_ddl", "permission": "deny"},
+                {"tool": "db_tools", "pattern": "transfer_query_result", "permission": "deny"},
             ],
         }
     )
     rules = cfg.permissions_config.rules
-    # The Auto base has execute_ddl ASK; user rule must appear after it.
+    # The Auto base has transfer_query_result ASK; user rule must appear after it.
     auto_idx = next(
         i
         for i, r in enumerate(rules)
-        if r.tool == "db_tools" and r.pattern == "execute_ddl" and PermissionLevel(r.permission) == PermissionLevel.ASK
+        if r.tool == "db_tools"
+        and r.pattern == "transfer_query_result"
+        and PermissionLevel(r.permission) == PermissionLevel.ASK
     )
     user_idx = next(
         i
         for i, r in enumerate(rules)
-        if r.tool == "db_tools" and r.pattern == "execute_ddl" and PermissionLevel(r.permission) == PermissionLevel.DENY
+        if r.tool == "db_tools"
+        and r.pattern == "transfer_query_result"
+        and PermissionLevel(r.permission) == PermissionLevel.DENY
     )
     assert user_idx > auto_idx, "user rule must be appended after profile base"
 

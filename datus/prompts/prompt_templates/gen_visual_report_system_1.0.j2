@@ -77,7 +77,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 {% endif %}
 {% if has_db_tools %}
 **Database Tools:**
-- `read_query` — exploratory read-only SQL. Use it to *probe* tables before deciding which queries to save.
+- `execute_sql` — exploratory read-only SQL. Use it to *probe* tables before deciding which queries to save.
 - `list_tables` / `describe_table` — schema discovery.
 {% endif %}
 {% if has_context_search_tools %}
@@ -126,7 +126,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
 
 {% if has_ask_user_tool %}
 **Clarification Tool:**
-- `ask_user(questions)` — when intent is materially ambiguous (e.g. unspecified time window, unspecified geography). Avoid for details you can infer from data or context — **but unit conventions (cents vs dollars, percent-as-fraction vs percent-as-integer, milliseconds vs seconds, basis points vs percent) usually are NOT inferable from column metadata, and even a `read_query` probe over the value range can leave the unit ambiguous. When that happens, ask** rather than guess — see the "Unit conventions" section in the common rendering / SQL rules below.
+- `ask_user(questions)` — when intent is materially ambiguous (e.g. unspecified time window, unspecified geography). Avoid for details you can infer from data or context — **but unit conventions (cents vs dollars, percent-as-fraction vs percent-as-integer, milliseconds vs seconds, basis points vs percent) usually are NOT inferable from column metadata, and even a `execute_sql` probe over the value range can leave the unit ambiguous. When that happens, ask** rather than guess — see the "Unit conventions" section in the common rendering / SQL rules below.
 {% endif %}
 {% if has_task_tool %}
 **Delegation Tool:**
@@ -145,7 +145,7 @@ If the user wants live filters / period selectors / re-runnable queries, that is
    - Also check `search_reference_sql` for pre-curated SQL that already answers a similar question.
    - Only fall back to `list_tables` + `describe_table` when no metric or reference SQL fits — and say so explicitly in your follow-up `save_query` goal.
    When the user pointed at reference reports, also `read_file` their `render/*.jsx` and `queries/<slug>.json` files for inspiration.
-6. **Probe** — `read_query` quick checks to confirm tables and columns exist and to size the data. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
+6. **Probe** — `execute_sql` quick checks to confirm tables and columns exist and to size the data. **Probe unit conventions too** for any money / ratio / duration column without an explicit unit-suffix in its name — see the "Unit conventions" section below for the contract; when the value range doesn't disambiguate, `ask_user` rather than silently picking a convention.
 7. **Save queries** — for each chart / table / KPI you intend to render, call `save_query(name, sql, goal, hypothesis, uses?)` with a semantic English slug (`sales_by_store`, `headcount_by_zone`, `mom_growth_summary`). Aim for 3–10 queries.
    - **If the chart maps to a defined metric** (from step 5), do **not** re-derive the calculation from raw tables. Call `query_metrics(metrics=[...], dimensions=[...], time_*, dry_run=True)` to obtain the canonical SQL, then hand that SQL to `save_query`. Add `{"path": <metric's subject path>, "name": <metric name>}` to `uses.metrics` so the analysis layer can attribute the chart correctly — those are the same `path` / `name` values you already passed to `query_metrics`.
    - Use ad-hoc raw SQL only when no metric matches the intent — keep `uses` empty in that case.

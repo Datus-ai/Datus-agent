@@ -296,7 +296,7 @@ class ReferenceTemplateTools:
             return FuncToolResult(
                 success=0,
                 error="Database tools not available. Use `render_reference_template` to get the SQL, "
-                "then execute it manually with `read_query`.",
+                "then execute it manually with `execute_sql`.",
             )
 
         try:

@@ -68,7 +68,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
     "gen_sql": (
         "Generate optimized SQL queries. Returns JSON with {sql, response, tokens_used}. "
         "For complex SQL (50+ lines), returns {sql_file_path, sql_preview, response} instead - "
-        "pass sql_file_path directly to read_query() to execute (no need to read_file() first). "
+        "pass sql_file_path directly to execute_sql() to execute (no need to read_file() first). "
         "Modifications return sql_diff in unified diff format. "
         "Use for data queries, analysis, and report SQL. Prompt: provide the question directly."
     ),
@@ -1248,7 +1248,7 @@ class SubAgentTaskTool:
             "subagent's owning workflow or platform. Task complexity is not the deciding factor: "
             "a simple scheduled job, dashboard, persisted table, semantic model, metric definition, "
             "or skill should still be handled by its specialized subagent. Use your own tools "
-            "(list_tables, describe_table, read_query, etc.) for read-only answers, explanations, "
+            "(list_tables, describe_table, execute_sql, etc.) for read-only answers, explanations, "
             "or lightweight investigations that do not create or update an artifact owned by another "
             "platform/workflow.",
             "",

@@ -198,9 +198,9 @@ class DeliverableAgenticNode(AgenticNode):
     def _setup_domain_tools(self) -> None:
         """Subclass-specific tool registration.
 
-        gen_table registers only ``execute_ddl``; gen_job additionally registers
-        ``execute_write``, ``transfer_query_result``, and the MigrationTargetMixin
-        wrappers.
+        Both gen_table and gen_job expose the unified ``execute_sql`` tool via
+        the standard DB tool set; gen_job additionally registers
+        ``transfer_query_result`` and the MigrationTargetMixin wrappers.
         """
         raise NotImplementedError("_setup_domain_tools must be implemented by subclasses")
 

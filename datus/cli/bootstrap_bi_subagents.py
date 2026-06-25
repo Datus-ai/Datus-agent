@@ -268,7 +268,7 @@ def stream_bi_save_subagents(
     main_cfg = SubAgentConfig(
         system_prompt=sub_agent_name,
         agent_description=description,
-        tools="context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.read_query",
+        tools="context_search_tools,db_tools.search_table,db_tools.describe_table,db_tools.execute_sql",
         scoped_context=scoped_context,
     )
     attribution_cfg = SubAgentConfig(

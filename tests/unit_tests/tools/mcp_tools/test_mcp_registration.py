@@ -171,7 +171,7 @@ class TestGlobalToolRegistry:
         tool_names = [name for name, _, _ in tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
         assert "list_databases" in tool_names
 
     def test_context_tool_has_expected_methods(self):

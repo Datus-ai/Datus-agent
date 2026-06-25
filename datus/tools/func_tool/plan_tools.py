@@ -626,7 +626,7 @@ class ConfirmPlanTool:
                 "  3. Before starting work on a step, call todo_update(id, 'in_progress') "
                 "so the sidebar reflects what you are doing.\n"
                 "  4. Execute the step by calling the relevant tools "
-                "(grep / read_file / list_tables / read_query / write_file — whatever "
+                "(grep / read_file / list_tables / execute_sql / write_file — whatever "
                 "the step requires).\n"
                 "  5. After completing the step, call todo_update(id, 'completed'); "
                 "use 'failed' instead if it could not be finished. Then move to the "

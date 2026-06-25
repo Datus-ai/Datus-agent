@@ -31,6 +31,7 @@ from datus.schemas.interaction_event import InteractionEvent
 from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.registry.tool_registry import ToolRegistry
+from datus.utils.constants import SQLType
 
 if TYPE_CHECKING:
     from datus.tools.permission.permission_manager import PermissionManager
@@ -302,6 +303,16 @@ class PermissionHooks(AgentHooks):
         #   /Users/foo/secret does not cascade to /Users/foo/other.
         if self.fs_policy is not None and category == "filesystem_tools":
             handled = await self._handle_filesystem_zone(context, tool_name, pattern_name)
+            if handled:
+                return
+
+        # db_tools.execute_sql: statement-type gating overrides rules.
+        #   read-only (SELECT/SHOW/DESCRIBE/EXPLAIN) → bypass; writes (INSERT/
+        #   UPDATE/DELETE), DDL, and unknown/MERGE → ASK (bucketed session cache),
+        #   dangerous bypass, non-interactive raise. A ``.sql`` file path or
+        #   unparseable text falls through to UNKNOWN → ASK (fail safe).
+        if category == "db_tools" and tool_name == "execute_sql":
+            handled = await self._handle_sql_permission(context, tool_name, pattern_name)
             if handled:
                 return
 
@@ -627,6 +638,55 @@ class PermissionHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error in external filesystem confirmation for {tool_name}: {e}")
             return False
+
+    # Read-only SQL statement types that auto-allow under ``execute_sql``.
+    # Everything else (INSERT/UPDATE/DELETE/DDL/MERGE/UNKNOWN) defers to the
+    # normal category-level permission check.
+    _SQL_READONLY_TYPES = frozenset({SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN})
+
+    async def _handle_sql_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
+        """Statement-type gating for ``db_tools.execute_sql`` calls.
+
+        ``execute_sql`` is the unified SQL entry point, so a single static rule
+        cannot express "reads auto-allow, writes ask". This gate inspects the
+        statement type instead:
+
+        * Read-only (SELECT/SHOW/DESCRIBE/EXPLAIN) → auto-allow, unless an
+          explicit DENY rule blocks ``db_tools.execute_sql`` (then defer so the
+          DENY is surfaced).
+        * Writes (INSERT/UPDATE/DELETE), DDL, and unknown/MERGE (incl. a ``.sql``
+          file path or unparseable text — fail safe) → defer to the normal
+          category-level check. With no static ALLOW rule for ``execute_sql``
+          that lands on the profile default: ASK under normal/auto (the broker
+          prompt shows the SQL), ALLOW under dangerous, raise when
+          non-interactive — and any explicit user rule still wins.
+
+        Returns ``True`` when the read has been auto-allowed, ``False`` to let
+        the normal category-level permission check run.
+        """
+        from datus.utils.sql_utils import parse_sql_type
+
+        args = self._parse_tool_args(context)
+        if not isinstance(args, dict):
+            return False
+        sql = args.get("sql", "")
+        # No dialect available at the hook layer; the keyword fallback in
+        # ``parse_sql_type`` is enough to separate reads from writes/DDL.
+        sql_type = parse_sql_type(sql, "") if isinstance(sql, str) else SQLType.UNKNOWN
+
+        if sql_type in self._SQL_READONLY_TYPES:
+            # Respect an explicit DENY; otherwise reads auto-allow regardless of
+            # profile (there is no static ALLOW rule for execute_sql to rely on).
+            if (
+                self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
+                == PermissionLevel.DENY
+            ):
+                return False
+            logger.debug("execute_sql read-only (%s): auto-allow", sql_type.value)
+            return True
+
+        # Writes / DDL / unknown → normal category-level check.
+        return False
 
     def _get_category_and_pattern(self, tool_name: str, context: Any) -> Tuple[str, str]:
         """Get tool category and pattern name for permission checking.

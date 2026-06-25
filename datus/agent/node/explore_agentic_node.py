@@ -135,7 +135,7 @@ class ExploreAgenticNode(AgenticNode):
                 self.tools.extend(
                     [
                         self.db_func_tool.to_function_tool(self.db_func_tool.describe_table),
-                        self.db_func_tool.to_function_tool(self.db_func_tool.read_query),
+                        self.db_func_tool.to_function_tool(self.db_func_tool.execute_sql),
                     ]
                 )
             else:

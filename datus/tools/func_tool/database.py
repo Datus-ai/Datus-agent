@@ -777,7 +777,7 @@ class DBFuncTool:
         if self.has_schema:
             methods_to_convert.append(self.search_table)
 
-        methods_to_convert.append(self.read_query)
+        methods_to_convert.append(self.execute_sql)
 
         if any(connector_registry.support_database(dialect) for dialect in configured_dialects):
             bound_tools.append(self.to_function_tool(self.list_databases))
@@ -1223,9 +1223,86 @@ class DBFuncTool:
             return FuncToolResult(success=0, error=error_msg)
 
     @mcp_tool()
+    def execute_sql(
+        self,
+        sql: str,
+        datasource: Optional[str] = "",
+        database: Optional[str] = "",
+        min_rows: Optional[int] = None,
+        max_rows: Optional[int] = None,
+    ) -> FuncToolResult:
+        """
+        Execute a single SQL statement against the current database connection.
+
+        This is the unified entry point for running SQL. The statement type is
+        detected automatically and routed accordingly:
+
+        * Read-only (SELECT, SHOW/DESCRIBE, EXPLAIN) — returns result rows.
+        * DML (INSERT, UPDATE, DELETE) — modifies data and returns write metadata.
+        * DDL (CREATE/DROP SCHEMA, CREATE TABLE/VIEW incl. CTAS, ALTER TABLE,
+          DROP TABLE/VIEW) — modifies the schema and returns DDL metadata.
+
+        CAUTION: Writes (INSERT/UPDATE/DELETE) and DDL modify the database. Only
+        run them when the task explicitly requires it; prefer a read-only SELECT
+        for inspection. Multi-statement SQL and MERGE are rejected.
+
+        Args:
+            sql: A single SQL statement, or a ``.sql`` file path
+                (e.g. "sql/session_1/query.sql") to read and execute from the workspace.
+            datasource: Optional datasource name for multi-datasource scenarios.
+            database: Optional physical database to run against. Required to target a
+                specific database of a multi-database datasource (e.g. one file of a
+                sqlite/duckdb glob).
+            min_rows: Optional minimum acceptable affected row count (DML only).
+            max_rows: Optional maximum acceptable affected row count (DML only).
+
+        Returns:
+            FuncToolResult: compressed rows for read-only queries, or execution
+            metadata for writes/DDL. On failure success=0 with an error message.
+        """
+        from datus.utils.sql_utils import parse_sql_type
+
+        try:
+            # Resolve a ``.sql`` file path up front so type detection inspects the
+            # real statement, not the path. The inner methods re-detect the path
+            # too, but on resolved SQL the check is a no-op.
+            sql_stripped = sql.strip()
+            if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
+                sql = self._read_sql_from_file(sql_stripped)
+
+            connector = self._get_connector(datasource, database)
+            sql_type = parse_sql_type(sql, connector.dialect)
+
+            if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
+                return self.read_query(sql, datasource=datasource, database=database)
+            if sql_type == SQLType.DDL:
+                return self.execute_ddl(sql, datasource=datasource, database=database)
+            if sql_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
+                return self.execute_write(
+                    sql,
+                    datasource=datasource,
+                    database=database,
+                    min_rows=min_rows,
+                    max_rows=max_rows,
+                )
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"Unsupported SQL type '{sql_type.value}' for execute_sql. Supported: "
+                    "SELECT/SHOW/DESCRIBE/EXPLAIN (read), INSERT/UPDATE/DELETE (write), and DDL "
+                    "(CREATE/DROP SCHEMA, CREATE TABLE/VIEW, ALTER TABLE, DROP TABLE/VIEW). "
+                    "MERGE and multi-statement scripts are not supported."
+                ),
+            )
+        except Exception as e:
+            return FuncToolResult(success=0, error=str(e))
+
     def read_query(self, sql: str, datasource: Optional[str] = "", database: Optional[str] = "") -> FuncToolResult:
         """
         Execute a read-only SQL query and return the result rows (optionally compressed).
+
+        Internal read path used by :meth:`execute_sql` and by Python callers
+        (e.g. reference-template execution). Not exposed to the LLM as its own tool.
 
         Only SELECT, SHOW/DESCRIBE, and EXPLAIN statements are allowed.
         DML (INSERT/UPDATE/DELETE) and DDL (CREATE/ALTER/DROP) are rejected.

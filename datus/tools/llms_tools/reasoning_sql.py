@@ -17,6 +17,7 @@ from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import llm_result2json, llm_result2sql
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import is_read_query_result
 
 logger = get_logger(__name__)
 
@@ -77,12 +78,17 @@ async def reasoning_sql_with_mcp_stream(
 
         # Look for actions that contain SQL execution results
         for action in action_history_manager.actions:
-            if action.action_type == "read_query" and action.status.value == "success":
-                # This is a SQL execution result, create SQLContext from it
+            sql_output = action.output or {}
+            if (
+                action.action_type == "execute_sql"
+                and action.status.value == "success"
+                and is_read_query_result(sql_output.get("result"))
+            ):
+                # This is a read-only query result; create SQLContext from it.
+                # Write/DDL executions return a metadata payload and are skipped.
                 from datus.schemas.node_models import SQLContext
 
                 sql_input = action.input or {}
-                sql_output = action.output or {}
 
                 sql_context = SQLContext(
                     sql_query=sql_input.get("sql", ""),

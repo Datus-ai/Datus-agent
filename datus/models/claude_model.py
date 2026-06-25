@@ -34,8 +34,10 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.utils.constants import SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_sql_type
 from datus.utils.ssl_utils import is_ssl_cert_verification_error
 from datus.utils.traceable_utils import optional_traceable
 
@@ -1099,9 +1101,15 @@ class ClaudeModel(OpenAICompatibleModel):
                     for block in tool_use_blocks:
                         if block.id in tool_call_cache:
                             sql_result = tool_call_cache[block.id].content[0].text
-                            # Use "Error" to determine execution success
-                            if "Error" not in sql_result and block.name == "read_query":
-                                sql_query = block.input.get("query") or block.input.get("sql", "")
+                            # Use "Error" to determine execution success. Only
+                            # seed SQL context from read-only execute_sql calls.
+                            sql_query = block.input.get("query") or block.input.get("sql", "")
+                            if (
+                                "Error" not in sql_result
+                                and block.name == "execute_sql"
+                                and parse_sql_type(sql_query, "")
+                                in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+                            ):
                                 sql_context = SQLContext(
                                     sql_query=sql_query,
                                     sql_return=sql_result,

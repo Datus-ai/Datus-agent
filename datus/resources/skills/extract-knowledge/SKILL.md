@@ -45,7 +45,7 @@ If none of the above yields a clear `(question, SQL)`, call `ask_user` to reques
 Once the input is resolved, decide which mode to run before entering the workflow:
 
 - **lite (default)** — do not call the `gen_sql` subagent. The main agent itself simulates "given this question + the current datasource schema, how would I draft the SQL," diffs that mental draft against `gold_sql`, and mines the gap directly. **Pros:** fast, zero subagent calls, single-pass. **Cons:** no independent blind-generator validation; depends on the main agent's discipline to "pretend not to know the answer."
-- **deep** — full pipeline. Drive the `gen_sql` subagent through multi-round blind iteration (≤5 rounds) until result match, then mine facts from the final diff. **Pros:** independent blind validator, iteration surfaces finer-grained boundary facts. **Cons:** consumes subagent tokens, requires multiple `read_query` executions.
+- **deep** — full pipeline. Drive the `gen_sql` subagent through multi-round blind iteration (≤5 rounds) until result match, then mine facts from the final diff. **Pros:** independent blind validator, iteration surfaces finer-grained boundary facts. **Cons:** consumes subagent tokens, requires multiple `execute_sql` executions.
 
 **Decision rule:**
 1. When the `ask_user` tool is available, call it once and ask the user to choose lite or deep; include the one-line tradeoff. Default suggestion = lite.
@@ -57,7 +57,7 @@ Record the chosen `mode` and route to the right workflow branch.
 
 ### Step 1 — Validate `gold_sql` (both modes)
 
-Run `read_query(sql=<gold_sql>)`.
+Run `execute_sql(sql=<gold_sql>)`.
 - If it errors: report to the user and **skip this pair**. Do not invent questions to salvage a broken gold.
 - Otherwise: cache the result (row count, column names, small preview). This is the factual baseline for later comparison.
 
@@ -66,7 +66,7 @@ Run `read_query(sql=<gold_sql>)`.
 Take this branch only when `mode = lite`; skip the deep branch entirely.
 
 1. **Temporarily ignore `gold_sql`.** Mentally switch to a state where you only know `question` + the current datasource schema. **Do not** let the specific shape of `gold_sql` influence this draft.
-2. **Write a draft SQL** (no need to `read_query`-execute it; the draft is only a comparison baseline) — this is the version a SQL agent unfamiliar with this project's business conventions would produce given that schema.
+2. **Write a draft SQL** (no need to `execute_sql`-execute it; the draft is only a comparison baseline) — this is the version a SQL agent unfamiliar with this project's business conventions would produce given that schema.
 3. **Diff the draft against `gold_sql` along these axes:**
    - Table choice, table aliases, missing mapping tables
    - Join type and join keys
@@ -97,12 +97,12 @@ The returned envelope contains `result.sql` (or `result.sql_file_path` for long 
 
 ### Step 3 (deep mode) — Execute and compare
 
-Run the subagent's SQL via `read_query` and compare against the cached gold result:
+Run the subagent's SQL via `execute_sql` and compare against the cached gold result:
 
 - Row count match?
 - Column names / count match at the semantic level (aliases may differ)?
 - After sorting both sides by the same key, do sampled rows match?
-- For precise verdicts, use `read_query` to run difference probes (two-way `EXCEPT`, key-column `SUM` / `COUNT(DISTINCT ...)` consistency checks, etc.)
+- For precise verdicts, use `execute_sql` to run difference probes (two-way `EXCEPT`, key-column `SUM` / `COUNT(DISTINCT ...)` consistency checks, etc.)
 
 Verdict: **match** or **mismatch**.
 
@@ -310,7 +310,7 @@ Return a single human-readable summary covering: the mode used (lite / deep); ho
 
 ## Tools You'll Use
 
-- `read_query(sql=...)` — execute gold SQL and difference probes (deep mode additionally executes subagent SQL). In lite mode it is only used for Step 1's gold validation.
+- `execute_sql(sql=...)` — execute gold SQL and difference probes (deep mode additionally executes subagent SQL). In lite mode it is only used for Step 1's gold validation.
 - `task(type="gen_sql", prompt=..., session_id=...)` — **deep mode only**; delegate SQL generation, reuse session across retries.
 - `read_file`, `write_file`, `edit_file` — manage `./knowledge/*.md` and `./AGENTS.md`. **Always** `read_file` the target domain file before edits (6.2 depends on it).
 - `ask_user` — required for: ambiguous input parsing; confirming a context-recovered pair; mode selection (lite / deep); new-domain confirmation (6.1); refinement decisions (6.2); **every fact conflict** (6.2). Phrase questions with numbered options.

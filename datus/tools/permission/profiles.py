@@ -64,8 +64,10 @@ _NORMAL_RULES = [
     # context search / date utilities
     _rule("context_search_tools", "*", PermissionLevel.ALLOW),
     _rule("date_parsing_tools", "*", PermissionLevel.ALLOW),
-    # db read
-    _rule("db_tools", "read_query", PermissionLevel.ALLOW),
+    # db read. ``execute_sql`` is the unified SQL entry point; its read-vs-write
+    # gating is handled dynamically per statement type in
+    # ``PermissionHooks._handle_sql_permission`` (read-only bypass, writes/DDL
+    # ASK), so it intentionally has no static rule here.
     _rule("db_tools", "verify_sql", PermissionLevel.ALLOW),
     _rule("db_tools", "list_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
@@ -122,8 +124,8 @@ _NORMAL_RULES = [
     # fire on nearly every chat interaction for zero safety benefit.
     _rule("sub_agent_tools", "*", PermissionLevel.ALLOW),
     # reference templates: read-only end to end — search/get/render are pure
-    # lookups and ``execute_reference_template`` renders Jinja then runs
-    # ``db_tools.read_query`` (never a write). Historically gen_sql lumped
+    # lookups and ``execute_reference_template`` renders Jinja then runs the
+    # internal read-only query path (never a write). Historically gen_sql lumped
     # these into ``semantic_tools`` (ALLOW) while chat left them in the
     # catch-all (ASK); the dedicated category unifies on ALLOW.
     _rule("reference_template_tools", "*", PermissionLevel.ALLOW),
@@ -188,11 +190,10 @@ _AUTO_EXTRA_RULES = [
     _rule("scheduler_tools", "pause_job", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "resume_job", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "trigger_*", PermissionLevel.ASK),
-    # db writes: always ASK
-    _rule("db_tools", "execute_ddl", PermissionLevel.ASK),
-    _rule("db_tools", "execute_write", PermissionLevel.ASK),
+    # db writes: always ASK. ``execute_sql`` writes/DDL are gated dynamically by
+    # ``PermissionHooks._handle_sql_permission`` (read-only bypass), so only the
+    # standalone cross-DB transfer tool needs an explicit ASK rule here.
     _rule("db_tools", "transfer_query_result", PermissionLevel.ASK),
-    _rule("db_tools", "write_query", PermissionLevel.ASK),
     # Named destructives — downgrade NORMAL's DENY to ASK in Auto. The user
     # can confirm at the prompt; DENY would force a profile switch to
     # ``dangerous`` (which is far more permissive than just ``delete``).

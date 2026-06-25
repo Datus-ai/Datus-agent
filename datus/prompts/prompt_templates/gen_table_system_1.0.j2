@@ -52,9 +52,9 @@ When the user provides a SQL query (SELECT/JOIN), the SQL already defines the ou
    - Stop if the DDL replaces, drops, alters, truncates, or overwrites an existing object without explicit authorization
 {% endif %}
 
-4. **Execute DDL** via `execute_ddl(sql)`:
+4. **Execute DDL** via `execute_sql(sql)`:
    - {% if has_ask_user_tool %}Only after user selects "Execute"{% else %}Only after workflow authorization is satisfied{% endif %}
-   - Verify the created table with `describe_table` or `read_query`
+   - Verify the created table with `describe_table` or `execute_sql`
 
 5. **Report summary** with table name, row count, and column list
 

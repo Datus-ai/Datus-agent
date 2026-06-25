@@ -23,6 +23,7 @@ class ToolOutputFormatter:
         self._register_builtins()
 
     def _register_builtins(self):
+        self._registry["execute_sql"] = self._format_read_query_result
         self._registry["read_query"] = self._format_read_query_result
         self._registry["describe_table"] = self._format_describe_table_result
         self._registry["search_table"] = self._format_search_table_result

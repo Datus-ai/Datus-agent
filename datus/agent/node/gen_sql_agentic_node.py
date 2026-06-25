@@ -320,7 +320,7 @@ class GenSQLAgenticNode(AgenticNode):
 
         If db_tools are not configured but reference_template_tools are requested,
         create an internal-only db_func_tool for execute_reference_template
-        without exposing db_tools (read_query, list_tables, etc.) to the LLM.
+        without exposing db_tools (execute_sql, list_tables, etc.) to the LLM.
         """
         try:
             db_tool = self.db_func_tool
@@ -636,7 +636,7 @@ class GenSQLAgenticNode(AgenticNode):
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         available_tool_names = self._get_available_tool_names()
         context["available_tool_names"] = available_tool_names
-        context["has_read_query_tool"] = "read_query" in available_tool_names
+        context["has_read_query_tool"] = "execute_sql" in available_tool_names
         context["has_describe_table_tool"] = "describe_table" in available_tool_names
         context["has_list_metrics_tool"] = "list_metrics" in available_tool_names
         context["has_query_metrics_tool"] = "query_metrics" in available_tool_names

@@ -8,8 +8,8 @@ GenTableAgenticNode implementation for wide table generation.
 This node creates database tables via CTAS (from JOIN SQL) or CREATE TABLE
 (from natural-language descriptions). Most of the plumbing lives in the
 shared :class:`DeliverableAgenticNode` base; this subclass only declares the
-tool set (``execute_ddl`` on top of the read-only DB tools) and the permission
-profile category map.
+tool set (the unified ``execute_sql`` tool via the standard DB tools) and the
+permission profile category map.
 """
 
 from typing import ClassVar, Optional
@@ -17,7 +17,6 @@ from typing import ClassVar, Optional
 from datus.agent.node.deliverable_node import DeliverableAgenticNode
 from datus.configuration.node_type import NodeType
 from datus.tools.func_tool import DBFuncTool
-from datus.tools.func_tool.base import trans_to_function_tool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -27,8 +26,8 @@ logger = get_logger(__name__)
 class GenTableAgenticNode(DeliverableAgenticNode):
     """Wide table generation subagent.
 
-    Registers the standard read-only DB tools plus :func:`execute_ddl` so the
-    LLM can CREATE TABLE / CTAS. Post-write validation is driven by
+    Registers the standard DB tools, including the unified ``execute_sql`` tool
+    so the LLM can CREATE TABLE / CTAS. Post-write validation is driven by
     :class:`ValidationHook` in the base class.
     """
 
@@ -40,16 +39,18 @@ class GenTableAgenticNode(DeliverableAgenticNode):
     DEFAULT_MAX_TURNS: ClassVar[int] = 50
 
     def _setup_domain_tools(self) -> None:
-        """DDL-only: read tools + ``execute_ddl``. No DML / no transfer."""
+        """Standard DB tools, including the unified ``execute_sql`` tool. No transfer.
+
+        Statement-type permission gating (read auto-allow, write/DDL ask) is
+        handled by ``PermissionHooks._handle_sql_permission``.
+        """
         try:
             self.db_func_tool = DBFuncTool(
                 agent_config=self.agent_config,
                 sub_agent_name=self._configured_node_name,
             )
             self.tools.extend(self.db_func_tool.available_tools())
-            if hasattr(self.db_func_tool, "execute_ddl"):
-                self.tools.append(trans_to_function_tool(self.db_func_tool.execute_ddl))
-            logger.debug("Added database tools + execute_ddl from DBFuncTool")
+            logger.debug("Added database tools (execute_sql) from DBFuncTool")
         except Exception as e:
             logger.exception("Failed to setup database tools")
             raise DatusException(

@@ -283,7 +283,7 @@ class TestExecuteReferenceTemplate:
         assert result.result["rendered_sql"] == "SELECT id FROM t"
 
     def test_execute_no_db_tool(self, tools, mock_rag):
-        """Without db_func_tool, returns error suggesting manual render + read_query."""
+        """Without db_func_tool, returns error suggesting manual render + execute_sql."""
         mock_rag.get_reference_template_detail.return_value = [
             {
                 "name": "tpl",
@@ -296,7 +296,7 @@ class TestExecuteReferenceTemplate:
         result = tools.execute_reference_template(["Sales"], "tpl", "{}")
         assert result.success == 0
         assert "not available" in result.error.lower()
-        assert "read_query" in result.error
+        assert "execute_sql" in result.error
 
     def test_execute_db_exception(self, tools, mock_rag):
         """DB tool raises exception, returns error with rendered SQL preserved."""

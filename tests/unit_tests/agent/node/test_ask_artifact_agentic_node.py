@@ -1906,12 +1906,12 @@ class TestToolsWhitelist:
         assert not missing, f"whitelisted tools missing from node surface: {sorted(missing)}"
 
     def test_method_level_whitelist_is_precise(self, real_agent_config):
-        """``db_tools.read_query`` grants exactly that method — sibling db
+        """``db_tools.execute_sql`` grants exactly that method — sibling db
         methods that weren't listed stay dropped."""
-        node = _make_ask_report_with_tools(real_agent_config, "db_tools.read_query")
+        node = _make_ask_report_with_tools(real_agent_config, "db_tools.execute_sql")
         names = _tool_names(node)
         # Listed → present.
-        assert "read_query" in names
+        assert "execute_sql" in names
         # Not listed (other DBFuncTool methods) → absent.
         for other in ("list_tables", "describe_table"):
             assert other not in names, f"{other} should not be exposed by a method-level whitelist"
@@ -1939,12 +1939,12 @@ class TestToolsWhitelist:
         # db_tools omitted from this whitelist → still dropped.
         assert "read_query" not in names
 
-    def test_db_tools_wildcard_keeps_read_query(self, real_agent_config):
+    def test_db_tools_wildcard_keeps_execute_sql(self, real_agent_config):
         """Sanity check the other direction: whitelisting ``db_tools.*``
-        keeps ``read_query`` so the prune isn't unconditionally stripping db."""
+        keeps ``execute_sql`` so the prune isn't unconditionally stripping db."""
         node = _make_ask_report_with_tools(real_agent_config, "db_tools.*")
         names = _tool_names(node)
-        assert "read_query" in names
+        assert "execute_sql" in names
         assert "list_tables" in names
 
     def test_empty_whitelist_exposes_no_tools(self, real_agent_config):

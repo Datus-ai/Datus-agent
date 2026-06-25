@@ -368,7 +368,7 @@ class LightweightDynamicMCPServer:
                 "Datus is a data engineering agent that provides tools for querying databases, "
                 "searching metrics, reference SQL, semantic models, and business knowledge. "
                 "Use search_table or list_tables to discover tables, describe_table for schema details, "
-                "and read_query to execute SQL queries."
+                "and execute_sql to run SQL (read-only SELECT for inspection; writes/DDL only when required)."
             ),
             stateless_http=True,
         )
@@ -828,7 +828,7 @@ class DatusMCPServer:
     1. Database Tools (DBFuncTool):
        - list_databases, list_schemas, list_tables
        - search_table, describe_table
-       - read_query
+       - execute_sql
 
     2. Context Search Tools (ContextSearchTools):
        - list_subject_tree
@@ -867,7 +867,7 @@ class DatusMCPServer:
                 "Datus is a data engineering agent that provides tools for querying databases, "
                 "searching metrics, reference SQL, semantic models, and business knowledge. "
                 "Use search_table or list_tables to discover tables, describe_table for schema details, "
-                "and read_query to execute SQL queries."
+                "and execute_sql to run SQL (read-only SELECT for inspection; writes/DDL only when required)."
             ),
             stateless_http=stateless_http,  # Enable stateless mode for dynamic routing
         )

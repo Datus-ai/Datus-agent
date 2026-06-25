@@ -54,7 +54,8 @@ def check_standard_db_tools(node_cls, agent_config):
     tool_names = [tool.name for tool in node.tools]
     assert "list_tables" in tool_names
     assert "describe_table" in tool_names
-    assert "read_query" in tool_names
+    # ``execute_sql`` is the unified SQL tool (replaces read_query/execute_ddl/execute_write).
+    assert "execute_sql" in tool_names
 
 
 def check_filesystem_tools(node_cls, agent_config):

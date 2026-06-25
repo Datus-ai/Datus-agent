@@ -120,7 +120,7 @@ class TestDBFuncTool:
         tools = db_func_tool.available_tools()
 
         # Should have base tools plus dialect-specific tools
-        expected_tool_count = 3  # list_tables, describe_table, read_query
+        expected_tool_count = 3  # list_tables, describe_table, execute_sql
         if connector_registry.support_database(mock_connector.dialect):
             expected_tool_count += 1
         if connector_registry.support_schema(mock_connector.dialect):
@@ -130,7 +130,7 @@ class TestDBFuncTool:
 
         # Verify tool names
         tool_names = {tool.name for tool in tools}
-        expected_base_tools = {"list_tables", "describe_table", "read_query"}
+        expected_base_tools = {"list_tables", "describe_table", "execute_sql"}
 
         assert expected_base_tools.issubset(tool_names)
         # Tool presence must exactly match dialect dispatch — no silent branch skipping.
@@ -1221,7 +1221,7 @@ class TestDBFuncToolEdgeCases:
             tool = DBFuncTool(mock_connector)
             tools = tool.available_tools()
 
-            expected_tool_count = 3  # list_tables, describe_table, read_query
+            expected_tool_count = 3  # list_tables, describe_table, execute_sql
             if connector_registry.support_database(dialect):
                 expected_tool_count += 1
             if connector_registry.support_schema(dialect):

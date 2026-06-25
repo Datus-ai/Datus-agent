@@ -78,7 +78,7 @@ class TestGenSQLAgenticNodeInit:
         assert isinstance(node.db_func_tool, DBFuncTool)
 
         tool_names = {t.name for t in node.tools}
-        assert {"list_tables", "describe_table", "read_query"} <= tool_names
+        assert {"list_tables", "describe_table", "execute_sql"} <= tool_names
 
     def test_gen_sql_max_turns_from_config(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (set to 5 in fixture)."""
@@ -273,7 +273,7 @@ class TestGenSQLAgenticNodeExecution:
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="read_query",
+                            name="execute_sql",
                             arguments=(
                                 '{"sql": "SELECT cds, AvgScrRead FROM satscores '
                                 'WHERE AvgScrRead IS NOT NULL ORDER BY cds LIMIT 5"}'
@@ -306,7 +306,7 @@ class TestGenSQLAgenticNodeExecution:
         # Verify tool was executed for real
         assert len(mock_llm_create.tool_results) >= 1
         sql_result = mock_llm_create.tool_results[0]
-        assert sql_result["tool"] == "read_query"
+        assert sql_result["tool"] == "execute_sql"
         assert sql_result["executed"] is True
 
         # The output should contain actual data from the california_schools SQLite db
@@ -2564,7 +2564,7 @@ class TestGenSQLSetupTools:
         assert isinstance(node.tools, list)
         # Should have at least DB tools
         tool_names = {tool.name for tool in node.tools}
-        assert {"list_tables", "describe_table", "read_query"} <= tool_names
+        assert {"list_tables", "describe_table", "execute_sql"} <= tool_names
 
     def test_setup_tools_with_scoped_context(self, real_agent_config, mock_llm_create):
         """scoped_context config affects context search tool creation."""
@@ -2832,7 +2832,7 @@ class TestGenSQLSystemPromptToolContext:
         call_kwargs = mock_prompt_manager.render_template.call_args.kwargs
         assert call_kwargs["template_name"] == "gen_sql_system"
         assert "describe_table" in call_kwargs["available_tool_names"]
-        assert "read_query" not in call_kwargs["available_tool_names"]
+        assert "execute_sql" not in call_kwargs["available_tool_names"]
         assert call_kwargs["has_describe_table_tool"] is True
         assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True
@@ -2907,7 +2907,7 @@ class TestGenSQLSystemPromptToolContext:
 
         call_kwargs = mock_prompt_manager.render_template.call_args.kwargs
         assert "describe_table" in call_kwargs["available_tool_names"]
-        assert "read_query" not in call_kwargs["available_tool_names"]
+        assert "execute_sql" not in call_kwargs["available_tool_names"]
         assert call_kwargs["has_describe_table_tool"] is True
         assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True

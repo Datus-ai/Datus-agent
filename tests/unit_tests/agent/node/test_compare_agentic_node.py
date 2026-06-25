@@ -81,7 +81,7 @@ class TestCompareAgenticNodeInit:
 
         tool_names = [t.name for t in node.tools]
         assert "list_tables" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
         assert "describe_table" in tool_names
 
     def test_compare_max_turns(self, real_agent_config, mock_llm_create):
@@ -161,7 +161,7 @@ class TestCompareAgenticNodeExecution:
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="read_query",
+                            name="execute_sql",
                             arguments=json.dumps({"sql": "SELECT COUNT(*) FROM satscores"}),
                         ),
                     ],
@@ -237,7 +237,7 @@ class TestCompareProductFlowAcceptance:
                 build_tool_then_response(
                     tool_calls=[
                         MockToolCall(
-                            name="read_query",
+                            name="execute_sql",
                             arguments={"sql": "SELECT COUNT(*) AS row_count FROM satscores"},
                         ),
                     ],
@@ -258,10 +258,10 @@ class TestCompareProductFlowAcceptance:
         async for action in node.execute_stream():
             actions.append(action)
 
-        read_query_results = [item for item in mock_llm_create.tool_results if item["tool"] == "read_query"]
-        assert len(read_query_results) == 1
-        assert read_query_results[0]["executed"] is True
-        assert "row_count" in str(read_query_results[0]["output"])
+        execute_sql_results = [item for item in mock_llm_create.tool_results if item["tool"] == "execute_sql"]
+        assert len(execute_sql_results) == 1
+        assert execute_sql_results[0]["executed"] is True
+        assert "row_count" in str(execute_sql_results[0]["output"])
         assert actions[-1].status == ActionStatus.SUCCESS
         assert actions[-1].output["success"] is True
         assert "aggregate query" in actions[-1].output["suggest"]

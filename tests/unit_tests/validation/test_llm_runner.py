@@ -286,19 +286,19 @@ class TestSelectReadonlyTools:
         fake = self._FakeDBFuncTool(
             [
                 self._FakeTool("describe_table"),
-                self._FakeTool("execute_ddl"),  # write — must be excluded
-                self._FakeTool("read_query"),
+                self._FakeTool("transfer_query_result"),  # write — must be excluded
+                self._FakeTool("execute_sql"),
                 self._FakeTool("mystery_tool"),  # not in whitelist
             ]
         )
         out = _select_readonly_tools(fake)
         names = {getattr(t, "name", "") for t in out}
-        assert names == {"describe_table", "read_query"}
+        assert names == {"describe_table", "execute_sql"}
 
     def test_whitelist_membership_matches_documented_set(self):
         """Regression guard — the whitelist must not silently gain write
         tools. If this fails the validator sub-agent boundary has widened."""
-        assert "read_query" in VALIDATOR_READONLY_TOOL_NAMES
+        assert "execute_sql" in VALIDATOR_READONLY_TOOL_NAMES
         assert "execute_ddl" not in VALIDATOR_READONLY_TOOL_NAMES
         assert "execute_write" not in VALIDATOR_READONLY_TOOL_NAMES
         assert "transfer_query_result" not in VALIDATOR_READONLY_TOOL_NAMES

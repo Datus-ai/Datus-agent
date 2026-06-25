@@ -693,7 +693,7 @@ class TestGenReportProductFlowAcceptance:
                     tool_calls=[
                         MockToolCall("describe_table", {"table_name": "satscores"}),
                         MockToolCall(
-                            "read_query",
+                            "execute_sql",
                             {"sql": "SELECT AVG(AvgScrRead) AS avg_read_score FROM satscores"},
                         ),
                     ],
@@ -721,7 +721,7 @@ class TestGenReportProductFlowAcceptance:
             actions.append(action)
 
         executed_tools = {item["tool"] for item in mock_llm_create.tool_results if item["executed"]}
-        assert {"describe_table", "read_query"} <= executed_tools
+        assert {"describe_table", "execute_sql"} <= executed_tools
         assert "avg_read_score" in str(mock_llm_create.tool_results)
         assert actions[-1].status == ActionStatus.SUCCESS
         assert actions[-1].output["success"] is True
