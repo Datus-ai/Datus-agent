@@ -56,7 +56,6 @@ class SemanticModelPanel(Vertical):
             ("Identifiers", "identifiers", 8, "json", None),
             ("Dimensions", "dimensions", 12, "json", None),
             ("Relationships", "relationships", 8, "json", None),
-            ("Filters", "filters", 6, "json", None),
         ]
 
         for label, key, lines, lan, regex in field_specs:
@@ -721,7 +720,6 @@ class CatalogScreen(ContextScreen):
         table.add_row("Identifiers", self._create_nested_table_for_json(semantic_record.get("identifiers")))
         table.add_row("Dimensions", self._create_nested_table_for_json(semantic_record.get("dimensions")))
         table.add_row("Relationships", self._create_nested_table_for_json(semantic_record.get("relationships")))
-        table.add_row("Filters", self._create_nested_table_for_json(semantic_record.get("filters")))
 
         sections.append(table)
 
@@ -931,7 +929,6 @@ class CatalogScreen(ContextScreen):
                 "ai_context_json",
                 "columns_json",
                 "relationships_json",
-                "filters_json",
             ],
         )
 
@@ -951,7 +948,6 @@ class CatalogScreen(ContextScreen):
     def _semantic_record_from_table_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         columns = self._decode_profile_json(profile.get("columns_json"), [])
         relationships = self._decode_profile_json(profile.get("relationships_json"), [])
-        filters = self._decode_profile_json(profile.get("filters_json"), [])
         ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
 
         identifiers = []
@@ -978,7 +974,6 @@ class CatalogScreen(ContextScreen):
             "identifiers": identifiers,
             "dimensions": dimensions,
             "relationships": relationships,
-            "filters": filters,
         }
 
     def action_cursor_down(self) -> None:

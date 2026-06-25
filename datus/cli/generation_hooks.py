@@ -879,7 +879,6 @@ class GenerationHooks(AgentHooks):
     ) -> dict:
         columns = GenerationHooks._metricflow_profile_columns(data_source)
         relationships = data_source.get("relationships") or data_source.get("joins") or []
-        filters = data_source.get("filters") or []
         custom_extensions = data_source.get("custom_extensions") or data_source.get("meta") or {}
         ai_context = data_source.get("ai_context")
         description = data_source.get("description", "") or ""
@@ -900,7 +899,6 @@ class GenerationHooks(AgentHooks):
             "ai_context_json": GenerationHooks._json_dumps(ai_context),
             "columns_json": GenerationHooks._json_dumps(columns),
             "relationships_json": GenerationHooks._json_dumps(relationships),
-            "filters_json": GenerationHooks._json_dumps(filters),
             "custom_extensions_json": GenerationHooks._json_dumps(custom_extensions),
             "yaml_path": yaml_path,
             "search_text": GenerationHooks._profile_search_text(
@@ -910,7 +908,6 @@ class GenerationHooks(AgentHooks):
                 ai_context,
                 columns,
                 relationships,
-                filters,
             ),
             "updated_at": datetime.now().replace(microsecond=0),
         }

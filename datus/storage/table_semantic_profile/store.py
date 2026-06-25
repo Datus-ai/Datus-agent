@@ -47,7 +47,6 @@ class TableSemanticProfileStorage(BaseEmbeddingStore):
                     pa.field("ai_context_json", pa.string()),
                     pa.field("columns_json", pa.string()),
                     pa.field("relationships_json", pa.string()),
-                    pa.field("filters_json", pa.string()),
                     pa.field("custom_extensions_json", pa.string()),
                     pa.field("yaml_path", pa.string()),
                     pa.field("search_text", pa.string()),

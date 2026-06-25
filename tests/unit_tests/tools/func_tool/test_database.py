@@ -531,7 +531,6 @@ class TestDescribeTableSemanticProfile:
                 "]"
             ),
             "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
-            "filters_json": '[{"expression":"amount > 0","scope":"dataset"}]',
             "custom_extensions_json": "",
             "yaml_path": "/tmp/orders.yml",
         }
@@ -545,7 +544,7 @@ class TestDescribeTableSemanticProfile:
             "ai_context": {"synonyms": ["purchases"]},
         }
         assert result.result["semantic"]["relationships"][0]["name"] == "orders_to_customers"
-        assert result.result["semantic"]["filters"][0]["expression"] == "amount > 0"
+        assert "filters" not in result.result["semantic"]
         assert "format" not in result.result["semantic"]
         assert "semantic_model_name" not in result.result["semantic"]
         assert "dataset_name" not in result.result["semantic"]
@@ -588,7 +587,6 @@ class TestDescribeTableSemanticProfile:
                 "]"
             ),
             "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
-            "filters_json": "[]",
         }
 
         result = tool.describe_table("orders")
@@ -601,7 +599,6 @@ class TestDescribeTableSemanticProfile:
         }
         assert result.result["semantic"] == {
             "relationships": [{"name": "orders_to_customers", "to_dataset": "customers"}],
-            "filters": [],
         }
         columns = {col["name"]: col for col in result.result["columns"]}
         assert columns["order_date"]["semantic_role"] == "time_dimension"

@@ -1150,7 +1150,6 @@ class GenerationTools:
         dataset_name = str(getattr(dataset, "name", "") or table_name)
         columns = cls._osi_dataset_columns(dataset)
         relationships = cls._osi_dataset_relationships(doc, dataset_name)
-        filters = getattr(dataset, "filters", None) or []
         ai_context = getattr(dataset, "ai_context", None)
         custom_extensions = getattr(dataset, "custom_extensions", None) or []
         description = getattr(dataset, "description", "") or ""
@@ -1168,7 +1167,6 @@ class GenerationTools:
             "ai_context_json": cls._json_dumps(ai_context),
             "columns_json": cls._json_dumps(columns),
             "relationships_json": cls._json_dumps(relationships),
-            "filters_json": cls._json_dumps(filters),
             "custom_extensions_json": cls._json_dumps(custom_extensions),
             "yaml_path": yaml_path,
             "search_text": cls._profile_search_text(
@@ -1179,7 +1177,6 @@ class GenerationTools:
                 ai_context,
                 columns,
                 relationships,
-                filters,
             ),
             "updated_at": datetime.now().replace(microsecond=0),
             **db_parts,

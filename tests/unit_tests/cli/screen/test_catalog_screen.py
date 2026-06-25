@@ -25,7 +25,6 @@ def test_catalog_screen_builds_generic_record_from_table_semantic_profile():
                 "]"
             ),
             "relationships_json": '[{"name":"orders_to_customers","to_dataset":"customers"}]',
-            "filters_json": '[{"expression":"amount > 0","scope":"dataset"}]',
         }
     )
 
@@ -35,7 +34,7 @@ def test_catalog_screen_builds_generic_record_from_table_semantic_profile():
     assert [item["name"] for item in record["identifiers"]] == ["order_id"]
     assert [item["name"] for item in record["dimensions"]] == ["order_date", "segment"]
     assert record["relationships"][0]["name"] == "orders_to_customers"
-    assert record["filters"][0]["expression"] == "amount > 0"
+    assert "filters" not in record
 
 
 def test_catalog_screen_readonly_panel_shows_profile_fields_without_measures():
@@ -50,7 +49,6 @@ def test_catalog_screen_readonly_panel_shows_profile_fields_without_measures():
             "identifiers": [{"name": "order_id"}],
             "dimensions": [{"name": "order_date"}],
             "relationships": [{"name": "orders_to_customers"}],
-            "filters": [],
             "measures": [{"name": "amount"}],
         }
     )
@@ -62,6 +60,6 @@ def test_catalog_screen_readonly_panel_shows_profile_fields_without_measures():
     assert "Data Source" in rendered
     assert "AI Context" in rendered
     assert "Relationships" in rendered
-    assert "Filters" in rendered
+    assert "Filters" not in rendered
     assert "Measures" not in rendered
     assert "amount" not in rendered

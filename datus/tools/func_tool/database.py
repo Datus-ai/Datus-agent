@@ -385,7 +385,6 @@ class DBFuncTool:
                 "ai_context_json",
                 "columns_json",
                 "relationships_json",
-                "filters_json",
             ],
         )
         logger.info(f"get_table_semantic_profile result: {result}")
@@ -410,7 +409,6 @@ class DBFuncTool:
         columns = result_data.get("columns", [])
         semantic_columns = self._decode_profile_json(profile.get("columns_json"), [])
         relationships = self._decode_profile_json(profile.get("relationships_json"), [])
-        filters = self._decode_profile_json(profile.get("filters_json"), [])
         ai_context = self._decode_profile_json(profile.get("ai_context_json"), None)
 
         table = {
@@ -428,7 +426,6 @@ class DBFuncTool:
         result_data["table"] = table
         result_data["semantic"] = {
             "relationships": relationships,
-            "filters": filters,
         }
 
         if not isinstance(semantic_columns, list):
