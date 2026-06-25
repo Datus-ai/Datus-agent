@@ -2,6 +2,25 @@
 
 ## 0.3
 
+### 0.3.6
+
+**增强**
+
+- **可限定范围的 `/init` 与 `/build-kb`** - `/init` 现在支持传入可选 scope 文本，`/build-kb` 支持跳过确认步骤，便于在明确范围或自动化场景中更直接地构建知识库。[#1033](https://github.com/Datus-ai/Datus-agent/pull/1033) [init 文档](https://docs.datus.ai/0.3/zh/cli/init_command/) [build-kb 文档](https://docs.datus.ai/0.3/zh/cli/build_kb_command/)
+- **模型级 SSL 校验配置** - 模型 provider 可通过 `ssl_verify` 配置 `true`、`false` 或 CA bundle 路径，以连接私有 CA 或自签名证书的 LLM endpoint；模型级配置优先级高于 `SSL_VERIFY` 和 `SSL_CERT_FILE` 环境变量。[#1043](https://github.com/Datus-ai/Datus-agent/pull/1043) [文档](https://docs.datus.ai/0.3/zh/configuration/agent/)
+- **API 运行时堆栈诊断** - API server 支持通过 `SIGUSR1` 将 live async task stack dump 到日志中，便于在不停止进程的情况下排查生产环境卡住问题。[#1037](https://github.com/Datus-ai/Datus-agent/pull/1037)
+
+**Bug 修复**
+
+- **Session 与 Catalog API 响应更稳定** - session 和 catalog endpoint 中较慢的同步文件系统或 datasource 调用会移出 event loop 并设置有界超时，避免单个慢请求拖住整个 API 进程。[#1036](https://github.com/Datus-ai/Datus-agent/pull/1036)
+- **Datasource Override 保留 Database 上下文** - 修复 datasource 名称被当作物理 database 名称使用的问题；Chat 请求现在会把 datasource override 与 database context 分开传递，connection、gateway、subagent 和 validation 路径都会保留这两个概念的区别。[#1048](https://github.com/Datus-ai/Datus-agent/pull/1048)
+- **Release 与测试稳定性** - Prepare Release workflow 现在会在 locked sync 前重新生成 `uv.lock`；BIRD SQLite fixtures 会隔离到临时目录，避免测试之间互相污染。[#1039](https://github.com/Datus-ai/Datus-agent/pull/1039) [#1047](https://github.com/Datus-ai/Datus-agent/pull/1047)
+
+**升级说明**
+
+- **Skill 执行方式** - Skill 现在通过 `load_skill` 执行；旧的 `skill_execute_command` 路径和 skill config 中的 `allowed_commands` 字段已移除。[#1033](https://github.com/Datus-ai/Datus-agent/pull/1033)
+- **数据库 Schema 工具** - `get_table_ddl` 不再作为面向 agent/MCP 的工具暴露。用户侧 schema 和样例数据检查请使用 `describe_table` 和 `read_query`。[#1031](https://github.com/Datus-ai/Datus-agent/pull/1031)
+
 ### 0.3.5
 
 **新功能**
