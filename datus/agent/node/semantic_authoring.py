@@ -26,6 +26,7 @@ default ``{node}_system`` latest-version scan is never affected.
 from __future__ import annotations
 
 import re
+from dataclasses import fields, is_dataclass
 from typing import Any, Dict, Optional
 
 from datus.utils.loggings import get_logger
@@ -82,6 +83,29 @@ def _normalize_model_name(value: Any) -> str:
     return text
 
 
+def _declared_field_names(value: Any) -> set[str]:
+    if is_dataclass(value):
+        return {field.name for field in fields(value)}
+
+    for attr_name in ("model_fields", "__fields__"):
+        field_map = getattr(value, attr_name, None) or getattr(type(value), attr_name, None)
+        if isinstance(field_map, dict):
+            return set(field_map)
+
+    annotations = getattr(type(value), "__annotations__", None)
+    return set(annotations) if isinstance(annotations, dict) else set()
+
+
+def _config_field_value(config: Any, field_name: str) -> Any:
+    if isinstance(config, dict):
+        value = config.get(field_name, "")
+    elif field_name in _declared_field_names(config):
+        value = getattr(config, field_name, "")
+    else:
+        return ""
+    return "" if callable(value) else value
+
+
 def default_osi_semantic_model_name(agent_config: Any = None) -> str:
     """Return the default OSI semantic model name for the current authoring scope."""
     candidates = []
@@ -93,9 +117,9 @@ def default_osi_semantic_model_name(agent_config: Any = None) -> str:
         if db_config is not None:
             candidates.extend(
                 [
-                    getattr(db_config, "database", ""),
-                    getattr(db_config, "schema", ""),
-                    getattr(db_config, "catalog", ""),
+                    _config_field_value(db_config, "database"),
+                    _config_field_value(db_config, "schema"),
+                    _config_field_value(db_config, "catalog"),
                 ]
             )
         candidates.extend(

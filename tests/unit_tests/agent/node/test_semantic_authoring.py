@@ -1,5 +1,6 @@
 """Unit tests for semantic authoring format resolution."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -13,6 +14,13 @@ from datus.agent.node.semantic_authoring import (
     resolve_authoring_format,
 )
 from datus.prompts.prompt_manager import get_prompt_manager
+
+
+@dataclass
+class _DbScope:
+    database: str = ""
+    schema: str = ""
+    catalog: str = ""
 
 
 def _agent_config(adapter):
@@ -39,11 +47,50 @@ def test_derives_from_node_semantic_adapter():
 def test_default_osi_semantic_model_name_uses_database_scope():
     config = SimpleNamespace(
         current_datasource="warehouse",
-        current_db_config=lambda: SimpleNamespace(database="Sales Domain", schema="", catalog=""),
+        current_db_config=lambda: _DbScope(database="Sales Domain"),
     )
 
     assert default_osi_semantic_model_name(config) == "sales_domain"
     assert default_osi_semantic_model_file(config) == "subject/semantic_models/warehouse/sales_domain.yml"
+
+
+def test_default_osi_semantic_model_name_uses_declared_db_scope_fallbacks():
+    config = SimpleNamespace(
+        current_datasource="warehouse",
+        current_db_config=lambda: _DbScope(schema="Reporting Schema", catalog="Lake House"),
+    )
+
+    assert default_osi_semantic_model_name(config) == "reporting_schema"
+    assert default_osi_semantic_model_file(config) == "subject/semantic_models/warehouse/reporting_schema.yml"
+
+
+def test_default_osi_semantic_model_name_skips_undeclared_schema_method():
+    class DbScopeWithSchemaMethod:
+        __annotations__ = {"database": str, "catalog": str}
+
+        database = ""
+        catalog = "Lake House"
+
+        def schema(self):
+            return "method-value"
+
+    config = SimpleNamespace(
+        current_datasource="warehouse",
+        current_db_config=lambda: DbScopeWithSchemaMethod(),
+    )
+
+    assert default_osi_semantic_model_name(config) == "lake_house"
+
+
+def test_default_osi_semantic_model_name_uses_agent_scope_fallbacks():
+    config = SimpleNamespace(
+        current_datasource="",
+        project_name="Project Alpha",
+        current_db_config=lambda: _DbScope(),
+    )
+
+    assert default_osi_semantic_model_name(config) == "project_alpha"
+    assert default_osi_semantic_model_file(config) == "subject/semantic_models/default/project_alpha.yml"
 
 
 def test_defaults_to_metricflow_when_unknown():
