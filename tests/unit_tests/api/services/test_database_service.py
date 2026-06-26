@@ -179,7 +179,7 @@ class _FakeServerConnector:
         self.database_name = database_name
         self.get_databases_calls = 0
 
-    def test_connection(self) -> bool:
+    def test_connection(self) -> bool:  # audit-noqa: zero_assert_test — connector API stub, not a test
         return True
 
     def get_databases(self, catalog_name: str = "", include_sys: bool = False):
