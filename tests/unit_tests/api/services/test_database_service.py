@@ -163,6 +163,82 @@ class TestListDatabases:
         assert result.data.current_database == "california_schools"
 
 
+class _FakeServerConnector:
+    """No-schema (server-style) connector that distinguishes its configured
+    database from every database reachable on the instance.
+
+    ``get_databases`` mimics ``SHOW DATABASES`` (the whole server); a scoped
+    listing must NOT call it when a database is configured.
+    """
+
+    dialect = "starrocks"
+    catalog_name = "default_catalog"
+    connection_string = "mysql+pymysql://u:p@host:9030/benchmark"
+
+    def __init__(self, database_name: str):
+        self.database_name = database_name
+        self.get_databases_calls = 0
+
+    def test_connection(self) -> bool:
+        return True
+
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False):
+        self.get_databases_calls += 1
+        return ["benchmark", "ga4", "olist", "fund_poc"]
+
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = ""):
+        return ["t2", "t1"]
+
+
+@pytest.fixture
+def _no_schema_dialect(monkeypatch):
+    """Force the server-style (no per-database schema) code path."""
+    from datus_db_core import connector_registry
+
+    monkeypatch.setattr(connector_registry, "support_schema", lambda dialect: False)
+
+
+class TestGetConnectionInfoScoping:
+    """A datasource is a connection profile scoped to its configured database;
+    listing must not leak every database on the server."""
+
+    def test_configured_database_is_listed_without_enumerating_server(self, real_agent_config, _no_schema_dialect):
+        """With a configured database, only that database is returned and the
+        server-wide ``get_databases`` enumeration is never invoked."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["benchmark"]
+        assert connector.get_databases_calls == 0
+        assert infos[0].current is True
+        # tables are surfaced (and sorted) for the scoped database
+        assert infos[0].tables == ["t1", "t2"]
+
+    def test_falls_back_to_server_enumeration_when_unconfigured(self, real_agent_config, _no_schema_dialect):
+        """Only when no database is configured do we enumerate the server so the
+        connection's reachable databases stay browsable."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        assert connector.get_databases_calls == 1
+        assert [i.name for i in infos] == ["benchmark", "ga4", "olist", "fund_poc"]
+
+    def test_request_database_name_filter_takes_precedence(self, real_agent_config, _no_schema_dialect):
+        """An explicit database_name filter wins over the configured database and
+        still avoids the server-wide enumeration."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput(database_name="ga4"))
+
+        assert [i.name for i in infos] == ["ga4"]
+        assert connector.get_databases_calls == 0
+
+
 class TestGetTableSchema:
     """Tests for get_table_schema with real SQLite connection."""
 

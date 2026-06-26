@@ -116,10 +116,11 @@ class DatasourceService:
     ) -> List[DatabaseInfo]:
         """Get connection information for a database connector.
 
-        Enumerates all databases (and schemas if supported), marks the
-        connector's configured database as ``current``.  Request-level
-        filters (database_name, schema_name, catalog_name) narrow the
-        result set when provided.
+        Lists the database(s) this connector is scoped to — its configured
+        database, or the whole server only when no database is configured —
+        resolves schemas if supported, and marks the connector's configured
+        database as ``current``. Request-level filters (database_name,
+        schema_name, catalog_name) narrow the result set when provided.
         """
         from datus_db_core import connector_registry
 
@@ -148,17 +149,24 @@ class DatasourceService:
             logger.exception("Connection test failed for %s", connector.database_name)
             return [_disconnected(connector.database_name)]
 
-        # 1) Enumerate databases — fatal if this fails since we have nothing to iterate.
+        # 1) Resolve which databases to list — fatal if this fails since we have nothing
+        # to iterate. A datasource is a connection profile scoped to its configured
+        # database(s): get_connections() already yields one connector per config-known
+        # database (a server datasource's configured ``database``, or one connector per
+        # glob file). So list the database this connector is bound to, NOT every database
+        # on the server — otherwise a single project datasource leaks the whole instance.
         try:
             if request.database_name:
                 db_names = [request.database_name]
+            elif connector.database_name:
+                db_names = [connector.database_name]
             elif hasattr(connector, "get_databases"):
+                # No database configured for this datasource — fall back to enumerating
+                # the server so the user can still browse what the connection can reach.
                 db_names = connector.get_databases(
                     catalog_name=catalog_name,
                     include_sys=request.include_sys_schemas,
                 )
-            elif connector.database_name:
-                db_names = [connector.database_name]
             else:
                 db_names = []
         except Exception as e:
