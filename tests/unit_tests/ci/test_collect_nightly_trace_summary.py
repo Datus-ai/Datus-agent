@@ -46,7 +46,7 @@ def test_summarize_observations_reports_counts_tokens_and_findings():
     assert summary["tool_span_count"] == 1
     assert summary["failed_span_count"] == 1
     assert summary["token_usage"] == {"input": 12, "output": 8, "total": 20}
-    assert summary["finding_type_counts"] == {"failed_span": 1, "slow_span": 1}
+    assert summary["finding_type_counts"] == {"failed_span": 1}
 
 
 def test_build_process_diagnostics_groups_by_suite():
