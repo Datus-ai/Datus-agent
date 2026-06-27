@@ -1822,7 +1822,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             "user explicitly asks, but call it out in your answer."
         )
         if self.ARTIFACT_KIND == "dashboard":
-            if db_exposed:
+            # This rule is specifically about running ad-hoc SQL, so gate it on
+            # ``execute_sql`` alone — a whitelist that keeps only ``describe_table``
+            # leaves ``db_exposed`` True but must NOT advertise SQL execution.
+            if execute_sql_exposed:
                 lines.append(
                     "6. **Dashboard queries have no precomputed data**. The "
                     "`queries/<slug>.sql.j2` files (inlined above) are "

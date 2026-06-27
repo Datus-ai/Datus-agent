@@ -1924,6 +1924,22 @@ class TestToolsWhitelist:
         assert "execute_sql" in rules
         assert "describe_table" not in rules, "rules must not mention a db tool the whitelist dropped"
 
+    def test_dashboard_rule6_gates_ad_hoc_sql_on_execute_sql_only(self, real_agent_config):
+        """Dashboard rule 6 must advertise ad-hoc ``execute_sql`` ONLY when that
+        tool is exposed. A whitelist that keeps just ``describe_table`` leaves DB
+        access nominally present, but the model has no way to run SQL — so the
+        rule must take its no-execution form instead of telling it to run SQL."""
+        node = _make_ask_dashboard_with_tools(real_agent_config, "db_tools.describe_table")
+        names = _tool_names(node)
+        assert "describe_table" in names
+        assert "execute_sql" not in names
+
+        rules = node._render_behavioral_rules_section()
+        assert "ad-hoc SQL via `execute_sql`" not in rules, (
+            "dashboard rule 6 must not advertise execute_sql when it is not whitelisted"
+        )
+        assert "live SQL execution is not enabled" in rules
+
     def test_filesystem_tools_require_whitelist(self, real_agent_config):
         """Filesystem tools are gated like every other group — present only
         when ``filesystem_tools`` is whitelisted, dropped otherwise. There is
