@@ -43,11 +43,15 @@ def test_openai_search_yes_fetch_no():
     assert OpenAIModel.supports_builtin_web_fetch(s) is False
 
 
-def test_claude_enables_both():
+def test_claude_search_server_fetch_local():
     s = Mock()
-    # Claude serves both server tools via the native path (OAuth and API key).
+    # web_search runs server-side (Anthropic web_search_20250305, GA). web_fetch
+    # is served by the LOCAL httpx backend instead of the hosted
+    # web_fetch_20250910: the hosted tool emits server_tool_use blocks whose
+    # rehydrated form carries an output-only ``citations`` field the message
+    # input schema rejects on replay (400), so we keep fetch local.
     assert ClaudeModel.supports_builtin_web_search(s) is True
-    assert ClaudeModel.supports_builtin_web_fetch(s) is True
+    assert ClaudeModel.supports_builtin_web_fetch(s) is False
 
 
 def test_describe_hosted_tool_item_web_search_dict():
@@ -124,6 +128,68 @@ def test_summarize_web_tool_result_handles_missing():
     from datus.models.claude_model import summarize_web_tool_result
 
     assert summarize_web_tool_result(None) == ("completed", {})
+
+
+def test_sanitize_server_block_strips_citations_from_server_tool_use():
+    """A rehydrated server_tool_use block carries an output-only ``citations``
+    field (extra='allow'); replaying it verbatim trips a 400. The sanitizer must
+    keep only the input-schema keys."""
+    from anthropic.types import ServerToolUseBlock
+
+    from datus.models.claude_model import sanitize_server_block_for_replay
+
+    block = ServerToolUseBlock(id="srv_1", name="web_search", input={"query": "eth"}, type="server_tool_use")
+    # Simulate the field the streaming accumulator attaches.
+    block.__pydantic_extra__["citations"] = None
+    assert "citations" in block.model_dump(mode="json")  # precondition
+
+    out = sanitize_server_block_for_replay(block)
+    assert out == {"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {"query": "eth"}}
+    assert "citations" not in out
+
+
+def test_sanitize_server_block_whitelists_web_search_tool_result():
+    """web_search_tool_result keeps only type/tool_use_id/content on replay."""
+    from types import SimpleNamespace
+
+    from datus.models.claude_model import sanitize_server_block_for_replay
+
+    block = SimpleNamespace(
+        model_dump=lambda mode="json": {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srv_1",
+            "content": [{"type": "web_search_result", "title": "t", "url": "https://x"}],
+            "cache_control": {"type": "ephemeral"},  # extra output-only key
+        }
+    )
+    out = sanitize_server_block_for_replay(block)
+    assert set(out) == {"type", "tool_use_id", "content"}
+    assert out["tool_use_id"] == "srv_1"
+
+
+def test_sanitize_server_block_unknown_type_falls_back_to_verbatim():
+    """An unrecognized block type is dumped verbatim (best effort, no data loss)."""
+    from types import SimpleNamespace
+
+    from datus.models.claude_model import sanitize_server_block_for_replay
+
+    dumped = {"type": "some_future_block", "foo": "bar"}
+    block = SimpleNamespace(model_dump=lambda mode="json": dumped)
+    assert sanitize_server_block_for_replay(block) == dumped
+
+
+def test_sanitize_server_block_returns_none_when_unserializable():
+    """A block whose model_dump raises is skipped (returns None) rather than
+    aborting the whole assistant-message rebuild."""
+    from types import SimpleNamespace
+
+    from datus.models.claude_model import sanitize_server_block_for_replay
+
+    def _boom(mode="json"):
+        raise ValueError("not serializable")
+
+    block = SimpleNamespace(type="server_tool_use", model_dump=_boom)
+    assert sanitize_server_block_for_replay(block) is None
 
 
 def test_codex_hosted_completion_attaches_citations():
@@ -274,3 +340,101 @@ def test_describe_hosted_tool_item_ignores_non_web_hosted_calls():
     # the web_search canonical schema by the deferred completion logic).
     for itype in ("file_search_call", "image_generation_call", "code_interpreter_call", "computer_call"):
         assert describe_hosted_tool_item({"type": itype, "id": "x"}) is None
+
+
+def _user_msg(text="explore eth tables"):
+    return {"role": "user", "content": [{"type": "text", "text": text}]}
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_turn_saves_user_and_placeholder():
+    """A turn that raises before normal persistence still commits the user
+    message (plus a non-empty placeholder assistant) so the next turn isn't
+    amnesiac. Role-alternating + non-empty text keeps the replay API-valid."""
+    from unittest.mock import AsyncMock
+
+    session = AsyncMock()
+    frame_locals = {
+        "session": session,
+        "turn_persisted": False,
+        "user_turn_message": _user_msg(),
+        "final_content": "",
+    }
+    await ClaudeModel._persist_failed_turn(Mock(), frame_locals, RuntimeError("boom"))
+
+    session.add_items.assert_awaited_once()
+    items = session.add_items.await_args.args[0]
+    assert [m["role"] for m in items] == ["user", "assistant"]
+    # Placeholder assistant text is non-empty (Anthropic rejects empty text).
+    assert items[1]["content"][0]["text"].strip()
+    assert "RuntimeError" in items[1]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_turn_uses_partial_content():
+    """When the turn produced partial assistant text before failing, that text
+    is preserved rather than replaced by the error placeholder."""
+    from unittest.mock import AsyncMock
+
+    session = AsyncMock()
+    frame_locals = {
+        "session": session,
+        "turn_persisted": False,
+        "user_turn_message": _user_msg(),
+        "final_content": "partial answer so far",
+    }
+    await ClaudeModel._persist_failed_turn(Mock(), frame_locals, RuntimeError("boom"))
+    items = session.add_items.await_args.args[0]
+    assert items[1]["content"][0]["text"] == "partial answer so far"
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_turn_skips_when_already_persisted():
+    """The success path already committed the turn; the failure path must not
+    double-write."""
+    from unittest.mock import AsyncMock
+
+    session = AsyncMock()
+    frame_locals = {
+        "session": session,
+        "turn_persisted": True,
+        "user_turn_message": _user_msg(),
+        "final_content": "done",
+    }
+    await ClaudeModel._persist_failed_turn(Mock(), frame_locals, RuntimeError("boom"))
+    session.add_items.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_turn_noop_without_session_or_user_message():
+    """No session (e.g. one-shot call) or a failure before the user message was
+    built → nothing to persist, and no crash."""
+    from unittest.mock import AsyncMock
+
+    # No session.
+    await ClaudeModel._persist_failed_turn(Mock(), {"session": None}, RuntimeError("x"))
+
+    # Session present but exception fired before user_turn_message existed.
+    session = AsyncMock()
+    await ClaudeModel._persist_failed_turn(Mock(), {"session": session, "turn_persisted": False}, RuntimeError("x"))
+    session.add_items.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_persist_failed_turn_swallows_persist_errors():
+    """The fallback must never mask the original error: a failing add_items is
+    logged and swallowed, not raised."""
+    from unittest.mock import AsyncMock
+
+    session = AsyncMock()
+    session.add_items.side_effect = RuntimeError("db locked")
+    frame_locals = {
+        "session": session,
+        "turn_persisted": False,
+        "user_turn_message": _user_msg(),
+        "final_content": "",
+    }
+    # Must complete without re-raising (would otherwise mask the real error)...
+    await ClaudeModel._persist_failed_turn(Mock(), frame_locals, ValueError("original"))
+    # ...while still having attempted the persist exactly once.
+    session.add_items.assert_awaited_once()

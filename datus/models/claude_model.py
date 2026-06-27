@@ -150,6 +150,41 @@ def summarize_web_tool_result(res_block, query: str = ""):
     return "completed", {}
 
 
+# Anthropic's message *input* schema for replayed server-side blocks is stricter
+# than the *output* schema: it accepts only the keys below per block type. The
+# streamed response (rehydrated via ``stream.get_final_message()``) attaches
+# output-only fields such as ``citations`` to these blocks — and because the SDK
+# block models use ``extra="allow"``, ``model_dump`` carries them through. Replaying
+# them verbatim trips a 400 (e.g. ``server_tool_use.citations: Extra inputs are not
+# permitted``), which aborts the turn before it can be persisted — so the next turn
+# also "forgets" the conversation. Whitelist the input-permitted keys to avoid this.
+_SERVER_BLOCK_INPUT_KEYS = {
+    "server_tool_use": ("type", "id", "name", "input"),
+    "web_search_tool_result": ("type", "tool_use_id", "content"),
+    "web_fetch_tool_result": ("type", "tool_use_id", "content"),
+}
+
+
+def sanitize_server_block_for_replay(block) -> Optional[dict]:
+    """Dump a server-side content block to the Anthropic message *input* schema.
+
+    Returns a dict containing only the keys Anthropic accepts when the block is
+    replayed inside an assistant message, or ``None`` if the block cannot be
+    serialized. Drops output-only fields (notably ``citations``) that would
+    otherwise raise ``Extra inputs are not permitted``.
+    """
+    try:
+        dumped = block.model_dump(mode="json")
+    except Exception:
+        logger.debug("Skipping non-serializable content block: %s", getattr(block, "type", "?"))
+        return None
+    allowed = _SERVER_BLOCK_INPUT_KEYS.get(dumped.get("type"))
+    if allowed is None:
+        # Unknown server block type — fall back to verbatim dump (best effort).
+        return dumped
+    return {k: dumped[k] for k in allowed if k in dumped}
+
+
 def convert_tools_for_anthropic(mcp_tools):
     """Convert MCP tools to Anthropic tool format.
 
@@ -243,8 +278,16 @@ class ClaudeModel(OpenAICompatibleModel):
         return True
 
     def supports_builtin_web_fetch(self) -> bool:
-        # Anthropic web_fetch_20250910 (beta) runs server-side via the native path.
-        return True
+        # web_fetch is served by the LOCAL httpx backend (``web_tool.web_fetch``)
+        # rather than Anthropic's server-side ``web_fetch_20250910``. The hosted
+        # tool emits ``server_tool_use`` / ``web_fetch_tool_result`` blocks that
+        # must be replayed verbatim next turn; the rehydrated blocks carry an
+        # output-only ``citations`` field the message *input* schema rejects
+        # (400 ``server_tool_use.citations: Extra inputs are not permitted``),
+        # which aborts the turn before it can be persisted. The local backend
+        # returns a plain ``tool_result`` instead, sidestepping that entirely.
+        # (web_search stays server-side — see ``sanitize_server_block_for_replay``.)
+        return False
 
     def _get_api_key(self) -> str:
         """Get Anthropic API key from config or environment."""
@@ -661,6 +704,10 @@ class ClaudeModel(OpenAICompatibleModel):
                 tool_call_cache = {}
                 sql_contexts = []
                 final_content = ""
+                # Guards the failure-path persistence below: the success path
+                # sets this once it has committed the turn, so the ``except``
+                # handler never double-writes a turn it already saved.
+                turn_persisted = False
                 # Accumulate token usage across all turns
                 cumulative_input_tokens = 0
                 cumulative_output_tokens = 0
@@ -1087,13 +1134,14 @@ class ClaudeModel(OpenAICompatibleModel):
                             tool_use_blocks.append(block)
                         else:
                             # Preserve server-side blocks (server_tool_use /
-                            # web_search_tool_result / web_fetch_tool_result) verbatim
-                            # so a mixed turn (server web tool + local tool_use) keeps a
-                            # valid assistant message when replayed to Anthropic next turn.
-                            try:
-                                content.append(block.model_dump(mode="json"))
-                            except Exception:
-                                logger.debug("Skipping non-serializable content block: %s", getattr(block, "type", "?"))
+                            # web_search_tool_result / web_fetch_tool_result) so a mixed
+                            # turn (server web tool + local tool_use) keeps a valid
+                            # assistant message when replayed to Anthropic next turn.
+                            # Sanitize to the input schema to drop output-only fields
+                            # (e.g. ``citations``) the API rejects on replay.
+                            sanitized = sanitize_server_block_for_replay(block)
+                            if sanitized is not None:
+                                content.append(sanitized)
 
                     if content:
                         messages.append({"role": "assistant", "content": content})
@@ -1201,6 +1249,7 @@ class ClaudeModel(OpenAICompatibleModel):
                             "content": [{"type": "text", "text": final_content}],
                         }
                         await session.add_items([user_turn_message, assistant_turn_message])
+                        turn_persisted = True
                         # Persist the turn's token usage into the durable
                         # ``turn_usage`` table. The native loop never calls
                         # ``Runner.run`` (which is what normally triggers
@@ -1226,13 +1275,45 @@ class ClaudeModel(OpenAICompatibleModel):
                 yield final_action
 
         except anthropic.AuthenticationError as e:
+            await self._persist_failed_turn(locals(), e)
             self._diagnose_oauth_401(e)
             raise
         except Exception as e:
+            await self._persist_failed_turn(locals(), e)
             if is_ssl_cert_verification_error(e):
                 raise DatusException(ErrorCode.MODEL_SSL_CERT_ERROR) from e
             logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
+
+    async def _persist_failed_turn(self, frame_locals: dict, error: Exception) -> None:
+        """Best-effort save of an interrupted turn so the next turn isn't amnesiac.
+
+        When the native loop raises mid-turn (e.g. a 400 on replay, a network
+        drop, or an interrupt), the normal end-of-loop persistence never runs, so
+        neither the user message nor any partial reply reaches the session — and
+        the user's *next* turn "forgets" what was just asked. This commits the
+        user message plus a placeholder/partial assistant message (kept non-empty
+        and role-alternating so Anthropic accepts the replay) before the original
+        error propagates. It must never mask that error: all failures here are
+        swallowed.
+        """
+        session = frame_locals.get("session")
+        if session is None or frame_locals.get("turn_persisted"):
+            return
+        user_turn_message = frame_locals.get("user_turn_message")
+        if not user_turn_message:
+            return
+        try:
+            partial = (frame_locals.get("final_content") or "").strip()
+            assistant_text = partial or f"[Turn interrupted before completion: {type(error).__name__}]"
+            assistant_turn_message = {
+                "role": "assistant",
+                "content": [{"type": "text", "text": assistant_text}],
+            }
+            await session.add_items([user_turn_message, assistant_turn_message])
+            logger.info("Persisted interrupted native Claude turn so history survives the failure.")
+        except Exception as persist_err:
+            logger.warning(f"Failed to persist interrupted native Claude turn: {persist_err}")
 
     def _build_native_usage_info(
         self,
