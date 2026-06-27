@@ -1580,7 +1580,7 @@ class TestVisualArtifactAutoAllow:
 class TestExecuteSqlPermission:
     """Statement-type gating for ``db_tools.execute_sql`` via _handle_sql_permission."""
 
-    def _make_hooks(self, mock_broker, config, non_interactive=False):
+    def _make_hooks(self, mock_broker, config, non_interactive=False, project_root=None):
         registry = ToolRegistry()
         tool_mock = MagicMock()
         tool_mock.name = "execute_sql"
@@ -1592,6 +1592,7 @@ class TestExecuteSqlPermission:
             node_name="chat",
             tool_registry=registry,
             non_interactive=non_interactive,
+            project_root=project_root,
         )
 
     @staticmethod
@@ -1660,12 +1661,47 @@ class TestExecuteSqlPermission:
 
     @pytest.mark.asyncio
     async def test_unknown_or_unparseable_sql_prompts(self, mock_broker):
-        """A .sql file path / unparseable text is treated as non-read → ASK (fail safe)."""
+        """An unresolvable .sql path / unparseable text is non-read → ASK (fail safe).
+
+        With no ``project_root`` set the ``.sql`` file cannot be read, so the gate
+        keeps the path as-is, classifies it UNKNOWN, and prompts.
+        """
         config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
         hooks = self._make_hooks(mock_broker, config)
         mock_broker.request = AsyncMock(return_value=[["y"]])
 
         await hooks.on_tool_start(self._ctx("sql/session_1/q.sql"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_readonly_sql_file_auto_allows(self, mock_broker, tmp_path):
+        """A .sql file holding a read-only SELECT is resolved and auto-allows.
+
+        The gate reads the workspace-relative file (same logic as the tool) so a
+        read-only file does not trigger an unnecessary confirmation prompt.
+        """
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "probe.sql").write_text("SELECT * FROM users LIMIT 10")
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config, project_root=str(tmp_path))
+
+        await hooks.on_tool_start(self._ctx("sql/probe.sql"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_sql_file_prompts(self, mock_broker, tmp_path):
+        """A .sql file holding a write is resolved to its real type and prompts."""
+        sql_dir = tmp_path / "sql"
+        sql_dir.mkdir()
+        (sql_dir / "load.sql").write_text("INSERT INTO users VALUES (1)")
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config, project_root=str(tmp_path))
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("sql/load.sql"), MagicMock(), self._tool())
 
         assert mock_broker.request.await_count == 1
 
@@ -1702,25 +1738,29 @@ class TestExecuteSqlPermission:
         mock_broker.request.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_session_always_allow_is_bucketed_by_sql_class(self, mock_broker):
-        """'Always allow' on a write must NOT auto-approve a later DDL/DROP.
+    async def test_session_always_allow_is_bucketed_by_sql_type(self, mock_broker):
+        """'Always allow' is keyed by the concrete SQL type, not a coarse class.
 
-        The session approval is keyed by SQL class (``execute_sql.write`` vs
-        ``execute_sql.ddl``), so the second, different-class statement still
-        prompts instead of inheriting the write's approval.
+        The session approval is bucketed per type (``execute_sql.insert`` /
+        ``.update`` / ``.ddl``), so approving an INSERT only auto-approves later
+        INSERTs — a different type (UPDATE, DROP) still prompts.
         """
         config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
         hooks = self._make_hooks(mock_broker, config)
         mock_broker.request = AsyncMock(return_value=[["a"]])  # "always allow (session)"
 
-        # First write: prompts once and approves the write bucket for the session.
+        # First INSERT: prompts once and approves the ``insert`` bucket.
         await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
         assert mock_broker.request.await_count == 1
 
-        # Another write (same class): served from the session cache, no prompt.
-        await hooks.on_tool_start(self._ctx("UPDATE t SET a = 1"), MagicMock(), self._tool())
+        # Another INSERT (same type): served from the session cache, no prompt.
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (2)"), MagicMock(), self._tool())
         assert mock_broker.request.await_count == 1
 
-        # A DDL (different class) is NOT covered by the write bucket → prompts again.
-        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+        # An UPDATE (different type) is NOT covered by the insert bucket → prompts.
+        await hooks.on_tool_start(self._ctx("UPDATE t SET a = 1"), MagicMock(), self._tool())
         assert mock_broker.request.await_count == 2
+
+        # A DDL (different type again) → prompts once more.
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 3

@@ -9,7 +9,6 @@ import re
 from collections import OrderedDict
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
@@ -542,30 +541,26 @@ class DBFuncTool:
         return os.path.expanduser(workspace_root)
 
     def _read_sql_from_file(self, file_path: str) -> str:
-        """Read SQL content from a file path relative to workspace root."""
-        if os.path.isabs(file_path):
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message_args={"error_message": f"Absolute paths are not allowed: {file_path}"},
-            )
-        if ".." in file_path:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT, message_args={"error_message": f"Invalid SQL file path: {file_path}"}
-            )
-        workspace_root = self._resolve_workspace_root()
-        full_path = (Path(workspace_root) / file_path).resolve()
-        workspace_resolved = Path(workspace_root).resolve()
-        if not str(full_path).startswith(str(workspace_resolved) + os.sep) and full_path != workspace_resolved:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message_args={"error_message": f"SQL file path escapes workspace: {file_path}"},
-            )
-        if not full_path.exists():
+        """Read SQL content from a file path relative to workspace root.
+
+        Delegates the path-safety checks and read to the shared
+        :func:`read_workspace_sql_file` so the execution path and the
+        permission gate resolve a ``.sql`` reference identically.
+        """
+        from datus.utils.sql_utils import read_workspace_sql_file
+
+        try:
+            return read_workspace_sql_file(file_path, self._resolve_workspace_root())
+        except FileNotFoundError:
             raise DatusException(
                 ErrorCode.COMMON_FILE_NOT_FOUND,
                 message_args={"config_name": "SQL", "file_name": file_path},
             )
-        return full_path.read_text(encoding="utf-8")
+        except ValueError as e:
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message_args={"error_message": str(e)},
+            )
 
     @staticmethod
     def _normalize_identifier_part(value: Optional[str]) -> str:
@@ -1273,14 +1268,18 @@ class DBFuncTool:
             FuncToolResult: compressed rows for read-only queries, or execution
             metadata for writes/DDL. On failure success=0 with an error message.
         """
-        from datus.utils.sql_utils import parse_sql_type
+        from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_type
 
         try:
             # Resolve a ``.sql`` file path up front so type detection inspects the
             # real statement, not the path. The inner methods re-detect the path
-            # too, but on resolved SQL the check is a no-op.
+            # too, but on resolved SQL the check is a no-op. The permission gate
+            # resolves the same file via the shared helper so a read-only .sql
+            # file auto-allows instead of prompting. A .sql file must contain a
+            # single statement; the downstream read/write/DDL paths each reject
+            # multi-statement input.
             sql_stripped = sql.strip()
-            if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
+            if looks_like_sql_file_ref(sql_stripped):
                 sql = self._read_sql_from_file(sql_stripped)
 
             connector = self._get_connector(datasource, database)
@@ -1337,10 +1336,12 @@ class DBFuncTool:
             FuncToolResult with result=self.compressor.compress(rows) when successful. On failure success=0 with the
             underlying error message from the connector.
         """
+        from datus.utils.sql_utils import looks_like_sql_file_ref
+
         try:
             # Support SQL file path: if sql is a simple path ending with .sql, read from file
             sql_stripped = sql.strip()
-            if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
+            if looks_like_sql_file_ref(sql_stripped):
                 sql = self._read_sql_from_file(sql_stripped)
 
             connector = self._get_connector(datasource, database)
@@ -1633,7 +1634,12 @@ class DBFuncTool:
         Returns:
             FuncToolResult with execution metadata when successful.
         """
-        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
+        from datus.utils.sql_utils import (
+            _first_statement,
+            looks_like_sql_file_ref,
+            parse_sql_type,
+            strip_sql_comments,
+        )
 
         if dry_run:
             return FuncToolResult(
@@ -1643,7 +1649,7 @@ class DBFuncTool:
 
         try:
             sql_stripped = sql.strip()
-            if sql_stripped.endswith(".sql") and "\n" not in sql_stripped and " " not in sql_stripped:
+            if looks_like_sql_file_ref(sql_stripped):
                 sql = self._read_sql_from_file(sql_stripped)
 
             cleaned = strip_sql_comments(sql).strip()

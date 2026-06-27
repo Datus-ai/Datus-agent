@@ -2834,7 +2834,6 @@ class TestGenSQLSystemPromptToolContext:
         assert "describe_table" in call_kwargs["available_tool_names"]
         assert "execute_sql" not in call_kwargs["available_tool_names"]
         assert call_kwargs["has_describe_table_tool"] is True
-        assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True
         assert '"sql"' in prompt
         assert '"output"' in prompt
@@ -2909,7 +2908,6 @@ class TestGenSQLSystemPromptToolContext:
         assert "describe_table" in call_kwargs["available_tool_names"]
         assert "execute_sql" not in call_kwargs["available_tool_names"]
         assert call_kwargs["has_describe_table_tool"] is True
-        assert call_kwargs["has_read_query_tool"] is False
         assert call_kwargs["has_ask_user_tool"] is True
 
     def test_system_prompt_context_includes_configured_mcp_tool_names(self, real_agent_config, mock_llm_create):

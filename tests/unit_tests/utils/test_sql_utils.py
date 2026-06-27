@@ -13,6 +13,7 @@ from datus.utils.sql_utils import (
     _metadata_pattern,
     extract_table_names,
     format_sql_to_pretty,
+    looks_like_sql_file_ref,
     metadata_identifier,
     normalize_sql,
     parse_context_switch,
@@ -22,6 +23,7 @@ from datus.utils.sql_utils import (
     parse_sql_type,
     parse_table_name_parts,
     parse_table_names_parts,
+    read_workspace_sql_file,
     strip_sql_comments,
 )
 
@@ -1565,3 +1567,55 @@ class TestParseMetadataFromDDLExtended:
         assert result["table"]["name"] == "t"
         name_col = next(c for c in result["columns"] if c["name"] == "name")
         assert name_col == {"name": "name", "type": "VARCHAR(100)"}
+
+
+class TestLooksLikeSqlFileRef:
+    """``looks_like_sql_file_ref`` separates a .sql path from inline SQL."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "sql/session_1/query.sql",
+            "query.sql",
+            "  sql/q.sql  ",  # surrounding whitespace is stripped
+        ],
+    )
+    def test_recognizes_bare_sql_path(self, text):
+        assert looks_like_sql_file_ref(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "SELECT * FROM users",  # inline SQL has whitespace
+            "SELECT 1",
+            "create table t (id int)",
+            "my file.sql",  # embedded space → not a bare path
+            "line1\nquery.sql",  # newline → not a single token
+            "users",  # no .sql suffix
+            "",
+            "   ",
+        ],
+    )
+    def test_rejects_non_file_text(self, text):
+        assert looks_like_sql_file_ref(text) is False
+
+
+class TestReadWorkspaceSqlFile:
+    """``read_workspace_sql_file`` reads workspace-relative .sql safely."""
+
+    def test_reads_relative_file(self, tmp_path):
+        (tmp_path / "sql").mkdir()
+        (tmp_path / "sql" / "q.sql").write_text("SELECT 1")
+        assert read_workspace_sql_file("sql/q.sql", str(tmp_path)) == "SELECT 1"
+
+    def test_absolute_path_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError):
+            read_workspace_sql_file("/etc/passwd", str(tmp_path))
+
+    def test_dotdot_traversal_raises_value_error(self, tmp_path):
+        with pytest.raises(ValueError):
+            read_workspace_sql_file("../../etc/passwd", str(tmp_path))
+
+    def test_missing_file_raises_file_not_found(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            read_workspace_sql_file("sql/missing.sql", str(tmp_path))

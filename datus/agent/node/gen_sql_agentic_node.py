@@ -636,7 +636,6 @@ class GenSQLAgenticNode(AgenticNode):
         context["has_task_tool"] = bool(self.sub_agent_task_tool)
         available_tool_names = self._get_available_tool_names()
         context["available_tool_names"] = available_tool_names
-        context["has_read_query_tool"] = "execute_sql" in available_tool_names
         context["has_describe_table_tool"] = "describe_table" in available_tool_names
         context["has_list_metrics_tool"] = "list_metrics" in available_tool_names
         context["has_query_metrics_tool"] = "query_metrics" in available_tool_names

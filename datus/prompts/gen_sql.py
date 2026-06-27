@@ -84,7 +84,6 @@ def get_sql_prompt(
         agent_description="",
         rules=[],
         available_tool_names=[],
-        has_read_query_tool=False,
         has_describe_table_tool=False,
         has_list_metrics_tool=False,
         has_query_metrics_tool=False,

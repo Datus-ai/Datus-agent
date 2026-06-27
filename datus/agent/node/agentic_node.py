@@ -3449,6 +3449,7 @@ class AgenticNode(Node):
                 fs_policy=self._make_filesystem_policy(),
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
+                project_root=getattr(self.agent_config, "project_root", None),
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "
