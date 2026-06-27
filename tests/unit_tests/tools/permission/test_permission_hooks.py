@@ -1764,3 +1764,118 @@ class TestExecuteSqlPermission:
         # A DDL (different type again) → prompts once more.
         await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
         assert mock_broker.request.await_count == 3
+
+
+class TestFormatToolArgsMarkdown:
+    """Unit tests for the ``_format_tool_args_markdown`` rendering helper.
+
+    Replaces the old single-line ``json.dumps`` + 200-char truncation: scalars
+    render inline, the ``sql`` arg / long strings move into fenced code blocks,
+    and nested structures render as pretty JSON — never truncated.
+    """
+
+    @staticmethod
+    def _fmt(args):
+        return permission_hooks_module._format_tool_args_markdown(args)
+
+    def test_empty_args_returns_empty_string(self):
+        """Empty args produce no markdown so callers can skip the section."""
+        assert self._fmt({}) == ""
+
+    def test_scalars_render_inline(self):
+        """Short scalars render inline as ``**key:** `value``` with no code fence."""
+        out = self._fmt({"database": "sales", "limit": 10, "dry_run": True, "note": None})
+        assert "**database:** `sales`" in out
+        assert "**limit:** `10`" in out
+        assert "**dry_run:** `True`" in out
+        assert "**note:** `None`" in out
+        assert "```" not in out
+        # Section header is present.
+        assert "**Arguments**" in out
+
+    def test_sql_arg_uses_sql_fence_and_is_not_truncated(self):
+        """The ``sql`` argument lands in a ```sql block with its full text."""
+        long_sql = "INSERT INTO orders (id, amount) VALUES " + ", ".join(f"({i}, {i * 1.5})" for i in range(50))
+        assert len(long_sql) > 200  # would have been truncated by the old code
+        out = self._fmt({"sql": long_sql})
+        assert "```sql" in out
+        assert long_sql in out  # full statement preserved
+        assert "..." not in out  # no truncation marker
+
+    def test_long_non_sql_string_uses_plain_fence(self):
+        """A long/multi-line non-sql string goes into a language-less fence."""
+        text = "line one\nline two\nline three"
+        out = self._fmt({"body": text})
+        assert "**body:**" in out
+        assert "```\n" in out  # language-less fence opener
+        assert "```sql" not in out
+        assert text in out
+
+    def test_nested_value_renders_pretty_json(self):
+        """dict/list values render as multi-line pretty JSON in a ```json block."""
+        nested = {"filters": {"region": {"in": ["us", "eu"]}}, "cols": ["a", "b"]}
+        out = self._fmt(nested)
+        assert "```json" in out
+        # Pretty-printed (indented, multi-line), not a single compact line.
+        assert "\n  " in out
+        # Deeply nested content is preserved.
+        assert '"region"' in out
+        assert '"in"' in out
+
+    def test_short_string_at_threshold_stays_inline(self):
+        """A string at the inline boundary is not forced into a code fence."""
+        value = "x" * permission_hooks_module._INLINE_ARG_MAX
+        out = self._fmt({"k": value})
+        assert f"**k:** `{value}`" in out
+        assert "```" not in out
+
+
+class TestPermissionPromptContent:
+    """End-to-end check that ``_request_user_confirmation`` builds rich content."""
+
+    def _make_hooks(self, mock_broker):
+        manager = PermissionManager(global_config=PermissionConfig())
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=ToolRegistry(),
+        )
+
+    @staticmethod
+    def _ctx(args):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps(args)
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_content_includes_sql_block_without_truncation(self, mock_broker):
+        """The InteractionEvent content carries a full, highlighted SQL block."""
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        hooks = self._make_hooks(mock_broker)
+        long_sql = "INSERT INTO orders VALUES " + ", ".join(f"({i})" for i in range(60))
+
+        approved = await hooks._request_user_confirmation(
+            "db_tools", "execute_sql.insert", self._ctx({"sql": long_sql})
+        )
+
+        assert approved is True
+        event = mock_broker.request.call_args.args[0][0]
+        assert "```sql" in event.content
+        assert long_sql in event.content  # not truncated
+        assert "..." not in event.content
+
+    @pytest.mark.asyncio
+    async def test_content_has_no_arguments_section_when_args_empty(self, mock_broker):
+        """With no args, the content omits the Arguments section entirely."""
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+        hooks = self._make_hooks(mock_broker)
+
+        approved = await hooks._request_user_confirmation("skills", "deep-analysis", self._ctx({}))
+
+        assert approved is False
+        event = mock_broker.request.call_args.args[0][0]
+        assert "**Arguments**" not in event.content
+        assert "Permission Request" in event.content

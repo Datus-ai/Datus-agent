@@ -32,6 +32,7 @@ from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.tools.registry.tool_registry import ToolRegistry
 from datus.utils.constants import SQLType
+from datus.utils.json_utils import to_pretty_str
 
 if TYPE_CHECKING:
     from datus.tools.permission.permission_manager import PermissionManager
@@ -92,6 +93,50 @@ def _get_permission_prompt_lock(broker: Any = None) -> asyncio.Lock:
         lock = asyncio.Lock()
         _loop_fallback_locks[loop] = lock
     return lock
+
+
+# Scalar strings at or below this length (and free of newlines) render inline on
+# the key line; anything longer moves into a fenced code block so the TUI's
+# syntax highlighting + scroll/pager handle it instead of cramming it onto one
+# line. Nothing is truncated — the InteractionApp already pages long content
+# (Shift+Up/Down) and opens it in a pager (``v``).
+_INLINE_ARG_MAX = 80
+
+
+def _format_tool_args_markdown(args: dict) -> str:
+    """Render tool arguments as a readable markdown key/value block.
+
+    Replaces the old single-line ``json.dumps`` + hard 200-char truncation,
+    which mangled nested structures and cut SQL mid-statement. Rendering rules:
+
+    * Scalars (short strings, ints, floats, bools, ``None``) render inline as
+      ``**key:** `value` ``.
+    * The ``sql`` argument and any multi-line / long string render in a fenced
+      code block — ``sql`` for the SQL argument (so it is highlighted),
+      language-less otherwise.
+    * ``dict`` / ``list`` values render as pretty (2-space) JSON in a ```json
+      block.
+
+    Each argument is emitted as its own top-level paragraph / code block rather
+    than nested under a list item, so ``RichMarkdown`` renders the fenced blocks
+    unambiguously. Nothing is truncated.
+
+    Returns an empty string for empty ``args`` so callers can skip the section.
+    """
+    if not args:
+        return ""
+
+    parts: List[str] = ["", "**Arguments**", ""]
+    for key, value in args.items():
+        if isinstance(value, (dict, list)):
+            pretty = to_pretty_str(value) or "{}"
+            parts.extend([f"**{key}:**", "", "```json", pretty, "```", ""])
+        elif isinstance(value, str) and ("\n" in value or len(value) > _INLINE_ARG_MAX):
+            lang = "sql" if key == "sql" else ""
+            parts.extend([f"**{key}:**", "", f"```{lang}", value, "```", ""])
+        else:
+            parts.append(f"**{key}:** `{value}`")
+    return "\n".join(parts)
 
 
 class PermissionDeniedException(Exception):
@@ -845,12 +890,12 @@ class PermissionHooks(AgentHooks):
 
         content = f"### Permission Request\n\n**Tool:** `{category}.{pattern_name}`\n"
 
-        # Show tool arguments if available (truncate long args)
-        if args:
-            args_str = json.dumps(args, ensure_ascii=False)
-            if len(args_str) > 200:
-                args_str = args_str[:197] + "..."
-            content += f"\n**Args:** `{args_str}`\n"
+        # Show tool arguments as a readable key/value block. Long SQL / nested
+        # values land in fenced code blocks (never truncated); the TUI pages and
+        # opens them in a pager.
+        args_md = _format_tool_args_markdown(args)
+        if args_md:
+            content += args_md + "\n"
 
         try:
             answers = await self.broker.request(
