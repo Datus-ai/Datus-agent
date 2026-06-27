@@ -655,14 +655,18 @@ class PermissionHooks(AgentHooks):
           explicit DENY rule blocks ``db_tools.execute_sql`` (then defer so the
           DENY is surfaced).
         * Writes (INSERT/UPDATE/DELETE), DDL, and unknown/MERGE (incl. a ``.sql``
-          file path or unparseable text — fail safe) → defer to the normal
-          category-level check. With no static ALLOW rule for ``execute_sql``
-          that lands on the profile default: ASK under normal/auto (the broker
-          prompt shows the SQL), ALLOW under dangerous, raise when
-          non-interactive — and any explicit user rule still wins.
+          file path or unparseable text — fail safe) → category-level rule check
+          for DENY/ALLOW, then ASK with a session cache **bucketed by SQL class**
+          (``execute_sql.write`` / ``execute_sql.ddl`` / ``execute_sql.unknown``).
+          Bucketing matters because ``execute_sql`` is one tool name: keying the
+          "Always allow" approval on the bare tool name would let one approved
+          INSERT silently green-light every later DELETE / DROP / MERGE. ALLOW
+          under dangerous (rule check returns ALLOW), raise when non-interactive.
 
-        Returns ``True`` when the read has been auto-allowed, ``False`` to let
-        the normal category-level permission check run.
+        Returns ``True`` when the call has been fully handled (read auto-allowed,
+        explicit/dangerous ALLOW, or bucketed ASK approved), ``False`` to let the
+        normal category-level permission check run (surfaces DENY / the
+        standardized non-interactive raise).
         """
         from datus.utils.sql_utils import parse_sql_type
 
@@ -685,8 +689,58 @@ class PermissionHooks(AgentHooks):
             logger.debug("execute_sql read-only (%s): auto-allow", sql_type.value)
             return True
 
-        # Writes / DDL / unknown → normal category-level check.
-        return False
+        # Non-read (write / DDL / unknown). Honour explicit rules first.
+        permission = self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
+        if permission == PermissionLevel.DENY:
+            # Surface the standardized DENY raise via the main flow.
+            return False
+        if permission == PermissionLevel.ALLOW:
+            # Explicit ALLOW rule or a permissive profile (e.g. dangerous).
+            return True
+
+        # ASK. Non-interactive flows must not prompt — defer so the main flow
+        # raises the standardized non-interactive PermissionDeniedException.
+        if self.non_interactive:
+            return False
+
+        if sql_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
+            sql_class = "write"
+        elif sql_type == SQLType.UNKNOWN:
+            sql_class = "unknown"
+        else:
+            sql_class = "ddl"
+        bucket_pattern = f"execute_sql.{sql_class}"
+        # Honour the per-class bucket plus any broad session approval (a prior
+        # un-bucketed ``db_tools.execute_sql`` or category wildcard). Only the
+        # prompt-driven "always allow" below is bucketed, so approving one write
+        # never green-lights a later DROP — but a deliberately broad approval
+        # still covers every class.
+        cache_keys = (f"db_tools.{bucket_pattern}", "db_tools.execute_sql", "db_tools.*")
+
+        def _session_approved() -> bool:
+            return any(self.permission_manager._session_approvals.get(key) for key in cache_keys)
+
+        if _session_approved():
+            logger.debug("execute_sql %s already approved for session", sql_class)
+            return True
+
+        async with _get_permission_prompt_lock(self.broker):
+            if _session_approved():
+                return True
+            # Pass the bucketed pattern as the cache key; deliberately omit
+            # ``tool_name`` so "Always allow" caches ONLY ``db_tools.execute_sql.<class>``
+            # and not the un-bucketed ``db_tools.execute_sql`` (which would cascade
+            # across statement classes).
+            approved = await self._request_user_confirmation("db_tools", bucket_pattern, context)
+            if not approved:
+                logger.info("User rejected execute_sql (%s)", sql_class)
+                raise PermissionDeniedException(
+                    "User rejected execution of 'execute_sql'",
+                    tool_category="db_tools",
+                    tool_name="execute_sql",
+                )
+            logger.info("User approved execute_sql (%s)", sql_class)
+            return True
 
     def _get_category_and_pattern(self, tool_name: str, context: Any) -> Tuple[str, str]:
         """Get tool category and pattern name for permission checking.

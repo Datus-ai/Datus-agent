@@ -47,6 +47,11 @@ class ChatAgenticNode(AgenticNode):
     DEFAULT_SUBAGENTS = "*"
     result_class = ChatNodeResult
 
+    # Subclasses whose contract is read-only (e.g. artifact ask agents) set this
+    # to True so the unified write-capable ``execute_sql`` tool hard-rejects any
+    # non-read statement at the tool layer. Defaults to False (full SQL access).
+    _db_read_only: bool = False
+
     def __init__(
         self,
         node_id: str,
@@ -132,6 +137,7 @@ class ChatAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             sub_agent_name=node_name,
             default_database=getattr(self, "active_database", "") or None,
+            read_only=self._db_read_only,
         )
         self._setup_context_search_tools()
         self._setup_reference_template_tools()
@@ -279,6 +285,7 @@ class ChatAgenticNode(AgenticNode):
             agent_config=self.agent_config,
             sub_agent_name=self.get_node_name(),
             default_database=database_name,
+            read_only=self._db_read_only,
         )
         self._rebuild_tools()
 

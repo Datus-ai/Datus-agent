@@ -147,6 +147,10 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     NODE_NAME: ClassVar[str] = "ask_artifact"
     ARTIFACT_KIND: ClassVar[Literal["report", "dashboard"]] = "report"
     ARTIFACT_ROOT_DIR_NAME: ClassVar[str] = "reports"
+    # Artifact ask agents are read-only consultants — they may explore the
+    # datasource but must never mutate it. ``execute_sql`` is write-capable, so
+    # construct its DBFuncTool in read-only mode to hard-reject non-read SQL.
+    _db_read_only: bool = True
     # When True, a missing ``artifact_blob`` in the agentic_nodes entry is a
     # fatal startup error rather than a signal to fall back to the on-disk
     # ``<kind>/<slug>/`` directory. Kinds whose backend publish flow always
@@ -415,6 +419,17 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
             return any(tool.name in exposed for tool in self.db_func_tool.available_tools())
         except Exception:
             return False
+
+    def _db_tool_exposed(self, tool_name: str) -> bool:
+        """True if a specific db_tools tool survived the whitelist prune.
+
+        The method-level whitelist can keep ``execute_sql`` while dropping
+        ``describe_table`` (or vice versa), so tool-specific prompt guidance must
+        derive its flag from the exposed ``self.tools`` per tool rather than the
+        coarse :meth:`_db_tools_exposed`. Otherwise the prompt advertises a tool
+        the model cannot call ("Tool ... not found").
+        """
+        return any(tool.name == tool_name for tool in self.tools)
 
     def _group_whitelisted(self, group: str) -> bool:
         """True if the configured ``tools`` grants any tool in ``group``.
@@ -1734,11 +1749,20 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
         has_insights = self._artifact_has_insights()
         # When the subagent whitelist drops db_tools, the model has no
         # describe_table / execute_sql to call — promising them in the rules
-        # makes it attempt unavailable tools ("Tool ... not found").
-        db_exposed = self._db_tools_exposed()
+        # makes it attempt unavailable tools ("Tool ... not found"). The
+        # method-level whitelist can keep one without the other, so derive each
+        # flag independently rather than from the coarse db-exposed check.
+        describe_exposed = self._db_tool_exposed("describe_table")
+        execute_sql_exposed = self._db_tool_exposed("execute_sql")
+        db_exposed = describe_exposed or execute_sql_exposed
+        live_tool_names = [
+            f"`{name}`"
+            for name, exposed in (("describe_table", describe_exposed), ("execute_sql", execute_sql_exposed))
+            if exposed
+        ]
         live_data_clause = (
-            "(call `describe_table` / `execute_sql` for those)"
-            if db_exposed
+            f"(call {' / '.join(live_tool_names)} for those)"
+            if live_tool_names
             else "(live database tools are not enabled for this agent, so answer "
             "from the snapshot and say plainly when something cannot be verified live)"
         )

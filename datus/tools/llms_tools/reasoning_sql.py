@@ -88,10 +88,13 @@ async def reasoning_sql_with_mcp_stream(
                 # Write/DDL executions return a metadata payload and are skipped.
                 from datus.schemas.node_models import SQLContext
 
-                sql_input = action.input or {}
+                # Tool actions store params under ``input["arguments"]``; fall
+                # back to the top-level shape for older payloads.
+                raw_input = action.input or {}
+                sql_input = raw_input.get("arguments", raw_input) if isinstance(raw_input, dict) else {}
 
                 sql_context = SQLContext(
-                    sql_query=sql_input.get("sql", ""),
+                    sql_query=sql_input.get("sql") or sql_input.get("query", ""),
                     explanation="",
                     sql_return=sql_output.get("result", ""),
                     sql_error=sql_output.get("error", ""),

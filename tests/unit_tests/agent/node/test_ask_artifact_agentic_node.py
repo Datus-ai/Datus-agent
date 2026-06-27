@@ -1916,6 +1916,14 @@ class TestToolsWhitelist:
         for other in ("list_tables", "describe_table"):
             assert other not in names, f"{other} should not be exposed by a method-level whitelist"
 
+        # The prompt/rules path must mirror the pruned surface: the behavioral
+        # rules may advertise the exposed ``execute_sql`` but must NOT instruct
+        # the model to call the dropped ``describe_table`` (which would fail at
+        # call time with "Tool ... not found").
+        rules = node._render_behavioral_rules_section()
+        assert "execute_sql" in rules
+        assert "describe_table" not in rules, "rules must not mention a db tool the whitelist dropped"
+
     def test_filesystem_tools_require_whitelist(self, real_agent_config):
         """Filesystem tools are gated like every other group — present only
         when ``filesystem_tools`` is whitelisted, dropped otherwise. There is

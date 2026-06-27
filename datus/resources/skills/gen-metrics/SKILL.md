@@ -36,7 +36,7 @@ Analyze the user's request and confirm the generation scope before proceeding. W
 
 ### Single Mode: Step 1a–1d
 
-**Step 1a: Inspect the table** — Call `describe_table(table_name)` to understand the columns and types. Optionally call `execute_sql` to sample data.
+**Step 1a: Inspect the table** — Call `describe_table(table_name)` to understand the columns and types. Optionally call `execute_sql(sql="SELECT * FROM <table> LIMIT 5")` to sample data.
 
 **Step 1b: Ask for reference SQL (optional)** — When `ask_user` is available, use it to ask:
 > "Do you have any existing SQL queries for this table that show the aggregations you care about? You can paste them here, or skip if not available."

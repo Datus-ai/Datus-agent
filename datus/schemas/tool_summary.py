@@ -210,9 +210,15 @@ def _fmt_execute_sql(result: Any) -> str:
     if isinstance(result, dict):
         if "compressed_data" in result or "original_rows" in result:
             return _fmt_read_query(result)
-        for key in ("row_count", "affected_rows", "rows_affected"):
-            if isinstance(result.get(key), int):
-                return _fmt_execute_write(result)
+        # ``execute_write`` always emits a ``message`` and may legitimately
+        # report ``row_count: None``, so classify a write by its ``sql_type``
+        # (or any row-count key) BEFORE the DDL ``message`` check — otherwise an
+        # INSERT/UPDATE/DELETE with an unknown row count would be mislabeled
+        # "DDL OK".
+        if result.get("sql_type") in {"insert", "update", "delete"} or any(
+            key in result for key in ("row_count", "affected_rows", "rows_affected")
+        ):
+            return _fmt_execute_write(result) or "Write OK"
         if result.get("message"):
             return _fmt_execute_ddl(result)
     return _fmt_read_query(result)

@@ -1015,14 +1015,15 @@ class TestAddInSqlContext:
         """Helper to create a TOOL action.
 
         ``sql`` is the statement carried in the action input; the chat SQL-context
-        seeder only considers read-type ``execute_sql`` calls.
+        seeder only considers read-type ``execute_sql`` calls. Real tool actions
+        nest call params under ``input["arguments"]``, so mirror that shape here.
         """
         return ActionHistory(
             action_id=f"test_{function_name}",
             role=ActionRole.TOOL,
             messages=f"Tool call: {function_name}",
             action_type=function_name,
-            input={"function_name": function_name, "arguments": "{}", "sql": sql},
+            input={"function_name": function_name, "arguments": {"sql": sql}},
             output=output_data,
             status=status,
         )
@@ -1058,6 +1059,7 @@ class TestAddInSqlContext:
                         },
                     },
                 },
+                sql="SELECT * FROM users",
             ),
         ]
 
@@ -1080,6 +1082,7 @@ class TestAddInSqlContext:
                         "error": "Table not found",
                     },
                 },
+                sql="SELECT * FROM nonexistent",
             ),
         ]
 
@@ -1101,6 +1104,7 @@ class TestAddInSqlContext:
                     "error": "Permission denied",
                     "raw_output": "Permission denied",
                 },
+                sql="SELECT * FROM secret",
             ),
         ]
 
@@ -1120,6 +1124,7 @@ class TestAddInSqlContext:
                     "success": "True",
                     "raw_output": "plain text output",
                 },
+                sql="SELECT * FROM users",
             ),
         ]
 
@@ -1148,6 +1153,7 @@ class TestAddInSqlContext:
                         }
                     ),
                 },
+                sql="SELECT id FROM users",
             ),
         ]
 
@@ -1162,7 +1168,7 @@ class TestAddInSqlContext:
     def test_sql_action_output_string_does_not_crash(self, real_agent_config, mock_llm_create):
         """read_query action output itself may be malformed; keep chat rendering alive."""
         cmds = _make_chat_commands(real_agent_config)
-        actions = [self._make_tool_action("execute_sql", "plain text output")]
+        actions = [self._make_tool_action("execute_sql", "plain text output", sql="SELECT * FROM users")]
 
         cmds.add_in_sql_context("SELECT * FROM users", "Query users", actions)
 
@@ -1204,6 +1210,42 @@ class TestAddInSqlContext:
         last_ctx = cmds.cli.cli_context.get_last_sql_context()
         assert last_ctx.row_count == 10
         assert last_ctx.sql_return == "second"
+
+    def test_write_action_does_not_overwrite_last_read_context(self, real_agent_config, mock_llm_create):
+        """A trailing write/DDL execute_sql must not clobber the last read context.
+
+        ``parse_sql_type`` gates the reverse scan: the final action is an
+        ``INSERT`` (not read-type), so the seeder skips it and seeds from the
+        preceding ``SELECT`` action — carrying that read's SQL, not the write's.
+        """
+        cmds = _make_chat_commands(real_agent_config)
+        actions = [
+            self._make_tool_action(
+                "execute_sql",
+                {
+                    "success": "True",
+                    "raw_output": {
+                        "success": 1,
+                        "result": {"original_rows": 7, "compressed_data": "id\n1"},
+                    },
+                },
+                sql="SELECT id FROM users",
+            ),
+            self._make_tool_action(
+                "execute_sql",
+                {"success": "True", "raw_output": {"success": 1, "row_count": 1}},
+                sql="INSERT INTO users VALUES (2)",
+            ),
+        ]
+        actions[1].action_id = "test_write_action"
+
+        cmds.add_in_sql_context("INSERT INTO users VALUES (2)", "Mixed turn", actions)
+
+        last_ctx = cmds.cli.cli_context.get_last_sql_context()
+        # Seeded from the read action, not the trailing write.
+        assert last_ctx.sql_query == "SELECT id FROM users"
+        assert last_ctx.row_count == 7
+        assert last_ctx.sql_return == "id\n1"
 
 
 # ===========================================================================

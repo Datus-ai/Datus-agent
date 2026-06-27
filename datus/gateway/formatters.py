@@ -23,7 +23,7 @@ class ToolOutputFormatter:
         self._register_builtins()
 
     def _register_builtins(self):
-        self._registry["execute_sql"] = self._format_read_query_result
+        self._registry["execute_sql"] = self._format_execute_sql_result
         self._registry["read_query"] = self._format_read_query_result
         self._registry["describe_table"] = self._format_describe_table_result
         self._registry["search_table"] = self._format_search_table_result
@@ -68,6 +68,21 @@ class ToolOutputFormatter:
         if formatter:
             return formatter(result)
         return _format_result_default(result)
+
+    @staticmethod
+    def _format_execute_sql_result(result) -> str:
+        """Format a unified ``execute_sql`` result by payload shape.
+
+        ``execute_sql`` covers reads, writes, and DDL. Only read payloads carry
+        a row set; write/DDL payloads carry a ``message`` / ``row_count`` and
+        would be misformatted as ``rows: 0`` by the read formatter, so fall back
+        to the default formatter for those shapes.
+        """
+        if isinstance(result, dict) and not any(
+            key in result for key in ("rows", "data", "columns", "compressed_data", "original_rows")
+        ):
+            return _format_result_default(result)
+        return ToolOutputFormatter._format_read_query_result(result)
 
     @staticmethod
     def _format_read_query_result(result) -> str:

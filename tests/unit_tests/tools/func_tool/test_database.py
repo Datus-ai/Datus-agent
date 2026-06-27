@@ -1551,6 +1551,59 @@ class TestDBFuncToolExecuteSql:
         assert result.result["message"] == "DDL executed successfully"
         mock_connector.execute_ddl.assert_called_once()
 
+    def test_read_only_allows_select(self):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.execute_query.return_value = Mock(success=True, sql_return=[{"a": 1}])
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(mock_connector, read_only=True)
+        tool.compressor.compress = Mock(return_value={"original_rows": 1, "compressed_data": "a\n1"})
+
+        result = tool.execute_sql("SELECT * FROM users")
+
+        assert result.success == 1
+        mock_connector.execute_query.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "INSERT INTO users VALUES (1)",
+            "UPDATE users SET a = 1",
+            "DELETE FROM users",
+            "CREATE TABLE t (id INT)",
+            "DROP TABLE users",
+            "TRUNCATE TABLE users",
+        ],
+    )
+    def test_read_only_rejects_non_read(self, sql):
+        """A read-only DBFuncTool hard-rejects every non-read statement at the
+        tool layer, independent of PermissionHooks."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            tool = DBFuncTool(mock_connector, read_only=True)
+
+        result = tool.execute_sql(sql)
+
+        assert result.success == 0
+        assert "read-only" in (result.error or "")
+        mock_connector.execute_insert.assert_not_called()
+        mock_connector.execute_ddl.assert_not_called()
+
     def test_min_max_rows_forwarded_to_write(self):
         mock_connector = Mock()
         mock_connector.dialect = "sqlite"

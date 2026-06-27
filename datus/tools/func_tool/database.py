@@ -112,6 +112,7 @@ class DBFuncTool:
         scoped_tables: Optional[Iterable[str]] = None,
         principal: Optional[Dict[str, Any]] = None,
         connector_cache_size: int = DEFAULT_CONNECTOR_CACHE_SIZE,
+        read_only: bool = False,
     ):
         """
         Initialize DBFuncTool.
@@ -129,6 +130,14 @@ class DBFuncTool:
             principal: Request-scoped SQL policy attributes. When omitted,
                        falls back to ``agent_config.principal`` if present.
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
+            read_only: When True, ``execute_sql`` hard-rejects any non-read
+                       statement (INSERT/UPDATE/DELETE/DDL/MERGE/...) at the tool
+                       layer, independent of ``PermissionHooks``. Use for agents
+                       whose contract is read-only (Explore, ask_report/dashboard,
+                       LLM validators) so the unified write-capable entry point
+                       cannot mutate the datasource even when hooks are bypassed
+                       (e.g. validators run with ``hooks=None``) or under a
+                       permissive profile.
         """
         if connector_or_manager is None:
             if not agent_config:
@@ -157,6 +166,7 @@ class DBFuncTool:
         principal_source = principal if principal is not None else getattr(agent_config, "principal", {})
         self.principal: Dict[str, Any] = dict(principal_source) if isinstance(principal_source, dict) else {}
         self.sub_agent_name = sub_agent_name
+        self.read_only = read_only
         self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
@@ -1278,6 +1288,17 @@ class DBFuncTool:
 
             if sql_type in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
                 return self.read_query(sql, datasource=datasource, database=database)
+            if self.read_only:
+                # Defense-in-depth for read-only agents: reject any non-read
+                # statement at the tool layer, independent of PermissionHooks
+                # (which may be bypassed, e.g. validators run with hooks=None).
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "This agent is read-only: only SELECT/SHOW/DESCRIBE/EXPLAIN "
+                        "statements are allowed through execute_sql."
+                    ),
+                )
             if sql_type in (SQLType.INSERT, SQLType.UPDATE, SQLType.DELETE):
                 return self.execute_write(
                     sql,
@@ -1511,14 +1532,17 @@ class DBFuncTool:
         Returns:
             Execution result with success status
         """
-        from datus.utils.sql_utils import parse_sql_type, strip_sql_comments
+        from datus.utils.sql_utils import _first_statement, parse_sql_type, strip_sql_comments
 
         # Validate: strip comments, reject multi-statement SQL
         cleaned = strip_sql_comments(sql).strip().rstrip(";").strip()
         if not cleaned:
             return FuncToolResult(success=0, error="Empty SQL statement")
 
-        if ";" in cleaned:
+        # Use the quote-aware parser, not a raw ``";" in cleaned`` check, so a
+        # single statement with a semicolon inside a string literal or quoted
+        # identifier (e.g. ``COMMENT ON ... IS 'a;b'``) is not falsely rejected.
+        if _first_statement(cleaned) != cleaned:
             return FuncToolResult(
                 success=0,
                 error="Multi-statement SQL is not allowed. Please submit one statement at a time.",

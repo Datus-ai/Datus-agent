@@ -80,12 +80,12 @@ class TestDBFuncToolIntegrationReal:
         """Test that SQLite returns correct number of tools."""
         tools = ssb_db_tool.available_tools()
 
-        # SQLite should have: list_tables, describe_table, read_query
+        # SQLite should have: list_tables, describe_table, execute_sql
         # No list_databases (single file), no list_schemas (SQLite doesn't have schemas)
         tool_names = {t.name for t in tools}
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
     def test_sqlite_connector_dialect(self, ssb_db_tool):
         """Test that SQLite connector has correct dialect."""
@@ -228,7 +228,7 @@ class TestDuckDBTool:
         assert "list_schemas" in tool_names
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
 
 # =============================================================================

@@ -1632,7 +1632,8 @@ class TestExecuteSqlPermission:
         """An INSERT defers to the normal ASK flow; user 'y' lets it through."""
         config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
         hooks = self._make_hooks(mock_broker, config)
-        mock_broker.request = AsyncMock(return_value="y")
+        # InteractionBroker.request returns List[List[str]]; mirror that shape.
+        mock_broker.request = AsyncMock(return_value=[["y"]])
 
         await hooks.on_tool_start(self._ctx("INSERT INTO users VALUES (1)"), MagicMock(), self._tool())
 
@@ -1642,7 +1643,7 @@ class TestExecuteSqlPermission:
     async def test_write_rejected_on_no(self, mock_broker):
         config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
         hooks = self._make_hooks(mock_broker, config)
-        mock_broker.request = AsyncMock(return_value="n")
+        mock_broker.request = AsyncMock(return_value=[["n"]])
 
         with pytest.raises(PermissionDeniedException):
             await hooks.on_tool_start(self._ctx("DELETE FROM users"), MagicMock(), self._tool())
@@ -1651,7 +1652,7 @@ class TestExecuteSqlPermission:
     async def test_ddl_prompts(self, mock_broker):
         config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
         hooks = self._make_hooks(mock_broker, config)
-        mock_broker.request = AsyncMock(return_value="y")
+        mock_broker.request = AsyncMock(return_value=[["y"]])
 
         await hooks.on_tool_start(self._ctx("CREATE TABLE t (id INT)"), MagicMock(), self._tool())
 
@@ -1662,7 +1663,7 @@ class TestExecuteSqlPermission:
         """A .sql file path / unparseable text is treated as non-read → ASK (fail safe)."""
         config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
         hooks = self._make_hooks(mock_broker, config)
-        mock_broker.request = AsyncMock(return_value="y")
+        mock_broker.request = AsyncMock(return_value=[["y"]])
 
         await hooks.on_tool_start(self._ctx("sql/session_1/q.sql"), MagicMock(), self._tool())
 
@@ -1699,3 +1700,27 @@ class TestExecuteSqlPermission:
         await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
 
         mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_always_allow_is_bucketed_by_sql_class(self, mock_broker):
+        """'Always allow' on a write must NOT auto-approve a later DDL/DROP.
+
+        The session approval is keyed by SQL class (``execute_sql.write`` vs
+        ``execute_sql.ddl``), so the second, different-class statement still
+        prompts instead of inheriting the write's approval.
+        """
+        config = PermissionConfig(default_permission=PermissionLevel.ASK, rules=[])
+        hooks = self._make_hooks(mock_broker, config)
+        mock_broker.request = AsyncMock(return_value=[["a"]])  # "always allow (session)"
+
+        # First write: prompts once and approves the write bucket for the session.
+        await hooks.on_tool_start(self._ctx("INSERT INTO t VALUES (1)"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # Another write (same class): served from the session cache, no prompt.
+        await hooks.on_tool_start(self._ctx("UPDATE t SET a = 1"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # A DDL (different class) is NOT covered by the write bucket → prompts again.
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2

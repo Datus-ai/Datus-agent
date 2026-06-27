@@ -40,7 +40,7 @@ Activate when you need to:
 ### Phase 1: Inspect Source
 
 - Use `describe_table(database=source)` to get source schema
-- Use `execute_sql(database=source)` to get row count and sample data
+- Use `execute_sql(sql="SELECT COUNT(*) AS rows FROM <source_table>", database=source)` to get the row count and `execute_sql(sql="SELECT * FROM <source_table> LIMIT 5", database=source)` to inspect sample data
 - Identify column types, nullable columns, and primary key candidates
 - Document the source schema for DDL generation
 

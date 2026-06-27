@@ -127,6 +127,11 @@ class ExploreAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.get_node_name(),
                 scoped_tables=dynamic_scoped_tables,
+                # Explore profiles the datasource and must stay read-only;
+                # ``execute_sql`` is write-capable, so reject non-read SQL at the
+                # tool layer (the permission gate alone would defer writes to the
+                # normal ASK/ALLOW flow rather than hard-deny them).
+                read_only=True,
             )
             if dynamic_scoped_tables:
                 # A per-run scoped table allowlist indicates a tightly

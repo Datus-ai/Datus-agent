@@ -868,7 +868,8 @@ class TestExtractSqlFromStreamingActions:
         action.action_type = "execute_sql"
         action.status = MagicMock()
         action.status.value = "success"
-        action.input = {"sql": "SELECT 1"}
+        # Real tool actions nest params under ``input["arguments"]``.
+        action.input = {"function_name": "execute_sql", "arguments": {"sql": "SELECT 1"}}
         # Read-only results carry the compressor payload (compressed_data).
         action.output = {"result": {"original_rows": 1, "compressed_data": "n\n1"}, "error": ""}
 
@@ -876,6 +877,8 @@ class TestExtractSqlFromStreamingActions:
         agent_commands._extract_sql_from_streaming_actions([action], workflow, node)
 
         assert len(workflow.context.sql_contexts) == 1
+        # The query is extracted from the nested ``arguments`` payload.
+        assert workflow.context.sql_contexts[0].sql_query == "SELECT 1"
 
     def test_extracts_from_action_history_manager(self, agent_commands):
         workflow = MagicMock()
@@ -898,7 +901,7 @@ class TestExtractSqlFromStreamingActions:
         action.action_type = "execute_sql"
         action.status = MagicMock()
         action.status.value = "success"
-        action.input = {"sql": "SELECT bad"}
+        action.input = {"function_name": "execute_sql", "arguments": {"sql": "SELECT bad"}}
         # A failed read returns no compressor payload → not read-shaped → skipped.
         action.output = {"result": "", "error": "syntax error"}
 

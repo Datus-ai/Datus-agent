@@ -63,7 +63,9 @@ class TestGenTableAgenticNodeInit:
         tool_names = [tool.name for tool in node.tools]
         # Unified SQL tool (covers CREATE TABLE / CTAS); legacy split tools are internal.
         assert "execute_sql" in tool_names
-        assert "execute_ddl" not in tool_names
+        # None of the legacy split tools may leak onto the LLM surface.
+        for legacy in ("execute_ddl", "read_query", "execute_write"):
+            assert legacy not in tool_names, f"legacy SQL tool {legacy!r} should not be exposed"
 
     def test_setup_tools_includes_standard_db_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_table_agentic_node import GenTableAgenticNode

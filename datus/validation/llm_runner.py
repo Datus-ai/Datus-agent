@@ -44,11 +44,14 @@ logger = get_logger(__name__)
 
 # Whitelist of read-only tools exposed to validator sub-agents. Deliberately
 # narrow — dedicated write tools are excluded, as is ``SubAgentTaskTool``
-# (to avoid recursive fork). ``execute_sql`` is the unified SQL entry point;
-# validators run non-interactively, so its statement-type gate in
-# ``PermissionHooks._handle_sql_permission`` raises on any write/DDL — keeping
-# validators read-only in practice. See design doc §5.5.
-VALIDATOR_READONLY_TOOL_NAMES = {
+# (to avoid recursive fork). ``execute_sql`` is the unified SQL entry point and
+# is write-capable; validators run with ``hooks=None`` so the statement-type
+# gate in ``PermissionHooks._handle_sql_permission`` is NOT in the call stack.
+# The read-only guarantee is therefore enforced at the tool layer: the
+# validator's DBFuncTool is constructed/copied in ``read_only=True`` mode, so
+# ``execute_sql`` hard-rejects any non-read statement (see
+# ``_select_readonly_tools``). See design doc §5.5.
+VALIDATOR_READONLY_TOOL_NAMES: set[str] = {
     # Database read tools
     "list_databases",
     "list_schemas",
@@ -279,7 +282,20 @@ def _select_readonly_tools(
     future additions. ``None`` sources are simply skipped — validators for
     pure-table subagents only need ``db_func_tool``; BI validators only need
     ``bi_tool``; etc.
+
+    The whitelisted ``execute_sql`` is write-capable and validators run with
+    ``hooks=None`` (no permission gate), so bind it to a read-only view of the
+    DB tool. A shallow copy shares the connectors/caches but flips
+    ``read_only=True`` without mutating the parent agent's tool, making
+    ``execute_sql`` hard-reject any non-read statement.
     """
+    if db_func_tool is not None and not getattr(db_func_tool, "read_only", False):
+        import copy as _copy
+
+        read_only_db = _copy.copy(db_func_tool)
+        read_only_db.read_only = True
+        db_func_tool = read_only_db
+
     allowed: List[Any] = []
     seen: set = set()
     for source in (db_func_tool, bi_tool, scheduler_tool):

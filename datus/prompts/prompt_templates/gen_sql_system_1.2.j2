@@ -1,6 +1,6 @@
 {% set tools = available_tool_names | default([]) -%}
 {% set can_ask_user = has_ask_user_tool | default(false) -%}
-{% set can_read_query = has_read_query_tool | default(false) -%}
+{% set can_execute_sql = "execute_sql" in tools -%}
 {% set can_describe_table = has_describe_table_tool | default(false) -%}
 {% set can_list_metrics = has_list_metrics_tool | default(false) -%}
 {% set can_query_metrics = has_query_metrics_tool | default(false) -%}
@@ -42,7 +42,7 @@ Use `ask_user` only when a missing table, metric, time range, business definitio
 When the request appears to match a reusable, parameterized SQL pattern:
 1. Call `search_reference_template` before writing ad-hoc SQL.
 2. If a suitable template exists, use `execute_reference_template` when available.
-{% if not can_execute_reference_template and can_render_reference_template and can_read_query %}
+{% if not can_execute_reference_template and can_render_reference_template and can_execute_sql %}
 3. If only `render_reference_template` is available, render the SQL and validate it with `execute_sql`.
 {% endif %}
 4. Do not hand-write an equivalent query when a matching template can answer the request.
@@ -115,7 +115,7 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 - Prefer readable CTEs for complex logic.
 - Use the current datasource unless the user explicitly asks for another datasource.
 
-{% if can_read_query %}
+{% if can_execute_sql %}
 ## SQL Validation
 - Validate every ad-hoc SQL query with `execute_sql` before final output.
 - If validation fails, analyze the error, fix the SQL, and retry.
@@ -128,7 +128,7 @@ When platform-specific syntax, functions, data types, advanced features, or plat
 - If you cannot validate SQL with an available tool, state that clearly in `output`.
 {% endif %}
 
-{% if has_filesystem_tools and can_read_query %}
+{% if has_filesystem_tools and can_execute_sql %}
 ## Long SQL File Storage
 When generated SQL is 50 lines or more:
 1. Save it with `write_file` to a whitespace-free path such as `sql/{task_slug}.sql`.

@@ -16,7 +16,7 @@ Guide for creating new Datus skills from scratch.
 
 Before asking the user anything, gather context silently:
 
-- If creating a data-related skill, **explore the database first**: use `list_tables`, `describe_table`, `execute_sql` (with LIMIT) to understand available tables, columns, data types, sample data, and time ranges.
+- If creating a data-related skill, **explore the database first**: use `list_tables`, `describe_table`, and read-only `execute_sql(sql="SELECT ... LIMIT ...")` queries to understand available tables, columns, data types, sample data, and time ranges.
 - If the conversation already contains a workflow the user wants to capture (e.g., "turn this into a skill"), extract the key steps, tools used, and patterns from the conversation history.
 - Check existing skills via `glob(pattern, path)` to avoid duplicates. The `~` expansion only applies to `path`, not `pattern`, so split the prefix out of the pattern: project-level `glob("*/SKILL.md", ".datus/skills")`; user-level `glob("*/SKILL.md", "~/.datus/skills")`.
 

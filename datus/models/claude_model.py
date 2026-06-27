@@ -1101,11 +1101,24 @@ class ClaudeModel(OpenAICompatibleModel):
                     for block in tool_use_blocks:
                         if block.id in tool_call_cache:
                             sql_result = tool_call_cache[block.id].content[0].text
-                            # Use "Error" to determine execution success. Only
-                            # seed SQL context from read-only execute_sql calls.
+                            # Only seed SQL context from successful read-only
+                            # execute_sql calls. Parse the tool payload to detect
+                            # failure instead of a brittle ``"Error" in text``
+                            # substring check, which both misses structured
+                            # ``{"success": 0, "error": ...}`` failures and can
+                            # reject valid result text that merely contains "Error".
                             sql_query = block.input.get("query") or block.input.get("sql", "")
+                            tool_failed = False
+                            try:
+                                parsed_result = json.loads(sql_result) if isinstance(sql_result, str) else sql_result
+                            except (TypeError, json.JSONDecodeError):
+                                parsed_result = None
+                            if isinstance(parsed_result, dict):
+                                tool_failed = parsed_result.get("success") == 0 or bool(parsed_result.get("error"))
+                            elif isinstance(sql_result, str):
+                                tool_failed = sql_result.lstrip().lower().startswith("error")
                             if (
-                                "Error" not in sql_result
+                                not tool_failed
                                 and block.name == "execute_sql"
                                 and parse_sql_type(sql_query, "")
                                 in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)

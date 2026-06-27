@@ -1863,15 +1863,24 @@ class ChatCommands:
         from datus.utils.constants import SQLType
         from datus.utils.sql_utils import parse_sql_type
 
+        def _action_sql(act) -> str:
+            # Tool actions store params under ``input["arguments"]`` (a dict or a
+            # JSON string); fall back to the top-level shape for older payloads.
+            inp = _maybe_parse_json(act.input)
+            if not isinstance(inp, dict):
+                return ""
+            args = _maybe_parse_json(inp.get("arguments", inp))
+            if not isinstance(args, dict):
+                return ""
+            return args.get("sql") or args.get("query", "") or ""
+
         def _is_read_sql_action(act) -> bool:
             # ``execute_sql`` is the unified entry point; only seed SQL context
             # from read-type statements (by input SQL), so a write/DDL never
             # clobbers the last query's context. Covers failed reads too.
             if act.function_name() != "execute_sql":
                 return False
-            inp = _maybe_parse_json(act.input)
-            sql = inp.get("sql", "") if isinstance(inp, dict) else ""
-            return parse_sql_type(sql, "") in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
+            return parse_sql_type(_action_sql(act), "") in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN)
 
         last_sql_action = None
         for i in range(len(incremental_actions) - 1, -1, -1):
@@ -1919,8 +1928,13 @@ class ChatCommands:
                 sql_return = ""
                 row_count = 0
 
+        # Seed the context with the SQL of the matched read action, not the
+        # caller-supplied ``sql`` — a later write/DDL turn must not pair the
+        # read result with the wrong statement. Fall back to ``sql`` when the
+        # action carries no parseable input.
+        matched_sql = _action_sql(last_sql_action) or sql
         sql_context = SQLContext(
-            sql_query=sql,
+            sql_query=matched_sql,
             sql_error=error,
             sql_return=sql_return,
             row_count=row_count,
