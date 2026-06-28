@@ -760,6 +760,36 @@ class TestAgentConfigServiceSelectors:
         assert config["db_config"]["database"] == "runtime_db"
         assert config["semantic_models_path"].endswith("subject/semantic_models/runtime_ds")
 
+    def test_build_semantic_adapter_config_uses_runtime_context_datasource(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "static_ds": {
+                        "type": "mysql",
+                        "host": "mysql-static",
+                        "database": "static_db",
+                    },
+                    "runtime_ds": {
+                        "type": "mysql",
+                        "host": "mysql-runtime",
+                        "database": "runtime_db",
+                    },
+                },
+                "semantic_layer": {"metricflow": {"datasource": "static_ds"}},
+            },
+        )
+
+        config = cfg.build_semantic_adapter_config(
+            adapter_type="metricflow",
+            runtime_db_context={"datasource": "runtime_ds"},
+        )
+
+        assert config["datasource"] == "runtime_ds"
+        assert config["db_config"]["host"] == "mysql-runtime"
+        assert config["db_config"]["database"] == "runtime_db"
+        assert config["semantic_models_path"].endswith("subject/semantic_models/runtime_ds")
+
     def test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database(self, tmp_path):
         cfg = self._make(
             tmp_path,

@@ -1543,9 +1543,14 @@ class AgentConfig:
         effective_runtime_db_context = (
             runtime_db_context if runtime_db_context is not None else self.runtime_db_context()
         )
+        runtime_datasource = _runtime_context_value(effective_runtime_db_context, "datasource")
 
         db_name = (
-            database_name or config.get("datasource") or self.current_datasource or self.services.default_datasource
+            database_name
+            or runtime_datasource
+            or config.get("datasource")
+            or self.current_datasource
+            or self.services.default_datasource
         )
         if db_name:
             config["datasource"] = db_name

@@ -655,9 +655,10 @@ class ExplorerService:
 
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
+            runtime_db_context = self._semantic_runtime_db_context(request)
             tools = SemanticTools(
                 self.agent_config,
-                runtime_db_context_provider=lambda: self._semantic_runtime_db_context(request),
+                runtime_db_context_provider=lambda: runtime_db_context,
             )
             adapter = tools.adapter
             if adapter is None:
@@ -715,9 +716,10 @@ class ExplorerService:
 
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
+            runtime_db_context = self._semantic_runtime_db_context(request)
             tools = SemanticTools(
                 self.agent_config,
-                runtime_db_context_provider=lambda: self._semantic_runtime_db_context(request),
+                runtime_db_context_provider=lambda: runtime_db_context,
             )
             if tools.adapter is None:
                 return Result[MetricPreviewData](
@@ -755,11 +757,12 @@ class ExplorerService:
                         errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                         errorMessage=f"Failed to compile SQL for metric '{metric_name}'.",
                     )
-                # The datasource id (logical key) is not a physical database; return the
-                # bound datasource's real default database so callers can run the SQL as-is.
-                # Pin the lookup to this service's datasource_id (not the implicit "current")
-                # so a multi-datasource config can never return another datasource's database.
-                database = self.agent_config.current_db_config(self.datasource_id).database or None
+                # Return the same runtime database context used to compile the SQL.
+                database = (
+                    runtime_db_context.get("database")
+                    or self.agent_config.current_db_config(self.datasource_id).database
+                    or None
+                )
                 return Result[MetricPreviewData](
                     success=True,
                     data=MetricPreviewData(metric=metric_name, sql=sql, database=database),

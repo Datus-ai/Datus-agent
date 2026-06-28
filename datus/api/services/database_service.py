@@ -424,9 +424,9 @@ class DatasourceService:
         # Parse table name parts
         name_parts = parse_table_name_parts(full_name, self.current_db_connector.get_type())
         current_db_config = self.agent_config.current_db_config()
-        catalog_name = name_parts["catalog_name"] or catalog or current_db_config.catalog
-        database_name = name_parts["database_name"] or database or self.current_db_name or current_db_config.database
-        schema_name = name_parts["schema_name"] or db_schema or current_db_config.schema
+        catalog_name = catalog or name_parts["catalog_name"] or current_db_config.catalog
+        database_name = database or name_parts["database_name"] or self.current_db_name or current_db_config.database
+        schema_name = db_schema or name_parts["schema_name"] or current_db_config.schema
         table_name = name_parts["table_name"]
 
         # Get semantic model using SemanticMetricsRAG

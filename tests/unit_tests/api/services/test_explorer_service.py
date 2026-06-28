@@ -970,9 +970,15 @@ class TestExplorerServicePreviewMetric:
         from types import SimpleNamespace
 
         tools_stub = SimpleNamespace(adapter=adapter, query_metrics=query_metrics)
+
+        def fake_semantic_tools(*args, **kwargs):
+            tools_stub.args = args
+            tools_stub.kwargs = kwargs
+            return tools_stub
+
         monkeypatch.setattr(
             "datus.tools.func_tool.semantic_tools.SemanticTools",
-            lambda *a, **k: tools_stub,
+            fake_semantic_tools,
         )
         return tools_stub
 
@@ -1010,19 +1016,24 @@ class TestExplorerServicePreviewMetric:
                 result={"metadata": {"explain": True, "sql": "SELECT 1 AS revenue"}, "data": []}
             )
         )
-        self._patch_tools(monkeypatch, adapter=MagicMock(), query_metrics=query_metrics)
+        tools_stub = self._patch_tools(monkeypatch, adapter=MagicMock(), query_metrics=query_metrics)
 
         svc = ExplorerService(agent_config=real_agent_config)
         result = await svc.preview_metric(
-            MetricPreviewInput(subject_path=["Finance", "revenue"], dimensions=["region"], limit=100)
+            MetricPreviewInput(
+                subject_path=["Finance", "revenue"],
+                dimensions=["region"],
+                limit=100,
+                database="runtime_preview_db",
+            )
         )
 
         assert result.success is True
         assert result.data.metric == "revenue"
         assert result.data.sql == "SELECT 1 AS revenue"
-        # Carries the bound datasource's physical database, not the logical datasource id.
-        assert result.data.database == (real_agent_config.current_db_config(svc.datasource_id).database or None)
+        assert result.data.database == "runtime_preview_db"
         assert result.data.preflight_error is None
+        assert tools_stub.kwargs["runtime_db_context_provider"]()["database"] == "runtime_preview_db"
         # dry_run must be requested so nothing actually executes.
         assert query_metrics.call_args.kwargs["dry_run"] is True
         assert query_metrics.call_args.kwargs["metrics"] == ["revenue"]

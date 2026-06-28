@@ -321,6 +321,7 @@ class SemanticTools:
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
         self._runtime_db_context_static: Dict[str, str] = {}
+        self._runtime_db_context_static_set = False
 
         # Keep storage handles for compatibility with older call sites, but
         # public SemanticTools methods use the semantic adapter as their source
@@ -456,9 +457,10 @@ class SemanticTools:
     def set_runtime_db_context(self, runtime_db_context: Optional[Mapping[str, Any]]) -> None:
         """Set a static runtime DB context and invalidate any adapter built for the old context."""
         normalized = self._normalize_runtime_db_context(runtime_db_context)
-        if normalized == self._runtime_db_context_static:
+        if normalized == self._runtime_db_context_static and self._runtime_db_context_static_set:
             return
         self._runtime_db_context_static = normalized
+        self._runtime_db_context_static_set = True
         self._adapter = None
         self._attribution_tool = None
         self._adapter_context_key = None
@@ -470,7 +472,15 @@ class SemanticTools:
             except Exception as e:
                 logger.debug("Failed to resolve runtime DB context for semantic adapter: %s", e)
                 return {}
-        return dict(self._runtime_db_context_static)
+        if self._runtime_db_context_static_set:
+            return dict(self._runtime_db_context_static)
+        runtime_context_getter = getattr(self.agent_config, "runtime_db_context", None)
+        if callable(runtime_context_getter):
+            try:
+                return self._normalize_runtime_db_context(runtime_context_getter())
+            except Exception as e:
+                logger.debug("Failed to resolve AgentConfig runtime DB context for semantic adapter: %s", e)
+        return {}
 
     def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""

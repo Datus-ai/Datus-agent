@@ -101,7 +101,7 @@ class TestGetSemanticModel:
         svc._ensure_semantic_rag = lambda: FakeSemanticRag()
 
         result = svc.get_semantic_model(
-            "schools",
+            "embedded_catalog.embedded_db.embedded_schema.schools",
             catalog="runtime_catalog",
             database="runtime_db",
             db_schema="runtime_schema",

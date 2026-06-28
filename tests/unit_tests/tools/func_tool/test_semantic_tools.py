@@ -1577,6 +1577,55 @@ class TestRuntimeDbContext:
             },
         ]
 
+    def test_adapter_config_uses_agent_config_runtime_context_when_provider_absent(self):
+        captured_builder_calls = []
+        adapter_config = object()
+        adapter = Mock()
+
+        def build_config(adapter_type=None, database_name=None, runtime_db_context=None):
+            captured_builder_calls.append(
+                {
+                    "adapter_type": adapter_type,
+                    "database_name": database_name,
+                    "runtime_db_context": dict(runtime_db_context or {}),
+                }
+            )
+            return adapter_config
+
+        with (
+            patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
+            patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
+            patch("datus.tools.func_tool.semantic_tools.semantic_adapter_registry.get_metadata", return_value=None),
+            patch(
+                "datus.tools.func_tool.semantic_tools.semantic_adapter_registry.create_adapter",
+                return_value=adapter,
+            ) as create_adapter,
+        ):
+            from datus.tools.func_tool.semantic_tools import SemanticTools
+
+            config = Mock()
+            config.active_model.return_value.model = "gpt-4o"
+            config.current_datasource = "static_ds"
+            config.runtime_db_context.return_value = {
+                "datasource": "runtime_ds",
+                "database": "agent_ctx_db",
+            }
+            config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
+            config.build_semantic_adapter_config = build_config
+
+            tool = SemanticTools(agent_config=config, adapter_type="metricflow")
+
+            assert tool.adapter is adapter
+
+        assert create_adapter.call_count == 1
+        assert captured_builder_calls == [
+            {
+                "adapter_type": "metricflow",
+                "database_name": "runtime_ds",
+                "runtime_db_context": {"datasource": "runtime_ds", "database": "agent_ctx_db"},
+            }
+        ]
+
     def test_validate_semantic_initializes_adapter_with_runtime_database(self, tmp_path):
         from datus.configuration.agent_config import AgentConfig, NodeConfig
         from datus.tools.func_tool.semantic_tools import SemanticTools
