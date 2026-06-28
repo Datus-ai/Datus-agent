@@ -12,6 +12,7 @@ from datus.api.models.explorer_models import (
     RenameSubjectInput,
     SubjectListData,
     SubjectNodeType,
+    SubjectPathInput,
 )
 from datus.api.services.explorer_service import ExplorerService
 
@@ -893,15 +894,22 @@ class TestExplorerServiceMetricDimensions:
         from types import SimpleNamespace
 
         tools_stub = SimpleNamespace(adapter=adapter)
+
+        def fake_semantic_tools(*args, **kwargs):
+            tools_stub.args = args
+            tools_stub.kwargs = kwargs
+            return tools_stub
+
         monkeypatch.setattr(
             "datus.tools.func_tool.semantic_tools.SemanticTools",
-            lambda *a, **k: tools_stub,
+            fake_semantic_tools,
         )
+        return tools_stub
 
     async def test_empty_subject_path_fails(self, real_agent_config):
         """Empty subject path is rejected before touching the adapter."""
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.get_metric_dimensions([])
+        result = await svc.get_metric_dimensions(SubjectPathInput(subject_path=[]))
         assert result.success is False
         assert "Subject path cannot be empty" in result.errorMessage
 
@@ -909,7 +917,7 @@ class TestExplorerServiceMetricDimensions:
         """A missing semantic adapter surfaces a clear error."""
         self._patch_adapter(monkeypatch, adapter=None)
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.get_metric_dimensions(["Finance", "revenue"])
+        result = await svc.get_metric_dimensions(SubjectPathInput(subject_path=["Finance", "revenue"]))
         assert result.success is False
         assert "adapter is not available" in result.errorMessage
 
@@ -925,10 +933,17 @@ class TestExplorerServiceMetricDimensions:
                 SimpleNamespace(name="metric_time", type="time", description=None, is_primary_key=None),
             ]
         )
-        self._patch_adapter(monkeypatch, adapter=adapter)
+        tools_stub = self._patch_adapter(monkeypatch, adapter=adapter)
 
         svc = ExplorerService(agent_config=real_agent_config)
-        result = await svc.get_metric_dimensions(["Finance", "revenue"])
+        result = await svc.get_metric_dimensions(
+            SubjectPathInput(
+                subject_path=["Finance", "revenue"],
+                catalog="runtime_catalog",
+                database="runtime_db",
+                db_schema="runtime_schema",
+            )
+        )
 
         assert result.success is True
         assert result.data.metric == "revenue"
@@ -936,6 +951,13 @@ class TestExplorerServiceMetricDimensions:
         assert result.data.dimensions[0].type == "string"
         assert result.data.dimensions[1].type == "time"
         assert adapter.get_dimensions.await_args.kwargs["metric_name"] == "revenue"
+        assert tools_stub.kwargs["runtime_db_context_provider"]() == {
+            "datasource": real_agent_config.current_datasource,
+            "catalog": "runtime_catalog",
+            "database": "runtime_db",
+            "schema": "runtime_schema",
+            "db_schema": "runtime_schema",
+        }
 
 
 @pytest.mark.asyncio

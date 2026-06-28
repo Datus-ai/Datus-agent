@@ -20,8 +20,20 @@ def _semantic_tools(adapter=True):
     tools = Mock()
     tools.adapter = Mock() if adapter else None
     tools._adapter_unavailable_message.return_value = "semantic adapter missing"
+    tools._configured_adapter_type.return_value = "metricflow" if adapter else None
     for name in ("list_metrics", "get_dimensions", "query_metrics", "validate_semantic", "attribution_analyze"):
         setattr(tools, name, Mock(name=name))
+    tools.available_tools.return_value = (
+        [
+            _fake_function_tool(tools.list_metrics),
+            _fake_function_tool(tools.get_dimensions),
+            _fake_function_tool(tools.query_metrics),
+            _fake_function_tool(tools.validate_semantic),
+            _fake_function_tool(tools.attribution_analyze),
+        ]
+        if adapter
+        else []
+    )
     return tools
 
 
