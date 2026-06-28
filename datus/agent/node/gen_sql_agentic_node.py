@@ -310,6 +310,7 @@ class GenSQLAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=self.node_config.get("system_prompt"),
                 adapter_type=adapter_type,
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
             self.tools.extend(self.semantic_tools.available_tools())
         except Exception as e:
@@ -446,6 +447,7 @@ class GenSQLAgenticNode(AgenticNode):
                         agent_config=self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),
                         adapter_type=adapter_type,
+                        runtime_db_context_provider=self._semantic_runtime_db_context,
                     )
                 tool_instance = self.semantic_tools
             elif tool_type == "db_tools":

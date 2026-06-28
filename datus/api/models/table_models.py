@@ -64,6 +64,9 @@ class SemanticModelInput(BaseModel):
 
     table: str = Field(..., description="Full table name")
     yaml: str = Field(..., description="SemanticModel YAML content")
+    catalog: Optional[str] = Field(None, description="Current catalog context")
+    database: Optional[str] = Field(None, description="Current database context")
+    db_schema: Optional[str] = Field(None, description="Current schema context")
 
 
 class ValidateSemanticModelData(BaseModel):

@@ -76,6 +76,45 @@ class TestGetSemanticModel:
         # The table exists but may not have a semantic model file
         assert isinstance(result, Result)
 
+    def test_get_semantic_model_prefers_runtime_db_context(self, real_agent_config):
+        """Runtime catalog/database/schema context is used for semantic model lookup."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        call = {}
+
+        class FakeSemanticRag:
+            def get_semantic_model(
+                self,
+                *,
+                catalog_name: str,
+                database_name: str,
+                schema_name: str,
+                table_name: str,
+            ):
+                call.update(
+                    catalog_name=catalog_name,
+                    database_name=database_name,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                )
+                return None
+
+        svc._ensure_semantic_rag = lambda: FakeSemanticRag()
+
+        result = svc.get_semantic_model(
+            "schools",
+            catalog="runtime_catalog",
+            database="runtime_db",
+            db_schema="runtime_schema",
+        )
+
+        assert isinstance(result, Result)
+        assert call == {
+            "catalog_name": "runtime_catalog",
+            "database_name": "runtime_db",
+            "schema_name": "runtime_schema",
+            "table_name": "schools",
+        }
+
     @pytest.mark.asyncio
     async def test_validate_semantic_model_nonexistent(self, real_agent_config):
         """validate_semantic_model for nonexistent table returns error."""

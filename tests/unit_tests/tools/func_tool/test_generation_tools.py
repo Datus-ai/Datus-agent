@@ -705,6 +705,24 @@ class TestValidateMetricFileHasBlocks:
 class TestSyncMetricToDb:
     """Tests for GenerationTools._sync_metric_to_db() private method."""
 
+    def test_current_db_parts_prefers_runtime_context(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        agent_config = SimpleNamespace(
+            current_db_config=lambda: SimpleNamespace(catalog="", database="", schema=""),
+            runtime_db_context=lambda: {
+                "catalog": "default_catalog",
+                "database": "ac_manage",
+                "schema": "public",
+            },
+        )
+
+        assert GenerationTools._current_db_parts(agent_config) == {
+            "catalog_name": "default_catalog",
+            "database_name": "ac_manage",
+            "schema_name": "public",
+        }
+
     def test_metric_file_not_found(self, generation_tools):
         result = generation_tools._sync_metric_to_db("/nonexistent/metric.yaml")
         assert result["success"] is False

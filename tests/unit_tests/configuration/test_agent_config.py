@@ -27,6 +27,8 @@ from datus.configuration.agent_config import (
     NodeConfig,
     ServicesConfig,
     ValidationConfig,
+    _apply_runtime_db_context_to_semantic_adapter_config,
+    _db_config_to_semantic_adapter_config,
     _parse_single_file_db,
     file_stem_from_uri,
     load_model_config,
@@ -207,6 +209,70 @@ class TestDbConfigFilterKwargs:
         kwargs = {"type": "postgresql", "host": "localhost", "custom_option": "${CUSTOM_TOKEN}"}
         cfg = DbConfig.filter_kwargs(DbConfig, kwargs)
         assert cfg.extra["custom_option"] == "token-value"
+
+
+class TestSemanticAdapterDbConfig:
+    def test_db_config_conversion_preserves_catalog(self):
+        cfg = DbConfig(type="trino", host="trino-host", catalog="hive", database="college_exam")
+
+        result = _db_config_to_semantic_adapter_config(cfg)
+
+        assert result["catalog"] == "hive"
+        assert result["database"] == "college_exam"
+
+    def test_runtime_context_overlay_uses_generic_aliases(self):
+        db_config = {"type": "mysql", "host": "localhost", "database": "configured_db"}
+
+        result = _apply_runtime_db_context_to_semantic_adapter_config(
+            db_config,
+            {
+                "catalog_name": "runtime_catalog",
+                "database_name": "runtime_db",
+                "db_schema": "runtime_schema",
+            },
+        )
+
+        assert result == {
+            "type": "mysql",
+            "host": "localhost",
+            "catalog": "runtime_catalog",
+            "database": "runtime_db",
+            "schema": "runtime_schema",
+        }
+
+    def test_override_by_args_pins_runtime_db_context_for_semantic_adapter(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            services={
+                "datasources": {
+                    "starrocks": {
+                        "type": "starrocks",
+                        "host": "127.0.0.1",
+                        "port": "9030",
+                        "username": "admin",
+                    }
+                },
+                "semantic_layer": {"metricflow": {"datasource": "starrocks"}},
+            },
+            skip_init_dirs=True,
+        )
+
+        cfg.override_by_args(
+            action="bootstrap-kb",
+            datasource="starrocks",
+            catalog="default_catalog",
+            database_name="ac_manage",
+            schema_name="public",
+        )
+        adapter_config = cfg.build_semantic_adapter_config(adapter_type="metricflow")
+
+        assert cfg.runtime_db_context()["database"] == "ac_manage"
+        assert adapter_config["db_config"]["database"] == "ac_manage"
+        assert adapter_config["db_config"]["catalog"] == "default_catalog"
+        assert adapter_config["db_config"]["schema"] == "public"
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +732,60 @@ class TestAgentConfigServiceSelectors:
         assert config["db_config"]["private_key_file"] == "/tmp/rsa_key.p8"
         assert config["db_config"]["private_key_file_pwd"] == "1234"
         assert "default" not in config["db_config"]
+
+    def test_build_semantic_adapter_config_runtime_datasource_overrides_configured_datasource(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "static_ds": {
+                        "type": "mysql",
+                        "host": "mysql-static",
+                        "database": "static_db",
+                    },
+                    "runtime_ds": {
+                        "type": "mysql",
+                        "host": "mysql-runtime",
+                        "database": "runtime_db",
+                    },
+                },
+                "semantic_layer": {"metricflow": {"datasource": "static_ds"}},
+            },
+        )
+
+        config = cfg.build_semantic_adapter_config(adapter_type="metricflow", database_name="runtime_ds")
+
+        assert config["datasource"] == "runtime_ds"
+        assert config["db_config"]["host"] == "mysql-runtime"
+        assert config["db_config"]["database"] == "runtime_db"
+        assert config["semantic_models_path"].endswith("subject/semantic_models/runtime_ds")
+
+    def test_build_semantic_adapter_config_uses_runtime_database_when_datasource_omits_database(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "college_exam": {
+                        "type": "mysql",
+                        "host": "mysql",
+                        "username": "user",
+                        "password": "pass",
+                        "default": True,
+                    },
+                },
+                "semantic_layer": {"metricflow": {"datasource": "college_exam"}},
+            },
+        )
+
+        config = cfg.build_semantic_adapter_config(
+            adapter_type="metricflow",
+            runtime_db_context={"database": "college_exam"},
+        )
+
+        assert config["datasource"] == "college_exam"
+        assert config["db_config"]["type"] == "mysql"
+        assert config["db_config"]["host"] == "mysql"
+        assert config["db_config"]["database"] == "college_exam"
 
     def test_file_datasource_preserves_adapter_specific_extra_fields(self, tmp_path):
         cfg = self._make(

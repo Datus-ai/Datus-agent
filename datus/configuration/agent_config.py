@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from datus.configuration.node_type import NodeType
 from datus.observability.config import ObservabilityConfig
@@ -772,6 +772,7 @@ class AgentConfig:
         self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
         self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
         self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
+        self._runtime_db_context: Dict[str, str] = {}
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
         # as ``None`` until first access so tests that stub load paths can
@@ -1221,6 +1222,55 @@ class AgentConfig:
         """Returns all datasource configs."""
         return self.services.datasources
 
+    def set_runtime_db_context(self, runtime_db_context: Optional[Mapping[str, Any]] = None, **kwargs: Any) -> None:
+        """Pin a request/CLI scoped catalog/database/schema context for adapters."""
+        values: Dict[str, Any] = {}
+        if runtime_db_context:
+            values.update(runtime_db_context)
+        values.update({key: value for key, value in kwargs.items() if value is not None})
+
+        normalized: Dict[str, str] = {}
+        for key in (
+            "datasource",
+            "catalog",
+            "catalog_name",
+            "database",
+            "database_name",
+            "schema",
+            "db_schema",
+            "schema_name",
+        ):
+            value = values.get(key)
+            if value is None:
+                continue
+            text = value.strip() if isinstance(value, str) else str(value).strip()
+            if text:
+                normalized[key] = text
+
+        if "catalog" not in normalized and "catalog_name" in normalized:
+            normalized["catalog"] = normalized["catalog_name"]
+        if "catalog_name" not in normalized and "catalog" in normalized:
+            normalized["catalog_name"] = normalized["catalog"]
+        if "database" not in normalized and "database_name" in normalized:
+            normalized["database"] = normalized["database_name"]
+        if "database_name" not in normalized and "database" in normalized:
+            normalized["database_name"] = normalized["database"]
+        if "schema" not in normalized:
+            if "db_schema" in normalized:
+                normalized["schema"] = normalized["db_schema"]
+            elif "schema_name" in normalized:
+                normalized["schema"] = normalized["schema_name"]
+        if "db_schema" not in normalized and "schema" in normalized:
+            normalized["db_schema"] = normalized["schema"]
+        if "schema_name" not in normalized and "schema" in normalized:
+            normalized["schema_name"] = normalized["schema"]
+
+        self._runtime_db_context = normalized
+
+    def runtime_db_context(self) -> Dict[str, str]:
+        """Return the request/CLI scoped datasource context, if one is pinned."""
+        return dict(self._runtime_db_context)
+
     def list_databases(self, datasource: str = "") -> List[str]:
         """Config-known physical databases of a datasource.
 
@@ -1482,6 +1532,7 @@ class AgentConfig:
         self,
         adapter_type: Optional[str] = None,
         database_name: Optional[str] = None,
+        runtime_db_context: Optional[Mapping[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         resolved_adapter = self.resolve_semantic_adapter(adapter_type)
         if not resolved_adapter:
@@ -1489,15 +1540,26 @@ class AgentConfig:
 
         config = self.get_semantic_layer_config(resolved_adapter)
         config.setdefault("type", resolved_adapter)
+        effective_runtime_db_context = (
+            runtime_db_context if runtime_db_context is not None else self.runtime_db_context()
+        )
 
         db_name = (
             database_name or config.get("datasource") or self.current_datasource or self.services.default_datasource
         )
         if db_name:
-            config.setdefault("datasource", db_name)
-            db_config = _db_config_to_semantic_adapter_config(self.current_db_config(db_name))
-            if db_config:
-                config.setdefault("db_config", db_config)
+            config["datasource"] = db_name
+            db_config_obj = self.current_db_config(db_name)
+            db_config = _merge_semantic_adapter_db_config(
+                _db_config_to_semantic_adapter_config(db_config_obj),
+                config.get("db_config"),
+            )
+            config_db_config = _apply_runtime_db_context_to_semantic_adapter_config(
+                db_config,
+                effective_runtime_db_context,
+            )
+            if config_db_config:
+                config["db_config"] = config_db_config
 
         datasource_name = config.get("datasource", self.current_datasource)
         config.setdefault("semantic_models_path", str(self.path_manager.semantic_model_path(datasource_name)))
@@ -1632,6 +1694,14 @@ class AgentConfig:
                 self.current_datasource = db_arg
             elif self.services.default_datasource:
                 self.current_datasource = self.services.default_datasource
+        runtime_db_context = {
+            "datasource": kwargs.get("datasource") or self.current_datasource,
+            "catalog": kwargs.get("catalog") or kwargs.get("catalog_name"),
+            "database": kwargs.get("database") or kwargs.get("database_name"),
+            "schema": kwargs.get("schema") or kwargs.get("db_schema") or kwargs.get("schema_name"),
+        }
+        if any(value for key, value in runtime_db_context.items() if key != "datasource"):
+            self.set_runtime_db_context(runtime_db_context)
         if kwargs.get("benchmark", ""):
             benchmark_platform = kwargs["benchmark"]
             # Validate benchmark is supported (will raise exception if not)
@@ -2271,7 +2341,7 @@ def _db_config_to_semantic_adapter_config(db_config: Optional[DbConfig]) -> Opti
     semantic_db_config = {
         key: str(value)
         for key, value in raw.items()
-        if value is not None and value != "" and key not in ("extra", "path_pattern", "catalog", "default")
+        if value is not None and value != "" and key not in ("extra", "path_pattern", "default")
     }
     # Merge connector-specific `extra` fields without overwriting explicit top-level keys
     if isinstance(extra, dict):
@@ -2280,6 +2350,52 @@ def _db_config_to_semantic_adapter_config(db_config: Optional[DbConfig]) -> Opti
                 continue
             semantic_db_config.setdefault(key, str(value))
     return semantic_db_config
+
+
+def _merge_semantic_adapter_db_config(
+    base_config: Optional[Dict[str, str]],
+    override_config: Any,
+) -> Optional[Dict[str, str]]:
+    if not isinstance(override_config, dict):
+        return base_config
+
+    merged = dict(base_config or {})
+    for key, value in override_config.items():
+        if value is None or value == "":
+            continue
+        merged[str(key)] = str(value)
+    return merged
+
+
+def _runtime_context_value(runtime_db_context: Optional[Mapping[str, Any]], *keys: str) -> str:
+    if not runtime_db_context:
+        return ""
+    for key in keys:
+        value = runtime_db_context.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+_RUNTIME_DB_CONTEXT_ALIASES = {
+    "catalog": ("catalog", "catalog_name"),
+    "database": ("database", "database_name"),
+    "schema": ("schema", "db_schema", "schema_name"),
+}
+
+
+def _apply_runtime_db_context_to_semantic_adapter_config(
+    db_config: Optional[Dict[str, str]],
+    runtime_db_context: Optional[Mapping[str, Any]],
+) -> Optional[Dict[str, str]]:
+    result = dict(db_config or {})
+
+    for canonical_key, aliases in _RUNTIME_DB_CONTEXT_ALIASES.items():
+        value = _runtime_context_value(runtime_db_context, *aliases)
+        if value:
+            result[canonical_key] = value
+
+    return result or db_config
 
 
 def _resolve_nested_value(value: Any) -> Any:

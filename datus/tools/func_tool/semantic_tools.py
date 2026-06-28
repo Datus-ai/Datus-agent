@@ -14,7 +14,7 @@ import inspect
 import io
 import json
 from collections import OrderedDict
-from typing import Any, Dict, List, Literal, Optional, Set
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Set, Tuple
 
 from agents import Tool
 
@@ -301,6 +301,7 @@ class SemanticTools:
         sub_agent_name: Optional[str] = None,
         adapter_type: Optional[str] = None,
         generation_evidence: Optional[GenerationEvidence] = None,
+        runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -311,11 +312,15 @@ class SemanticTools:
             adapter_type: Optional adapter type (e.g., "metricflow"). If not provided, tools will use storage only.
             generation_evidence: Optional shared tracker for validate_semantic and query_metrics(dry_run=True)
                 publish-gate evidence.
+            runtime_db_context_provider: Optional callback that returns the per-turn datasource/catalog/database/schema
+                context used to initialize the semantic adapter.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.adapter_type = adapter_type
         self.generation_evidence = generation_evidence
+        self._runtime_db_context_provider = runtime_db_context_provider
+        self._runtime_db_context_static: Dict[str, str] = {}
 
         # Keep storage handles for compatibility with older call sites, but
         # public SemanticTools methods use the semantic adapter as their source
@@ -330,6 +335,7 @@ class SemanticTools:
         self._adapter: Optional[BaseSemanticAdapter] = None
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
         self._adapter_load_error: Optional[str] = None
+        self._adapter_context_key: Optional[Tuple[str, str, str, str, str]] = None
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:
@@ -413,6 +419,59 @@ class SemanticTools:
             self.adapter_type = resolved_adapter
         return resolved_adapter
 
+    @staticmethod
+    def _normalize_runtime_db_context(runtime_db_context: Optional[Mapping[str, Any]]) -> Dict[str, str]:
+        if not runtime_db_context:
+            return {}
+
+        normalized: Dict[str, str] = {}
+        for key in (
+            "datasource",
+            "catalog",
+            "catalog_name",
+            "database",
+            "database_name",
+            "schema",
+            "db_schema",
+            "schema_name",
+        ):
+            value = runtime_db_context.get(key)
+            if value is None:
+                continue
+            text = value.strip() if isinstance(value, str) else str(value).strip()
+            if text:
+                normalized[key] = text
+
+        if "catalog" not in normalized and "catalog_name" in normalized:
+            normalized["catalog"] = normalized["catalog_name"]
+        if "database" not in normalized and "database_name" in normalized:
+            normalized["database"] = normalized["database_name"]
+        if "schema" not in normalized:
+            if "db_schema" in normalized:
+                normalized["schema"] = normalized["db_schema"]
+            elif "schema_name" in normalized:
+                normalized["schema"] = normalized["schema_name"]
+        return normalized
+
+    def set_runtime_db_context(self, runtime_db_context: Optional[Mapping[str, Any]]) -> None:
+        """Set a static runtime DB context and invalidate any adapter built for the old context."""
+        normalized = self._normalize_runtime_db_context(runtime_db_context)
+        if normalized == self._runtime_db_context_static:
+            return
+        self._runtime_db_context_static = normalized
+        self._adapter = None
+        self._attribution_tool = None
+        self._adapter_context_key = None
+
+    def _runtime_db_context(self) -> Dict[str, str]:
+        if callable(self._runtime_db_context_provider):
+            try:
+                return self._normalize_runtime_db_context(self._runtime_db_context_provider())
+            except Exception as e:
+                logger.debug("Failed to resolve runtime DB context for semantic adapter: %s", e)
+                return {}
+        return dict(self._runtime_db_context_static)
+
     def _extract_db_config(self, datasource: str) -> Optional[dict]:
         """Extract db_config dict from the selected database config."""
         try:
@@ -426,7 +485,7 @@ class SemanticTools:
         db_config = {
             k: str(v)
             for k, v in raw.items()
-            if v is not None and v != "" and k not in ("extra", "path_pattern", "catalog", "default")
+            if v is not None and v != "" and k not in ("extra", "path_pattern", "default")
         }
         # Preserve connector-specific `extra` fields without overwriting explicit top-level keys
         if isinstance(extra, dict):
@@ -439,49 +498,76 @@ class SemanticTools:
     @property
     def adapter(self) -> Optional[BaseSemanticAdapter]:
         """Lazy load semantic adapter if configured."""
-        if self._adapter is None:
-            try:
-                resolved_adapter = self.adapter_type
-                resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
-                if callable(resolver):
-                    resolved_adapter = resolver(self.adapter_type)
-                if not resolved_adapter:
-                    return None
+        try:
+            resolved_adapter = self.adapter_type
+            resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+            if callable(resolver):
+                resolved_adapter = resolver(self.adapter_type)
+            if not resolved_adapter:
+                return None
 
-                metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
-                builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
-                adapter_config = builder(resolved_adapter) if callable(builder) else None
-                if adapter_config is None:
-                    datasource = self.agent_config.current_datasource
-                    db_config = self._extract_db_config(datasource)
-                    semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
-
-                    if metadata and metadata.config_class:
-                        adapter_config = metadata.config_class(
-                            datasource=datasource,
-                            db_config=db_config,
-                            semantic_models_path=semantic_models_path,
-                        )
-                    else:
-                        from datus.tools.semantic_tools.config import SemanticAdapterConfig
-
-                        adapter_config = SemanticAdapterConfig(datasource=datasource)
-                elif isinstance(adapter_config, dict):
-                    if metadata and metadata.config_class:
-                        adapter_config = metadata.config_class(**adapter_config)
-                    else:
-                        from datus.tools.semantic_tools.config import SemanticAdapterConfig
-
-                        adapter_config = SemanticAdapterConfig(**adapter_config)
-
-                self.adapter_type = resolved_adapter
-                self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
-                self._adapter_load_error = None
-                logger.info(f"Loaded semantic adapter: {resolved_adapter}")
-            except Exception as e:
-                logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
-                self._adapter_load_error = str(e)
+            runtime_db_context = self._runtime_db_context()
+            datasource = runtime_db_context.get("datasource") or self.agent_config.current_datasource
+            context_key = (
+                resolved_adapter,
+                datasource or "",
+                runtime_db_context.get("catalog", ""),
+                runtime_db_context.get("database", ""),
+                runtime_db_context.get("schema", ""),
+            )
+            if self._adapter is not None:
+                if self._adapter_context_key is None or self._adapter_context_key == context_key:
+                    return self._adapter
                 self._adapter = None
+                self._attribution_tool = None
+                self._adapter_context_key = None
+
+            metadata = semantic_adapter_registry.get_metadata(resolved_adapter)
+            builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
+            adapter_config = None
+            if callable(builder):
+                builder_kwargs: Dict[str, Any] = {}
+                try:
+                    builder_params = inspect.signature(builder).parameters
+                    if "database_name" in builder_params:
+                        builder_kwargs["database_name"] = datasource or None
+                    if "runtime_db_context" in builder_params:
+                        builder_kwargs["runtime_db_context"] = runtime_db_context
+                except (TypeError, ValueError):
+                    pass
+                adapter_config = builder(resolved_adapter, **builder_kwargs)
+            if adapter_config is None:
+                db_config = self._extract_db_config(datasource)
+                semantic_models_path = str(self.agent_config.path_manager.semantic_model_path(datasource))
+
+                if metadata and metadata.config_class:
+                    adapter_config = metadata.config_class(
+                        datasource=datasource,
+                        db_config=db_config,
+                        semantic_models_path=semantic_models_path,
+                    )
+                else:
+                    from datus.tools.semantic_tools.config import SemanticAdapterConfig
+
+                    adapter_config = SemanticAdapterConfig(datasource=datasource)
+            elif isinstance(adapter_config, dict):
+                if metadata and metadata.config_class:
+                    adapter_config = metadata.config_class(**adapter_config)
+                else:
+                    from datus.tools.semantic_tools.config import SemanticAdapterConfig
+
+                    adapter_config = SemanticAdapterConfig(**adapter_config)
+
+            self.adapter_type = resolved_adapter
+            self._adapter = semantic_adapter_registry.create_adapter(resolved_adapter, adapter_config)
+            self._adapter_context_key = context_key
+            self._adapter_load_error = None
+            logger.info(f"Loaded semantic adapter: {resolved_adapter}")
+        except Exception as e:
+            logger.warning(f"Failed to load semantic adapter '{self.adapter_type}': {e}")
+            self._adapter_load_error = str(e)
+            self._adapter = None
+            self._adapter_context_key = None
         return self._adapter
 
     @property
@@ -532,6 +618,7 @@ class SemanticTools:
             # Clear cached adapter and attribution tool
             self._adapter = None
             self._attribution_tool = None
+            self._adapter_context_key = None
 
             # Force reload by accessing the property
             if self.adapter is not None:
@@ -552,7 +639,7 @@ class SemanticTools:
         Returns:
             List of Tool objects for LLM function calling
         """
-        if self.adapter is None:
+        if not self._configured_adapter_type():
             logger.warning("SemanticTools unavailable: %s", self._adapter_unavailable_message())
             return []
 

@@ -54,6 +54,17 @@ def test_default_osi_semantic_model_name_uses_database_scope():
     assert default_osi_semantic_model_file(config) == "subject/semantic_models/warehouse/sales_domain.yml"
 
 
+def test_default_osi_semantic_model_name_prefers_runtime_database_scope():
+    config = SimpleNamespace(
+        current_datasource="starrocks",
+        current_db_config=lambda: _DbScope(),
+        runtime_db_context=lambda: {"database": "ac_manage"},
+    )
+
+    assert default_osi_semantic_model_name(config) == "ac_manage"
+    assert default_osi_semantic_model_file(config) == "subject/semantic_models/starrocks/ac_manage.yml"
+
+
 def test_default_osi_semantic_model_name_uses_declared_db_scope_fallbacks():
     config = SimpleNamespace(
         current_datasource="warehouse",

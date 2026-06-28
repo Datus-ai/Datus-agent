@@ -730,6 +730,78 @@ class AgenticNode(Node):
             "target for this turn; generate SQL for THIS dialect."
         )
 
+    def _semantic_runtime_db_context(self) -> Dict[str, str]:
+        """Return the current datasource/catalog/database/schema for semantic adapter initialization."""
+        agent_config = getattr(self, "agent_config", None)
+        if not agent_config:
+            return {}
+
+        from datus.utils.node_utils import resolve_database_name_for_prompt
+
+        datasource = getattr(agent_config, "current_datasource", "") or ""
+        runtime_context: Dict[str, str] = {}
+        runtime_context_getter = getattr(agent_config, "runtime_db_context", None)
+        if callable(runtime_context_getter):
+            try:
+                runtime_context = runtime_context_getter() or {}
+            except Exception as e:
+                logger.debug("Unable to read runtime DB context for semantic adapter: %s", e)
+                runtime_context = {}
+        datasource = runtime_context.get("datasource") or datasource
+        context: Dict[str, str] = {}
+        if datasource:
+            context["datasource"] = datasource
+
+        db_config = None
+        try:
+            db_config = agent_config.current_db_config(datasource)
+        except Exception as e:
+            logger.debug("Unable to read current DB config for semantic adapter context: %s", e)
+
+        user_input = getattr(self, "input", None)
+        connector = getattr(getattr(self, "db_func_tool", None), "connector", None)
+
+        catalog = (
+            getattr(user_input, "catalog", "")
+            or runtime_context.get("catalog")
+            or runtime_context.get("catalog_name")
+            or getattr(db_config, "catalog", "")
+            or ""
+        )
+        if catalog:
+            context["catalog"] = str(catalog).strip()
+
+        requested_database = (
+            getattr(user_input, "database", "")
+            or runtime_context.get("database")
+            or runtime_context.get("database_name")
+            or ""
+        )
+        database = resolve_database_name_for_prompt(connector, requested_database)
+        database = (
+            database
+            or runtime_context.get("database")
+            or runtime_context.get("database_name")
+            or getattr(db_config, "database", "")
+            or ""
+        )
+        if database:
+            context["database"] = str(database).strip()
+
+        schema = (
+            getattr(user_input, "db_schema", "")
+            or runtime_context.get("schema")
+            or runtime_context.get("db_schema")
+            or runtime_context.get("schema_name")
+            or getattr(db_config, "schema", "")
+            or ""
+        )
+        if schema:
+            context["schema"] = str(schema).strip()
+            context["db_schema"] = str(schema).strip()
+
+        return {key: value for key, value in context.items() if value}
+
     def _build_enhanced_message(
         self,
         user_input: Any,

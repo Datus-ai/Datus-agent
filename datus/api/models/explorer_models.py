@@ -117,6 +117,9 @@ class MetricPreviewInput(BaseModel):
     """Preview a saved metric by compiling it to SQL (dry-run)."""
 
     subject_path: List[str] = Field(..., description="Path to the saved metric; the leaf is the metric name")
+    catalog: Optional[str] = Field(None, description="Current catalog context")
+    database: Optional[str] = Field(None, description="Current database context")
+    db_schema: Optional[str] = Field(None, description="Current schema context")
     dimensions: Optional[List[str]] = Field(None, description="Optional dimensions to group by")
     time_start: Optional[str] = Field(None, description="Optional start time (ISO or relative, e.g. '-7d')")
     time_end: Optional[str] = Field(None, description="Optional end time (ISO or relative, e.g. 'now')")
@@ -195,3 +198,6 @@ class SubjectPathInput(BaseModel):
     """Subject path input."""
 
     subject_path: List[str] = Field(..., description="Subject path name")
+    catalog: Optional[str] = Field(None, description="Current catalog context")
+    database: Optional[str] = Field(None, description="Current database context")
+    db_schema: Optional[str] = Field(None, description="Current schema context")

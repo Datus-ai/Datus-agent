@@ -186,8 +186,9 @@ class AskMetricsAgenticNode(AgenticNode):
                 agent_config=self.agent_config,
                 sub_agent_name=sub_agent_name,
                 adapter_type=self._resolve_adapter_type(),
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
-            if self.semantic_tools.adapter is None:
+            if not self.semantic_tools._configured_adapter_type():
                 self.startup_error = self.semantic_tools._adapter_unavailable_message()
                 logger.warning("AskMetrics semantic adapter unavailable: %s", self.startup_error)
                 return

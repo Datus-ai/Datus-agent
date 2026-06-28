@@ -180,6 +180,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 sub_agent_name=self.NODE_NAME,
                 adapter_type=adapter_type,
                 generation_evidence=self.generation_evidence,
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
 
             # Add all available tools from semantic func tool

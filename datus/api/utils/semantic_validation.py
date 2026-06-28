@@ -52,6 +52,9 @@ def validate_semantic_yaml(
     file_path: str,
     datus_home: str,
     datasource: str,
+    catalog: Optional[str] = None,
+    database: Optional[str] = None,
+    db_schema: Optional[str] = None,
 ) -> Tuple[bool, List[str]]:
     """Validate semantic model / metric YAML content.
 
@@ -64,10 +67,14 @@ def validate_semantic_yaml(
             for replacement in the collected file list).
         datus_home: Datus home directory path.
         datasource: Current datasource for semantic model directory.
+        catalog: Optional runtime catalog context.
+        database: Optional runtime database context.
+        db_schema: Optional runtime schema context.
 
     Returns:
         ``(is_valid, error_messages)``
     """
+    del catalog, database, db_schema  # Reserved for warehouse-backed validation callers.
     if _check_metricflow():
         return _validate_deep(yaml_content, file_path, datus_home, datasource)
     return _validate_yaml_format(yaml_content)

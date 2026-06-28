@@ -112,6 +112,9 @@ async def init_success_story_semantic_model_async(
         context_message += f"SQL:\n{sql}\n\n"
 
     current_db_config = agent_config.current_db_config()
+    runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
+    runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
+    runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
 
     # Emit task started event
     if emit:
@@ -125,9 +128,16 @@ async def init_success_story_semantic_model_async(
 
     semantic_input = SemanticNodeInput(
         user_message=context_message,
-        catalog=current_db_config.catalog,
-        database=current_db_config.database,
-        db_schema=current_db_config.schema,
+        catalog=runtime_db_context.get("catalog")
+        or runtime_db_context.get("catalog_name")
+        or current_db_config.catalog,
+        database=runtime_db_context.get("database")
+        or runtime_db_context.get("database_name")
+        or current_db_config.database,
+        db_schema=runtime_db_context.get("schema")
+        or runtime_db_context.get("db_schema")
+        or runtime_db_context.get("schema_name")
+        or current_db_config.schema,
     )
 
     action_history_manager = ActionHistoryManager()

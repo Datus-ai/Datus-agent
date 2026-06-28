@@ -110,6 +110,25 @@ def default_osi_semantic_model_name(agent_config: Any = None) -> str:
     """Return the default OSI semantic model name for the current authoring scope."""
     candidates = []
     if agent_config is not None:
+        runtime_context = {}
+        runtime_context_getter = getattr(agent_config, "runtime_db_context", None)
+        if callable(runtime_context_getter):
+            try:
+                runtime_context = runtime_context_getter() or {}
+            except Exception:
+                runtime_context = {}
+        if isinstance(runtime_context, dict):
+            candidates.extend(
+                [
+                    runtime_context.get("database"),
+                    runtime_context.get("database_name"),
+                    runtime_context.get("schema"),
+                    runtime_context.get("db_schema"),
+                    runtime_context.get("schema_name"),
+                    runtime_context.get("catalog"),
+                    runtime_context.get("catalog_name"),
+                ]
+            )
         try:
             db_config = agent_config.current_db_config()
         except Exception:

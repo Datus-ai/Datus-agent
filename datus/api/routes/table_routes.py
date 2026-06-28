@@ -53,9 +53,18 @@ async def get_semantic_model(
         ...,
         description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
     ),
+    catalog: str | None = Query(None, description="Current catalog context"),
+    database: str | None = Query(None, description="Current database context"),
+    db_schema: str | None = Query(None, description="Current schema context"),
 ) -> Result[GetSemanticModelData]:
     """Get SemanticModel YAML."""
-    return await asyncio.to_thread(svc.datasource.get_semantic_model, table)
+    return await asyncio.to_thread(
+        svc.datasource.get_semantic_model,
+        table,
+        catalog=catalog,
+        database=database,
+        db_schema=db_schema,
+    )
 
 
 @router.post(

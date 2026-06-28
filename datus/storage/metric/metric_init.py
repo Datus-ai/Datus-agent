@@ -878,13 +878,23 @@ async def _generate_metrics_batch(
         batch_message = f"{batch_message}\n\n## Additional Instructions\n{extra_instructions}"
 
     current_db_config = agent_config.current_db_config()
+    runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
+    runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
+    runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
     latest_prompt_version = get_prompt_manager(agent_config=agent_config).get_latest_version("gen_metrics_system")
 
     metrics_input = SemanticNodeInput(
         user_message=batch_message,
-        catalog=current_db_config.catalog,
-        database=current_db_config.database,
-        db_schema=current_db_config.schema,
+        catalog=runtime_db_context.get("catalog")
+        or runtime_db_context.get("catalog_name")
+        or current_db_config.catalog,
+        database=runtime_db_context.get("database")
+        or runtime_db_context.get("database_name")
+        or current_db_config.database,
+        db_schema=runtime_db_context.get("schema")
+        or runtime_db_context.get("db_schema")
+        or runtime_db_context.get("schema_name")
+        or current_db_config.schema,
         prompt_version=latest_prompt_version,
     )
 

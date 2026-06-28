@@ -413,13 +413,20 @@ class DatasourceService:
                 errorMessage=str(e),
             )
 
-    def _get_semantic_model(self, full_name: str):
+    def _get_semantic_model(
+        self,
+        full_name: str,
+        *,
+        catalog: Optional[str] = None,
+        database: Optional[str] = None,
+        db_schema: Optional[str] = None,
+    ):
         # Parse table name parts
         name_parts = parse_table_name_parts(full_name, self.current_db_connector.get_type())
         current_db_config = self.agent_config.current_db_config()
-        catalog_name = name_parts["catalog_name"] or current_db_config.catalog
-        database_name = name_parts["database_name"] or self.current_db_name or current_db_config.database
-        schema_name = name_parts["schema_name"] or current_db_config.schema
+        catalog_name = name_parts["catalog_name"] or catalog or current_db_config.catalog
+        database_name = name_parts["database_name"] or database or self.current_db_name or current_db_config.database
+        schema_name = name_parts["schema_name"] or db_schema or current_db_config.schema
         table_name = name_parts["table_name"]
 
         # Get semantic model using SemanticMetricsRAG
@@ -431,7 +438,14 @@ class DatasourceService:
         )
         return semantic_model
 
-    def get_semantic_model(self, full_name: str) -> Result[GetSemanticModelData]:
+    def get_semantic_model(
+        self,
+        full_name: str,
+        *,
+        catalog: Optional[str] = None,
+        database: Optional[str] = None,
+        db_schema: Optional[str] = None,
+    ) -> Result[GetSemanticModelData]:
         """Get SemanticModel YAML.
 
         Business logic:
@@ -447,7 +461,12 @@ class DatasourceService:
             Result[GetSemanticModelData] with YAML content
         """
         try:
-            semantic_model = self._get_semantic_model(full_name)
+            semantic_model = self._get_semantic_model(
+                full_name,
+                catalog=catalog,
+                database=database,
+                db_schema=db_schema,
+            )
             if not semantic_model:
                 return Result[GetSemanticModelData](
                     success=True,
@@ -505,7 +524,12 @@ class DatasourceService:
             )
 
         # Step 2: Get semantic file path
-        semantic_model = self._get_semantic_model(request.table)
+        semantic_model = self._get_semantic_model(
+            request.table,
+            catalog=request.catalog,
+            database=request.database,
+            db_schema=request.db_schema,
+        )
         if not semantic_model:
             return Result[dict](
                 success=False,
@@ -571,7 +595,12 @@ class DatasourceService:
         logger.info("Validating semantic model YAML")
         try:
             full_name = request.table
-            semantic_model = self._get_semantic_model(full_name)
+            semantic_model = self._get_semantic_model(
+                full_name,
+                catalog=request.catalog,
+                database=request.database,
+                db_schema=request.db_schema,
+            )
             if not semantic_model:
                 return Result[ValidateSemanticModelData](
                     success=False,
@@ -590,6 +619,9 @@ class DatasourceService:
                 file_path=semantic_file_path,
                 datus_home=self.agent_config.home,
                 datasource=self.agent_config.current_datasource,
+                catalog=request.catalog,
+                database=request.database,
+                db_schema=request.db_schema,
             )
 
             if not is_valid:

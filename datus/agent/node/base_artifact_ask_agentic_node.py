@@ -344,6 +344,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
                     agent_config=self.agent_config,
                     sub_agent_name=self.node_config.get("system_prompt"),
                     adapter_type=self.node_config.get("adapter_type", "metricflow"),
+                    runtime_db_context_provider=self._semantic_runtime_db_context,
                 )
             except Exception as exc:
                 logger.error("%s: failed to build whitelisted semantic_tools: %s", self.get_node_name(), exc)

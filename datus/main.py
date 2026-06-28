@@ -245,6 +245,9 @@ def create_parser() -> argparse.ArgumentParser:
         help="Pull semantic models and metrics from semantic adapter (e.g., metricflow, dbt, cube)",
     )
     bootstrap_parser.add_argument("--catalog", type=str, help="Catalog of the success story")
+    bootstrap_parser.add_argument(
+        "--schema_name", type=str, help="Schema name to use for semantic validation/execution"
+    )
     bootstrap_parser.add_argument("--subject_path", type=str, help="Subject path of the success story")
     bootstrap_parser.add_argument(
         "--sql_dir", type=str, help="Directory containing SQL files for reference_sql component"

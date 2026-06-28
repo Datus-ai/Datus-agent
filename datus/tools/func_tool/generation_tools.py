@@ -1195,10 +1195,23 @@ class GenerationTools:
             current_db_config = agent_config.current_db_config()
         except Exception:
             current_db_config = object()
+        runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
+        runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
+        runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
         return {
-            "catalog_name": getattr(current_db_config, "catalog", "") or "",
-            "database_name": getattr(current_db_config, "database", "") or "",
-            "schema_name": getattr(current_db_config, "schema", "") or "",
+            "catalog_name": runtime_db_context.get("catalog")
+            or runtime_db_context.get("catalog_name")
+            or getattr(current_db_config, "catalog", "")
+            or "",
+            "database_name": runtime_db_context.get("database")
+            or runtime_db_context.get("database_name")
+            or getattr(current_db_config, "database", "")
+            or "",
+            "schema_name": runtime_db_context.get("schema")
+            or runtime_db_context.get("db_schema")
+            or runtime_db_context.get("schema_name")
+            or getattr(current_db_config, "schema", "")
+            or "",
         }
 
     @staticmethod

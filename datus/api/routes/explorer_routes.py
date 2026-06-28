@@ -108,7 +108,7 @@ async def get_metric_dimensions(
     svc: ServiceDep,
 ) -> Result[MetricDimensionsData]:
     """List a metric's queryable dimensions."""
-    return await svc.explorer.get_metric_dimensions(request.subject_path)
+    return await svc.explorer.get_metric_dimensions(request)
 
 
 @router.post(
