@@ -100,8 +100,8 @@ class TestCustomSubagentResolution:
         )
 
         tool_names = {tool.name for tool in node.tools}
-        # db_tools.* expands to at least read_query (SQL execution against the DB).
-        assert "read_query" in tool_names, f"Expected read_query from db_tools.*, got: {sorted(tool_names)}"
+        # db_tools.* expands to at least execute_sql (SQL execution against the DB).
+        assert "execute_sql" in tool_names, f"Expected execute_sql from db_tools.*, got: {sorted(tool_names)}"
         # filesystem_tools.* expands to file reads used for reference SQL discovery.
         assert "read_file" in tool_names, f"Expected read_file from filesystem_tools.*, got: {sorted(tool_names)}"
 

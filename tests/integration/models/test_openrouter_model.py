@@ -154,7 +154,7 @@ class TestOpenRouterMultiModel:
     @pytest.mark.parametrize(
         "model_name",
         [
-            "anthropic/claude-sonnet-4",
+            "anthropic/claude-haiku-4-5",
             "openai/gpt-4.1-mini",
             "google/gemini-2.5-flash",
         ],

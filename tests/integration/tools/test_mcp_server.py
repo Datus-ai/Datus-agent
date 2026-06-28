@@ -46,11 +46,11 @@ CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "tests" / "conf" / "agen
 STATIC_EXPECTED_TOOLS = {
     "list_tables",
     "describe_table",
-    "read_query",
+    "execute_sql",
     "list_databases",
     "list_subject_tree",
 }
-DYNAMIC_EXPECTED_TOOLS = {"list_tables", "describe_table", "read_query"}
+DYNAMIC_EXPECTED_TOOLS = {"list_tables", "describe_table", "execute_sql"}
 
 
 # =============================================================================
@@ -225,11 +225,11 @@ class StaticModeTestBase:
             assert data["result"] is not None
 
     async def test_read_query(self):
-        """Verify read_query executes SQL and returns results."""
+        """Verify execute_sql executes SQL and returns results."""
         async with self._session() as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM customer"})
             data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query failed: {data.get('error')}"
+            assert data["success"] == 1, f"execute_sql failed: {data.get('error')}"
             assert data["result"] is not None
 
     async def test_list_databases(self):
@@ -311,21 +311,21 @@ class DynamicModeTestBase:
             assert data["result"] is not None
 
     async def test_read_query_ssb(self):
-        """Verify read_query on ssb_sqlite executes SQL."""
+        """Verify execute_sql on ssb_sqlite executes SQL."""
         async with self._ssb_session() as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM supplier"})
             data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query ssb failed: {data.get('error')}"
+            assert data["success"] == 1, f"execute_sql ssb failed: {data.get('error')}"
             assert data["result"] is not None
 
     async def test_read_query_duckdb(self):
-        """Verify read_query on duckdb executes SQL."""
+        """Verify execute_sql on duckdb executes SQL."""
         async with self._duckdb_session() as session:
             result = await session.call_tool(
-                "read_query", {"sql": "SELECT COUNT(*) AS cnt FROM mf_demo.mf_demo_customers"}
+                "execute_sql", {"sql": "SELECT COUNT(*) AS cnt FROM mf_demo.mf_demo_customers"}
             )
             data = parse_tool_result(result)
-            assert data["success"] == 1, f"read_query duckdb failed: {data.get('error')}"
+            assert data["success"] == 1, f"execute_sql duckdb failed: {data.get('error')}"
             assert data["result"] is not None
 
     async def test_multi_datasource_isolation(self):
@@ -536,12 +536,12 @@ class TestMCPClient:
             assert data["result"] is not None, "list_subject_tree should return a result"
 
     async def test_error_handling_invalid_sql(self):
-        """N10-07a: read_query with invalid SQL returns proper error via MCP."""
+        """N10-07a: execute_sql with invalid SQL returns proper error via MCP."""
         async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT * FROM nonexistent_xyz_table"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT * FROM nonexistent_xyz_table"})
             data = parse_tool_result(result)
 
-            assert data["success"] == 0, "read_query with invalid table should return success=0"
+            assert data["success"] == 0, "execute_sql with invalid table should return success=0"
             assert data.get("error") is not None, "Should have error message"
             assert len(data["error"]) > 0, "Error message should not be empty"
 
@@ -557,7 +557,7 @@ class TestMCPClient:
     async def test_large_result_set(self):
         """N10-08: Large query result is properly handled (compressed/truncated)."""
         async with mcp_http_session(self.url) as session:
-            result = await session.call_tool("read_query", {"sql": "SELECT * FROM lineorder LIMIT 500"})
+            result = await session.call_tool("execute_sql", {"sql": "SELECT * FROM lineorder LIMIT 500"})
             data = parse_tool_result(result)
 
             assert data["success"] == 1, f"read_query should succeed, got error: {data.get('error')}"
@@ -573,7 +573,7 @@ class TestMCPClient:
             results = await asyncio.gather(
                 session.call_tool("list_tables", {}),
                 session.call_tool("describe_table", {"table_name": "customer"}),
-                session.call_tool("read_query", {"sql": "SELECT COUNT(*) as cnt FROM supplier"}),
+                session.call_tool("execute_sql", {"sql": "SELECT COUNT(*) as cnt FROM supplier"}),
             )
 
             assert len(results) == 3, f"Should have 3 results, got {len(results)}"
@@ -610,7 +610,7 @@ class TestMCPToolRegistration:
         tool_names = [t.name for t in tools]
         assert "list_tables" in tool_names
         assert "describe_table" in tool_names
-        assert "read_query" in tool_names
+        assert "execute_sql" in tool_names
 
     @pytest.mark.asyncio
     async def test_list_subject_tree_tool(self, server):

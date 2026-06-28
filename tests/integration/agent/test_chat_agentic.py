@@ -130,7 +130,7 @@ class TestChatAgentic:
         # so asserting on the literal string "select" makes the test LLM-brittle.
         execution_stats = response.output.get("execution_stats", {}) or {}
         tools_used = execution_stats.get("tools_used", []) or []
-        assert any(t and ("query" in t.lower()) for t in tools_used), (
+        assert any(t and ("query" in t.lower() or "sql" in t.lower()) for t in tools_used), (
             f"Agent should execute a SQL/query tool to answer the data question, tools_used: {tools_used}"
         )
         response_text = (response.output.get("response") or "").lower()

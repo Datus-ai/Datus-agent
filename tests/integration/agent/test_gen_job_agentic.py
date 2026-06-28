@@ -136,10 +136,9 @@ class TestGenJobAgenticInit:
         assert node.execution_mode == "workflow", f"unexpected execution mode: {node.execution_mode}"
 
         tool_names = [tool.name for tool in node.tools]
-        assert "execute_ddl" in tool_names, f"missing execute_ddl, got: {tool_names}"
+        assert "execute_sql" in tool_names, f"missing execute_sql, got: {tool_names}"
         assert "execute_write" in tool_names, f"missing execute_write, got: {tool_names}"
         assert "transfer_query_result" in tool_names, f"missing transfer_query_result, got: {tool_names}"
-        assert "read_query" in tool_names, f"missing read_query, got: {tool_names}"
 
         logger.info("gen_job node initialized with %d tools: %s", len(node.tools), tool_names)
 

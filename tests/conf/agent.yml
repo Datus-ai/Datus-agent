@@ -68,7 +68,7 @@ agent:
       type: openrouter
       vendor: openrouter
       api_key: ${OPENROUTER_API_KEY}
-      model: anthropic/claude-sonnet-4
+      model: anthropic/claude-haiku-4-5
 
   nodes:
     schema_linking:
