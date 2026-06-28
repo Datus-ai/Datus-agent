@@ -700,6 +700,13 @@ class ClaudeModel(OpenAICompatibleModel):
                     "role": "user",
                     "content": [{"type": "text", "text": prompt_text}],
                 }
+                # Index of this turn's first NEW message in ``messages`` (prior
+                # session history was just replayed above, so anything before
+                # this index is already persisted). The end-of-turn persistence
+                # stores ``messages[turn_start_index:]`` — the full structured
+                # delta including every ``tool_use`` / ``tool_result`` — instead
+                # of only the final text.
+                turn_start_index = len(messages)
                 messages.append(user_turn_message)
                 tool_call_cache = {}
                 sql_contexts = []
@@ -1244,11 +1251,19 @@ class ClaudeModel(OpenAICompatibleModel):
                 # in that case so the next turn starts from a clean slate.
                 if session is not None and final_content:
                     try:
-                        assistant_turn_message = {
-                            "role": "assistant",
-                            "content": [{"type": "text", "text": final_content}],
-                        }
-                        await session.add_items([user_turn_message, assistant_turn_message])
+                        # Persist the FULL structured turn — every assistant
+                        # ``tool_use`` block and its matching ``tool_result``
+                        # reply — not just ``final_content``. ``messages`` from
+                        # ``turn_start_index`` on is exactly the sequence
+                        # Anthropic accepted during the loop, so replaying it on
+                        # resume is safe and keeps the tool-calling history
+                        # intact. Storing only the final text previously dropped
+                        # every tool call/result, leaving resumed turns with
+                        # broken history (and tool calls leaking into text).
+                        turn_items = self._replay_safe_turn_items(
+                            messages[turn_start_index:], user_turn_message, final_content
+                        )
+                        await session.add_items(turn_items)
                         turn_persisted = True
                         # Persist the turn's token usage into the durable
                         # ``turn_usage`` table. The native loop never calls
@@ -1306,14 +1321,78 @@ class ClaudeModel(OpenAICompatibleModel):
         try:
             partial = (frame_locals.get("final_content") or "").strip()
             assistant_text = partial or f"[Turn interrupted before completion: {type(error).__name__}]"
-            assistant_turn_message = {
-                "role": "assistant",
-                "content": [{"type": "text", "text": assistant_text}],
-            }
-            await session.add_items([user_turn_message, assistant_turn_message])
+            # Preserve any completed tool_use/tool_result rounds from this turn
+            # too, not just a placeholder — ``_replay_safe_turn_items`` drops a
+            # trailing dangling ``tool_use`` (interrupted before its result) and
+            # appends ``assistant_text`` so the history ends on an assistant
+            # message Anthropic will accept on replay.
+            messages = frame_locals.get("messages")
+            turn_start_index = frame_locals.get("turn_start_index")
+            if isinstance(messages, list) and isinstance(turn_start_index, int):
+                turn_items = self._replay_safe_turn_items(
+                    messages[turn_start_index:], user_turn_message, assistant_text
+                )
+            else:
+                turn_items = [
+                    user_turn_message,
+                    {"role": "assistant", "content": [{"type": "text", "text": assistant_text}]},
+                ]
+            await session.add_items(turn_items)
             logger.info("Persisted interrupted native Claude turn so history survives the failure.")
         except Exception as persist_err:
             logger.warning(f"Failed to persist interrupted native Claude turn: {persist_err}")
+
+    @staticmethod
+    def _replay_safe_turn_items(
+        turn_items: List[Dict[str, Any]],
+        user_turn_message: Dict[str, Any],
+        fallback_text: str,
+    ) -> List[Dict[str, Any]]:
+        """Trim one native-loop turn to a replay-safe item list for the session.
+
+        ``turn_items`` is the slice of the native loop's ``messages`` added
+        during a single user turn: the user message, then alternating assistant
+        (``text`` + ``tool_use``) and user (``tool_result``) messages, ending —
+        on the success path — with a clean assistant text message.
+
+        Anthropic rejects replay of (a) an assistant ``tool_use`` block with no
+        matching ``tool_result`` and (b) a history that ends on a
+        user/``tool_result`` message (it would collide with the next turn's
+        user message). This drops any trailing *dangling* ``tool_use`` (only the
+        tail can dangle — the loop appends each ``tool_result`` immediately after
+        its ``tool_use``) and guarantees the sequence ends on an assistant
+        message, appending a non-empty ``fallback_text`` placeholder when needed
+        so the turn is never lost. Completed tool rounds are preserved verbatim.
+        """
+        items = [m for m in turn_items if isinstance(m, dict)]
+
+        def _tool_use_ids(msg: Dict[str, Any]) -> List[Any]:
+            content = msg.get("content")
+            if not isinstance(content, list):
+                return []
+            return [b.get("id") for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+
+        answered = set()
+        for m in items:
+            if m.get("role") == "user" and isinstance(m.get("content"), list):
+                for b in m["content"]:
+                    if isinstance(b, dict) and b.get("type") == "tool_result":
+                        answered.add(b.get("tool_use_id"))
+
+        # Drop a trailing assistant turn whose tool calls were never answered
+        # (interrupted between emitting the tool_use and recording its result).
+        while items:
+            last = items[-1]
+            if last.get("role") == "assistant" and any(tid not in answered for tid in _tool_use_ids(last)):
+                items.pop()
+                continue
+            break
+
+        if not items:
+            items = [user_turn_message]
+        if items[-1].get("role") != "assistant":
+            items.append({"role": "assistant", "content": [{"type": "text", "text": fallback_text or "[empty turn]"}]})
+        return items
 
     def _build_native_usage_info(
         self,
