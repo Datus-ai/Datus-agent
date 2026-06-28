@@ -560,7 +560,7 @@ class TestMCPClient:
             result = await session.call_tool("execute_sql", {"sql": "SELECT * FROM lineorder LIMIT 500"})
             data = parse_tool_result(result)
 
-            assert data["success"] == 1, f"read_query should succeed, got error: {data.get('error')}"
+            assert data["success"] == 1, f"execute_sql should succeed, got error: {data.get('error')}"
             assert data["result"] is not None, "Should have result data"
             # Result should contain data in some form
             result_str = str(data["result"])
