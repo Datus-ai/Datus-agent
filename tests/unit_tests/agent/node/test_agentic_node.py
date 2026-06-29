@@ -319,6 +319,66 @@ class TestSetupInputAgenticNode:
 
 
 # ---------------------------------------------------------------------------
+# TestSemanticRuntimeDbContext
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticRuntimeDbContext:
+    def test_returns_empty_without_agent_config(self):
+        node = _make_node(agent_config=None)
+
+        assert node._semantic_runtime_db_context() == {}
+
+    def test_uses_request_runtime_context_and_schema_alias(self):
+        cfg = MagicMock()
+        cfg.current_datasource = "static_ds"
+        cfg.runtime_db_context.return_value = {
+            "datasource": "runtime_ds",
+            "catalog_name": "runtime_catalog",
+            "database_name": "runtime_db",
+            "schema_name": "runtime_schema",
+        }
+        cfg.current_db_config.return_value = MagicMock(
+            catalog="configured_catalog",
+            database="configured_db",
+            schema="configured_schema",
+        )
+        db_tool = MagicMock()
+        db_tool.connector.database_name = "connector_db"
+        node = _make_node(agent_config=cfg, db_func_tool=db_tool)
+        node.input = MagicMock(catalog="", database="", db_schema="")
+
+        assert node._semantic_runtime_db_context() == {
+            "datasource": "runtime_ds",
+            "catalog": "runtime_catalog",
+            "database": "runtime_db",
+            "schema": "runtime_schema",
+            "db_schema": "runtime_schema",
+        }
+        cfg.current_db_config.assert_called_once_with("runtime_ds")
+
+    def test_uses_input_context_when_config_context_fails(self):
+        cfg = MagicMock()
+        cfg.current_datasource = "static_ds"
+        cfg.runtime_db_context.side_effect = RuntimeError("context unavailable")
+        cfg.current_db_config.side_effect = RuntimeError("config unavailable")
+        node = _make_node(agent_config=cfg, db_func_tool=MagicMock())
+        node.input = MagicMock(
+            catalog="input_catalog",
+            database="input_db",
+            db_schema="input_schema",
+        )
+
+        assert node._semantic_runtime_db_context() == {
+            "datasource": "static_ds",
+            "catalog": "input_catalog",
+            "database": "input_db",
+            "schema": "input_schema",
+            "db_schema": "input_schema",
+        }
+
+
+# ---------------------------------------------------------------------------
 # TestUpdateContextAgenticNode
 # ---------------------------------------------------------------------------
 

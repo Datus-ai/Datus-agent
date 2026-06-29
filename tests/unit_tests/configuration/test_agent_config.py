@@ -29,6 +29,7 @@ from datus.configuration.agent_config import (
     ValidationConfig,
     _apply_runtime_db_context_to_semantic_adapter_config,
     _db_config_to_semantic_adapter_config,
+    _merge_semantic_adapter_db_config,
     _parse_single_file_db,
     file_stem_from_uri,
     load_model_config,
@@ -238,6 +239,59 @@ class TestSemanticAdapterDbConfig:
             "catalog": "runtime_catalog",
             "database": "runtime_db",
             "schema": "runtime_schema",
+        }
+
+    def test_runtime_context_normalizes_aliases(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+        )
+
+        cfg.set_runtime_db_context(
+            {
+                "catalog_name": "runtime_catalog",
+                "database_name": "runtime_db",
+                "db_schema": "runtime_schema",
+            }
+        )
+
+        assert cfg.runtime_db_context() == {
+            "catalog_name": "runtime_catalog",
+            "catalog": "runtime_catalog",
+            "database_name": "runtime_db",
+            "database": "runtime_db",
+            "db_schema": "runtime_schema",
+            "schema": "runtime_schema",
+            "schema_name": "runtime_schema",
+        }
+
+        cfg.set_runtime_db_context({"schema_name": "runtime_schema_name"})
+        assert cfg.runtime_db_context() == {
+            "schema_name": "runtime_schema_name",
+            "schema": "runtime_schema_name",
+            "db_schema": "runtime_schema_name",
+        }
+
+    def test_merge_semantic_adapter_db_config_ignores_empty_overrides(self):
+        result = _merge_semantic_adapter_db_config(
+            {"type": "mysql", "host": "configured-host"},
+            {
+                "host": "override-host",
+                "database": "runtime_db",
+                "schema": "",
+                "empty": None,
+                "port": 3306,
+            },
+        )
+
+        assert result == {
+            "type": "mysql",
+            "host": "override-host",
+            "database": "runtime_db",
+            "port": "3306",
         }
 
     def test_override_by_args_pins_runtime_db_context_for_semantic_adapter(self, tmp_path):
