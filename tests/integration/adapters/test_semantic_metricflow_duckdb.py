@@ -200,3 +200,6 @@ async def test_query_metrics_where_clause_dry_run(mf_adapter):
     sql = result.metadata.get("sql", "")
     assert sql, f"Expected non-empty SQL with where clause; metadata={result.metadata}"
     assert "WHERE" in sql.upper(), f"Expected WHERE in generated SQL; got:\n{sql}"
+    # Assert the caller-supplied predicate survives: a framework-generated WHERE
+    # could otherwise pass this test even if the where= argument were dropped.
+    assert "2020-01-04" in sql, f"Expected dry_run SQL to preserve the caller filter; got:\n{sql}"

@@ -86,7 +86,9 @@ that the agent actually calls:
 ## MetricFlow Semantic Adapter Tests
 
 These suites exercise `MetricFlowAdapter` against real databases:
-`validate_semantic`, `list_metrics`, `get_dimensions`, `query_metrics(dry_run=True)`.
+`validate_semantic`, `list_metrics`, `get_dimensions`, `query_metrics(dry_run=True)`,
+and live `query_metrics(...)` behavior including time filters, multi-metric queries,
+and `where`-clause SQL generation.
 
 Each suite seeds a minimal `mf_orders` fact table plus `mf_time_spine` (required
 by MetricFlow) and cleans up on teardown.

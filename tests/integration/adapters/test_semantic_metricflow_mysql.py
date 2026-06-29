@@ -15,6 +15,7 @@ are created inside the existing `test` database alongside the adapter test
 tables and dropped on teardown.
 """
 
+import logging
 import os
 from datetime import date, timedelta
 
@@ -31,6 +32,8 @@ datus_semantic_metricflow = import_required(  # noqa: E402
 
 MetricFlowAdapter = datus_semantic_metricflow.MetricFlowAdapter
 MetricFlowConfig = datus_semantic_metricflow.MetricFlowConfig
+
+logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.integration, pytest.mark.nightly, pytest.mark.asyncio]
 
@@ -120,40 +123,45 @@ def seeded_db(mf_config):
         charset="utf8mb4",
         autocommit=True,
     )
-    cursor = conn.cursor()
+    # Outer try/finally guarantees the connection is closed even if seeding
+    # raises before `yield`; each cursor is scoped with a context manager.
     try:
-        cursor.execute(f"DROP TABLE IF EXISTS `{_DATA_TABLE}`")
-        cursor.execute(f"DROP TABLE IF EXISTS `{_TIME_SPINE_TABLE}`")
-        cursor.execute(
-            f"CREATE TABLE `{_DATA_TABLE}` (id INT NOT NULL, amount DECIMAL(10,2), created_at DATE, PRIMARY KEY (id))"
-        )
-        values = ", ".join(f"({r[0]}, {r[1]}, '{r[2]}')" for r in _SAMPLE_ROWS)
-        cursor.execute(f"INSERT INTO `{_DATA_TABLE}` VALUES {values}")
+        with conn.cursor() as cursor:
+            cursor.execute(f"DROP TABLE IF EXISTS `{_DATA_TABLE}`")
+            cursor.execute(f"DROP TABLE IF EXISTS `{_TIME_SPINE_TABLE}`")
+            cursor.execute(
+                f"CREATE TABLE `{_DATA_TABLE}` (id INT NOT NULL, amount DECIMAL(10,2), created_at DATE, PRIMARY KEY (id))"
+            )
+            values = ", ".join(f"({r[0]}, {r[1]}, '{r[2]}')" for r in _SAMPLE_ROWS)
+            cursor.execute(f"INSERT INTO `{_DATA_TABLE}` VALUES {values}")
 
-        cursor.execute(f"CREATE TABLE `{_TIME_SPINE_TABLE}` (ds DATE NOT NULL)")
-        spine_values = []
-        d = date(2020, 1, 1)
-        while d <= date(2025, 12, 31):
-            spine_values.append(f"('{d}')")
-            d += timedelta(days=1)
-        cursor.execute(f"INSERT INTO `{_TIME_SPINE_TABLE}` VALUES {','.join(spine_values)}")
+            cursor.execute(f"CREATE TABLE `{_TIME_SPINE_TABLE}` (ds DATE NOT NULL)")
+            spine_values = []
+            d = date(2020, 1, 1)
+            while d <= date(2025, 12, 31):
+                spine_values.append(f"('{d}')")
+                d += timedelta(days=1)
+            cursor.execute(f"INSERT INTO `{_TIME_SPINE_TABLE}` VALUES {','.join(spine_values)}")
+
+        yield
+
+        with conn.cursor() as cleanup:
+            cleanup.execute(f"DROP TABLE IF EXISTS `{_DATA_TABLE}`")
+            cleanup.execute(f"DROP TABLE IF EXISTS `{_TIME_SPINE_TABLE}`")
     finally:
-        cursor.close()
-
-    yield
-
-    cleanup = conn.cursor()
-    try:
-        cleanup.execute(f"DROP TABLE IF EXISTS `{_DATA_TABLE}`")
-        cleanup.execute(f"DROP TABLE IF EXISTS `{_TIME_SPINE_TABLE}`")
-    finally:
-        cleanup.close()
         conn.close()
 
 
 @pytest.fixture(scope="module")
 def mf_adapter(mf_config, seeded_db):
-    return MetricFlowAdapter(mf_config)
+    adapter = MetricFlowAdapter(mf_config)
+    yield adapter
+    # Best-effort connection teardown so the adapter's SQL client does not stay
+    # open for the rest of the pytest process; log instead of silently passing.
+    try:
+        adapter.client.sql_client.close()
+    except Exception as exc:  # noqa: BLE001 - teardown is best-effort
+        logger.warning("Failed to close MetricFlow SQL client during teardown: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -218,3 +226,6 @@ async def test_query_metrics_where_clause_dry_run(mf_adapter):
     sql = result.metadata.get("sql", "")
     assert sql, f"Expected non-empty SQL with where clause; metadata={result.metadata}"
     assert "WHERE" in sql.upper(), f"Expected WHERE in generated SQL; got:\n{sql}"
+    # Assert the caller-supplied predicate survives: a framework-generated WHERE
+    # could otherwise pass this test even if the where= argument were dropped.
+    assert "2020-01-04" in sql, f"Expected dry_run SQL to preserve the caller filter; got:\n{sql}"

@@ -14,6 +14,7 @@ MetricFlow tables are isolated in the `mf_nightly` schema within the existing
 `test` database and dropped on teardown.
 """
 
+import logging
 import os
 
 import pytest
@@ -29,6 +30,8 @@ datus_semantic_metricflow = import_required(  # noqa: E402
 
 MetricFlowAdapter = datus_semantic_metricflow.MetricFlowAdapter
 MetricFlowConfig = datus_semantic_metricflow.MetricFlowConfig
+
+logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.integration, pytest.mark.nightly, pytest.mark.asyncio]
 
@@ -117,38 +120,43 @@ def seeded_db(mf_config):
         dbname=_DATABASE,
     )
     conn.autocommit = True
-    cursor = conn.cursor()
+    # Outer try/finally guarantees the connection is closed even if seeding
+    # raises before `yield`; each cursor is scoped with a context manager.
     try:
-        cursor.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_TIME_SPINE_TABLE}" CASCADE')
-        cursor.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_DATA_TABLE}" CASCADE')
-        cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_SCHEMA}")
-        cursor.execute(
-            f'CREATE TABLE "{_SCHEMA}"."{_DATA_TABLE}" (id INTEGER PRIMARY KEY, amount DECIMAL(10,2), created_at DATE)'
-        )
-        values = ", ".join(f"({r[0]}, {r[1]}, '{r[2]}')" for r in _SAMPLE_ROWS)
-        cursor.execute(f'INSERT INTO "{_SCHEMA}"."{_DATA_TABLE}" VALUES {values}')
-        cursor.execute(f'CREATE TABLE "{_SCHEMA}"."{_TIME_SPINE_TABLE}" (ds DATE NOT NULL)')
-        cursor.execute(
-            f'INSERT INTO "{_SCHEMA}"."{_TIME_SPINE_TABLE}" '
-            "SELECT d::date FROM generate_series('2020-01-01'::date, '2025-12-31'::date, '1 day') d"
-        )
-    finally:
-        cursor.close()
+        with conn.cursor() as cursor:
+            cursor.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_TIME_SPINE_TABLE}" CASCADE')
+            cursor.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_DATA_TABLE}" CASCADE')
+            cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {_SCHEMA}")
+            cursor.execute(
+                f'CREATE TABLE "{_SCHEMA}"."{_DATA_TABLE}" (id INTEGER PRIMARY KEY, amount DECIMAL(10,2), created_at DATE)'
+            )
+            values = ", ".join(f"({r[0]}, {r[1]}, '{r[2]}')" for r in _SAMPLE_ROWS)
+            cursor.execute(f'INSERT INTO "{_SCHEMA}"."{_DATA_TABLE}" VALUES {values}')
+            cursor.execute(f'CREATE TABLE "{_SCHEMA}"."{_TIME_SPINE_TABLE}" (ds DATE NOT NULL)')
+            cursor.execute(
+                f'INSERT INTO "{_SCHEMA}"."{_TIME_SPINE_TABLE}" '
+                "SELECT d::date FROM generate_series('2020-01-01'::date, '2025-12-31'::date, '1 day') d"
+            )
 
-    yield
+        yield
 
-    cleanup = conn.cursor()
-    try:
-        cleanup.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_TIME_SPINE_TABLE}" CASCADE')
-        cleanup.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_DATA_TABLE}" CASCADE')
+        with conn.cursor() as cleanup:
+            cleanup.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_TIME_SPINE_TABLE}" CASCADE')
+            cleanup.execute(f'DROP TABLE IF EXISTS "{_SCHEMA}"."{_DATA_TABLE}" CASCADE')
     finally:
-        cleanup.close()
         conn.close()
 
 
 @pytest.fixture(scope="module")
 def mf_adapter(mf_config, seeded_db):
-    return MetricFlowAdapter(mf_config)
+    adapter = MetricFlowAdapter(mf_config)
+    yield adapter
+    # Best-effort connection teardown so the adapter's SQL client does not stay
+    # open for the rest of the pytest process; log instead of silently passing.
+    try:
+        adapter.client.sql_client.close()
+    except Exception as exc:  # noqa: BLE001 - teardown is best-effort
+        logger.warning("Failed to close MetricFlow SQL client during teardown: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -213,3 +221,6 @@ async def test_query_metrics_where_clause_dry_run(mf_adapter):
     sql = result.metadata.get("sql", "")
     assert sql, f"Expected non-empty SQL with where clause; metadata={result.metadata}"
     assert "WHERE" in sql.upper(), f"Expected WHERE in generated SQL; got:\n{sql}"
+    # Assert the caller-supplied predicate survives: a framework-generated WHERE
+    # could otherwise pass this test even if the where= argument were dropped.
+    assert "2020-01-04" in sql, f"Expected dry_run SQL to preserve the caller filter; got:\n{sql}"
