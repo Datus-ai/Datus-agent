@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -383,6 +384,47 @@ class TestConfigureLogging:
             mgr = loggings_module.configure_logging(agent_config=agent_config, console_output=False)
 
         assert Path(mgr.log_dir) == path_manager.logs_dir
+
+    def test_configure_logging_routes_litellm_to_file_only(self, tmp_path, capsys):
+        from datus.utils.loggings import configure_logging
+
+        mgr = configure_logging(console_output=False, log_dir=str(tmp_path / "logs"))
+        import litellm  # noqa: F401
+
+        msg = "LiteLLM completion() model= test-model; provider = test-provider"
+        litellm_logger = logging.getLogger("LiteLLM")
+        capsys.readouterr()
+        litellm_logger.info(msg)
+        for handler in litellm_logger.handlers:
+            handler.flush()
+
+        captured = capsys.readouterr()
+        assert msg not in captured.out
+        assert msg not in captured.err
+        assert msg in Path(mgr.file_handler.baseFilename).read_text(encoding="utf-8")
+
+    def test_configure_litellm_logging_removes_late_console_handler(self, tmp_path, capsys):
+        from datus.utils.loggings import configure_litellm_logging, configure_logging
+
+        mgr = configure_logging(console_output=False, log_dir=str(tmp_path / "logs"))
+        litellm_logger = logging.getLogger("LiteLLM")
+        late_console_handler = logging.StreamHandler(sys.stdout)
+        late_console_handler.setFormatter(logging.Formatter("%(message)s"))
+        litellm_logger.addHandler(late_console_handler)
+
+        configure_litellm_logging()
+
+        msg = "LiteLLM completion() model= late-import; provider = test-provider"
+        capsys.readouterr()
+        litellm_logger.info(msg)
+        for handler in litellm_logger.handlers:
+            handler.flush()
+
+        captured = capsys.readouterr()
+        assert late_console_handler not in litellm_logger.handlers
+        assert msg not in captured.out
+        assert msg not in captured.err
+        assert msg in Path(mgr.file_handler.baseFilename).read_text(encoding="utf-8")
 
 
 class TestAddExcInfo:

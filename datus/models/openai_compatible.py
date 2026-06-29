@@ -38,7 +38,7 @@ from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
 from datus.utils.constants import LLMProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
-from datus.utils.loggings import get_logger
+from datus.utils.loggings import configure_litellm_logging, get_logger
 from datus.utils.resource_utils import read_data_file_text
 from datus.utils.text_utils import LitellmPlaceholderStreamFilter, strip_litellm_placeholder
 from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
@@ -93,6 +93,7 @@ litellm.set_verbose = False
 # Suppress "Provider List: ..." debug prints to stdout when LiteLLM encounters
 # model names not in its built-in list (e.g. Coding Plan models like kimi-for-coding)
 litellm.suppress_debug_info = True
+configure_litellm_logging()
 
 # Module-level cache for model specs loaded from conf/providers.yml
 _MODEL_SPECS_CACHE: Optional[Dict[str, Dict[str, int]]] = None

@@ -17,6 +17,8 @@ from rich.console import Console
 
 fileno = False
 
+_LITELLM_LOGGER_NAMES = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
+
 # Global log manager
 _log_manager = None
 
@@ -157,6 +159,19 @@ def get_log_manager(
     return _log_manager
 
 
+def configure_litellm_logging(file_handler: Optional[logging.Handler] = None) -> None:
+    """Route LiteLLM's verbose loggers away from the interactive console."""
+    if file_handler is None and _log_manager is not None:
+        file_handler = _log_manager.file_handler
+
+    for logger_name in _LITELLM_LOGGER_NAMES:
+        logger = logging.getLogger(logger_name)
+        logger.handlers.clear()
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        logger.addHandler(file_handler if file_handler is not None else logging.NullHandler())
+
+
 def configure_logging(
     debug=False,
     log_dir=None,
@@ -193,13 +208,11 @@ def configure_logging(
         agent_config=agent_config,
     )
 
-    # Configure LiteLLM logger to output to file only (not console)
-    # This prevents noisy "LiteLLM completion() model=..." messages from appearing in console
-    litellm_logger = logging.getLogger("LiteLLM")
-    litellm_logger.handlers.clear()  # Remove default handlers
-    litellm_logger.addHandler(_log_manager.file_handler)  # Only output to file
-    litellm_logger.propagate = False  # Don't propagate to root logger
-    litellm_logger.setLevel(logging.INFO)  # Keep INFO level for file logging
+    try:
+        import litellm  # noqa: F401
+    except Exception:
+        pass
+    configure_litellm_logging(_log_manager.file_handler)
 
     # Set output target based on console_output parameter
     if console_output:
