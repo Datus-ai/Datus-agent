@@ -25,6 +25,7 @@ from datus.schemas.tool_summary import (
     SUMMARY_TEXT_MAX_CHARS,
     TOOL_SUMMARY_REGISTRY,
     ToolSummaryRegistry,
+    detect_tool_failure,
     format_failure,
     format_generic_result,
     format_list_envelope,
@@ -72,6 +73,44 @@ class TestPublicHelpers:
     def test_looks_like_failure_default_false(self):
         assert looks_like_failure({"success": 1}) is False
         assert looks_like_failure({}) is False
+
+    def test_detect_tool_failure_dict_payload(self):
+        assert detect_tool_failure({"success": 0, "error": "boom"}) is True
+        assert detect_tool_failure({"success": False}) is True
+        assert detect_tool_failure({"error": "connection refused"}) is True
+        assert detect_tool_failure({"success": 1, "result": [1, 2]}) is False
+        assert detect_tool_failure({"success": 1, "error": "  "}) is False
+
+    def test_detect_tool_failure_json_string_payload(self):
+        # Claude-native path stores raw_output as a JSON string.
+        assert detect_tool_failure(json.dumps({"success": 0, "error": "x"})) is True
+        assert detect_tool_failure(json.dumps({"success": 1})) is False
+
+    def test_detect_tool_failure_non_json_string_is_not_failure(self):
+        # A Python repr (single quotes) or plain text is not JSON-parseable and
+        # must NOT be misread — return False rather than raising.
+        assert detect_tool_failure("{'success': 0}") is False
+        assert detect_tool_failure("ok") is False
+        assert detect_tool_failure("") is False
+
+    def test_detect_tool_failure_other_types(self):
+        assert detect_tool_failure(None) is False
+        assert detect_tool_failure([{"success": 0}]) is False
+
+    def test_detect_tool_failure_real_functoolresult_contract(self):
+        """Contract test: the exact payload model backends receive from a
+        FuncToolResult (its model_dump) must be detected. This locks the
+        producer (func_tool) ↔ consumer (detect_tool_failure) shape so a
+        rejected write never renders a green ✓."""
+        from datus.tools.func_tool.base import FuncToolResult
+
+        failed = FuncToolResult(success=0, error="File type not allowed: x.sh").model_dump(mode="json")
+        ok = FuncToolResult(success=1, result="File written successfully").model_dump(mode="json")
+        assert detect_tool_failure(failed) is True
+        assert detect_tool_failure(ok) is False
+        # Claude-native serializes the same payload as a JSON string.
+        assert detect_tool_failure(json.dumps(failed)) is True
+        assert detect_tool_failure(json.dumps(ok)) is False
 
     def test_format_failure_with_message(self):
         # Error text is clipped to SUMMARY_ERROR_MAX_CHARS (19).

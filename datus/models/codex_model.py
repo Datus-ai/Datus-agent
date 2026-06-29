@@ -26,6 +26,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.observability.manager import get_observability_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_agents_run_config_kwargs, build_trace_span_attributes
@@ -743,14 +744,18 @@ class CodexModel(LLMBaseModel):
                                 args_display = tool_info["args_display"] if tool_info else ""
                                 arguments = tool_info["arguments"] if tool_info else "{}"
 
+                                # FuncToolResult(success=0) returns normally rather than
+                                # raising, so inspect the payload instead of hardcoding
+                                # SUCCESS — otherwise a rejected write renders a green ✓.
+                                tool_failed = detect_tool_failure(output_content)
                                 action = ActionHistory(
                                     action_id=f"complete_{call_id}",
                                     role=ActionRole.TOOL,
                                     messages=f"Tool call: {tool_name}('{args_display}...')",
                                     action_type=tool_name,
                                     input={"function_name": tool_name, "arguments": arguments},
-                                    output={"success": True, "raw_output": output_content},
-                                    status=ActionStatus.SUCCESS,
+                                    output={"success": not tool_failed, "raw_output": output_content},
+                                    status=ActionStatus.FAILED if tool_failed else ActionStatus.SUCCESS,
                                 )
                                 action_history_manager.add_action(action)
                                 yield action

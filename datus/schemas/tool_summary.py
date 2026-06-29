@@ -66,6 +66,33 @@ def looks_like_failure(data: dict) -> bool:
     return False
 
 
+def detect_tool_failure(output_content: Any) -> bool:
+    """Return True when a tool's output payload signals failure.
+
+    Tools built on :class:`~datus.tools.func_tool.base.FuncToolResult` report
+    errors via ``success=0`` / non-empty ``error`` instead of raising, so the
+    model integrations cannot infer failure from "did the call throw". Every
+    backend (OpenAI-compatible, Claude-native, Codex) must run the returned
+    payload through this helper to render ✗ and mark the action FAILED.
+
+    Accepts the raw ``ToolCallOutputItem.output`` shape: a dict (normal SDK
+    path), a JSON string, or anything else (treated as non-failure).
+    """
+    data: Optional[dict] = None
+    if isinstance(output_content, dict):
+        data = output_content
+    elif isinstance(output_content, str):
+        try:
+            parsed = json.loads(output_content)
+        except (TypeError, ValueError):
+            return False
+        if isinstance(parsed, dict):
+            data = parsed
+    if data is None:
+        return False
+    return looks_like_failure(data)
+
+
 def format_failure(data: dict) -> str:
     error = data.get("error")
     if not isinstance(error, str) or not error.strip():

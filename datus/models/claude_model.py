@@ -34,6 +34,7 @@ from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
+from datus.schemas.tool_summary import detect_tool_failure
 from datus.utils.constants import SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -1088,15 +1089,20 @@ class ClaudeModel(OpenAICompatibleModel):
                             if not tool_executed:
                                 logger.error(f"Tool {block.name} could not be executed")
 
-                            # Yield SUCCESS/FAILURE action for real-time tool call display
+                            # Yield SUCCESS/FAILURE action for real-time tool call display.
+                            # A tool that returns FuncToolResult(success=0) executed without
+                            # raising (tool_executed=True), so keying status off tool_executed
+                            # alone would render a green ✓ on a soft failure. Fold the payload's
+                            # success/error signal in via detect_tool_failure.
                             result_text = ""
                             if block.id in tool_call_cache:
                                 result_text = tool_call_cache[block.id].content[0].text
+                            tool_failed = (not tool_executed) or detect_tool_failure(hook_result)
                             result_summary = (
-                                self._format_tool_result(result_text, block.name) if tool_executed else "Failed"
+                                self._format_tool_result(result_text, block.name) if not tool_failed else "Failed"
                             )
                             tool_output = {
-                                "success": tool_executed,
+                                "success": not tool_failed,
                                 "raw_output": result_text,
                                 "summary": result_summary,
                                 "status_message": result_summary,
@@ -1119,7 +1125,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                 action_type=block.name,
                                 input={"function_name": block.name, "arguments": block.input},
                                 output=tool_output,
-                                status=ActionStatus.SUCCESS if tool_executed else ActionStatus.FAILED,
+                                status=ActionStatus.SUCCESS if not tool_failed else ActionStatus.FAILED,
                             )
                             complete_action.end_time = datetime.now()
                             if action_history_manager is not None:

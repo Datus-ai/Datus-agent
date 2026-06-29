@@ -326,9 +326,10 @@ class FilesystemFuncTool(BaseTool):
             if resolved.read_only:
                 return self._read_only_reject(resolved)
 
+            # write_file intentionally skips the extension whitelist: the agent
+            # must be able to emit any text artifact (shell/infra/scala/etc.).
+            # Zone, read-only and strict-external gating above still apply.
             target_path = resolved.resolved
-            if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
             try:
                 target_path.parent.mkdir(parents=True, exist_ok=True)

@@ -799,6 +799,51 @@ class TestBuildWriteFile:
         tc = _build_write_file(a, verbose=True)
         assert tc.args_lines == []
 
+    def test_compact_soft_failure_flips_mark_and_shows_error(self):
+        """FuncToolResult(success=0) with no raised exception (status SUCCESS)
+        must still render ✗ and surface the error, not a fabricated
+        'wrote N lines' from the input content."""
+        a = _make(
+            status=ActionStatus.SUCCESS,
+            input_data={
+                "function_name": "write_file",
+                "arguments": {"path": "infra/x.sh", "content": "#!/bin/sh\necho hi"},
+            },
+            output_data={"raw_output": '{"success": 0, "error": "File type not allowed: infra/x.sh"}'},
+        )
+        tc = _build_write_file(a, verbose=False)
+        assert tc.status_mark == "✗"
+        assert tc.compact_result == "File type not allowed: infra/x.sh"
+        assert "wrote" not in tc.compact_result
+
+    def test_compact_error_only_payload_flips_mark(self):
+        """An error-only payload (no success field) is also a failure."""
+        a = _make(
+            input_data={
+                "function_name": "write_file",
+                "arguments": {"path": "x.sql", "content": "SELECT 1"},
+            },
+            output_data={"raw_output": '{"error": "Permission denied: x.sql"}'},
+        )
+        tc = _build_write_file(a, verbose=False)
+        assert tc.status_mark == "✗"
+        assert tc.compact_result == "Permission denied: x.sql"
+
+    def test_compact_failed_status_shows_error(self):
+        """When the backend already marked the action FAILED, the compact line
+        reflects the failure rather than fabricating a write count."""
+        a = _make(
+            status=ActionStatus.FAILED,
+            input_data={
+                "function_name": "write_file",
+                "arguments": {"path": "x.sql", "content": "SELECT 1"},
+            },
+            output_data={"raw_output": '{"success": 0, "error": "disk full"}'},
+        )
+        tc = _build_write_file(a, verbose=False)
+        assert tc.status_mark == "✗"
+        assert "wrote" not in (tc.compact_result or "")
+
 
 # ── Builder registry: new tools registered ────────────────────────
 

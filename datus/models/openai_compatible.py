@@ -34,7 +34,7 @@ from datus.models.mcp_result_extractors import extract_sql_contexts
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.observability.manager import get_observability_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, looks_like_failure
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, detect_tool_failure
 from datus.utils.constants import LLMProvider
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_str
@@ -230,27 +230,10 @@ def classify_openai_compatible_error(error: Exception) -> tuple[ErrorCode, bool]
 # CLI compact rendering and SSE share a single source of truth.
 
 
-def _detect_tool_failure(output_content: Any) -> bool:
-    """Return True when the tool's output payload signals failure.
-
-    Tools built on :class:`FuncToolResult` report errors via ``success=0`` /
-    non-empty ``error`` instead of raising. The Agents SDK therefore emits a
-    ``tool_call_output_item`` for them and we must inspect the payload to
-    render ✗ (and mark the action FAILED) correctly.
-    """
-    data: Optional[dict] = None
-    if isinstance(output_content, dict):
-        data = output_content
-    elif isinstance(output_content, str):
-        try:
-            parsed = json.loads(output_content)
-        except (TypeError, ValueError):
-            return False
-        if isinstance(parsed, dict):
-            data = parsed
-    if data is None:
-        return False
-    return looks_like_failure(data)
+# Failure detection is shared across all model backends so OpenAI-compatible,
+# Claude-native and Codex render ✗ identically for FuncToolResult(success=0).
+# Kept as a module-level alias for backward-compatible imports.
+_detect_tool_failure = detect_tool_failure
 
 
 class OpenAICompatibleModel(LLMBaseModel):

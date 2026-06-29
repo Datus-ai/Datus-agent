@@ -237,11 +237,20 @@ class TestWriteFile:
         assert result.success == 1
         assert (tmp_path / "subdir" / "nested" / "file.txt").exists()
 
-    def test_write_disallowed_extension(self, tmp_path):
+    def test_write_skips_extension_whitelist(self, tmp_path):
+        """write_file accepts any text artifact regardless of extension; the
+        whitelist only gates read/edit/delete, not creation."""
+        tool = _make_tool(str(tmp_path))
+        result = tool.write_file("infra/deploy.sh", "#!/bin/sh\necho hi\n")
+        assert result.success == 1
+        assert (tmp_path / "infra" / "deploy.sh").read_text() == "#!/bin/sh\necho hi\n"
+
+    def test_write_non_whitelisted_extension_in_zone(self, tmp_path):
+        """A previously-rejected extension (.exe) now writes successfully."""
         tool = _make_tool(str(tmp_path))
         result = tool.write_file("file.exe", "binary")
-        assert result.success == 0
-        assert "not allowed" in result.error.lower()
+        assert result.success == 1
+        assert (tmp_path / "file.exe").read_text() == "binary"
 
     def test_write_path_traversal_classified_external(self, tmp_path):
         """Write with ``../`` escape also classifies EXTERNAL — gating lives

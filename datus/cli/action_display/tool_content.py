@@ -1092,8 +1092,18 @@ def _build_edit_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
 
 
 def _build_write_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """write_file: show file path and write result."""
+    """write_file: show file path and write result.
+
+    A rejected write returns ``FuncToolResult(success=0)`` without raising, so
+    the compact line must surface the error and flip the icon to ✗ instead of
+    fabricating a ``wrote N lines`` success from the input ``content`` alone.
+    """
     tc = make_base_content(action)
+    data = parse_output_data(action.output)
+    tool_error: Optional[str] = None
+    if data is not None and (data.get("success") == 0 or data.get("error")):
+        tool_error = str(data.get("error") or "Failed")
+        tc.status_mark = "✗"
     if verbose:
         # Custom args: show path/file_type, truncate long content
         args_lines: List[str] = []
@@ -1118,18 +1128,22 @@ def _build_write_file(action: ActionHistory, verbose: bool) -> ToolCallContent:
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
-        data = parse_output_data(action.output)
-        args = _parse_args_dict(action)
-        content = args.get("content")
-        if isinstance(content, str) and content:
-            line_count = len(content.splitlines()) or 1
-            tc.compact_result = f"wrote {line_count} lines"
-        elif data:
-            result = data.get("result")
-            if isinstance(result, str) and "success" in result.lower():
-                tc.compact_result = "File written"
-            elif data.get("success"):
-                tc.compact_result = "File written"
+        if action.status == ActionStatus.FAILED:
+            tc.compact_result = action.output if isinstance(action.output, str) else (tool_error or "Failed")
+        elif tool_error is not None:
+            tc.compact_result = tool_error
+        else:
+            args = _parse_args_dict(action)
+            content = args.get("content")
+            if isinstance(content, str) and content:
+                line_count = len(content.splitlines()) or 1
+                tc.compact_result = f"wrote {line_count} lines"
+            elif data:
+                result = data.get("result")
+                if isinstance(result, str) and "success" in result.lower():
+                    tc.compact_result = "File written"
+                elif data.get("success"):
+                    tc.compact_result = "File written"
     return tc
 
 
