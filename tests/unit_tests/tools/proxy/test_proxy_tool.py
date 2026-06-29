@@ -126,6 +126,27 @@ class TestCreateProxyTool:
         assert result == {"success": 1, "result": "proxied"}
 
     @pytest.mark.asyncio
+    async def test_proxy_tool_returns_error_on_timeout(self, monkeypatch):
+        """A client that never reports must time out into a failure result."""
+        monkeypatch.setattr("datus.tools.proxy.proxy_tool.DEFAULT_RESULT_TIMEOUT", 0.01)
+        channel = ToolResultChannel()
+        original = FunctionTool(
+            name="write_file",
+            description="A test tool",
+            params_json_schema={"type": "object", "properties": {}},
+            on_invoke_tool=lambda ctx, args: {"success": 1},
+        )
+        proxy = create_proxy_tool(original, channel)
+
+        ctx = SimpleNamespace(tool_call_id="call_timeout")
+        # No publisher — the wait must elapse and surface a failure, not hang.
+        result = await proxy.on_invoke_tool(ctx, "{}")
+
+        assert result["success"] == 0
+        assert "Timed out" in result["error"]
+        assert result["result"] is None
+
+    @pytest.mark.asyncio
     async def test_proxy_tool_returns_error_on_channel_cancel(self):
         """Verify that RuntimeError from channel.cancel_all is caught and returns error dict."""
         channel = ToolResultChannel()
