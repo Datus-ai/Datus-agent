@@ -10,45 +10,18 @@ Wait and publish are order-independent: either side can arrive first.
 """
 
 import asyncio
-import os
 from typing import Any, Dict, Optional
 
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
-
-
-def _load_default_timeout() -> float:
-    """Parse DATUS_PROXY_TOOL_RESULT_TIMEOUT into a positive number of seconds.
-
-    A malformed or non-positive override would otherwise leak a raw ValueError
-    at import time, or silently turn every proxied tool wait into an instant
-    timeout — so reject it with a clear DatusException instead.
-    """
-    raw = os.getenv("DATUS_PROXY_TOOL_RESULT_TIMEOUT", "600")
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        value = None
-    if value is None or value <= 0:
-        raise DatusException(
-            ErrorCode.COMMON_FIELD_INVALID,
-            message_args={
-                "field_name": "DATUS_PROXY_TOOL_RESULT_TIMEOUT",
-                "except_values": "a positive number of seconds",
-                "your_value": raw,
-            },
-        )
-    return value
-
 
 # Safety net: a proxied tool (e.g. write_file/edit_file executed on the client)
 # blocks the agent loop until the client POSTs its result. If the client never
 # reports — tab closed, crash, or a frontend bug that swallows the report — the
 # loop would otherwise hang forever. ``wait_for`` defaults to this bound so the
-# turn fails cleanly instead. Override via DATUS_PROXY_TOOL_RESULT_TIMEOUT (s).
-DEFAULT_RESULT_TIMEOUT: float = _load_default_timeout()
+# turn fails cleanly instead.
+DEFAULT_RESULT_TIMEOUT: float = 600.0
 
 
 class ToolResultChannel:
