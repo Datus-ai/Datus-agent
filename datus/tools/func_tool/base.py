@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import asyncio
 import inspect
 import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -180,7 +181,16 @@ def trans_to_function_tool(
             if inspect.iscoroutinefunction(method_to_call):
                 result = await method_to_call(**args_dict)
             else:
-                result = method_to_call(**args_dict)
+                # Offload synchronous tool methods to a worker thread. Many tools
+                # (DB metadata/queries, filesystem ops) make blocking I/O calls;
+                # ``final_invoker`` is awaited directly on the asyncio event-loop
+                # thread, so calling them inline freezes the loop — a single slow
+                # ``list_tables`` against a large StarRocks cluster would hang the
+                # whole server (all requests unresponsive). ``asyncio.to_thread``
+                # keeps the loop free and copies the current contextvars (trace
+                # context) into the worker. ``set_tool_context`` is applied above
+                # on the per-session tool instance, so it is visible in the thread.
+                result = await asyncio.to_thread(method_to_call, **args_dict)
             if isinstance(result, FuncToolResult):
                 return result.model_dump(mode="json")
             return result

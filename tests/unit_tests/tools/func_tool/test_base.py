@@ -3,7 +3,9 @@ Test cases for datus/tools/func_tool/base.py
 Focuses on trans_to_function_tool parameter filtering for LLM-hallucinated arguments.
 """
 
+import asyncio
 import json
+import threading
 
 import pytest
 
@@ -120,6 +122,58 @@ class TestTransToFunctionTool:
 
         assert result["success"] == 0
         assert result["error"] == "Unsupported parameters for this tool: catalog"
+
+    @pytest.mark.asyncio
+    async def test_sync_tool_runs_off_the_event_loop_thread(self):
+        """Synchronous tool methods must be offloaded to a worker thread.
+
+        ``final_invoker`` is awaited directly on the asyncio event-loop thread.
+        If a blocking sync tool (e.g. a StarRocks ``list_tables`` metadata query)
+        ran inline, it would freeze the loop and make the whole server
+        unresponsive. The fix dispatches sync methods via ``asyncio.to_thread``;
+        here we assert the method body executed on a different thread.
+        """
+        loop_thread_id = threading.get_ident()
+        ran_on: dict = {}
+
+        class FakeTool:
+            def list_tables(self) -> FuncToolResult:
+                ran_on["thread_id"] = threading.get_ident()
+                return FuncToolResult(result="ok")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.list_tables)
+
+        result = await tool.on_invoke_tool(None, "{}")
+
+        assert result["success"] == 1
+        assert ran_on["thread_id"] != loop_thread_id
+
+    @pytest.mark.asyncio
+    async def test_blocking_sync_tool_does_not_stall_the_event_loop(self):
+        """A blocking sync tool must not prevent other coroutines from running."""
+        proceed = threading.Event()
+
+        class FakeTool:
+            def slow_io(self) -> FuncToolResult:
+                # Blocks the worker thread until the event loop releases it.
+                proceed.wait(2)
+                return FuncToolResult(result="done")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.slow_io)
+
+        task = asyncio.create_task(tool.on_invoke_tool(None, "{}"))
+        # If slow_io blocked the loop, this yield would never resume and the
+        # event below would never be set (deadlock). Reaching here with the task
+        # still pending proves the loop stayed free while slow_io blocked.
+        await asyncio.sleep(0.05)
+        assert not task.done()
+
+        proceed.set()
+        result = await task
+        assert result["success"] == 1
+        assert result["result"] == "done"
 
 
 class TestFuncToolListResult:
