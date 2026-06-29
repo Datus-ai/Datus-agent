@@ -1381,7 +1381,13 @@ class SessionManager:
 
         return messages
 
-    def _restore_native_tool_call(self, item, current_actions, assistant_progress, created_at):
+    def _restore_native_tool_call(
+        self,
+        item: Dict[str, Any],
+        current_actions: List[ActionHistory],
+        assistant_progress: List[str],
+        created_at: Optional[str],
+    ) -> None:
         """Build a PROCESSING tool action from a Claude-native content block.
 
         ``ClaudeModel``'s OAuth path persists tool calls as ``tool_use`` /
@@ -1410,7 +1416,13 @@ class SessionManager:
         )
         current_actions.append(action)
 
-    def _attach_native_tool_result(self, current_actions, tool_use_id, raw_content, created_at):
+    def _attach_native_tool_result(
+        self,
+        current_actions: List[ActionHistory],
+        tool_use_id: Optional[str],
+        raw_content: Any,
+        created_at: Optional[str],
+    ) -> None:
         """Pair a Claude-native tool result with its in-flight tool_use action.
 
         Mirrors the ``function_call_output`` path but for Anthropic blocks

@@ -158,14 +158,14 @@ def summarize_web_tool_result(res_block, query: str = ""):
 # them verbatim trips a 400 (e.g. ``server_tool_use.citations: Extra inputs are not
 # permitted``), which aborts the turn before it can be persisted — so the next turn
 # also "forgets" the conversation. Whitelist the input-permitted keys to avoid this.
-_SERVER_BLOCK_INPUT_KEYS = {
+_SERVER_BLOCK_INPUT_KEYS: Dict[str, tuple[str, ...]] = {
     "server_tool_use": ("type", "id", "name", "input"),
     "web_search_tool_result": ("type", "tool_use_id", "content"),
     "web_fetch_tool_result": ("type", "tool_use_id", "content"),
 }
 
 
-def sanitize_server_block_for_replay(block) -> Optional[dict]:
+def sanitize_server_block_for_replay(block: Any) -> Optional[Dict[str, Any]]:
     """Dump a server-side content block to the Anthropic message *input* schema.
 
     Returns a dict containing only the keys Anthropic accepts when the block is
@@ -668,7 +668,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 builtin_web = kwargs.get("builtin_web_tools") or {}
                 if builtin_web.get("web_search"):
                     tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
-                if builtin_web.get("web_fetch"):
+                if builtin_web.get("web_fetch") and self.supports_builtin_web_fetch():
                     tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5})
 
                 # Re-apply cache control so the ephemeral marker lands on the final
@@ -972,6 +972,22 @@ class ClaudeModel(OpenAICompatibleModel):
                     # If no tool calls, conversation is complete
                     if not any(block.type == "tool_use" for block in message):
                         final_content = "\n".join([block.text for block in message if block.type == "text"])
+                        # Persist the final assistant message — including any
+                        # sanitized ``server_tool_use`` / ``web_search_tool_result``
+                        # blocks from a ``web_search``-only turn — before breaking.
+                        # The completion branch exits before the assistant-content
+                        # append below, so without this the native web-tool replay
+                        # history would be reduced to plain ``final_content``.
+                        final_replay_content: List[Dict[str, Any]] = []
+                        for block in message:
+                            if block.type == "text":
+                                final_replay_content.append({"type": "text", "text": block.text})
+                            else:
+                                sanitized = sanitize_server_block_for_replay(block)
+                                if sanitized is not None:
+                                    final_replay_content.append(sanitized)
+                        if final_replay_content:
+                            messages.append({"role": "assistant", "content": final_replay_content})
                         logger.debug("No tool calls, conversation completed")
                         break
 
@@ -1300,7 +1316,7 @@ class ClaudeModel(OpenAICompatibleModel):
             logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
 
-    async def _persist_failed_turn(self, frame_locals: dict, error: Exception) -> None:
+    async def _persist_failed_turn(self, frame_locals: Dict[str, Any], error: Exception) -> None:
         """Best-effort save of an interrupted turn so the next turn isn't amnesiac.
 
         When the native loop raises mid-turn (e.g. a 400 on replay, a network
@@ -1320,6 +1336,11 @@ class ClaudeModel(OpenAICompatibleModel):
             return
         try:
             partial = (frame_locals.get("final_content") or "").strip()
+            if not partial:
+                # On a mid-stream failure ``final_content`` is still empty, but
+                # the partial text the user already saw lives in
+                # ``thinking_accumulated`` — prefer it over the placeholder.
+                partial = (frame_locals.get("thinking_accumulated") or "").strip()
             assistant_text = partial or f"[Turn interrupted before completion: {type(error).__name__}]"
             # Preserve any completed tool_use/tool_result rounds from this turn
             # too, not just a placeholder — ``_replay_safe_turn_items`` drops a
@@ -1649,7 +1670,11 @@ class ClaudeModel(OpenAICompatibleModel):
         # only be expressed as raw tool dicts on the native Messages API, not via
         # the agents-SDK LiteLLM tool list. Non-web calls (e.g. compaction
         # summarization, which passes no builtin_web_tools) stay on LiteLLM.
-        _want_builtin_web = any((kwargs.get("builtin_web_tools") or {}).values())
+        _builtin_web_tools = kwargs.get("builtin_web_tools") or {}
+        _want_builtin_web = bool(
+            (_builtin_web_tools.get("web_search") and self.supports_builtin_web_search())
+            or (_builtin_web_tools.get("web_fetch") and self.supports_builtin_web_fetch())
+        )
         if (self.use_native_api and self._is_oauth_token) or _want_builtin_web:
             if action_history_manager is None:
                 action_history_manager = ActionHistoryManager()

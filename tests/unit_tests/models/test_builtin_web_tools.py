@@ -185,7 +185,7 @@ def test_sanitize_server_block_returns_none_when_unserializable():
 
     from datus.models.claude_model import sanitize_server_block_for_replay
 
-    def _boom(mode="json"):
+    def _boom(mode: str = "json") -> dict[str, object]:
         raise ValueError("not serializable")
 
     block = SimpleNamespace(type="server_tool_use", model_dump=_boom)
@@ -342,7 +342,7 @@ def test_describe_hosted_tool_item_ignores_non_web_hosted_calls():
         assert describe_hosted_tool_item({"type": itype, "id": "x"}) is None
 
 
-def _user_msg(text="explore eth tables"):
+def _user_msg(text: str = "explore eth tables") -> dict[str, object]:
     return {"role": "user", "content": [{"type": "text", "text": text}]}
 
 
