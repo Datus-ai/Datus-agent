@@ -109,3 +109,41 @@ class TestToolResultChannel:
 
         result = await channel.wait_for("call_done")
         assert result == "first"
+
+    @pytest.mark.asyncio
+    async def test_wait_for_timeout_raises_and_drops_future(self):
+        """A never-published call must time out instead of hanging forever."""
+        channel = ToolResultChannel()
+
+        with pytest.raises(asyncio.TimeoutError):
+            await channel.wait_for("call_timeout", timeout=0.02)
+
+        # The abandoned future is dropped so it cannot leak or mislead a late publish.
+        assert "call_timeout" not in channel._futures
+
+    @pytest.mark.asyncio
+    async def test_wait_for_with_timeout_returns_result(self):
+        """timeout is an upper bound, not a delay — a prompt publish still resolves."""
+        channel = ToolResultChannel()
+
+        async def publisher():
+            await asyncio.sleep(0.01)
+            await channel.publish("call_fast", "ok")
+
+        task = asyncio.create_task(publisher())
+        result = await channel.wait_for("call_fast", timeout=5)
+        await task
+
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_publish_after_timeout_is_ignored(self):
+        """A result reported after the waiter timed out must not crash or stick."""
+        channel = ToolResultChannel()
+
+        with pytest.raises(asyncio.TimeoutError):
+            await channel.wait_for("call_late", timeout=0.02)
+
+        # Late report lands with no waiter; it is accepted but never observed.
+        await channel.publish("call_late", "too_late")
+        assert channel._futures["call_late"].done()

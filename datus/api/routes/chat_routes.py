@@ -504,12 +504,21 @@ async def submit_tool_result(
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id) if request.session_id else None
     if not task or not task.node:
+        # No live waiter means the agent loop already gave up (e.g. the proxy
+        # tool timed out) or the session was never running — surface it so a
+        # client that thinks it is unblocking the turn can be diagnosed.
+        logger.warning(
+            f"tool_result for unknown task: session_id={request.session_id}, call_id={request.call_tool_id}"
+        )
         return Result[ToolResultData](
             success=False,
             errorCode="TASK_NOT_FOUND",
             errorMessage="No active task found for this session",
         )
 
+    logger.info(
+        f"Received tool_result: session_id={request.session_id}, call_id={request.call_tool_id}"
+    )
     await task.node.tool_channel.publish(request.call_tool_id, request.tool_result.model_dump())
     return Result[ToolResultData](
         success=True,

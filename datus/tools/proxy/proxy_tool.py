@@ -11,13 +11,14 @@ results from stdin, enabling external callers to provide tool results.
 
 from __future__ import annotations
 
+import asyncio
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 
-from datus.tools.proxy.tool_result_channel import ToolResultChannel
+from datus.tools.proxy.tool_result_channel import DEFAULT_RESULT_TIMEOUT, ToolResultChannel
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -45,9 +46,26 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
 
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
         call_id = tool_ctx.tool_call_id
-        logger.debug(f"Proxy tool '{original.name}' waiting for result, call_id={call_id}")
+        logger.info(
+            f"Proxy tool '{original.name}' awaiting client result, call_id={call_id}, timeout={DEFAULT_RESULT_TIMEOUT}s"
+        )
         try:
-            return await channel.wait_for(call_id)
+            result = await channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
+            logger.info(f"Proxy tool '{original.name}' received client result, call_id={call_id}")
+            return result
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Proxy tool '{original.name}' timed out after {DEFAULT_RESULT_TIMEOUT}s "
+                f"waiting for client result, call_id={call_id}"
+            )
+            return {
+                "success": 0,
+                "error": (
+                    f"Timed out after {int(DEFAULT_RESULT_TIMEOUT)}s waiting for the client "
+                    f"to report the result of '{original.name}'."
+                ),
+                "result": None,
+            }
         except RuntimeError as e:
             logger.warning(f"Proxy tool '{original.name}' error: {e}, call_id={call_id}")
             return {"success": 0, "error": str(e), "result": None}
