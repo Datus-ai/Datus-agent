@@ -191,6 +191,7 @@ dev = [
     "pytest-cov>=7.0.0",
     "chardet>=3.0.2,<6",
     "diff-cover>=10.2.0",
+    "datus-storage-postgresql>=0.1.5",
 ]
 
 [tool.coverage.run]

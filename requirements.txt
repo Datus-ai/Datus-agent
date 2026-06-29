@@ -1,3 +1,6 @@
+# Release/pip-install compatibility metadata only.
+# Test CI installs from pyproject.toml and uv.lock with `uv sync --locked`.
+
 python-dotenv==1.0.0
 pandas==2.1.4
 sqlalchemy==2.0.23

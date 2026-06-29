@@ -1,3 +1,6 @@
+# Docs and release-candidate tooling only.
+# Test CI installs from pyproject.toml and uv.lock with `uv sync --locked`.
+
 # MkDocs core
 mkdocs>=1.6,<2
 
