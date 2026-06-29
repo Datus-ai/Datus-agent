@@ -8,7 +8,8 @@ import asyncio
 
 import pytest
 
-from datus.tools.proxy.tool_result_channel import ToolResultChannel
+from datus.tools.proxy.tool_result_channel import ToolResultChannel, _load_default_timeout
+from datus.utils.exceptions import DatusException
 
 
 @pytest.mark.ci
@@ -148,3 +149,35 @@ class TestToolResultChannel:
 
         # Late report lands with no waiter; publish reports it as undelivered.
         assert await channel.publish("call_late", "too_late") is False
+
+    @pytest.mark.asyncio
+    async def test_wait_for_explicit_none_is_unbounded(self):
+        """timeout=None opts back into an unbounded wait."""
+        channel = ToolResultChannel()
+
+        async def publisher():
+            await asyncio.sleep(0.01)
+            await channel.publish("call_inf", "done")
+
+        task = asyncio.create_task(publisher())
+        result = await channel.wait_for("call_inf", timeout=None)
+        await task
+
+        assert result == "done"
+
+
+@pytest.mark.ci
+class TestLoadDefaultTimeout:
+    def test_valid_override(self, monkeypatch):
+        monkeypatch.setenv("DATUS_PROXY_TOOL_RESULT_TIMEOUT", "120")
+        assert _load_default_timeout() == 120.0
+
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("DATUS_PROXY_TOOL_RESULT_TIMEOUT", raising=False)
+        assert _load_default_timeout() == 600.0
+
+    @pytest.mark.parametrize("bad", ["abc", "0", "-5", ""])
+    def test_rejects_malformed_or_non_positive(self, monkeypatch, bad):
+        monkeypatch.setenv("DATUS_PROXY_TOOL_RESULT_TIMEOUT", bad)
+        with pytest.raises(DatusException):
+            _load_default_timeout()
