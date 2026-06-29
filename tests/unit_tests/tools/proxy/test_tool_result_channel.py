@@ -104,22 +104,24 @@ class TestToolResultChannel:
     async def test_publish_to_done_future_is_noop(self):
         channel = ToolResultChannel()
 
-        await channel.publish("call_done", "first")
-        await channel.publish("call_done", "second")  # should be ignored (future already done)
+        assert await channel.publish("call_done", "first") is True
+        # Second publish is ignored (future already done) and reported as undelivered.
+        assert await channel.publish("call_done", "second") is False
 
         result = await channel.wait_for("call_done")
         assert result == "first"
 
     @pytest.mark.asyncio
-    async def test_wait_for_timeout_raises_and_drops_future(self):
+    async def test_wait_for_timeout_raises_and_settles_future(self):
         """A never-published call must time out instead of hanging forever."""
         channel = ToolResultChannel()
 
         with pytest.raises(asyncio.TimeoutError):
             await channel.wait_for("call_timeout", timeout=0.02)
 
-        # The abandoned future is dropped so it cannot leak or mislead a late publish.
-        assert "call_timeout" not in channel._futures
+        # The future is retained but settled (cancelled) so a late publish for
+        # the same call_id is recognised as late rather than re-created.
+        assert channel._futures["call_timeout"].done()
 
     @pytest.mark.asyncio
     async def test_wait_for_with_timeout_returns_result(self):
@@ -144,6 +146,5 @@ class TestToolResultChannel:
         with pytest.raises(asyncio.TimeoutError):
             await channel.wait_for("call_late", timeout=0.02)
 
-        # Late report lands with no waiter; it is accepted but never observed.
-        await channel.publish("call_late", "too_late")
-        assert channel._futures["call_late"].done()
+        # Late report lands with no waiter; publish reports it as undelivered.
+        assert await channel.publish("call_late", "too_late") is False

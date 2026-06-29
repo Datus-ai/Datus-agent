@@ -47,34 +47,34 @@ class ToolResultChannel:
         """Wait for a result to be published for the given call_id.
 
         ``timeout`` (seconds) bounds the wait so a never-reported client tool
-        cannot block the agent loop forever; on expiry the dead future is
-        dropped and ``asyncio.TimeoutError`` propagates to the caller.
+        cannot block the agent loop forever; on expiry ``asyncio.wait_for``
+        cancels the future (leaving it settled) and ``asyncio.TimeoutError``
+        propagates. The settled future is retained so a late ``publish`` for the
+        same ``call_id`` is recognised as late rather than silently re-created.
         """
         async with self._lock:
             future = self._get_or_create_future(call_id)
         if timeout is None:
             return await future
-        try:
-            return await asyncio.wait_for(future, timeout)
-        except asyncio.TimeoutError:
-            # Drop the abandoned future so a late publish doesn't target a
-            # waiter that has already given up.
-            async with self._lock:
-                if self._futures.get(call_id) is future:
-                    self._futures.pop(call_id, None)
-            raise
+        return await asyncio.wait_for(future, timeout)
 
-    async def publish(self, call_id: str, result: Any) -> None:
-        """Publish a result for the given call_id."""
+    async def publish(self, call_id: str, result: Any) -> bool:
+        """Publish a result for the given call_id.
+
+        Returns ``True`` if a live waiter received it, ``False`` if the result
+        was dropped — a duplicate, or one that arrived after the waiter timed
+        out — so callers can tell ``matched`` from ``late`` reports.
+        """
         async with self._lock:
             future = self._get_or_create_future(call_id)
             if future.done():
                 # Already settled — typically a duplicate report, or one that
                 # arrived after wait_for timed out and dropped its waiter.
                 logger.warning(f"Tool result for call_id={call_id} ignored; waiter already settled")
-                return
+                return False
             future.set_result(result)
         logger.info(f"Tool result published for call_id={call_id}")
+        return True
 
     def cancel_all(self, reason: str = "Channel closed"):
         """Cancel all pending futures.

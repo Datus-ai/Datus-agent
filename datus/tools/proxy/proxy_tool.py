@@ -12,6 +12,7 @@ results from stdin, enabling external callers to provide tool results.
 from __future__ import annotations
 
 import asyncio
+import time
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
@@ -46,17 +47,22 @@ def create_proxy_tool(original: FunctionTool, channel: ToolResultChannel) -> Fun
 
     async def proxy_invoke(tool_ctx: ToolContext, args_str: str) -> dict:
         call_id = tool_ctx.tool_call_id
+        started = time.monotonic()
         logger.info(
             f"Proxy tool '{original.name}' awaiting client result, call_id={call_id}, timeout={DEFAULT_RESULT_TIMEOUT}s"
         )
         try:
             result = await channel.wait_for(call_id, timeout=DEFAULT_RESULT_TIMEOUT)
-            logger.info(f"Proxy tool '{original.name}' received client result, call_id={call_id}")
+            waited_ms = int((time.monotonic() - started) * 1000)
+            logger.info(
+                f"Proxy tool '{original.name}' received client result, call_id={call_id}, waited_ms={waited_ms}"
+            )
             return result
         except asyncio.TimeoutError:
+            waited_ms = int((time.monotonic() - started) * 1000)
             logger.warning(
                 f"Proxy tool '{original.name}' timed out after {DEFAULT_RESULT_TIMEOUT}s "
-                f"waiting for client result, call_id={call_id}"
+                f"waiting for client result, call_id={call_id}, waited_ms={waited_ms}"
             )
             return {
                 "success": 0,
