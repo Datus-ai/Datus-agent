@@ -80,3 +80,51 @@ that the agent actually calls:
 4. Pick a new opt-in flag (`ADAPTERS_<NAME>=1`) and document env vars here.
 5. Confirm the adapter's `docker-compose.yml` ports don't collide with others
    you run simultaneously.
+
+---
+
+## MetricFlow Semantic Adapter Tests
+
+These suites exercise `MetricFlowAdapter` against real databases:
+`validate_semantic`, `list_metrics`, `get_dimensions`, `query_metrics(dry_run=True)`.
+
+Each suite seeds a minimal `mf_orders` fact table plus `mf_time_spine` (required
+by MetricFlow) and cleans up on teardown.
+
+### DuckDB (no Docker)
+
+```bash
+ADAPTERS_METRICFLOW_DUCKDB=1 uv run pytest tests/integration/adapters/test_semantic_metricflow_duckdb.py -v
+```
+
+No container needed. The database file is created in a pytest tmp directory.
+
+### MySQL (shares container with MySQL Adapter Tests)
+
+```bash
+cd /path/to/datus-db-adapters/datus-mysql && docker compose up -d
+cd /path/to/Datus-agent
+ADAPTERS_METRICFLOW_MYSQL=1 uv run pytest tests/integration/adapters/test_semantic_metricflow_mysql.py -v
+```
+
+MetricFlow tables (`mf_orders`, `mf_time_spine`) are created inside the existing
+`test` database used by the MySQL Adapter Tests and dropped on teardown.
+
+### PostgreSQL (shares container with PostgreSQL Adapter Tests)
+
+```bash
+cd /path/to/datus-db-adapters/datus-postgresql && docker compose up -d
+cd /path/to/Datus-agent
+ADAPTERS_METRICFLOW_PG=1 uv run pytest tests/integration/adapters/test_semantic_metricflow_postgresql.py -v
+```
+
+MetricFlow tables are created in the `mf_nightly` schema within the existing
+`test` database and dropped on teardown.
+
+### MetricFlow env vars
+
+| Suite | Opt-in flag | Connection env | Notes |
+|---|---|---|---|
+| DuckDB | `ADAPTERS_METRICFLOW_DUCKDB=1` | none | DB file auto-generated in tmp dir |
+| MySQL | `ADAPTERS_METRICFLOW_MYSQL=1` | same as `ADAPTERS_MYSQL` vars | tables in `test` DB |
+| PostgreSQL | `ADAPTERS_METRICFLOW_PG=1` | same as `ADAPTERS_PG` vars | tables in `mf_nightly` schema |
