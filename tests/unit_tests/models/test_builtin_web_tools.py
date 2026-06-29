@@ -36,11 +36,24 @@ def test_codex_search_yes_fetch_no():
     assert CodexModel.supports_builtin_web_fetch(s) is False
 
 
-def test_openai_search_yes_fetch_no():
-    s = Mock()
-    # API-key OpenAI also uses the Responses hosted web_search; no hosted fetch.
-    assert OpenAIModel.supports_builtin_web_search(s) is True
-    assert OpenAIModel.supports_builtin_web_fetch(s) is False
+def test_openai_search_yes_only_on_official_endpoint():
+    # The hosted web_search tool is only accepted by the Responses API, which
+    # ``get_agents_sdk_model`` routes to ONLY for the canonical OpenAI host.
+    # supports_builtin_web_search must mirror that route exactly, otherwise the
+    # node injects WebSearchTool into a LiteLLM ChatCompletions request and the
+    # converter raises ``Hosted tools are not supported with the ChatCompletions
+    # API``.
+    official = Mock()
+    official.litellm_adapter._is_official_openai.return_value = True
+    assert OpenAIModel.supports_builtin_web_search(official) is True
+    assert OpenAIModel.supports_builtin_web_fetch(official) is False
+
+    # provider=openai but a custom base_url (vLLM / OpenRouter relay / Coding
+    # Plan proxy) → LiteLLM ChatCompletions path → hosted tool must be OFF.
+    proxy = Mock()
+    proxy.litellm_adapter._is_official_openai.return_value = False
+    assert OpenAIModel.supports_builtin_web_search(proxy) is False
+    assert OpenAIModel.supports_builtin_web_fetch(proxy) is False
 
 
 def test_claude_enables_both():
