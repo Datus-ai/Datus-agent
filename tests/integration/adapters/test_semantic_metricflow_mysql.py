@@ -15,7 +15,6 @@ are created inside the existing `test` database alongside the adapter test
 tables and dropped on teardown.
 """
 
-import asyncio
 import os
 from datetime import date, timedelta
 
@@ -33,7 +32,7 @@ datus_semantic_metricflow = import_required(  # noqa: E402
 MetricFlowAdapter = datus_semantic_metricflow.MetricFlowAdapter
 MetricFlowConfig = datus_semantic_metricflow.MetricFlowConfig
 
-pytestmark = [pytest.mark.integration, pytest.mark.nightly]
+pytestmark = [pytest.mark.integration, pytest.mark.nightly, pytest.mark.asyncio]
 
 _HOST = os.getenv("MYSQL_HOST", "localhost")
 _PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -162,63 +161,59 @@ def mf_adapter(mf_config, seeded_db):
 # ---------------------------------------------------------------------------
 
 
-def test_validate_semantic_passes(mf_adapter):
-    result = asyncio.run(mf_adapter.validate_semantic())
+async def test_validate_semantic_passes(mf_adapter):
+    result = await mf_adapter.validate_semantic()
     errors = [i for i in result.issues if i.severity == "error"]
     assert result.valid, f"Unexpected validation errors: {errors}"
 
 
-def test_list_metrics_returns_metric(mf_adapter):
-    metrics = asyncio.run(mf_adapter.list_metrics())
+async def test_list_metrics_returns_metric(mf_adapter):
+    metrics = await mf_adapter.list_metrics()
     names = {m.name for m in metrics}
     assert len(metrics) >= 1, "Expected at least one metric"
     assert "total_amount" in names, f"'total_amount' not in {sorted(names)}"
 
 
-def test_get_dimensions_returns_dimension(mf_adapter):
-    dims = asyncio.run(mf_adapter.get_dimensions("total_amount"))
+async def test_get_dimensions_returns_dimension(mf_adapter):
+    dims = await mf_adapter.get_dimensions("total_amount")
     assert len(dims) >= 1, f"Expected at least one dimension, got {dims}"
 
 
-def test_query_metrics_dry_run_returns_sql(mf_adapter):
-    result = asyncio.run(mf_adapter.query_metrics(["total_amount"], dry_run=True))
+async def test_query_metrics_dry_run_returns_sql(mf_adapter):
+    result = await mf_adapter.query_metrics(["total_amount"], dry_run=True)
     sql = result.metadata.get("sql", "")
     assert sql, f"Expected non-empty SQL from dry_run; metadata={result.metadata}"
 
 
-def test_query_metrics_live(mf_adapter):
-    result = asyncio.run(mf_adapter.query_metrics(["total_amount"]))
+async def test_query_metrics_live(mf_adapter):
+    result = await mf_adapter.query_metrics(["total_amount"])
     assert len(result.data) >= 1, f"Expected data rows; got: {result}"
     assert "total_amount" in result.columns, f"Expected 'total_amount' in columns; got: {result.columns}"
 
 
-def test_query_metrics_with_time_filter(mf_adapter):
-    result = asyncio.run(
-        mf_adapter.query_metrics(
-            ["total_amount"],
-            time_start="2020-01-01",
-            time_end="2020-01-03",
-        )
+async def test_query_metrics_with_time_filter(mf_adapter):
+    result = await mf_adapter.query_metrics(
+        ["total_amount"],
+        time_start="2020-01-01",
+        time_end="2020-01-03",
     )
     assert len(result.data) >= 1, f"Expected data with time filter; got: {result}"
     total = sum(float(row["total_amount"]) for row in result.data if row.get("total_amount") is not None)
     assert total == pytest.approx(60.0), f"Expected SUM=60 for 2020-01-01..03, got {total}"
 
 
-def test_query_metrics_multi_metric(mf_adapter):
-    result = asyncio.run(mf_adapter.query_metrics(["total_amount", "order_count"]))
+async def test_query_metrics_multi_metric(mf_adapter):
+    result = await mf_adapter.query_metrics(["total_amount", "order_count"])
     assert len(result.data) >= 1, f"Expected data rows; got: {result}"
     assert "total_amount" in result.columns, f"'total_amount' missing from {result.columns}"
     assert "order_count" in result.columns, f"'order_count' missing from {result.columns}"
 
 
-def test_query_metrics_where_clause_dry_run(mf_adapter):
-    result = asyncio.run(
-        mf_adapter.query_metrics(
-            ["total_amount"],
-            where="metric_time >= '2020-01-04'",
-            dry_run=True,
-        )
+async def test_query_metrics_where_clause_dry_run(mf_adapter):
+    result = await mf_adapter.query_metrics(
+        ["total_amount"],
+        where="metric_time >= '2020-01-04'",
+        dry_run=True,
     )
     sql = result.metadata.get("sql", "")
     assert sql, f"Expected non-empty SQL with where clause; metadata={result.metadata}"
