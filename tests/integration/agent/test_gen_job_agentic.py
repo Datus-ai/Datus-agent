@@ -137,7 +137,6 @@ class TestGenJobAgenticInit:
 
         tool_names = [tool.name for tool in node.tools]
         assert "execute_sql" in tool_names, f"missing execute_sql, got: {tool_names}"
-        assert "execute_write" in tool_names, f"missing execute_write, got: {tool_names}"
         assert "transfer_query_result" in tool_names, f"missing transfer_query_result, got: {tool_names}"
 
         logger.info("gen_job node initialized with %d tools: %s", len(node.tools), tool_names)
@@ -166,7 +165,7 @@ class TestGenJobAgenticRealLLM:
                 "Create a new table named nightly_job_school_summary with one integer "
                 "column total_schools, then load it by inserting a single row: the total "
                 "number of rows in the schools table (INSERT INTO ... SELECT COUNT(*) FROM schools). "
-                "Use execute_ddl for the CREATE TABLE and execute_write for the INSERT. "
+                "Use execute_sql for the CREATE TABLE and the INSERT. "
                 "This is an explicit, non-destructive request targeting a brand-new table."
             ),
         )
