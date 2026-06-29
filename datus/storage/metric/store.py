@@ -792,7 +792,9 @@ class MetricRAG:
                     datasource_id=self.datasource_id,
                     project_name=getattr(self.agent_config, "project_name", None),
                     sub_agent_name=self.sub_agent_name,
-                    metrics=[{"id": r.get("id"), "name": r.get("name"), "uid": r.get("uid")} for r in results],
+                    # uid is the contract's string field — normalize missing/null
+                    # to "" (empty = not Hub-governed) rather than forwarding None.
+                    metrics=[{"id": r.get("id"), "name": r.get("name"), "uid": r.get("uid") or ""} for r in results],
                 )
             )
         except Exception as exc:  # noqa: BLE001 — retrieval must never fail on telemetry
