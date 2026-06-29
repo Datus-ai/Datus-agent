@@ -15,6 +15,14 @@ from datus.api.hooks.chat_hooks import (
     make_chat_hooks,
     set_chat_hooks,
 )
+from datus.api.hooks.metric_hooks import (
+    MetricRetrievalEvent,
+    MetricRetrievalHook,
+    RetrievalFn,
+    get_metric_retrieval_hook,
+    make_metric_retrieval_hook,
+    set_metric_retrieval_hook,
+)
 
 __all__ = [
     "ChatHooks",
@@ -25,4 +33,10 @@ __all__ = [
     "get_chat_hooks",
     "make_chat_hooks",
     "set_chat_hooks",
+    "MetricRetrievalEvent",
+    "MetricRetrievalHook",
+    "RetrievalFn",
+    "get_metric_retrieval_hook",
+    "make_metric_retrieval_hook",
+    "set_metric_retrieval_hook",
 ]

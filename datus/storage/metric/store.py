@@ -139,6 +139,10 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     # -- Operations & Lineage --
                     pa.field("yaml_path", pa.string()),
                     pa.field("updated_at", pa.timestamp("ms")),
+                    # Semantic Hub stable node id (locked_metadata.uid); empty for
+                    # metrics not governed by the Hub. Lets retrieval be counted
+                    # per Hub uid (consumption tracking).
+                    pa.field("uid", pa.string()),
                 ]
             ),
             vector_source_name="description",
@@ -159,6 +163,15 @@ class MetricStorage(BaseSubjectEmbeddingStore):
 
         self.create_subject_index()
         self.create_fts_index(["description", "name"])
+
+    def _scope_column_migration_exprs(self) -> Dict[str, str]:
+        # Also backfill the Hub uid column on pre-existing metric tables (empty
+        # default; real uids land on the next build-kb / pull vectorization),
+        # reusing the same best-effort ensure_columns migration as scope columns.
+        exprs = super()._scope_column_migration_exprs()
+        if self._schema is not None and "uid" in set(self._schema.names):
+            exprs = {**exprs, "uid": "''"}
+        return exprs
 
     def batch_store_metrics(self, metrics: List[Dict[str, Any]]) -> None:
         """Store multiple metrics in the database efficiently.
@@ -665,6 +678,7 @@ class MetricRAG:
         from datus.storage.registry import get_storage
 
         self.agent_config = agent_config
+        self.sub_agent_name = sub_agent_name
         self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self._provenance_enabled = is_knowledge_provenance_enabled(agent_config)
         self.storage: MetricStorage = get_storage(
@@ -759,7 +773,30 @@ class MetricRAG:
             extra_conditions=self._sub_agent_conditions(),
         )
         results = self._merge_search_results(exact_results, vector_results, top_n)
-        return self._enrich_metric_results(results)
+        enriched = self._enrich_metric_results(results)
+        self._emit_retrieval(query_text, enriched)
+        return enriched
+
+    def _emit_retrieval(self, query_text: str, results: List[Dict[str, Any]]) -> None:
+        # Fire-and-forget: report retrieved Hub metrics so the host can count
+        # consumption. Never let hook errors break a search.
+        try:
+            from datus.api.hooks import MetricRetrievalEvent, get_metric_retrieval_hook
+
+            hook = get_metric_retrieval_hook()
+            if hook is None:
+                return
+            hook.on_retrieval(
+                MetricRetrievalEvent(
+                    query_text=query_text,
+                    datasource_id=self.datasource_id,
+                    project_name=getattr(self.agent_config, "project_name", None),
+                    sub_agent_name=self.sub_agent_name,
+                    metrics=[{"id": r.get("id"), "name": r.get("name"), "uid": r.get("uid")} for r in results],
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — retrieval must never fail on telemetry
+            logger.debug(f"metric retrieval hook failed: {exc}")
 
     def _search_exact_metric_matches(
         self,
