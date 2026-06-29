@@ -210,7 +210,7 @@ def configure_logging(
 
     try:
         import litellm  # noqa: F401
-    except Exception:
+    except ModuleNotFoundError:
         pass
     configure_litellm_logging(_log_manager.file_handler)
 

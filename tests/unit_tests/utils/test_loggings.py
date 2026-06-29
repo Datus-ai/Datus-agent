@@ -385,14 +385,15 @@ class TestConfigureLogging:
 
         assert Path(mgr.log_dir) == path_manager.logs_dir
 
-    def test_configure_logging_routes_litellm_to_file_only(self, tmp_path, capsys):
+    @pytest.mark.parametrize("logger_name", ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"))
+    def test_configure_logging_routes_litellm_to_file_only(self, tmp_path, capsys, logger_name):
         from datus.utils.loggings import configure_logging
 
         mgr = configure_logging(console_output=False, log_dir=str(tmp_path / "logs"))
         import litellm  # noqa: F401
 
-        msg = "LiteLLM completion() model= test-model; provider = test-provider"
-        litellm_logger = logging.getLogger("LiteLLM")
+        msg = f"{logger_name} completion() model= test-model; provider = test-provider"
+        litellm_logger = logging.getLogger(logger_name)
         capsys.readouterr()
         litellm_logger.info(msg)
         for handler in litellm_logger.handlers:
@@ -403,18 +404,19 @@ class TestConfigureLogging:
         assert msg not in captured.err
         assert msg in Path(mgr.file_handler.baseFilename).read_text(encoding="utf-8")
 
-    def test_configure_litellm_logging_removes_late_console_handler(self, tmp_path, capsys):
+    @pytest.mark.parametrize("logger_name", ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy"))
+    def test_configure_litellm_logging_removes_late_console_handler(self, tmp_path, capsys, logger_name):
         from datus.utils.loggings import configure_litellm_logging, configure_logging
 
         mgr = configure_logging(console_output=False, log_dir=str(tmp_path / "logs"))
-        litellm_logger = logging.getLogger("LiteLLM")
+        litellm_logger = logging.getLogger(logger_name)
         late_console_handler = logging.StreamHandler(sys.stdout)
         late_console_handler.setFormatter(logging.Formatter("%(message)s"))
         litellm_logger.addHandler(late_console_handler)
 
         configure_litellm_logging()
 
-        msg = "LiteLLM completion() model= late-import; provider = test-provider"
+        msg = f"{logger_name} completion() model= late-import; provider = test-provider"
         capsys.readouterr()
         litellm_logger.info(msg)
         for handler in litellm_logger.handlers:
