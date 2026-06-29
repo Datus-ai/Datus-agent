@@ -1349,6 +1349,207 @@ class TestGetSessionMessages:
         assert assistant_groups, "Anthropic-format assistant turn missing from resume payload"
         assert assistant_groups[0]["content"] == "Hi! 👋 Welcome to Datus."
 
+    def test_native_tool_use_and_result_resume(self, sm):
+        """Claude-native ``tool_use`` blocks and their ``tool_result`` user reply
+        are restored into the assistant group (not flushed as a user bubble).
+
+        Covers the resume dispatch for ``tool_use`` inside assistant content and
+        a ``tool_result``-only user message paired back to its in-flight call.
+        """
+        session_id = f"test_native_tool_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            rows = [
+                (
+                    json.dumps({"role": "user", "content": [{"type": "text", "text": "count rows"}]}),
+                    "2026-05-21T00:00:00",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "Let me query."},
+                                {
+                                    "type": "tool_use",
+                                    "id": "toolu_1",
+                                    "name": "execute_sql",
+                                    "input": {"sql": "SELECT COUNT(*) FROM t"},
+                                },
+                            ],
+                        }
+                    ),
+                    "2026-05-21T00:00:01",
+                ),
+                (
+                    json.dumps(
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "toolu_1",
+                                    "content": [{"type": "text", "text": "{'rows': 30000}"}],
+                                }
+                            ],
+                        }
+                    ),
+                    "2026-05-21T00:00:02",
+                ),
+                (
+                    json.dumps({"role": "assistant", "content": [{"type": "text", "text": "There are 30000 rows."}]}),
+                    "2026-05-21T00:00:03",
+                ),
+            ]
+            conn.executemany(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                [(session_id, data, ts) for data, ts in rows],
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+
+        # The tool_result-only user message must NOT surface as a user bubble.
+        user_messages = [m for m in messages if m["role"] == "user"]
+        assert len(user_messages) == 1
+        assert user_messages[0]["content"] == "count rows"
+
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups
+        actions = assistant_groups[0].get("actions", [])
+        # A PROCESSING tool_use action and its paired SUCCESS result.
+        tool_call = next(a for a in actions if a.action_id == "toolu_1")
+        assert tool_call.action_type == "execute_sql"
+        complete = next(a for a in actions if a.action_id == "complete_toolu_1")
+        assert complete.status == ActionStatus.SUCCESS
+        assert complete.output == {"rows": 30000}
+
+    def test_native_server_web_tool_result_resume(self, sm):
+        """A ``server_tool_use`` block plus inline ``web_search_tool_result`` in
+        the same assistant message restore a tool call and its result."""
+        session_id = f"test_native_web_{uuid.uuid4().hex[:8]}"
+        sm.get_session(session_id)
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("INSERT OR IGNORE INTO agent_sessions (session_id) VALUES (?)", (session_id,))
+            assistant_msg = {
+                "role": "assistant",
+                "content": [
+                    {"type": "server_tool_use", "id": "srv_1", "name": "web_search", "input": {"query": "datus"}},
+                    {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": "srv_1",
+                        "content": [{"type": "text", "text": "search hits"}],
+                    },
+                    {"type": "text", "text": "Found it."},
+                ],
+            }
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (
+                    session_id,
+                    json.dumps({"role": "user", "content": [{"type": "text", "text": "search"}]}),
+                    "2026-05-21T00:00:00",
+                ),
+            )
+            conn.execute(
+                "INSERT INTO agent_messages (session_id, message_data, created_at) VALUES (?, ?, ?)",
+                (session_id, json.dumps(assistant_msg), "2026-05-21T00:00:01"),
+            )
+            conn.commit()
+
+        messages = sm.get_session_messages(session_id)
+        assistant_groups = [m for m in messages if m["role"] == "assistant"]
+        assert assistant_groups
+        actions = assistant_groups[0].get("actions", [])
+        srv_call = next(a for a in actions if a.action_id == "srv_1")
+        assert srv_call.action_type == "web_search"
+        assert any(a.action_id == "complete_srv_1" and a.status == ActionStatus.SUCCESS for a in actions)
+
+
+class TestNativeToolHelpers:
+    """Direct unit tests for SessionManager native-tool restore helpers."""
+
+    def test_restore_native_tool_call_builds_processing_action(self, sm):
+        actions: list = []
+        progress: list = []
+        sm._restore_native_tool_call(
+            {"id": "t1", "name": "execute_sql", "input": {"sql": "SELECT 1"}},
+            actions,
+            progress,
+            "2026-05-21T00:00:00",
+        )
+        assert len(actions) == 1
+        assert actions[0].action_id == "t1"
+        assert actions[0].status == ActionStatus.PROCESSING
+        assert actions[0].input["arguments"] == json.dumps({"sql": "SELECT 1"}, ensure_ascii=False)
+        assert progress and progress[0].startswith("✓ Tool call: execute_sql")
+
+    def test_restore_native_tool_call_unserializable_input_defaults_to_empty(self, sm):
+        """A tool input that json.dumps cannot serialize falls back to ``"{}"``
+        instead of crashing the resume."""
+
+        class _Unserializable:
+            pass
+
+        actions: list = []
+        sm._restore_native_tool_call(
+            {"id": "t1", "name": "fetch", "input": {"bad": _Unserializable()}},
+            actions,
+            [],
+            None,
+        )
+        assert actions[0].input["arguments"] == "{}"
+
+    def test_restore_native_tool_call_string_input_and_defaults(self, sm):
+        """A pre-serialized string input is kept verbatim; missing id/created_at
+        fall back to a generated uuid and now()."""
+        actions: list = []
+        sm._restore_native_tool_call({"input": "raw-args"}, actions, [], None)
+        assert actions[0].action_type == "unknown"
+        assert actions[0].input["arguments"] == "raw-args"
+        assert actions[0].action_id  # generated uuid
+
+    def test_attach_native_tool_result_pairs_by_id(self, sm):
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, "t1", [{"type": "text", "text": "{'k': 1}"}], None)
+        complete = actions[-1]
+        assert complete.action_id == "complete_t1"
+        assert complete.status == ActionStatus.SUCCESS
+        assert complete.output == {"k": 1}
+
+    def test_attach_native_tool_result_falls_back_to_recent_when_no_id(self, sm):
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, None, "plain string result", None)
+        complete = actions[-1]
+        assert complete.action_id == "complete_t1"
+        assert complete.output == {"result": "plain string result"}
+
+    def test_attach_native_tool_result_noop_without_actions(self, sm):
+        actions: list = []
+        sm._attach_native_tool_result(actions, "t1", "x", None)
+        assert actions == []
+
+    def test_attach_native_tool_result_noop_when_no_match(self, sm):
+        """An id with no matching PROCESSING action appends nothing."""
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, "nonexistent", "x", None)
+        assert len(actions) == 1  # only the original tool_use
+
+    def test_attach_native_tool_result_serializes_dict_content(self, sm):
+        """Non-list, non-str content is JSON-dumped before parsing."""
+        actions: list = []
+        sm._restore_native_tool_call({"id": "t1", "name": "fetch", "input": {}}, actions, [], None)
+        sm._attach_native_tool_result(actions, "t1", {"nested": "value"}, None)
+        assert actions[-1].output == {"nested": "value"}
+
 
 # ===========================================================================
 # TestParseOutputFromAction (migrated from test_session_loader.py)

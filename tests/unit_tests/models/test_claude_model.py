@@ -718,6 +718,37 @@ def _make_tool_use_block(name="read_query", block_id="tool_1", input_data=None):
     return block
 
 
+def _make_server_tool_use_block(block_id="srv_1", name="web_search", input_data=None):
+    """A server_tool_use block whose model_dump carries an output-only
+    ``citations`` field (as the streaming accumulator attaches it)."""
+    block = MagicMock()
+    block.type = "server_tool_use"
+    block.id = block_id
+    block.name = name
+    block.input = input_data or {"query": "datus"}
+    block.model_dump = lambda mode="json": {
+        "type": "server_tool_use",
+        "id": block_id,
+        "name": name,
+        "input": block.input,
+        "citations": None,
+    }
+    return block
+
+
+def _make_web_search_result_block(tool_use_id="srv_1"):
+    block = MagicMock()
+    block.type = "web_search_tool_result"
+    block.tool_use_id = tool_use_id
+    block.model_dump = lambda mode="json": {
+        "type": "web_search_tool_result",
+        "tool_use_id": tool_use_id,
+        "content": [{"type": "web_search_result", "title": "t", "url": "https://x"}],
+        "cache_control": {"type": "ephemeral"},
+    }
+    return block
+
+
 def _make_response(content_blocks, input_tokens=100, output_tokens=50):
     response = MagicMock()
     response.content = content_blocks
@@ -761,6 +792,56 @@ class TestGenerateWithMcpStream:
         assert actions[0].action_type == "final_response"
         assert actions[0].status == ActionStatus.SUCCESS
         assert "hello world" in actions[0].output["raw_output"]
+
+    @pytest.mark.asyncio
+    async def test_web_search_only_turn_persists_sanitized_server_blocks(self):
+        """A web_search-only completion (no local tool_use) must enable the
+        server-side web_search tool and persist its sanitized server_tool_use /
+        web_search_tool_result blocks into the session on the break path."""
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        message_blocks = [
+            _make_server_tool_use_block("srv_1"),
+            _make_web_search_result_block("srv_1"),
+            _make_text_block("Here is what I found."),
+        ]
+        model.anthropic_client.messages.create.return_value = _make_response(message_blocks)
+
+        session = AsyncMock()
+        ahm = ActionHistoryManager()
+        captured_tools = {}
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="search the web",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True, "web_fetch": True},
+                session=session,
+                action_history_manager=ahm,
+            ):
+                pass
+            captured_tools = model.anthropic_client.messages.create.call_args.kwargs.get("tools", [])
+
+        # The hosted web_search tool is enabled; the local-only web_fetch is NOT.
+        tool_types = {t.get("type") for t in captured_tools if isinstance(t, dict)}
+        assert "web_search_20250305" in tool_types
+        assert "web_fetch_20250910" not in tool_types
+
+        # The persisted assistant message keeps the sanitized server blocks
+        # (citations / cache_control stripped to the input schema).
+        session.add_items.assert_awaited()
+        persisted = session.add_items.await_args.args[0]
+        assistant_blocks = [b for m in persisted if m["role"] == "assistant" for b in m["content"]]
+        srv = next(b for b in assistant_blocks if b.get("type") == "server_tool_use")
+        assert set(srv) == {"type", "id", "name", "input"}
+        result = next(b for b in assistant_blocks if b.get("type") == "web_search_tool_result")
+        assert set(result) == {"type", "tool_use_id", "content"}
 
     @pytest.mark.asyncio
     async def test_tool_call_yields_processing_and_success(self):
