@@ -37,7 +37,9 @@ SUMMARY_ERROR_MAX_CHARS = 19
 # Filesystem tools want full path/count visibility; web tools want their
 # result titles / page label visible on the compact line rather than clipped
 # to a handful of characters.
-FS_TOOLS_NO_CLIP = frozenset({"read_file", "write_file", "edit_file", "glob", "grep", "web_search", "web_fetch"})
+FS_TOOLS_NO_CLIP = frozenset(
+    {"read_file", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
+)
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -173,8 +175,8 @@ def _clip_short(text: str, tool_name: str = "", limit: int = SUMMARY_TEXT_MAX_CH
     """Final-stage clip applied at registry exit.
 
     Filesystem tools (``read_file``, ``write_file``, ``edit_file``,
-    ``glob``, ``grep``) are exempt — their summaries are returned
-    verbatim because users want full path / count visibility there.
+    ``delete_file``, ``glob``, ``grep``) are exempt — their summaries are
+    returned verbatim because users want full path / count visibility there.
     """
     if not isinstance(text, str):
         return text

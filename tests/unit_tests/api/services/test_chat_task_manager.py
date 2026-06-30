@@ -391,6 +391,41 @@ class TestChatTaskManagerBehavior:
         assert content.type == "markdown"
         assert content.payload["content"] == "1 table: orders"
 
+    @pytest.mark.asyncio
+    async def test_run_loop_web_source_proxies_filesystem_writes(self, real_agent_config):
+        """source='web' proxies the client-owned write tools (write/edit/delete_file)."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        class FakeNode:
+            session_id = "s-web-proxy"
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                return
+                yield  # pragma: no cover - makes this an async generator
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-web-proxy", asyncio_task=MagicMock())
+
+        with patch("datus.api.services.chat_task_manager.apply_proxy_tools") as mock_apply:
+            await manager._run_loop(
+                task,
+                real_agent_config,
+                StreamChatInput(message="hi", source="web", session_id="s-web-proxy"),
+            )
+
+        mock_apply.assert_called_once()
+        called_node, called_patterns = mock_apply.call_args.args
+        assert isinstance(called_node, FakeNode)
+        assert called_patterns == ["write_file", "edit_file", "delete_file"]
+        assert task.status == "completed"
+
     def test_include_final_response_rejects_nested_subagent_response(self):
         """Depth>0 sub-agent wrappers must not render as top-level answers."""
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus

@@ -660,6 +660,18 @@ class TestFilesystemFormatters:
         out = _summarize("delete_file", {"success": 1, "result": "File deleted successfully: /tmp/z.txt"})
         assert out == "deleted /tmp/z.txt"
 
+    def test_delete_file_unrecognized_string_falls_through(self):
+        # No success marker -> the formatter returns the (truncated) raw string.
+        from datus.schemas.tool_summary import _fmt_delete_file
+
+        assert _fmt_delete_file("scratch removed") == "scratch removed"
+
+    def test_delete_file_non_string_result_empty(self):
+        # Non-string result -> formatter yields "" so the generic path takes over.
+        from datus.schemas.tool_summary import _fmt_delete_file
+
+        assert _fmt_delete_file({"deleted": True}) == ""
+
     def test_glob(self):
         out = _summarize(
             "glob",
