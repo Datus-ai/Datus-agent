@@ -656,6 +656,10 @@ class TestFilesystemFormatters:
         out = _summarize("edit_file", {"success": 1, "result": "File edited successfully: /tmp/y.py"})
         assert out == "edited /tmp/y.py"
 
+    def test_delete_file(self):
+        out = _summarize("delete_file", {"success": 1, "result": "File deleted successfully: /tmp/z.txt"})
+        assert out == "deleted /tmp/z.txt"
+
     def test_glob(self):
         out = _summarize(
             "glob",

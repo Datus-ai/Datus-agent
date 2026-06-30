@@ -858,6 +858,15 @@ def _fmt_edit_file(result: Any) -> str:
     return ""
 
 
+def _fmt_delete_file(result: Any) -> str:
+    if isinstance(result, str):
+        marker = "File deleted successfully: "
+        if result.startswith(marker):
+            return f"deleted {result[len(marker) :]}"
+        return truncate_text(result)
+    return ""
+
+
 def _fmt_glob(result: Any) -> str:
     if isinstance(result, dict):
         files = result.get("files")
@@ -1252,6 +1261,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "read_file": _fmt_read_file,
         "write_file": _fmt_write_file,
         "edit_file": _fmt_edit_file,
+        "delete_file": _fmt_delete_file,
         "glob": _fmt_glob,
         "grep": _fmt_grep,
         # Plan / todo

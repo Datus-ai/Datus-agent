@@ -243,6 +243,7 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "read_file": lambda a: _format_positional(a, "file_path", "path"),
     "write_file": lambda a: _format_positional(a, "file_path", "path"),
     "edit_file": lambda a: _format_positional(a, "file_path", "path"),
+    "delete_file": lambda a: _format_positional(a, "file_path", "path"),
     "glob": lambda a: _format_kw(a, "pattern", "path"),
     "grep": lambda a: _format_kw(a, "pattern", "path"),
     # Context search tools
