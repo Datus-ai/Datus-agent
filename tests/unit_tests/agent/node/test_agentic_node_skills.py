@@ -887,12 +887,12 @@ class TestBuiltinNodeDefaultSkills:
     def test_gen_metrics_defaults(self):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics, gen-semantic-model"
+        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics, metricflow-semantic-authoring"
 
     def test_gen_semantic_model_defaults(self):
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS == "gen-semantic-model"
+        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS == "metricflow-semantic-authoring"
 
     def test_gen_dashboard_leaves_defaults_unset(self):
         """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
@@ -962,8 +962,8 @@ class TestSkillAllowedAgentsConsistency:
         [
             ("gen_job", ["gen-table", "table-validation", "data-migration"]),
             ("gen_table", ["gen-table", "table-validation"]),
-            ("gen_semantic_model", ["gen-semantic-model"]),
-            ("gen_metrics", ["gen-metrics", "gen-semantic-model"]),
+            ("gen_semantic_model", ["metricflow-semantic-authoring"]),
+            ("gen_metrics", ["gen-metrics", "metricflow-semantic-authoring"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
             ("gen_skill", ["create-skill", "optimize-skill"]),
             ("scheduler", ["airflow-workflow", "scheduler-validation"]),
@@ -974,6 +974,31 @@ class TestSkillAllowedAgentsConsistency:
             fm = self._read_skill_frontmatter(skill)
             allowed = fm.get("allowed_agents") or []
             assert node_name in allowed, f"Skill '{skill}' must list '{node_name}' in allowed_agents — got {allowed}"
+
+    def test_semantic_sql_history_profiler_is_optional_and_scoped(self):
+        import pathlib
+
+        project_root = pathlib.Path(__file__).resolve().parents[4]
+        skills_dir = project_root / "datus" / "resources" / "skills"
+        manager = SkillManager(config=SkillConfig(directories=[str(skills_dir)]))
+
+        semantic_names = {
+            skill.name
+            for skill in manager.get_available_skills(
+                "gen_semantic_model",
+                patterns=["semantic-sql-history-profiler"],
+            )
+        }
+        metric_names = {
+            skill.name
+            for skill in manager.get_available_skills(
+                "gen_metrics",
+                patterns=["semantic-sql-history-profiler"],
+            )
+        }
+
+        assert semantic_names == {"semantic-sql-history-profiler"}
+        assert metric_names == set()
 
     def test_dashboard_router_skill_is_not_exposed_to_chat(self):
         """Dashboard routing is handled by task(type="gen_dashboard"), not a chat-visible skill."""

@@ -24,8 +24,10 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 Please strictly follow the instructions below:
 
 **Skill-first workflow**:
-- Before starting generation, check `<available_skills>` for `gen-semantic-model`.
-- If available, call `load_skill("gen-semantic-model")` and follow it.
+- Before starting generation, check `<available_skills>`.
+{% include "_semantic_sql_history_profiler_gate.j2" %}
+
+- If `<available_skills>` includes `metricflow-semantic-authoring`, call `load_skill("metricflow-semantic-authoring")` and follow it. If the profiler gate applies, also follow the profiler skill before writing YAML.
 - Continue to use the rules below for detailed YAML structure and output format.
 
 0. **Clarify blocking ambiguity first**:
@@ -44,15 +46,15 @@ Please strictly follow the instructions below:
 
 2. **Analyze column usage patterns** (STRONGLY RECOMMENDED):
    - Use `analyze_column_usage_patterns(table_name)` to discover how columns are used in historical SQL queries
-   - This reveals filter operators (LIKE, IN, FIND_IN_SET, etc.), functions, and **actual filter examples** commonly used with each column
+   - This reveals filter operators, functions, and **actual filter examples** commonly used with each column
    - Example output:
      ```json
      {
        "column_patterns": {
-         "tags": {
-           "operators": ["LIKE"],
-           "functions": ["FIND_IN_SET"],
-           "usage_description": "Use FIND_IN_SET() for queries. Commonly filtered with LIKE"
+         "status": {
+           "operators": ["=", "IN"],
+           "functions": [],
+           "usage_description": "Commonly filtered with = and IN"
          }
        }
      }
@@ -70,15 +72,16 @@ Please strictly follow the instructions below:
    - **CRITICAL**: Populate `description` fields for ALL measures, dimensions, and identifiers by **COMBINING ALL** available information:
      - Start with DDL comments (preserve original language)
      - Append usage patterns and **filter examples** from `analyze_column_usage_patterns`
+     - Append compact observed distribution evidence from `profile_semantic_model_evidence` when available: null rate, numeric ranges and percentiles, date spans/freshness/duration, distinct counts, representative stable values, referential coverage, common filter templates, and enum/code mappings
      - Append Enum-like patterns (e.g., "status: 1=Active, 2=Inactive")
-   - **Describe what a column means, not how to query it.** Capture business meaning — term, encodings, term→column mappings; do not embed query directives for the reader to execute. Facts that need verifying against data belong in a knowledge atom, not the model description.
+   - **Describe what a column means first, then add concise observed evidence.** Capture business meaning, encodings, term→column mappings, and compact profiler observations. Avoid long SQL snippets or procedural query instructions; mention operator/function usage only when it is directly supported by evidence and helps interpret the column.
    - **YAML String Quoting Rule**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`.
    - **Example dimension with usage pattern**:
      ```yaml
-     - name: tags
+     - name: status
        type: CATEGORICAL
-       expr: tags
-       description: "Product tags (comma-separated). Use FIND_IN_SET() for tag membership checks. Examples: FIND_IN_SET('vip', tags)"
+       expr: status
+       description: "Order status; commonly filtered with =/IN; representative values include paid/refund"
      ```
    - **NO TRANSLATION**: Ensure all descriptions match the original DDL comments exactly. If the comment is in Chinese, the description MUST be in Chinese.
    - **Time dimension correctness**:
@@ -131,9 +134,9 @@ Use `get_multiple_tables_ddl` to get all table DDLs.
 
 ### Step 2.5: Analyze Column Usage Patterns (STRONGLY RECOMMENDED)
 For each table, call `analyze_column_usage_patterns(table_name)` to discover:
-- Filter operators commonly used (LIKE, IN, FIND_IN_SET, etc.)
-- Functions applied to columns (JSON_EXTRACT, REGEXP, etc.)
-- **Actual historical filter examples** (e.g. "tags LIKE '%vip%'")
+- Filter operators commonly used by historical SQL
+- Functions applied to columns
+- **Actual historical filter examples**
 - This helps generate much better dimension descriptions with concrete usage hints
 
 ### Step 3: Discover Table Relationships (CRITICAL)
@@ -162,8 +165,8 @@ For each table, call `check_semantic_object_exists` to avoid duplicates.
 Create one YAML file per table with proper identifier definitions:
 - **CRITICAL**: Extract `description` from DDL column comments for ALL fields. **DO NOT TRANSLATE**.
 - **RECOMMENDED**: Enrich dimension descriptions with usage patterns from `analyze_column_usage_patterns`:
-  - Append usage hints like "Use FIND_IN_SET() for filtering" or "Commonly filtered with LIKE"
-  - Example: "Product tags (comma-separated). Use FIND_IN_SET() for tag membership checks"
+  - Append concise usage hints only when they are backed by historical evidence, such as common equality/range/text-search filters or function-based predicates.
+  - Keep examples short and redacted; do not paste long SQL fragments.
 - Use `entity` field to reference other tables (singular form: customer, not customers).
 - `type: PRIMARY` for the table's primary key.
 - `type: FOREIGN` for columns that join to other tables.

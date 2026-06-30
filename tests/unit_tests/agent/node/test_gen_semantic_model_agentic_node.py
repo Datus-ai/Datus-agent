@@ -99,6 +99,27 @@ class TestGenSemanticModelAgenticNodeInit:
 
         # SemanticDiscoveryTools should be present
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
+        assert "profile_semantic_model_evidence" not in tool_names
+
+    def test_semantic_sql_history_profiler_tool_is_skill_gated(self, real_agent_config, mock_llm_create):
+        """Profiler tool is exposed only when the optional skill is configured."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        original = dict(real_agent_config.agentic_nodes.get("gen_semantic_model", {}))
+        try:
+            real_agent_config.agentic_nodes["gen_semantic_model"] = {
+                **original,
+                "skills": "metricflow-semantic-authoring, semantic-sql-history-profiler",
+            }
+            node = GenSemanticModelAgenticNode(
+                agent_config=real_agent_config,
+                execution_mode="workflow",
+            )
+        finally:
+            real_agent_config.agentic_nodes["gen_semantic_model"] = original
+
+        tool_names = {tool.name for tool in node.tools}
+        assert "profile_semantic_model_evidence" in tool_names
 
     def test_semantic_model_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -345,7 +366,7 @@ class TestGenSemanticModelAgenticNodeExecution:
         async def _raise_interrupted(*args, **kwargs):
             """Async generator that raises ExecutionInterrupted."""
             raise ExecutionInterrupted("User pressed ESC")
-            yield  # noqa: makes this an async generator
+            yield  # noqa
 
         node = GenSemanticModelAgenticNode(
             agent_config=real_agent_config,

@@ -634,6 +634,19 @@ def _fmt_analyze_column_usage_patterns(result: Any) -> str:
     return ""
 
 
+def _fmt_profile_semantic_model_evidence(result: Any) -> str:
+    if isinstance(result, dict):
+        tables = result.get("tables")
+        if isinstance(tables, dict):
+            n = len(tables)
+            suffix = " + data" if result.get("data_profiled") else ""
+            return (f"{n} table profiled" if n == 1 else f"{n} tables profiled") + suffix
+        summary = result.get("summary")
+        if isinstance(summary, str) and summary:
+            return summary
+    return ""
+
+
 def _fmt_get_multiple_tables_ddl(result: Any) -> str:
     if isinstance(result, list):
         n = len(result)
@@ -1234,6 +1247,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
         "analyze_table_relationships": _fmt_analyze_table_relationships,
         "analyze_column_usage_patterns": _fmt_analyze_column_usage_patterns,
+        "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         "analyze_metric_candidates_from_history": _fmt_analyze_metric_candidates_from_history,
         "get_multiple_tables_ddl": _fmt_get_multiple_tables_ddl,
         # Scheduler tools

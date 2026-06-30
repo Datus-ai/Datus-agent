@@ -148,7 +148,7 @@ For each table involved in the metric:
 
 ### 2b. Create Missing Model
 
-If the semantic model is missing, follow the `gen-semantic-model` workflow when that skill is available. In brief: inspect table structure with `describe_table`, discover joins with `analyze_table_relationships` when multiple tables are involved, use `analyze_column_usage_patterns` for likely measures and dimensions, write the semantic model YAML under the semantic model directory shown in the system prompt, then run `validate_semantic` and fix issues until it passes before continuing.
+If the semantic model is missing, follow the `metricflow-semantic-authoring` workflow when that skill is available. In brief: inspect table structure with `describe_table`, discover joins with `analyze_table_relationships` when multiple tables are involved, use `analyze_column_usage_patterns` for likely measures and dimensions, write the semantic model YAML under the semantic model directory shown in the system prompt, then run `validate_semantic` and fix issues until it passes before continuing.
 
 ### 2c. Multi-Table / JOIN SQL Modeling
 

@@ -261,6 +261,7 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "render_reference_template": lambda a: _format_positional(a, "template_id", "name"),
     "execute_reference_template": lambda a: _format_positional(a, "template_id", "name"),
     # Semantic discovery tools
+    "profile_semantic_model_evidence": lambda a: _format_kw(a, "query_text", "tables", "profile_mode"),
     "analyze_metric_candidates_from_history": lambda a: _format_kw(a, "query_text", "tables", "sample_sql_queries"),
     # Platform document tools
     "list_document_nav": lambda _a: "",
@@ -1935,6 +1936,27 @@ def _build_analyze_columns(action: ActionHistory, verbose: bool) -> ToolCallCont
     return tc
 
 
+def _build_profile_semantic_model_evidence(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """profile_semantic_model_evidence: show profiled table count."""
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            result = data.get("result")
+            if isinstance(result, dict):
+                tables = result.get("tables", {})
+                count = len(tables) if isinstance(tables, dict) else 0
+                noun = "table" if count == 1 else "tables"
+                tc.compact_result = f"{count} {noun} profiled"
+                if result.get("data_profiled"):
+                    tc.compact_result += ", data sampled"
+    return tc
+
+
 def _build_analyze_metric_candidates(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """analyze_metric_candidates_from_history: show mined metric candidate count."""
     tc = make_base_content(action)
@@ -2149,6 +2171,7 @@ class ToolCallContentBuilder:
         self._registry["analyze_table_relationships"] = _build_analyze_relationships
         self._registry["get_multiple_tables_ddl"] = _build_get_multiple_ddl
         self._registry["analyze_column_usage_patterns"] = _build_analyze_columns
+        self._registry["profile_semantic_model_evidence"] = _build_profile_semantic_model_evidence
         self._registry["analyze_metric_candidates_from_history"] = _build_analyze_metric_candidates
 
         # Skill tools

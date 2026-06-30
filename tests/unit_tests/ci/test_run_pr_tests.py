@@ -72,7 +72,7 @@ def test_select_impacted_unit_tests_maps_prompt_and_resource_paths_without_full_
         [
             "datus/prompts/prompt_templates/gen_metrics_system_1.2.j2",
             "datus/resources/skills/gen-metrics/SKILL.md",
-            "datus/resources/skills/gen-semantic-model/SKILL.md",
+            "datus/resources/skills/metricflow-semantic-authoring/SKILL.md",
         ]
     )
 

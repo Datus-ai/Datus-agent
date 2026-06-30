@@ -41,6 +41,7 @@ from datus.cli.action_display.tool_content import (
     _build_list_tables,
     _build_load_skill,
     _build_parse_dates,
+    _build_profile_semantic_model_evidence,
     _build_query_metrics,
     _build_read_file,
     _build_read_query,
@@ -1724,6 +1725,21 @@ class TestBuildAnalyzeColumns:
 
 
 @pytest.mark.ci
+class TestBuildProfileSemanticModelEvidence:
+    def test_compact(self):
+        a = _make(
+            input_data={"function_name": "profile_semantic_model_evidence"},
+            output_data={
+                "raw_output": '{"success": 1, "result": {'
+                '"data_profiled": true, '
+                '"tables": {"orders": {}, "customers": {}}, "summary": "ok"}}'
+            },
+        )
+        tc = _build_profile_semantic_model_evidence(a, verbose=False)
+        assert "2 tables profiled, data sampled" in tc.compact_result
+
+
+@pytest.mark.ci
 class TestBuildAnalyzeMetricCandidates:
     def test_compact(self):
         a = _make(
@@ -1922,6 +1938,7 @@ class TestAllToolsRegistered:
         "analyze_table_relationships",
         "get_multiple_tables_ddl",
         "analyze_column_usage_patterns",
+        "profile_semantic_model_evidence",
         "analyze_metric_candidates_from_history",
         # Skill
         "execute_command",

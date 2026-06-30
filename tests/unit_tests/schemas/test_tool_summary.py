@@ -509,6 +509,19 @@ class TestGenerationFormatters:
         )
         assert out == "2 metric cands"
 
+    def test_profile_semantic_model_evidence(self):
+        out = _summarize(
+            "profile_semantic_model_evidence",
+            {
+                "success": 1,
+                "result": {
+                    "data_profiled": True,
+                    "tables": {"orders": {}, "customers": {}},
+                },
+            },
+        )
+        assert out == "2 tables profiled…"
+
     def test_analyze_metric_candidates_from_history_with_derived_datasource(self):
         out = _summarize(
             "analyze_metric_candidates_from_history",
@@ -922,6 +935,11 @@ def test_failure_path_uniform(tool: str):
             "Analyzed 5 columns…",
         ),
         ("analyze_column_usage_patterns", {"column_patterns": {"a": {}, "b": {}}}, "2 cols analyzed"),
+        (
+            "profile_semantic_model_evidence",
+            {"data_profiled": False, "tables": {"orders": {}}},
+            "1 table profiled",
+        ),
         # Scheduler fallbacks
         ("submit_sql_job", {"job_id": "j"}, "+job j"),
         ("submit_sparksql_job", {"job_id": "j2"}, "+spark j2"),
@@ -1029,6 +1047,7 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("generate_sql_summary_id", "very_long_summary_id_12345"),
     ("analyze_table_relationships", {"relationships": [{}] * 99, "summary": "x" * 100}),
     ("analyze_column_usage_patterns", {"column_patterns": {str(i): {} for i in range(99)}}),
+    ("profile_semantic_model_evidence", {"data_profiled": True, "tables": {str(i): {} for i in range(99)}}),
     ("get_multiple_tables_ddl", [{}] * 99),
     # scheduler
     ("submit_sql_job", {"job_id": "very_long_job_id_here"}),

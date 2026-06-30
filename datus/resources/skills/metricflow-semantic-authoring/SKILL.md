@@ -1,6 +1,6 @@
 ---
-name: gen-semantic-model
-description: Generate MetricFlow semantic models from database tables with validation and Knowledge Base publishing
+name: metricflow-semantic-authoring
+description: Author MetricFlow semantic model YAML from database tables with validation and Knowledge Base publishing
 tags:
   - semantic-model
   - metricflow
@@ -12,7 +12,7 @@ allowed_agents:
   - gen_metrics
 ---
 
-# Generate Semantic Model Skill
+# MetricFlow Semantic Authoring
 
 Create production-ready MetricFlow semantic model YAML for one or more database tables, validate it, and publish it to the Knowledge Base.
 
@@ -22,8 +22,16 @@ Create production-ready MetricFlow semantic model YAML for one or more database 
    - Identify the table or tables from the user request.
    - Use `describe_table` and relationship tools as needed.
    - Use `ask_user` only when a critical modeling choice cannot be inferred.
+   - If the request includes historical SQL or success-story SQL and the `semantic-sql-history-profiler`
+     skill is available, load that skill and call `profile_semantic_model_evidence` before modeling
+     columns or writing YAML.
+   - Pass every provided historical SQL statement to the profiler via `sql_entries_json` or `sql_queries`;
+     do not truncate to a few representative examples.
 
 2. **Model columns**
+   - For historical-SQL requests with profiler evidence, use the profiler output as the primary source
+     for join hints, commonly filtered/grouped dimensions, aggregate candidates, and concise usage hints.
+     Use `analyze_column_usage_patterns` only as a fallback or to fill a narrow gap.
    - Choose one primary time dimension when a reliable time column exists.
    - Define `type: TIME` only for a physical DATE/TIME/TIMESTAMP column, or for a SQL expression / `sql_query` alias that is guaranteed to return a DATE/TIME/TIMESTAMP value.
    - Do not mark numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as `type: TIME`; model them as identifiers or categorical dimensions unless you explicitly convert them to a real date.

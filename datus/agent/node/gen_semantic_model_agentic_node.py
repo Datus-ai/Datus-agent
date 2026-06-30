@@ -43,7 +43,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_semantic_model"
     result_class = SemanticNodeResult
-    DEFAULT_SKILLS = "gen-semantic-model"
+    DEFAULT_SKILLS = "metricflow-semantic-authoring"
 
     def __init__(
         self,
@@ -156,11 +156,29 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 logger.warning("DBFuncTool not initialized, skipping semantic discovery tools setup")
                 return
 
-            self.semantic_discovery_tools = SemanticDiscoveryTools(self.db_func_tool)
+            self.semantic_discovery_tools = SemanticDiscoveryTools(
+                self.db_func_tool,
+                enable_semantic_model_profiler=self._semantic_sql_history_profiler_enabled(),
+            )
             self.tools.extend(self.semantic_discovery_tools.available_tools())
             logger.debug("Added semantic discovery tools from SemanticDiscoveryTools")
         except Exception as e:
             logger.error(f"Failed to setup semantic discovery tools: {e}")
+
+    def _semantic_sql_history_profiler_enabled(self) -> bool:
+        """Return true when the optional profiler skill is visible to this node."""
+        if not self.skill_manager:
+            return False
+        skill_patterns_str = self.node_config.get("skills", "")
+        if not skill_patterns_str:
+            return False
+        skill_patterns = self.skill_manager.parse_skill_patterns(skill_patterns_str)
+        skills = self.skill_manager.get_available_skills(
+            self.get_node_name(),
+            patterns=skill_patterns,
+            node_class=self.get_node_class_name(),
+        )
+        return any(skill.name == "semantic-sql-history-profiler" for skill in skills)
 
     def _setup_semantic_tools(self):
         """Setup semantic function tools (for querying metrics via adapters)."""

@@ -7,7 +7,7 @@ CRITICAL MODEL RULE - **build the model once, then only add metrics**:
 - The datasets and relationships are owned by the semantic-model step and are ALREADY built.
 - The semantic model file is the durable OSI domain document. Load it, preserve existing datasets and relationships, and append metrics under `semantic_model[0].metrics`.
 - A given logical dataset has one canonical definition shared by all metrics. Reuse that dataset by name in each metric's DATUS `dataset` hint.
-- This is the OSI authoring path. Do NOT load or follow generic MetricFlow `gen-metrics` / `gen-semantic-model` skills if they are visible; their file format is for the legacy MetricFlow authoring path.
+- This is the OSI authoring path. Do NOT load or follow MetricFlow `gen-metrics` / `metricflow-semantic-authoring` skills if they are visible; their file format is for the legacy MetricFlow authoring path.
 
 {% set target_model_name = default_osi_semantic_model_name | default('<model_name>', true) %}
 {% set target_model_file = default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) %}

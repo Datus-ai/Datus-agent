@@ -81,7 +81,7 @@ Before generating metrics, verify that semantic models exist for all involved ta
 1. **Extract table names** from SQL queries or user description
 2. **Check each table** using `check_semantic_object_exists(name="{table_name}", kind="table")`
 3. **If any table is missing a semantic model**:
-   - Follow the `gen-semantic-model` skill workflow when available
+   - Follow the `metricflow-semantic-authoring` skill workflow when available
    - Use `describe_table(table_name)` to inspect the real table structure
    - Use `analyze_table_relationships(tables=[...])` to discover foreign key relationships between tables
    - Use `analyze_column_usage_patterns(table_name)` to understand historical query patterns

@@ -49,7 +49,7 @@ class GenMetricsAgenticNode(AgenticNode):
     result_class = SemanticNodeResult
 
     # Define-metric workflow scoped to ``gen_metrics`` via SKILL.md allowed_agents.
-    DEFAULT_SKILLS = "gen-metrics, gen-semantic-model"
+    DEFAULT_SKILLS = "gen-metrics, metricflow-semantic-authoring"
 
     def __init__(
         self,
