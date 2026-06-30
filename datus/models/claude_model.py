@@ -673,7 +673,7 @@ class ClaudeModel(OpenAICompatibleModel):
                 # web_search_tool_result / web_fetch_tool_result content blocks),
                 # so they are NOT registered in func_tool_map.
                 builtin_web = kwargs.get("builtin_web_tools") or {}
-                if builtin_web.get("web_search"):
+                if builtin_web.get("web_search") and self.supports_builtin_web_search():
                     tools.append({"type": "web_search_20250305", "name": "web_search", "max_uses": 5})
                 if builtin_web.get("web_fetch") and self.supports_builtin_web_fetch():
                     tools.append({"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 5})
@@ -764,6 +764,11 @@ class ClaudeModel(OpenAICompatibleModel):
                     emitted_server_ids: set = set()
                     server_tool_names: dict = {}
                     server_tool_queries: dict = {}
+                    # Track the most recent server-tool start id so a result block
+                    # whose ``tool_use_id`` is ``None`` (malformed proxies) pairs back
+                    # to the generated ``srv_*`` id instead of collapsing onto
+                    # ``complete_None`` (which ActionHistoryManager would dedupe away).
+                    last_server_tool_id: Optional[str] = None
                     if self.async_anthropic_client is not None:
                         # Streaming path: yield text deltas as ``thinking_delta``
                         # ActionHistory in real time (parity with
@@ -794,6 +799,7 @@ class ClaudeModel(OpenAICompatibleModel):
                                         sname = getattr(block_start, "name", None) or "web_search"
                                         server_tool_names[sid] = sname
                                         emitted_server_ids.add(sid)
+                                        last_server_tool_id = sid
                                         s_input = getattr(block_start, "input", {}) or {}
                                         if isinstance(s_input, dict):
                                             server_tool_queries[sid] = str(
@@ -809,7 +815,16 @@ class ClaudeModel(OpenAICompatibleModel):
                                             status=ActionStatus.PROCESSING,
                                         )
                                     elif bs_type in ("web_search_tool_result", "web_fetch_tool_result"):
-                                        tid = getattr(block_start, "tool_use_id", None)
+                                        # Malformed proxies (e.g. kimi) echo a result
+                                        # block with a null ``tool_use_id``; fall back
+                                        # to the matching start's generated id so the
+                                        # completion pairs with it and never collapses
+                                        # onto ``complete_None``.
+                                        tid = (
+                                            getattr(block_start, "tool_use_id", None)
+                                            or last_server_tool_id
+                                            or f"srv_{uuid.uuid4().hex[:8]}"
+                                        )
                                         sname = server_tool_names.get(tid, "web_search")
                                         summary, canonical = summarize_web_tool_result(
                                             block_start, query=server_tool_queries.get(tid, "")

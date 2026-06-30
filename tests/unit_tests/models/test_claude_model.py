@@ -2496,6 +2496,110 @@ class TestGenerateWithMcpStreamTextDeltas:
         assert "final_response" in persisted_types
 
     @pytest.mark.asyncio
+    async def test_stream_null_id_server_tool_pairs_with_generated_id(self):
+        """Regression: malformed proxies (kimi) stream ``server_tool_use`` /
+        ``web_search_tool_result`` blocks with a null id. The completion must
+        reuse the start's generated ``srv_*`` id instead of collapsing onto
+        ``complete_None`` — otherwise ``ActionHistoryManager.add_action`` dedupes
+        a second null-id search away and the pair never matches the start.
+        """
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        def _srv_start(name="web_search"):
+            block = MagicMock()
+            block.type = "server_tool_use"
+            block.id = None  # provider omits the id
+            block.name = name
+            block.input = {"query": "datus"}
+            return block
+
+        def _srv_result():
+            block = MagicMock()
+            block.type = "web_search_tool_result"
+            block.tool_use_id = None  # provider omits the id
+            block.content = []
+            return block
+
+        # Two interleaved null-id server searches in one turn.
+        events = [
+            _FakeStreamEvent("content_block_start", content_block=_srv_start()),
+            _FakeStreamEvent("content_block_start", content_block=_srv_result()),
+            _FakeStreamEvent("content_block_start", content_block=_srv_start()),
+            _FakeStreamEvent("content_block_start", content_block=_srv_result()),
+        ]
+        final_msg = _make_response([_make_text_block("done")])
+        stream_manager = _FakeAsyncStreamManager(events, final_msg)
+
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for action in model._generate_with_mcp_stream(
+                prompt="search the web",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True},
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
+        # Two starts (srv_*) + two completions (complete_srv_*) all surface.
+        starts = [a for a in tool_actions if a.action_id.startswith("srv_")]
+        completes = [a for a in tool_actions if a.action_id.startswith("complete_")]
+        assert len(starts) == 2
+        assert len(completes) == 2
+        # No action_id is None or collapses onto the bare ``complete_None`` id.
+        assert all(isinstance(a.action_id, str) and a.action_id for a in actions)
+        assert all(a.action_id != "complete_None" for a in completes)
+        # Each completion pairs with a distinct start's generated id.
+        assert {c.action_id for c in completes} == {f"complete_{s.action_id}" for s in starts}
+
+    @pytest.mark.asyncio
+    async def test_stream_proxy_endpoint_does_not_inject_hosted_web_search(self):
+        """A non-official Claude-compatible proxy (kimi) must NOT receive the
+        hosted ``web_search_20250305`` tool even when ``web_search`` is requested
+        — it falls back to the local Tavily backend instead.
+        """
+        from datus.schemas.action_history import ActionHistoryManager
+
+        cfg = _make_model_config(use_native_api=True, base_url="https://api.kimi.com/coding")
+        model = _make_claude_model(cfg)
+
+        final_msg = _make_response([_make_text_block("done")])
+        stream_manager = _FakeAsyncStreamManager([], final_msg)
+        async_client = MagicMock()
+        async_client.messages.stream = MagicMock(return_value=stream_manager)
+        model.async_anthropic_client = async_client
+
+        ahm = ActionHistoryManager()
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            async for _ in model._generate_with_mcp_stream(
+                prompt="search the web",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True},
+                action_history_manager=ahm,
+            ):
+                pass
+
+        captured_tools = async_client.messages.stream.call_args.kwargs.get("tools", [])
+        tool_types = {t.get("type") for t in captured_tools if isinstance(t, dict)}
+        assert "web_search_20250305" not in tool_types
+
+    @pytest.mark.asyncio
     async def test_interrupt_during_stream_raises_execution_interrupted(self):
         """When ``interrupt_controller.is_interrupted`` is True during the stream
         loop, the generator must raise ``ExecutionInterrupted`` so the caller can
