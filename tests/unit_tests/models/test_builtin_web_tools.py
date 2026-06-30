@@ -29,11 +29,19 @@ def test_base_defaults_false():
     assert LLMBaseModel.supports_builtin_web_fetch(s) is False
 
 
-def test_codex_search_yes_fetch_no():
-    s = Mock()
-    # OpenAI Responses exposes hosted web_search but no hosted fetch.
-    assert CodexModel.supports_builtin_web_search(s) is True
-    assert CodexModel.supports_builtin_web_fetch(s) is False
+def test_codex_search_yes_only_on_official_endpoint():
+    # OpenAI Responses exposes hosted web_search but no hosted fetch — and the
+    # hosted tool is only honored by the official ChatGPT Codex host. A custom
+    # base_url (third-party relay) must fall back to the local backend.
+    official = Mock()
+    official._base_url = "https://chatgpt.com/backend-api/codex"
+    assert CodexModel.supports_builtin_web_search(official) is True
+    assert CodexModel.supports_builtin_web_fetch(official) is False
+
+    proxy = Mock()
+    proxy._base_url = "https://my-proxy.example.com/codex"
+    assert CodexModel.supports_builtin_web_search(proxy) is False
+    assert CodexModel.supports_builtin_web_fetch(proxy) is False
 
 
 def test_openai_search_yes_only_on_official_endpoint():
@@ -57,14 +65,23 @@ def test_openai_search_yes_only_on_official_endpoint():
 
 
 def test_claude_search_server_fetch_local():
-    s = Mock()
-    # web_search runs server-side (Anthropic web_search_20250305, GA). web_fetch
-    # is served by the LOCAL httpx backend instead of the hosted
-    # web_fetch_20250910: the hosted tool emits server_tool_use blocks whose
-    # rehydrated form carries an output-only ``citations`` field the message
-    # input schema rejects on replay (400), so we keep fetch local.
-    assert ClaudeModel.supports_builtin_web_search(s) is True
-    assert ClaudeModel.supports_builtin_web_fetch(s) is False
+    # web_search runs server-side (Anthropic web_search_20250305, GA) — but only
+    # on the official api.anthropic.com host. Third-party Claude-compatible
+    # proxies (e.g. kimi_coding at api.kimi.com/coding) share type:claude yet
+    # return malformed hosted-tool blocks, so they fall back to the local
+    # backend. web_fetch is ALWAYS served by the LOCAL httpx backend instead of
+    # the hosted web_fetch_20250910: the hosted tool emits server_tool_use blocks
+    # whose rehydrated form carries an output-only ``citations`` field the
+    # message input schema rejects on replay (400), so we keep fetch local.
+    official = Mock()
+    official._get_base_url.return_value = "https://api.anthropic.com"
+    assert ClaudeModel.supports_builtin_web_search(official) is True
+    assert ClaudeModel.supports_builtin_web_fetch(official) is False
+
+    proxy = Mock()
+    proxy._get_base_url.return_value = "https://api.kimi.com/coding/"
+    assert ClaudeModel.supports_builtin_web_search(proxy) is False
+    assert ClaudeModel.supports_builtin_web_fetch(proxy) is False
 
 
 def test_describe_hosted_tool_item_web_search_dict():
