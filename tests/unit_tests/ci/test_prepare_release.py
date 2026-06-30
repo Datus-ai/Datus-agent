@@ -186,6 +186,31 @@ def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatc
     assert "datus-semantic-core>=0.2.1" in (repo_root / "requirements.txt").read_text(encoding="utf-8")
 
 
+def test_update_dependency_group_lower_bounds_matches_normalized_names(tmp_path, prepare_release):
+    repo_root = _write_release_repo(tmp_path)
+    pyproject_path = repo_root / "pyproject.toml"
+    pyproject_path.write_text(
+        pyproject_path.read_text(encoding="utf-8")
+        .replace('"datus-metricflow>=0.2.6"', '"Datus_MetricFlow>=0.2.6"')
+        .replace('"datus-semantic-metricflow>=0.2.7"', '"datus_semantic_metricflow>=0.2.7"'),
+        encoding="utf-8",
+    )
+
+    changed = prepare_release.update_dependency_group_lower_bounds(
+        pyproject_path,
+        "ci",
+        {
+            "datus-metricflow": Version("0.2.7"),
+            "datus-semantic-metricflow": Version("0.2.8"),
+        },
+    )
+
+    pyproject_content = pyproject_path.read_text(encoding="utf-8")
+    assert changed is True
+    assert '"Datus_MetricFlow>=0.2.7"' in pyproject_content
+    assert '"datus_semantic_metricflow>=0.2.8"' in pyproject_content
+
+
 def test_prepare_release_can_leave_adapter_bounds_unchanged(tmp_path, monkeypatch, prepare_release):
     repo_root = _write_release_repo(tmp_path)
 

@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 CI_DIR = Path(__file__).resolve().parent
@@ -121,7 +123,10 @@ def update_dependency_group_lower_bounds(path: Path, group_name: str, bounds: di
     in_dependency_groups = False
     in_target_group = False
     changed = False
-    remaining = set(bounds)
+    canonical_bounds = {
+        canonicalize_name(package_name): (package_name, version) for package_name, version in bounds.items()
+    }
+    remaining = set(canonical_bounds)
 
     for index, line in enumerate(lines):
         stripped = line.strip()
@@ -140,20 +145,32 @@ def update_dependency_group_lower_bounds(path: Path, group_name: str, bounds: di
         if not in_target_group:
             continue
 
-        for package_name, version in bounds.items():
-            pattern = rf'(\s*"{re.escape(package_name)})(?:[^"]*)(".*)'
-            replacement = rf"\1>={version}\2"
-            updated_line, count = re.subn(pattern, replacement, line, count=1)
-            if count == 1:
-                lines[index] = updated_line
-                remaining.discard(package_name)
-                changed = changed or updated_line != line
-                break
+        dependency_match = re.match(r'(\s*")([^"]+)(".*)', line)
+        if dependency_match is None:
+            continue
+        dependency = dependency_match.group(2)
+        try:
+            requirement = Requirement(dependency)
+        except InvalidRequirement:
+            continue
+        canonical_name = canonicalize_name(requirement.name)
+        if canonical_name not in canonical_bounds:
+            continue
+
+        _, version = canonical_bounds[canonical_name]
+        name_match = re.match(r"\s*([A-Za-z0-9_.-]+)", dependency)
+        if name_match is None:
+            continue
+        updated_dependency = f"{name_match.group(1)}>={version}"
+        updated_line = f"{dependency_match.group(1)}{updated_dependency}{dependency_match.group(3)}"
+        lines[index] = updated_line
+        remaining.discard(canonical_name)
+        changed = changed or updated_line != line
 
     if not in_target_group:
         raise ValueError(f"Unable to find dependency group {group_name!r} in {path}")
     if remaining:
-        missing = ", ".join(sorted(remaining))
+        missing = ", ".join(sorted(canonical_bounds[canonical_name][0] for canonical_name in remaining))
         raise ValueError(f"Unable to update dependency lower bounds for {missing} in dependency group {group_name}")
 
     if changed:
