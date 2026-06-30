@@ -34,7 +34,7 @@ class TestDBFuncToolIntegrationReal:
         result = ssb_db_tool.list_tables()
 
         assert result.success == 1
-        table_names = [t["name"] for t in result.result]
+        table_names = [t["qualified_name"].split(".")[-1] for t in result.result]
         # SSB database has: date, supplier, customer, part, lineorder
         expected_tables = {"date", "supplier", "customer", "part", "lineorder"}
         assert expected_tables.issubset(set(table_names))
@@ -143,13 +143,13 @@ class TestSqliteMultiConnector:
         result = db_tool.list_tables(database="california_schools")
         assert result.success == 1
         assert len(result.result) > 1
-        table_names = set([item["name"] for item in result.result])
+        table_names = set([item["qualified_name"].split(".")[-1] for item in result.result])
         assert {"frpm", "satscores", "schools"}.issubset(table_names)
 
         result = db_tool.list_tables(database="card_games")
         assert result.success == 1
         assert len(result.result) > 1
-        table_names = set([item["name"] for item in result.result])
+        table_names = set([item["qualified_name"].split(".")[-1] for item in result.result])
         assert {"cards", "legalities", "set_translations", "foreign_data", "rulings", "sets"}.issubset(table_names)
 
 
@@ -178,7 +178,7 @@ class TestDuckDBTool:
         result = duckdb_tool.list_tables(schema_name="mf_demo")
 
         assert result.success == 1
-        table_names = [t["name"] for t in result.result]
+        table_names = [t["qualified_name"].split(".")[-1] for t in result.result]
         # DuckDB has: mf_demo_countries, mf_demo_customers, mf_demo_transactions, mf_time_spine
         expected_tables = {"mf_demo_countries", "mf_demo_customers", "mf_demo_transactions", "mf_time_spine"}
         assert expected_tables.issubset(set(table_names))
@@ -333,7 +333,7 @@ class TestScopedTables:
         result = scoped_db_tool.list_tables()
 
         assert result.success == 1, f"list_tables should succeed, got error: {result.error}"
-        table_names = [t["name"] for t in result.result]
+        table_names = [t["qualified_name"].split(".")[-1] for t in result.result]
 
         assert "customer" in table_names, "customer should be in scoped results"
         assert "lineorder" in table_names, "lineorder should be in scoped results"

@@ -206,11 +206,11 @@ class TestDBFuncTool:
 
         # Should include tables, views, and materialized views
         expected_result = [
-            {"type": "table", "name": "users"},
-            {"type": "table", "name": "orders"},
-            {"type": "view", "name": "user_view"},
-            {"type": "view", "name": "order_view"},
-            {"type": "materialized_view", "name": "sales_mv"},
+            {"type": "table", "qualified_name": "users"},
+            {"type": "table", "qualified_name": "orders"},
+            {"type": "view", "qualified_name": "user_view"},
+            {"type": "view", "qualified_name": "order_view"},
+            {"type": "materialized_view", "qualified_name": "sales_mv"},
         ]
 
         assert len(result.result) == len(expected_result)
@@ -225,7 +225,7 @@ class TestDBFuncTool:
         result = scoped_db_func_tool.list_tables(include_views=True)
 
         assert result.success == 1
-        assert [item["name"] for item in result.result] == [
+        assert [item["qualified_name"] for item in result.result] == [
             "users",
             "orders",
             "user_view",
@@ -353,7 +353,7 @@ class TestDBFuncTool:
 
         allowed = tool.list_tables(database="analytics", schema_name="schema1", include_views=True)
         assert allowed.success == 1
-        assert [entry["name"] for entry in allowed.result] == ["orders", "users", "view1", "mv1"]
+        assert [entry["qualified_name"] for entry in allowed.result] == ["orders", "users", "view1", "mv1"]
         connector.get_tables.assert_called_with("", "analytics", "schema1")
         connector.get_views.assert_called_with("", "analytics", "schema1")
         connector.get_materialized_views.assert_called_with("", "analytics", "schema1")
@@ -738,7 +738,7 @@ class TestDBFuncTool:
         assert blocked_schema.result == []
 
         allowed_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="public")
-        assert [entry["name"] for entry in allowed_tables.result] == ["orders"]
+        assert [entry["qualified_name"] for entry in allowed_tables.result] == ["orders"]
 
         blocked_tables = tool.list_tables(catalog="cat1", database="analytics", schema_name="marketing")
         assert blocked_tables.result == []
@@ -947,7 +947,7 @@ class TestScopedContextFromSubAgentConfig:
         """list_tables should only return in-scope tables."""
         result = scoped_tool.list_tables(database="db1", schema_name="schema1")
         assert result.success == 1
-        names = [entry["name"] for entry in result.result]
+        names = [entry["qualified_name"] for entry in result.result]
         assert "orders" in names
         assert "users" not in names
 

@@ -78,7 +78,7 @@ def db_tool(trino_connector: TrinoConnector) -> DBFuncTool:
 def test_list_tables_returns_tpch_tables(db_tool: DBFuncTool) -> None:
     result = db_tool.list_tables()
     assert result.success == 1, f"list_tables failed: {result.error}"
-    names = {entry["name"] for entry in result.result}
+    names = {entry["qualified_name"].split(".")[-1] for entry in result.result}
     # tpch.tiny ships 8 standard TPC-H tables; we check the ones we actually query.
     assert "region" in names, f"region missing from {sorted(names)}"
     assert "nation" in names, f"nation missing from {sorted(names)}"
