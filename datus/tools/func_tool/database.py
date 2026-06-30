@@ -656,7 +656,7 @@ class DBFuncTool:
         filtered: List[Dict[str, Any]] = []
         for entry in entries:
             coordinate = self._build_table_coordinate(
-                raw_name=str(entry.get("name", "")),
+                raw_name=str(entry.get("qualified_name", "")),
                 catalog=catalog,
                 database=database,
                 schema=schema,
@@ -1015,8 +1015,10 @@ class DBFuncTool:
             include_views: When True (default) also include views and materialized views.
 
         Returns:
-            FuncToolResult with result=[{"type": "table|view|materialized_view", "name": str}, ...]. On failure
-            success=0 with an explanatory error message.
+            FuncToolResult with result=[{"type": "table|view|materialized_view", "qualified_name": str}, ...].
+            ``qualified_name`` is ``[db.][schema.]table``, prefixing only the levels the caller did not pass
+            (e.g. pass ``database`` but not ``schema`` and each entry carries its resolved ``schema.table``).
+            On failure success=0 with an explanatory error message.
         """
         try:
             catalog, database, schema_name = self._normalize_namespace_args(
@@ -1028,7 +1030,7 @@ class DBFuncTool:
             connector = self._get_connector(datasource, database)
             result = []
             for tb in connector.get_tables(catalog, database, schema_name):
-                result.append({"type": "table", "name": tb})
+                result.append({"type": "table", "qualified_name": tb})
 
             if include_views:
                 # Add views. We deliberately swallow any exception — some connectors
@@ -1039,7 +1041,7 @@ class DBFuncTool:
                 try:
                     views = connector.get_views(catalog, database, schema_name)
                     for view in views:
-                        result.append({"type": "view", "name": view})
+                        result.append({"type": "view", "qualified_name": view})
                 except Exception as e:
                     logger.debug(f"get_views unavailable on {connector.dialect}: {e}")
 
@@ -1047,7 +1049,7 @@ class DBFuncTool:
                 try:
                     materialized_views = connector.get_materialized_views(catalog, database, schema_name)
                     for mv in materialized_views:
-                        result.append({"type": "materialized_view", "name": mv})
+                        result.append({"type": "materialized_view", "qualified_name": mv})
                 except Exception as e:
                     logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 

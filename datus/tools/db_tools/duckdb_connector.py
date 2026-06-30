@@ -679,35 +679,53 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
                 sql_query=sql_query,
             )
 
+    @staticmethod
+    def _qualify_name(table: str, real_db: str, real_schema: str, arg_db: str, arg_schema: str) -> str:
+        """Prefix ``table`` with the database/schema levels the caller did not pin down.
+
+        ``real_db``/``real_schema`` are the row's actual coordinates; ``arg_db``/``arg_schema``
+        are the caller's *original* arguments. A level is prepended only when the caller left it
+        blank, yielding ``[db.][schema.]table`` so an unscoped listing stays addressable.
+        """
+        parts: List[str] = []
+        if not arg_db and real_db:
+            parts.append(real_db)
+        if not arg_schema and real_schema:
+            parts.append(real_schema)
+        parts.append(table)
+        return ".".join(parts)
+
     @override
     @_serialised
     def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get all table names."""
+        """Get qualified table names (``[db.][schema.]table`` for levels not given by the caller)."""
         self.connect()
-        sql = "SELECT table_name FROM duckdb_tables() WHERE database_name != 'system'"
+        sql = "SELECT database_name, schema_name, table_name FROM duckdb_tables() WHERE database_name != 'system'"
         if database_name:
             sql += f" AND database_name = '{database_name}'"
         if schema_name:
             sql += f" AND schema_name = '{schema_name}'"
 
         result = self.connection.execute(sql)
-        return [row[0] for row in result.fetchall()]
+        return [self._qualify_name(row[2], row[0], row[1], database_name, schema_name) for row in result.fetchall()]
 
     @override
     @_serialised
     def get_views(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> List[str]:
-        """Get all view names."""
+        """Get qualified view names (``[db.][schema.]view`` for levels not given by the caller)."""
         self.connect()
-        database_name = database_name or self.database_name
-        schema_name = schema_name or self.schema_name
-        sql = "SELECT view_name FROM duckdb_views() WHERE database_name != 'system'"
-        if database_name:
-            sql += f" AND database_name = '{database_name}'"
-        if schema_name:
-            sql += f" AND schema_name = '{schema_name}'"
+        # Keep the historical query scope (current db/schema when unspecified); qualification still
+        # uses the caller's *original* args so an unscoped call surfaces the resolved db/schema.
+        eff_db = database_name or self.database_name
+        eff_schema = schema_name or self.schema_name
+        sql = "SELECT database_name, schema_name, view_name FROM duckdb_views() WHERE database_name != 'system'"
+        if eff_db:
+            sql += f" AND database_name = '{eff_db}'"
+        if eff_schema:
+            sql += f" AND schema_name = '{eff_schema}'"
 
         result = self.connection.execute(sql)
-        return [row[0] for row in result.fetchall()]
+        return [self._qualify_name(row[2], row[0], row[1], database_name, schema_name) for row in result.fetchall()]
 
     @override
     @_serialised

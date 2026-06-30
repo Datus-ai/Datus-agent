@@ -157,7 +157,7 @@ def _item_name(item) -> str:
     if isinstance(item, str):
         return item
     if isinstance(item, dict):
-        for key in ("name", "table_name", "database", "schema", "identifier", "title", "id"):
+        for key in ("name", "qualified_name", "table_name", "database", "schema", "identifier", "title", "id"):
             val = item.get(key)
             if val:
                 return str(val)
