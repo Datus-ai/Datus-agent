@@ -702,6 +702,46 @@ class TestCodexModelBaseUrl:
         assert model._base_url == "https://my-proxy.example.com/codex"
 
 
+class TestCodexSupportsBuiltinWebSearch:
+    """Hosted ``web_search`` is gated on the official ChatGPT Codex host.
+
+    A custom ``base_url`` points at a third-party relay that may not support the
+    hosted tool, so it must fall back to the local Tavily backend.
+    """
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_official_codex_enables_web_search(self, mock_oauth_cls, model_config):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth_cls.return_value = MagicMock()
+        model = CodexModel(model_config=model_config)
+        assert model.supports_builtin_web_search() is True
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_default_base_url_enables_web_search(self, mock_oauth_cls):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(type="codex", api_key="", model="gpt-5.3-codex", auth_type="oauth")
+        model = CodexModel(model_config=config)
+        assert model.supports_builtin_web_search() is True
+
+    @patch("datus.models.codex_model.OAuthManager")
+    def test_custom_proxy_disables_web_search(self, mock_oauth_cls):
+        from datus.models.codex_model import CodexModel
+
+        mock_oauth_cls.return_value = MagicMock()
+        config = ModelConfig(
+            type="codex",
+            api_key="",
+            model="gpt-5.3-codex",
+            base_url="https://my-proxy.example.com/codex",
+            auth_type="oauth",
+        )
+        model = CodexModel(model_config=config)
+        assert model.supports_builtin_web_search() is False
+
+
 class TestCodexModelJsonOutput401Retry:
     @patch("datus.models.codex_model.OAuthManager")
     def test_json_output_401_retry(self, mock_oauth_cls, model_config):

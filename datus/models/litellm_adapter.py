@@ -71,6 +71,26 @@ def is_official_openai_endpoint(provider: Optional[str], base_url: Optional[str]
     return hostname == "api.openai.com"
 
 
+def is_official_anthropic_endpoint(base_url: Optional[str]) -> bool:
+    """True iff ``base_url`` resolves to Anthropic's hosted API (``api.anthropic.com``).
+
+    A missing ``base_url`` implies the Anthropic SDK default
+    (``https://api.anthropic.com``). Any other host is treated as a third-party
+    Claude-compatible proxy (e.g. ``kimi_coding``'s ``api.kimi.com/coding``,
+    self-hosted gateways). Those advertise Anthropic compatibility but do NOT
+    honor Anthropic's server-side tools (``web_search_20250305``): they either
+    ignore the tool or echo back malformed ``server_tool_use`` blocks with a
+    missing ``id``, so callers must not inject the hosted tool for them.
+    """
+    if not base_url:
+        return True
+    try:
+        hostname = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return False
+    return hostname == "api.anthropic.com"
+
+
 def is_known_non_thinking_model(provider: Optional[str], model_name: Optional[str]) -> bool:
     """Return True only when the (provider, model) is on the deny-list.
 

@@ -239,6 +239,33 @@ class TestGetBaseUrl:
         assert model._get_base_url() == "https://api.anthropic.com"
 
 
+class TestSupportsBuiltinWebSearch:
+    """Hosted ``web_search_20250305`` is gated on the official Anthropic host.
+
+    Third-party Claude-compatible proxies (e.g. ``kimi_coding`` at
+    ``api.kimi.com/coding``) share ``type: claude`` but return malformed
+    ``server_tool_use`` blocks for the hosted tool, so it must NOT be injected
+    for them — they fall back to the local Tavily backend.
+    """
+
+    def test_official_anthropic_enables_web_search(self):
+        model = _make_claude_model(_make_model_config(base_url="https://api.anthropic.com"))
+        assert model.supports_builtin_web_search() is True
+
+    def test_default_base_url_enables_web_search(self):
+        # base_url=None resolves to the Anthropic default host.
+        model = _make_claude_model(_make_model_config(base_url=None))
+        assert model.supports_builtin_web_search() is True
+
+    def test_kimi_coding_proxy_disables_web_search(self):
+        model = _make_claude_model(_make_model_config(base_url="https://api.kimi.com/coding/"))
+        assert model.supports_builtin_web_search() is False
+
+    def test_arbitrary_proxy_disables_web_search(self):
+        model = _make_claude_model(_make_model_config(base_url="https://myproxy.example.com/v1"))
+        assert model.supports_builtin_web_search() is False
+
+
 # ---------------------------------------------------------------------------
 # generate (litellm path vs native path)
 # ---------------------------------------------------------------------------
@@ -842,6 +869,55 @@ class TestGenerateWithMcpStream:
         assert set(srv) == {"type", "id", "name", "input"}
         result = next(b for b in assistant_blocks if b.get("type") == "web_search_tool_result")
         assert set(result) == {"type", "tool_use_id", "content"}
+
+    @pytest.mark.asyncio
+    async def test_server_tool_use_with_null_id_does_not_crash(self):
+        """Regression: a ``server_tool_use`` block with a missing ``id`` (as
+        ``kimi_coding``'s Anthropic-compatible endpoint returns for the hosted
+        web_search tool) must not crash ActionHistory validation.
+
+        The provider omits ``id`` / ``tool_use_id``, which the SDK parses as
+        ``None``. The post-stream server-tool pass used to build the action with
+        ``action_id=block.id`` (=None) and the dedup-by-id check missed it,
+        raising ``ValidationError: action_id Input should be a valid string``.
+        The fix substitutes a generated ``srv_*`` id so action_id is never None.
+        """
+        from datus.schemas.action_history import ActionHistoryManager, ActionRole
+
+        cfg = _make_model_config(use_native_api=True)
+        model = _make_claude_model(cfg)
+
+        # Mirror the captured kimi response: server_tool_use + result both lack ids.
+        message_blocks = [
+            _make_server_tool_use_block(block_id=None),
+            _make_web_search_result_block(tool_use_id=None),
+            _make_text_block("done"),
+        ]
+        model.anthropic_client.messages.create.return_value = _make_response(message_blocks)
+
+        ahm = ActionHistoryManager()
+        actions = []
+        with patch("datus.models.claude_model.multiple_mcp_servers") as mock_mcp:
+            mock_mcp.return_value.__aenter__ = AsyncMock(return_value={})
+            mock_mcp.return_value.__aexit__ = AsyncMock(return_value=False)
+            # Must not raise pydantic ValidationError.
+            async for action in model._generate_with_mcp_stream(
+                prompt="select 1",
+                mcp_servers={},
+                instruction="sys",
+                output_type={},
+                builtin_web_tools={"web_search": True},
+                action_history_manager=ahm,
+            ):
+                actions.append(action)
+
+        # Every emitted action carries a valid non-None string action_id.
+        assert actions, "expected at least the final assistant action"
+        assert all(isinstance(a.action_id, str) and a.action_id for a in actions)
+        # The server tool was still surfaced with a generated fallback id.
+        tool_actions = [a for a in actions if a.role == ActionRole.TOOL]
+        assert tool_actions, "server_tool_use should still surface as a TOOL action"
+        assert all(a.action_id.startswith(("srv_", "complete_")) for a in tool_actions)
 
     @pytest.mark.asyncio
     async def test_tool_call_yields_processing_and_success(self):
