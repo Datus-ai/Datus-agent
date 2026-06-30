@@ -192,6 +192,11 @@ dev = [
     "chardet>=3.0.2,<6",
     "diff-cover>=10.2.0",
 ]
+ci = [
+    "datus-storage-postgresql>=0.1.5",
+    "datus-metricflow>=0.2.7",
+    "datus-semantic-metricflow>=0.2.8",
+]
 
 [tool.coverage.run]
 source = ["datus"]

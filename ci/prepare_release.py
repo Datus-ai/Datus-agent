@@ -22,6 +22,8 @@ if str(CI_DIR) not in sys.path:
 
 from check_release_readiness import (  # noqa: E402
     ADAPTER_CORE_PACKAGES,
+    CI_ADAPTER_PACKAGES,
+    CI_DEPENDENCY_GROUP,
     REPO_ROOT,
     check_tag_available,
     fetch_latest_pypi_version,
@@ -114,11 +116,69 @@ def update_dependency_lower_bounds(path: Path, bounds: dict[str, Version], *, qu
     return False
 
 
-def latest_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+def update_dependency_group_lower_bounds(path: Path, group_name: str, bounds: dict[str, Version]) -> bool:
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    in_dependency_groups = False
+    in_target_group = False
+    changed = False
+    remaining = set(bounds)
+
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "[dependency-groups]":
+            in_dependency_groups = True
+            continue
+        if in_dependency_groups and stripped.startswith("[") and stripped.endswith("]"):
+            break
+        if not in_dependency_groups:
+            continue
+        if stripped.startswith(f"{group_name} = ["):
+            in_target_group = True
+            continue
+        if in_target_group and stripped == "]":
+            break
+        if not in_target_group:
+            continue
+
+        for package_name, version in bounds.items():
+            pattern = rf'(\s*"{re.escape(package_name)})(?:[^"]*)(".*)'
+            replacement = rf"\1>={version}\2"
+            updated_line, count = re.subn(pattern, replacement, line, count=1)
+            if count == 1:
+                lines[index] = updated_line
+                remaining.discard(package_name)
+                changed = changed or updated_line != line
+                break
+
+    if not in_target_group:
+        raise ValueError(f"Unable to find dependency group {group_name!r} in {path}")
+    if remaining:
+        missing = ", ".join(sorted(remaining))
+        raise ValueError(f"Unable to update dependency lower bounds for {missing} in dependency group {group_name}")
+
+    if changed:
+        path.write_text("".join(lines), encoding="utf-8")
+    return changed
+
+
+def latest_package_bounds(
+    package_names: tuple[str, ...],
+    *,
+    timeout: float,
+    allow_prerelease: bool,
+) -> dict[str, Version]:
     return {
         package_name: fetch_latest_pypi_version(package_name, timeout=timeout, allow_prerelease=allow_prerelease)
-        for package_name in ADAPTER_CORE_PACKAGES
+        for package_name in package_names
     }
+
+
+def latest_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+    return latest_package_bounds(ADAPTER_CORE_PACKAGES, timeout=timeout, allow_prerelease=allow_prerelease)
+
+
+def latest_ci_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+    return latest_package_bounds(CI_ADAPTER_PACKAGES, timeout=timeout, allow_prerelease=allow_prerelease)
 
 
 def prepare_release(
@@ -143,6 +203,9 @@ def prepare_release(
             changed.append(pyproject_path)
         if update_dependency_lower_bounds(requirements_path, bounds, quoted=False):
             changed.append(requirements_path)
+        ci_bounds = latest_ci_adapter_bounds(timeout=pypi_timeout, allow_prerelease=allow_prerelease)
+        if update_dependency_group_lower_bounds(pyproject_path, CI_DEPENDENCY_GROUP, ci_bounds):
+            changed.append(pyproject_path)
 
     return sorted(set(changed))
 
@@ -164,7 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--update-adapter-bounds",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Update adapter core dependency lower bounds to latest PyPI releases",
+        help="Update adapter dependency lower bounds to latest PyPI releases",
     )
     parser.add_argument(
         "--allow-prerelease",

@@ -1,3 +1,5 @@
+# Documentation build requirements. Test CI installs from pyproject.toml and
+# uv.lock via uv sync --locked.
 # MkDocs core
 mkdocs>=1.6,<2
 
