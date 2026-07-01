@@ -727,6 +727,14 @@ class TestSubAgentTaskAcceptance:
         parent.get_node_name.return_value = "chat"
         parent.proxy_tool_patterns = []
         parent.tool_channel = None
+        # A chat parent carries no bound physical database, so the delegated subagent must
+        # inherit nothing here (contrast TestSubagentInheritsParentDatabase, where a DB-bound
+        # parent does propagate). Pin these so the auto-MagicMock attributes don't masquerade
+        # as a real database.
+        parent.input.database = None
+        parent.input.catalog = None
+        parent.input.db_schema = None
+        parent.db_func_tool = None
         task_tool._parent_node = parent
 
         assert "sales_analyst" in task_tool._get_available_types()
@@ -2566,3 +2574,154 @@ class TestSessionPersistence:
         desc = schema["properties"]["session_id"]["description"]
         assert "continue" in desc.lower()
         assert "type" in desc.lower()  # callout that types must match
+
+
+@pytest.mark.ci
+class TestSubagentInheritsParentDatabase:
+    """A subagent spawned via the task tool must inherit the parent node's resolved
+    physical database (and catalog/schema where supported).
+
+    Regression guard: for a multi-database glob (``path_pattern``) datasource the default
+    database is an arbitrary first-matched file, so a subagent that does NOT inherit the
+    parent's database silently explores the wrong one — the root cause of a benchmark task
+    delegating to ``explore`` and hanging on an unrelated bird database.
+    """
+
+    @staticmethod
+    def _parent(database="", catalog="", db_schema="", connector_db=None):
+        parent = MagicMock()
+        parent.input.database = database
+        parent.input.catalog = catalog
+        parent.input.db_schema = db_schema
+        if connector_db is None:
+            parent.db_func_tool = None
+        else:
+            parent.db_func_tool.connector.database_name = connector_db
+        return parent
+
+    def test_parent_db_context_reads_parent_input(self, task_tool):
+        task_tool._parent_node = self._parent(database="california_schools", catalog="cat", db_schema="sch")
+        assert task_tool._parent_db_context() == {
+            "database": "california_schools",
+            "catalog": "cat",
+            "db_schema": "sch",
+        }
+
+    def test_parent_db_context_falls_back_to_connector_database_name(self, task_tool):
+        # Parent set no explicit database → use the connector's real database name, not the
+        # datasource default (resolve_database_name_for_prompt contract).
+        task_tool._parent_node = self._parent(database="", connector_db="california_schools")
+        assert task_tool._parent_db_context()["database"] == "california_schools"
+
+    def test_parent_db_context_ignores_mock_connector_database_name(self, task_tool):
+        parent = MagicMock()
+        parent.input.database = ""
+        parent.input.catalog = None
+        parent.input.db_schema = None
+        task_tool._parent_node = parent
+
+        assert task_tool._parent_db_context() == {
+            "database": None,
+            "catalog": None,
+            "db_schema": None,
+        }
+
+    def test_parent_db_context_no_parent_returns_empty(self, task_tool):
+        task_tool._parent_node = None
+        assert task_tool._parent_db_context() == {}
+
+    def test_apply_db_context_skips_fields_the_input_lacks(self):
+        # ExploreNodeInput declares only `database`; catalog/db_schema must be skipped, not error.
+        class OnlyDatabase:
+            database = None
+
+        obj = SubAgentTaskTool._apply_db_context(OnlyDatabase(), {"database": "db1", "catalog": "c", "db_schema": "s"})
+        assert obj.database == "db1"
+        assert not hasattr(obj, "catalog")
+
+    def test_apply_db_context_sets_all_declared_fields(self):
+        from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
+
+        ctx = {"database": "california_schools", "catalog": "cat", "db_schema": "sch"}
+        gen = SubAgentTaskTool._apply_db_context(GenSQLNodeInput(user_message="x"), ctx)
+        assert (gen.database, gen.catalog, gen.db_schema) == ("california_schools", "cat", "sch")
+
+    def test_build_node_input_explore_inherits_parent_database(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+        from datus.schemas.explore_agentic_node_models import ExploreNodeInput
+
+        tool = SubAgentTaskTool(agent_config=real_agent_config)
+        tool._parent_node = self._parent(database="california_schools")
+        node = ExploreAgenticNode(
+            node_id="t",
+            description="d",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        inp = tool._build_node_input(node, "explore schools")
+        assert isinstance(inp, ExploreNodeInput)
+        assert inp.database == "california_schools"
+
+    def test_build_node_input_explore_no_parent_leaves_database_unset(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+
+        tool = SubAgentTaskTool(agent_config=real_agent_config)
+        tool._parent_node = None
+        node = ExploreAgenticNode(
+            node_id="t",
+            description="d",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        inp = tool._build_node_input(node, "explore schools")
+        assert inp.database is None
+
+    def test_refresh_node_db_tools_rebuilds_when_database_inherited(self):
+        node = MagicMock()
+        node.input.database = "california_schools"
+        node.db_func_tool = MagicMock()
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": "california_schools", "catalog": None, "db_schema": None},
+        )
+
+        node.setup_tools.assert_called_once_with()
+
+    def test_refresh_node_db_tools_preserves_ask_user_after_setup(self):
+        read_query = Mock()
+        read_query.name = "read_query"
+        ask_user = Mock()
+        ask_user.name = "ask_user"
+
+        node = MagicMock()
+        node.input.database = "california_schools"
+        node.db_func_tool = MagicMock()
+        node.tools = [read_query, ask_user]
+        node.ask_user_tool.available_tools.return_value = [ask_user]
+
+        def reset_tools():
+            node.tools = [read_query]
+
+        node.setup_tools.side_effect = reset_tools
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": "california_schools", "catalog": None, "db_schema": None},
+        )
+
+        assert [tool.name for tool in node.tools] == ["read_query", "ask_user"]
+
+    def test_refresh_node_db_tools_skips_when_database_absent(self):
+        node = MagicMock()
+        node.input.database = None
+        node.db_func_tool = MagicMock()
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": None, "catalog": None, "db_schema": None},
+        )
+
+        node.setup_tools.assert_not_called()

@@ -169,6 +169,8 @@ class AskMetricsAgenticNode(AgenticNode):
             return
 
         self.tools = []
+        self.db_func_tool = None
+        self.reference_template_tools = None
         sub_agent_name = self.get_node_name()
         tool_patterns = self._configured_tool_patterns()
 
@@ -215,6 +217,9 @@ class AskMetricsAgenticNode(AgenticNode):
             return list(self.DEFAULT_TOOLS)
         patterns = [str(item).strip() for item in items if str(item).strip()]
         return patterns or list(self.DEFAULT_TOOLS)
+
+    def _input_database(self) -> Optional[str]:
+        return getattr(self.input, "database", None) if self.input else None
 
     def _setup_tool_pattern(self, pattern: str) -> None:
         try:
@@ -273,14 +278,22 @@ class AskMetricsAgenticNode(AgenticNode):
             return self.semantic_tools
         if category == "db_tools":
             if not self.db_func_tool:
-                self.db_func_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=sub_agent_name)
+                self.db_func_tool = DBFuncTool(
+                    agent_config=self.agent_config,
+                    default_database=self._input_database(),
+                    sub_agent_name=sub_agent_name,
+                )
             return self.db_func_tool
         if category == "reference_template_tools":
             if not self.reference_template_tools:
                 db_tool = self.db_func_tool
                 if not db_tool:
                     try:
-                        db_tool = DBFuncTool(agent_config=self.agent_config, sub_agent_name=sub_agent_name)
+                        db_tool = DBFuncTool(
+                            agent_config=self.agent_config,
+                            default_database=self._input_database(),
+                            sub_agent_name=sub_agent_name,
+                        )
                         self.db_func_tool = db_tool
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("Reference template tools will run without db_tools: %s", exc)

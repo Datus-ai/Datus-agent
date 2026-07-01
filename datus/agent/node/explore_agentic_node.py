@@ -125,6 +125,7 @@ class ExploreAgenticNode(AgenticNode):
                 dynamic_scoped_tables = self.input.scoped_tables
             self.db_func_tool = DBFuncTool(
                 agent_config=self.agent_config,
+                default_database=getattr(self.input, "database", None) if self.input else None,
                 sub_agent_name=self.get_node_name(),
                 scoped_tables=dynamic_scoped_tables,
                 # Explore profiles the datasource and must stay read-only;
