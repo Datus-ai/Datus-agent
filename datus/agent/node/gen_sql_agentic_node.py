@@ -124,7 +124,7 @@ class GenSQLAgenticNode(AgenticNode):
         self.setup_tools()
 
         # Setup ask_user tool for clarification questions (interactive mode only)
-        if self.execution_mode == "interactive":
+        if self.execution_mode == "interactive" and not self.ask_user_tool:
             self._setup_ask_user_tool()
 
         logger.debug(f"GenSQLAgenticNode tools: {len(self.tools)} tools - {[tool.name for tool in self.tools]}")
@@ -254,6 +254,8 @@ class GenSQLAgenticNode(AgenticNode):
             return
 
         self.tools = []
+        self.db_func_tool = None
+        self.reference_template_tools = None
         tools_str = self.node_config.get("tools")
         if not tools_str:
             tools_str = self.DEFAULT_TOOLS
@@ -272,6 +274,9 @@ class GenSQLAgenticNode(AgenticNode):
         self._setup_sub_agent_task_tool()
         if self.sub_agent_task_tool:
             self.tools.extend(self.sub_agent_task_tool.available_tools())
+
+        if self.execution_mode == "interactive":
+            self._setup_ask_user_tool()
 
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()

@@ -988,6 +988,12 @@ class SubAgentTaskTool:
         setup_tools = getattr(node, "setup_tools", None)
         if callable(setup_tools):
             setup_tools()
+            ask_user_tool = getattr(node, "ask_user_tool", None)
+            tools = getattr(node, "tools", None)
+            if ask_user_tool is not None and isinstance(tools, list):
+                tool_names = {getattr(tool, "name", "") for tool in tools}
+                if "ask_user" not in tool_names:
+                    tools.extend(ask_user_tool.available_tools())
 
     def _build_node_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
         """Build the appropriate input object for the given node.

@@ -2690,6 +2690,30 @@ class TestSubagentInheritsParentDatabase:
 
         node.setup_tools.assert_called_once_with()
 
+    def test_refresh_node_db_tools_preserves_ask_user_after_setup(self):
+        read_query = Mock()
+        read_query.name = "read_query"
+        ask_user = Mock()
+        ask_user.name = "ask_user"
+
+        node = MagicMock()
+        node.input.database = "california_schools"
+        node.db_func_tool = MagicMock()
+        node.tools = [read_query, ask_user]
+        node.ask_user_tool.available_tools.return_value = [ask_user]
+
+        def reset_tools():
+            node.tools = [read_query]
+
+        node.setup_tools.side_effect = reset_tools
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": "california_schools", "catalog": None, "db_schema": None},
+        )
+
+        assert [tool.name for tool in node.tools] == ["read_query", "ask_user"]
+
     def test_refresh_node_db_tools_skips_when_database_absent(self):
         node = MagicMock()
         node.input.database = None

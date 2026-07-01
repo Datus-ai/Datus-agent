@@ -169,6 +169,8 @@ class AskMetricsAgenticNode(AgenticNode):
             return
 
         self.tools = []
+        self.db_func_tool = None
+        self.reference_template_tools = None
         sub_agent_name = self.get_node_name()
         tool_patterns = self._configured_tool_patterns()
 
