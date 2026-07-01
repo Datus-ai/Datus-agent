@@ -103,7 +103,7 @@ class TestOpenAIModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise
@@ -285,7 +285,7 @@ class TestKimiModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise
@@ -386,7 +386,7 @@ class TestGeminiModel:
 
             logger.debug(f"MCP response: {result.get('content', '')}")
         except DatusException as e:
-            if e.error_code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
+            if e.code == ErrorCode.MODEL_MAX_TURNS_EXCEEDED:
                 pytest.skip(f"MCP test skipped due to max turns exceeded: {str(e)}")
             else:
                 raise

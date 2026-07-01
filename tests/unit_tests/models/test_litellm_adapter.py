@@ -517,8 +517,11 @@ class TestIsOfficialAnthropicEndpoint:
     official. Third-party Claude-compatible proxies must be rejected so the
     hosted ``web_search_20250305`` tool is never injected for them."""
 
+    # NOTE: the param is named ``endpoint`` (not ``base_url``) on purpose. The
+    # ``pytest-base-url`` plugin registers a session-scoped ``base_url`` fixture,
+    # and a same-named parametrize param collides with it (ScopeMismatch).
     @pytest.mark.parametrize(
-        "base_url",
+        "endpoint",
         [
             None,
             "",
@@ -527,11 +530,11 @@ class TestIsOfficialAnthropicEndpoint:
             "https://API.Anthropic.com",  # case-insensitive host
         ],
     )
-    def test_official_or_default(self, base_url):
-        assert is_official_anthropic_endpoint(base_url) is True
+    def test_official_or_default(self, endpoint):
+        assert is_official_anthropic_endpoint(endpoint) is True
 
     @pytest.mark.parametrize(
-        "base_url",
+        "endpoint",
         [
             "https://api.kimi.com/coding/",  # kimi_coding proxy
             "https://api.moonshot.ai/anthropic",
@@ -540,8 +543,8 @@ class TestIsOfficialAnthropicEndpoint:
             "not-a-url",
         ],
     )
-    def test_third_party_proxies_rejected(self, base_url):
-        assert is_official_anthropic_endpoint(base_url) is False
+    def test_third_party_proxies_rejected(self, endpoint):
+        assert is_official_anthropic_endpoint(endpoint) is False
 
 
 class TestGetAgentsSdkModelRouting:
