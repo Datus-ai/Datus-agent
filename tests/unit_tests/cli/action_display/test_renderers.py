@@ -494,7 +494,7 @@ class TestRenderMainAction:
         action = _make_action(
             ActionRole.TOOL,
             ActionStatus.SUCCESS,
-            input_data={"function_name": "execute_command", "arguments": {"command": "ls"}},
+            input_data={"function_name": "bash", "arguments": {"command": "ls"}},
             output_data={"raw_output": f'{{"success": 1, "result": "{out}"}}'},
         )
         result = _renderer().render_main_action(action, verbose=False)
@@ -684,7 +684,7 @@ class TestRenderProcessing:
         action = _make_action(
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            input_data={"function_name": "execute_command", "arguments": {"command": "sleep 5"}},
+            input_data={"function_name": "bash", "arguments": {"command": "sleep 5"}},
             start_time=datetime.now() - timedelta(seconds=3),
         )
         result = _renderer().render_processing(action, "○")
@@ -696,7 +696,7 @@ class TestRenderProcessing:
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
             depth=1,
-            input_data={"function_name": "execute_command", "arguments": {"command": "ls"}},
+            input_data={"function_name": "bash", "arguments": {"command": "ls"}},
             start_time=datetime.now() - timedelta(seconds=1),
         )
         result = _renderer().render_processing(action, "○")
@@ -744,8 +744,9 @@ class TestRenderProcessing:
         result = _renderer().render_processing(action, "\u25cb")
         # Truncation helper inserts " ... " separator in the middle.
         assert " ... " in result.plain
-        # Key label remains visible.
-        assert "sql:" in result.plain
+        # Value is shown positionally (matching the completed header), no key prefix.
+        assert "SELECT" in result.plain
+        assert "sql:" not in result.plain
 
     def test_processing_indents_inside_subagent(self):
         """PROCESSING row inside a subagent (depth>0) gets the `  ⎿  ` prefix."""

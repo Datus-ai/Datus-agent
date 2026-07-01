@@ -742,7 +742,7 @@ class InlineStreamingContext:
             # INTERACTION actions: collect input during live interaction, skip in history
             if action.role == ActionRole.INTERACTION:
                 if action.status == ActionStatus.PROCESSING and self._input_collector:
-                    # An ASK-gated tool (e.g. ``execute_command``) is already
+                    # An ASK-gated tool (e.g. ``bash``) is already
                     # pinned as the running "○ 🔧 tool(...)" frame. Clearing it
                     # to draw the prompt is correct, but the same tool resumes
                     # execution once approved — capture the frame so we can

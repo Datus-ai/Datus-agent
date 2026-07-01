@@ -303,19 +303,34 @@ _TOOL_ARGS_FORMATTERS: Dict[str, Callable[[dict], str]] = {
     "web_fetch": lambda a: _format_positional(a, "url"),
     # Skill tools
     "load_skill": lambda a: _format_positional(a, "skill_name", "name"),
-    "execute_command": lambda a: _format_kw(a, "command"),
+    # Positional (bare quoted value) — the command is the whole point, the
+    # ``command:`` key prefix is just noise in the ``bash(...)`` header.
+    "bash": lambda a: _format_positional(a, "command"),
 }
+
+
+def tool_specific_args_summary(action: ActionHistory) -> str:
+    """Return the per-tool concise args summary, or "" when no formatter applies.
+
+    Shared by the completed-tool header (via ``set_tool_specific_args_summary``)
+    and the running (PROCESSING) frame so both render args the same way — e.g.
+    ``bash("sleep 5")`` rather than ``command: "sleep 5"``.
+    """
+    function_name = action.input.get("function_name", "") if action.input else ""
+    formatter = _TOOL_ARGS_FORMATTERS.get(function_name)
+    if formatter is None:
+        return ""
+    try:
+        return formatter(_parse_args_dict(action)) or ""
+    except Exception:  # pragma: no cover - defensive
+        return ""
 
 
 def set_tool_specific_args_summary(tc: ToolCallContent, action: ActionHistory) -> None:
     """Populate ``tc.args_summary`` using a per-tool formatter when available."""
     if tc.args_summary:
         return
-    function_name = action.input.get("function_name", "") if action.input else ""
-    formatter = _TOOL_ARGS_FORMATTERS.get(function_name)
-    if formatter is None:
-        return
-    summary = formatter(_parse_args_dict(action))
+    summary = tool_specific_args_summary(action)
     if summary:
         tc.args_summary = summary
 
@@ -569,7 +584,7 @@ def _format_result_only_markup(output_data, indent: str = "") -> List[str]:
         return format_output_verbose_markup(output_data, indent)
 
     # If there's an error, show it — but keep going to also surface the
-    # ``result`` payload when present. Tools like ``execute_command`` put the
+    # ``result`` payload when present. Tools like ``bash`` put the
     # actual stdout/stderr in ``result`` while ``error`` is only a terse
     # "Command exited with code N"; returning early here would hide the real
     # failure reason and leave the user with no info to act on.
@@ -2015,8 +2030,8 @@ def _build_analyze_metric_candidates(action: ActionHistory, verbose: bool) -> To
     return tc
 
 
-def _build_execute_command(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """execute_command: show the real command output, on success and failure.
+def _build_bash(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """bash: show the real command output, on success and failure.
 
     The compact line has little room, so surface the meaningful part — the last
     non-empty output line (the stdout result on success, the stderr reason on
@@ -2246,7 +2261,7 @@ class ToolCallContentBuilder:
         self._registry["analyze_metric_candidates_from_history"] = _build_analyze_metric_candidates
 
         # Skill tools
-        self._registry["execute_command"] = _build_execute_command
+        self._registry["bash"] = _build_bash
         self._registry["load_skill"] = _build_load_skill
 
         # Interaction tools

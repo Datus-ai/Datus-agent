@@ -270,13 +270,13 @@ class TestChatAgenticNodeToolSetup:
         assert isinstance(node.bash_tool, BashTool)
 
         # ``["*"]`` pattern: tool is exposed; per-call gating is handled by
-        # the PermissionManager ``bash_tools.execute_command`` ASK rule.
+        # the PermissionManager ``bash_tools.bash`` ASK rule.
         tool_names = [t.name for t in node.tools]
-        assert "execute_command" in tool_names
+        assert "bash" in tool_names
 
         # Permission category mapping is mandatory — without it, the ASK rule
         # added in ``profiles._NORMAL_RULES`` would never fire.
-        assert node.tool_registry.get("execute_command") == "bash_tools"
+        assert node.tool_registry.get("bash") == "bash_tools"
 
     def test_context_search_failure_does_not_remove_db_tools(self, real_agent_config, mock_llm_create):
         """Embedding/context setup failures should only remove context tools."""

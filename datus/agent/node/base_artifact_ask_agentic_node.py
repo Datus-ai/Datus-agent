@@ -448,7 +448,7 @@ class BaseArtifactAskAgenticNode(ChatAgenticNode):
     def _ensure_bash_tool_in_tools(self) -> None:
         """Gate :class:`AgenticNode`'s lazy bash re-injection on the whitelist.
 
-        ``_finalize_system_prompt`` re-adds ``execute_command`` to
+        ``_finalize_system_prompt`` re-adds ``bash`` to
         ``self.tools`` on every prompt build — AFTER ``setup_tools()`` already
         pruned it — which silently re-exposes bash on an ask_* agent whose
         ``tools`` never granted ``bash_tools`` (the model then sees it in its

@@ -913,12 +913,23 @@ class ActionRenderer:
         args part when none were sent. The elapsed time recomputes on every
         repaint, so it ticks up while the tool runs.
         """
-        from datus.cli.action_display.tool_content import extract_args, format_running_duration
+        from datus.cli.action_display.tool_content import (
+            extract_args,
+            format_running_duration,
+            tool_specific_args_summary,
+        )
 
         function_name = action.input.get("function_name", "") if action.input else ""
         label = function_name or action.messages or ""
-        args_lines = extract_args(action)
-        suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
+        # Prefer the per-tool summary (e.g. bare ``"sleep 5"`` for bash)
+        # so the running frame matches the completed header; fall back to the
+        # generic ``key: value`` first-arg preview.
+        tool_summary = tool_specific_args_summary(action)
+        if tool_summary:
+            suffix = f"({_truncate_middle(tool_summary, max_len=80)})"
+        else:
+            args_lines = extract_args(action)
+            suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
         running = f" \u00b7 running {format_running_duration(action.start_time)}"
         body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}{running}"
         if action.depth > 0:

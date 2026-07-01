@@ -2342,7 +2342,7 @@ class AgenticNode(Node):
 
         Available to every agentic node when ``agent.bash.enabled`` is
         ``True`` (the default). ``allowed_patterns=["*"]`` means the tool
-        exposes ``execute_command`` for any shell command; per-call gating
+        exposes ``bash`` for any shell command; per-call gating
         is the responsibility of the ``bash_tools`` ASK rule in the
         permission profile, not a static pattern whitelist.
 
@@ -2399,7 +2399,7 @@ class AgenticNode(Node):
             return None
 
     def _ensure_bash_tool_in_tools(self) -> None:
-        """Ensure the BashTool's ``execute_command`` is in ``self.tools``.
+        """Ensure the BashTool's ``bash`` is in ``self.tools``.
 
         Mirrors :meth:`_ensure_skill_tools_in_tools` — called lazily so the
         late ``setup_tools()`` reset in subclasses doesn't strip the tool.

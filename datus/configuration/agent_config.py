@@ -792,7 +792,7 @@ class AgentConfig:
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
         # ``bash.enabled`` toggles whether agentic nodes instantiate the
         # general-purpose ``BashTool``. Default ``True`` preserves the
-        # current behaviour where every node exposes ``execute_command``
+        # current behaviour where every node exposes ``bash``
         # (gated by the ``bash_tools`` ASK rule in the permission profile).
         # Set to ``False`` for hardened environments where shell execution
         # must be unavailable regardless of profile.
@@ -994,10 +994,10 @@ class AgentConfig:
         """Whether agentic nodes should instantiate the general-purpose ``BashTool``.
 
         ``True`` (default): every :class:`AgenticNode` exposes
-        ``execute_command``; per-call gating is handled by the
+        ``bash``; per-call gating is handled by the
         ``bash_tools`` ASK rule in the permission profile.
 
-        ``False``: ``BashTool`` is not created and ``execute_command`` is
+        ``False``: ``BashTool`` is not created and ``bash`` is
         not advertised to the model. Use this for hardened deployments
         where shell execution must be unavailable regardless of profile.
         """

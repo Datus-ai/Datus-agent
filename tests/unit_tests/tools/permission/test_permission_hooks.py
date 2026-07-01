@@ -937,7 +937,7 @@ class TestFilesystemZoneProfileMatrix:
         The zone gate returns ``False`` here so the category-level
         ``default=ASK`` (or any explicit ``filesystem_tools.write_file`` rule)
         takes over. The user choosing "Allow once" lets the call proceed; the
-        cache key is category-level, matching how ``bash_tools.execute_command``
+        cache key is category-level, matching how ``bash_tools.bash``
         ASK works.
         """
         hooks, _, project = self._build(mock_broker, tmp_path, profile="normal")

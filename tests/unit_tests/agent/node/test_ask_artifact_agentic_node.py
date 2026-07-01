@@ -2187,14 +2187,14 @@ class TestChatDecoupling:
         assert "You are a helpful AI assistant integrated with Datus-agent" not in prompt
 
     def test_bash_not_reinjected_after_prompt_build(self, real_agent_config):
-        """``execute_command`` stays out of the surface across a prompt build
+        """``bash`` stays out of the surface across a prompt build
         when ``bash_tools`` isn't whitelisted — the core lazy-injection leak."""
         node = _make_ask_report_with_tools(
             real_agent_config, "date_parsing_tools.*,filesystem_tools.*", name="ask_nobash", slug="nobash"
         )
-        assert "execute_command" not in _tool_names(node)
+        assert "bash" not in _tool_names(node)
         node._get_system_prompt()  # runs the lazy bash re-injection path
-        assert "execute_command" not in _tool_names(node), "bash leaked via prompt-build lazy injection"
+        assert "bash" not in _tool_names(node), "bash leaked via prompt-build lazy injection"
 
     def test_skills_not_reinjected_after_prompt_build(self, real_agent_config):
         """Same lazy-injection bypass as bash, for the skill loader tools."""
@@ -2207,12 +2207,12 @@ class TestChatDecoupling:
 
     def test_bash_present_when_whitelisted(self, real_agent_config):
         """The gate is whitelist-driven, not a blanket block: ``bash_tools.*``
-        keeps ``execute_command`` available through the prompt build."""
+        keeps ``bash`` available through the prompt build."""
         node = _make_ask_report_with_tools(
             real_agent_config, "bash_tools.*,filesystem_tools.*", name="ask_bash", slug="withbash"
         )
         node._get_system_prompt()
-        assert "execute_command" in _tool_names(node)
+        assert "bash" in _tool_names(node)
 
     def test_skills_present_when_whitelisted(self, real_agent_config):
         """Symmetric to bash: ``skills.*`` keeps the skill loader tool through

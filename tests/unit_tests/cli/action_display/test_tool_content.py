@@ -18,12 +18,12 @@ from datus.cli.action_display.tool_content import (
     _build_analyze_relationships,
     _build_ask_user,
     _build_attribution_analyze,
+    _build_bash,
     _build_check_exists,
     _build_describe_table,
     _build_doc_search_result,
     _build_end_generation,
     _build_end_metric_generation,
-    _build_execute_command,
     _build_generate_sql_summary_id,
     _build_get_detail,
     _build_get_dimensions,
@@ -1795,10 +1795,10 @@ class TestBuildExecuteCommand:
     def test_compact_success_shows_first_lines(self):
         """Successful command surfaces the real output, first lines first (claude-style)."""
         a = _make(
-            input_data={"function_name": "execute_command"},
+            input_data={"function_name": "bash"},
             output_data={"raw_output": '{"success": 1, "result": "line one\\nline two"}'},
         )
-        tc = _build_execute_command(a, verbose=False)
+        tc = _build_bash(a, verbose=False)
         assert tc.compact_result_lines == ["line one", "line two"]
         assert tc.compact_result_overflow == 0
         assert tc.compact_result == "line one"  # single-line degrade
@@ -1808,10 +1808,10 @@ class TestBuildExecuteCommand:
         """More than COMPACT_MAX_LINES output lines fold into an overflow count."""
         out = "\\n".join(f"line{i}" for i in range(10))
         a = _make(
-            input_data={"function_name": "execute_command"},
+            input_data={"function_name": "bash"},
             output_data={"raw_output": f'{{"success": 1, "result": "{out}"}}'},
         )
-        tc = _build_execute_command(a, verbose=False)
+        tc = _build_bash(a, verbose=False)
         assert tc.compact_result_lines == ["line0", "line1", "line2"]
         assert tc.compact_result_overflow == 7
 
@@ -1821,27 +1821,27 @@ class TestBuildExecuteCommand:
 
         marker = build_archived_marker("/tmp/000001_bash_ab.txt", "hello world preview")
         a = _make(
-            input_data={"function_name": "execute_command"},
+            input_data={"function_name": "bash"},
             output_data={"raw_output": json.dumps({"success": 1, "result": marker})},
         )
-        tc = _build_execute_command(a, verbose=False)
+        tc = _build_bash(a, verbose=False)
         assert any("hello world preview" in line for line in tc.compact_result_lines)
         assert all("[DATUS_ARCHIVED]" not in line for line in tc.compact_result_lines)
         assert any("read_file" in line for line in tc.compact_result_lines)
 
     def test_compact_success_no_output_falls_back_to_label(self):
         a = _make(
-            input_data={"function_name": "execute_command"},
+            input_data={"function_name": "bash"},
             output_data={"raw_output": '{"success": 1, "result": ""}'},
         )
-        tc = _build_execute_command(a, verbose=False)
+        tc = _build_bash(a, verbose=False)
         assert tc.compact_result == "Command executed"
         assert tc.compact_result_lines == []
 
     def test_compact_failure_shows_stderr_reason(self):
         """Non-zero exit: the stderr reason is visible (no 'exited with code' prefix)."""
         a = _make(
-            input_data={"function_name": "execute_command"},
+            input_data={"function_name": "bash"},
             output_data={
                 "raw_output": (
                     '{"success": 0, "error": "Command exited with code 1", '
@@ -1849,7 +1849,7 @@ class TestBuildExecuteCommand:
                 )
             },
         )
-        tc = _build_execute_command(a, verbose=False)
+        tc = _build_bash(a, verbose=False)
         assert tc.compact_result_lines == ["run", "foo: command not found"]
         assert all("exited with code" not in line for line in tc.compact_result_lines)
         assert tc.status_mark == "✗"
@@ -1857,10 +1857,10 @@ class TestBuildExecuteCommand:
     def test_compact_failure_strips_exception_prefix(self):
         """Exception path with no captured output: strip 'Command execution failed: '."""
         a = _make(
-            input_data={"function_name": "execute_command"},
+            input_data={"function_name": "bash"},
             output_data={"raw_output": '{"success": 0, "error": "Command execution failed: [Errno 2] boom"}'},
         )
-        tc = _build_execute_command(a, verbose=False)
+        tc = _build_bash(a, verbose=False)
         assert tc.compact_result == "[Errno 2] boom"
         assert tc.status_mark == "✗"
 
@@ -2025,7 +2025,7 @@ class TestAllToolsRegistered:
         "profile_semantic_model_evidence",
         "analyze_metric_candidates_from_history",
         # Skill
-        "execute_command",
+        "bash",
         "load_skill",
         # Interaction
         "ask_user",
@@ -2270,6 +2270,14 @@ class TestToolArgsFormatters:
 
         fmt = _TOOL_ARGS_FORMATTERS["describe_table"]
         assert fmt(self._args(table_name="orders")) == '"orders"'
+
+    def test_bash_positional_no_key_prefix(self):
+        """bash shows the bare command value, not a ``command:`` prefix."""
+        from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS
+
+        fmt = _TOOL_ARGS_FORMATTERS["bash"]
+        assert fmt(self._args(command="sleep 5")) == '"sleep 5"'
+        assert "command:" not in fmt(self._args(command="ls -la"))
 
     def test_grep_kw_args(self):
         from datus.cli.action_display.tool_content import _TOOL_ARGS_FORMATTERS

@@ -121,7 +121,7 @@ class BashTool:
         """Set tool context (called by framework before tool invocation)."""
         self._tool_context = ctx
 
-    def execute_command(self, command: str) -> FuncToolResult:
+    def bash(self, command: str) -> FuncToolResult:
         """Execute a shell command if it matches the allowed patterns.
 
         The command runs in ``workspace_root`` with ``shell=False``. Only
@@ -391,4 +391,4 @@ class BashTool:
         """
         if not self.allowed_patterns:
             return []
-        return [trans_to_function_tool(self.execute_command)]
+        return [trans_to_function_tool(self.bash)]

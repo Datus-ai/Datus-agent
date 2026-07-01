@@ -818,7 +818,7 @@ class TestStreamingInteractionProcessing:
     def test_processing_frame_restored_after_ask_approval(self):
         """A tool pinned as the running frame is restored after an ASK approval.
 
-        Regression: ``execute_command`` (bash) is ASK-gated, so a permission
+        Regression: ``bash`` (bash) is ASK-gated, so a permission
         INTERACTION fires while the tool's PROCESSING frame is pinned. The
         interaction handler clears the frame to draw the prompt; without a
         restore the (possibly long) bash then runs with a blank pinned region
@@ -848,9 +848,9 @@ class TestStreamingInteractionProcessing:
         bash_action = _make_action(
             ActionRole.TOOL,
             ActionStatus.PROCESSING,
-            messages="Tool call: execute_command",
-            action_type="execute_command",
-            input_data={"function_name": "execute_command", "arguments": {"command": "sleep 5"}},
+            messages="Tool call: bash",
+            action_type="bash",
+            input_data={"function_name": "bash", "arguments": {"command": "sleep 5"}},
         )
         ctx._processing_action = bash_action
 

@@ -130,7 +130,7 @@ class TestBashToolAvailableTools:
     def test_patterns_present_exposes_tool(self, python_tool):
         tools = python_tool.available_tools()
         assert len(tools) == 1
-        assert tools[0].name == "execute_command"
+        assert tools[0].name == "bash"
 
     def test_empty_patterns_hides_tool(self, empty_tool):
         assert empty_tool.available_tools() == []
@@ -197,43 +197,43 @@ class TestBashToolPatternMatching:
 
 class TestBashToolExecution:
     def test_execute_allowed_command(self, python_tool):
-        result = python_tool.execute_command("python scripts/analyze.py")
+        result = python_tool.bash("python scripts/analyze.py")
         assert result.success == 1
         assert "Analysis complete" in result.result
 
-    def test_execute_command_with_args(self, python_tool):
-        result = python_tool.execute_command("python scripts/analyze.py --input test.json")
+    def test_bash_with_args(self, python_tool):
+        result = python_tool.bash("python scripts/analyze.py --input test.json")
         assert result.success == 1
         assert "--input" in result.result or "test.json" in result.result
 
     def test_execute_denied_command(self, python_tool):
-        result = python_tool.execute_command("rm -rf /")
+        result = python_tool.bash("rm -rf /")
         assert result.success == 0
         assert "not allowed" in result.error.lower()
 
     def test_execute_empty_command(self, python_tool):
-        result = python_tool.execute_command("")
+        result = python_tool.bash("")
         assert result.success == 0
         assert "empty" in result.error.lower()
 
     def test_execute_whitespace_only(self, python_tool):
-        result = python_tool.execute_command("   ")
+        result = python_tool.bash("   ")
         assert result.success == 0
         assert "empty" in result.error.lower()
 
     def test_execute_returns_json_output(self, python_tool):
-        result = python_tool.execute_command("python scripts/process.py")
+        result = python_tool.bash("python scripts/process.py")
         assert result.success == 1
         assert "processed" in result.result
 
     def test_execute_failing_command(self, python_tool):
         # Script doesn't exist — Python exits non-zero.
-        result = python_tool.execute_command("python scripts/nonexistent.py")
+        result = python_tool.bash("python scripts/nonexistent.py")
         assert result.success == 0
         assert result.error is not None
 
     def test_empty_patterns_blocks_execution(self, empty_tool):
-        result = empty_tool.execute_command("python anything.py")
+        result = empty_tool.bash("python anything.py")
         assert result.success == 0
         assert "not allowed" in result.error.lower()
 
@@ -244,7 +244,7 @@ class TestBashToolExecution:
         agent's terminal stdin and hangs until the tool timeout, freezing the
         whole process. Reading stdin here should return an empty string fast.
         """
-        result = multi_pattern_tool.execute_command('python -c "import sys; print(len(sys.stdin.read()))"')
+        result = multi_pattern_tool.bash('python -c "import sys; print(len(sys.stdin.read()))"')
         assert result.success == 1
         assert result.result.strip() == "0"
 
@@ -255,7 +255,7 @@ class TestBashToolWorkspaceIsolation:
 
     def test_commands_run_in_workspace(self, multi_pattern_tool, temp_workspace):
         (temp_workspace / "scripts" / "pwd_test.py").write_text("import os\nprint(os.getcwd())\n")
-        result = multi_pattern_tool.execute_command("python scripts/pwd_test.py")
+        result = multi_pattern_tool.bash("python scripts/pwd_test.py")
         assert result.success == 1
         assert str(temp_workspace) in result.result or temp_workspace.name in result.result
 
@@ -274,7 +274,7 @@ class TestBashToolExtraEnv:
             "print(f\"DIR={os.environ.get('MY_TOOL_DIR', 'NOT_SET')}\")\n"
         )
 
-        result = tool.execute_command("python scripts/env_test.py")
+        result = tool.bash("python scripts/env_test.py")
         assert result.success == 1
         assert "NAME=demo" in result.result
         assert f"DIR={temp_workspace}" in result.result
@@ -289,26 +289,26 @@ class TestBashToolExtraEnv:
         (temp_workspace / "scripts" / "env_test.py").write_text(
             "import os\nprint(f\"SKILL_NAME={os.environ.get('SKILL_NAME', 'MISSING')}\")\n"
         )
-        result = tool.execute_command("python scripts/env_test.py")
+        result = tool.bash("python scripts/env_test.py")
         assert result.success == 1
         assert "SKILL_NAME=MISSING" in result.result
 
 
 class TestBashToolEdgeCases:
     def test_quoted_command(self, wildcard_tool):
-        result = wildcard_tool.execute_command("python -c \"print('hello world')\"")
+        result = wildcard_tool.bash("python -c \"print('hello world')\"")
         assert result.success == 1
         assert "hello world" in result.result
 
     def test_arithmetic_command(self, wildcard_tool):
-        result = wildcard_tool.execute_command('python -c "print(1+2)"')
+        result = wildcard_tool.bash('python -c "print(1+2)"')
         assert result.success == 1
         assert "3" in result.result
 
     def test_invalid_shlex_syntax_returns_error(self, wildcard_tool):
-        # Unclosed quote: ``execute_command`` calls ``shlex.split`` and reports
+        # Unclosed quote: ``bash`` calls ``shlex.split`` and reports
         # the syntax error rather than crashing.
-        result = wildcard_tool.execute_command('python -c "unclosed')
+        result = wildcard_tool.bash('python -c "unclosed')
         assert result.success == 0
         assert "syntax" in result.error.lower() or "not allowed" in result.error.lower()
 
@@ -322,7 +322,7 @@ class TestBashToolTimeout:
         )
         (temp_workspace / "scripts" / "sleep_test.py").write_text("import time\ntime.sleep(10)\nprint('Done')\n")
 
-        result = tool.execute_command("python scripts/sleep_test.py")
+        result = tool.bash("python scripts/sleep_test.py")
         assert result.success == 0
         assert "timed out" in result.error.lower()
 
@@ -335,7 +335,7 @@ class TestBashToolOutputLimit:
         monkeypatch.setattr(bash_tool_module, "MAX_OUTPUT_SIZE", 50)
 
         tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["python:*"])
-        result = tool.execute_command("python -c \"print('X' * 500)\"")
+        result = tool.bash("python -c \"print('X' * 500)\"")
         assert result.success == 1
         assert "truncated" in result.result
         # Truncation marker tells us the source was longer than the cap.
@@ -358,14 +358,14 @@ class TestBashToolOutputOffload:
         )
 
     def test_small_output_returned_inline_and_no_residual_file(self, offload_tool, offload_dir):
-        result = offload_tool.execute_command("python -c \"print('hi')\"")
+        result = offload_tool.bash("python -c \"print('hi')\"")
         assert result.success == 1
         assert result.result.strip() == "hi"
         # Small output is read back and the temp file deleted — nothing lingers.
         assert list(offload_dir.glob("*")) == []
 
     def test_empty_output_leaves_no_file(self, offload_tool, offload_dir):
-        result = offload_tool.execute_command('python -c "pass"')
+        result = offload_tool.bash('python -c "pass"')
         assert result.success == 1
         assert (result.result or "") == ""
         assert list(offload_dir.glob("*")) == []
@@ -375,7 +375,7 @@ class TestBashToolOutputOffload:
         from datus.utils.tool_archive import build_archived_marker, parse_archived_marker
 
         monkeypatch.setattr(bash_tool_module, "BASH_ARCHIVE_THRESHOLD", 100)
-        result = offload_tool.execute_command("python -c \"print('Y' * 5000)\"")
+        result = offload_tool.bash("python -c \"print('Y' * 5000)\"")
         assert result.success == 1
         # The file kept on disk holds the complete output.
         kept = list(offload_dir.glob("*_bash_*.txt"))
@@ -392,7 +392,7 @@ class TestBashToolOutputOffload:
         from datus.utils.tool_archive import is_archived_output
 
         monkeypatch.setattr(bash_tool_module, "BASH_ARCHIVE_THRESHOLD", 100)
-        result = offload_tool.execute_command("python -c \"import sys; sys.stdout.write('Z'*5000); sys.exit(2)\"")
+        result = offload_tool.bash("python -c \"import sys; sys.stdout.write('Z'*5000); sys.exit(2)\"")
         assert result.success == 0
         assert "exited with code 2" in result.error
         assert is_archived_output(result.result)
@@ -401,7 +401,7 @@ class TestBashToolOutputOffload:
     def test_no_provider_falls_back_to_in_memory(self, temp_workspace, offload_dir):
         """Without a provider the tool truncates in memory and writes no file."""
         tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["*"])
-        result = tool.execute_command("python -c \"print('hello')\"")
+        result = tool.bash("python -c \"print('hello')\"")
         assert result.success == 1
         assert result.result.strip() == "hello"
         assert not offload_dir.exists() or list(offload_dir.glob("*")) == []
@@ -412,6 +412,6 @@ class TestBashToolOutputOffload:
             allowed_patterns=["*"],
             output_dir_provider=lambda: None,
         )
-        result = tool.execute_command("python -c \"print('ok')\"")
+        result = tool.bash("python -c \"print('ok')\"")
         assert result.success == 1
         assert result.result.strip() == "ok"

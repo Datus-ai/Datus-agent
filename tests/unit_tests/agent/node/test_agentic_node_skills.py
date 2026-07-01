@@ -746,7 +746,7 @@ class TestSkillIntegrationEdgeCases:
         """Test that finalize_system_prompt preserves existing tools."""
         mock_agent_config.agentic_nodes = {"test_node": {"skills": "sql-*"}}
         # BashTool is fail-closed when no permission manager exists; wire a
-        # permissive config so the lazy injector includes ``execute_command``.
+        # permissive config so the lazy injector includes ``bash``.
         mock_agent_config.permissions_config = PermissionConfig(default_permission=PermissionLevel.ALLOW)
         mock_agent_config.active_profile_name = "normal"
         # Local web_search is mounted only when a Tavily key resolves; pin one so
@@ -781,7 +781,7 @@ class TestSkillIntegrationEdgeCases:
         assert "tool1" in tool_names
         assert "tool2" in tool_names
         assert "load_skill" in tool_names
-        assert "execute_command" in tool_names
+        assert "bash" in tool_names
         assert "add_memory" in tool_names
         assert "edit_memory" in tool_names
         assert "web_search" in tool_names
@@ -1048,7 +1048,7 @@ class TestBashToolToggle:
 
         assert isinstance(node.bash_tool, BashTool)
         bash_names = {t.name for t in node.bash_tool.available_tools()}
-        assert "execute_command" in bash_names
+        assert "bash" in bash_names
 
     def test_bash_tool_disabled_via_config(self, mock_agent_config):
         """``bash_tool_enabled=False`` keeps ``BashTool`` out of the node."""
@@ -1077,7 +1077,7 @@ class TestBashToolToggle:
         """Without permission enforcement, BashTool must NOT be created.
 
         ``_ensure_permission_hooks`` is a no-op when ``permission_manager``
-        is ``None``, so creating an ``execute_command`` tool would expose
+        is ``None``, so creating an ``bash`` tool would expose
         unrestricted shell execution to the model. Fail closed instead.
         """
         # ``permissions_config = None`` short-circuits ``_setup_permission_manager``,
