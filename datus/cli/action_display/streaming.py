@@ -742,6 +742,13 @@ class InlineStreamingContext:
             # INTERACTION actions: collect input during live interaction, skip in history
             if action.role == ActionRole.INTERACTION:
                 if action.status == ActionStatus.PROCESSING and self._input_collector:
+                    # An ASK-gated tool (e.g. ``execute_command``) is already
+                    # pinned as the running "○ 🔧 tool(...)" frame. Clearing it
+                    # to draw the prompt is correct, but the same tool resumes
+                    # execution once approved — capture the frame so we can
+                    # restore it, otherwise a long bash runs with a blank pinned
+                    # region and only appears when it completes.
+                    saved_processing = self._processing_action
                     self._stop_processing_live()
                     self._stop_subagent_live()
                     user_input = self._input_collector(action, self.display.console)
@@ -760,6 +767,11 @@ class InlineStreamingContext:
                     except Exception as e:
                         logger.error(f"Error submitting interaction response: {e}")
                         return
+                    # Approval submitted: the gated tool now proceeds to run.
+                    # Restore its PROCESSING frame so the user sees live progress
+                    # for the (possibly long) execution instead of a blank region.
+                    if saved_processing is not None:
+                        self._update_processing_live(saved_processing)
                     self._processed_index += 1
                     return  # Wait for SUCCESS action to arrive
                 else:

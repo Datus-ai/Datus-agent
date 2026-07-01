@@ -237,6 +237,17 @@ class TestBashToolExecution:
         assert result.success == 0
         assert "not allowed" in result.error.lower()
 
+    def test_stdin_read_gets_eof_not_hang(self, multi_pattern_tool):
+        """A command reading stdin must receive immediate EOF, never block.
+
+        stdin is redirected to DEVNULL; without it the child inherits the
+        agent's terminal stdin and hangs until the tool timeout, freezing the
+        whole process. Reading stdin here should return an empty string fast.
+        """
+        result = multi_pattern_tool.execute_command('python -c "import sys; print(len(sys.stdin.read()))"')
+        assert result.success == 1
+        assert result.result.strip() == "0"
+
 
 class TestBashToolWorkspaceIsolation:
     def test_workspace_root_resolved(self, python_tool, temp_workspace):

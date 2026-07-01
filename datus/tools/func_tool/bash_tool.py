@@ -144,6 +144,13 @@ class BashTool:
                 text=True,
                 timeout=self.timeout,
                 env=self._get_safe_env(),
+                # Detach the child from the agent's stdin. Without this the child
+                # inherits datus's terminal stdin and any command that reads it
+                # (``cat``, ``read``, ``python`` awaiting input, an interactive
+                # prompt) blocks forever, fighting the TUI's prompt_toolkit for
+                # the same TTY and freezing the whole process. DEVNULL delivers
+                # an immediate EOF so such commands fail fast instead of hanging.
+                stdin=subprocess.DEVNULL,
             )
 
             output = result.stdout

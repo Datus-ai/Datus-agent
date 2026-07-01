@@ -815,6 +815,68 @@ class TestStreamingInteractionProcessing:
         assert len(submit_calls) == 1
         assert submit_calls[0] == (action.action_id, "a")
 
+    def test_processing_frame_restored_after_ask_approval(self):
+        """A tool pinned as the running frame is restored after an ASK approval.
+
+        Regression: ``execute_command`` (bash) is ASK-gated, so a permission
+        INTERACTION fires while the tool's PROCESSING frame is pinned. The
+        interaction handler clears the frame to draw the prompt; without a
+        restore the (possibly long) bash then runs with a blank pinned region
+        and only appears on completion.
+        """
+        import threading
+
+        from datus.cli.tui.live_display_state import LiveDisplayState
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True)
+        live_state = LiveDisplayState()
+        display = ActionHistoryDisplay(console, live_state=live_state)
+
+        interaction = _make_action(
+            ActionRole.INTERACTION,
+            ActionStatus.PROCESSING,
+            messages="Allow bash?",
+            action_type="request_choice",
+            input_data={"content": "Allow?", "choices": {"y": "Yes", "n": "No"}, "default_choice": "y"},
+        )
+        ctx = InlineStreamingContext([interaction], display, live_state=live_state)
+        ctx._processed_index = 0
+        ctx._tick = 0
+
+        # Simulate the bash tool already pinned as the running frame.
+        bash_action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            messages="Tool call: execute_command",
+            action_type="execute_command",
+            input_data={"function_name": "execute_command", "arguments": {"command": "sleep 5"}},
+        )
+        ctx._processing_action = bash_action
+
+        async def fake_submit(action_id, user_input):
+            return None
+
+        mock_broker = MagicMock()
+        mock_broker.submit = fake_submit
+        ctx._broker = mock_broker
+
+        loop = asyncio.new_event_loop()
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+        ctx._event_loop = loop
+        ctx._input_collector = MagicMock(return_value="y")
+
+        try:
+            ctx._process_actions()
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=2)
+            loop.close()
+
+        # Frame restored to the same bash tool so live progress keeps showing.
+        assert ctx._processing_action is bash_action
+
     def test_process_interaction_success_skipped(self):
         """INTERACTION SUCCESS is skipped (not shown after live interaction)."""
         buf = StringIO()

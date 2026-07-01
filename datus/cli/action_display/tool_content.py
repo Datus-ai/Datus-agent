@@ -537,10 +537,18 @@ def _format_result_only_markup(output_data, indent: str = "") -> List[str]:
     if data is None:
         return format_output_verbose_markup(output_data, indent)
 
-    # If there's an error, show it
+    # If there's an error, show it — but keep going to also surface the
+    # ``result`` payload when present. Tools like ``execute_command`` put the
+    # actual stdout/stderr in ``result`` while ``error`` is only a terse
+    # "Command exited with code N"; returning early here would hide the real
+    # failure reason and leave the user with no info to act on.
     error = data.get("error")
     if error and str(error) not in ("None", "null", ""):
-        return [f"{indent}[bold red]error: {_escape_markup(str(error))}[/bold red]"]
+        err_lines = [f"{indent}[bold red]error: {_escape_markup(str(error))}[/bold red]"]
+        result = data.get("result")
+        if result not in (None, "", [], {}):
+            err_lines.extend(_format_value_markup(result, indent))
+        return err_lines
 
     # Extract result and format it
     result = data.get("result")
@@ -1977,8 +1985,32 @@ def _build_analyze_metric_candidates(action: ActionHistory, verbose: bool) -> To
 
 
 def _build_execute_command(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """execute_command: show success."""
-    return _build_simple_action(action, verbose, "Command executed")
+    """execute_command: show the real command output, on success and failure.
+
+    The compact line has little room, so surface the meaningful part — the last
+    non-empty output line (the stdout result on success, the stderr reason on
+    failure) — instead of the boilerplate ``Command executed`` label or the
+    ``Command exited with code N`` prefix. When nothing was captured, fall back
+    to the label / error with its generic exception wrapper stripped.
+    """
+    tc = _build_simple_action(action, verbose, "Command executed")
+    if verbose:
+        return tc
+    data = parse_output_data(action.output)
+    output = data.get("result") if isinstance(data, dict) else None
+    lines: List[str] = []
+    if isinstance(output, str) and output.strip():
+        lines = [ln for ln in output.splitlines() if ln.strip() and ln.strip() != "[stderr]"]
+    if lines:
+        tc.compact_result = _truncate_middle(lines[-1], 80)
+    elif tc.status_mark == "✗":
+        # No captured output: strip the verbose failure-prefix boilerplate.
+        # (Keep "Command exited with code N" / "Command timed out ..." — those
+        # ARE the message; only the generic exception wrapper is noise.)
+        prefix = "Command execution failed: "
+        if tc.compact_result.startswith(prefix):
+            tc.compact_result = tc.compact_result[len(prefix) :]
+    return tc
 
 
 def _build_load_skill(action: ActionHistory, verbose: bool) -> ToolCallContent:

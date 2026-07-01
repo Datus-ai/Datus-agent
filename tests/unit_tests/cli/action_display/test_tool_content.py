@@ -1776,13 +1776,48 @@ class TestBuildAnalyzeMetricCandidates:
 
 @pytest.mark.ci
 class TestBuildExecuteCommand:
-    def test_compact(self):
+    def test_compact_success_shows_output(self):
+        """Successful command surfaces the real output (last line), not the label."""
         a = _make(
             input_data={"function_name": "execute_command"},
-            output_data={"raw_output": '{"success": 1, "result": "output text"}'},
+            output_data={"raw_output": '{"success": 1, "result": "line one\\nline two"}'},
         )
         tc = _build_execute_command(a, verbose=False)
-        assert "Command executed" in tc.compact_result
+        assert tc.compact_result == "line two"
+        assert tc.status_mark == "✓"
+
+    def test_compact_success_no_output_falls_back_to_label(self):
+        a = _make(
+            input_data={"function_name": "execute_command"},
+            output_data={"raw_output": '{"success": 1, "result": ""}'},
+        )
+        tc = _build_execute_command(a, verbose=False)
+        assert tc.compact_result == "Command executed"
+
+    def test_compact_failure_shows_stderr_not_exit_code(self):
+        """Non-zero exit: show the stderr reason, drop the 'exited with code' prefix."""
+        a = _make(
+            input_data={"function_name": "execute_command"},
+            output_data={
+                "raw_output": (
+                    '{"success": 0, "error": "Command exited with code 1", '
+                    '"result": "run\\n[stderr]\\nfoo: command not found"}'
+                )
+            },
+        )
+        tc = _build_execute_command(a, verbose=False)
+        assert tc.compact_result == "foo: command not found"
+        assert tc.status_mark == "✗"
+
+    def test_compact_failure_strips_exception_prefix(self):
+        """Exception path with no captured output: strip 'Command execution failed: '."""
+        a = _make(
+            input_data={"function_name": "execute_command"},
+            output_data={"raw_output": '{"success": 0, "error": "Command execution failed: [Errno 2] boom"}'},
+        )
+        tc = _build_execute_command(a, verbose=False)
+        assert tc.compact_result == "[Errno 2] boom"
+        assert tc.status_mark == "✗"
 
 
 @pytest.mark.ci
