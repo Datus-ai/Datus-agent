@@ -29,22 +29,18 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'pyproject.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install -r requirements-test.txt
-          pip install --upgrade --no-cache-dir \
-            "datus-metricflow @ https://github.com/Datus-ai/metricflow/archive/95fe9271d2fbe1e12797595b2d841c84c1ce6f3d.tar.gz" \
-            "datus-semantic-metricflow @ https://github.com/Datus-ai/datus-semantic-adapter/archive/002b93e39b906f42ecf9bc513ace3c1594139462.tar.gz#subdirectory=datus-semantic-metricflow"
-          pip install pytest-cov 'chardet<6' diff-cover packaging
+          uv sync --locked --group ci
+          echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Check release metadata
         run: python3 ci/check_release_readiness.py

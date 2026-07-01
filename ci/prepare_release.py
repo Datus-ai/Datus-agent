@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 CI_DIR = Path(__file__).resolve().parent
@@ -22,6 +24,8 @@ if str(CI_DIR) not in sys.path:
 
 from check_release_readiness import (  # noqa: E402
     ADAPTER_CORE_PACKAGES,
+    CI_ADAPTER_PACKAGES,
+    CI_DEPENDENCY_GROUP,
     REPO_ROOT,
     check_tag_available,
     fetch_latest_pypi_version,
@@ -114,11 +118,103 @@ def update_dependency_lower_bounds(path: Path, bounds: dict[str, Version], *, qu
     return False
 
 
-def latest_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+def _split_line_ending(line: str) -> tuple[str, str]:
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    return line, ""
+
+
+def _replace_requirement_lower_bound(dependency: str, version: Version) -> str:
+    requirement_part, marker_separator, marker = dependency.partition(";")
+    updated_requirement_part, count = re.subn(
+        r"(>=\s*)[A-Za-z0-9_.!+*-]+",
+        rf"\g<1>{version}",
+        requirement_part,
+        count=1,
+    )
+    if count != 1:
+        raise ValueError(f"{dependency} must declare a >= lower bound")
+    return f"{updated_requirement_part}{marker_separator}{marker}"
+
+
+def update_dependency_group_lower_bounds(path: Path, group_name: str, bounds: dict[str, Version]) -> bool:
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    in_dependency_groups = False
+    in_target_group = False
+    changed = False
+    canonical_bounds = {
+        canonicalize_name(package_name): (package_name, version) for package_name, version in bounds.items()
+    }
+    remaining = set(canonical_bounds)
+
+    for index, line in enumerate(lines):
+        line_body, line_ending = _split_line_ending(line)
+        stripped = line_body.strip()
+        if stripped == "[dependency-groups]":
+            in_dependency_groups = True
+            continue
+        if in_dependency_groups and stripped.startswith("[") and stripped.endswith("]"):
+            break
+        if not in_dependency_groups:
+            continue
+        if stripped.startswith(f"{group_name} = ["):
+            in_target_group = True
+            continue
+        if in_target_group and stripped == "]":
+            break
+        if not in_target_group:
+            continue
+
+        dependency_match = re.match(r'(\s*")([^"]+)(".*)', line_body)
+        if dependency_match is None:
+            continue
+        dependency = dependency_match.group(2)
+        try:
+            requirement = Requirement(dependency)
+        except InvalidRequirement:
+            continue
+        canonical_name = canonicalize_name(requirement.name)
+        if canonical_name not in canonical_bounds:
+            continue
+
+        _, version = canonical_bounds[canonical_name]
+        updated_dependency = _replace_requirement_lower_bound(dependency, version)
+        updated_line = f"{dependency_match.group(1)}{updated_dependency}{dependency_match.group(3)}{line_ending}"
+        lines[index] = updated_line
+        remaining.discard(canonical_name)
+        changed = changed or updated_line != line
+
+    if not in_target_group:
+        raise ValueError(f"Unable to find dependency group {group_name!r} in {path}")
+    if remaining:
+        missing = ", ".join(sorted(canonical_bounds[canonical_name][0] for canonical_name in remaining))
+        raise ValueError(f"Unable to update dependency lower bounds for {missing} in dependency group {group_name}")
+
+    if changed:
+        path.write_text("".join(lines), encoding="utf-8")
+    return changed
+
+
+def latest_package_bounds(
+    package_names: tuple[str, ...],
+    *,
+    timeout: float,
+    allow_prerelease: bool,
+) -> dict[str, Version]:
     return {
         package_name: fetch_latest_pypi_version(package_name, timeout=timeout, allow_prerelease=allow_prerelease)
-        for package_name in ADAPTER_CORE_PACKAGES
+        for package_name in package_names
     }
+
+
+def latest_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+    return latest_package_bounds(ADAPTER_CORE_PACKAGES, timeout=timeout, allow_prerelease=allow_prerelease)
+
+
+def latest_ci_adapter_bounds(timeout: float, allow_prerelease: bool) -> dict[str, Version]:
+    return latest_package_bounds(CI_ADAPTER_PACKAGES, timeout=timeout, allow_prerelease=allow_prerelease)
 
 
 def prepare_release(
@@ -143,6 +239,9 @@ def prepare_release(
             changed.append(pyproject_path)
         if update_dependency_lower_bounds(requirements_path, bounds, quoted=False):
             changed.append(requirements_path)
+        ci_bounds = latest_ci_adapter_bounds(timeout=pypi_timeout, allow_prerelease=allow_prerelease)
+        if update_dependency_group_lower_bounds(pyproject_path, CI_DEPENDENCY_GROUP, ci_bounds):
+            changed.append(pyproject_path)
 
     return sorted(set(changed))
 

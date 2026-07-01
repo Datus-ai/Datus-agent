@@ -366,13 +366,13 @@ jobs:
           fi
 
           git checkout -B "${sync_branch}" origin/main
-          git checkout "${SOURCE_SHA}" -- pyproject.toml requirements.txt
+          git checkout "${SOURCE_SHA}" -- pyproject.toml requirements.txt requirements-test.txt uv.lock
           if git diff --quiet; then
             echo "Main already has release ${VERSION} metadata"
             exit 0
           fi
 
-          git add pyproject.toml requirements.txt
+          git add pyproject.toml requirements.txt requirements-test.txt uv.lock
           git commit -m "chore: sync main release metadata to ${VERSION}"
           if [[ -n "${existing_sync_sha}" ]]; then
             git push \
@@ -392,7 +392,7 @@ jobs:
           ## Changes
 
           - copy release source metadata from ${SOURCE_SHA}
-          - update pyproject.toml and requirements.txt on main
+          - update pyproject.toml, requirements.txt, requirements-test.txt, and uv.lock on main
 
           ## Validation
 
