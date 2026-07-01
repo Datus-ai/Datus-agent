@@ -770,57 +770,49 @@ class OpenAICompatibleModel(LLMBaseModel):
         return tools
 
     @staticmethod
-    async def _flush_pending_hosted_searches(
-        pending: List[Dict[str, Any]],
-        result: Any,
-        action_history_manager: Optional[ActionHistoryManager],
-    ) -> AsyncGenerator[ActionHistory, None]:
-        """Emit deferred completions for hosted ``web_search`` calls.
+    def _build_hosted_search_completion(
+        call_id: str,
+        tool_name: str,
+        arguments: str,
+        args_str: str,
+        query: str,
+        sources: List[Dict[str, Any]],
+        start_time: Optional[datetime] = None,
+    ) -> ActionHistory:
+        """Build the completion for a single hosted ``web_search`` call.
 
-        OpenAI's hosted search returns no results on the call item; the title+url
-        pairs the model used surface as ``url_citation`` annotations on the
-        assistant message. We read them back from ``result.to_input_list()``
-        (annotations preserved) and, per the agreed model, attach the turn's full
-        citation set as each hosted search's canonical results — falling back to
-        the call's own ``action.sources`` URLs when no citations were produced.
+        OpenAI's hosted search returns no results on the call item; the only
+        per-call metadata available in-stream is ``action.sources`` (URLs, no
+        titles). We use those as the canonical result and emit the completion
+        immediately so the CLI stops the in-progress spinner as soon as the
+        server-side search returns, rather than pinning it until stream end. The
+        richer ``url_citation`` titles still surface inline in the assistant
+        answer text.
         """
         from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
-        from datus.schemas.web_result import (
-            collect_citations_from_input_list,
-            normalize_search_results,
-            web_search_short_summary,
+        from datus.schemas.web_result import normalize_search_results, web_search_short_summary
+
+        canonical = normalize_search_results(query, sources or [])
+        summary = web_search_short_summary(canonical)
+        kwargs: Dict[str, Any] = dict(
+            action_id=f"complete_{call_id}",
+            role=ActionRole.TOOL,
+            messages=f"Tool call: {tool_name}('{args_str}...')",
+            action_type=tool_name,
+            input={"function_name": tool_name, "arguments": arguments},
+            output={
+                "success": True,
+                "raw_output": {"success": True, "result": canonical},
+                "summary": summary,
+                "status_message": summary,
+            },
+            status=ActionStatus.SUCCESS,
         )
-
-        citations: List[dict] = []
-        try:
-            if hasattr(result, "to_input_list"):
-                citations = collect_citations_from_input_list(result.to_input_list())
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"Failed to collect web_search citations: {e}")
-
-        for call in pending:
-            items = citations or call.get("sources") or []
-            canonical = normalize_search_results(call.get("query", ""), items)
-            summary = web_search_short_summary(canonical)
-            done_action = ActionHistory(
-                action_id=f"complete_{call['call_id']}",
-                role=ActionRole.TOOL,
-                messages=f"Tool call: {call['tool_name']}('{call['args_str']}...')",
-                action_type=call["tool_name"],
-                input={"function_name": call["tool_name"], "arguments": call["arguments"]},
-                output={
-                    "success": True,
-                    "raw_output": {"success": True, "result": canonical},
-                    "summary": summary,
-                    "status_message": summary,
-                },
-                status=ActionStatus.SUCCESS,
-                start_time=call.get("start_time"),
-            )
-            done_action.end_time = datetime.now()
-            if action_history_manager is not None:
-                action_history_manager.add_action(done_action)
-            yield done_action
+        if start_time is not None:
+            kwargs["start_time"] = start_time
+        done_action = ActionHistory(**kwargs)
+        done_action.end_time = datetime.now()
+        return done_action
 
     async def generate_with_tools(
         self,
@@ -1330,10 +1322,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                 tool_output_seen = False
                 final_assistant_yielded = False
                 last_assistant_text = ""
-                # Hosted web_search calls run server-side and expose no results on
-                # the call item; we defer their completion until after the stream
-                # so we can attach the assistant message's url_citation results.
-                pending_hosted_searches: List[dict] = []
 
                 # Streaming thinking state: accumulate text deltas for real-time output
                 thinking_stream_id: Optional[str] = None
@@ -1520,10 +1508,14 @@ class OpenAICompatibleModel(LLMBaseModel):
 
                                 # Hosted tools (web_search, …) run server-side and
                                 # emit no ``tool_call_output_item``. The results
-                                # are not on the call item — they arrive as
-                                # url_citation annotations on the assistant
-                                # message — so defer the completion until the
-                                # stream ends (see the pending-hosted flush below).
+                                # are not on the call item — the richer title+url
+                                # pairs arrive as url_citation annotations on the
+                                # assistant message. Emit the completion right away
+                                # from the call's own ``action.sources`` so the CLI
+                                # stops the in-progress spinner as soon as the
+                                # server-side search returns, rather than pinning it
+                                # until stream end. The citation titles still
+                                # surface inline in the assistant answer text.
                                 if is_hosted:
                                     temp_tool_calls.pop(call_id, None)
                                     from datus.schemas.web_result import extract_action_sources, hosted_action_query
@@ -1533,19 +1525,18 @@ class OpenAICompatibleModel(LLMBaseModel):
                                         if isinstance(raw_item, dict)
                                         else getattr(raw_item, "action", None)
                                     )
-                                    pending_hosted_searches.append(
-                                        {
-                                            "call_id": call_id,
-                                            "tool_name": tool_name,
-                                            "arguments": arguments,
-                                            "args_str": args_str,
-                                            "query": str(
-                                                hosted_action_query(raw_action) or args_dict.get("query") or ""
-                                            ),
-                                            "sources": extract_action_sources(raw_action),
-                                            "start_time": datetime.now(),
-                                        }
+                                    hosted_done = self._build_hosted_search_completion(
+                                        call_id=call_id,
+                                        tool_name=tool_name,
+                                        arguments=arguments,
+                                        args_str=args_str,
+                                        query=str(hosted_action_query(raw_action) or args_dict.get("query") or ""),
+                                        sources=extract_action_sources(raw_action),
+                                        start_time=start_action.start_time,
                                     )
+                                    if action_history_manager is not None:
+                                        action_history_manager.add_action(hosted_done)
+                                    yield hosted_done
 
                         # Handle tool call completion
                         elif item_type == "tool_call_output_item":
@@ -1674,16 +1665,6 @@ class OpenAICompatibleModel(LLMBaseModel):
                                     action_history_manager.add_action(thinking_action)
                                     yield thinking_action
                                     mark_assistant_response(text_content, is_thinking)
-
-                # Flush deferred hosted web_search completions. The url_citation
-                # results live on the assistant message(s); read them back from
-                # the final input list (which preserves annotations) and attach
-                # them as the canonical web_search result for the turn's calls.
-                if pending_hosted_searches:
-                    async for hosted_done in self._flush_pending_hosted_searches(
-                        pending_hosted_searches, result, action_history_manager
-                    ):
-                        yield hosted_done
 
                 final_output = getattr(result, "final_output", "") or ""
                 if not isinstance(final_output, str):

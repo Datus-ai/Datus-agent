@@ -19,6 +19,7 @@ from datus.models.base import LLMBaseModel
 from datus.models.claude_model import ClaudeModel
 from datus.models.codex_model import CodexModel
 from datus.models.openai_model import OpenAIModel
+from datus.schemas.action_history import ActionStatus
 
 _NOW = datetime(2026, 1, 1, 0, 0, 0)
 
@@ -222,69 +223,45 @@ def test_sanitize_server_block_returns_none_when_unserializable():
     assert sanitize_server_block_for_replay(block) is None
 
 
-def test_codex_hosted_completion_attaches_citations():
-    """Deferred hosted web_search completion carries the canonical result built
-    from the assistant message's url_citation annotations."""
-    from types import SimpleNamespace
-
+def test_codex_hosted_completion_uses_action_sources():
+    """Hosted web_search completion is emitted immediately from the call's own
+    ``action.sources`` (the only per-call metadata available in-stream)."""
     from datus.models.codex_model import CodexModel
 
-    pending = [
-        {
-            "call_id": "ws_1",
-            "tool_name": "web_search",
-            "arguments": "{}",
-            "args_str": "",
-            "query": "duckdb latest",
-            "sources": [{"title": "", "url": "https://fallback", "snippet": ""}],
-        }
-    ]
-    result = SimpleNamespace(
-        to_input_list=lambda: [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": "...",
-                        "annotations": [{"type": "url_citation", "title": "DuckDB", "url": "https://duckdb.org"}],
-                    }
-                ],
-            }
-        ]
+    done = CodexModel._build_hosted_search_completion(
+        call_id="ws_1",
+        tool_name="web_search",
+        arguments="{}",
+        args_str="",
+        query="duckdb latest",
+        sources=[{"title": "", "url": "https://only-source", "snippet": ""}],
     )
-    actions = CodexModel._build_hosted_search_completions(pending, result)
-    assert len(actions) == 1
-    done = actions[0]
     assert done.action_id == "complete_ws_1"
     assert done.action_type == "web_search"
+    assert done.status == ActionStatus.SUCCESS
     canonical = done.output["raw_output"]["result"]
     assert canonical["query"] == "duckdb latest"
-    # url_citations win over the action.sources fallback.
-    assert canonical["results"] == [{"title": "DuckDB", "url": "https://duckdb.org", "snippet": "", "age": None}]
-    assert done.output["summary"] == "1 web result: DuckDB"
+    assert canonical["results"] == [{"title": "", "url": "https://only-source", "snippet": "", "age": None}]
+    # No titles on sources, so the label falls back to the domain.
+    assert done.output["summary"] == "1 web result: only-source"
 
 
-def test_codex_hosted_completion_falls_back_to_sources():
-    """With no citations, the call's own action.sources URLs become the results."""
-    from types import SimpleNamespace
-
+def test_codex_hosted_completion_empty_sources_summarizes_query():
+    """With no sources at all, the completion still resolves — summarizing the
+    query so the CLI renders a completed (non-spinning) row."""
     from datus.models.codex_model import CodexModel
 
-    pending = [
-        {
-            "call_id": "ws_2",
-            "tool_name": "web_search",
-            "arguments": "{}",
-            "args_str": "",
-            "query": "q",
-            "sources": [{"title": "", "url": "https://only-source", "snippet": ""}],
-        }
-    ]
-    result = SimpleNamespace(to_input_list=lambda: [])  # no assistant citations
-    actions = CodexModel._build_hosted_search_completions(pending, result)
-    canonical = actions[0].output["raw_output"]["result"]
-    assert canonical["results"] == [{"title": "", "url": "https://only-source", "snippet": "", "age": None}]
+    done = CodexModel._build_hosted_search_completion(
+        call_id="ws_2",
+        tool_name="web_search",
+        arguments="{}",
+        args_str="",
+        query="duckdb latest",
+        sources=[],
+    )
+    canonical = done.output["raw_output"]["result"]
+    assert canonical["results"] == []
+    assert done.output["summary"] == 'searched: "duckdb latest"'
 
 
 def test_describe_hosted_tool_item_ignores_function_call():
@@ -297,69 +274,44 @@ def test_describe_hosted_tool_item_ignores_function_call():
     )
 
 
-@pytest.mark.asyncio
-async def test_openai_flush_pending_hosted_searches_uses_citations():
-    """OpenAI deferred hosted web_search completion builds the canonical result
-    from the assistant message's url_citation annotations."""
-    from types import SimpleNamespace
-
+def test_openai_hosted_completion_uses_action_sources():
+    """OpenAI hosted web_search completion is emitted immediately from the call's
+    own ``action.sources``; ``start_time`` is preserved and ``end_time`` set."""
     from datus.models.openai_compatible import OpenAICompatibleModel
 
-    pending = [
-        {
-            "call_id": "ws_1",
-            "tool_name": "web_search",
-            "arguments": "{}",
-            "args_str": "",
-            "query": "duckdb latest",
-            "sources": [{"title": "", "url": "https://fallback", "snippet": ""}],
-            "start_time": _NOW,
-        }
-    ]
-    result = SimpleNamespace(
-        to_input_list=lambda: [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "annotations": [{"type": "url_citation", "title": "DuckDB", "url": "https://duckdb.org"}],
-                    }
-                ],
-            }
-        ]
+    done = OpenAICompatibleModel._build_hosted_search_completion(
+        call_id="ws_1",
+        tool_name="web_search",
+        arguments="{}",
+        args_str="",
+        query="duckdb latest",
+        sources=[{"title": "", "url": "https://only-source", "snippet": ""}],
+        start_time=_NOW,
     )
-    actions = [a async for a in OpenAICompatibleModel._flush_pending_hosted_searches(pending, result, None)]
-    assert len(actions) == 1
-    done = actions[0]
     assert done.action_id == "complete_ws_1"
+    assert done.start_time == _NOW
+    # end_time is stamped at build time (real now), always after the injected start.
+    assert done.end_time is not None and done.end_time >= done.start_time
     canonical = done.output["raw_output"]["result"]
     assert canonical["query"] == "duckdb latest"
-    assert canonical["results"] == [{"title": "DuckDB", "url": "https://duckdb.org", "snippet": "", "age": None}]
+    assert canonical["results"] == [{"title": "", "url": "https://only-source", "snippet": "", "age": None}]
 
 
-@pytest.mark.asyncio
-async def test_openai_flush_pending_hosted_searches_falls_back_to_sources():
-    """With no assistant citations, the call's own action.sources become results."""
-    from types import SimpleNamespace
-
+def test_openai_hosted_completion_empty_sources_summarizes_query():
+    """With no sources, the completion still resolves so the spinner clears."""
     from datus.models.openai_compatible import OpenAICompatibleModel
 
-    pending = [
-        {
-            "call_id": "ws_2",
-            "tool_name": "web_search",
-            "arguments": "{}",
-            "args_str": "",
-            "query": "q",
-            "sources": [{"title": "", "url": "https://only-source", "snippet": ""}],
-            "start_time": _NOW,
-        }
-    ]
-    result = SimpleNamespace(to_input_list=lambda: [])
-    actions = [a async for a in OpenAICompatibleModel._flush_pending_hosted_searches(pending, result, None)]
-    canonical = actions[0].output["raw_output"]["result"]
-    assert canonical["results"] == [{"title": "", "url": "https://only-source", "snippet": "", "age": None}]
+    done = OpenAICompatibleModel._build_hosted_search_completion(
+        call_id="ws_2",
+        tool_name="web_search",
+        arguments="{}",
+        args_str="",
+        query="q",
+        sources=[],
+    )
+    canonical = done.output["raw_output"]["result"]
+    assert canonical["results"] == []
+    assert done.output["summary"] == 'searched: "q"'
 
 
 def test_describe_hosted_tool_item_ignores_non_web_hosted_calls():
