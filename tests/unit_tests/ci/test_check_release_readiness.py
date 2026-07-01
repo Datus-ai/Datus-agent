@@ -43,6 +43,12 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
                 "datus-bi-core>=0.1.2",
                 "datus-scheduler-core>=0.1.1",
             ]
+
+            [dependency-groups]
+            ci = [
+                "datus-metricflow>=0.2.6",
+                "datus-semantic-metricflow>=0.2.7",
+            ]
             """
         ).strip(),
         encoding="utf-8",
@@ -153,6 +159,31 @@ def test_adapter_dependency_consistency_requires_lower_bounds(tmp_path, check_re
     _checks, errors = check_release_readiness.check_adapter_dependency_consistency(repo_root)
 
     assert errors == ["datus-db-core in pyproject.toml must declare a >= lower bound"]
+
+
+def test_ci_adapter_dependency_consistency_accepts_matching_lower_bounds(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path)
+
+    checks, errors = check_release_readiness.check_ci_adapter_dependency_consistency(repo_root)
+
+    assert errors == []
+    assert {check.name: check.pyproject_lower_bound for check in checks} == {
+        "datus-metricflow": Version("0.2.6"),
+        "datus-semantic-metricflow": Version("0.2.7"),
+    }
+
+
+def test_ci_adapter_dependency_consistency_requires_group_lower_bounds(tmp_path, check_release_readiness):
+    repo_root = _write_release_repo(tmp_path)
+    pyproject = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    (repo_root / "pyproject.toml").write_text(
+        pyproject.replace('"datus-metricflow>=0.2.6"', '"datus-metricflow"'),
+        encoding="utf-8",
+    )
+
+    _checks, errors = check_release_readiness.check_ci_adapter_dependency_consistency(repo_root)
+
+    assert errors == ["datus-metricflow in pyproject.toml dependency-groups.ci must declare a >= lower bound"]
 
 
 def test_adapter_latest_check_rejects_stale_lower_bound(tmp_path, check_release_readiness):

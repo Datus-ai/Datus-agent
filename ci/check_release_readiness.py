@@ -30,6 +30,11 @@ ADAPTER_CORE_PACKAGES = (
     "datus-bi-core",
     "datus-scheduler-core",
 )
+CI_DEPENDENCY_GROUP = "ci"
+CI_ADAPTER_PACKAGES = (
+    "datus-metricflow",
+    "datus-semantic-metricflow",
+)
 CONSOLE_VERSION_COMMANDS = ("datus", "datus-agent", "datus-api", "datus-gateway")
 
 
@@ -64,6 +69,14 @@ def parse_dependency_list(requirement_lines: Iterable[str]) -> dict[str, Require
 
 def read_pyproject_dependencies(repo_root: Path) -> dict[str, Requirement]:
     dependencies = _read_pyproject(repo_root)["project"].get("dependencies", [])
+    return parse_dependency_list(dependencies)
+
+
+def read_pyproject_dependency_group_dependencies(repo_root: Path, group_name: str) -> dict[str, Requirement]:
+    dependency_groups = _read_pyproject(repo_root).get("dependency-groups", {})
+    dependencies = dependency_groups.get(group_name)
+    if dependencies is None:
+        raise ValueError(f"pyproject.toml is missing dependency-groups.{group_name}")
     return parse_dependency_list(dependencies)
 
 
@@ -192,6 +205,44 @@ def check_adapter_dependency_consistency(
     return checks, errors
 
 
+def check_ci_adapter_dependency_consistency(
+    repo_root: Path,
+    package_names: Iterable[str] = CI_ADAPTER_PACKAGES,
+    group_name: str = CI_DEPENDENCY_GROUP,
+) -> tuple[list[DependencyCheck], list[str]]:
+    checks: list[DependencyCheck] = []
+    errors: list[str] = []
+
+    try:
+        group_deps = read_pyproject_dependency_group_dependencies(repo_root, group_name)
+    except ValueError as exc:
+        return checks, [str(exc)]
+
+    for package_name in package_names:
+        normalized = canonicalize_name(package_name)
+        requirement = group_deps.get(normalized)
+        if requirement is None:
+            errors.append(f"{package_name} is missing from pyproject.toml dependency-groups.{group_name}")
+            continue
+
+        group_lower = lower_bound(requirement)
+        if group_lower is None:
+            errors.append(
+                f"{package_name} in pyproject.toml dependency-groups.{group_name} must declare a >= lower bound"
+            )
+            continue
+
+        checks.append(
+            DependencyCheck(
+                name=package_name,
+                pyproject_lower_bound=group_lower,
+                requirements_lower_bound=group_lower,
+            )
+        )
+
+    return checks, errors
+
+
 def fetch_latest_pypi_version(package_name: str, timeout: float = 10.0, allow_prerelease: bool = False) -> Version:
     request = urllib.request.Request(
         f"https://pypi.org/pypi/{package_name}/json",
@@ -260,7 +311,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--check-adapter-latest",
         action="store_true",
-        help="Fetch PyPI metadata and require adapter core lower bounds to match latest published versions",
+        help="Fetch PyPI metadata and require adapter lower bounds to match latest published versions",
     )
     parser.add_argument(
         "--allow-prerelease",
@@ -285,7 +336,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_console_versions:
         errors.extend(check_console_script_versions(version))
 
-    dependency_checks, dependency_errors = check_adapter_dependency_consistency(repo_root)
+    core_dependency_checks, core_dependency_errors = check_adapter_dependency_consistency(repo_root)
+    ci_dependency_checks, ci_dependency_errors = check_ci_adapter_dependency_consistency(repo_root)
+    dependency_checks = [*core_dependency_checks, *ci_dependency_checks]
+    dependency_errors = [*core_dependency_errors, *ci_dependency_errors]
     errors.extend(dependency_errors)
 
     if args.check_adapter_latest and not dependency_errors:
@@ -307,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Release readiness checks passed for datus-agent {version}")
-    print("Adapter core dependency lower bounds:")
+    print("Adapter dependency lower bounds:")
     for check in dependency_checks:
         latest = f", latest={check.latest_version}" if check.latest_version is not None else ""
         print(f"  - {check.name}>={check.pyproject_lower_bound}{latest}")
