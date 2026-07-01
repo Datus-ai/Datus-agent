@@ -488,6 +488,33 @@ class TestRenderMainAction:
         text = _plain(result)
         assert "list_tables" in text
 
+    def test_bash_multiline_result_folds_extra_lines(self):
+        """bash compact result renders first 3 lines + a '… +N lines' overflow row."""
+        out = "\\n".join(f"line{i}" for i in range(10))
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "execute_command", "arguments": {"command": "ls"}},
+            output_data={"raw_output": f'{{"success": 1, "result": "{out}"}}'},
+        )
+        result = _renderer().render_main_action(action, verbose=False)
+        text = _plain(result)
+        assert "line0" in text and "line1" in text and "line2" in text
+        assert "line3" not in text  # folded
+        assert "… +7 lines" in text
+
+    def test_single_line_tool_returns_one_text(self):
+        """Regression: tools without multi-line compact fields render exactly one line block."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            input_data={"function_name": "list_tables"},
+            output_data={"raw_output": '{"success": 1, "result": ["a", "b"]}'},
+        )
+        result = _renderer().render_main_action(action, verbose=False)
+        # No overflow / continuation rows for a plain single-line result.
+        assert "… +" not in _plain(result)
+
     def test_task_tool_renders_as_subagent(self):
         """TOOL(task) action renders as subagent summary."""
         action = _make_action(
@@ -652,6 +679,30 @@ class TestRenderProcessing:
         assert "list_tables" in result.plain
         assert result.plain.startswith("\u25cb ")
 
+    def test_processing_shows_running_elapsed(self):
+        """PROCESSING frame appends a `· running Ns` elapsed suffix (all tools)."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            input_data={"function_name": "execute_command", "arguments": {"command": "sleep 5"}},
+            start_time=datetime.now() - timedelta(seconds=3),
+        )
+        result = _renderer().render_processing(action, "○")
+        assert "running 3s" in result.plain
+
+    def test_processing_depth_gt_zero_dim_and_elbow(self):
+        """Sub-agent (depth>0) PROCESSING frame keeps the ⎿ elbow and running suffix."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            depth=1,
+            input_data={"function_name": "execute_command", "arguments": {"command": "ls"}},
+            start_time=datetime.now() - timedelta(seconds=1),
+        )
+        result = _renderer().render_processing(action, "○")
+        assert "⎿" in result.plain
+        assert "running 1s" in result.plain
+
     def test_processing_includes_first_argument(self):
         """PROCESSING frame includes the first argument as `(key: value)` summary."""
         action = _make_action(
@@ -675,7 +726,9 @@ class TestRenderProcessing:
             input_data={"function_name": "list_tables"},
         )
         result = _renderer().render_processing(action, "\u25cb")
-        assert result.plain.endswith("list_tables...")
+        # Args fall back to "..."; a running-duration suffix now trails the frame.
+        assert "list_tables..." in result.plain
+        assert "running" in result.plain
 
     def test_processing_truncates_long_argument_value(self):
         """Long argument values get middle-truncated at 80 chars."""

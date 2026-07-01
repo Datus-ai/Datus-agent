@@ -828,9 +828,22 @@ class ActionRenderer:
             status_dot = "[red]\u23fa[/red]" if failed else "[green]\u23fa[/green]"
             header = f"\U0001f527 {rich_escape(tc.label)}({rich_escape(tc.args_summary)})"
             mark = "[red]\u00d7[/red]" if failed else "[green]\u2713[/green]"
-            result_text = tc.compact_result or tc.output_preview
             dur = tc.duration_str.strip()  # "(<0.1s)" or "(12.4s)"
             dur_suffix = f" \u00b7 [dim]{dur.strip('()')}[/dim]" if dur else ""
+
+            # Multi-line compact result (e.g. bash showing the first few output
+            # lines). Continuation rows align under the first line's content; an
+            # overflow row folds the remainder claude-style.
+            if tc.compact_result_lines:
+                first, *rest = tc.compact_result_lines
+                body_lines = [f"  \u2514\u2500 {mark} {rich_escape(first)}{dur_suffix}"]
+                body_lines.extend(f"     {rich_escape(line)}" for line in rest)
+                if tc.compact_result_overflow > 0:
+                    body_lines.append(f"     [dim]\u2026 +{tc.compact_result_overflow} lines (ctrl+o to expand)[/dim]")
+                body = "\n".join(body_lines)
+                return [Text.from_markup(f"{status_dot} {header}\n{body}")]
+
+            result_text = tc.compact_result or tc.output_preview
             if result_text:
                 body = f"  \u2514\u2500 {mark} {rich_escape(result_text)}{dur_suffix}"
             else:
@@ -892,20 +905,22 @@ class ActionRenderer:
     def render_processing(self, action: ActionHistory, frame: str) -> Text:
         """Render the static running indicator for a PROCESSING tool.
 
-        Output: ``{frame} 🔧 {function_name}({first_arg_summary})`` at depth=0
-        (no dim — matches the completed top-level tool header colour), and
-        ``  ⎿  {frame} 🔧 …`` inside a subagent group (depth>0) with
-        ``[dim]`` so it aligns with the other ``⎿`` tool rows under the
-        ``⏺`` header. Falls back to ``{frame} 🔧 {label}...`` when no
-        arguments were sent.
+        Output: ``{frame} 🔧 {function_name}({first_arg_summary}) · running {Ns}``
+        at depth=0 (no dim — matches the completed top-level tool header colour),
+        and ``  ⎿  {frame} 🔧 … · running {Ns}`` inside a subagent group
+        (depth>0) with ``[dim]`` so it aligns with the other ``⎿`` tool rows
+        under the ``⏺`` header. Falls back to ``{frame} 🔧 {label}...`` for the
+        args part when none were sent. The elapsed time recomputes on every
+        repaint, so it ticks up while the tool runs.
         """
-        from datus.cli.action_display.tool_content import extract_args
+        from datus.cli.action_display.tool_content import extract_args, format_running_duration
 
         function_name = action.input.get("function_name", "") if action.input else ""
         label = function_name or action.messages or ""
         args_lines = extract_args(action)
         suffix = f"({_truncate_middle(args_lines[0], max_len=80)})" if args_lines else "..."
-        body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}"
+        running = f" \u00b7 running {format_running_duration(action.start_time)}"
+        body = f"{frame} \U0001f527 {rich_escape(label)}{rich_escape(suffix)}{running}"
         if action.depth > 0:
             return Text.from_markup(f"[dim]  \u23bf  {body}[/dim]")
         return Text.from_markup(body)

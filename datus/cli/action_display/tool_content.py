@@ -13,13 +13,19 @@ Architecture:
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionStatus
 from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY
 from datus.utils.loggings import get_logger
+from datus.utils.tool_archive import is_archived_output, parse_archived_marker
 
 logger = get_logger(__name__)
+
+# Max output lines shown inline in a bash compact result before folding into a
+# "… +N lines" row (claude-style).
+COMPACT_MAX_LINES = 3
 
 
 @dataclass
@@ -35,6 +41,12 @@ class ToolCallContent:
     # Compact-mode fields used by the new header + └─ line layout:
     args_summary: str = ""  # concise args for header, e.g. '"orders"' or 'pattern: "*.py"'
     compact_result: str = ""  # concise result for └─ line, e.g. '3 tables: a, b, c'
+    # Optional multi-line compact result (e.g. bash showing the first few output
+    # lines, claude-style). When non-empty the renderer draws one └─ row per
+    # line plus a "… +N lines" overflow row; empty → single-line ``compact_result``
+    # path (unchanged for every other tool).
+    compact_result_lines: List[str] = field(default_factory=list)
+    compact_result_overflow: int = 0  # extra lines beyond those shown
 
 
 # Type alias for custom content builder functions
@@ -56,6 +68,25 @@ def calc_duration(action: ActionHistory) -> str:
             return " (<0.1s)"
         return f" ({duration_sec:.1f}s)"
     return ""
+
+
+def format_running_duration(start_time: Optional[datetime]) -> str:
+    """Elapsed time for a still-running action as a compact whole-second string.
+
+    Used by the PROCESSING frame, which has no ``end_time`` yet. Integer-second
+    granularity (``3s``, ``1m5s``) avoids sub-second flicker at the display's
+    ~4 Hz repaint. Returns ``"0s"`` when ``start_time`` is missing or in the
+    future.
+    """
+    if start_time is None:
+        return "0s"
+    elapsed = int((datetime.now() - start_time).total_seconds())
+    if elapsed < 0:
+        elapsed = 0
+    if elapsed < 60:
+        return f"{elapsed}s"
+    minutes, seconds = divmod(elapsed, 60)
+    return f"{minutes}m{seconds}s"
 
 
 # ── Compact-layout helpers (header args + └─ result line) ──────────
@@ -1998,11 +2029,27 @@ def _build_execute_command(action: ActionHistory, verbose: bool) -> ToolCallCont
         return tc
     data = parse_output_data(action.output)
     output = data.get("result") if isinstance(data, dict) else None
+
+    # Oversized output was offloaded to disk (see BashTool): show the inline
+    # preview split across the first rows, never the raw marker. The full
+    # content is recoverable via ``read_file(<path>)``.
+    if is_archived_output(output):
+        preview = (parse_archived_marker(output) or {}).get("preview", "").strip()
+        tc.compact_result_lines = []
+        if preview:
+            tc.compact_result_lines.append(_truncate_middle(preview, 120))
+        tc.compact_result_lines.append("(large output archived — read_file to view)")
+        tc.compact_result = tc.compact_result_lines[0]
+        return tc
+
     lines: List[str] = []
     if isinstance(output, str) and output.strip():
         lines = [ln for ln in output.splitlines() if ln.strip() and ln.strip() != "[stderr]"]
     if lines:
-        tc.compact_result = _truncate_middle(lines[-1], 80)
+        # Show the first few lines (claude-style), fold the rest into "… +N lines".
+        tc.compact_result_lines = [_truncate_middle(ln, 120) for ln in lines[:COMPACT_MAX_LINES]]
+        tc.compact_result_overflow = max(0, len(lines) - COMPACT_MAX_LINES)
+        tc.compact_result = tc.compact_result_lines[0]  # single-line degrade
     elif tc.status_mark == "✗":
         # No captured output: strip the verbose failure-prefix boilerplate.
         # (Keep "Command exited with code N" / "Command timed out ..." — those

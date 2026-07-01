@@ -14,6 +14,7 @@ injected by the caller through ``extra_env``.
 """
 
 import fnmatch
+import hashlib
 import logging
 import os
 import shlex
@@ -21,16 +22,25 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.utils.tool_archive import build_archived_marker, make_single_line_preview
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 60
 MAX_OUTPUT_SIZE = 50000
+# Output larger than this is offloaded to a file under the session data dir and
+# replaced with a ``[DATUS_ARCHIVED]`` preview marker, so a huge command output
+# neither buffers in memory nor pollutes the model context. Only applies when an
+# ``output_dir_provider`` is wired (agentic-node sessions); otherwise the tool
+# falls back to the in-memory ``MAX_OUTPUT_SIZE`` truncation.
+BASH_ARCHIVE_THRESHOLD = 8000
+# Single-line preview length carried inline in the archive marker.
+BASH_ARCHIVE_PREVIEW_CHARS = 1000
 
 
 class BashTool:
@@ -67,6 +77,7 @@ class BashTool:
         timeout: int = DEFAULT_TIMEOUT,
         extra_env: Optional[Dict[str, str]] = None,
         identity: Optional[str] = None,
+        output_dir_provider: Optional[Callable[[], Optional[Path]]] = None,
     ):
         """Initialize the bash tool.
 
@@ -80,12 +91,23 @@ class BashTool:
                 to carry caller-specific context (e.g. ``SKILL_NAME``).
             identity: Optional label used in log messages so multiple
                 BashTool instances can be distinguished.
+            output_dir_provider: Optional zero-arg callable returning the
+                directory where oversized command output is offloaded (the
+                session data dir). Resolved lazily per call so the session id
+                need not exist at construction time. When ``None`` (or it
+                returns ``None``), output is captured in memory and truncated
+                at :data:`MAX_OUTPUT_SIZE` — the general-purpose fallback used
+                by MCP / standalone callers and tests.
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.allowed_patterns = list(allowed_patterns) if allowed_patterns else []
         self.timeout = timeout
         self.extra_env = dict(extra_env) if extra_env else {}
         self.identity = identity
+        self._output_dir_provider = output_dir_provider
+        # Monotonic per-instance counter zero-padded into archive filenames so a
+        # directory listing sorts in command-invocation order.
+        self._bash_output_seq = 0
         self._tool_context: Any = None
 
         logger.debug(
@@ -133,48 +155,164 @@ class BashTool:
         if argv and argv[0] == "python":
             argv[0] = sys.executable or shutil.which("python3") or "python3"
 
+        logger.info("Executing command (identity=%s): %s", self.identity, command)
+        output_dir = self._resolve_output_dir()
         try:
-            logger.info("Executing command (identity=%s): %s", self.identity, command)
-
-            result = subprocess.run(
-                argv,
-                shell=False,
-                cwd=str(self.workspace_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-                env=self._get_safe_env(),
-                # Detach the child from the agent's stdin. Without this the child
-                # inherits datus's terminal stdin and any command that reads it
-                # (``cat``, ``read``, ``python`` awaiting input, an interactive
-                # prompt) blocks forever, fighting the TUI's prompt_toolkit for
-                # the same TTY and freezing the whole process. DEVNULL delivers
-                # an immediate EOF so such commands fail fast instead of hanging.
-                stdin=subprocess.DEVNULL,
-            )
-
-            output = result.stdout
-            if result.stderr:
-                output += f"\n[stderr]\n{result.stderr}"
-
-            if len(output) > MAX_OUTPUT_SIZE:
-                output = output[:MAX_OUTPUT_SIZE] + f"\n... [truncated, total {len(output)} chars]"
-
-            if result.returncode != 0:
-                return FuncToolResult(
-                    success=0,
-                    error=f"Command exited with code {result.returncode}",
-                    result=output,
-                )
-
-            return FuncToolResult(success=1, result=output)
-
+            if output_dir is not None:
+                # Preferred path: stream the child's output straight to disk so
+                # a huge output never buffers in memory; decide by file size
+                # afterwards. Timeout is handled inside so the partial file is
+                # still surfaced.
+                return self._execute_with_redirect(argv, command, output_dir)
+            return self._execute_in_memory(argv)
         except subprocess.TimeoutExpired:
             logger.error("Command timed out (identity=%s): %s", self.identity, command)
             return FuncToolResult(success=0, error=f"Command timed out after {self.timeout} seconds")
         except Exception as e:
             logger.error("Command execution failed (identity=%s): %s", self.identity, e)
             return FuncToolResult(success=0, error=f"Command execution failed: {str(e)}")
+
+    def _resolve_output_dir(self) -> Optional[Path]:
+        """Resolve the offload directory lazily, tolerating any provider error.
+
+        Returns ``None`` (→ in-memory fallback) when no provider is wired, the
+        provider yields nothing, or the directory can't be created.
+        """
+        if self._output_dir_provider is None:
+            return None
+        try:
+            raw = self._output_dir_provider()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("bash output_dir_provider raised: %s", exc)
+            return None
+        if not raw:
+            return None
+        path = Path(raw)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:  # pragma: no cover - defensive
+            logger.debug("bash output dir mkdir failed (%s): %s", path, exc)
+            return None
+        return path
+
+    def _execute_with_redirect(self, argv: List[str], command: str, output_dir: Path) -> FuncToolResult:
+        """Run the command with stdout/stderr redirected to a file on disk.
+
+        stderr is merged into the stdout file (``stderr=STDOUT``) so interleaved
+        output keeps its real order. After the process exits the file size
+        decides the outcome:
+
+        - empty      → delete the file, return an empty result;
+        - <= threshold → read the (small) content back, delete the file;
+        - > threshold  → read only a head preview, keep the file and return a
+          ``[DATUS_ARCHIVED]`` marker so the model can ``read_file(<path>)``.
+        """
+        seq = self._bash_output_seq
+        self._bash_output_seq += 1
+        cmd_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()[:8]
+        path = output_dir / f"{seq:06d}_bash_{cmd_hash}.txt"
+
+        timed_out = False
+        returncode = 0
+        try:
+            with open(path, "wb") as fh:
+                proc = subprocess.run(
+                    argv,
+                    shell=False,
+                    cwd=str(self.workspace_root),
+                    stdout=fh,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    timeout=self.timeout,
+                    env=self._get_safe_env(),
+                )
+            returncode = proc.returncode
+        except subprocess.TimeoutExpired:
+            # The child is killed but the file holds whatever it wrote so far.
+            timed_out = True
+            logger.error("Command timed out (identity=%s): %s", self.identity, command)
+
+        result_str = self._result_from_output_file(path)
+
+        if timed_out:
+            return FuncToolResult(
+                success=0,
+                error=f"Command timed out after {self.timeout} seconds",
+                result=result_str or None,
+            )
+        if returncode != 0:
+            return FuncToolResult(
+                success=0,
+                error=f"Command exited with code {returncode}",
+                result=result_str or None,
+            )
+        return FuncToolResult(success=1, result=result_str)
+
+    def _result_from_output_file(self, path: Path) -> str:
+        """Turn the on-disk output file into a model-facing result string.
+
+        Never loads more than ``BASH_ARCHIVE_PREVIEW_CHARS`` into memory for an
+        oversized file.
+        """
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return ""
+
+        if size == 0:
+            self._safe_unlink(path)
+            return ""
+        if size <= BASH_ARCHIVE_THRESHOLD:
+            content = path.read_text(encoding="utf-8", errors="replace")
+            self._safe_unlink(path)
+            return content
+        # Oversized: read only the head for the inline preview; keep the file.
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(BASH_ARCHIVE_PREVIEW_CHARS)
+        preview = make_single_line_preview(head, BASH_ARCHIVE_PREVIEW_CHARS)
+        return build_archived_marker(path, preview)
+
+    @staticmethod
+    def _safe_unlink(path: Path) -> None:
+        try:
+            path.unlink()
+        except OSError:  # pragma: no cover - best effort cleanup
+            pass
+
+    def _execute_in_memory(self, argv: List[str]) -> FuncToolResult:
+        """Fallback path (no offload dir): capture output in memory + truncate."""
+        result = subprocess.run(
+            argv,
+            shell=False,
+            cwd=str(self.workspace_root),
+            capture_output=True,
+            text=True,
+            timeout=self.timeout,
+            env=self._get_safe_env(),
+            # Detach the child from the agent's stdin. Without this the child
+            # inherits datus's terminal stdin and any command that reads it
+            # (``cat``, ``read``, ``python`` awaiting input, an interactive
+            # prompt) blocks forever, fighting the TUI's prompt_toolkit for
+            # the same TTY and freezing the whole process. DEVNULL delivers
+            # an immediate EOF so such commands fail fast instead of hanging.
+            stdin=subprocess.DEVNULL,
+        )
+
+        output = result.stdout
+        if result.stderr:
+            output += f"\n[stderr]\n{result.stderr}"
+
+        if len(output) > MAX_OUTPUT_SIZE:
+            output = output[:MAX_OUTPUT_SIZE] + f"\n... [truncated, total {len(output)} chars]"
+
+        if result.returncode != 0:
+            return FuncToolResult(
+                success=0,
+                error=f"Command exited with code {result.returncode}",
+                result=output,
+            )
+
+        return FuncToolResult(success=1, result=output)
 
     def _is_command_allowed(self, command: str) -> bool:
         """Check if a command matches any allowed pattern."""

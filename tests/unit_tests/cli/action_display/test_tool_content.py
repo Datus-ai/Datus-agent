@@ -135,6 +135,22 @@ class TestSharedHelpers:
     def test_calc_duration_no_end(self):
         assert calc_duration(_make()) == ""
 
+    def test_format_running_duration_seconds(self):
+        from datus.cli.action_display.tool_content import format_running_duration
+
+        assert format_running_duration(datetime.now() - timedelta(seconds=3)) == "3s"
+
+    def test_format_running_duration_minutes(self):
+        from datus.cli.action_display.tool_content import format_running_duration
+
+        assert format_running_duration(datetime.now() - timedelta(seconds=61)) == "1m1s"
+
+    def test_format_running_duration_none_and_future(self):
+        from datus.cli.action_display.tool_content import format_running_duration
+
+        assert format_running_duration(None) == "0s"
+        assert format_running_duration(datetime.now() + timedelta(seconds=5)) == "0s"
+
     def test_extract_args_dict(self):
         a = _make(input_data={"function_name": "f", "arguments": {"a": 1, "b": "x"}})
         lines = extract_args(a)
@@ -1776,15 +1792,42 @@ class TestBuildAnalyzeMetricCandidates:
 
 @pytest.mark.ci
 class TestBuildExecuteCommand:
-    def test_compact_success_shows_output(self):
-        """Successful command surfaces the real output (last line), not the label."""
+    def test_compact_success_shows_first_lines(self):
+        """Successful command surfaces the real output, first lines first (claude-style)."""
         a = _make(
             input_data={"function_name": "execute_command"},
             output_data={"raw_output": '{"success": 1, "result": "line one\\nline two"}'},
         )
         tc = _build_execute_command(a, verbose=False)
-        assert tc.compact_result == "line two"
+        assert tc.compact_result_lines == ["line one", "line two"]
+        assert tc.compact_result_overflow == 0
+        assert tc.compact_result == "line one"  # single-line degrade
         assert tc.status_mark == "✓"
+
+    def test_compact_folds_beyond_three_lines(self):
+        """More than COMPACT_MAX_LINES output lines fold into an overflow count."""
+        out = "\\n".join(f"line{i}" for i in range(10))
+        a = _make(
+            input_data={"function_name": "execute_command"},
+            output_data={"raw_output": f'{{"success": 1, "result": "{out}"}}'},
+        )
+        tc = _build_execute_command(a, verbose=False)
+        assert tc.compact_result_lines == ["line0", "line1", "line2"]
+        assert tc.compact_result_overflow == 7
+
+    def test_compact_archived_output_shows_preview_not_marker(self):
+        """Oversized (archived) output shows the marker preview, never the raw marker."""
+        from datus.utils.tool_archive import build_archived_marker
+
+        marker = build_archived_marker("/tmp/000001_bash_ab.txt", "hello world preview")
+        a = _make(
+            input_data={"function_name": "execute_command"},
+            output_data={"raw_output": json.dumps({"success": 1, "result": marker})},
+        )
+        tc = _build_execute_command(a, verbose=False)
+        assert any("hello world preview" in line for line in tc.compact_result_lines)
+        assert all("[DATUS_ARCHIVED]" not in line for line in tc.compact_result_lines)
+        assert any("read_file" in line for line in tc.compact_result_lines)
 
     def test_compact_success_no_output_falls_back_to_label(self):
         a = _make(
@@ -1793,9 +1836,10 @@ class TestBuildExecuteCommand:
         )
         tc = _build_execute_command(a, verbose=False)
         assert tc.compact_result == "Command executed"
+        assert tc.compact_result_lines == []
 
-    def test_compact_failure_shows_stderr_not_exit_code(self):
-        """Non-zero exit: show the stderr reason, drop the 'exited with code' prefix."""
+    def test_compact_failure_shows_stderr_reason(self):
+        """Non-zero exit: the stderr reason is visible (no 'exited with code' prefix)."""
         a = _make(
             input_data={"function_name": "execute_command"},
             output_data={
@@ -1806,7 +1850,8 @@ class TestBuildExecuteCommand:
             },
         )
         tc = _build_execute_command(a, verbose=False)
-        assert tc.compact_result == "foo: command not found"
+        assert tc.compact_result_lines == ["run", "foo: command not found"]
+        assert all("exited with code" not in line for line in tc.compact_result_lines)
         assert tc.status_mark == "✗"
 
     def test_compact_failure_strips_exception_prefix(self):

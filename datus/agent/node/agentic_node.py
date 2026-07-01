@@ -2368,11 +2368,35 @@ class AgenticNode(Node):
             self.bash_tool = BashTool(
                 workspace_root=self._resolve_workspace_root(),
                 allowed_patterns=["*"],
+                # Offload oversized command output to the session data dir (the
+                # same location minor compact uses). Resolved lazily: this method
+                # runs before ``session_id`` is finalized, so the closure reads it
+                # at execute time. Returns None until a session id exists → the
+                # tool falls back to in-memory truncation.
+                output_dir_provider=self._bash_output_dir,
             )
             logger.debug(f"Setup bash tool with workspace: {self.bash_tool.workspace_root}")
         except Exception as e:
             logger.error(f"Failed to setup bash tool: {e}")
             self.bash_tool = None
+
+    def _bash_output_dir(self) -> Optional[Path]:
+        """Session data dir for bash output offload, or None if unavailable.
+
+        Reused directory convention as the compact archive
+        (``path_manager.session_data_dir(session_id)``). Returns None before a
+        session id is allocated or when the path manager can't be built, so the
+        bash tool degrades to in-memory truncation.
+        """
+        if not self.session_id:
+            return None
+        try:
+            from datus.utils.path_manager import get_path_manager
+
+            return get_path_manager(agent_config=self.agent_config).session_data_dir(self.session_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to resolve bash output dir: %s", exc)
+            return None
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Ensure the BashTool's ``execute_command`` is in ``self.tools``.

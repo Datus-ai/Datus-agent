@@ -340,3 +340,78 @@ class TestBashToolOutputLimit:
         assert "truncated" in result.result
         # Truncation marker tells us the source was longer than the cap.
         assert "total" in result.result
+
+
+class TestBashToolOutputOffload:
+    """Redirect-to-disk path: output streams to a file, decided by size afterwards."""
+
+    @pytest.fixture
+    def offload_dir(self, tmp_path):
+        return tmp_path / "session_data"
+
+    @pytest.fixture
+    def offload_tool(self, temp_workspace, offload_dir):
+        return BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            output_dir_provider=lambda: offload_dir,
+        )
+
+    def test_small_output_returned_inline_and_no_residual_file(self, offload_tool, offload_dir):
+        result = offload_tool.execute_command("python -c \"print('hi')\"")
+        assert result.success == 1
+        assert result.result.strip() == "hi"
+        # Small output is read back and the temp file deleted — nothing lingers.
+        assert list(offload_dir.glob("*")) == []
+
+    def test_empty_output_leaves_no_file(self, offload_tool, offload_dir):
+        result = offload_tool.execute_command('python -c "pass"')
+        assert result.success == 1
+        assert (result.result or "") == ""
+        assert list(offload_dir.glob("*")) == []
+
+    def test_large_output_archived_to_file_with_marker(self, offload_tool, offload_dir, monkeypatch):
+        from datus.tools.func_tool import bash_tool as bash_tool_module
+        from datus.utils.tool_archive import build_archived_marker, parse_archived_marker
+
+        monkeypatch.setattr(bash_tool_module, "BASH_ARCHIVE_THRESHOLD", 100)
+        result = offload_tool.execute_command("python -c \"print('Y' * 5000)\"")
+        assert result.success == 1
+        # The file kept on disk holds the complete output.
+        kept = list(offload_dir.glob("*_bash_*.txt"))
+        assert len(kept) == 1
+        assert kept[0].read_text().count("Y") == 5000
+        # Model-facing result is exactly the marker (path + 1000-char preview),
+        # NOT the full 5000-char output.
+        expected = build_archived_marker(str(kept[0]), "Y" * bash_tool_module.BASH_ARCHIVE_PREVIEW_CHARS)
+        assert result.result == expected
+        assert parse_archived_marker(result.result)["path"] == str(kept[0])
+
+    def test_large_failure_sets_error_and_marker(self, offload_tool, offload_dir, monkeypatch):
+        from datus.tools.func_tool import bash_tool as bash_tool_module
+        from datus.utils.tool_archive import is_archived_output
+
+        monkeypatch.setattr(bash_tool_module, "BASH_ARCHIVE_THRESHOLD", 100)
+        result = offload_tool.execute_command("python -c \"import sys; sys.stdout.write('Z'*5000); sys.exit(2)\"")
+        assert result.success == 0
+        assert "exited with code 2" in result.error
+        assert is_archived_output(result.result)
+        assert len(list(offload_dir.glob("*_bash_*.txt"))) == 1
+
+    def test_no_provider_falls_back_to_in_memory(self, temp_workspace, offload_dir):
+        """Without a provider the tool truncates in memory and writes no file."""
+        tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["*"])
+        result = tool.execute_command("python -c \"print('hello')\"")
+        assert result.success == 1
+        assert result.result.strip() == "hello"
+        assert not offload_dir.exists() or list(offload_dir.glob("*")) == []
+
+    def test_provider_returning_none_uses_in_memory(self, temp_workspace):
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            output_dir_provider=lambda: None,
+        )
+        result = tool.execute_command("python -c \"print('ok')\"")
+        assert result.success == 1
+        assert result.result.strip() == "ok"
