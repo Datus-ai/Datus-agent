@@ -123,7 +123,10 @@ def get_files_from_glob_pattern(path_pattern: str, dialect: str | DBType = DBTyp
         dir_pattern, _ = "", normalized_pattern
     dir_has_wildcard = any(ch in dir_pattern for ch in ("*", "?", "["))
 
-    files = glob.glob(path_pattern, recursive=True)
+    # Sort for a deterministic order: a glob datasource's default database is the first
+    # match (see DBManager._resolve_db_config), and glob.glob() returns filesystem order,
+    # which varies across machines. Sorting keeps the default stable across runners.
+    files = sorted(glob.glob(path_pattern, recursive=True))
     result: List[Dict[str, str]] = []
 
     for file_path in files:
