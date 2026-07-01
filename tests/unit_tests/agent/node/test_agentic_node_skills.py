@@ -1044,7 +1044,9 @@ class TestBashToolToggle:
             agent_config=mock_agent_config,
         )
 
-        assert node.bash_tool is not None
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
         bash_names = {t.name for t in node.bash_tool.available_tools()}
         assert "execute_command" in bash_names
 

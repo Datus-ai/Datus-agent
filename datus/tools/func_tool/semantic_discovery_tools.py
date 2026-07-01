@@ -1349,6 +1349,7 @@ class SemanticDiscoveryTools:
                 f"GROUP BY {column_ref} ORDER BY count DESC LIMIT {max(top_n, 1)}"
             )
             top_values = self._run_profile_rows_query(top_sql, database)
+            top_values = [row for row in top_values if isinstance(row, dict) and not row.get("error")]
             profile["top_values_sql"] = top_sql
             if top_values:
                 profile["top_values"] = [

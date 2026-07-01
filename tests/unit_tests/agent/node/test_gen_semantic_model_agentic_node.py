@@ -542,9 +542,9 @@ class TestExecutionModeGenSemanticModel:
         # in all modes), so _compose_hooks may return CompositeHooks. Check
         # the permission gate on the node so the test stays robust.
         hooks = node._compose_hooks()
-        assert hooks is not None
-        assert node.permission_hooks is not None
         assert node.permission_hooks.non_interactive is True
+        hooks_list = getattr(hooks, "hooks_list", [hooks])
+        assert node.permission_hooks in hooks_list
         # Permission manager must be loaded with the dangerous profile, not the
         # user's profile, so workflow flows always operate against a known
         # baseline.

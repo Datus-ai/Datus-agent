@@ -217,7 +217,8 @@ def _summary_from_registry(action: ActionHistory, function_name: str) -> str:
     if action.status != ActionStatus.SUCCESS or not action.output:
         return ""
     output = action.output if isinstance(action.output, dict) else {}
-    summary = TOOL_SUMMARY_REGISTRY.summarize_dict(output, function_name)
+    data = parse_output_data(output) or output
+    summary = TOOL_SUMMARY_REGISTRY.summarize_dict(data, function_name)
     if not summary or summary in ("Empty result", "OK"):
         return ""
     return summary
@@ -1944,16 +1945,7 @@ def _build_profile_semantic_model_evidence(action: ActionHistory, verbose: bool)
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                tables = result.get("tables", {})
-                count = len(tables) if isinstance(tables, dict) else 0
-                noun = "table" if count == 1 else "tables"
-                tc.compact_result = f"{count} {noun} profiled"
-                if result.get("data_profiled"):
-                    tc.compact_result += ", data sampled"
+        tc.compact_result = _summary_from_registry(action, "profile_semantic_model_evidence")
     return tc
 
 

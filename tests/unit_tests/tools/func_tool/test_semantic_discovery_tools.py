@@ -22,7 +22,9 @@ def _make_db_tool(agent_config=None, sub_agent_name="test_agent"):
     return db_tool
 
 
-def _make_tools(db_tool=None, enable_semantic_model_profiler=False) -> SemanticDiscoveryTools:
+def _make_tools(
+    db_tool: MagicMock | None = None, enable_semantic_model_profiler: bool = False
+) -> SemanticDiscoveryTools:
     if db_tool is None:
         db_tool = _make_db_tool()
     return SemanticDiscoveryTools(
@@ -524,6 +526,28 @@ class TestProfileSemanticModelEvidence:
         assert profile["columns"]["amount"]["stats"]["min_value"] == 1
         assert profile["columns"]["amount"]["stats"]["max_value"] == 99
         assert profile["columns"]["amount"]["percentiles"]["p50"] == 50
+
+    def test_top_values_profile_skips_error_rows(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1, result={"compressed_data": "index,row_count,non_null_count,distinct_count\n0,10,9,2\n"}
+            ),
+            FuncToolResult(success=0, result=[{"error": "top values failed"}]),
+        ]
+        tools = _make_tools(db_tool)
+
+        profile = tools._profile_single_column(
+            table_ref="orders",
+            column_name="status",
+            column_type="VARCHAR",
+            kind="categorical",
+            database="",
+            top_n=2,
+        )
+
+        assert "top_values_sql" in profile
+        assert "top_values" not in profile
 
     def test_deep_profiles_explicit_table_without_sql_evidence(self):
         db_tool = _make_db_tool()
