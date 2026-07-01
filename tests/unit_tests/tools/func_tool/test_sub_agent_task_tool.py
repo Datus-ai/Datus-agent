@@ -732,6 +732,8 @@ class TestSubAgentTaskAcceptance:
         # parent does propagate). Pin these so the auto-MagicMock attributes don't masquerade
         # as a real database.
         parent.input.database = None
+        parent.input.catalog = None
+        parent.input.db_schema = None
         parent.db_func_tool = None
         task_tool._parent_node = parent
 
@@ -2611,6 +2613,19 @@ class TestSubagentInheritsParentDatabase:
         task_tool._parent_node = self._parent(database="", connector_db="california_schools")
         assert task_tool._parent_db_context()["database"] == "california_schools"
 
+    def test_parent_db_context_ignores_mock_connector_database_name(self, task_tool):
+        parent = MagicMock()
+        parent.input.database = ""
+        parent.input.catalog = None
+        parent.input.db_schema = None
+        task_tool._parent_node = parent
+
+        assert task_tool._parent_db_context() == {
+            "database": None,
+            "catalog": None,
+            "db_schema": None,
+        }
+
     def test_parent_db_context_no_parent_returns_empty(self, task_tool):
         task_tool._parent_node = None
         assert task_tool._parent_db_context() == {}
@@ -2662,3 +2677,27 @@ class TestSubagentInheritsParentDatabase:
         )
         inp = tool._build_node_input(node, "explore schools")
         assert inp.database is None
+
+    def test_refresh_node_db_tools_rebuilds_when_database_inherited(self):
+        node = MagicMock()
+        node.input.database = "california_schools"
+        node.db_func_tool = MagicMock()
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": "california_schools", "catalog": None, "db_schema": None},
+        )
+
+        node.setup_tools.assert_called_once_with()
+
+    def test_refresh_node_db_tools_skips_when_database_absent(self):
+        node = MagicMock()
+        node.input.database = None
+        node.db_func_tool = MagicMock()
+
+        SubAgentTaskTool._refresh_node_db_tools(
+            node,
+            {"database": None, "catalog": None, "db_schema": None},
+        )
+
+        node.setup_tools.assert_not_called()

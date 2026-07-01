@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from datus.agent.node.agentic_node import AgenticNode
     from datus.cli.execution_state import InteractionBroker
     from datus.schemas.action_bus import ActionBus
+    from datus.schemas.base import BaseInput
 
 logger = get_logger(__name__)
 
@@ -758,8 +759,11 @@ class SubAgentTaskTool:
                     ),
                 )
 
-            # Set input on the node
-            node.input = self._build_node_input(node, prompt)
+            # Set input on the node, then refresh DB-backed tools so connector
+            # routing follows the inherited physical database as well.
+            db_ctx = self._parent_db_context()
+            node.input = self._build_node_input(node, prompt, db_ctx=db_ctx)
+            self._refresh_node_db_tools(node, db_ctx)
 
             # Inject parent's InteractionBroker so that sub-agent INTERACTION
             # actions are routed through the parent's broker queue.  When injected,
@@ -943,18 +947,27 @@ class SubAgentTaskTool:
         if parent is None:
             return {}
         parent_input = getattr(parent, "input", None)
-        requested_db = getattr(parent_input, "database", "") or ""
+        requested_db = self._string_attr(parent_input, "database") or ""
         connector = getattr(getattr(parent, "db_func_tool", None), "connector", None)
         from datus.utils.node_utils import resolve_database_name_for_prompt
 
+        resolved_db = resolve_database_name_for_prompt(connector, requested_db)
+        if not isinstance(resolved_db, str) or not resolved_db:
+            resolved_db = None
+
         return {
-            "database": resolve_database_name_for_prompt(connector, requested_db) or None,
-            "catalog": (getattr(parent_input, "catalog", "") or None),
-            "db_schema": (getattr(parent_input, "db_schema", "") or None),
+            "database": resolved_db,
+            "catalog": self._string_attr(parent_input, "catalog"),
+            "db_schema": self._string_attr(parent_input, "db_schema"),
         }
 
     @staticmethod
-    def _apply_db_context(node_input, ctx: Dict[str, Optional[str]]):
+    def _string_attr(obj: Any, name: str) -> Optional[str]:
+        value = getattr(obj, name, None)
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _apply_db_context(node_input: "BaseInput", ctx: Dict[str, Optional[str]]) -> "BaseInput":
         """Set inherited DB context on a freshly-built subagent input in place.
 
         Only assigns fields the input model actually declares (``ExploreNodeInput`` carries
@@ -966,7 +979,17 @@ class SubAgentTaskTool:
                 setattr(node_input, field, value)
         return node_input
 
-    def _build_node_input(self, node, prompt: str):
+    @staticmethod
+    def _refresh_node_db_tools(node: "AgenticNode", ctx: Dict[str, Optional[str]]) -> None:
+        """Rebuild DB-backed tool instances after inherited input context is set."""
+        node_database = SubAgentTaskTool._string_attr(getattr(node, "input", None), "database")
+        if not node_database or not ctx.get("database") or not hasattr(node, "db_func_tool"):
+            return
+        setup_tools = getattr(node, "setup_tools", None)
+        if callable(setup_tools):
+            setup_tools()
+
+    def _build_node_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
         """Build the appropriate input object for the given node.
 
         The subagent inherits the parent node's resolved physical ``database`` (and
@@ -979,7 +1002,7 @@ class SubAgentTaskTool:
         from datus.schemas.explore_agentic_node_models import ExploreNodeInput
         from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 
-        db_ctx = self._parent_db_context()
+        db_ctx = db_ctx if db_ctx is not None else self._parent_db_context()
 
         if isinstance(node, ExploreAgenticNode):
             return self._apply_db_context(ExploreNodeInput(user_message=prompt), db_ctx)

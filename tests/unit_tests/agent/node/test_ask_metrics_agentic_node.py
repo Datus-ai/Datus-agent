@@ -1000,6 +1000,18 @@ class TestAskMetricsAgenticNode:
         assert registry.get("read_query") == "db_tools"
         assert registry.get("parse_temporal_expressions") == "date_parsing_tools"
 
+    def test_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["revenue"]}}},
+            node_config={"type": "ask_metrics", "tools": "db_tools.read_query"},
+            input_data=AskMetricsNodeInput(user_message="Show revenue", database="california_schools"),
+        )
+
+        assert node.db_func_tool._default_database == "california_schools"
+
     def test_setup_tools_handles_context_search_failure(self, real_agent_config, mock_llm_create):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 

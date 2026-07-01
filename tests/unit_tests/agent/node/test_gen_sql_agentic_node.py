@@ -80,6 +80,23 @@ class TestGenSQLAgenticNodeInit:
         tool_names = {t.name for t in node.tools}
         assert {"list_tables", "describe_table", "execute_sql"} <= tool_names
 
+    def test_gen_sql_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        """Rebuilt DB tools should route to the physical database on node input."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_database",
+            description="Test GenSQL node",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+        )
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+
+        node._setup_db_tools()
+
+        assert node.db_func_tool._default_database == "california_schools"
+
     def test_gen_sql_max_turns_from_config(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (set to 5 in fixture)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode

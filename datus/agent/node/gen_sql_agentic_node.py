@@ -215,6 +215,9 @@ class GenSQLAgenticNode(AgenticNode):
         )
         self._rebuild_tools()
 
+    def _input_database(self) -> Optional[str]:
+        return getattr(self.input, "database", None) if self.input else None
+
     def _rebuild_tools(self):
         """Rebuild the tools list with current tool instances."""
         self.tools = []
@@ -288,6 +291,7 @@ class GenSQLAgenticNode(AgenticNode):
         try:
             self.db_func_tool = DBFuncTool(
                 agent_config=self.agent_config,
+                default_database=self._input_database(),
                 sub_agent_name=self.node_config.get("system_prompt"),
             )
             self.tools.extend(self.db_func_tool.available_tools())
@@ -328,6 +332,7 @@ class GenSQLAgenticNode(AgenticNode):
             if not db_tool:
                 db_tool = DBFuncTool(
                     agent_config=self.agent_config,
+                    default_database=self._input_database(),
                     sub_agent_name=self.node_config.get("system_prompt"),
                 )
             self.reference_template_tools = ReferenceTemplateTools(
@@ -454,6 +459,7 @@ class GenSQLAgenticNode(AgenticNode):
                 if not self.db_func_tool:
                     self.db_func_tool = DBFuncTool(
                         agent_config=self.agent_config,
+                        default_database=self._input_database(),
                         sub_agent_name=self.node_config.get("system_prompt"),
                     )
                 tool_instance = self.db_func_tool
@@ -475,6 +481,7 @@ class GenSQLAgenticNode(AgenticNode):
                     if not db_tool:
                         db_tool = DBFuncTool(
                             agent_config=self.agent_config,
+                            default_database=self._input_database(),
                             sub_agent_name=self.node_config.get("system_prompt"),
                         )
                     self.reference_template_tools = ReferenceTemplateTools(
