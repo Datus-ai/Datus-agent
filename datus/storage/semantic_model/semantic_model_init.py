@@ -7,6 +7,7 @@ import os
 from typing import Callable, Optional
 
 import pandas as pd
+import yaml
 
 from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 from datus.cli.generation_hooks import GenerationHooks
@@ -45,8 +46,8 @@ async def init_success_story_semantic_model_async(
         emit: Optional callback to stream BatchEvent progress events
         build_mode: ``"overwrite"`` (default) wipes the semantic model store
             for the current project before regenerating. ``"incremental"``
-            does not wipe; the LLM still runs and new entries are upserted
-            on top of existing ones (no row-level dedup).
+            skips generation when all referenced tables already have semantic
+            model rows; otherwise it generates and upserts missing coverage.
     """
     # Load and validate CSV file
     csv_path = success_story
@@ -94,15 +95,58 @@ async def init_success_story_semantic_model_async(
         logger.error(error_msg)
         return False, error_msg
 
-    if build_mode == "overwrite":
+    if build_mode == "check":
         from datus.storage.semantic_model.store import SemanticModelRAG
+        from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 
         semantic_model_rag = SemanticModelRAG(agent_config)
+        table_profile_rag = TableSemanticProfileRAG(agent_config)
+        logger.info(
+            "[check] semantic_model rows=%d table_semantic_profile rows=%d; generation skipped",
+            semantic_model_rag.get_size(),
+            table_profile_rag.get_size(),
+        )
+        return True, ""
+
+    if build_mode == "overwrite":
+        from datus.storage.semantic_model.store import SemanticModelRAG
+        from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+
+        semantic_model_rag = SemanticModelRAG(agent_config)
+        table_profile_rag = TableSemanticProfileRAG(agent_config)
         logger.info(
             "[overwrite] Wiping semantic_model rows for datasource '%s' before re-population",
             semantic_model_rag.datasource_id,
         )
         semantic_model_rag.truncate()
+        table_profile_rag.truncate()
+
+    elif build_mode == "incremental":
+        try:
+            from datus.storage.semantic_model.auto_create import (
+                extract_tables_from_sql_list,
+                find_missing_semantic_models,
+            )
+
+            referenced_tables = extract_tables_from_sql_list(
+                [str(sql) for sql in all_sqls if str(sql).strip()], agent_config
+            )
+            if referenced_tables:
+                missing_tables = find_missing_semantic_models(referenced_tables, agent_config)
+                if not missing_tables:
+                    logger.info(
+                        "[incremental] semantic models already exist for %d referenced table(s); generation skipped",
+                        len(referenced_tables),
+                    )
+                    return True, ""
+                logger.info(
+                    "[incremental] %d/%d referenced table(s) need semantic model refresh: %s",
+                    len(missing_tables),
+                    len(referenced_tables),
+                    missing_tables,
+                )
+        except Exception as exc:
+            logger.warning("Failed to compute incremental semantic-model coverage; generation will continue: %s", exc)
 
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"
@@ -297,3 +341,79 @@ def process_semantic_yaml_file(
         error_msg = f"Failed to sync '{yaml_file_path}' to vector store: {error}"
         logger.error(error_msg)
         return False, error
+
+
+def refresh_semantic_yaml_profile_descriptions(
+    yaml_file_path: str,
+    profile_evidence: dict,
+    *,
+    authoring_format: str = "",
+    agent_config: Optional[AgentConfig] = None,
+    sync_to_storage: bool = False,
+) -> tuple[bool, str, int]:
+    """Refresh generated `Observed profile` description suffixes in a semantic YAML file.
+
+    The caller is responsible for producing ``profile_evidence`` via the read-only
+    profiler. This function preserves semantic structure and only updates
+    description fields. When ``sync_to_storage`` is true, the updated YAML is
+    projected back into the semantic stores after it is written.
+    """
+    if sync_to_storage and agent_config is None:
+        return False, "agent_config is required when sync_to_storage=True", 0
+
+    if not os.path.exists(yaml_file_path):
+        return False, f"Semantic YAML file not found: {yaml_file_path}", 0
+
+    try:
+        with open(yaml_file_path, "r", encoding="utf-8") as f:
+            docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
+    except Exception as exc:
+        return False, f"Failed to read semantic YAML file '{yaml_file_path}': {exc}", 0
+
+    try:
+        from datus.storage.semantic_model.profile_description import (
+            refresh_metricflow_yaml_descriptions,
+            refresh_osi_yaml_descriptions,
+        )
+
+        fmt = (authoring_format or "").strip().lower()
+        if not fmt:
+            fmt = "metricflow" if any(isinstance(doc, dict) and doc.get("data_source") for doc in docs) else "osi"
+        if fmt == "metricflow":
+            changed = refresh_metricflow_yaml_descriptions(docs, profile_evidence)
+        elif fmt == "osi":
+            changed = refresh_osi_yaml_descriptions(docs, profile_evidence)
+        else:
+            return False, f"Unsupported semantic YAML authoring format: {authoring_format}", 0
+    except Exception as exc:
+        return False, f"Failed to refresh semantic YAML descriptions: {exc}", 0
+
+    if changed <= 0:
+        return True, "", 0
+
+    try:
+        with open(yaml_file_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+    except Exception as exc:
+        return False, f"Failed to write semantic YAML file '{yaml_file_path}': {exc}", 0
+
+    if sync_to_storage:
+        if fmt == "metricflow":
+            sync_success, sync_error = process_semantic_yaml_file(
+                yaml_file_path,
+                agent_config,
+                include_semantic_objects=True,
+                include_metrics=True,
+            )
+        else:
+            from datus.tools.func_tool.generation_tools import GenerationTools
+
+            result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_semantic_to_db(
+                yaml_file_path
+            )
+            sync_success = bool(result.get("success"))
+            sync_error = result.get("error", "")
+        if not sync_success:
+            return False, sync_error, changed
+
+    return True, "", changed

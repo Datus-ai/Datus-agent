@@ -315,7 +315,7 @@ class TestEndMetricGeneration:
 
         assert result.success == 1
         preflight_mock.assert_not_called()
-        sync_mock.assert_called_once()
+        sync_mock.assert_called_once_with(str(metric_file), [], {}, replace_metric_artifact=False)
 
     def test_osi_forwards_all_semantic_model_files_to_sync(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
@@ -353,7 +353,12 @@ class TestEndMetricGeneration:
 
         assert result.success == 1
         preflight_mock.assert_not_called()
-        sync_mock.assert_called_once_with(str(metric_file), [str(orders_file), str(customers_file)], {})
+        sync_mock.assert_called_once_with(
+            str(metric_file),
+            [str(orders_file), str(customers_file)],
+            {},
+            replace_metric_artifact=False,
+        )
         assert generation_tools.generation_evidence.semantic_kb_sync_passed is True
 
 
@@ -746,6 +751,7 @@ class TestSyncMetricToDb:
             include_metrics=True,
             metric_sqls=None,
             original_yaml_path=str(metric_file),
+            replace_metric_artifact=False,
         )
 
     def test_metric_with_semantic_models_syncs_semantic_then_metric(self, generation_tools, tmp_path):
@@ -773,6 +779,7 @@ class TestSyncMetricToDb:
         assert metric_call[0][0] == str(metric_file)
         assert metric_call.kwargs.get("include_semantic_objects") is False
         assert metric_call.kwargs.get("include_metrics") is True
+        assert metric_call.kwargs.get("replace_metric_artifact") is False
         assert metric_call.kwargs.get("metric_sqls") == {"rev": "SELECT 1"}
         assert metric_call.kwargs.get("original_yaml_path") == str(metric_file)
 
@@ -820,6 +827,7 @@ class TestSyncMetricToDb:
         assert "name: existing_metric" not in captured["content"]
         assert captured["kwargs"]["metric_sqls"] == {"new_metric": "SELECT new_metric"}
         assert captured["kwargs"]["original_yaml_path"] == str(metric_file)
+        assert captured["kwargs"]["replace_metric_artifact"] is False
 
     def test_semantic_sync_failure_aborts_metric_sync(self, generation_tools, tmp_path):
         """When semantic object sync fails, metric sync is skipped and failure propagated."""
@@ -944,6 +952,7 @@ class TestOsiSync:
             )
 
         assert result["success"] is True
+        generation_tools.metric_rag.delete_artifact_rows.assert_called_once_with(str(metric_file))
         generation_tools.metric_rag.upsert_batch.assert_called_once()
         metric_objects = generation_tools.metric_rag.upsert_batch.call_args.args[0]
         assert len(metric_objects) == 1
@@ -956,6 +965,46 @@ class TestOsiSync:
         assert metric_obj["sql"] == "SELECT 1"
         assert metric_obj["yaml_path"] == str(metric_file)
         assert result["metric_names"] == ["order_count"]
+
+    def test_sync_osi_metric_to_db_can_upsert_without_replacing_artifact(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
+            "        expression:\n"
+            "          dialects:\n"
+            "            - dialect: ANSI_SQL\n"
+            "              expression: COUNT(DISTINCT order_id)\n"
+        )
+        dataset = SimpleNamespace(
+            name="orders",
+            source=SimpleNamespace(table="orders"),
+            primary_key="order_id",
+            time_dimension=None,
+            dimensions=[],
+        )
+        metric = SimpleNamespace(
+            name="order_count",
+            description="Number of orders",
+            expression="COUNT(DISTINCT order_id)",
+            dataset="orders",
+            subject_path=None,
+            kind=None,
+        )
+        doc = SimpleNamespace(datasets=[dataset], metrics=[metric])
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file), replace_metric_artifact=False)
+
+        assert result["success"] is True
+        generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.metric_rag.upsert_batch.assert_called_once()
 
     def test_sync_osi_metric_to_db_includes_derived_and_joined_dimensions(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
@@ -1179,12 +1228,14 @@ class TestOsiSync:
             result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
 
         assert result["success"] is True
+        generation_tools.semantic_rag.delete_artifact_rows.assert_called_once_with(str(semantic_file))
         generation_tools.semantic_rag.upsert_batch.assert_called_once()
         objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
         assert [obj["kind"] for obj in objects] == ["table", "column", "column", "column"]
         assert objects[0]["name"] == "orders"
         assert objects[1]["name"] == "order_id"
         assert objects[1]["is_entity_key"] is True
+        generation_tools.table_semantic_profile_rag.delete_artifact_rows.assert_called_once_with(str(semantic_file))
         generation_tools.table_semantic_profile_rag.upsert_batch.assert_called_once()
         profiles = generation_tools.table_semantic_profile_rag.upsert_batch.call_args.args[0]
         assert profiles[0]["format"] == "osi"
@@ -1624,8 +1675,12 @@ class TestValidateMetricNameConflicts:
         ]
         with patch("datus.tools.func_tool.generation_tools.metric_definition_conflict", return_value="metric_type"):
             result = generation_tools._validate_metric_name_conflicts([{"name": "revenue", "metric_type": "ratio"}])
-        assert result is not None
-        assert "conflict" in result.lower()
+        assert result == (
+            "Metric name conflict within this datasource for 'revenue': "
+            "existing metric id 'm1' has a different 'metric_type'. "
+            "Metric names must be unique within a datasource; choose a more specific name "
+            "or update the existing metric explicitly."
+        )
 
     def test_exception_during_search_returns_none(self, generation_tools):
         generation_tools.metric_rag.search_all_metrics.side_effect = RuntimeError("storage error")

@@ -474,7 +474,9 @@ class GenerationTools:
                 )
 
             if self._is_osi_authoring():
-                sync_result = self._sync_osi_metric_to_db(abs_metric, abs_semantic_files, metric_sqls)
+                sync_result = self._sync_osi_metric_to_db(
+                    abs_metric, abs_semantic_files, metric_sqls, replace_metric_artifact=False
+                )
                 if not sync_result.get("success"):
                     return FuncToolResult(
                         success=0,
@@ -1185,6 +1187,9 @@ class GenerationTools:
     def _upsert_table_semantic_profiles(self, profiles: List[dict]) -> int:
         if not profiles or self.table_semantic_profile_rag is None:
             return 0
+        yaml_path = str(profiles[0].get("yaml_path") or "")
+        if yaml_path:
+            self.table_semantic_profile_rag.delete_artifact_rows(yaml_path)
         self.table_semantic_profile_rag.upsert_batch(profiles)
         self.table_semantic_profile_rag.create_indices()
         return len(profiles)
@@ -1552,6 +1557,7 @@ class GenerationTools:
                         f"context: {', '.join(sorted(target_dataset_names))}"
                     ),
                 }
+            self.semantic_rag.delete_artifact_rows(semantic_model_path)
             self.semantic_rag.upsert_batch(semantic_objects)
             self.semantic_rag.create_indices()
             profile_count = self._upsert_table_semantic_profiles(table_profiles)
@@ -1611,6 +1617,7 @@ class GenerationTools:
         metric_file: str,
         semantic_model_file: Optional[str | List[str]] = None,
         metric_sqls: Optional[Dict[str, str]] = None,
+        replace_metric_artifact: bool = True,
     ) -> dict:
         """Sync OSI metrics into MetricRAG using the OSI document as source of truth."""
         try:
@@ -1693,6 +1700,8 @@ class GenerationTools:
                     return sem_result
                 synced_semantic_files.append(current_semantic_file)
 
+            if replace_metric_artifact:
+                self.metric_rag.delete_artifact_rows(metric_file)
             self.metric_rag.upsert_batch(metric_objects)
             self.metric_rag.create_indices()
             return {
@@ -1766,6 +1775,7 @@ class GenerationTools:
                     include_metrics=True,
                     metric_sqls=sync_metric_sqls,
                     original_yaml_path=metric_file,
+                    replace_metric_artifact=False,
                 )
             finally:
                 if temp_metric_file and os.path.exists(temp_metric_file):

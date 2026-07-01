@@ -30,6 +30,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
 )
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.utils.benchmark_utils import load_benchmark_tasks
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -417,13 +418,15 @@ class Agent:
                         self.global_config.check_init_storage_config("database")
 
                         self.metadata_store = SchemaWithValueRAG(self.global_config)
-                        return {
+                        result = {
                             "status": "success",
                             "message": f"current metadata is already built, "
                             f"dir_path={dir_path},"
                             f"schema_size={self.metadata_store.get_schema_size()}, "
                             f"value_size={self.metadata_store.get_value_size()}",
                         }
+                        results[component] = result
+                        continue
 
                 if kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("database")
@@ -482,9 +485,26 @@ class Agent:
                     f"schema_size={self.metadata_store.get_schema_size()}, "
                     f"value_size={self.metadata_store.get_value_size()}",
                 }
-                return result
+                results[component] = result
+                continue
 
             elif component == "semantic_model":
+                uses_adapter = hasattr(self.args, "from_adapter") and self.args.from_adapter
+                uses_semantic_yaml = hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml
+                if kb_update_strategy == "check":
+                    temp_rag = SemanticModelRAG(self.global_config)
+                    profile_rag = TableSemanticProfileRAG(self.global_config)
+                    result = {
+                        "status": "success",
+                        "message": (
+                            "semantic_model check completed, "
+                            f"semantic_object_count={temp_rag.get_size()}, "
+                            f"table_semantic_profile_count={profile_rag.get_size()}"
+                        ),
+                    }
+                    results[component] = result
+                    continue
+
                 if kb_update_strategy == "overwrite":
                     # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
                     # because MetricFlow adapter needs to read YAML files from this directory
@@ -504,24 +524,25 @@ class Agent:
                 else:
                     self.global_config.check_init_storage_config("semantic_model")
                 temp_rag = SemanticModelRAG(self.global_config)
-                if kb_update_strategy == "overwrite":
+                if kb_update_strategy == "overwrite" and (uses_adapter or uses_semantic_yaml):
                     temp_rag.truncate()
+                    TableSemanticProfileRAG(self.global_config).truncate()
 
                 # Initialize semantic model
-                if hasattr(self.args, "from_adapter") and self.args.from_adapter:
+                if uses_adapter:
                     # Pull from semantic adapter
                     from datus.storage.semantic_model.adapter_init import init_from_adapter
 
                     successful, error_message = asyncio.run(
                         init_from_adapter(self.global_config, self.args.from_adapter)
                     )
-                elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                elif uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_semantic_model(
                         self.args.semantic_yaml, self.global_config
                     )
                 else:
                     successful, error_message = init_success_story_semantic_model(
-                        self.global_config, self.args.success_story
+                        self.global_config, self.args.success_story, build_mode=kb_update_strategy
                     )
 
                 if successful:
@@ -532,27 +553,39 @@ class Agent:
                     }
                 else:
                     result = {"status": "failed", "message": error_message}
-                return result
+                results[component] = result
+                continue
 
             elif component == "metrics":
+                uses_adapter = hasattr(self.args, "from_adapter") and self.args.from_adapter
+                uses_semantic_yaml = hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml
+                if kb_update_strategy == "check":
+                    self.metrics_store = MetricRAG(self.global_config)
+                    result = {
+                        "status": "success",
+                        "message": f"metrics check completed, metrics_count={self.metrics_store.get_metrics_size()}",
+                    }
+                    results[component] = result
+                    continue
+
                 if kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("metric")  # Keep compatibility
                 else:
                     self.global_config.check_init_storage_config("metric")
                 self.metrics_store = MetricRAG(self.global_config)
-                if kb_update_strategy == "overwrite":
+                if kb_update_strategy == "overwrite" and uses_adapter:
                     self.metrics_store.truncate()
                 self._reset_metrics_stream_state()
 
                 # Initialize metrics
-                if hasattr(self.args, "from_adapter") and self.args.from_adapter:
+                if uses_adapter:
                     # Pull from semantic adapter
                     from datus.storage.metric.adapter_init import init_from_adapter
 
                     successful, error_message = asyncio.run(
                         init_from_adapter(self.global_config, self.args.from_adapter, subject_path=subject_tree)
                     )
-                elif hasattr(self.args, "semantic_yaml") and self.args.semantic_yaml:
+                elif uses_semantic_yaml:
                     successful, error_message = init_semantic_yaml_metrics(self.args.semantic_yaml, self.global_config)
                 else:
                     successful, error_message, _ = init_success_story_metrics(
@@ -560,6 +593,7 @@ class Agent:
                         self.args.success_story,
                         subject_tree,
                         emit=self._emit_metrics_event,
+                        build_mode=kb_update_strategy,
                         batch_size=getattr(self.args, "metrics_batch_size", 5),
                     )
 
@@ -573,7 +607,8 @@ class Agent:
                     }
                 else:
                     result = {"status": "failed", "message": error_message}
-                return result
+                results[component] = result
+                continue
             elif component == "reference_sql":
                 if kb_update_strategy == "overwrite":
                     # Also clear the sql_summaries directory (YAML files)
@@ -605,7 +640,8 @@ class Agent:
                     subject_tree=subject_tree,
                     emit=self._emit_reference_sql_event,
                 )
-                return result
+                results[component] = result
+                continue
             elif component == "reference_template":
                 if kb_update_strategy == "overwrite":
                     self.global_config.save_storage_config("reference_template")
@@ -629,7 +665,8 @@ class Agent:
                     subject_tree=subject_tree,
                     emit=self._emit_reference_template_event,
                 )
-                return result
+                results[component] = result
+                continue
             results[component] = True
 
         # Initialize success story storage (always created)
@@ -639,10 +676,18 @@ class Agent:
         results["success_story"] = True
 
         logger.info(f"Knowledge base components initialized successfully: {', '.join(selected_components)}")
+        component_results = {key: value for key, value in results.items() if key != "success_story"}
+        if len(component_results) == 1:
+            return next(iter(component_results.values()))
+        failed = {
+            key: value
+            for key, value in component_results.items()
+            if isinstance(value, dict) and value.get("status") not in {"success", "skipped"}
+        }
         return {
-            "status": "success",
+            "status": "failed" if failed else "success",
             "message": "Knowledge base initialized",
-            "components": results,
+            "components": component_results,
         }
 
     def benchmark(self, run_id: Optional[str] = None):

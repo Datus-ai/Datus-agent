@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import pyarrow as pa
 import yaml
-from datus_storage_base.conditions import WhereExpr, and_, in_
+from datus_storage_base.conditions import WhereExpr, and_, eq, in_
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
@@ -726,6 +726,12 @@ class MetricRAG:
     def truncate(self) -> None:
         """Delete all metrics for this datasource."""
         self.storage.delete_datasource_rows(self.datasource_id)
+
+    def delete_artifact_rows(self, yaml_path: str) -> None:
+        """Delete metric rows projected from a single YAML artifact."""
+        if not yaml_path:
+            return
+        self.storage._delete_rows(and_(eq("yaml_path", yaml_path), *self._sub_agent_conditions()))
 
     def store_batch(self, metrics: List[Dict[str, Any]]):
         logger.info(f"store metrics: {metrics}")

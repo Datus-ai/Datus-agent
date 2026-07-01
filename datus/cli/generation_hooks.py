@@ -645,6 +645,7 @@ class GenerationHooks(AgentHooks):
                         include_metrics=True,
                         metric_sqls=metric_sqls,
                         original_yaml_path=file_path,
+                        replace_metric_artifact=False,
                     ),
                 )
                 item_type = "metric"
@@ -728,6 +729,7 @@ class GenerationHooks(AgentHooks):
                         include_metrics=True,
                         metric_sqls=metric_sqls,
                         original_yaml_path=metric_file,  # Use original metric file path, not temp file
+                        replace_metric_artifact=False,
                     ),
                 )
 
@@ -913,12 +915,16 @@ class GenerationHooks(AgentHooks):
         }
 
     @staticmethod
-    def _sync_table_semantic_profiles(agent_config: AgentConfig, profiles: list[dict]) -> int:
+    def _sync_table_semantic_profiles(
+        agent_config: AgentConfig, profiles: list[dict], replace_yaml_path: Optional[str] = None
+    ) -> int:
         if not profiles:
             return 0
         if not isinstance(getattr(agent_config, "project_name", ""), str):
             return 0
         profile_rag = TableSemanticProfileRAG(agent_config)
+        if replace_yaml_path:
+            profile_rag.delete_artifact_rows(replace_yaml_path)
         profile_rag.upsert_batch(profiles)
         profile_rag.create_indices()
         return len(profiles)
@@ -934,6 +940,7 @@ class GenerationHooks(AgentHooks):
         include_metrics: bool = True,
         metric_sqls: dict = None,
         original_yaml_path: Optional[str] = None,
+        replace_metric_artifact: bool = True,
     ) -> dict:
         """
         Sync semantic objects and/or metrics from YAML file to Knowledge Base.
@@ -946,6 +953,9 @@ class GenerationHooks(AgentHooks):
             metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
             original_yaml_path: Original YAML file path to store
                 (if different from file_path, e.g., when using temp files)
+            replace_metric_artifact: Whether metric sync should replace all
+                metric rows for original_yaml_path before upserting. Use False
+                for incremental sub-agent partial publishes.
 
         Now parses tables, columns, metrics, and entities as individual 'semantic_objects'.
         """
@@ -1353,11 +1363,16 @@ class GenerationHooks(AgentHooks):
             all_objects = semantic_objects + metric_objects
             if all_objects:
                 if semantic_objects:
+                    semantic_rag.delete_artifact_rows(yaml_path_to_store)
                     semantic_rag.upsert_batch(semantic_objects)
                     semantic_rag.create_indices()
-                profile_count = GenerationHooks._sync_table_semantic_profiles(agent_config, table_profiles)
+                profile_count = GenerationHooks._sync_table_semantic_profiles(
+                    agent_config, table_profiles, replace_yaml_path=yaml_path_to_store if table_profiles else None
+                )
 
                 if metric_objects:
+                    if replace_metric_artifact:
+                        metric_rag.delete_artifact_rows(yaml_path_to_store)
                     metric_rag.upsert_batch(metric_objects)
                     metric_rag.create_indices()
                 result = {

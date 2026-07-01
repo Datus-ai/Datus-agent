@@ -11,6 +11,7 @@ import pytest
 from datus.storage.semantic_model.semantic_model_init import (
     init_semantic_yaml_semantic_model,
     process_semantic_yaml_file,
+    refresh_semantic_yaml_profile_descriptions,
 )
 
 # ---------------------------------------------------------------------------
@@ -187,6 +188,134 @@ class TestProcessSemanticYamlFile:
 
 
 # ---------------------------------------------------------------------------
+# refresh_semantic_yaml_profile_descriptions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.ci
+class TestRefreshSemanticYamlProfileDescriptions:
+    def test_metricflow_refresh_writes_description_and_syncs(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  description: Orders table.
+  sql_table: orders
+  dimensions:
+    - name: status
+      expr: status
+      type: CATEGORICAL
+      description: Order status.
+""",
+            encoding="utf-8",
+        )
+        evidence = {
+            "tables": {
+                "orders": {
+                    "query_count": 1,
+                    "data_distribution_profile": {
+                        "columns": {
+                            "status": {
+                                "kind": "categorical",
+                                "stats": {"distinct_count": 2},
+                                "top_values": [{"value": "paid"}],
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        mock_config = MagicMock()
+
+        with patch(
+            "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
+            return_value=(True, ""),
+        ) as mock_sync:
+            success, error, changed = refresh_semantic_yaml_profile_descriptions(
+                str(yaml_file),
+                evidence,
+                agent_config=mock_config,
+                sync_to_storage=True,
+            )
+
+        assert success is True
+        assert error == ""
+        assert changed == 2
+        assert "Observed profile:" in yaml_file.read_text(encoding="utf-8")
+        mock_sync.assert_called_once_with(
+            str(yaml_file),
+            mock_config,
+            include_semantic_objects=True,
+            include_metrics=True,
+        )
+
+    def test_sync_requires_agent_config(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text("data_source:\n  name: orders\n", encoding="utf-8")
+
+        success, error, changed = refresh_semantic_yaml_profile_descriptions(
+            str(yaml_file),
+            {"tables": {}},
+            sync_to_storage=True,
+        )
+
+        assert success is False
+        assert "agent_config is required" in error
+        assert changed == 0
+
+    def test_osi_refresh_syncs_via_generation_tools(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+semantic_model:
+  - name: shop
+    datasets:
+      - name: orders
+        description: Orders dataset.
+        source: orders
+        dimensions:
+          - name: status
+            description: Order status.
+""",
+            encoding="utf-8",
+        )
+        evidence = {
+            "tables": {
+                "orders": {
+                    "query_count": 1,
+                    "data_distribution_profile": {
+                        "columns": {
+                            "status": {
+                                "kind": "categorical",
+                                "stats": {"distinct_count": 2},
+                                "top_values": [{"value": "paid"}],
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        mock_config = MagicMock()
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as mock_tools_cls:
+            mock_tools_cls.return_value.sync_osi_semantic_to_db.return_value = {"success": True}
+            success, error, changed = refresh_semantic_yaml_profile_descriptions(
+                str(yaml_file),
+                evidence,
+                authoring_format="osi",
+                agent_config=mock_config,
+                sync_to_storage=True,
+            )
+
+        assert success is True
+        assert error == ""
+        assert changed == 2
+        mock_tools_cls.assert_called_once_with(agent_config=mock_config, authoring_format="osi")
+        mock_tools_cls.return_value.sync_osi_semantic_to_db.assert_called_once_with(str(yaml_file))
+
+
+# ---------------------------------------------------------------------------
 # init_success_story_semantic_model_async - importability and coroutine check
 # ---------------------------------------------------------------------------
 
@@ -332,6 +461,10 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
         """
         monkeypatch.setattr(
             "datus.storage.semantic_model.store.SemanticModelRAG",
+            MagicMock(return_value=MagicMock()),
+        )
+        monkeypatch.setattr(
+            "datus.storage.table_semantic_profile.store.TableSemanticProfileRAG",
             MagicMock(return_value=MagicMock()),
         )
 
@@ -824,7 +957,13 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
 
         fake_rag_instance = MagicMock()
         rag_factory = MagicMock(return_value=fake_rag_instance)
+        fake_profile_rag_instance = MagicMock()
+        profile_rag_factory = MagicMock(return_value=fake_profile_rag_instance)
         monkeypatch.setattr("datus.storage.semantic_model.store.SemanticModelRAG", rag_factory)
+        monkeypatch.setattr(
+            "datus.storage.table_semantic_profile.store.TableSemanticProfileRAG",
+            profile_rag_factory,
+        )
 
         class MockSemanticNode:
             def __init__(self, *args, **kwargs):
@@ -850,6 +989,8 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
         assert success is True
         rag_factory.assert_called_once_with(mock_config)
         fake_rag_instance.truncate.assert_called_once_with()
+        profile_rag_factory.assert_called_once_with(mock_config)
+        fake_profile_rag_instance.truncate.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_incremental_does_not_call_truncate(self, tmp_path, monkeypatch):
@@ -870,8 +1011,14 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
         mock_db_config.schema = ""
         mock_config.current_db_config.return_value = mock_db_config
 
-        rag_factory = MagicMock()
+        fake_rag_instance = MagicMock()
+        rag_factory = MagicMock(return_value=fake_rag_instance)
+        profile_rag_factory = MagicMock()
         monkeypatch.setattr("datus.storage.semantic_model.store.SemanticModelRAG", rag_factory)
+        monkeypatch.setattr(
+            "datus.storage.table_semantic_profile.store.TableSemanticProfileRAG",
+            profile_rag_factory,
+        )
 
         class MockSemanticNode:
             def __init__(self, *args, **kwargs):
@@ -895,4 +1042,5 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
         )
 
         assert success is True
-        rag_factory.assert_not_called()
+        fake_rag_instance.truncate.assert_not_called()
+        profile_rag_factory.assert_not_called()

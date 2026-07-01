@@ -980,8 +980,8 @@ async def init_success_story_metrics_async(
         emit: Optional callback to stream BatchEvent progress events
         extra_instructions: Optional extra instructions for the LLM
         build_mode: ``"overwrite"`` (default) regenerates unconditionally;
-            ``"incremental"`` skips the LLM call when the metric store
-            already contains entries.
+            ``"incremental"`` skips only batches whose metric candidates are
+            already satisfied by existing metric definitions.
         batch_size: Number of SQL queries per batch (default 5).
     """
     if batch_size <= 0:
@@ -992,6 +992,16 @@ async def init_success_story_metrics_async(
         )
 
     event_helper = BatchEventHelper(BIZ_NAME, emit)
+
+    if build_mode == "check":
+        from datus.storage.metric.store import MetricRAG
+
+        metric_rag = MetricRAG(agent_config)
+        logger.info(
+            "[check] metrics rows=%d; generation skipped",
+            metric_rag.get_metrics_size(),
+        )
+        return True, "", {"checked": True, "metrics_count": metric_rag.get_metrics_size()}
 
     if build_mode == "overwrite":
         from datus.storage.metric.store import MetricRAG
@@ -1323,6 +1333,16 @@ def init_semantic_yaml_metrics(
     if not os.path.exists(yaml_file_path):
         logger.error(f"Semantic YAML file {yaml_file_path} not found")
         return False, f"Semantic YAML file {yaml_file_path} not found"
+
+    if _metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI:
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        result = GenerationTools(
+            agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI
+        )._sync_osi_metric_to_db(yaml_file_path)
+        if result.get("success"):
+            return True, result.get("message", "")
+        return False, result.get("error", "Unknown error")
 
     # Import from semantic_model package to avoid circular dependency
     from datus.storage.semantic_model.semantic_model_init import process_semantic_yaml_file

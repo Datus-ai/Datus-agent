@@ -6,7 +6,7 @@
 
 from enum import Enum
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -116,18 +116,63 @@ class TestInitSemanticYamlMetrics:
         yaml_file.write_text("tables:\n  - name: test\n")
         mock_config = MagicMock()
 
-        # The import happens inside the function body from the semantic_model package
-        from unittest.mock import patch
-
-        with patch(
-            "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
-            return_value=(True, ""),
-        ) as mock_process:
+        with (
+            patch(
+                "datus.storage.metric.metric_init._metrics_authoring_format",
+                return_value="metricflow",
+            ),
+            patch(
+                "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
+                return_value=(True, ""),
+            ) as mock_process,
+        ):
             success, error = init_semantic_yaml_metrics(str(yaml_file), mock_config)
 
         assert success is True
         assert error == ""
         mock_process.assert_called_once_with(str(yaml_file), mock_config, include_semantic_objects=False)
+
+    def test_osi_existing_file_calls_osi_metric_sync(self, tmp_path):
+        """OSI metric YAML imports use the OSI sync path."""
+        yaml_file = tmp_path / "metrics.yaml"
+        yaml_file.write_text("metrics:\n  - name: revenue\n")
+        mock_config = MagicMock()
+        mock_tools = MagicMock()
+        mock_tools._sync_osi_metric_to_db.return_value = {"success": True, "message": "synced"}
+
+        with (
+            patch(
+                "datus.storage.metric.metric_init._metrics_authoring_format",
+                return_value="osi",
+            ),
+            patch("datus.tools.func_tool.generation_tools.GenerationTools", return_value=mock_tools) as mock_cls,
+        ):
+            success, error = init_semantic_yaml_metrics(str(yaml_file), mock_config)
+
+        assert success is True
+        assert error == "synced"
+        mock_cls.assert_called_once_with(agent_config=mock_config, authoring_format="osi")
+        mock_tools._sync_osi_metric_to_db.assert_called_once_with(str(yaml_file))
+
+    def test_osi_existing_file_returns_sync_error(self, tmp_path):
+        """OSI sync failures are surfaced as init failures."""
+        yaml_file = tmp_path / "metrics.yaml"
+        yaml_file.write_text("metrics:\n  - name: revenue\n")
+        mock_config = MagicMock()
+        mock_tools = MagicMock()
+        mock_tools._sync_osi_metric_to_db.return_value = {"success": False, "error": "invalid osi metrics"}
+
+        with (
+            patch(
+                "datus.storage.metric.metric_init._metrics_authoring_format",
+                return_value="osi",
+            ),
+            patch("datus.tools.func_tool.generation_tools.GenerationTools", return_value=mock_tools),
+        ):
+            success, error = init_semantic_yaml_metrics(str(yaml_file), mock_config)
+
+        assert success is False
+        assert error == "invalid osi metrics"
 
 
 # ---------------------------------------------------------------------------

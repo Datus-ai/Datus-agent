@@ -654,6 +654,7 @@ class TestSyncToStorage:
             include_metrics=True,
             metric_sqls={"m": "SQL"},
             original_yaml_path="/tmp/metric.yaml",
+            replace_metric_artifact=False,
         )
 
     async def test_semantic_type_sync_failure(self, hooks):
@@ -1239,6 +1240,98 @@ class TestSyncSemanticToDbBooleanCoercion:
 
 
 class TestSyncSemanticToDbMetricReferenceNormalization:
+    def test_sync_replaces_rows_for_same_yaml_artifact(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: public.orders
+  dimensions:
+    - name: status
+      type: CATEGORICAL
+      expr: status
+  measures:
+    - name: revenue
+      agg: SUM
+      expr: amount
+---
+metric:
+  name: total_revenue
+  type: measure_proxy
+  type_params:
+    measure: revenue
+""",
+            encoding="utf-8",
+        )
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = "public"
+        agent_config.current_db_config.return_value = db_config
+        agent_config.project_name = "unit-test-project"
+
+        mock_semantic_rag = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_profile_rag = MagicMock()
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+            patch("datus.cli.generation_hooks.TableSemanticProfileRAG", return_value=mock_profile_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                original_yaml_path=str(yaml_file),
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        mock_semantic_rag.delete_artifact_rows.assert_called_once_with(str(yaml_file))
+        mock_semantic_rag.upsert_batch.assert_called_once()
+        mock_profile_rag.delete_artifact_rows.assert_called_once_with(str(yaml_file))
+        mock_profile_rag.upsert_batch.assert_called_once()
+        mock_metric_rag.delete_artifact_rows.assert_called_once_with(str(yaml_file))
+        mock_metric_rag.upsert_batch.assert_called_once()
+
+    def test_metric_partial_sync_does_not_replace_whole_yaml_artifact(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "orders_metrics.yml"
+        yaml_file.write_text(
+            """
+metric:
+  name: total_revenue
+  type: measure_proxy
+  type_params:
+    measure: revenue
+""",
+            encoding="utf-8",
+        )
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = "public"
+        agent_config.current_db_config.return_value = db_config
+
+        mock_semantic_rag = MagicMock()
+        mock_metric_rag = MagicMock()
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+                original_yaml_path=str(yaml_file),
+                replace_metric_artifact=False,
+            )
+
+        assert result["success"], f"Sync failed: {result.get('error')}"
+        mock_metric_rag.delete_artifact_rows.assert_not_called()
+        mock_metric_rag.upsert_batch.assert_called_once()
+
     def test_metric_id_includes_subject_path_to_avoid_same_name_collision(self, agent_config, tmp_path):
         yaml_file = tmp_path / "metrics.yml"
         yaml_file.write_text(

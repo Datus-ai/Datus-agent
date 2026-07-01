@@ -324,6 +324,92 @@ class TestKbServiceInitMetadata:
         assert result["status"] == "success"
 
 
+class TestKbServiceInitSemanticAndMetrics:
+    """Tests for semantic model and metrics strategy handling."""
+
+    def test_init_semantic_model_check_skips_generation(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        args = KbService._build_args(
+            BootstrapKbInput(components=["semantic_model"], strategy="check"),
+            str(real_agent_config.home),
+        )
+        with (
+            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag,
+            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile,
+            patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_init,
+        ):
+            mock_rag.return_value.get_size.return_value = 4
+            mock_profile.return_value.get_size.return_value = 2
+            result = svc._init_semantic_model(real_agent_config, "check", "", args, emit=None)
+
+        assert result["status"] == "success"
+        assert "semantic_object_count=4" in result["message"]
+        assert "table_semantic_profile_count=2" in result["message"]
+        mock_init.assert_not_called()
+
+    def test_init_semantic_model_forwards_strategy(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        args = KbService._build_args(
+            BootstrapKbInput(components=["semantic_model"], strategy="incremental", success_story="stories.csv"),
+            str(real_agent_config.home),
+        )
+
+        with (
+            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
+            patch("datus.api.services.kb_service.TableSemanticProfileRAG"),
+            patch(
+                "datus.api.services.kb_service.init_success_story_semantic_model",
+                return_value=(True, ""),
+            ) as mock_init,
+        ):
+            mock_rag_cls.return_value.get_size.return_value = 5
+            result = svc._init_semantic_model(real_agent_config, "incremental", "", args, emit=None)
+
+        assert result["status"] == "success"
+        mock_init.assert_called_once_with(real_agent_config, args.success_story, emit=None, build_mode="incremental")
+
+    def test_init_metrics_check_skips_generation(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        args = KbService._build_args(
+            BootstrapKbInput(components=["metrics"], strategy="check"),
+            str(real_agent_config.home),
+        )
+
+        with (
+            patch("datus.api.services.kb_service.MetricRAG") as mock_rag_cls,
+            patch("datus.api.services.kb_service.init_success_story_metrics") as mock_init,
+        ):
+            mock_rag_cls.return_value.get_metrics_size.return_value = 8
+            result = svc._init_metrics(real_agent_config, "check", "", args, subject_tree=None, emit=None)
+
+        assert result["status"] == "success"
+        assert "metrics_count=8" in result["message"]
+        mock_init.assert_not_called()
+
+    def test_init_metrics_forwards_strategy(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        args = KbService._build_args(
+            BootstrapKbInput(components=["metrics"], strategy="incremental", success_story="stories.csv"),
+            str(real_agent_config.home),
+        )
+
+        with (
+            patch("datus.api.services.kb_service.MetricRAG") as mock_rag_cls,
+            patch("datus.api.services.kb_service.init_success_story_metrics", return_value=(True, "", {})) as mock_init,
+        ):
+            mock_rag_cls.return_value.get_metrics_size.return_value = 6
+            result = svc._init_metrics(real_agent_config, "incremental", "", args, subject_tree=["Sales"], emit=None)
+
+        assert result["status"] == "success"
+        mock_init.assert_called_once_with(
+            real_agent_config,
+            args.success_story,
+            ["Sales"],
+            emit=None,
+            build_mode="incremental",
+        )
+
+
 class TestKbServiceRunComponent:
     """Tests for _run_component dispatch."""
 

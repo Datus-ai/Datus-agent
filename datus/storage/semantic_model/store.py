@@ -345,6 +345,12 @@ class SemanticModelRAG:
         """Delete all semantic model data for this datasource."""
         self.storage.delete_datasource_rows(self.datasource_id)
 
+    def delete_artifact_rows(self, yaml_path: str) -> None:
+        """Delete semantic rows projected from a single YAML artifact."""
+        if not yaml_path:
+            return
+        self.storage._delete_rows(And([eq("yaml_path", yaml_path)] + self._sub_agent_conditions()))
+
     def get_semantic_model(
         self,
         catalog_name: str = "",

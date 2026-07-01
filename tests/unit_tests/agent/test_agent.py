@@ -1045,14 +1045,19 @@ class TestBootstrapKbSemanticModel:
 
         mock_rag = MagicMock()
         mock_rag.get_size.return_value = 5
+        mock_profile_rag = MagicMock()
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
-            patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)) as mock_init,
         ):
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
+        mock_init.assert_called_once_with(agent.global_config, args.success_story, build_mode="overwrite")
+        mock_rag.truncate.assert_not_called()
+        mock_profile_rag.truncate.assert_not_called()
 
     def test_semantic_model_failure(self):
         args = _make_args_ext(components=["semantic_model"], kb_update_strategy="overwrite")
@@ -1062,11 +1067,33 @@ class TestBootstrapKbSemanticModel:
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG"),
             patch("datus.agent.agent.init_success_story_semantic_model", return_value=(False, "error msg")),
         ):
             result = agent.bootstrap_kb()
 
         assert result["status"] == "failed"
+
+    def test_semantic_model_check_skips_generation(self):
+        args = _make_args_ext(components=["semantic_model"], kb_update_strategy="check")
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_size.return_value = 7
+        mock_profile_rag = MagicMock()
+        mock_profile_rag.get_size.return_value = 3
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.init_success_story_semantic_model") as mock_init,
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        assert "semantic_object_count=7" in result["message"]
+        assert "table_semantic_profile_count=3" in result["message"]
+        mock_init.assert_not_called()
 
     def test_semantic_model_overwrite_cancelled_when_dir_exists(self, tmp_path):
         args = _make_args_ext(components=["semantic_model"], kb_update_strategy="overwrite")
@@ -1103,6 +1130,43 @@ class TestBootstrapKbSemanticModel:
 
         assert result["status"] == "success"
 
+    def test_semantic_model_yaml_overwrite_truncates_stores(self):
+        args = _make_args_ext(
+            components=["semantic_model"], kb_update_strategy="overwrite", semantic_yaml="path/to.yaml"
+        )
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_size.return_value = 2
+        mock_profile_rag = MagicMock()
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.init_semantic_yaml_semantic_model", return_value=(True, None)),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        mock_rag.truncate.assert_called_once_with()
+        mock_profile_rag.truncate.assert_called_once_with()
+
+    def test_semantic_model_incremental_forwards_strategy(self):
+        args = _make_args_ext(components=["semantic_model"], kb_update_strategy="incremental")
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_size.return_value = 2
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
+            patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)) as mock_init,
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        mock_init.assert_called_once_with(agent.global_config, args.success_story, build_mode="incremental")
+
 
 # ---------------------------------------------------------------------------
 # bootstrap_kb — metrics branch
@@ -1119,11 +1183,13 @@ class TestBootstrapKbMetrics:
 
         with (
             patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
-            patch("datus.agent.agent.init_success_story_metrics", return_value=(True, None, {})),
+            patch("datus.agent.agent.init_success_story_metrics", return_value=(True, None, {})) as mock_init,
         ):
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
+        mock_init.assert_called_once()
+        assert mock_init.call_args.kwargs["build_mode"] == "overwrite"
 
     def test_metrics_overwrite_keeps_semantic_yaml_dir(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite")
@@ -1160,6 +1226,39 @@ class TestBootstrapKbMetrics:
 
         assert result["status"] == "success"
 
+    def test_metrics_yaml_overwrite_does_not_truncate_store(self):
+        args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite", semantic_yaml="metrics.yaml")
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_metrics_size.return_value = 5
+
+        with (
+            patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
+            patch("datus.agent.agent.init_semantic_yaml_metrics", return_value=(True, None)),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        mock_rag.truncate.assert_not_called()
+
+    def test_metrics_incremental_forwards_strategy(self):
+        args = _make_args_ext(components=["metrics"], kb_update_strategy="incremental")
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_metrics_size.return_value = 5
+
+        with (
+            patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
+            patch("datus.agent.agent.init_success_story_metrics", return_value=(True, None, {})) as mock_init,
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        mock_init.assert_called_once()
+        assert mock_init.call_args.kwargs["build_mode"] == "incremental"
+
     def test_metrics_failure(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite")
         agent = _make_agent_ext(args=args)
@@ -1173,6 +1272,46 @@ class TestBootstrapKbMetrics:
             result = agent.bootstrap_kb()
 
         assert result["status"] == "failed"
+
+    def test_metrics_check_skips_generation(self):
+        args = _make_args_ext(components=["metrics"], kb_update_strategy="check")
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_metrics_size.return_value = 9
+
+        with (
+            patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
+            patch("datus.agent.agent.init_success_story_metrics") as mock_init,
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        assert "metrics_count=9" in result["message"]
+        mock_init.assert_not_called()
+
+    def test_multiple_components_return_summary(self):
+        args = _make_args_ext(components=["semantic_model", "metrics"], kb_update_strategy="check")
+        agent = _make_agent_ext(args=args)
+
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.get_size.return_value = 1
+        mock_profile_rag = MagicMock()
+        mock_profile_rag.get_size.return_value = 2
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.get_metrics_size.return_value = 3
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        assert set(result["components"]) == {"semantic_model", "metrics"}
+        assert "semantic_object_count=1" in result["components"]["semantic_model"]["message"]
+        assert "metrics_count=3" in result["components"]["metrics"]["message"]
 
 
 # ---------------------------------------------------------------------------

@@ -773,3 +773,17 @@ class TestMetricRAGSearch:
         result = MetricRAG._merge_search_results([first], [second], top_n=5)
 
         assert result == [first, second]
+
+
+class TestMetricRAGArtifactDelete:
+    def test_delete_artifact_rows_uses_sub_agent_scope(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows("metrics/orders.yml")
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._delete_rows.assert_called_once()

@@ -23,6 +23,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
 )
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.time_utils import now_utc_iso, to_utc_iso
@@ -253,9 +254,21 @@ class KbService:
         args: types.SimpleNamespace,
         emit,
     ) -> dict:
-        successful, error_message = init_success_story_semantic_model(config, args.success_story, emit=emit)
+        rag = SemanticModelRAG(config)
+        if strategy == "check":
+            profile_rag = TableSemanticProfileRAG(config)
+            return {
+                "status": "success",
+                "message": (
+                    "semantic_model check completed, "
+                    f"semantic_object_count={rag.get_size()}, "
+                    f"table_semantic_profile_count={profile_rag.get_size()}"
+                ),
+            }
+        successful, error_message = init_success_story_semantic_model(
+            config, args.success_story, emit=emit, build_mode=strategy
+        )
         if successful:
-            rag = SemanticModelRAG(config)
             return {
                 "status": "success",
                 "message": f"semantic_model bootstrap completed, semantic_object_count={rag.get_size()}",
@@ -272,9 +285,16 @@ class KbService:
         subject_tree: Optional[list],
         emit,
     ) -> dict:
-        successful, error_message, _ = init_success_story_metrics(config, args.success_story, subject_tree, emit=emit)
+        rag = MetricRAG(config)
+        if strategy == "check":
+            return {
+                "status": "success",
+                "message": f"metrics check completed, metrics_count={rag.get_metrics_size()}",
+            }
+        successful, error_message, _ = init_success_story_metrics(
+            config, args.success_story, subject_tree, emit=emit, build_mode=strategy
+        )
         if successful:
-            rag = MetricRAG(config)
             return {
                 "status": "success",
                 "message": f"metrics bootstrap completed, metrics_count={rag.get_metrics_size()}",
