@@ -54,6 +54,12 @@ def _write_release_repo(tmp_path: Path) -> Path:
                 "datus-bi-core>=0.1.2",
                 "datus-scheduler-core>=0.1.1",
             ]
+
+            [dependency-groups]
+            ci = [
+                "datus-metricflow>=0.2.6",
+                "datus-semantic-metricflow>=0.2.7",
+            ]
             """
         ).strip()
         + "\n",
@@ -153,6 +159,14 @@ def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatc
             "datus-scheduler-core": Version("0.1.2"),
         },
     )
+    monkeypatch.setattr(
+        prepare_release,
+        "latest_ci_adapter_bounds",
+        lambda timeout, allow_prerelease: {
+            "datus-metricflow": Version("0.2.7"),
+            "datus-semantic-metricflow": Version("0.2.8"),
+        },
+    )
 
     changed = prepare_release.prepare_release(
         repo_root,
@@ -167,7 +181,47 @@ def test_prepare_release_updates_version_and_adapter_bounds(tmp_path, monkeypatc
     assert 'version = "0.2.7"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     assert 'version("datus-agent")' in (repo_root / "datus" / "__init__.py").read_text(encoding="utf-8")
     assert '"datus-db-core>=0.1.4"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"datus-metricflow>=0.2.7"' in (repo_root / "pyproject.toml").read_text(encoding="utf-8")
     assert "datus-semantic-core>=0.2.1" in (repo_root / "requirements.txt").read_text(encoding="utf-8")
+
+
+def test_update_dependency_group_lower_bounds_preserves_formatting_and_requirement_metadata(tmp_path, prepare_release):
+    pyproject_path = tmp_path / "pyproject.toml"
+    pyproject_path.write_text(
+        dedent(
+            """
+            [dependency-groups]
+            ci = [
+                "Datus_MetricFlow[snowflake]>=0.2.6,<0.3; python_version >= '3.12'",
+                "datus-semantic-metricflow>=0.2.7",
+            ]
+            """
+        ).lstrip(),
+        encoding="utf-8",
+    )
+
+    changed = prepare_release.update_dependency_group_lower_bounds(
+        pyproject_path,
+        "ci",
+        {
+            "datus-metricflow": Version("0.2.7"),
+            "datus-semantic-metricflow": Version("0.2.8"),
+        },
+    )
+
+    assert changed is True
+    assert (
+        pyproject_path.read_text(encoding="utf-8")
+        == dedent(
+            """
+        [dependency-groups]
+        ci = [
+            "Datus_MetricFlow[snowflake]>=0.2.7,<0.3; python_version >= '3.12'",
+            "datus-semantic-metricflow>=0.2.8",
+        ]
+        """
+        ).lstrip()
+    )
 
 
 def test_prepare_release_can_leave_adapter_bounds_unchanged(tmp_path, monkeypatch, prepare_release):
