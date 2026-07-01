@@ -1000,6 +1000,40 @@ class TestAskMetricsAgenticNode:
         assert registry.get("read_query") == "db_tools"
         assert registry.get("parse_temporal_expressions") == "date_parsing_tools"
 
+    def test_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["revenue"]}}},
+            node_config={"type": "ask_metrics", "tools": "db_tools.read_query"},
+            input_data=AskMetricsNodeInput(user_message="Show revenue", database="california_schools"),
+        )
+
+        assert node.db_func_tool._default_database == "california_schools"
+
+    def test_setup_tools_refreshes_db_tools_for_changed_input_database(self, real_agent_config, mock_llm_create):
+        from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
+
+        tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
+        node, _, _ = _make_node(
+            real_agent_config,
+            tree=tree,
+            node_config={"type": "ask_metrics", "tools": "db_tools.read_query"},
+        )
+        original_db_tool = node.db_func_tool
+
+        node.input = AskMetricsNodeInput(user_message="Show revenue", database="california_schools")
+        with (
+            patch("datus.agent.node.ask_metrics_agentic_node.SemanticTools", return_value=_semantic_tools()),
+            patch("datus.agent.node.ask_metrics_agentic_node.ContextSearchTools", return_value=_context_tools(tree)),
+            patch("datus.agent.node.ask_metrics_agentic_node.trans_to_function_tool", side_effect=_fake_function_tool),
+        ):
+            node.setup_tools()
+
+        assert node.db_func_tool is not original_db_tool
+        assert node.db_func_tool._default_database == "california_schools"
+
     def test_setup_tools_handles_context_search_failure(self, real_agent_config, mock_llm_create):
         from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
 

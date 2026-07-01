@@ -112,6 +112,25 @@ class TestExploreAgenticNodeTools:
         assert "describe_table" in tool_names
         assert "execute_sql" in tool_names
 
+    def test_explore_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        """Rebuilt DB tools should route to the physical database on node input."""
+        from datus.agent.node.explore_agentic_node import ExploreAgenticNode
+        from datus.schemas.explore_agentic_node_models import ExploreNodeInput
+
+        node = ExploreAgenticNode(
+            node_id="test_explore_tools_database",
+            description="Test Explore node",
+            node_type=NodeType.TYPE_EXPLORE,
+            agent_config=real_agent_config,
+            node_name="explore",
+        )
+        node.input = ExploreNodeInput(user_message="Explore schools", database="california_schools")
+
+        node._setup_db_tools()
+
+        assert node.db_func_tool._default_database == "california_schools"
+        assert node.db_func_tool.read_only is True
+
     def test_explore_has_readonly_filesystem_tools(self, real_agent_config, mock_llm_create):
         """Node should have read-only filesystem tools."""
         from datus.agent.node.explore_agentic_node import ExploreAgenticNode

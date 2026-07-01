@@ -80,6 +80,47 @@ class TestGenSQLAgenticNodeInit:
         tool_names = {t.name for t in node.tools}
         assert {"list_tables", "describe_table", "execute_sql"} <= tool_names
 
+    def test_gen_sql_db_tools_use_input_database(self, real_agent_config, mock_llm_create):
+        """Rebuilt DB tools should route to the physical database on node input."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_database",
+            description="Test GenSQL node",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="gen_sql",
+        )
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+
+        node._setup_db_tools()
+
+        assert node.db_func_tool._default_database == "california_schools"
+
+    def test_gen_sql_setup_tools_refreshes_specific_db_tool_database(self, real_agent_config, mock_llm_create):
+        """Specific db_tools methods should rebuild DBFuncTool with current input database."""
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+
+        real_agent_config.agentic_nodes["custom_gen_sql_db"] = {
+            "system_prompt": "gen_sql",
+            "tools": "db_tools.read_query",
+            "max_turns": 5,
+        }
+        node = GenSQLAgenticNode(
+            node_id="test_gen_sql_specific_database",
+            description="Test GenSQL node",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="custom_gen_sql_db",
+        )
+        original_db_tool = node.db_func_tool
+
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+        node.setup_tools()
+
+        assert node.db_func_tool is not original_db_tool
+        assert node.db_func_tool._default_database == "california_schools"
+
     def test_gen_sql_max_turns_from_config(self, real_agent_config, mock_llm_create):
         """max_turns is read from agentic_nodes config (set to 5 in fixture)."""
         from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
@@ -835,6 +876,33 @@ class TestGenSQLNodeReferenceTemplateToolSetup:
             node_name="tpl_test2",
         )
         assert isinstance(node.reference_template_tools, ReferenceTemplateTools)
+
+    def test_reference_template_only_refreshes_internal_db_tool_database(self, real_agent_config, mock_llm_create):
+        """Reference-template-only configs should refresh their internal DBFuncTool."""
+        real_agent_config.agentic_nodes["tpl_only"] = {
+            "system_prompt": "gen_sql",
+            "tools": "reference_template_tools.execute_reference_template",
+            "max_turns": 5,
+        }
+        from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
+        from datus.configuration.node_type import NodeType
+        from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
+
+        node = GenSQLAgenticNode(
+            node_id="tpl_only_id",
+            description="Test",
+            node_type=NodeType.TYPE_GEN_SQL,
+            agent_config=real_agent_config,
+            node_name="tpl_only",
+        )
+        original_template_tools = node.reference_template_tools
+
+        node.input = GenSQLNodeInput(user_message="Show all schools", database="california_schools")
+        node.setup_tools()
+
+        assert isinstance(node.reference_template_tools, ReferenceTemplateTools)
+        assert node.reference_template_tools is not original_template_tools
+        assert node.reference_template_tools.db_func_tool._default_database == "california_schools"
 
 
 # ===========================================================================
