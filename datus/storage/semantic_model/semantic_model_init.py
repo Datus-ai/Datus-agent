@@ -165,8 +165,13 @@ async def init_success_story_semantic_model_async(
             "[overwrite] Wiping semantic_model rows for datasource '%s' before re-population",
             semantic_model_rag.datasource_id,
         )
-        semantic_model_rag.truncate()
-        table_profile_rag.truncate()
+        try:
+            semantic_model_rag.truncate()
+            table_profile_rag.truncate()
+        except Exception as exc:
+            error_msg = f"Failed to wipe semantic model storage for build_mode='overwrite': {exc}"
+            logger.exception(error_msg)
+            return False, error_msg
 
     elif build_mode == "incremental":
         try:

@@ -591,6 +591,37 @@ class TestInitSuccessStorySemanticModelAsync:
         assert "storage unavailable" in error
 
     @pytest.mark.asyncio
+    async def test_overwrite_mode_truncate_failure_returns_error(self, tmp_path):
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+        mock_config = MagicMock()
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.datasource_id = "test_ds"
+        mock_semantic_rag.truncate.side_effect = RuntimeError("truncate failed")
+        mock_table_profile_rag = MagicMock()
+
+        with (
+            patch("datus.storage.semantic_model.store.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch(
+                "datus.storage.table_semantic_profile.store.TableSemanticProfileRAG",
+                return_value=mock_table_profile_rag,
+            ),
+        ):
+            success, error = await init_success_story_semantic_model_async(
+                mock_config,
+                str(csv_path),
+                build_mode="overwrite",
+            )
+
+        assert success is False
+        assert "Failed to wipe semantic model storage" in error
+        assert "truncate failed" in error
+        mock_semantic_rag.truncate.assert_called_once()
+        mock_table_profile_rag.truncate.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_check_mode_reports_existing_row_counts(self, tmp_path):
         from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
 
