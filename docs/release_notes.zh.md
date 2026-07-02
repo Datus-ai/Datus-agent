@@ -2,6 +2,31 @@
 
 ## 0.3
 
+### 0.3.7
+
+**新功能**
+
+- **统一的 Web 搜索与抓取工具** - 新增 `web_tool.web_search` / `web_tool.web_fetch` 工具，agent 可联网搜索并抓取网页正文。后端按当前模型 provider 自动选择（Claude 原生 `web_search`/`web_fetch`、OpenAI hosted search、本地 Tavily），并统一归一化为同一套结果结构，无论用哪个模型，CLI/TUI 展示与 API、`datus -p` 的事件载荷都保持一致。例如 Claude 和 GPT 模型都会优先调用自己的搜索工具，没有内置搜索工具的模型降级到本地 Tavily 配置，如果仍然没有配置则没有搜索能力。[#1050](https://github.com/Datus-ai/Datus-agent/pull/1050) [#1068](https://github.com/Datus-ai/Datus-agent/pull/1068) [#1070](https://github.com/Datus-ai/Datus-agent/pull/1070) [#1081](https://github.com/Datus-ai/Datus-agent/pull/1081) [文档](https://docs.datus.ai/0.3/zh/configuration/web_tool/)
+
+**增强**
+
+- **统一的 `execute_sql` 数据库工具** - 原先分散的 `read_query` / `execute_ddl` / `execute_write` 合并为单个 `execute_sql`，按语句类型自动判定并授权：只读查询（SELECT/SHOW/EXPLAIN）自动放行，写入与 DDL 走权限确认（在 permission mode 为 dangerous 时才会自动执行）。同时解除了对 DDL 语句类型的预先限制，确认后即可执行 `CREATE DATABASE` / `TRUNCATE` / `MERGE` 等语句。[#1062](https://github.com/Datus-ai/Datus-agent/pull/1062)
+- **`list_tables` 返回限定名** - 列表项由裸 `table_name` 改为 `qualified_name`（`[db.][schema.]table`），只补全调用方未指定的命名空间层级，便于在跨 db/schema 场景中构造合法的后续查询引用。[#1078](https://github.com/Datus-ai/Datus-agent/pull/1078)
+- **完善 OSI 指标生成与 AskMetrics 语义指标链路** - 将 OSI 语义模型收敛为业务域级别，新增 describe_table 时的表级 semantic profile 同步/展示，并增强 ask_metrics 查询时的指标发现、跨表 join 控制及累计/滚动指标查询能力。[#1061](https://github.com/Datus-ai/Datus-agent/pull/1061) [#1055](https://github.com/Datus-ai/Datus-agent/pull/1055) [文档](https://docs.datus.ai/0.3/zh/adapters/osi_semantic_adapter/)
+- **build-kb / init 扫描全部文本文件** - `/build-kb` 与 `/init` 不再按固定后缀白名单扫描，改为按内容识别文本文件，无扩展名或少见后缀的文本也能纳入，二进制与超大文件（>~1MB）自动跳过。[#1059](https://github.com/Datus-ai/Datus-agent/pull/1059)
+- **权限确认弹窗可读化** - 权限确认时的工具参数改为按 markdown 分块渲染（SQL 用代码块高亮、嵌套结构用 JSON 块），能更清晰的看到需要确认的内容。[#1069](https://github.com/Datus-ai/Datus-agent/pull/1069)
+
+**Bug 修复**
+
+- **工具失败展示与 write_file 扩展名** - 修复 Claude 原生 / Codex 后端下工具执行失败仍显示绿色 ✓ 的问题（现正确显示 ✗）；同时解除 `write_file` 的扩展名白名单限制，可写出 `.sh` / `.tf` 等文件。[#1077](https://github.com/Datus-ai/Datus-agent/pull/1077)
+- **catalog/list 按 datasource 配置的 database 限定** - `GET /api/v1/catalog/list` 不再列出服务器实例上的全部 database，只返回 datasource 实际绑定的 database。[#1064](https://github.com/Datus-ai/Datus-agent/pull/1064)
+- **语义适配器运行时 DB 上下文** - 选中的 catalog/database/schema 会作为运行时 DB 上下文贯穿 API 与 agent，语义适配器配置与 SemanticTools 会随上下文切换自动重建。[#1066](https://github.com/Datus-ai/Datus-agent/pull/1066)
+- **CLI 抑制 LiteLLM 控制台日志** - LiteLLM 的 INFO 日志改写入 Datus 日志文件，不再泄漏到 TUI 界面。[#1071](https://github.com/Datus-ai/Datus-agent/pull/1071)
+
+**升级说明**
+
+- **数据库 SQL 工具合并** - `read_query` / `execute_ddl` / `execute_write` 不再作为独立的 agent/MCP 工具暴露，统一为单个 `execute_sql`；自定义 subagent 工具白名单或脚本若引用了旧工具名，需迁移到 `execute_sql`。[#1062](https://github.com/Datus-ai/Datus-agent/pull/1062)
+
 ### 0.3.6
 
 **增强**
