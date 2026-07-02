@@ -1011,6 +1011,42 @@ flow_groups:
         gaps:
           - https://github.com/Datus-ai/Datus-agent/issues/910
 
+      - id: extension.web_tools
+        title: Web search and fetch tools
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/configuration/web_tool.md
+        entrypoints:
+          - "Tool: web_search"
+          - "Tool: web_fetch"
+        contracts:
+          - The unified web tool group resolves provider configuration and exposes web_search/web_fetch to agents per permission policy.
+          - web_search/web_fetch results render through the canonical web_result schema regardless of backend (Tavily / Anthropic / OpenAI hosted).
+        coverage:
+          pr_acceptance:
+            status: covered
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_web_tool.py
+              - tests/unit_tests/schemas/test_web_result.py
+              - tests/unit_tests/agent/node/test_agentic_node_web_tools.py
+          merge_queue:
+            status: covered
+            nodeids:
+              - tests/unit_tests/tools/func_tool/test_web_tool.py
+              - tests/unit_tests/schemas/test_web_result.py
+              - tests/unit_tests/agent/node/test_agentic_node_web_tools.py
+          nightly:
+            status: external
+            notes: >
+              Live web_search/web_fetch require real provider credentials (Tavily / Anthropic / OpenAI
+              hosted) and network egress, classified as an external dependency. Provider-agnostic result
+              parsing, rendering, and tool wiring/permission exposure are covered deterministically.
+          weekly_benchmark:
+            status: not_applicable
+        gaps:
+          - https://github.com/Datus-ai/Datus-agent/issues/910
+
   quality_and_ops:
     description: Validation, observability, provider compatibility, benchmark, and release-confidence operations.
     flows:

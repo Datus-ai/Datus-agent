@@ -75,6 +75,7 @@ nav:
       - Workflow: configuration/workflow.md
       - Benchmark: configuration/benchmark.md
       - SQL Policy: configuration/sql_policy.md
+      - Web Tools: configuration/web_tool.md
       - Services:
         - Datasources: configuration/datasources.md
         - Semantic Layer: configuration/semantic_layer.md
