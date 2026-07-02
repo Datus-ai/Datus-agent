@@ -1,7 +1,11 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
+<<<<<<< HEAD
 version = "0.3.7rc1"
+=======
+version = "0.3.7"
+>>>>>>> a001cbb ([Doc] Add 0.3.7 release notes and bump version to 0.3.7 (#1097))
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"

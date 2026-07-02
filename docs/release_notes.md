@@ -2,6 +2,38 @@
 
 ## 0.3
 
+### 0.3.7
+
+**New Features**
+
+- **Unified Web Search and Fetch Tools** - Added `web_tool.web_search` / `web_tool.web_fetch` so the agent can search the web and fetch page content. The backend is selected automatically by the current model provider (Claude native `web_search`/`web_fetch`, OpenAI hosted search, or local Tavily), and results are normalized into one shared structure, so CLI/TUI rendering and the API / `datus -p` event payloads stay consistent regardless of the model. For example, Claude and GPT models prefer their own built-in search tools, models without a built-in search tool fall back to the local Tavily configuration, and without that configuration search is unavailable. [#1050](https://github.com/Datus-ai/Datus-agent/pull/1050) [#1068](https://github.com/Datus-ai/Datus-agent/pull/1068) [#1070](https://github.com/Datus-ai/Datus-agent/pull/1070) [#1081](https://github.com/Datus-ai/Datus-agent/pull/1081) [docs](https://docs.datus.ai/0.3/configuration/web_tool/)
+
+**Enhancements**
+
+- **Unified `execute_sql` Database Tool** - The previously separate `read_query` / `execute_ddl` / `execute_write` tools are merged into a single `execute_sql` that classifies each statement type and authorizes accordingly: read-only queries (SELECT/SHOW/EXPLAIN) pass automatically, while writes and DDL go through permission confirmation (auto-executed only when the permission mode is `dangerous`). The previous restriction on DDL statement types is also lifted, so statements like `CREATE DATABASE` / `TRUNCATE` / `MERGE` can run once confirmed. [#1062](https://github.com/Datus-ai/Datus-agent/pull/1062)
+- **`list_tables` Returns Qualified Names** - List items changed from bare `table_name` to `qualified_name` (`[db.][schema.]table`), completing only the namespace levels the caller did not specify, which makes it easier to build valid follow-up query references across databases/schemas. [#1078](https://github.com/Datus-ai/Datus-agent/pull/1078)
+- **Improved OSI Metric Generation and the AskMetrics Semantic Pipeline** - OSI semantic models are consolidated at the business-domain level, `describe_table` now syncs and displays a table-level semantic profile, and `ask_metrics` gains stronger metric discovery, cross-table join control, and cumulative/rolling metric querying. [#1061](https://github.com/Datus-ai/Datus-agent/pull/1061) [#1055](https://github.com/Datus-ai/Datus-agent/pull/1055) [docs](https://docs.datus.ai/0.3/adapters/osi_semantic_adapter/)
+- **build-kb / init Scan All Text Files** - `/build-kb` and `/init` no longer scan by a fixed extension whitelist; text files are detected by content, so extension-less or uncommon-suffix text files are included, while binaries and oversized files (>~1MB) are skipped automatically. [#1059](https://github.com/Datus-ai/Datus-agent/pull/1059)
+- **Readable Permission Prompts** - Tool arguments in permission confirmations are now rendered as markdown blocks (SQL as highlighted code blocks, nested structures as JSON blocks), making it much clearer what you are being asked to approve. [#1069](https://github.com/Datus-ai/Datus-agent/pull/1069)
+
+**Bug Fixes**
+
+- **Tool Failure Display and `write_file` Extensions** - Fixed failed tool executions still showing a green ✓ under the Claude native / Codex backends (now correctly shown as ✗); also removed the `write_file` extension whitelist so files like `.sh` / `.tf` can be written. [#1077](https://github.com/Datus-ai/Datus-agent/pull/1077)
+- **catalog/list Scoped to the Datasource's Configured Databases** - `GET /api/v1/catalog/list` no longer lists every database on the server instance; it returns only the databases actually bound to the datasource. [#1064](https://github.com/Datus-ai/Datus-agent/pull/1064)
+- **Runtime DB Context for Semantic Adapters** - The selected catalog/database/schema now travels through the API and agent as runtime DB context, and semantic adapter configuration plus SemanticTools are rebuilt automatically when the context switches. [#1066](https://github.com/Datus-ai/Datus-agent/pull/1066)
+- **CLI Suppresses LiteLLM Console Logs** - LiteLLM INFO logs are now written to the Datus log file instead of leaking into the TUI. [#1071](https://github.com/Datus-ai/Datus-agent/pull/1071)
+
+**Upgrade Notes**
+
+- **Database SQL Tool Consolidation** - `read_query` / `execute_ddl` / `execute_write` are no longer exposed as separate agent/MCP tools; they are unified into a single `execute_sql`. Custom subagent tool whitelists or scripts referencing the old tool names must migrate to `execute_sql`. [#1062](https://github.com/Datus-ai/Datus-agent/pull/1062)
+
+**Internal**
+
+- **Web Frontend Proxies `delete_file`** - `delete_file` in web sessions is now proxied to the browser side for execution, consistent with `write_file` / `edit_file`, instead of running on the server filesystem. [#1080](https://github.com/Datus-ai/Datus-agent/pull/1080)
+- **Metric Retrieval Hook and uid Column** - `tb_metrics` gains a `uid` column and a new metric retrieval hook so the SaaS Semantic Hub can track metric consumption; no end-user impact. [#1072](https://github.com/Datus-ai/Datus-agent/pull/1072)
+- **Benchmark Provenance** - The Claude native execution loop now preserves structured tool results for benchmark provenance. [#1056](https://github.com/Datus-ai/Datus-agent/pull/1056)
+- **Testing and Release** - Added a MetricFlow nightly integration test, fixed nightly/UT issues, and completed 0.3.6 release-note doc and link fixes plus release preparation. [#1076](https://github.com/Datus-ai/Datus-agent/pull/1076) [#1067](https://github.com/Datus-ai/Datus-agent/pull/1067) [#1065](https://github.com/Datus-ai/Datus-agent/pull/1065) [#1057](https://github.com/Datus-ai/Datus-agent/pull/1057) [#1054](https://github.com/Datus-ai/Datus-agent/pull/1054)
+
 ### 0.3.6
 
 **Enhancements**
