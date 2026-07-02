@@ -776,6 +776,13 @@ class TestMetricRAGSearch:
 
 
 class TestMetricRAGArtifactDelete:
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def to_pylist(self):
+            return self._rows
+
     def test_delete_artifact_rows_uses_sub_agent_scope(self):
         from datus.storage.metric.store import MetricRAG
 
@@ -788,6 +795,18 @@ class TestMetricRAGArtifactDelete:
         rag._sub_agent_conditions.assert_called_once_with()
         rag.storage._delete_rows.assert_called_once()
 
+    def test_delete_artifact_rows_ignores_empty_yaml_path(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows("")
+
+        rag._sub_agent_conditions.assert_not_called()
+        rag.storage._delete_rows.assert_not_called()
+
     def test_delete_artifact_rows_except_keeps_current_ids(self):
         from datus.storage.metric.store import MetricRAG
 
@@ -799,3 +818,63 @@ class TestMetricRAGArtifactDelete:
 
         rag._sub_agent_conditions.assert_called_once_with()
         rag.storage._delete_rows.assert_called_once()
+
+    def test_delete_artifact_rows_except_deletes_all_when_keep_ids_empty(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.delete_artifact_rows = Mock()
+
+        rag.delete_artifact_rows_except("metrics/orders.yml", ["", None])
+
+        rag.delete_artifact_rows.assert_called_once_with("metrics/orders.yml")
+
+    def test_list_artifact_rows_returns_empty_for_empty_yaml_path(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+
+        assert rag.list_artifact_rows("") == []
+        rag.storage._search_all.assert_not_called()
+
+    def test_list_artifact_rows_returns_storage_rows(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+        rag.storage._search_all.return_value = self._Rows([{"id": "metric:orders"}])
+
+        assert rag.list_artifact_rows("metrics/orders.yml") == [{"id": "metric:orders"}]
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._search_all.assert_called_once()
+
+    def test_restore_artifact_rows_ignores_empty_yaml_path(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.delete_artifact_rows = Mock()
+        rag.upsert_batch = Mock()
+        rag.create_indices = Mock()
+
+        rag.restore_artifact_rows("", [{"id": "metric:orders"}])
+
+        rag.delete_artifact_rows.assert_not_called()
+        rag.upsert_batch.assert_not_called()
+        rag.create_indices.assert_not_called()
+
+    def test_restore_artifact_rows_replaces_snapshot(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.delete_artifact_rows = Mock()
+        rag.upsert_batch = Mock()
+        rag.create_indices = Mock()
+        rows = [{"id": "metric:orders"}]
+
+        rag.restore_artifact_rows("metrics/orders.yml", rows)
+
+        rag.delete_artifact_rows.assert_called_once_with("metrics/orders.yml")
+        rag.upsert_batch.assert_called_once_with(rows)
+        rag.create_indices.assert_called_once_with()

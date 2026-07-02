@@ -64,3 +64,72 @@ def test_get_profile_lowercase_fallback_runs_after_ambiguous_broad_lookup():
     result = rag.get_profile(database_name="shop", table_name="Orders")
 
     assert result == expected
+
+
+def _artifact_rag():
+    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag.storage = Mock()
+    rag._sub_agent_conditions = Mock(return_value=[])
+    return rag
+
+
+def test_delete_artifact_rows_ignores_empty_yaml_path():
+    rag = _artifact_rag()
+
+    rag.delete_artifact_rows("")
+
+    rag._sub_agent_conditions.assert_not_called()
+    rag.storage._delete_rows.assert_not_called()
+
+
+def test_delete_artifact_rows_uses_sub_agent_scope():
+    rag = _artifact_rag()
+
+    rag.delete_artifact_rows("semantic/orders.yml")
+
+    rag._sub_agent_conditions.assert_called_once_with()
+    rag.storage._delete_rows.assert_called_once()
+
+
+def test_delete_artifact_rows_except_deletes_all_when_keep_ids_empty():
+    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag.delete_artifact_rows = Mock()
+
+    rag.delete_artifact_rows_except("semantic/orders.yml", ["", None])
+
+    rag.delete_artifact_rows.assert_called_once_with("semantic/orders.yml")
+
+
+def test_delete_artifact_rows_except_keeps_current_ids():
+    rag = _artifact_rag()
+
+    rag.delete_artifact_rows_except("semantic/orders.yml", ["profile:orders"])
+
+    rag._sub_agent_conditions.assert_called_once_with()
+    rag.storage._delete_rows.assert_called_once()
+
+
+def test_list_artifact_rows_handles_empty_and_non_empty_paths():
+    rag = _artifact_rag()
+    rag.storage._search_all.return_value = _Rows([{"id": "profile:orders"}])
+
+    assert rag.list_artifact_rows("") == []
+    assert rag.list_artifact_rows("semantic/orders.yml") == [{"id": "profile:orders"}]
+
+    rag._sub_agent_conditions.assert_called_once_with()
+    rag.storage._search_all.assert_called_once()
+
+
+def test_restore_artifact_rows_handles_empty_and_non_empty_paths():
+    rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag.delete_artifact_rows = Mock()
+    rag.upsert_batch = Mock()
+    rag.create_indices = Mock()
+    rows = [{"id": "profile:orders"}]
+
+    rag.restore_artifact_rows("", rows)
+    rag.restore_artifact_rows("semantic/orders.yml", rows)
+
+    rag.delete_artifact_rows.assert_called_once_with("semantic/orders.yml")
+    rag.upsert_batch.assert_called_once_with(rows)
+    rag.create_indices.assert_called_once_with()

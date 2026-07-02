@@ -6,6 +6,7 @@
 
 import os
 import tempfile
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -917,3 +918,78 @@ class TestSemanticModelRAGCreateIndices:
         sem_rag.create_indices()
         # Verify data is still accessible
         assert sem_rag.get_size() >= 1
+
+
+class TestSemanticModelRAGArtifactRows:
+    """Tests for artifact-scoped semantic row replacement helpers."""
+
+    class _Rows:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def to_pylist(self):
+            return self._rows
+
+    def test_delete_artifact_rows_ignores_empty_yaml_path(self):
+        rag = SemanticModelRAG.__new__(SemanticModelRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows("")
+
+        rag._sub_agent_conditions.assert_not_called()
+        rag.storage._delete_rows.assert_not_called()
+
+    def test_delete_artifact_rows_uses_sub_agent_scope(self):
+        rag = SemanticModelRAG.__new__(SemanticModelRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows("semantic/orders.yml")
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._delete_rows.assert_called_once()
+
+    def test_delete_artifact_rows_except_deletes_all_when_keep_ids_empty(self):
+        rag = SemanticModelRAG.__new__(SemanticModelRAG)
+        rag.delete_artifact_rows = Mock()
+
+        rag.delete_artifact_rows_except("semantic/orders.yml", ["", None])
+
+        rag.delete_artifact_rows.assert_called_once_with("semantic/orders.yml")
+
+    def test_delete_artifact_rows_except_keeps_current_ids(self):
+        rag = SemanticModelRAG.__new__(SemanticModelRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows_except("semantic/orders.yml", ["table:orders"])
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._delete_rows.assert_called_once()
+
+    def test_list_artifact_rows_handles_empty_and_non_empty_paths(self):
+        rag = SemanticModelRAG.__new__(SemanticModelRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+        rag.storage._search_all.return_value = self._Rows([{"id": "table:orders"}])
+
+        assert rag.list_artifact_rows("") == []
+        assert rag.list_artifact_rows("semantic/orders.yml") == [{"id": "table:orders"}]
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._search_all.assert_called_once()
+
+    def test_restore_artifact_rows_handles_empty_and_non_empty_paths(self):
+        rag = SemanticModelRAG.__new__(SemanticModelRAG)
+        rag.delete_artifact_rows = Mock()
+        rag.upsert_batch = Mock()
+        rag.create_indices = Mock()
+        rows = [{"id": "table:orders"}]
+
+        rag.restore_artifact_rows("", rows)
+        rag.restore_artifact_rows("semantic/orders.yml", rows)
+
+        rag.delete_artifact_rows.assert_called_once_with("semantic/orders.yml")
+        rag.upsert_batch.assert_called_once_with(rows)
+        rag.create_indices.assert_called_once_with()

@@ -9,6 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from datus.storage.semantic_model.semantic_model_init import (
+    _infer_semantic_yaml_authoring_format,
+    _load_success_story_profile_entries,
+    _metricflow_data_source_table,
+    _semantic_yaml_profile_tables,
     init_semantic_yaml_semantic_model,
     process_semantic_yaml_file,
     refresh_semantic_yaml_profile_descriptions,
@@ -523,6 +527,7 @@ data_source:
             result={"tables": {"orders": {"data_distribution_profile": {"columns": {}}}}}
         )
 
+        events = []
         with (
             patch("datus.tools.func_tool.database.DBFuncTool") as mock_db_tool,
             patch(
@@ -538,11 +543,14 @@ data_source:
                 mock_config,
                 str(yaml_file),
                 str(success_story),
+                emit=events.append,
             )
 
         assert success is True
         assert error == ""
         assert changed == 2
+        assert [event.stage for event in events] == ["task_started", "task_completed"]
+        assert events[-1].payload == {"semantic_yaml": str(yaml_file), "changed_description_count": 2}
         mock_db_tool.assert_called_once_with(
             agent_config=mock_config,
             sub_agent_name="gen_semantic_model",
@@ -571,6 +579,180 @@ data_source:
         assert success is False
         assert "--semantic_yaml is required" in error
         assert changed == 0
+
+    def test_refresh_profile_requires_success_story(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text("data_source:\n  name: orders\n", encoding="utf-8")
+
+        success, error, changed = refresh_success_story_semantic_model_profile(
+            MagicMock(),
+            str(yaml_file),
+            "",
+        )
+
+        assert success is False
+        assert "--success_story is required" in error
+        assert changed == 0
+
+    def test_refresh_profile_reports_missing_yaml_file(self, tmp_path):
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text("sql\nSELECT 1\n", encoding="utf-8")
+
+        success, error, changed = refresh_success_story_semantic_model_profile(
+            MagicMock(path_manager=None),
+            str(tmp_path / "missing.yml"),
+            str(success_story),
+        )
+
+        assert success is False
+        assert "Semantic YAML file not found" in error
+        assert changed == 0
+
+    def test_success_story_profile_entries_validate_required_sql(self, tmp_path):
+        missing = tmp_path / "missing.csv"
+        entries, error = _load_success_story_profile_entries(str(missing))
+        assert entries == []
+        assert "not found" in error
+
+        no_sql = tmp_path / "no_sql.csv"
+        no_sql.write_text("question\nhow many orders?\n", encoding="utf-8")
+        entries, error = _load_success_story_profile_entries(str(no_sql))
+        assert entries == []
+        assert "missing required column: sql" in error
+
+        blank_sql = tmp_path / "blank_sql.csv"
+        blank_sql.write_text("source_context_id,name,question,sql\n,,ignored,\n", encoding="utf-8")
+        entries, error = _load_success_story_profile_entries(str(blank_sql))
+        assert entries == []
+        assert "contains no SQL rows" in error
+
+        valid = tmp_path / "valid.csv"
+        valid.write_text("source_context_id,name,question,sql\n,story_name,,SELECT 1\n", encoding="utf-8")
+        entries, error = _load_success_story_profile_entries(str(valid))
+        assert error == ""
+        assert entries == [{"name": "story_name", "question": "", "sql": "SELECT 1"}]
+
+    def test_semantic_yaml_profile_table_helpers_cover_format_variants(self):
+        docs = [
+            None,
+            {"data_source": "not-a-dict"},
+            {
+                "semantic_model": [
+                    {
+                        "datasets": [
+                            {"source": {"table": "mart.orders"}},
+                            {"source": "mart.customers"},
+                            {"table": "fallback_table"},
+                            {"name": "fallback_name"},
+                        ]
+                    },
+                    "ignored",
+                ],
+                "datasets": [{"source": {"table": "mart.orders"}}],
+            },
+        ]
+
+        assert _infer_semantic_yaml_authoring_format([], " OSI ") == "osi"
+        assert _metricflow_data_source_table("not-a-dict") == ""
+        assert _semantic_yaml_profile_tables(docs, "osi") == [
+            "mart.orders",
+            "mart.customers",
+            "fallback_table",
+            "fallback_name",
+        ]
+
+    def test_refresh_profile_rejects_unsupported_authoring_format(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text("data_source:\n  name: orders\n", encoding="utf-8")
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text("sql\nSELECT * FROM orders\n", encoding="utf-8")
+
+        success, error, changed = refresh_success_story_semantic_model_profile(
+            MagicMock(path_manager=None),
+            str(yaml_file),
+            str(success_story),
+            authoring_format="unsupported",
+        )
+
+        assert success is False
+        assert "Unsupported semantic YAML authoring format" in error
+        assert changed == 0
+
+    def test_refresh_profile_rejects_yaml_without_table_targets(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text("data_source:\n  description: no table target\n", encoding="utf-8")
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text("sql\nSELECT * FROM orders\n", encoding="utf-8")
+
+        success, error, changed = refresh_success_story_semantic_model_profile(
+            MagicMock(path_manager=None),
+            str(yaml_file),
+            str(success_story),
+        )
+
+        assert success is False
+        assert "No table targets found" in error
+        assert changed == 0
+
+    def test_refresh_profile_reports_profiler_exception_and_emits_failure(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text("data_source:\n  name: orders\n", encoding="utf-8")
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text("sql\nSELECT * FROM orders\n", encoding="utf-8")
+        current_db_config = MagicMock(catalog="", database="analytics", schema="")
+        mock_config = MagicMock(path_manager=None)
+        mock_config.current_db_config.return_value = current_db_config
+        mock_config.runtime_db_context.return_value = {}
+        events = []
+
+        with patch("datus.tools.func_tool.database.DBFuncTool", side_effect=RuntimeError("db offline")):
+            success, error, changed = refresh_success_story_semantic_model_profile(
+                mock_config,
+                str(yaml_file),
+                str(success_story),
+                emit=events.append,
+            )
+
+        assert success is False
+        assert "Failed to profile semantic YAML" in error
+        assert "db offline" in error
+        assert changed == 0
+        assert [event.stage for event in events] == ["task_started", "task_failed"]
+
+    def test_refresh_profile_reports_profiler_failure_and_emits_failure(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text("data_source:\n  name: orders\n", encoding="utf-8")
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text("sql\nSELECT * FROM orders\n", encoding="utf-8")
+        current_db_config = MagicMock(catalog="", database="analytics", schema="")
+        mock_config = MagicMock(path_manager=None)
+        mock_config.current_db_config.return_value = current_db_config
+        mock_config.runtime_db_context.return_value = {}
+        mock_discovery = MagicMock()
+        mock_discovery.profile_semantic_model_evidence.return_value = MagicMock(
+            success=False,
+            error="profile failed",
+        )
+        events = []
+
+        with (
+            patch("datus.tools.func_tool.database.DBFuncTool"),
+            patch(
+                "datus.tools.func_tool.semantic_discovery_tools.SemanticDiscoveryTools",
+                return_value=mock_discovery,
+            ),
+        ):
+            success, error, changed = refresh_success_story_semantic_model_profile(
+                mock_config,
+                str(yaml_file),
+                str(success_story),
+                emit=events.append,
+            )
+
+        assert success is False
+        assert error == "profile failed"
+        assert changed == 0
+        assert [event.stage for event in events] == ["task_started", "task_failed"]
 
 
 # ---------------------------------------------------------------------------
