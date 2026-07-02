@@ -2840,6 +2840,8 @@
       
         
       
+        
+      
     
     
     
@@ -3057,6 +3059,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../configuration/web_tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -3079,10 +3109,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_11_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_11_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_11_7" id="__nav_1_11_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_11_8" id="__nav_1_11_8_label" tabindex="0">
             
   
   
@@ -3100,8 +3130,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_11_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_11_7">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_11_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_11_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4296,7 +4326,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.6/docs/knowledge_base/platform_doc.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.7/docs/knowledge_base/platform_doc.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4518,6 +4548,7 @@
 </table>
 <p>To expose these tools in custom nodes or subagents, include <code>platform_doc_tools</code> (or specific <code>platform_doc_search_tools.*</code>) in the tool configuration.</p>
 <p><strong>Recommended call order</strong>: <code>list_document_nav</code> → <code>get_document</code> → <code>search_document</code> → <code>web_search_document</code> (fallback).</p>
+<p><code>web_search_document</code> is not the same tool as the general-purpose <code>web_search</code> from the <a href="../../configuration/web_tool/">web tool group</a> — they share the Tavily key configuration but have separate permission categories.</p>
 <p><strong><code>get_document</code> expects one document at a time</strong>. Pass a single hierarchy path like:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>titles=[&quot;DDL&quot;, &quot;CREATE TABLE&quot;]
 </span></code></pre></div>
