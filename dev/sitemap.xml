@@ -253,6 +253,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/configuration/storage/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/configuration/web_tool/</loc>
+        <lastmod>2026-07-02</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/configuration/web_tool/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/configuration/web_tool/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/configuration/workflow/</loc>
         <lastmod>2026-07-02</lastmod>
         <changefreq>daily</changefreq>
@@ -839,6 +846,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/configuration/storage/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devconfiguration/storage/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/configuration/web_tool/</loc>
+        <lastmod>2026-07-02</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/configuration/web_tool/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devconfiguration/web_tool/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/configuration/workflow/</loc>

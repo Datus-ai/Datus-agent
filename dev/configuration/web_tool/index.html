@@ -1,6 +1,6 @@
 
 <!doctype html>
-<html lang="zh" class="no-js">
+<html lang="en" class="no-js">
   <head>
     
       <meta charset="utf-8">
@@ -8,35 +8,35 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/zh/cli/reference/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/configuration/web_tool/">
       
       
-        <link rel="prev" href="../skill_command/">
+        <link rel="prev" href="../sql_policy/">
       
       
-        <link rel="next" href="../plan_mode/">
+        <link rel="next" href="../datasources/">
       
       
         
-          <link rel="alternate" href="../../../cli/reference/" hreflang="en">
+          <link rel="alternate" href="./" hreflang="en">
         
-          <link rel="alternate" href="./" hreflang="zh">
+          <link rel="alternate" href="../../zh/configuration/web_tool/" hreflang="zh">
         
       
       
-      <link rel="icon" href="../../../assets/logo-light.png">
+      <link rel="icon" href="../../assets/logo-light.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>参考 - Datus Docs</title>
+        <title>Web Tools - Datus Docs</title>
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -49,9 +49,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -76,8 +76,8 @@
     <div data-md-component="skip">
       
         
-        <a href="#_1" class="md-skip">
-          跳转至
+        <a href="#web-tools" class="md-skip">
+          Skip to content
         </a>
       
     </div>
@@ -93,10 +93,10 @@
       
 
 <header class="md-header" data-md-component="header">
-  <nav class="md-header__inner md-grid" aria-label="页眉">
-    <a href="../../" title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="Datus Docs" class="md-header__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../../assets/logo-light.png" alt="logo">
+  <img src="../../assets/logo-light.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              参考
+              Web Tools
             
           </span>
         </div>
@@ -163,20 +163,20 @@
       <div class="md-header__option">
   <div class="md-select">
     
-    <button class="md-header__button md-icon" aria-label="选择当前语言">
+    <button class="md-header__button md-icon" aria-label="Select language">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m12.87 15.07-2.54-2.51.03-.03A17.5 17.5 0 0 0 14.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2zm-2.62 7 1.62-4.33L19.12 17z"/></svg>
     </button>
     <div class="md-select__inner">
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="../../../cli/reference/" hreflang="en" class="md-select__link">
+            <a href="./" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
         
           <li class="md-select__item">
-            <a href="./" hreflang="zh" class="md-select__link">
+            <a href="../../zh/configuration/web_tool/" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -197,16 +197,16 @@
   <label class="md-search__overlay" for="__search"></label>
   <div class="md-search__inner" role="search">
     <form class="md-search__form" name="search">
-      <input type="text" class="md-search__input" name="query" aria-label="搜索" placeholder="搜索" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
       <label class="md-search__icon md-icon" for="__search">
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
         
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
       </label>
-      <nav class="md-search__options" aria-label="查找">
+      <nav class="md-search__options" aria-label="Search">
         
-        <button type="reset" class="md-search__icon md-icon" title="清空当前内容" aria-label="清空当前内容" tabindex="-1">
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
           
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
@@ -217,7 +217,7 @@
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
         <div class="md-search-result" data-md-component="search-result">
           <div class="md-search-result__meta">
-            正在初始化搜索引擎
+            Initializing search
           </div>
           <ol class="md-search-result__list" role="presentation"></ol>
         </div>
@@ -229,7 +229,7 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
+        <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -250,7 +250,7 @@
         
           
             
-<nav class="md-tabs" aria-label="标签" data-md-component="tabs">
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
       
@@ -264,13 +264,13 @@
     
     
       <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../" class="md-tabs__link">
+        <a href="../.." class="md-tabs__link">
           
   
   
     
   
-  首页
+  Home
 
         </a>
       </li>
@@ -290,7 +290,7 @@
   
     
   
-  发布说明
+  Release Notes
 
       </a>
     </li>
@@ -317,18 +317,18 @@
   
 
 
-<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="导航栏" data-md-level="0">
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../" title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
+    <a href="../.." title="Datus Docs" class="md-nav__button md-logo" aria-label="Datus Docs" data-md-component="logo">
       
-  <img src="../../../assets/logo-light.png" alt="logo">
+  <img src="../../assets/logo-light.png" alt="logo">
 
     </a>
     Datus Docs
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/Datus-ai/Datus-agent" title="前往仓库" class="md-source" data-md-component="source">
+      <a href="https://github.com/Datus-ai/Datus-agent" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
@@ -406,14 +406,14 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../" class="md-nav__link ">
+            <a href="../.." class="md-nav__link ">
               
   
   
   <span class="md-ellipsis">
     
   
-    首页
+    Home
   
 
     
@@ -435,7 +435,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    首页
+    Home
   
 
           </label>
@@ -481,7 +481,7 @@
   <span class="md-ellipsis">
     
   
-    入门指南
+    Getting Started
   
 
     
@@ -497,7 +497,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    入门指南
+    Getting Started
   
 
           </label>
@@ -517,7 +517,7 @@
   <span class="md-ellipsis">
     
   
-    快速开始
+    Quickstart
   
 
     
@@ -545,7 +545,7 @@
   <span class="md-ellipsis">
     
   
-    数据工程快速开始
+    Data Engineering Quickstart
   
 
     
@@ -573,7 +573,7 @@
   <span class="md-ellipsis">
     
   
-    上下文数据工程
+    Contextual Data Engineering
   
 
     
@@ -627,10 +627,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -661,11 +659,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_3" >
         
           
           <label class="md-nav__link" for="__nav_1_3" id="__nav_1_3_label" tabindex="0">
@@ -675,7 +673,7 @@
   <span class="md-ellipsis">
     
   
-    命令行
+    CLI
   
 
     
@@ -686,12 +684,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_3">
             <span class="md-nav__icon md-icon"></span>
             
   
-    命令行
+    CLI
   
 
           </label>
@@ -704,14 +702,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../introduction/" class="md-nav__link">
+      <a href="../../cli/introduction/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -732,14 +730,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../chat_command/" class="md-nav__link">
+      <a href="../../cli/chat_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    聊天命令
+    Chat Command
   
 
     
@@ -760,14 +758,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../context_command/" class="md-nav__link">
+      <a href="../../cli/context_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    上下文命令
+    Context Command
   
 
     
@@ -788,14 +786,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../execution_command/" class="md-nav__link">
+      <a href="../../cli/execution_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    执行命令
+    Execution Command
   
 
     
@@ -816,14 +814,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../mcp_extensions/" class="md-nav__link">
+      <a href="../../cli/mcp_extensions/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    MCP 扩展
+    MCP Extensions
   
 
     
@@ -844,14 +842,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../sql_execution/" class="md-nav__link">
+      <a href="../../cli/sql_execution/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    SQL 执行
+    SQL Execution
   
 
     
@@ -872,172 +870,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../skill_command/" class="md-nav__link">
+      <a href="../../cli/skill_command/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    技能命令
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-    
-  
-  
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    参考
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    参考
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        会话
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        元数据
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        上下文
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Agent
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        系统
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../plan_mode/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    计划模式
+    Skill Command
   
 
     
@@ -1058,14 +898,70 @@
   
   
     <li class="md-nav__item">
-      <a href="../other_commands/" class="md-nav__link">
+      <a href="../../cli/reference/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    其他命令
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/plan_mode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Plan Mode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/other_commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Other Commands
   
 
     
@@ -1179,7 +1075,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -1207,7 +1103,7 @@
   <span class="md-ellipsis">
     
   
-    内置 subagent
+    Built-in subagents
   
 
     
@@ -1235,7 +1131,7 @@
   <span class="md-ellipsis">
     
   
-    自定义 subagent
+    Customized subagents
   
 
     
@@ -1263,7 +1159,7 @@
   <span class="md-ellipsis">
     
   
-    生成 Dashboard
+    Generate Dashboard
   
 
     
@@ -1291,7 +1187,7 @@
   <span class="md-ellipsis">
     
   
-    生成指标
+    Generate Metrics
   
 
     
@@ -1319,7 +1215,7 @@
   <span class="md-ellipsis">
     
   
-    指标问答
+    Ask Metrics
   
 
     
@@ -1347,7 +1243,7 @@
   <span class="md-ellipsis">
     
   
-    生成语义模型
+    Generate Semantic Model
   
 
     
@@ -1375,7 +1271,7 @@
   <span class="md-ellipsis">
     
   
-    调度器
+    Scheduler
   
 
     
@@ -1607,7 +1503,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -1663,7 +1559,7 @@
   <span class="md-ellipsis">
     
   
-    内置 Skills
+    Built-in Skills
   
 
     
@@ -1679,7 +1575,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    内置 Skills
+    Built-in Skills
   
 
           </label>
@@ -1699,7 +1595,7 @@
   <span class="md-ellipsis">
     
   
-    初始化
+    Init
   
 
     
@@ -1727,7 +1623,7 @@
   <span class="md-ellipsis">
     
   
-    构建知识库
+    Build KB
   
 
     
@@ -1755,7 +1651,7 @@
   <span class="md-ellipsis">
     
   
-    存储分类
+    Storage Classify
   
 
     
@@ -1783,7 +1679,7 @@
   <span class="md-ellipsis">
     
   
-    知识提取
+    Extract Knowledge
   
 
     
@@ -1811,7 +1707,7 @@
   <span class="md-ellipsis">
     
   
-    记忆整理
+    Memory Organization
   
 
     
@@ -1839,7 +1735,7 @@
   <span class="md-ellipsis">
     
   
-    会话总结
+    Session Summarize
   
 
     
@@ -1883,7 +1779,7 @@
   <span class="md-ellipsis">
     
   
-    chatbot
+    Chatbot
   
 
     
@@ -1933,7 +1829,7 @@
   <span class="md-ellipsis">
     
   
-    IM 网关
+    IM Gateway
   
 
     
@@ -1949,7 +1845,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    IM 网关
+    IM Gateway
   
 
           </label>
@@ -1969,7 +1865,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2025,7 +1921,7 @@
   <span class="md-ellipsis">
     
   
-    飞书
+    Feishu
   
 
     
@@ -2091,7 +1987,7 @@
   <span class="md-ellipsis">
     
   
-    知识库
+    Knowledge Base
   
 
     
@@ -2107,7 +2003,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    知识库
+    Knowledge Base
   
 
           </label>
@@ -2127,7 +2023,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2155,7 +2051,7 @@
   <span class="md-ellipsis">
     
   
-    平台文档
+    Platform Documentation
   
 
     
@@ -2183,7 +2079,7 @@
   <span class="md-ellipsis">
     
   
-    元数据
+    Metadata
   
 
     
@@ -2211,7 +2107,7 @@
   <span class="md-ellipsis">
     
   
-    语义模型
+    Semantic Models
   
 
     
@@ -2239,7 +2135,7 @@
   <span class="md-ellipsis">
     
   
-    指标
+    Metrics
   
 
     
@@ -2295,7 +2191,7 @@
   <span class="md-ellipsis">
     
   
-    SQL模板
+    Reference Template
   
 
     
@@ -2355,7 +2251,7 @@
   <span class="md-ellipsis">
     
   
-    工作流
+    Workflow
   
 
     
@@ -2371,7 +2267,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    工作流
+    Workflow
   
 
           </label>
@@ -2391,7 +2287,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2419,7 +2315,7 @@
   <span class="md-ellipsis">
     
   
-    节点
+    Nodes
   
 
     
@@ -2447,7 +2343,7 @@
   <span class="md-ellipsis">
     
   
-    编排
+    Orchestration
   
 
     
@@ -2573,7 +2469,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2601,7 +2497,7 @@
   <span class="md-ellipsis">
     
   
-    部署
+    Deployment
   
 
     
@@ -2657,7 +2553,7 @@
   <span class="md-ellipsis">
     
   
-    知识库 API
+    Knowledge Base API
   
 
     
@@ -2711,8 +2607,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2743,11 +2641,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_11" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_11" checked>
         
           
           <label class="md-nav__link" for="__nav_1_11" id="__nav_1_11_label" tabindex="0">
@@ -2757,7 +2655,7 @@
   <span class="md-ellipsis">
     
   
-    配置
+    Configuration
   
 
     
@@ -2768,12 +2666,12 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_11_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_11_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_11">
             <span class="md-nav__icon md-icon"></span>
             
   
-    配置
+    Configuration
   
 
           </label>
@@ -2786,14 +2684,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -2814,7 +2712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/agent/" class="md-nav__link">
+      <a href="../agent/" class="md-nav__link">
         
   
   
@@ -2842,14 +2740,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/compact/" class="md-nav__link">
+      <a href="../compact/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    上下文压缩
+    Context Compaction
   
 
     
@@ -2870,14 +2768,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/workflow/" class="md-nav__link">
+      <a href="../workflow/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    工作流
+    Workflow
   
 
     
@@ -2898,14 +2796,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/benchmark/" class="md-nav__link">
+      <a href="../benchmark/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    基准测试
+    Benchmark
   
 
     
@@ -2926,7 +2824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/sql_policy/" class="md-nav__link">
+      <a href="../sql_policy/" class="md-nav__link">
         
   
   
@@ -2951,10 +2849,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../configuration/web_tool/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web Tools
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2970,6 +2895,131 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#backend-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend selection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web_search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web_search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web_fetch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web_fetch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-and-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and safety
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#permissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Permissions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relation-to-web_search_document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relation to web_search_document
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3013,7 +3063,7 @@
   <span class="md-ellipsis">
     
   
-    服务
+    Services
   
 
     
@@ -3029,7 +3079,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    服务
+    Services
   
 
           </label>
@@ -3042,7 +3092,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/datasources/" class="md-nav__link">
+      <a href="../datasources/" class="md-nav__link">
         
   
   
@@ -3070,14 +3120,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/semantic_layer/" class="md-nav__link">
+      <a href="../semantic_layer/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    语义层
+    Semantic Layer
   
 
     
@@ -3098,14 +3148,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/bi_platforms/" class="md-nav__link">
+      <a href="../bi_platforms/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    BI 平台
+    BI Platforms
   
 
     
@@ -3126,14 +3176,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/schedulers/" class="md-nav__link">
+      <a href="../schedulers/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    调度器
+    Schedulers
   
 
     
@@ -3162,7 +3212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/storage/" class="md-nav__link">
+      <a href="../storage/" class="md-nav__link">
         
   
   
@@ -3190,14 +3240,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../configuration/nodes/" class="md-nav__link">
+      <a href="../nodes/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    节点
+    Nodes
   
 
     
@@ -3257,7 +3307,7 @@
   <span class="md-ellipsis">
     
   
-    适配器
+    Adapters
   
 
     
@@ -3273,7 +3323,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    适配器
+    Adapters
   
 
           </label>
@@ -3293,7 +3343,7 @@
   <span class="md-ellipsis">
     
   
-    数据库适配器
+    Database Adapters
   
 
     
@@ -3343,7 +3393,7 @@
   <span class="md-ellipsis">
     
   
-    语义层适配器
+    Semantic Adapters
   
 
     
@@ -3359,7 +3409,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    语义层适配器
+    Semantic Adapters
   
 
           </label>
@@ -3379,7 +3429,7 @@
   <span class="md-ellipsis">
     
   
-    概览
+    Overview
   
 
     
@@ -3407,7 +3457,7 @@
   <span class="md-ellipsis">
     
   
-    MetricFlow 语义适配器
+    MetricFlow Semantic Adapter
   
 
     
@@ -3435,7 +3485,7 @@
   <span class="md-ellipsis">
     
   
-    OSI 语义适配器
+    OSI Semantic Adapter
   
 
     
@@ -3471,7 +3521,7 @@
   <span class="md-ellipsis">
     
   
-    BI 适配器
+    BI Adapters
   
 
     
@@ -3499,7 +3549,7 @@
   <span class="md-ellipsis">
     
   
-    Scheduler 适配器
+    Scheduler Adapters
   
 
     
@@ -3553,7 +3603,7 @@
   <span class="md-ellipsis">
     
   
-    基准测试
+    Benchmark
   
 
     
@@ -3569,7 +3619,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    基准测试
+    Benchmark
   
 
           </label>
@@ -3589,7 +3639,7 @@
   <span class="md-ellipsis">
     
   
-    介绍
+    Introduction
   
 
     
@@ -3647,7 +3697,7 @@
   <span class="md-ellipsis">
     
   
-    集成
+    Integration
   
 
     
@@ -3663,7 +3713,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    集成
+    Integration
   
 
           </label>
@@ -3711,7 +3761,7 @@
   <span class="md-ellipsis">
     
   
-    校验
+    Validation
   
 
     
@@ -3739,7 +3789,7 @@
   <span class="md-ellipsis">
     
   
-    自动记忆
+    Auto Memory
   
 
     
@@ -3888,7 +3938,7 @@
   <span class="md-ellipsis">
     
   
-    开发
+    Develop
   
 
     
@@ -3910,7 +3960,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    开发
+    Develop
   
 
           </label>
@@ -3932,7 +3982,7 @@
   <span class="md-ellipsis">
     
   
-    可观测性
+    Observability
   
 
     
@@ -3968,7 +4018,7 @@
   <span class="md-ellipsis">
     
   
-    VSCode 插件
+    VSCode Extension
   
 
     
@@ -4003,7 +4053,7 @@
   <span class="md-ellipsis">
     
   
-    发布说明
+    Release Notes
   
 
     
@@ -4029,7 +4079,7 @@
                   <div class="md-sidebar__inner">
                     
 
-<nav class="md-nav md-nav--secondary" aria-label="目录">
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
   
   
   
@@ -4038,15 +4088,15 @@
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
-      目录
+      Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#backend-selection" class="md-nav__link">
     <span class="md-ellipsis">
       
-        会话
+        Backend selection
       
     </span>
   </a>
@@ -4054,10 +4104,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#setup" class="md-nav__link">
     <span class="md-ellipsis">
       
-        元数据
+        Setup
       
     </span>
   </a>
@@ -4065,10 +4115,49 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
+  <a href="#tool-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        上下文
+        Tool reference
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Tool reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#web_search" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web_search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#web_fetch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        web_fetch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-and-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits and safety
       
     </span>
   </a>
@@ -4076,10 +4165,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#agent" class="md-nav__link">
+  <a href="#permissions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Agent
+        Permissions
       
     </span>
   </a>
@@ -4087,10 +4176,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
+  <a href="#relation-to-web_search_document" class="md-nav__link">
     <span class="md-ellipsis">
       
-        系统
+        Relation to web_search_document
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#troubleshooting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Troubleshooting
       
     </span>
   </a>
@@ -4114,7 +4214,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/cli/reference.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/configuration/web_tool.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4122,222 +4222,210 @@
   
 
 
-<h1 id="_1">斜杠命令参考<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
-<p>Datus-CLI 中所有可用的斜杠命令，按类别分组。</p>
-<h2 id="_2">会话<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<h1 id="web-tools">Web Tools<a class="headerlink" href="#web-tools" title="Permanent link">&para;</a></h1>
+<p>During a chat session the agent can reach the public web through a single pair of tools:</p>
 <table>
 <thead>
 <tr>
-<th>命令</th>
-<th>别名</th>
-<th>说明</th>
+<th>Tool</th>
+<th>Purpose</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>/help</code></td>
-<td></td>
-<td>显示所有斜杠命令的帮助信��</td>
+<td><code>web_search</code></td>
+<td>Search the web and return ranked results with snippets</td>
 </tr>
 <tr>
-<td><code>/exit</code></td>
-<td><code>/quit</code></td>
-<td>退出 CLI</td>
-</tr>
-<tr>
-<td><code>/clear</code></td>
-<td></td>
-<td>清除控制台和聊天会话</td>
-</tr>
-<tr>
-<td><code>/chat_info</code></td>
-<td></td>
-<td>显示当前聊天会话信息</td>
-</tr>
-<tr>
-<td><code>/compact</code></td>
-<td></td>
-<td>通过摘要历史记录压缩聊天会话</td>
-</tr>
-<tr>
-<td><code>/resume</code></td>
-<td></td>
-<td>列出并恢复之前的聊天会话</td>
-</tr>
-<tr>
-<td><code>/rewind</code></td>
-<td></td>
-<td>将当前会话回退到指定的轮次</td>
+<td><code>web_fetch</code></td>
+<td>Fetch one URL and return its readable text content</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_3">元数据<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>The typical flow pairs them: <code>web_search</code> finds candidate pages (latest SQL dialect syntax, an error message, a product changelog), then <code>web_fetch</code> pulls the full text of the most promising URL. Both tools return the same result structure regardless of which backend served the request, so downstream behavior never depends on your LLM provider.</p>
+<h2 id="backend-selection">Backend selection<a class="headerlink" href="#backend-selection" title="Permanent link">&para;</a></h2>
+<p>The agent always sees the same two tools; what serves them is chosen automatically per active LLM provider:</p>
+<ul>
+<li><strong>Vendor-native</strong> — if the active provider's API ships a built-in web search capability, Datus injects the vendor's hosted tool and skips the local implementation. No setup is needed.</li>
+<li><strong>Local fallback</strong> — for every other provider:<ul>
+<li><code>web_search</code> calls the <a href="https://tavily.com">Tavily</a> search API — requires an API key (see below).</li>
+<li><code>web_fetch</code> downloads the page directly over HTTP and extracts the main text — no key, no third-party API.</li>
+</ul>
+</li>
+</ul>
+<p>Current support by provider:</p>
 <table>
 <thead>
 <tr>
-<th>命令</th>
-<th>说明</th>
+<th>Provider</th>
+<th><code>web_search</code></th>
+<th><code>web_fetch</code></th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>/databases</code></td>
-<td>列出所有数据库</td>
+<td>OpenAI (official <code>api.openai.com</code>)</td>
+<td>Vendor-native</td>
+<td>Local</td>
 </tr>
 <tr>
-<td><code>/database</code></td>
-<td>切换当前数据库</td>
+<td>ChatGPT Codex (official <code>chatgpt.com</code> backend)</td>
+<td>Vendor-native</td>
+<td>Local</td>
 </tr>
 <tr>
-<td><code>/tables</code></td>
-<td>列出所有表</td>
+<td>Claude / Anthropic (official <code>api.anthropic.com</code>)</td>
+<td>Vendor-native</td>
+<td>Local</td>
 </tr>
 <tr>
-<td><code>/schemas</code></td>
-<td>列出所有 schema 或显示 schema 详情</td>
-</tr>
-<tr>
-<td><code>/schema</code></td>
-<td>切换当前 schema</td>
-</tr>
-<tr>
-<td><code>/table_schema</code></td>
-<td>显示表字段详情</td>
-</tr>
-<tr>
-<td><code>/indexes</code></td>
-<td>显示表的索引</td>
+<td>Everything else (DeepSeek, Qwen, self-hosted, OpenAI/Claude-compatible relays, …)</td>
+<td>Local (Tavily)</td>
+<td>Local</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_4">上下文<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>Two caveats:</p>
+<ul>
+<li>Vendor-native search requires the <strong>official</strong> endpoint. If the provider entry points at a custom <code>base_url</code> (a relay, proxy, or self-hosted gateway), the hosted tool cannot be relied on and Datus falls back to the local Tavily backend automatically.</li>
+<li><code>web_fetch</code> currently always runs on the local backend, for every provider.</li>
+</ul>
+<p>Switching models with <code>/model</code> mid-session re-resolves the backends immediately.</p>
+<h2 id="setup">Setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<p>Only the local <code>web_search</code> backend needs configuration — a Tavily API key, resolved in this order:</p>
+<ol>
+<li><code>agent.document.tavily_api_key</code> in <code>agent.yml</code> (supports <code>${ENV_VAR}</code> substitution)</li>
+<li>The <code>TAVILY_API_KEY</code> environment variable</li>
+</ol>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">document</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">tavily_api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${TAVILY_API_KEY}</span>
+</span></code></pre></div>
+<p>Without a key (and without vendor-native search), <code>web_search</code> is simply not exposed to the agent — a note is written to the log. <code>web_fetch</code> is always available.</p>
+<h2 id="tool-reference">Tool reference<a class="headerlink" href="#tool-reference" title="Permanent link">&para;</a></h2>
+<h3 id="web_search"><code>web_search</code><a class="headerlink" href="#web_search" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>命令</th>
-<th>说明</th>
+<th>Argument</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>/catalog</code></td>
-<td>显示数据库目录浏览器</td>
+<td><code>keywords</code></td>
+<td>list of strings</td>
+<td>required</td>
+<td>Search queries, e.g. <code>["StarRocks materialized view syntax"]</code></td>
 </tr>
 <tr>
-<td><code>/subject</code></td>
-<td>显示语义模型、指标和参考</td>
+<td><code>max_results</code></td>
+<td>int</td>
+<td><code>5</code></td>
+<td>Maximum results to return (1–20)</td>
+</tr>
+<tr>
+<td><code>include_domains</code></td>
+<td>list of strings</td>
+<td>none</td>
+<td>Restrict results to specific domains, e.g. <code>["docs.snowflake.com"]</code></td>
 </tr>
 </tbody>
 </table>
-<h2 id="agent">Agent<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
+<p>Result:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;StarRocks materialized view syntax&quot;</span><span class="p">,</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">&quot;result_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="nt">&quot;results&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;snippet&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;age&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span><span class="p">]</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">}</span>
+</span></code></pre></div>
+<h3 id="web_fetch"><code>web_fetch</code><a class="headerlink" href="#web_fetch" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>命令</th>
-<th>说明</th>
+<th>Argument</th>
+<th>Type</th>
+<th>Default</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>/agent</code></td>
-<td>打开统一 agent 管理 TUI（Built-in 覆写 / 设为默认）。<code>/agent &lt;name&gt;</code> 仍可直接切换默认 agent</td>
+<td><code>url</code></td>
+<td>string</td>
+<td>required</td>
+<td>Absolute <code>http(s)</code> URL to fetch</td>
 </tr>
 <tr>
-<td><code>/subagent</code></td>
-<td>打开统一 agent 管理 TUI（Custom Tab）</td>
-</tr>
-<tr>
-<td><code>/datasource</code></td>
-<td>切换当前数据源</td>
-</tr>
-<tr>
-<td><code>/language</code></td>
-<td>固定所有 agentic 节点的响应语言（<a href="../other_commands/#language">Language 命令</a>）</td>
+<td><code>max_chars</code></td>
+<td>int</td>
+<td><code>20000</code></td>
+<td>Truncate the extracted text to this many characters</td>
 </tr>
 </tbody>
 </table>
-<h2 id="_5">系统<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>Result:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">&quot;url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">&quot;title&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">&quot;truncated&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">&quot;char_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>truncated</code> reports whether <code>content</code> was cut off at <code>max_chars</code>; the agent can re-fetch with a larger limit when it needs the tail of a long page.</p>
+<h2 id="limits-and-safety">Limits and safety<a class="headerlink" href="#limits-and-safety" title="Permanent link">&para;</a></h2>
+<p>The local <code>web_fetch</code> backend enforces:</p>
+<ul>
+<li><strong>Public targets only (SSRF protection)</strong> — requests to <code>localhost</code>, <code>*.local</code> / <code>*.internal</code> hostnames, private/loopback/link-local IP ranges, and cloud metadata addresses are refused.</li>
+<li><strong>HTML / plain text only</strong> — other content types (PDFs, images, binaries) are rejected with an explanatory error.</li>
+<li><strong>10 MiB response cap</strong> — responses that declare a larger body are refused before download.</li>
+<li><strong>30-second timeout</strong> per request, following redirects.</li>
+<li><strong>Boilerplate stripping</strong> — scripts, styles, navigation, headers/footers are removed; only the main text is returned.</li>
+</ul>
+<h2 id="permissions">Permissions<a class="headerlink" href="#permissions" title="Permanent link">&para;</a></h2>
+<p>Both tools belong to the <code>web_tool</code> permission category and are <strong>allowed by default</strong> in every built-in profile: they only read the public web and send nothing derived from your databases. To require confirmation or disable them, add a rule under <code>agent.permissions</code>:</p>
+<div class="language-yaml highlight"><span class="filename">agent.yml</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">permissions</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">rules</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">tool</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">web_tool</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="nt">pattern</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;*&quot;</span><span class="w">          </span><span class="c1"># or a single tool: web_search / web_fetch</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="nt">permission</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span><span class="w">      </span><span class="c1"># allow | ask | deny</span>
+</span></code></pre></div>
+<h2 id="relation-to-web_search_document">Relation to <code>web_search_document</code><a class="headerlink" href="#relation-to-web_search_document" title="Permanent link">&para;</a></h2>
+<p>Do not confuse <code>web_tool.web_search</code> with <a href="../../knowledge_base/platform_doc/"><code>web_search_document</code></a>: the latter belongs to the knowledge-base platform-documentation tool group and serves as a web fallback when local document search comes up empty. Both use Tavily and share the same API-key configuration, but they are separate tools with separate permission categories.</p>
+<h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>命令</th>
-<th>别名</th>
-<th>说明</th>
-<th>详情</th>
+<th>Symptom</th>
+<th>Cause / fix</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>/model</code></td>
-<td><code>/models</code></td>
-<td>运行时切换 LLM 提供商/模型</td>
-<td><a href="../other_commands/#model">Model 命令</a></td>
+<td><code>web_search</code> never appears in the tool list</td>
+<td>No Tavily key resolvable and no vendor-native search — set <code>agent.document.tavily_api_key</code> or <code>TAVILY_API_KEY</code>.</td>
 </tr>
 <tr>
-<td><code>/effort</code></td>
-<td></td>
-<td>设置 reasoning 强度（off/minimal/low/medium/high）</td>
-<td><a href="../other_commands/#effort">Effort 命令</a></td>
+<td><code>Web search is unavailable: set agent.document.tavily_api_key or TAVILY_API_KEY.</code></td>
+<td>Same as above — the key disappeared at call time.</td>
 </tr>
 <tr>
-<td><code>/init</code></td>
-<td></td>
-<td>轻量初始化:扫描并写出 <code>AGENTS.md</code> 清单与文件类 knowledge/memory（不建向量库）；可附加自由文本作为目标/范围提示</td>
-<td><a href="../../skills/init/">Init 命令</a></td>
+<td><code>Refusing to fetch non-public URL target (SSRF protection)</code></td>
+<td>The URL points at localhost / a private network. Intentional; only public web targets are fetchable.</td>
 </tr>
 <tr>
-<td><code>/build-kb</code></td>
-<td></td>
-<td>构建向量索引 KB（semantic models / metrics / reference SQL）并刷新 <code>AGENTS.md</code> 索引；可附加自由文本限定文件/库表/业务域范围</td>
-<td><a href="../../skills/build_kb/">Build KB 命令</a></td>
+<td><code>Unsupported content-type '...'</code></td>
+<td>The URL is not an HTML/text page. Point <code>web_fetch</code> at a readable page instead.</td>
 </tr>
 <tr>
-<td><code>/session-summarize</code></td>
-<td></td>
-<td>把当前会话总结进各持久化存储（先出 manifest,确认后执行）；可附加自由文本作为关注点提示</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/memory-organize</code></td>
-<td></td>
-<td>审计并整理所有持久化存储（先出整改计划,确认后执行）；可附加自由文本作为关注点提示</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/mcp</code></td>
-<td></td>
-<td>管理 MCP 服务器（列表/添加/删除/检查/调用/过滤）</td>
-<td><a href="../mcp_extensions/">MCP 扩展</a></td>
-</tr>
-<tr>
-<td><code>/skill</code></td>
-<td></td>
-<td>管理技能和市场</td>
-<td><a href="../skill_command/">Skill 命令</a></td>
-</tr>
-<tr>
-<td><code>/bootstrap-bi</code></td>
-<td></td>
-<td>为子 agent 上下文提取 BI 仪表盘资产</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/services</code></td>
-<td></td>
-<td>列出已配置的服务平台及其只读方法</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/permission</code></td>
-<td></td>
-<td>切换当前 CLI / agent 权限配置文件</td>
-<td></td>
-</tr>
-<tr>
-<td><code>/profile</code></td>
-<td></td>
-<td>已废弃的 <code>/permission</code> 兼容别名</td>
-<td></td>
+<td><code>Response too large ... exceeds the 10,485,760-byte web_fetch limit.</code></td>
+<td>The page body exceeds 10 MiB. Fetch a smaller page (e.g. a specific article rather than an archive).</td>
 </tr>
 </tbody>
 </table>
@@ -4367,33 +4455,33 @@
   
     
       
-      <nav class="md-footer__inner md-grid" aria-label="页脚" >
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../skill_command/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 技能命令">
+          <a href="../sql_policy/" class="md-footer__link md-footer__link--prev" aria-label="Previous: SQL Policy">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
             </div>
             <div class="md-footer__title">
               <span class="md-footer__direction">
-                上一页
+                Previous
               </span>
               <div class="md-ellipsis">
-                技能命令
+                SQL Policy
               </div>
             </div>
           </a>
         
         
           
-          <a href="../plan_mode/" class="md-footer__link md-footer__link--next" aria-label="下一页: 计划模式">
+          <a href="../datasources/" class="md-footer__link md-footer__link--next" aria-label="Next: Datasources">
             <div class="md-footer__title">
               <span class="md-footer__direction">
-                下一页
+                Next
               </span>
               <div class="md-ellipsis">
-                计划模式
+                Datasources
               </div>
             </div>
             <div class="md-footer__button md-icon">
@@ -4483,12 +4571,12 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="../../../javascripts/analytics.js"></script>
+        <script src="../../javascripts/analytics.js"></script>
       
     
   </body>

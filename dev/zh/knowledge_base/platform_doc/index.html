@@ -2840,6 +2840,8 @@
       
         
       
+        
+      
     
     
     
@@ -3057,6 +3059,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../configuration/web_tool/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web Tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -3079,10 +3109,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_11_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_11_8" >
         
           
-          <label class="md-nav__link" for="__nav_1_11_7" id="__nav_1_11_7_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_1_11_8" id="__nav_1_11_8_label" tabindex="0">
             
   
   
@@ -3100,8 +3130,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_11_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_1_11_7">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_1_11_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_1_11_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4519,6 +4549,7 @@
 </table>
 <p>如需在自定义节点或子代理中启用这些工具，请在工具配置里加入 <code>platform_doc_tools</code>（或具体的 <code>platform_doc_search_tools.*</code>）。
 <strong>推荐调用顺序</strong>：<code>list_document_nav</code> → <code>get_document</code> → <code>search_document</code> → <code>web_search_document</code>（兜底）。</p>
+<p><code>web_search_document</code> 与 <a href="../../configuration/web_tool/">Web 工具组</a>中的通用 <code>web_search</code> 不是同一个工具 —— 两者共享 Tavily key 配置，但权限类别各自独立。</p>
 <p><strong><code>get_document</code> 一次只取一篇文档</strong>，示例：</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>titles=[&quot;DDL&quot;, &quot;CREATE TABLE&quot;]
 </span></code></pre></div>
