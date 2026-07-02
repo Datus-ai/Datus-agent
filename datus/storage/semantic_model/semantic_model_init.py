@@ -4,6 +4,7 @@
 
 import asyncio
 import os
+import tempfile
 from typing import Callable, Optional
 
 import pandas as pd
@@ -21,6 +22,40 @@ from datus.utils.terminal_utils import suppress_keyboard_input
 logger = get_logger(__name__)
 
 SEMANTIC_MODEL_RESPONSE_ACTION_TYPE = f"{GenSemanticModelAgenticNode.NODE_NAME}_response"
+_VALID_BUILD_MODES = {"check", "overwrite", "incremental"}
+
+
+def _resolve_semantic_yaml_refresh_path(yaml_file_path: str, agent_config: Optional[AgentConfig]) -> Optional[str]:
+    raw_path = str(yaml_file_path or "")
+    if not raw_path:
+        return None
+
+    path_manager = getattr(agent_config, "path_manager", None) if agent_config is not None else None
+    subject_dir = getattr(path_manager, "subject_dir", None) if path_manager is not None else None
+    if isinstance(subject_dir, (str, os.PathLike)):
+        from datus.cli.generation_hooks import resolve_kb_sandbox_path
+
+        return resolve_kb_sandbox_path(raw_path, "semantic", os.fspath(subject_dir))
+    return os.path.realpath(raw_path)
+
+
+def _atomic_dump_semantic_yaml(yaml_file_path: str, docs: list) -> None:
+    target_dir = os.path.dirname(os.path.realpath(yaml_file_path)) or "."
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(yaml_file_path)}.",
+        suffix=".tmp",
+        dir=target_dir,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
+        os.replace(temp_path, yaml_file_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 async def init_success_story_semantic_model_async(
@@ -95,14 +130,27 @@ async def init_success_story_semantic_model_async(
         logger.error(error_msg)
         return False, error_msg
 
+    if build_mode not in _VALID_BUILD_MODES:
+        error_msg = (
+            f"Unsupported semantic model build_mode: {build_mode!r}. "
+            f"Expected one of: {', '.join(sorted(_VALID_BUILD_MODES))}"
+        )
+        logger.error(error_msg)
+        return False, error_msg
+
     semantic_model_rag = None
     table_profile_rag = None
     if build_mode in {"check", "overwrite"}:
-        from datus.storage.semantic_model.store import SemanticModelRAG
-        from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+        try:
+            from datus.storage.semantic_model.store import SemanticModelRAG
+            from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 
-        semantic_model_rag = SemanticModelRAG(agent_config)
-        table_profile_rag = TableSemanticProfileRAG(agent_config)
+            semantic_model_rag = SemanticModelRAG(agent_config)
+            table_profile_rag = TableSemanticProfileRAG(agent_config)
+        except Exception as exc:
+            error_msg = f"Failed to initialize semantic model storage for build_mode='{build_mode}': {exc}"
+            logger.exception(error_msg)
+            return False, error_msg
 
     if build_mode == "check":
         logger.info(
@@ -360,14 +408,18 @@ def refresh_semantic_yaml_profile_descriptions(
     if sync_to_storage and agent_config is None:
         return False, "agent_config is required when sync_to_storage=True", 0
 
-    if not os.path.exists(yaml_file_path):
-        return False, f"Semantic YAML file not found: {yaml_file_path}", 0
+    resolved_yaml_path = _resolve_semantic_yaml_refresh_path(yaml_file_path, agent_config)
+    if not resolved_yaml_path:
+        return False, f"Semantic YAML file rejected by sandbox check: {yaml_file_path}", 0
+
+    if not os.path.exists(resolved_yaml_path):
+        return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
 
     try:
-        with open(yaml_file_path, "r", encoding="utf-8") as f:
+        with open(resolved_yaml_path, "r", encoding="utf-8") as f:
             docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
     except Exception as exc:
-        return False, f"Failed to read semantic YAML file '{yaml_file_path}': {exc}", 0
+        return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
 
     try:
         from datus.storage.semantic_model.profile_description import (
@@ -387,19 +439,19 @@ def refresh_semantic_yaml_profile_descriptions(
     except Exception as exc:
         return False, f"Failed to refresh semantic YAML descriptions: {exc}", 0
 
-    if changed <= 0:
+    if changed <= 0 and not sync_to_storage:
         return True, "", 0
 
-    try:
-        with open(yaml_file_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump_all(docs, f, allow_unicode=True, sort_keys=False)
-    except Exception as exc:
-        return False, f"Failed to write semantic YAML file '{yaml_file_path}': {exc}", 0
+    if changed > 0:
+        try:
+            _atomic_dump_semantic_yaml(resolved_yaml_path, docs)
+        except Exception as exc:
+            return False, f"Failed to write semantic YAML file '{resolved_yaml_path}': {exc}", 0
 
     if sync_to_storage:
         if fmt == "metricflow":
             sync_success, sync_error = process_semantic_yaml_file(
-                yaml_file_path,
+                resolved_yaml_path,
                 agent_config,
                 include_semantic_objects=True,
                 include_metrics=True,
@@ -408,7 +460,7 @@ def refresh_semantic_yaml_profile_descriptions(
             from datus.tools.func_tool.generation_tools import GenerationTools
 
             result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_semantic_to_db(
-                yaml_file_path
+                resolved_yaml_path
             )
             sync_success = bool(result.get("success"))
             sync_error = result.get("error", "")

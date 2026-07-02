@@ -1005,7 +1005,54 @@ class TestOsiSync:
 
         assert result["success"] is True
         generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_not_called()
+        generation_tools.metric_rag.list_artifact_rows.assert_called_once_with(str(metric_file))
         generation_tools.metric_rag.upsert_batch.assert_called_once()
+
+    def test_sync_osi_metric_partial_publish_restores_on_later_failure(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
+            "        expression:\n"
+            "          dialects:\n"
+            "            - dialect: ANSI_SQL\n"
+            "              expression: COUNT(DISTINCT order_id)\n"
+        )
+        dataset = SimpleNamespace(
+            name="orders",
+            source=SimpleNamespace(table="orders"),
+            primary_key="order_id",
+            time_dimension=None,
+            dimensions=[],
+        )
+        metric = SimpleNamespace(
+            name="order_count",
+            description="Number of orders",
+            expression="COUNT(DISTINCT order_id)",
+            dataset="orders",
+            subject_path=None,
+            kind=None,
+        )
+        doc = SimpleNamespace(datasets=[dataset], metrics=[metric])
+        generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "old-metric"}]
+        generation_tools.metric_rag.create_indices.side_effect = RuntimeError("index failed")
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file), replace_metric_artifact=False)
+
+        assert result["success"] is False
+        assert "index failed" in result["error"]
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_not_called()
+        generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(
+            str(metric_file), [{"id": "old-metric"}]
+        )
 
     def test_sync_osi_metric_to_db_includes_derived_and_joined_dimensions(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(

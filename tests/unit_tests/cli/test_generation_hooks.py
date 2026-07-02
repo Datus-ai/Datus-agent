@@ -1392,7 +1392,50 @@ metric:
 
         assert result["success"], f"Sync failed: {result.get('error')}"
         mock_metric_rag.delete_artifact_rows.assert_not_called()
+        mock_metric_rag.delete_artifact_rows_except.assert_not_called()
+        mock_metric_rag.list_artifact_rows.assert_called_once_with(str(yaml_file))
         mock_metric_rag.upsert_batch.assert_called_once()
+
+    def test_metric_partial_sync_restores_metric_rows_on_later_failure(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "orders_metrics.yml"
+        yaml_file.write_text(
+            """
+metric:
+  name: total_revenue
+  type: measure_proxy
+  type_params:
+    measure: revenue
+""",
+            encoding="utf-8",
+        )
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = "public"
+        agent_config.current_db_config.return_value = db_config
+
+        mock_semantic_rag = MagicMock()
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.list_artifact_rows.return_value = [{"id": "old-metric"}]
+        mock_metric_rag.create_indices.side_effect = RuntimeError("index failed")
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                include_semantic_objects=False,
+                include_metrics=True,
+                original_yaml_path=str(yaml_file),
+                replace_metric_artifact=False,
+            )
+
+        assert result["success"] is False
+        assert "index failed" in result["error"]
+        mock_metric_rag.delete_artifact_rows_except.assert_not_called()
+        mock_metric_rag.restore_artifact_rows.assert_called_once_with(str(yaml_file), [{"id": "old-metric"}])
 
     def test_metric_id_includes_subject_path_to_avoid_same_name_collision(self, agent_config, tmp_path):
         yaml_file = tmp_path / "metrics.yml"

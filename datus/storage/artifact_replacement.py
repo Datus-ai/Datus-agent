@@ -21,12 +21,21 @@ def snapshot_artifact_replacements(replacement_plans: List[ArtifactReplacementPl
     return snapshots
 
 
-def restore_artifact_replacements(snapshots: List[ArtifactSnapshot]) -> None:
+def restore_artifact_replacements(snapshots: List[ArtifactSnapshot]) -> List[str]:
+    failures = []
     for rag, yaml_path, rows in reversed(snapshots):
         try:
             rag.restore_artifact_rows(yaml_path, rows)
         except Exception as restore_exc:
-            logger.warning("Failed to restore artifact rows for %s after sync failure: %s", yaml_path, restore_exc)
+            failure = f"{type(rag).__name__}:{yaml_path}"
+            logger.error(
+                "Failed to restore artifact rows for %s after sync failure: %s",
+                yaml_path,
+                restore_exc,
+                exc_info=True,
+            )
+            failures.append(failure)
+    return failures
 
 
 def delete_stale_artifact_rows(replacement_plans: List[ArtifactReplacementPlan]) -> None:

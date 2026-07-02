@@ -1377,13 +1377,21 @@ class GenerationHooks(AgentHooks):
                     else None
                 )
                 replacement_plans = []
+                restore_plans = []
                 if semantic_objects:
-                    replacement_plans.append((semantic_rag, yaml_path_to_store, semantic_objects))
+                    plan = (semantic_rag, yaml_path_to_store, semantic_objects)
+                    replacement_plans.append(plan)
+                    restore_plans.append(plan)
                 if profile_rag is not None:
-                    replacement_plans.append((profile_rag, yaml_path_to_store, table_profiles))
-                if metric_objects and replace_metric_artifact:
-                    replacement_plans.append((metric_rag, yaml_path_to_store, metric_objects))
-                snapshots = snapshot_artifact_replacements(replacement_plans)
+                    plan = (profile_rag, yaml_path_to_store, table_profiles)
+                    replacement_plans.append(plan)
+                    restore_plans.append(plan)
+                if metric_objects:
+                    plan = (metric_rag, yaml_path_to_store, metric_objects)
+                    restore_plans.append(plan)
+                    if replace_metric_artifact:
+                        replacement_plans.append(plan)
+                snapshots = snapshot_artifact_replacements(restore_plans)
                 try:
                     if semantic_objects:
                         semantic_rag.upsert_batch(semantic_objects)
@@ -1396,8 +1404,13 @@ class GenerationHooks(AgentHooks):
                         metric_rag.upsert_batch(metric_objects)
                         metric_rag.create_indices()
                     delete_stale_artifact_rows(replacement_plans)
-                except Exception:
-                    restore_artifact_replacements(snapshots)
+                except Exception as sync_exc:
+                    restore_failures = restore_artifact_replacements(snapshots)
+                    if restore_failures:
+                        raise RuntimeError(
+                            "Artifact replacement failed and rollback was incomplete for: "
+                            f"{', '.join(restore_failures)}"
+                        ) from sync_exc
                     raise
                 result = {
                     "success": True,

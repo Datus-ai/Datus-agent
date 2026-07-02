@@ -1577,8 +1577,13 @@ class GenerationTools:
                     self.table_semantic_profile_rag.create_indices()
                     profile_count = len(table_profiles)
                 delete_stale_artifact_rows(replacement_plans)
-            except Exception:
-                restore_artifact_replacements(snapshots)
+            except Exception as sync_exc:
+                restore_failures = restore_artifact_replacements(snapshots)
+                if restore_failures:
+                    raise RuntimeError(
+                        "OSI semantic replacement failed and rollback was incomplete for: "
+                        f"{', '.join(restore_failures)}"
+                    ) from sync_exc
                 raise
             return {
                 "success": True,
@@ -1719,14 +1724,19 @@ class GenerationTools:
                     return sem_result
                 synced_semantic_files.append(current_semantic_file)
 
-            replacement_plans = [(self.metric_rag, metric_file, metric_objects)] if replace_metric_artifact else []
-            snapshots = snapshot_artifact_replacements(replacement_plans)
+            metric_plan = (self.metric_rag, metric_file, metric_objects)
+            replacement_plans = [metric_plan] if replace_metric_artifact else []
+            snapshots = snapshot_artifact_replacements([metric_plan])
             try:
                 self.metric_rag.upsert_batch(metric_objects)
                 self.metric_rag.create_indices()
                 delete_stale_artifact_rows(replacement_plans)
-            except Exception:
-                restore_artifact_replacements(snapshots)
+            except Exception as sync_exc:
+                restore_failures = restore_artifact_replacements(snapshots)
+                if restore_failures:
+                    raise RuntimeError(
+                        f"OSI metric replacement failed and rollback was incomplete for: {', '.join(restore_failures)}"
+                    ) from sync_exc
                 raise
             return {
                 "success": True,

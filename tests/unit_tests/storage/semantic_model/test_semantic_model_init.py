@@ -227,6 +227,7 @@ data_source:
             }
         }
         mock_config = MagicMock()
+        mock_config.path_manager = None
 
         with patch(
             "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
@@ -297,6 +298,7 @@ semantic_model:
             }
         }
         mock_config = MagicMock()
+        mock_config.path_manager = None
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as mock_tools_cls:
             mock_tools_cls.return_value.sync_osi_semantic_to_db.return_value = {"success": True}
@@ -313,6 +315,126 @@ semantic_model:
         assert changed == 2
         mock_tools_cls.assert_called_once_with(agent_config=mock_config, authoring_format="osi")
         mock_tools_cls.return_value.sync_osi_semantic_to_db.assert_called_once_with(str(yaml_file))
+
+    def test_unchanged_metricflow_yaml_still_retries_storage_sync(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: orders
+""",
+            encoding="utf-8",
+        )
+        mock_config = MagicMock()
+        mock_config.path_manager = None
+
+        with patch(
+            "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
+            return_value=(True, ""),
+        ) as mock_sync:
+            success, error, changed = refresh_semantic_yaml_profile_descriptions(
+                str(yaml_file),
+                {"tables": {}},
+                agent_config=mock_config,
+                sync_to_storage=True,
+            )
+
+        assert success is True
+        assert error == ""
+        assert changed == 0
+        mock_sync.assert_called_once_with(
+            str(yaml_file),
+            mock_config,
+            include_semantic_objects=True,
+            include_metrics=True,
+        )
+
+    def test_unchanged_metricflow_yaml_returns_sync_failure(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: orders
+""",
+            encoding="utf-8",
+        )
+        mock_config = MagicMock()
+        mock_config.path_manager = None
+
+        with patch(
+            "datus.storage.semantic_model.semantic_model_init.process_semantic_yaml_file",
+            return_value=(False, "storage unavailable"),
+        ):
+            success, error, changed = refresh_semantic_yaml_profile_descriptions(
+                str(yaml_file),
+                {"tables": {}},
+                agent_config=mock_config,
+                sync_to_storage=True,
+            )
+
+        assert success is False
+        assert error == "storage unavailable"
+        assert changed == 0
+
+    def test_refresh_rejects_path_outside_semantic_sandbox(self, tmp_path):
+        subject_dir = tmp_path / "subject"
+        (subject_dir / "semantic_models").mkdir(parents=True)
+        outside = tmp_path / "outside.yml"
+        outside.write_text("data_source:\n  name: orders\n", encoding="utf-8")
+        mock_config = MagicMock()
+        mock_config.path_manager.subject_dir = subject_dir
+
+        success, error, changed = refresh_semantic_yaml_profile_descriptions(
+            str(outside),
+            {"tables": {}},
+            agent_config=mock_config,
+        )
+
+        assert success is False
+        assert "rejected by sandbox" in error
+        assert changed == 0
+
+    def test_atomic_write_failure_preserves_existing_yaml(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        original = """
+data_source:
+  name: orders
+  description: Orders table.
+  sql_table: orders
+  dimensions:
+    - name: status
+      expr: status
+      type: CATEGORICAL
+      description: Order status.
+"""
+        yaml_file.write_text(original, encoding="utf-8")
+        evidence = {
+            "tables": {
+                "orders": {
+                    "query_count": 1,
+                    "data_distribution_profile": {
+                        "columns": {
+                            "status": {
+                                "kind": "categorical",
+                                "stats": {"distinct_count": 2},
+                                "top_values": [{"value": "paid"}],
+                            }
+                        }
+                    },
+                }
+            }
+        }
+
+        with patch("datus.storage.semantic_model.semantic_model_init.yaml.safe_dump_all") as mock_dump:
+            mock_dump.side_effect = RuntimeError("dump failed")
+            success, error, changed = refresh_semantic_yaml_profile_descriptions(str(yaml_file), evidence)
+
+        assert success is False
+        assert "dump failed" in error
+        assert changed == 0
+        assert yaml_file.read_text(encoding="utf-8") == original
 
 
 # ---------------------------------------------------------------------------
@@ -378,6 +500,75 @@ class TestInitSuccessStorySemanticModelAsync:
 
         assert success is False
         assert "missing required columns: ['sql']" in error
+
+    @pytest.mark.asyncio
+    async def test_async_rejects_unknown_build_mode(self, tmp_path):
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+        mock_config = MagicMock()
+
+        success, error = await init_success_story_semantic_model_async(
+            mock_config,
+            str(csv_path),
+            build_mode="full",
+        )
+
+        assert success is False
+        assert "Unsupported semantic model build_mode" in error
+
+    @pytest.mark.asyncio
+    async def test_check_mode_storage_init_failure_returns_error(self, tmp_path):
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+        mock_config = MagicMock()
+
+        with patch(
+            "datus.storage.semantic_model.store.SemanticModelRAG",
+            side_effect=RuntimeError("storage unavailable"),
+        ):
+            success, error = await init_success_story_semantic_model_async(
+                mock_config,
+                str(csv_path),
+                build_mode="check",
+            )
+
+        assert success is False
+        assert "Failed to initialize semantic model storage" in error
+        assert "storage unavailable" in error
+
+    @pytest.mark.asyncio
+    async def test_check_mode_reports_existing_row_counts(self, tmp_path):
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT 1,Q?\n")
+        mock_config = MagicMock()
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.get_size.return_value = 2
+        mock_table_profile_rag = MagicMock()
+        mock_table_profile_rag.get_size.return_value = 3
+
+        with (
+            patch("datus.storage.semantic_model.store.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch(
+                "datus.storage.table_semantic_profile.store.TableSemanticProfileRAG",
+                return_value=mock_table_profile_rag,
+            ),
+        ):
+            success, error = await init_success_story_semantic_model_async(
+                mock_config,
+                str(csv_path),
+                build_mode="check",
+            )
+
+        assert success is True
+        assert error == ""
+        mock_semantic_rag.get_size.assert_called_once()
+        mock_table_profile_rag.get_size.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
