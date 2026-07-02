@@ -107,6 +107,19 @@ def _make_tool_output_event(call_id="call_001", output="result text"):
     return FakeEvent(item=FakeItem(type="tool_call_output_item", raw_item=raw, output=output))
 
 
+def _make_hosted_web_search_event(call_id="ws_1", query="duckdb latest", sources=None):
+    """A hosted ``web_search_call`` item (dict form) as emitted by the Responses API.
+
+    It carries no ``name`` (so it routes through ``describe_hosted_tool_item``)
+    and there is NO paired ``tool_call_output_item`` — the only per-call metadata
+    is ``action.sources``.
+    """
+    if sources is None:
+        sources = [{"url": "https://duckdb.org"}]
+    raw = {"type": "web_search_call", "id": call_id, "action": {"type": "search", "query": query, "sources": sources}}
+    return FakeEvent(item=FakeItem(type="tool_call_item", raw_item=raw))
+
+
 def _make_message_event(text="I will now query the database"):
     """Create a RunItemStreamEvent for message_output_item (Phase 3 / fallback)."""
     raw = FakeRawItemWithContent(content=[FakeTextContent(text=text)])
@@ -358,6 +371,47 @@ class TestStreamActionOrdering:
         processing_action = [a for a in actions if a.status == ActionStatus.PROCESSING][0]
         assert processing_action.action_id == "unique_123"
         assert processing_action.action_type == "my_tool"
+
+    @pytest.mark.asyncio
+    async def test_hosted_web_search_completes_in_stream(self):
+        """Hosted web_search has no paired tool_call_output_item; its completion
+        must be emitted immediately in-stream (from action.sources) so the CLI
+        spinner clears, rather than being deferred to stream end."""
+        events = [
+            _make_hosted_web_search_event(
+                call_id="ws_1",
+                query="duckdb latest",
+                sources=[{"url": "https://duckdb.org/release"}],
+            ),
+        ]
+
+        actions = await _collect_actions(events)
+
+        roles_and_statuses = [(a.role, a.status) for a in actions]
+        assert roles_and_statuses == [
+            (ActionRole.TOOL, ActionStatus.PROCESSING),  # search dispatched
+            (ActionRole.TOOL, ActionStatus.SUCCESS),  # completion emitted in-stream, not deferred
+        ]
+        done = actions[1]
+        assert done.action_id == "complete_ws_1"
+        assert done.action_type == "web_search"
+        canonical = done.output["raw_output"]["result"]
+        assert canonical["query"] == "duckdb latest"
+        assert canonical["results"] == [{"title": "", "url": "https://duckdb.org/release", "snippet": "", "age": None}]
+
+    @pytest.mark.asyncio
+    async def test_hosted_web_search_no_sources_still_completes(self):
+        """With no sources on the call, the completion still resolves (summarizing
+        the query) so the spinner never stays pinned."""
+        events = [
+            _make_hosted_web_search_event(call_id="ws_2", query="q", sources=[]),
+        ]
+
+        actions = await _collect_actions(events)
+
+        assert [a.status for a in actions] == [ActionStatus.PROCESSING, ActionStatus.SUCCESS]
+        assert actions[1].output["raw_output"]["result"]["results"] == []
+        assert actions[1].output["summary"] == 'searched: "q"'
 
 
 # ---------------------------------------------------------------------------
