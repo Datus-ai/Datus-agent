@@ -23,7 +23,6 @@ from datus.utils.tool_archive import (
 )
 
 
-@pytest.mark.ci
 class TestMarkerRoundTrip:
     def test_build_then_parse(self):
         marker = build_archived_marker("/tmp/000001_output_ab.txt", "the preview text")
@@ -47,14 +46,12 @@ class TestMarkerRoundTrip:
         assert parsed["preview"] == "preview here"
 
 
-@pytest.mark.ci
 class TestSingleLinePreview:
     def test_flattens_newlines_and_truncates(self):
         assert make_single_line_preview("a\nb\r\nc", 100) == "a b  c"
         assert make_single_line_preview("x" * 50, 10) == "x" * 10
 
 
-@pytest.mark.ci
 class TestIsErrorOutput:
     def test_funcresult_success_zero_is_error(self):
         assert is_error_output('{"success": 0, "error": "boom"}')
@@ -66,18 +63,17 @@ class TestIsErrorOutput:
         assert is_error_output("Traceback (most recent call last): ...")
 
 
-@pytest.mark.ci
-class TestToolArchive:
+class TestToolArchivePrimitives:
     def test_archive_writes_file_and_returns_marker(self, tmp_path):
         archive = ToolArchive("proj", "sess", base_dir=tmp_path, preview_chars=20)
         marker = archive.archive("full content here that is fairly long", 3, "output")
-        parsed = parse_archived_marker(marker)
-        assert parsed is not None
-        written = tmp_path / "000003_output_"  # filename prefix
         files = list(tmp_path.glob("000003_output_*.txt"))
         assert len(files) == 1
-        assert str(files[0]).startswith(str(written))
         assert files[0].read_text() == "full content here that is fairly long"
+        # Marker points at the written file and carries a bounded preview.
+        parsed = parse_archived_marker(marker)
+        assert parsed["path"] == str(files[0])
+        assert parsed["preview"] == "full content here th"  # preview_chars=20
 
     def test_archive_rejects_bad_kind(self, tmp_path):
         from datus.utils.exceptions import DatusException

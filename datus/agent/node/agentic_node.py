@@ -2385,10 +2385,12 @@ class AgenticNode(Node):
 
         Reused directory convention as the compact archive
         (``path_manager.session_data_dir(session_id)``). Returns None before a
-        session id is allocated or when the path manager can't be built, so the
-        bash tool degrades to in-memory truncation.
+        session id is allocated, when there is no ``agent_config`` (mirrors
+        ``_resolve_session_data_dir`` — otherwise ``get_path_manager`` would fall
+        back to a process-wide default rooted at ``~/.datus``), or when the path
+        manager can't be built, so the bash tool degrades to in-memory truncation.
         """
-        if not self.session_id:
+        if not self.agent_config or not self.session_id:
             return None
         try:
             from datus.utils.path_manager import get_path_manager

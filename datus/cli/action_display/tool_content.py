@@ -2033,11 +2033,14 @@ def _build_analyze_metric_candidates(action: ActionHistory, verbose: bool) -> To
 def _build_bash(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """bash: show the real command output, on success and failure.
 
-    The compact line has little room, so surface the meaningful part — the last
-    non-empty output line (the stdout result on success, the stderr reason on
-    failure) — instead of the boilerplate ``Command executed`` label or the
-    ``Command exited with code N`` prefix. When nothing was captured, fall back
-    to the label / error with its generic exception wrapper stripped.
+    The compact line has little room, so surface the meaningful part — the first
+    ``COMPACT_MAX_LINES`` non-empty output lines (the rest folded into a
+    ``… +N lines`` overflow row), covering the stdout result on success and the
+    stderr reason on failure — instead of the boilerplate ``Command executed``
+    label or the ``Command exited with code N`` prefix. Archived (oversized)
+    output shows the marker preview, never the raw marker. When nothing was
+    captured, fall back to the label / error with its generic exception wrapper
+    stripped.
     """
     tc = _build_simple_action(action, verbose, "Command executed")
     if verbose:

@@ -15,21 +15,22 @@ injected by the caller through ``extra_env``.
 
 import fnmatch
 import hashlib
-import logging
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.utils.loggings import get_logger
 from datus.utils.tool_archive import build_archived_marker, make_single_line_preview
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 60
 MAX_OUTPUT_SIZE = 50000
@@ -106,8 +107,13 @@ class BashTool:
         self.identity = identity
         self._output_dir_provider = output_dir_provider
         # Monotonic per-instance counter zero-padded into archive filenames so a
-        # directory listing sorts in command-invocation order.
+        # directory listing sorts in command-invocation order. Paired with a
+        # per-instance random token so a recreated/resumed BashTool (which
+        # restarts the counter at 0 against the same reused offload dir) never
+        # overwrites an earlier instance's archive — stale ``[DATUS_ARCHIVED]``
+        # markers would otherwise point at the wrong payload.
         self._bash_output_seq = 0
+        self._bash_output_token = uuid.uuid4().hex[:8]
         self._tool_context: Any = None
 
         logger.debug(
@@ -210,7 +216,7 @@ class BashTool:
         seq = self._bash_output_seq
         self._bash_output_seq += 1
         cmd_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()[:8]
-        path = output_dir / f"{seq:06d}_bash_{cmd_hash}.txt"
+        path = output_dir / f"{seq:06d}_{self._bash_output_token}_bash_{cmd_hash}.txt"
 
         timed_out = False
         returncode = 0

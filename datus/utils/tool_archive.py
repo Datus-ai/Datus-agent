@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.loggings import get_logger
 from datus.utils.path_manager import DatusPathManager, get_path_manager
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 #: Fixed prefix written into an offloaded payload whenever an item has been
 #: moved to disk. The bracketed all-caps keeps the marker visually distinct from
