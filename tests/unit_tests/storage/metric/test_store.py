@@ -787,3 +787,15 @@ class TestMetricRAGArtifactDelete:
 
         rag._sub_agent_conditions.assert_called_once_with()
         rag.storage._delete_rows.assert_called_once()
+
+    def test_delete_artifact_rows_except_keeps_current_ids(self):
+        from datus.storage.metric.store import MetricRAG
+
+        rag = MetricRAG.__new__(MetricRAG)
+        rag.storage = Mock()
+        rag._sub_agent_conditions = Mock(return_value=[])
+
+        rag.delete_artifact_rows_except("metrics/orders.yml", ["metric:orders"])
+
+        rag._sub_agent_conditions.assert_called_once_with()
+        rag.storage._delete_rows.assert_called_once()

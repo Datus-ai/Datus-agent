@@ -33,7 +33,8 @@ def merge_observed_profile(description: Any, observed_profile: str, *, max_chars
     if base:
         budget = max_chars - len(base) - len(f". {OBSERVED_PROFILE_PREFIX} ...")
         clipped = _clip_text(observed, max(40, budget)).strip(" .;")
-        return f"{base}. {OBSERVED_PROFILE_PREFIX} {clipped}."
+        result = f"{base}. {OBSERVED_PROFILE_PREFIX} {clipped}."
+        return _clip_text(result, max_chars) if len(result) > max_chars else result
     return _clip_text(merged, max_chars)
 
 
@@ -362,9 +363,13 @@ def _format_percent(value: float) -> str:
 
 def _clip_text(value: str, max_chars: int) -> str:
     text = " ".join(str(value).split())
+    if max_chars <= 0:
+        return ""
     if len(text) <= max_chars:
         return text
-    return text[: max_chars - 1].rstrip(" ,;") + "..."
+    if max_chars <= 3:
+        return "." * max_chars
+    return text[: max_chars - 3].rstrip(" ,;") + "..."
 
 
 def _dedupe(values: Iterable[str]) -> List[str]:

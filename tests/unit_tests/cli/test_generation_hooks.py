@@ -1287,12 +1287,74 @@ metric:
             )
 
         assert result["success"], f"Sync failed: {result.get('error')}"
-        mock_semantic_rag.delete_artifact_rows.assert_called_once_with(str(yaml_file))
+        mock_semantic_rag.delete_artifact_rows.assert_not_called()
         mock_semantic_rag.upsert_batch.assert_called_once()
-        mock_profile_rag.delete_artifact_rows.assert_called_once_with(str(yaml_file))
+        mock_semantic_rag.delete_artifact_rows_except.assert_called_once()
+        mock_profile_rag.delete_artifact_rows.assert_not_called()
         mock_profile_rag.upsert_batch.assert_called_once()
-        mock_metric_rag.delete_artifact_rows.assert_called_once_with(str(yaml_file))
+        mock_profile_rag.delete_artifact_rows_except.assert_called_once()
+        mock_metric_rag.delete_artifact_rows.assert_not_called()
         mock_metric_rag.upsert_batch.assert_called_once()
+        mock_metric_rag.delete_artifact_rows_except.assert_called_once()
+
+    def test_sync_replacement_restores_snapshots_when_later_store_fails(self, agent_config, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: public.orders
+  dimensions:
+    - name: status
+      type: CATEGORICAL
+      expr: status
+  measures:
+    - name: revenue
+      agg: SUM
+      expr: amount
+---
+metric:
+  name: total_revenue
+  type: measure_proxy
+  type_params:
+    measure: revenue
+""",
+            encoding="utf-8",
+        )
+        db_config = MagicMock()
+        db_config.catalog = ""
+        db_config.database = "test_db"
+        db_config.schema = "public"
+        agent_config.current_db_config.return_value = db_config
+        agent_config.project_name = "unit-test-project"
+
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.list_artifact_rows.return_value = [{"id": "old-semantic"}]
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.list_artifact_rows.return_value = [{"id": "old-metric"}]
+        mock_metric_rag.upsert_batch.side_effect = RuntimeError("metric write failed")
+        mock_profile_rag = MagicMock()
+        mock_profile_rag.list_artifact_rows.return_value = [{"id": "old-profile"}]
+
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=mock_metric_rag),
+            patch("datus.cli.generation_hooks.TableSemanticProfileRAG", return_value=mock_profile_rag),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(
+                file_path=str(yaml_file),
+                agent_config=agent_config,
+                original_yaml_path=str(yaml_file),
+            )
+
+        assert result["success"] is False
+        assert "metric write failed" in result["error"]
+        mock_semantic_rag.delete_artifact_rows.assert_not_called()
+        mock_metric_rag.delete_artifact_rows.assert_not_called()
+        mock_profile_rag.delete_artifact_rows.assert_not_called()
+        mock_semantic_rag.restore_artifact_rows.assert_called_once_with(str(yaml_file), [{"id": "old-semantic"}])
+        mock_profile_rag.restore_artifact_rows.assert_called_once_with(str(yaml_file), [{"id": "old-profile"}])
+        mock_metric_rag.restore_artifact_rows.assert_called_once_with(str(yaml_file), [{"id": "old-metric"}])
 
     def test_metric_partial_sync_does_not_replace_whole_yaml_artifact(self, agent_config, tmp_path):
         yaml_file = tmp_path / "orders_metrics.yml"

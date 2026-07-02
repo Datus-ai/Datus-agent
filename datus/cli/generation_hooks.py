@@ -17,6 +17,11 @@ from datus_storage_base.conditions import And, eq
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.artifact_replacement import (
+    delete_stale_artifact_rows,
+    restore_artifact_replacements,
+    snapshot_artifact_replacements,
+)
 from datus.storage.metric.store import MetricRAG, build_metric_id
 from datus.storage.reference_sql.store import ReferenceSqlRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
@@ -924,7 +929,10 @@ class GenerationHooks(AgentHooks):
             return 0
         profile_rag = TableSemanticProfileRAG(agent_config)
         if replace_yaml_path:
-            profile_rag.delete_artifact_rows(replace_yaml_path)
+            profile_rag.upsert_batch(profiles)
+            profile_rag.create_indices()
+            profile_rag.delete_artifact_rows_except(replace_yaml_path, [profile.get("id", "") for profile in profiles])
+            return len(profiles)
         profile_rag.upsert_batch(profiles)
         profile_rag.create_indices()
         return len(profiles)
@@ -1362,19 +1370,35 @@ class GenerationHooks(AgentHooks):
             # Store all objects using upsert (update if id exists, insert if not)
             all_objects = semantic_objects + metric_objects
             if all_objects:
-                if semantic_objects:
-                    semantic_rag.delete_artifact_rows(yaml_path_to_store)
-                    semantic_rag.upsert_batch(semantic_objects)
-                    semantic_rag.create_indices()
-                profile_count = GenerationHooks._sync_table_semantic_profiles(
-                    agent_config, table_profiles, replace_yaml_path=yaml_path_to_store if table_profiles else None
+                profile_count = 0
+                profile_rag = (
+                    TableSemanticProfileRAG(agent_config)
+                    if table_profiles and isinstance(getattr(agent_config, "project_name", ""), str)
+                    else None
                 )
-
-                if metric_objects:
-                    if replace_metric_artifact:
-                        metric_rag.delete_artifact_rows(yaml_path_to_store)
-                    metric_rag.upsert_batch(metric_objects)
-                    metric_rag.create_indices()
+                replacement_plans = []
+                if semantic_objects:
+                    replacement_plans.append((semantic_rag, yaml_path_to_store, semantic_objects))
+                if profile_rag is not None:
+                    replacement_plans.append((profile_rag, yaml_path_to_store, table_profiles))
+                if metric_objects and replace_metric_artifact:
+                    replacement_plans.append((metric_rag, yaml_path_to_store, metric_objects))
+                snapshots = snapshot_artifact_replacements(replacement_plans)
+                try:
+                    if semantic_objects:
+                        semantic_rag.upsert_batch(semantic_objects)
+                        semantic_rag.create_indices()
+                    if profile_rag is not None:
+                        profile_rag.upsert_batch(table_profiles)
+                        profile_rag.create_indices()
+                        profile_count = len(table_profiles)
+                    if metric_objects:
+                        metric_rag.upsert_batch(metric_objects)
+                        metric_rag.create_indices()
+                    delete_stale_artifact_rows(replacement_plans)
+                except Exception:
+                    restore_artifact_replacements(snapshots)
+                    raise
                 result = {
                     "success": True,
                     "message": (

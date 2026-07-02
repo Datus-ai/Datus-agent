@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import pyarrow as pa
-from datus_storage_base.conditions import And, eq
+from datus_storage_base.conditions import And, eq, in_, not_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
@@ -105,6 +105,35 @@ class TableSemanticProfileRAG:
         if not yaml_path:
             return
         self.storage._delete_rows(And([eq("yaml_path", yaml_path)] + self._sub_agent_conditions()))
+
+    def delete_artifact_rows_except(self, yaml_path: str, keep_ids: List[str]) -> None:
+        """Delete stale table profile rows for one YAML artifact after replacement succeeds."""
+        if not yaml_path:
+            return
+        normalized_keep_ids = [row_id for row_id in keep_ids if row_id]
+        if not normalized_keep_ids:
+            self.delete_artifact_rows(yaml_path)
+            return
+        self.storage._delete_rows(
+            And([eq("yaml_path", yaml_path), not_(in_("id", normalized_keep_ids))] + self._sub_agent_conditions())
+        )
+
+    def list_artifact_rows(self, yaml_path: str) -> List[Dict[str, Any]]:
+        """Return table profile rows projected from a single YAML artifact."""
+        if not yaml_path:
+            return []
+        return self.storage._search_all(
+            where=And([eq("yaml_path", yaml_path)] + self._sub_agent_conditions())
+        ).to_pylist()
+
+    def restore_artifact_rows(self, yaml_path: str, rows: List[Dict[str, Any]]) -> None:
+        """Restore one YAML artifact to a previously captured row snapshot."""
+        if not yaml_path:
+            return
+        self.delete_artifact_rows(yaml_path)
+        if rows:
+            self.upsert_batch(rows)
+        self.create_indices()
 
     def get_profile(
         self,

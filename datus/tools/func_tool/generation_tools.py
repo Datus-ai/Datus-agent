@@ -16,6 +16,11 @@ from agents import Tool
 from datus_storage_base.conditions import And, eq
 
 from datus.configuration.agent_config import AgentConfig
+from datus.storage.artifact_replacement import (
+    delete_stale_artifact_rows,
+    restore_artifact_replacements,
+    snapshot_artifact_replacements,
+)
 from datus.storage.metric.store import MetricRAG, build_metric_id, metric_definition_conflict, normalize_metric_name
 from datus.storage.semantic_model.store import SemanticModelRAG, _identifier_variants, _normalized_identifier
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
@@ -1188,10 +1193,12 @@ class GenerationTools:
         if not profiles or self.table_semantic_profile_rag is None:
             return 0
         yaml_path = str(profiles[0].get("yaml_path") or "")
-        if yaml_path:
-            self.table_semantic_profile_rag.delete_artifact_rows(yaml_path)
         self.table_semantic_profile_rag.upsert_batch(profiles)
         self.table_semantic_profile_rag.create_indices()
+        if yaml_path:
+            self.table_semantic_profile_rag.delete_artifact_rows_except(
+                yaml_path, [profile.get("id", "") for profile in profiles]
+            )
         return len(profiles)
 
     @staticmethod
@@ -1557,10 +1564,22 @@ class GenerationTools:
                         f"context: {', '.join(sorted(target_dataset_names))}"
                     ),
                 }
-            self.semantic_rag.delete_artifact_rows(semantic_model_path)
-            self.semantic_rag.upsert_batch(semantic_objects)
-            self.semantic_rag.create_indices()
-            profile_count = self._upsert_table_semantic_profiles(table_profiles)
+            replacement_plans = [(self.semantic_rag, semantic_model_path, semantic_objects)]
+            if table_profiles and self.table_semantic_profile_rag is not None:
+                replacement_plans.append((self.table_semantic_profile_rag, semantic_model_path, table_profiles))
+            snapshots = snapshot_artifact_replacements(replacement_plans)
+            try:
+                self.semantic_rag.upsert_batch(semantic_objects)
+                self.semantic_rag.create_indices()
+                profile_count = 0
+                if table_profiles and self.table_semantic_profile_rag is not None:
+                    self.table_semantic_profile_rag.upsert_batch(table_profiles)
+                    self.table_semantic_profile_rag.create_indices()
+                    profile_count = len(table_profiles)
+                delete_stale_artifact_rows(replacement_plans)
+            except Exception:
+                restore_artifact_replacements(snapshots)
+                raise
             return {
                 "success": True,
                 "message": f"Synced {len(semantic_objects)} OSI semantic object(s): {', '.join(synced_items[:5])}",
@@ -1700,10 +1719,15 @@ class GenerationTools:
                     return sem_result
                 synced_semantic_files.append(current_semantic_file)
 
-            if replace_metric_artifact:
-                self.metric_rag.delete_artifact_rows(metric_file)
-            self.metric_rag.upsert_batch(metric_objects)
-            self.metric_rag.create_indices()
+            replacement_plans = [(self.metric_rag, metric_file, metric_objects)] if replace_metric_artifact else []
+            snapshots = snapshot_artifact_replacements(replacement_plans)
+            try:
+                self.metric_rag.upsert_batch(metric_objects)
+                self.metric_rag.create_indices()
+                delete_stale_artifact_rows(replacement_plans)
+            except Exception:
+                restore_artifact_replacements(snapshots)
+                raise
             return {
                 "success": True,
                 "message": f"Synced {len(metric_objects)} OSI metric(s): {', '.join(synced_items[:5])}",

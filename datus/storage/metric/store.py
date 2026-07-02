@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import pyarrow as pa
 import yaml
-from datus_storage_base.conditions import WhereExpr, and_, eq, in_
+from datus_storage_base.conditions import WhereExpr, and_, eq, in_, not_
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
@@ -732,6 +732,35 @@ class MetricRAG:
         if not yaml_path:
             return
         self.storage._delete_rows(and_(eq("yaml_path", yaml_path), *self._sub_agent_conditions()))
+
+    def delete_artifact_rows_except(self, yaml_path: str, keep_ids: List[str]) -> None:
+        """Delete stale metric rows for one YAML artifact after replacement succeeds."""
+        if not yaml_path:
+            return
+        normalized_keep_ids = [row_id for row_id in keep_ids if row_id]
+        if not normalized_keep_ids:
+            self.delete_artifact_rows(yaml_path)
+            return
+        self.storage._delete_rows(
+            and_(eq("yaml_path", yaml_path), not_(in_("id", normalized_keep_ids)), *self._sub_agent_conditions())
+        )
+
+    def list_artifact_rows(self, yaml_path: str) -> List[Dict[str, Any]]:
+        """Return metric rows projected from a single YAML artifact."""
+        if not yaml_path:
+            return []
+        return self.storage._search_all(
+            where=and_(eq("yaml_path", yaml_path), *self._sub_agent_conditions())
+        ).to_pylist()
+
+    def restore_artifact_rows(self, yaml_path: str, rows: List[Dict[str, Any]]) -> None:
+        """Restore one YAML artifact to a previously captured row snapshot."""
+        if not yaml_path:
+            return
+        self.delete_artifact_rows(yaml_path)
+        if rows:
+            self.upsert_batch(rows)
+        self.create_indices()
 
     def store_batch(self, metrics: List[Dict[str, Any]]):
         logger.info(f"store metrics: {metrics}")

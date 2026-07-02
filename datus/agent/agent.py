@@ -506,9 +506,8 @@ class Agent:
                     continue
 
                 if kb_update_strategy == "overwrite":
-                    # Only clear semantic_models/{datasource} directory when NOT using --from_adapter
-                    # because MetricFlow adapter needs to read YAML files from this directory
-                    if not (hasattr(self.args, "from_adapter") and self.args.from_adapter):
+                    # Adapter and explicit YAML imports need their source files intact.
+                    if not (uses_adapter or uses_semantic_yaml):
                         semantic_yaml_dir = self.global_config.path_manager.semantic_model_path(
                             self.global_config.current_datasource
                         )
@@ -684,9 +683,12 @@ class Agent:
             for key, value in component_results.items()
             if isinstance(value, dict) and value.get("status") not in {"success", "skipped"}
         }
+        overall_status = "failed" if failed else "success"
         return {
-            "status": "failed" if failed else "success",
-            "message": "Knowledge base initialized",
+            "status": overall_status,
+            "message": (
+                "Knowledge base initialized" if overall_status == "success" else "Knowledge base initialization failed"
+            ),
             "components": component_results,
         }
 

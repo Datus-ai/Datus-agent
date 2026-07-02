@@ -95,12 +95,16 @@ async def init_success_story_semantic_model_async(
         logger.error(error_msg)
         return False, error_msg
 
-    if build_mode == "check":
+    semantic_model_rag = None
+    table_profile_rag = None
+    if build_mode in {"check", "overwrite"}:
         from datus.storage.semantic_model.store import SemanticModelRAG
         from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 
         semantic_model_rag = SemanticModelRAG(agent_config)
         table_profile_rag = TableSemanticProfileRAG(agent_config)
+
+    if build_mode == "check":
         logger.info(
             "[check] semantic_model rows=%d table_semantic_profile rows=%d; generation skipped",
             semantic_model_rag.get_size(),
@@ -109,11 +113,6 @@ async def init_success_story_semantic_model_async(
         return True, ""
 
     if build_mode == "overwrite":
-        from datus.storage.semantic_model.store import SemanticModelRAG
-        from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
-
-        semantic_model_rag = SemanticModelRAG(agent_config)
-        table_profile_rag = TableSemanticProfileRAG(agent_config)
         logger.info(
             "[overwrite] Wiping semantic_model rows for datasource '%s' before re-population",
             semantic_model_rag.datasource_id,

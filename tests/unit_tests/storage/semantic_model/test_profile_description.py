@@ -19,6 +19,14 @@ def test_merge_observed_profile_replaces_generated_suffix():
     )
 
 
+def test_merge_observed_profile_clamps_long_base_description():
+    description = "x" * 80
+
+    updated = merge_observed_profile(description, "y" * 80, max_chars=60)
+
+    assert len(updated) <= 60
+
+
 def test_build_column_observed_profile_for_categorical_usage():
     observed = build_column_observed_profile(
         {

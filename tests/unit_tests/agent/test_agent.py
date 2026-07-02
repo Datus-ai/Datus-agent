@@ -1139,15 +1139,20 @@ class TestBootstrapKbSemanticModel:
         mock_rag = MagicMock()
         mock_rag.get_size.return_value = 2
         mock_profile_rag = MagicMock()
+        mock_dir = MagicMock()
+        mock_dir.exists.return_value = True
+        agent.global_config.path_manager.semantic_model_path.return_value = mock_dir
 
         with (
             patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
             patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
             patch("datus.agent.agent.init_semantic_yaml_semantic_model", return_value=(True, None)),
+            patch("datus.agent.agent.safe_rmtree") as mock_safe_rmtree,
         ):
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
+        mock_safe_rmtree.assert_not_called()
         mock_rag.truncate.assert_called_once_with()
         mock_profile_rag.truncate.assert_called_once_with()
 
@@ -1312,6 +1317,28 @@ class TestBootstrapKbMetrics:
         assert set(result["components"]) == {"semantic_model", "metrics"}
         assert "semantic_object_count=1" in result["components"]["semantic_model"]["message"]
         assert "metrics_count=3" in result["components"]["metrics"]["message"]
+
+    def test_multiple_components_failure_message_matches_status(self):
+        args = _make_args_ext(components=["semantic_model", "metrics"], kb_update_strategy="overwrite")
+        agent = _make_agent_ext(args=args)
+
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.get_size.return_value = 1
+        mock_profile_rag = MagicMock()
+        mock_metric_rag = MagicMock()
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch("datus.agent.agent.MetricRAG", return_value=mock_metric_rag),
+            patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
+            patch("datus.agent.agent.init_success_story_metrics", return_value=(False, "metrics failed", {})),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "failed"
+        assert result["message"] == "Knowledge base initialization failed"
+        assert result["components"]["metrics"]["status"] == "failed"
 
 
 # ---------------------------------------------------------------------------

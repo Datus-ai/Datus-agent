@@ -952,7 +952,8 @@ class TestOsiSync:
             )
 
         assert result["success"] is True
-        generation_tools.metric_rag.delete_artifact_rows.assert_called_once_with(str(metric_file))
+        generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.metric_rag.upsert_batch.assert_called_once()
         metric_objects = generation_tools.metric_rag.upsert_batch.call_args.args[0]
         assert len(metric_objects) == 1
@@ -1228,14 +1229,16 @@ class TestOsiSync:
             result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
 
         assert result["success"] is True
-        generation_tools.semantic_rag.delete_artifact_rows.assert_called_once_with(str(semantic_file))
+        generation_tools.semantic_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.semantic_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.semantic_rag.upsert_batch.assert_called_once()
         objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
         assert [obj["kind"] for obj in objects] == ["table", "column", "column", "column"]
         assert objects[0]["name"] == "orders"
         assert objects[1]["name"] == "order_id"
         assert objects[1]["is_entity_key"] is True
-        generation_tools.table_semantic_profile_rag.delete_artifact_rows.assert_called_once_with(str(semantic_file))
+        generation_tools.table_semantic_profile_rag.delete_artifact_rows.assert_not_called()
+        generation_tools.table_semantic_profile_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.table_semantic_profile_rag.upsert_batch.assert_called_once()
         profiles = generation_tools.table_semantic_profile_rag.upsert_batch.call_args.args[0]
         assert profiles[0]["format"] == "osi"
@@ -1279,6 +1282,8 @@ class TestOsiSync:
 
         assert result["success"] is False
         assert "profile sync failed" in result["error"]
+        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once()
+        generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once()
 
 
 class TestGenerateSqlSummaryId:
