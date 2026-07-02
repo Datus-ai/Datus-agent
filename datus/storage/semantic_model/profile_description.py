@@ -106,7 +106,7 @@ def build_column_observed_profile(
         )
         freshness = _as_int(temporal.get("freshness_days_from_profile_date"))
         if freshness is not None:
-            parts.append(f"latest value {freshness} day{'s' if freshness != 1 else ''} before profiling")
+            parts.append(_freshness_phrase(freshness))
 
     null_rate = _as_float(stats.get("null_rate"))
     if null_rate is not None and null_rate >= 0.01:
@@ -287,6 +287,17 @@ def _duration_profile_phrases(duration_profiles: List[dict]) -> List[str]:
             phrase += f", p90 {p90} days"
         phrases.append(phrase)
     return _dedupe(phrases)
+
+
+def _freshness_phrase(freshness_days_from_profile_date: int) -> str:
+    if freshness_days_from_profile_date == 0:
+        return "latest value on profiling date"
+    if freshness_days_from_profile_date > 0:
+        unit = "day" if freshness_days_from_profile_date == 1 else "days"
+        return f"latest value {freshness_days_from_profile_date} {unit} before profiling"
+    days_after = abs(freshness_days_from_profile_date)
+    unit = "day" if days_after == 1 else "days"
+    return f"latest value {days_after} {unit} after profiling"
 
 
 def _field_usage_phrase(field_usage: Dict[str, Any]) -> str:

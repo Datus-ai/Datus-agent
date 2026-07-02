@@ -1172,6 +1172,40 @@ class TestBootstrapKbSemanticModel:
         assert result["status"] == "success"
         mock_init.assert_called_once_with(agent.global_config, args.success_story, build_mode="incremental")
 
+    def test_semantic_model_refresh_profile_updates_existing_yaml_without_regeneration(self):
+        args = _make_args_ext(
+            components=["semantic_model"],
+            kb_update_strategy="refresh-profile",
+            semantic_yaml="path/to.yaml",
+            success_story="stories.csv",
+        )
+        agent = _make_agent_ext(args=args)
+
+        mock_rag = MagicMock()
+        mock_rag.get_size.return_value = 2
+        mock_profile_rag = MagicMock()
+        mock_profile_rag.get_size.return_value = 1
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=mock_profile_rag),
+            patch(
+                "datus.agent.agent.refresh_success_story_semantic_model_profile",
+                return_value=(True, "", 3),
+            ) as mock_refresh,
+            patch("datus.agent.agent.init_success_story_semantic_model") as mock_generate,
+            patch("datus.agent.agent.init_semantic_yaml_semantic_model") as mock_import_yaml,
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        assert "changed_description_count=3" in result["message"]
+        mock_refresh.assert_called_once_with(agent.global_config, "path/to.yaml", "stories.csv")
+        mock_generate.assert_not_called()
+        mock_import_yaml.assert_not_called()
+        mock_rag.truncate.assert_not_called()
+        mock_profile_rag.truncate.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # bootstrap_kb — metrics branch

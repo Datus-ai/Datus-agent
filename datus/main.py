@@ -181,9 +181,12 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--kb_update_strategy",
         type=str,
-        choices=["check", "overwrite", "incremental"],
+        choices=["check", "overwrite", "incremental", "refresh-profile"],
         default="check",
-        help="Knowledge base update strategy: check (verify paths and data), overwrite (careful!), or incremental",
+        help=(
+            "Knowledge base update strategy: check (verify paths and data), overwrite (careful!), "
+            "incremental, or refresh-profile (semantic_model only; update profile descriptions in an existing YAML)"
+        ),
     )
     bootstrap_parser.add_argument(
         "--components",

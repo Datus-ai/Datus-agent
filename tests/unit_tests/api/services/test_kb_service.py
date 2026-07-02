@@ -29,6 +29,7 @@ class TestKbServiceBuildArgs:
             components=["metadata"],
             strategy="check",
             success_story="data/stories",
+            semantic_yaml="semantic/orders.yml",
             sql_dir="data/sql",
             schema_linking_type="table",
             catalog="main",
@@ -36,6 +37,7 @@ class TestKbServiceBuildArgs:
         )
         args = KbService._build_args(request, "/project")
         assert args.success_story == "/project/data/stories"
+        assert args.semantic_yaml == "/project/semantic/orders.yml"
         assert args.sql_dir == "/project/data/sql"
         assert args.schema_linking_type == "table"
         assert args.catalog == "main"
@@ -49,6 +51,7 @@ class TestKbServiceBuildArgs:
         )
         args = KbService._build_args(request, "/project")
         assert args.success_story is None
+        assert args.semantic_yaml is None
         assert args.sql_dir is None
 
     def test_build_args_sets_defaults(self):
@@ -367,6 +370,41 @@ class TestKbServiceInitSemanticAndMetrics:
 
         assert result["status"] == "success"
         mock_init.assert_called_once_with(real_agent_config, args.success_story, emit=None, build_mode="incremental")
+
+    def test_init_semantic_model_refresh_profile_forwards_yaml_and_success_story(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        args = KbService._build_args(
+            BootstrapKbInput(
+                components=["semantic_model"],
+                strategy="refresh-profile",
+                success_story="stories.csv",
+                semantic_yaml="semantic/orders.yml",
+            ),
+            str(real_agent_config.home),
+        )
+
+        with (
+            patch("datus.api.services.kb_service.SemanticModelRAG") as mock_rag_cls,
+            patch("datus.api.services.kb_service.TableSemanticProfileRAG") as mock_profile_cls,
+            patch(
+                "datus.api.services.kb_service.refresh_success_story_semantic_model_profile",
+                return_value=(True, "", 4),
+            ) as mock_refresh,
+            patch("datus.api.services.kb_service.init_success_story_semantic_model") as mock_generate,
+        ):
+            mock_rag_cls.return_value.get_size.return_value = 5
+            mock_profile_cls.return_value.get_size.return_value = 2
+            result = svc._init_semantic_model(real_agent_config, "refresh-profile", "", args, emit=None)
+
+        assert result["status"] == "success"
+        assert "changed_description_count=4" in result["message"]
+        mock_refresh.assert_called_once_with(
+            real_agent_config,
+            args.semantic_yaml,
+            args.success_story,
+            emit=None,
+        )
+        mock_generate.assert_not_called()
 
     def test_init_metrics_check_skips_generation(self, real_agent_config):
         svc = KbService(agent_config=real_agent_config)

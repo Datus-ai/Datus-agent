@@ -94,6 +94,18 @@ def test_build_profile_descriptions_cover_distribution_fields():
     assert "many to one or one to one" in join_observed
 
 
+def test_build_column_observed_profile_formats_future_freshness():
+    observed = build_column_observed_profile(
+        {
+            "kind": "temporal",
+            "stats": {"min_value": "2026-01-01", "max_value": "2026-10-31"},
+            "temporal_summary": {"freshness_days_from_profile_date": -121},
+        }
+    )
+
+    assert "latest value 121 days after profiling" in observed
+
+
 def test_refresh_metricflow_yaml_descriptions_patches_table_and_column():
     docs = [
         yaml.safe_load(

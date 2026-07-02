@@ -3,9 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
+import json
 import os
 import tempfile
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 import yaml
@@ -322,6 +323,231 @@ def init_success_story_semantic_model(
         return asyncio.run(
             init_success_story_semantic_model_async(agent_config, success_story, emit, build_mode=build_mode)
         )
+
+
+def refresh_success_story_semantic_model_profile(
+    agent_config: AgentConfig,
+    yaml_file_path: str,
+    success_story: str,
+    emit: Optional[Callable[[BatchEvent], None]] = None,
+    *,
+    authoring_format: str = "",
+    profile_mode: str = "deep",
+    max_tables: int = 8,
+    max_columns_per_table: int = 40,
+    top_n: int = 8,
+    max_profile_seconds: int = 120,
+) -> tuple[bool, str, int]:
+    """Refresh profile-derived descriptions for an existing semantic YAML file.
+
+    This is the CLI/API orchestration path for ``kb_update_strategy=refresh-profile``:
+    it mines historical SQL from the success-story CSV, samples bounded live-data
+    profiles through read-only DB tools, updates only generated description
+    suffixes in the YAML, and syncs that YAML back to semantic storage.
+    """
+    if not yaml_file_path:
+        return False, "--semantic_yaml is required for semantic_model refresh-profile", 0
+    if not success_story:
+        return False, "--success_story is required for semantic_model refresh-profile", 0
+
+    resolved_yaml_path = _resolve_semantic_yaml_refresh_path(yaml_file_path, agent_config)
+    if not resolved_yaml_path:
+        return False, f"Semantic YAML file rejected by sandbox check: {yaml_file_path}", 0
+    if not os.path.exists(resolved_yaml_path):
+        return False, f"Semantic YAML file not found: {resolved_yaml_path}", 0
+
+    entries, error = _load_success_story_profile_entries(success_story)
+    if error:
+        return False, error, 0
+
+    try:
+        with open(resolved_yaml_path, "r", encoding="utf-8") as f:
+            docs = [doc for doc in yaml.safe_load_all(f) if doc is not None]
+    except Exception as exc:
+        return False, f"Failed to read semantic YAML file '{resolved_yaml_path}': {exc}", 0
+
+    fmt = _infer_semantic_yaml_authoring_format(docs, authoring_format)
+    if fmt not in {"metricflow", "osi"}:
+        return False, f"Unsupported semantic YAML authoring format: {authoring_format}", 0
+    tables = _semantic_yaml_profile_tables(docs, fmt)
+    if not tables:
+        return False, f"No table targets found in semantic YAML file: {resolved_yaml_path}", 0
+
+    current_db_config = agent_config.current_db_config()
+    runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
+    runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
+    runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
+    catalog = runtime_db_context.get("catalog") or runtime_db_context.get("catalog_name") or current_db_config.catalog
+    database = (
+        runtime_db_context.get("database") or runtime_db_context.get("database_name") or current_db_config.database
+    )
+    schema_name = (
+        runtime_db_context.get("schema")
+        or runtime_db_context.get("db_schema")
+        or runtime_db_context.get("schema_name")
+        or current_db_config.schema
+    )
+
+    if emit:
+        emit(
+            BatchEvent(
+                biz_name="semantic_model_profile_refresh",
+                stage=BatchStage.TASK_STARTED,
+                total_items=len(tables),
+                payload={"semantic_yaml": resolved_yaml_path, "tables": tables},
+            )
+        )
+
+    try:
+        from datus.tools.func_tool.database import DBFuncTool
+        from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
+
+        db_tool = DBFuncTool(agent_config=agent_config, sub_agent_name="gen_semantic_model", read_only=True)
+        discovery_tools = SemanticDiscoveryTools(db_tool=db_tool, enable_semantic_model_profiler=True)
+        profile_result = discovery_tools.profile_semantic_model_evidence(
+            sql_entries_json=json.dumps(entries, ensure_ascii=False),
+            tables=tables,
+            catalog=str(catalog or ""),
+            database=str(database or ""),
+            schema_name=str(schema_name or ""),
+            profile_mode=profile_mode,
+            max_tables=max_tables,
+            max_columns_per_table=max_columns_per_table,
+            top_n=top_n,
+            max_profile_seconds=max_profile_seconds,
+        )
+    except Exception as exc:
+        error = f"Failed to profile semantic YAML '{resolved_yaml_path}': {exc}"
+        logger.exception(error)
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_profile_refresh", stage=BatchStage.TASK_FAILED, error=error))
+        return False, error, 0
+
+    if not profile_result.success:
+        error = profile_result.error or "profile_semantic_model_evidence failed"
+        if emit:
+            emit(BatchEvent(biz_name="semantic_model_profile_refresh", stage=BatchStage.TASK_FAILED, error=error))
+        return False, error, 0
+
+    success, error, changed = refresh_semantic_yaml_profile_descriptions(
+        resolved_yaml_path,
+        profile_result.result or {},
+        authoring_format=fmt,
+        agent_config=agent_config,
+        sync_to_storage=True,
+    )
+
+    if emit:
+        emit(
+            BatchEvent(
+                biz_name="semantic_model_profile_refresh",
+                stage=BatchStage.TASK_COMPLETED if success else BatchStage.TASK_FAILED,
+                completed_items=len(tables) if success else 0,
+                failed_items=0 if success else len(tables),
+                error=error or None,
+                payload={"semantic_yaml": resolved_yaml_path, "changed_description_count": changed},
+            )
+        )
+    return success, error, changed
+
+
+def _load_success_story_profile_entries(success_story: str) -> tuple[list[dict[str, str]], str]:
+    try:
+        df = pd.read_csv(success_story)
+    except FileNotFoundError:
+        return [], f"Success story CSV file not found: {success_story}"
+    except pd.errors.EmptyDataError:
+        return [], f"Success story CSV file is empty: {success_story}"
+    except Exception as exc:
+        return [], f"Failed to read success story CSV file '{success_story}': {exc}"
+
+    if "sql" not in df.columns:
+        return [], f"Success story CSV '{success_story}' is missing required column: sql"
+
+    entries = []
+    for idx, row in df.iterrows():
+        sql = _success_story_cell(row, "sql")
+        if not sql:
+            continue
+        entries.append(
+            {
+                "name": _success_story_cell(row, "source_context_id")
+                or _success_story_cell(row, "name")
+                or f"success_story_{idx + 1}",
+                "question": _success_story_cell(row, "question"),
+                "sql": sql,
+            }
+        )
+    if not entries:
+        return [], f"Success story CSV '{success_story}' contains no SQL rows"
+    return entries, ""
+
+
+def _success_story_cell(row: Any, key: str) -> str:
+    value = row.get(key)
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def _infer_semantic_yaml_authoring_format(docs: list[dict], authoring_format: str = "") -> str:
+    fmt = (authoring_format or "").strip().lower()
+    if fmt:
+        return fmt
+    return "metricflow" if any(isinstance(doc, dict) and doc.get("data_source") for doc in docs) else "osi"
+
+
+def _semantic_yaml_profile_tables(docs: list[dict], authoring_format: str) -> list[str]:
+    if authoring_format == "metricflow":
+        return _dedupe_semantic_yaml_values(
+            _metricflow_data_source_table(doc.get("data_source")) for doc in docs if isinstance(doc, dict)
+        )
+    return _dedupe_semantic_yaml_values(
+        _osi_dataset_table(dataset) for doc in docs for dataset in _iter_osi_yaml_datasets(doc)
+    )
+
+
+def _metricflow_data_source_table(data_source: Any) -> str:
+    if not isinstance(data_source, dict):
+        return ""
+    return str(data_source.get("sql_table") or data_source.get("name") or "").strip()
+
+
+def _iter_osi_yaml_datasets(doc: Any) -> list[dict]:
+    if not isinstance(doc, dict):
+        return []
+    datasets = [dataset for dataset in doc.get("datasets") or [] if isinstance(dataset, dict)]
+    semantic_models = doc.get("semantic_model")
+    if isinstance(semantic_models, list):
+        for semantic_model in semantic_models:
+            if isinstance(semantic_model, dict):
+                datasets.extend(
+                    dataset for dataset in semantic_model.get("datasets") or [] if isinstance(dataset, dict)
+                )
+    return datasets
+
+
+def _osi_dataset_table(dataset: dict) -> str:
+    source = dataset.get("source")
+    if isinstance(source, dict) and source.get("table"):
+        return str(source["table"]).strip()
+    if isinstance(source, str) and source.strip():
+        return source.strip()
+    return str(dataset.get("table") or dataset.get("name") or "").strip()
+
+
+def _dedupe_semantic_yaml_values(values) -> list[str]:
+    result = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
 
 
 def init_semantic_yaml_semantic_model(

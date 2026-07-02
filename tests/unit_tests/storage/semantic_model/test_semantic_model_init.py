@@ -12,6 +12,7 @@ from datus.storage.semantic_model.semantic_model_init import (
     init_semantic_yaml_semantic_model,
     process_semantic_yaml_file,
     refresh_semantic_yaml_profile_descriptions,
+    refresh_success_story_semantic_model_profile,
 )
 
 # ---------------------------------------------------------------------------
@@ -485,6 +486,91 @@ data_source:
         assert "dump failed" in error
         assert changed == 0
         assert yaml_file.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.ci
+class TestRefreshSuccessStorySemanticModelProfile:
+    def test_profiles_existing_metricflow_yaml_and_refreshes_descriptions(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+data_source:
+  name: orders
+  sql_table: marts.orders
+  description: Orders table.
+""",
+            encoding="utf-8",
+        )
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text(
+            "source_context_id,question,sql\n"
+            "q1,paid orders,\"SELECT status FROM marts.orders WHERE status = 'paid'\"\n",
+            encoding="utf-8",
+        )
+        mock_config = MagicMock()
+        mock_config.path_manager = None
+        mock_config.runtime_db_context.return_value = {}
+        current_db_config = MagicMock()
+        current_db_config.catalog = ""
+        current_db_config.database = "analytics"
+        current_db_config.schema = ""
+        mock_config.current_db_config.return_value = current_db_config
+
+        from datus.tools.func_tool.base import FuncToolResult
+
+        mock_discovery = MagicMock()
+        mock_discovery.profile_semantic_model_evidence.return_value = FuncToolResult(
+            result={"tables": {"orders": {"data_distribution_profile": {"columns": {}}}}}
+        )
+
+        with (
+            patch("datus.tools.func_tool.database.DBFuncTool") as mock_db_tool,
+            patch(
+                "datus.tools.func_tool.semantic_discovery_tools.SemanticDiscoveryTools",
+                return_value=mock_discovery,
+            ),
+            patch(
+                "datus.storage.semantic_model.semantic_model_init.refresh_semantic_yaml_profile_descriptions",
+                return_value=(True, "", 2),
+            ) as mock_refresh,
+        ):
+            success, error, changed = refresh_success_story_semantic_model_profile(
+                mock_config,
+                str(yaml_file),
+                str(success_story),
+            )
+
+        assert success is True
+        assert error == ""
+        assert changed == 2
+        mock_db_tool.assert_called_once_with(
+            agent_config=mock_config,
+            sub_agent_name="gen_semantic_model",
+            read_only=True,
+        )
+        profile_kwargs = mock_discovery.profile_semantic_model_evidence.call_args.kwargs
+        assert profile_kwargs["tables"] == ["marts.orders"]
+        assert profile_kwargs["database"] == "analytics"
+        assert profile_kwargs["profile_mode"] == "deep"
+        assert "paid orders" in profile_kwargs["sql_entries_json"]
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args[0] == str(yaml_file)
+        assert mock_refresh.call_args.kwargs["authoring_format"] == "metricflow"
+        assert mock_refresh.call_args.kwargs["sync_to_storage"] is True
+
+    def test_refresh_profile_requires_semantic_yaml(self, tmp_path):
+        success_story = tmp_path / "stories.csv"
+        success_story.write_text("sql\nSELECT 1\n", encoding="utf-8")
+
+        success, error, changed = refresh_success_story_semantic_model_profile(
+            MagicMock(),
+            "",
+            str(success_story),
+        )
+
+        assert success is False
+        assert "--semantic_yaml is required" in error
+        assert changed == 0
 
 
 # ---------------------------------------------------------------------------

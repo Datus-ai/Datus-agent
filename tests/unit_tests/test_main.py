@@ -200,6 +200,11 @@ class TestCreateParser:
         args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--kb_update_strategy", "check"])
         assert args.kb_update_strategy == "check"
 
+    def test_bootstrap_kb_accepts_refresh_profile_strategy(self):
+        parser = create_parser()
+        args = parser.parse_args(["bootstrap-kb", "--datasource", "ds", "--kb_update_strategy", "refresh-profile"])
+        assert args.kb_update_strategy == "refresh-profile"
+
     def test_bootstrap_kb_default_components_and_strategy(self):
         parser = create_parser()
         args = parser.parse_args(["bootstrap-kb", "--datasource", "ds"])

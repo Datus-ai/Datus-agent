@@ -3,7 +3,22 @@
 import pytest
 from pydantic import ValidationError
 
-from datus.api.models.kb_models import BootstrapDocInput
+from datus.api.models.kb_models import BootstrapDocInput, BootstrapKbInput
+
+
+class TestBootstrapKbInput:
+    """Tests for BootstrapKbInput validation."""
+
+    def test_refresh_profile_strategy_accepts_semantic_yaml(self):
+        inp = BootstrapKbInput(
+            components=["semantic_model"],
+            strategy="refresh-profile",
+            success_story="stories.csv",
+            semantic_yaml="semantic/orders.yml",
+        )
+
+        assert inp.strategy == "refresh-profile"
+        assert inp.semantic_yaml == "semantic/orders.yml"
 
 
 class TestBootstrapDocInput:

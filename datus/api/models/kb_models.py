@@ -34,11 +34,12 @@ class BootstrapKbInput(BaseModel):
             "`reference_sql` indexes reusable SQL files."
         ),
     )
-    strategy: Literal["overwrite", "check", "incremental"] = Field(
+    strategy: Literal["overwrite", "check", "incremental", "refresh-profile"] = Field(
         default="incremental",
         description=(
             "Update strategy. `check` inspects existing data without rebuilding where supported, "
-            "`overwrite` clears and rebuilds, and `incremental` appends or updates changed entries."
+            "`overwrite` clears and rebuilds, `incremental` appends or updates changed entries, "
+            "and `refresh-profile` updates profile-derived descriptions in an existing semantic YAML."
         ),
     )
 
@@ -71,6 +72,13 @@ class BootstrapKbInput(BaseModel):
         description=(
             "Project-root-relative path to a success-story CSV containing historical question/SQL pairs. "
             "Used by `semantic_model` and `metrics` when bootstrapping from success stories."
+        ),
+    )
+    semantic_yaml: Optional[str] = Field(
+        default=None,
+        description=(
+            "Project-root-relative semantic model YAML path. Required by `semantic_model` with "
+            "`strategy=refresh-profile` so profile descriptions can be refreshed in place."
         ),
     )
     subject_tree: Optional[list[str]] = Field(

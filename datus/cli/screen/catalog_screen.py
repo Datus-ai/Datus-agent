@@ -36,6 +36,43 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+_NESTED_TABLE_PRIMARY_KEYS = (
+    "name",
+    "expr",
+    "role",
+    "type",
+    "time_granularity",
+    "entity",
+    "agg",
+    "agg_time_dimension",
+    "from",
+    "to",
+    "from_columns",
+    "to_columns",
+)
+_NESTED_TABLE_TRAILING_KEYS = ("description", "ai_context")
+
+
+def _ordered_nested_table_keys(items: List[Dict[str, Any]]) -> List[str]:
+    """Return stable, human-readable columns for semantic nested tables."""
+    seen_keys = set()
+    encountered_keys = []
+    for item in items:
+        for key in item.keys():
+            if key not in seen_keys:
+                encountered_keys.append(key)
+                seen_keys.add(key)
+
+    primary = [key for key in _NESTED_TABLE_PRIMARY_KEYS if key in seen_keys]
+    trailing = [key for key in _NESTED_TABLE_TRAILING_KEYS if key in seen_keys]
+    middle = [
+        key
+        for key in encountered_keys
+        if key not in _NESTED_TABLE_PRIMARY_KEYS and key not in _NESTED_TABLE_TRAILING_KEYS
+    ]
+    return primary + middle + trailing
+
+
 class SemanticModelPanel(Vertical):
     """Display and edit semantic model metadata."""
 
@@ -791,14 +828,8 @@ class CatalogScreen(ContextScreen):
                 row_styles=["on grey15", "on grey23"],
             )
             if parsed_data and isinstance(parsed_data[0], dict):
-                # Collect all unique keys from all items to handle heterogeneous dicts
-                all_keys = []
-                seen_keys = set()
-                for item in parsed_data:
-                    for key in item.keys():
-                        if key not in seen_keys:
-                            all_keys.append(key)
-                            seen_keys.add(key)
+                # Collect all unique keys with a readable semantic-column order.
+                all_keys = _ordered_nested_table_keys(parsed_data)
 
                 for key in all_keys:
                     nested_table.add_column(str(key), style="dim cyan", justify="center")

@@ -28,6 +28,7 @@ from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.semantic_model.semantic_model_init import (
     init_semantic_yaml_semantic_model,
     init_success_story_semantic_model,
+    refresh_success_story_semantic_model_profile,
 )
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
@@ -396,6 +397,11 @@ class Agent:
         selected_components = self.args.components
 
         kb_update_strategy = self.args.kb_update_strategy
+        if kb_update_strategy == "refresh-profile" and set(selected_components) != {"semantic_model"}:
+            return {
+                "status": "failed",
+                "message": "kb_update_strategy=refresh-profile is only supported with --components semantic_model",
+            }
         benchmark_platform = self.args.benchmark
         pool_size = 4 if not self.args.pool_size else self.args.pool_size
         dir_path = self.global_config.rag_storage_path()
@@ -502,6 +508,31 @@ class Agent:
                             f"table_semantic_profile_count={profile_rag.get_size()}"
                         ),
                     }
+                    results[component] = result
+                    continue
+
+                if kb_update_strategy == "refresh-profile":
+                    self.global_config.check_init_storage_config("semantic_model")
+                    temp_rag = SemanticModelRAG(self.global_config)
+                    profile_rag = TableSemanticProfileRAG(self.global_config)
+                    successful, error_message, changed = refresh_success_story_semantic_model_profile(
+                        self.global_config,
+                        self.args.semantic_yaml,
+                        self.args.success_story,
+                    )
+                    if successful:
+                        result = {
+                            "status": "success",
+                            "message": (
+                                "semantic_model profile refresh completed, "
+                                f"changed_description_count={changed}, "
+                                f"semantic_object_count={temp_rag.get_size()}, "
+                                f"table_semantic_profile_count={profile_rag.get_size()}"
+                            ),
+                            "error": error_message,
+                        }
+                    else:
+                        result = {"status": "failed", "message": error_message}
                     results[component] = result
                     continue
 

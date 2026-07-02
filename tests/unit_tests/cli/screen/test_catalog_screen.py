@@ -63,3 +63,29 @@ def test_catalog_screen_readonly_panel_shows_profile_fields_without_measures():
     assert "Filters" not in rendered
     assert "Measures" not in rendered
     assert "amount" not in rendered
+
+
+def test_catalog_screen_nested_semantic_table_uses_readable_column_order():
+    screen = object.__new__(CatalogScreen)
+    table = screen._create_nested_table_for_json(
+        [
+            {
+                "description": "Activity key",
+                "expr": "ac_code",
+                "name": "activity",
+                "role": "primary_key",
+                "type": "PRIMARY",
+            },
+            {
+                "description": "Start date",
+                "expr": "start_date",
+                "name": "start_date",
+                "role": "dimension",
+                "time_granularity": "DAY",
+                "type": "TIME",
+            },
+        ]
+    )
+
+    headers = [column.header for column in table.columns]
+    assert headers == ["name", "expr", "role", "type", "time_granularity", "description"]
