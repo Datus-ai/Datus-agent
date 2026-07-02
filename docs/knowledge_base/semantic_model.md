@@ -58,6 +58,14 @@ datus-agent bootstrap-kb \
     --datasource <your_datasource> \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
+
+# Refresh observed profile descriptions in an existing YAML
+datus-agent bootstrap-kb \
+    --datasource <your_datasource> \
+    --components semantic_model \
+    --kb_update_strategy refresh-profile \
+    --semantic_yaml path/to/semantic_model.yaml \
+    --success_story path/to/success_story.csv
 ```
 
 ### Key Parameters
@@ -66,9 +74,14 @@ datus-agent bootstrap-kb \
 |-----------|----------|-------------|---------|
 | `--datasource` | ✅ | Database datasource | `sales_db` |
 | `--components` | ✅ | Components to initialize | `semantic_model` |
-| `--success_story` | ⚠️ | CSV file with historical SQLs (required if no `--semantic_yaml`) | `success_story.csv` |
-| `--semantic_yaml` | ⚠️ | Semantic model YAML file (required if no `--success_story`) | `semantic_model.yaml` |
-| `--kb_update_strategy` | ✅ | Update strategy | `overwrite`/`incremental` |
+| `--success_story` | ⚠️ | CSV file with historical SQLs. Required for generation from SQL history and for `refresh-profile`. | `success_story.csv` |
+| `--semantic_yaml` | ⚠️ | Semantic model YAML file. Required for YAML import and for `refresh-profile`. | `semantic_model.yaml` |
+| `--kb_update_strategy` | ❌ | Update strategy. Defaults to `check`; `refresh-profile` is semantic-model only. | `check`/`overwrite`/`incremental`/`refresh-profile` |
+
+`refresh-profile` updates an existing MetricFlow or OSI semantic YAML in place. It re-runs bounded, read-only data
+profiling guided by the historical SQLs in `--success_story`, replaces the generated `Observed profile:` suffixes in
+table and column descriptions, and syncs the updated YAML back to the semantic model vector store. It does not run full
+LLM semantic-model generation and does not truncate the semantic model store.
 
 ## Data Source Formats
 

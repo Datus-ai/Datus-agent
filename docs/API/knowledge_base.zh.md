@@ -13,15 +13,34 @@
 | 字段                  | 类型      | 默认值          | 说明 |
 |----------------------|----------|----------------|------|
 | `components`         | string[] | _（必填）_       | 要构建的组件：`metadata`、`semantic_model`、`metrics`、`reference_sql` |
-| `strategy`           | string   | `incremental`  | `check`（仅检查）、`overwrite`（重建）、`incremental`（增量更新） |
+| `strategy`           | string   | `incremental`  | `check`（仅检查）、`overwrite`（重建）、`incremental`（增量更新）或 `refresh-profile`（仅语义模型） |
 | `schema_linking_type`| string   | `full`         | metadata 专用：`table`、`view`、`mv`、`full` |
 | `catalog`            | string   | `""`           | 支持 catalog 的引擎的 metadata catalog 过滤，例如 StarRocks；Snowflake 需要留空 |
 | `database_name`      | string   | `""`           | metadata 数据库过滤 |
 | `success_story`      | string?  | `null`         | 项目根目录的相对路径，指向 success-story CSV |
+| `semantic_yaml`      | string?  | `null`         | 项目根目录的相对路径，指向语义模型 YAML；`strategy=refresh-profile` 时必需 |
 | `subject_tree`       | string[]?| `null`         | 预定义层级分类 |
 | `sql_dir`            | string?  | `null`         | 项目根目录的相对路径，指向 `.sql` 文件目录 |
 
 **响应**：`text/event-stream`，参见下方 [SSE 事件格式](#sse-events)。
+
+`strategy=refresh-profile` 仅在 `components` 恰好为 `["semantic_model"]` 时有效。它要求同时传入 `semantic_yaml`
+和 `success_story`，会用有界、只读的数据 profile 刷新已有 MetricFlow 或 OSI YAML 中生成的 `Observed profile:`
+description 片段，并把更新后的 YAML 同步回 semantic model storage。它不会重新运行完整语义模型生成，也不会清空
+semantic model store。
+
+**示例**：
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{
+    "components": ["semantic_model"],
+    "strategy": "refresh-profile",
+    "semantic_yaml": "subject/semantic_models/starrocks/orders.yml",
+    "success_story": "success_story.csv"
+  }'
+```
 
 ### `POST /api/v1/kb/bootstrap/{stream_id}/cancel`
 

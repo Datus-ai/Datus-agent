@@ -59,6 +59,14 @@ datus-agent bootstrap-kb \
     --datasource <your_datasource> \
     --components semantic_model \
     --semantic_yaml path/to/semantic_model.yaml
+
+# 刷新已有 YAML 中的观测 profile 描述
+datus-agent bootstrap-kb \
+    --datasource <your_datasource> \
+    --components semantic_model \
+    --kb_update_strategy refresh-profile \
+    --semantic_yaml path/to/semantic_model.yaml \
+    --success_story path/to/success_story.csv
 ```
 
 ### 关键参数
@@ -67,9 +75,13 @@ datus-agent bootstrap-kb \
 |-----------|----------|-------------|---------|
 | `--datasource` | ✅ | 数据库数据源 | `sales_db` |
 | `--components` | ✅ | 要初始化的组件 | `semantic_model` |
-| `--success_story` | ⚠️ | 包含历史 SQLs 的 CSV 文件（如果没有 `--semantic_yaml` 则必需） | `success_story.csv` |
-| `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件（如果没有 `--success_story` 则必需） | `semantic_model.yaml` |
-| `--kb_update_strategy` | ✅ | 更新策略 | `overwrite`/`incremental` |
+| `--success_story` | ⚠️ | 包含历史 SQLs 的 CSV 文件。从 SQL 历史生成和 `refresh-profile` 都需要。 | `success_story.csv` |
+| `--semantic_yaml` | ⚠️ | 语义模型 YAML 文件。从 YAML 导入和 `refresh-profile` 都需要。 | `semantic_model.yaml` |
+| `--kb_update_strategy` | ❌ | 更新策略。默认是 `check`；`refresh-profile` 仅支持 `semantic_model` 组件。 | `check`/`overwrite`/`incremental`/`refresh-profile` |
+
+`refresh-profile` 会原地更新已有 MetricFlow 或 OSI 语义模型 YAML。它会根据 `--success_story` 中的历史 SQL
+重新做有界、只读的数据 profile，替换表和字段 description 中生成的 `Observed profile:` 片段，并把更新后的 YAML
+同步回语义模型向量库。它不会重新运行完整 LLM 语义模型生成，也不会清空 semantic model store。
 
 ## 数据源格式
 

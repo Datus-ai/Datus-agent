@@ -15,15 +15,34 @@ metrics, and reference SQL.
 | Field                | Type     | Default        | Notes |
 |----------------------|----------|----------------|-------|
 | `components`         | string[] | _(required)_   | Components to bootstrap: `metadata`, `semantic_model`, `metrics`, `reference_sql` |
-| `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), or `incremental` (append/update) |
+| `strategy`           | string   | `incremental`  | `check` (inspect only), `overwrite` (rebuild), `incremental` (append/update), or `refresh-profile` (semantic model only) |
 | `schema_linking_type`| string   | `full`         | Metadata only: `table`, `view`, `mv`, or `full` |
 | `catalog`            | string   | `""`           | Metadata catalog filter for catalog-aware engines such as StarRocks; leave empty for Snowflake |
 | `database_name`      | string   | `""`           | Metadata database filter |
 | `success_story`      | string?  | `null`         | Project-root-relative path to success-story CSV |
+| `semantic_yaml`      | string?  | `null`         | Project-root-relative semantic model YAML path; required with `strategy=refresh-profile` |
 | `subject_tree`       | string[]?| `null`         | Predefined hierarchical categories |
 | `sql_dir`            | string?  | `null`         | Project-root-relative directory with `.sql` files |
 
 **Response**: `text/event-stream`. See [SSE event format](#sse-event-format) below.
+
+`strategy=refresh-profile` is only valid when `components` is exactly `["semantic_model"]`. It requires both
+`semantic_yaml` and `success_story`, refreshes generated `Observed profile:` description suffixes in the existing
+MetricFlow or OSI YAML using bounded read-only data profiling, and syncs the updated YAML back to semantic model storage.
+It does not run full semantic-model generation or truncate the semantic model store.
+
+**Example**:
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/kb/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{
+    "components": ["semantic_model"],
+    "strategy": "refresh-profile",
+    "semantic_yaml": "subject/semantic_models/starrocks/orders.yml",
+    "success_story": "success_story.csv"
+  }'
+```
 
 ### `POST /api/v1/kb/bootstrap/{stream_id}/cancel`
 
