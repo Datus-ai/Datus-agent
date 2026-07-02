@@ -160,7 +160,7 @@ def refresh_osi_yaml_descriptions(docs: List[dict], profile_evidence: Dict[str, 
         if table_observed:
             changed += _merge_description(dataset, table_observed)
         field_items = []
-        for key in ("dimensions", "measures", "identifiers", "columns"):
+        for key in ("fields", "dimensions", "measures", "identifiers", "columns"):
             value = dataset.get(key)
             if isinstance(value, list):
                 field_items.extend(item for item in value if isinstance(item, dict))

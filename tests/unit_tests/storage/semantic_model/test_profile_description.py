@@ -192,3 +192,49 @@ semantic_model:
     assert changed == 2
     assert "referenced by 1 historical query" in dataset["description"]
     assert "2 distinct non-null values" in dataset["dimensions"][0]["description"]
+
+
+def test_refresh_osi_yaml_descriptions_patches_dataset_fields():
+    docs = [
+        yaml.safe_load(
+            """
+semantic_model:
+  - name: commerce
+    datasets:
+      - name: orders
+        description: Orders dataset.
+        source: marts.orders
+        fields:
+          - name: amount
+            expression:
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: amount
+            description: Order amount.
+"""
+        )
+    ]
+    evidence = {
+        "tables": {
+            "orders": {
+                "query_count": 1,
+                "data_distribution_profile": {
+                    "row_count": 10,
+                    "columns": {
+                        "amount": {
+                            "kind": "numeric",
+                            "stats": {"min_value": 1, "max_value": 99},
+                            "percentiles": {"p50": 50, "p90": 90},
+                        }
+                    },
+                },
+            }
+        }
+    }
+
+    changed = refresh_osi_yaml_descriptions(docs, evidence)
+
+    dataset = docs[0]["semantic_model"][0]["datasets"][0]
+    assert changed == 2
+    assert "observed row count 10" in dataset["description"]
+    assert "observed range 1-99" in dataset["fields"][0]["description"]
