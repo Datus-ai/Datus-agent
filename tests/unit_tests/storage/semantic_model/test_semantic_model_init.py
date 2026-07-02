@@ -316,6 +316,56 @@ semantic_model:
         mock_tools_cls.assert_called_once_with(agent_config=mock_config, authoring_format="osi")
         mock_tools_cls.return_value.sync_osi_semantic_to_db.assert_called_once_with(str(yaml_file))
 
+    def test_osi_refresh_returns_sync_exception(self, tmp_path):
+        yaml_file = tmp_path / "orders.yml"
+        yaml_file.write_text(
+            """
+semantic_model:
+  - name: shop
+    datasets:
+      - name: orders
+        description: Orders dataset.
+        source: orders
+        dimensions:
+          - name: status
+            description: Order status.
+""",
+            encoding="utf-8",
+        )
+        evidence = {
+            "tables": {
+                "orders": {
+                    "query_count": 1,
+                    "data_distribution_profile": {
+                        "columns": {
+                            "status": {
+                                "kind": "categorical",
+                                "stats": {"distinct_count": 2},
+                                "top_values": [{"value": "paid"}],
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        mock_config = MagicMock()
+        mock_config.path_manager = None
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as mock_tools_cls:
+            mock_tools_cls.return_value.sync_osi_semantic_to_db.side_effect = RuntimeError("storage offline")
+            success, error, changed = refresh_semantic_yaml_profile_descriptions(
+                str(yaml_file),
+                evidence,
+                authoring_format="osi",
+                agent_config=mock_config,
+                sync_to_storage=True,
+            )
+
+        assert success is False
+        assert "Failed to sync OSI semantic YAML file" in error
+        assert "storage offline" in error
+        assert changed == 2
+
     def test_unchanged_metricflow_yaml_still_retries_storage_sync(self, tmp_path):
         yaml_file = tmp_path / "orders.yml"
         yaml_file.write_text(
