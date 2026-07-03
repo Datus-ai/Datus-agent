@@ -1045,6 +1045,17 @@ class SemanticTools:
             return tool_result
 
         except Exception as e:
+            # Surface backend validation rejections as structured planner guidance.
+            # Duck-typed so the tool layer stays decoupled from any specific adapter.
+            payload = getattr(e, "payload", None)
+            if payload is not None and getattr(payload, "error_type", None) == "semantic_validation_error":
+                data = payload.model_dump() if hasattr(payload, "model_dump") else dict(payload)
+                logger.info(f"query_metrics validation rejection: code={data.get('code')}")
+                return FuncToolResult(
+                    success=0,
+                    error=getattr(payload, "message", "") or "query_metrics validation failed",
+                    result=data,
+                )
             logger.error(f"Error querying metrics: {e}")
             return FuncToolResult(
                 success=0,

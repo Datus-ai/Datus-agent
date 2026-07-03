@@ -9,7 +9,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-import re
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 if TYPE_CHECKING:
@@ -89,6 +88,7 @@ class AskMetricsAgenticNode(AgenticNode):
         self.subject_tree_mode: str = "none"
         self.subject_tree_prompt: str = ""
         self._metric_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._failed_query_signatures: set[tuple] = set()
         self._selected_final_metric_result_id: Optional[str] = None
         self.startup_error: Optional[str] = None
 
@@ -470,12 +470,23 @@ class AskMetricsAgenticNode(AgenticNode):
             )
         normalized_dimensions = None if dimensions is None else self._normalize_string_list(dimensions)
         normalized_order_by = None if order_by is None else self._normalize_string_list(order_by)
-        normalized_dimensions, time_granularity, normalized_order_by = self._apply_window_time_grouping(
-            expanded_metrics,
-            normalized_dimensions,
-            time_granularity,
-            normalized_order_by,
-        )
+        # metric_time grouping is derived from each metric's definition and
+        # applied by the semantic adapter; the node no longer injects it here.
+
+        # De-duplicate deterministic validation failures: once a metric/dimension/
+        # granularity combination has been rejected, do not re-issue the identical
+        # query — return actionable guidance so the planner adjusts instead of looping.
+        signature = self._query_signature(expanded_metrics, normalized_dimensions, time_granularity, where)
+        if signature in self._failed_query_signatures:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "query_metrics already failed for this metric/dimension/granularity "
+                    "combination. Adjust the metrics, dimensions, or granularity — or split "
+                    "the query into compatible metric groups — instead of retrying identical "
+                    "arguments."
+                ),
+            )
         query_kwargs = {
             "metrics": expanded_metrics,
             "dimensions": normalized_dimensions,
@@ -493,7 +504,36 @@ class AskMetricsAgenticNode(AgenticNode):
         if zero_fill:
             query_kwargs["zero_fill"] = zero_fill
         result = self.semantic_tools.query_metrics(**query_kwargs)
+        if self._is_deterministic_validation_failure(result):
+            self._failed_query_signatures.add(signature)
         return self._apply_query_result_column_aliases(result)
+
+    @staticmethod
+    def _query_signature(
+        metrics: List[str],
+        dimensions: Optional[List[str]],
+        time_granularity: Optional[str],
+        where: Optional[str],
+    ) -> tuple:
+        """Stable key for a query_metrics invocation used to suppress identical retries."""
+        return (
+            tuple(sorted(metrics or [])),
+            tuple(sorted(dimensions or [])),
+            str(time_granularity or "").strip().lower(),
+            str(where or "").strip(),
+        )
+
+    @staticmethod
+    def _is_deterministic_validation_failure(result: FuncToolResult) -> bool:
+        """True when query_metrics failed for a deterministic semantic validation reason.
+
+        Transient/infra failures are excluded so a retry with the same arguments is
+        only suppressed when re-issuing it cannot succeed.
+        """
+        if not isinstance(result, FuncToolResult) or result.success != 0:
+            return False
+        payload = result.result if isinstance(result.result, dict) else {}
+        return payload.get("error_type") == "semantic_validation_error"
 
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
@@ -560,44 +600,6 @@ class AskMetricsAgenticNode(AgenticNode):
                 self._append_unique(expanded, bundled_metric)
 
         return expanded
-
-    def _apply_window_time_grouping(
-        self,
-        metrics: List[str],
-        dimensions: Optional[List[str]],
-        time_granularity: Optional[str],
-        order_by: Optional[List[str]],
-    ) -> tuple[Optional[List[str]], Optional[str], Optional[List[str]]]:
-        catalog = self._metric_catalog()
-        if not catalog:
-            return dimensions, time_granularity, order_by
-
-        time_dimension = ""
-        inferred_grain = self._normalize_time_grain(time_granularity)
-        for metric_name in metrics:
-            metric = catalog.get(metric_name)
-            if not metric:
-                continue
-            metadata = self._metric_metadata(metric)
-            if not self._is_window_metric(metadata):
-                continue
-            inferred_grain = inferred_grain or self._infer_window_time_grain(metadata)
-            if inferred_grain:
-                time_dimension = f"metric_time__{inferred_grain}"
-                break
-
-        if not time_dimension:
-            return dimensions, time_granularity, order_by
-
-        updated_dimensions = list(dimensions or [])
-        if not any(str(dimension).startswith("metric_time__") for dimension in updated_dimensions):
-            self._append_unique(updated_dimensions, time_dimension)
-
-        updated_order_by = list(order_by or [])
-        if not updated_order_by:
-            updated_order_by = [time_dimension]
-
-        return updated_dimensions, time_granularity or inferred_grain, updated_order_by
 
     @classmethod
     def _window_metric_bundle(
@@ -748,33 +750,6 @@ class AskMetricsAgenticNode(AgenticNode):
         if not metric_kind:
             return True
         return metric_kind in {"aggregate", "measure_proxy", "simple"}
-
-    @classmethod
-    def _infer_window_time_grain(cls, metadata: Dict[str, Any]) -> str:
-        for key in ("time_granularity", "time_grain", "grain_to_date"):
-            grain = cls._normalize_time_grain(cls._metadata_text(metadata, key))
-            if grain:
-                return grain
-
-        time_dimension = cls._metadata_text(metadata, "time_dimension")
-        if time_dimension.startswith("metric_time__"):
-            grain = cls._normalize_time_grain(time_dimension.split("__", 1)[1])
-            if grain:
-                return grain
-
-        window = cls._metadata_text(metadata, "window")
-        if window:
-            parts = re.findall(r"[a-zA-Z]+", window.lower())
-            if parts:
-                return cls._normalize_time_grain(parts[-1])
-        return ""
-
-    @staticmethod
-    def _normalize_time_grain(value: Optional[str]) -> str:
-        grain = str(value or "").strip().lower()
-        if grain.endswith("s"):
-            grain = grain[:-1]
-        return grain if grain in {"day", "week", "month", "quarter", "year"} else ""
 
     @staticmethod
     def _metric_metadata(metric: Dict[str, Any]) -> Dict[str, Any]:

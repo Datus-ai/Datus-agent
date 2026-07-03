@@ -560,64 +560,18 @@ class TestAskMetricsAgenticNode:
 
         node.query_metrics(metrics=["moving_3_month_order_count_avg"], dimensions=[])
 
+        # The node still expands the executable metric bundle; metric_time grouping
+        # is delegated to the semantic adapter and no longer injected here.
         semantic_tools.query_metrics.assert_called_once_with(
             metrics=["order_count", "moving_window_month_count", "moving_3_month_order_count_avg"],
-            dimensions=["metric_time__month"],
+            dimensions=[],
             path=None,
             time_start=None,
             time_end=None,
-            time_granularity="month",
+            time_granularity=None,
             where=None,
             limit=None,
-            order_by=["metric_time__month"],
-            dry_run=False,
-        )
-
-    def test_query_metrics_infers_window_grain_from_metric_time_dimension(self, real_agent_config, mock_llm_create):
-        node, semantic_tools, _ = _make_node(
-            real_agent_config,
-            tree={"Commerce": {"Orders": {"metrics": ["running_order_count"]}}},
-        )
-        semantic_tools.list_metrics.return_value = FuncToolResult(
-            result={
-                "items": [
-                    {
-                        "name": "order_count",
-                        "measures": ["orders.order_id"],
-                        "metadata": {
-                            "dataset": "orders",
-                            "expr": "COUNT(DISTINCT order_id)",
-                            "metric_kind": "aggregate",
-                            "measure": "order_id",
-                        },
-                    },
-                    {
-                        "name": "running_order_count",
-                        "metadata": {
-                            "dataset": "orders",
-                            "time_dimension": "metric_time__month",
-                            "window_aggregation": "sum",
-                            "metric_kind": "cumulative",
-                        },
-                    },
-                ],
-                "has_more": False,
-            }
-        )
-        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
-
-        node.query_metrics(metrics=["running_order_count"], dimensions=[])
-
-        semantic_tools.query_metrics.assert_called_once_with(
-            metrics=["running_order_count"],
-            dimensions=["metric_time__month"],
-            path=None,
-            time_start=None,
-            time_end=None,
-            time_granularity="month",
-            where=None,
-            limit=None,
-            order_by=["metric_time__month"],
+            order_by=None,
             dry_run=False,
         )
 
@@ -683,6 +637,8 @@ class TestAskMetricsAgenticNode:
             dimensions=["metric_time__month"],
         )
 
+        # Metric bundle expansion is preserved; caller-supplied dimensions pass
+        # through unchanged and grain injection is left to the semantic adapter.
         semantic_tools.query_metrics.assert_called_once_with(
             metrics=[
                 "average_order_amount",
@@ -693,12 +649,56 @@ class TestAskMetricsAgenticNode:
             path=None,
             time_start=None,
             time_end=None,
-            time_granularity="month",
+            time_granularity=None,
             where=None,
             limit=None,
-            order_by=["metric_time__month"],
+            order_by=None,
             dry_run=False,
         )
+
+    def test_query_metrics_dedupes_deterministic_validation_failure(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
+        )
+        semantic_tools.query_metrics.return_value = FuncToolResult(
+            success=0,
+            error="cumulative metric requires metric_time",
+            result={
+                "error_type": "semantic_validation_error",
+                "code": "cumulative_requires_metric_time",
+            },
+        )
+
+        first = node.query_metrics(metrics=["order_count"], dimensions=["product_type"])
+        assert first.success == 0
+        assert semantic_tools.query_metrics.call_count == 1
+
+        # An identical retry after a deterministic validation failure is short-circuited.
+        second = node.query_metrics(metrics=["order_count"], dimensions=["product_type"])
+        assert second.success == 0
+        assert "already failed" in (second.error or "")
+        assert semantic_tools.query_metrics.call_count == 1
+
+    def test_query_metrics_does_not_dedupe_transient_failure(self, real_agent_config, mock_llm_create):
+        node, semantic_tools, _ = _make_node(
+            real_agent_config,
+            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
+        )
+        semantic_tools.list_metrics.return_value = FuncToolResult(
+            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
+        )
+        # A non-validation (infra) failure must not suppress a retry.
+        semantic_tools.query_metrics.return_value = FuncToolResult(
+            success=0, error="Failed to query metrics: connection lost"
+        )
+
+        node.query_metrics(metrics=["order_count"], dimensions=["product_type"])
+        node.query_metrics(metrics=["order_count"], dimensions=["product_type"])
+        assert semantic_tools.query_metrics.call_count == 2
 
     def test_query_metrics_passes_limit_through(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
