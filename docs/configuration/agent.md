@@ -163,8 +163,8 @@ database) rather than deployed alongside a `.pem`:
 ```
 
 The native client loads inline content into an in-memory trust store; the
-litellm code path spills it to a content-addressed temp file (it only accepts a
-CA bundle by path), removed on exit.
+litellm code path spills it to a temp file in a private per-process directory
+(it only accepts a CA bundle by path).
 
 **Resolution precedence** (first match wins):
 

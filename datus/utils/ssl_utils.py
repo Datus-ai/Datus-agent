@@ -19,15 +19,14 @@ without materializing a file on disk. It is consumed differently per path:
   :func:`resolve_ssl_verify_for_httpx`.
 * litellm path -> litellm only accepts a CA bundle via a file path (SSL_VERIFY /
   SSL_CERT_FILE), so :func:`materialize_ca_bundle` spills the content to a
-  content-addressed temp file. That is the single unavoidable file.
+  temp file under a private per-process directory. That is the single
+  unavoidable file.
 """
 
-import atexit
 import hashlib
 import os
 import ssl
 import tempfile
-from pathlib import Path
 from typing import Optional, Union
 
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -164,34 +163,40 @@ def resolve_ssl_verify_for_httpx(value: Union[bool, str]) -> Union[bool, str, ss
     return normalize_ssl_verify(value)
 
 
-# Content-addressed CA bundles materialized this process, for atexit cleanup.
-_MATERIALIZED_CA_FILES: set[str] = set()
+# Private per-process directory (0700, unguessable) that holds materialized CA
+# bundles. Created lazily so processes that never use a custom CA pay nothing.
+_ca_bundle_dir: Optional[str] = None
+
+
+def _get_ca_bundle_dir() -> str:
+    global _ca_bundle_dir
+    if _ca_bundle_dir is None:
+        # mkdtemp yields a 0700, uniquely-named dir owned by us — an attacker
+        # cannot pre-plant a file or symlink at our target paths.
+        _ca_bundle_dir = tempfile.mkdtemp(prefix="datus-ca-")
+    return _ca_bundle_dir
 
 
 def materialize_ca_bundle(pem: str) -> str:
-    """Write inline PEM CA content to a stable temp file and return its path.
+    """Write inline PEM CA content to a temp file and return its path.
 
     The litellm path only accepts a CA bundle via a file path, so PEM content
-    must be spilled to disk there. Files are content-addressed (sha256) and
-    written once, so repeated calls and shared CAs never grow the set. A CA
-    certificate is public, so no encryption or per-tenant isolation is needed;
-    the file is removed on interpreter exit (best-effort).
+    must be spilled to disk there. Files live in a private per-process directory
+    and are content-addressed (sha256) so repeated calls and shared CAs reuse
+    the same file. A CA certificate is public, so no encryption is needed; the
+    file is intentionally not cleaned up (tiny, bounded by distinct CAs, and
+    cleared when the process's temp dir goes away).
     """
     digest = hashlib.sha256(pem.encode("utf-8")).hexdigest()[:16]
-    ca_dir = Path(tempfile.gettempdir()) / "datus-ca"
-    ca_dir.mkdir(parents=True, exist_ok=True)
-    path = ca_dir / f"{digest}.pem"
-    if not path.exists():
-        path.write_text(pem, encoding="utf-8")
-    _MATERIALIZED_CA_FILES.add(str(path))
-    return str(path)
-
-
-@atexit.register
-def _cleanup_materialized_ca_files() -> None:
-    """Best-effort removal of CA bundles written this process."""
-    for path in list(_MATERIALIZED_CA_FILES):
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+    path = os.path.join(_get_ca_bundle_dir(), f"{digest}.pem")
+    try:
+        # Atomic exclusive create: O_EXCL refuses to follow a symlink or reuse an
+        # existing file, and dedups concurrent writers of the same content.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path
+    try:
+        os.write(fd, pem.encode("utf-8"))
+    finally:
+        os.close(fd)
+    return path

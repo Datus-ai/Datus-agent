@@ -164,27 +164,30 @@ class TestResolveSslVerifyForHttpx:
 
 
 class TestMaterializeCaBundle:
+    # Each test uses its own certificate so the content-addressed paths are
+    # distinct and per-test cleanup cannot collide (even under parallel runs).
     def test_writes_content_to_file(self):
-        path = materialize_ca_bundle(_CA_PEM)
+        pem = _self_signed_ca_pem()
+        path = materialize_ca_bundle(pem)
         try:
             assert os.path.exists(path)
             with open(path, encoding="utf-8") as f:
-                assert f.read() == _CA_PEM
+                assert f.read() == pem
         finally:
             os.remove(path)
 
     def test_content_addressed_dedup(self):
-        p1 = materialize_ca_bundle(_CA_PEM)
-        p2 = materialize_ca_bundle(_CA_PEM)
+        pem = _self_signed_ca_pem()
+        p1 = materialize_ca_bundle(pem)
+        p2 = materialize_ca_bundle(pem)
         try:
             assert p1 == p2
         finally:
             os.remove(p1)
 
     def test_different_content_different_path(self):
-        other = _self_signed_ca_pem()
-        p1 = materialize_ca_bundle(_CA_PEM)
-        p2 = materialize_ca_bundle(other)
+        p1 = materialize_ca_bundle(_self_signed_ca_pem())
+        p2 = materialize_ca_bundle(_self_signed_ca_pem())
         try:
             assert p1 != p2
         finally:

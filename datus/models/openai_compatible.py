@@ -274,7 +274,6 @@ class OpenAICompatibleModel(LLMBaseModel):
         from datus.utils.ssl_utils import (
             is_pem_cert_content,
             materialize_ca_bundle,
-            normalize_ssl_verify,
             resolve_ssl_verify_for_httpx,
             ssl_verify_to_env,
         )
@@ -287,11 +286,12 @@ class OpenAICompatibleModel(LLMBaseModel):
             # content -> in-memory SSLContext (no file); else normalized bool/path.
             self.ssl_verify = resolve_ssl_verify_for_httpx(ssl_verify_cfg)
             # litellm path only accepts a CA bundle via a file path, so spill inline
-            # PEM content to a content-addressed temp file; bool/path pass through.
+            # PEM content to a temp file; bool/path reuse the already-normalized
+            # self.ssl_verify (avoids a second normalize + duplicate warning).
             if is_pem_cert_content(ssl_verify_cfg):
                 os.environ["SSL_VERIFY"] = materialize_ca_bundle(ssl_verify_cfg)
             else:
-                os.environ["SSL_VERIFY"] = ssl_verify_to_env(normalize_ssl_verify(ssl_verify_cfg))
+                os.environ["SSL_VERIFY"] = ssl_verify_to_env(self.ssl_verify)
         else:
             self.ssl_verify = None
 
