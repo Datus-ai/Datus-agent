@@ -271,14 +271,27 @@ class OpenAICompatibleModel(LLMBaseModel):
         # its network I/O after returning). A process global is the only mechanism that
         # works across all paths. Blast radius is limited: ``SSL_VERIFY`` is a
         # litellm-specific variable that standard libraries (requests/httpx/curl) ignore.
-        from datus.utils.ssl_utils import normalize_ssl_verify, ssl_verify_to_env
+        from datus.utils.ssl_utils import (
+            is_pem_cert_content,
+            materialize_ca_bundle,
+            normalize_ssl_verify,
+            resolve_ssl_verify_for_httpx,
+            ssl_verify_to_env,
+        )
 
         ssl_verify_cfg = getattr(self.model_config, "ssl_verify", None)
         # Only act on real bool/str config values; a non-(bool|str) (e.g. unset, or a
         # test double) leaves behavior untouched.
         if isinstance(ssl_verify_cfg, (bool, str)):
-            self.ssl_verify = normalize_ssl_verify(ssl_verify_cfg)
-            os.environ["SSL_VERIFY"] = ssl_verify_to_env(self.ssl_verify)
+            # Native httpx path (ClaudeModel reads self.ssl_verify): inline PEM
+            # content -> in-memory SSLContext (no file); else normalized bool/path.
+            self.ssl_verify = resolve_ssl_verify_for_httpx(ssl_verify_cfg)
+            # litellm path only accepts a CA bundle via a file path, so spill inline
+            # PEM content to a content-addressed temp file; bool/path pass through.
+            if is_pem_cert_content(ssl_verify_cfg):
+                os.environ["SSL_VERIFY"] = materialize_ca_bundle(ssl_verify_cfg)
+            else:
+                os.environ["SSL_VERIFY"] = ssl_verify_to_env(normalize_ssl_verify(ssl_verify_cfg))
         else:
             self.ssl_verify = None
 

@@ -4,14 +4,48 @@
 
 """Unit tests for datus/utils/ssl_utils.py. Pure, no network."""
 
+import os
+import ssl
+
 import pytest
 
 from datus.utils.exceptions import DatusException
 from datus.utils.ssl_utils import (
+    is_pem_cert_content,
     is_ssl_cert_verification_error,
+    materialize_ca_bundle,
     normalize_ssl_verify,
+    resolve_ssl_verify_for_httpx,
     ssl_verify_to_env,
 )
+
+
+def _self_signed_ca_pem() -> str:
+    """A throwaway, valid self-signed CA certificate (PEM), generated once."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "datus-test-ca")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.now(timezone.utc) - timedelta(days=1))
+        .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode("utf-8")
+
+
+_CA_PEM = _self_signed_ca_pem()
 
 
 class TestNormalizeSslVerify:
@@ -100,3 +134,59 @@ class TestIsSslCertVerificationError:
         e = Exception("boom")
         e.__context__ = e
         assert is_ssl_cert_verification_error(e) is False
+
+
+class TestIsPemCertContent:
+    def test_pem_content_detected(self):
+        assert is_pem_cert_content(_CA_PEM) is True
+
+    @pytest.mark.parametrize("value", ["/etc/ssl/ca.pem", "true", "false", "", True, False, None, 1])
+    def test_non_pem_rejected(self, value):
+        assert is_pem_cert_content(value) is False
+
+
+class TestResolveSslVerifyForHttpx:
+    def test_pem_content_becomes_ssl_context(self):
+        result = resolve_ssl_verify_for_httpx(_CA_PEM)
+        assert isinstance(result, ssl.SSLContext)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_bool_delegates_to_normalize(self, value):
+        assert resolve_ssl_verify_for_httpx(value) is value
+
+    def test_path_delegates_to_normalize(self):
+        assert resolve_ssl_verify_for_httpx("/etc/ssl/ca.pem") == "/etc/ssl/ca.pem"
+
+    def test_malformed_pem_raises(self):
+        bad = "-----BEGIN CERTIFICATE-----\nnot-valid-base64\n-----END CERTIFICATE-----"
+        with pytest.raises(ssl.SSLError):
+            resolve_ssl_verify_for_httpx(bad)
+
+
+class TestMaterializeCaBundle:
+    def test_writes_content_to_file(self):
+        path = materialize_ca_bundle(_CA_PEM)
+        try:
+            assert os.path.exists(path)
+            with open(path, encoding="utf-8") as f:
+                assert f.read() == _CA_PEM
+        finally:
+            os.remove(path)
+
+    def test_content_addressed_dedup(self):
+        p1 = materialize_ca_bundle(_CA_PEM)
+        p2 = materialize_ca_bundle(_CA_PEM)
+        try:
+            assert p1 == p2
+        finally:
+            os.remove(p1)
+
+    def test_different_content_different_path(self):
+        other = _self_signed_ca_pem()
+        p1 = materialize_ca_bundle(_CA_PEM)
+        p2 = materialize_ca_bundle(other)
+        try:
+            assert p1 != p2
+        finally:
+            os.remove(p1)
+            os.remove(p2)

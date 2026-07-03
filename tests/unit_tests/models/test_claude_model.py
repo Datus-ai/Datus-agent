@@ -3051,6 +3051,32 @@ class TestSslVerify:
         # no proxy configured -> the transport carries no proxy.
         assert "proxy" not in sync_tx.call_args.kwargs
 
+    def test_pem_content_builds_in_memory_context_and_materializes_file(self):
+        import os
+        import ssl
+
+        from tests.unit_tests.utils.test_ssl_utils import _self_signed_ca_pem
+
+        cfg = _make_model_config(base_url="https://internal.example.com")
+        cfg.ssl_verify = _self_signed_ca_pem()
+        with (
+            patch("httpx.HTTPTransport") as sync_tx,
+            patch("httpx.AsyncHTTPTransport"),
+        ):
+            model = _make_claude_model(cfg)
+
+        # native path: inline PEM -> in-memory SSLContext (no file), passed to httpx.
+        assert isinstance(model.ssl_verify, ssl.SSLContext)
+        assert isinstance(sync_tx.call_args.kwargs.get("verify"), ssl.SSLContext)
+        # litellm path: PEM content spilled to a real CA bundle file on disk.
+        ca_path = os.environ["SSL_VERIFY"]
+        try:
+            assert os.path.exists(ca_path)
+            with open(ca_path, encoding="utf-8") as f:
+                assert f.read() == cfg.ssl_verify
+        finally:
+            os.remove(ca_path)
+
     def test_ssl_verify_false_materializes_false(self):
         import os
 
