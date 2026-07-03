@@ -2917,10 +2917,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#plugin-interface" class="md-nav__link">
+  <a href="#provider-interface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Plugin Interface
+        Provider Interface
       
     </span>
   </a>
@@ -4109,10 +4109,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#plugin-interface" class="md-nav__link">
+  <a href="#provider-interface" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Plugin Interface
+        Provider Interface
       
     </span>
   </a>
@@ -4190,23 +4190,23 @@
 
 <h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
 <p>SQL policy is an extension framework for enforcing request-scoped SQL read controls. It is useful when an API request should only access rows or tables within the caller's business scope, such as a tenant, market, region, or store list.</p>
-<p>The open-source agent provides the framework boundary and runtime hook points. It does not ship a concrete policy engine. Deployments that need enforcement should provide their own plugin package.</p>
+<p>The open-source agent provides the framework boundary and runtime hook points. It does not ship a concrete policy engine. Deployments that need enforcement should provide their own SQL policy package.</p>
 <h2 id="framework-boundary">Framework Boundary<a class="headerlink" href="#framework-boundary" title="Permanent link">&para;</a></h2>
 <p>The open-source agent owns these responsibilities:</p>
 <ul>
 <li>Loading <code>agent.sql_policy</code> from agent configuration.</li>
-<li>Loading the configured plugin class from <code>agent.sql_policy.provider</code>.</li>
-<li>Passing the full raw <code>agent.sql_policy</code> mapping to the plugin.</li>
+<li>Loading the configured provider class from <code>agent.sql_policy.provider</code>.</li>
+<li>Passing the full raw <code>agent.sql_policy</code> mapping to the provider.</li>
 <li>Parsing request principal fields into <code>AppContext.principal</code>.</li>
 <li>Running a generic API pre-check for required <code>principal.*</code> values.</li>
-<li>Calling the plugin before read queries reach the database.</li>
-<li>Revalidating SQL after a plugin rewrite.</li>
+<li>Calling the provider before read queries reach the database.</li>
+<li>Revalidating SQL after a provider rewrite.</li>
 <li>Returning policy denial reasons to the tool/model layer.</li>
 </ul>
-<p>The plugin owns these responsibilities:</p>
+<p>The provider owns these responsibilities:</p>
 <ul>
 <li>Defining the policy schema under <code>agent.sql_policy</code>.</li>
-<li>Validating plugin-specific policy fields.</li>
+<li>Validating provider-specific policy fields.</li>
 <li>Matching policies to datasources, tables, columns, or other business concepts.</li>
 <li>Resolving values from the request principal.</li>
 <li>Rewriting read SQL or denying the query.</li>
@@ -4221,9 +4221,9 @@
 <li>If the raw policy config references <code>value_from: principal.&lt;path&gt;</code>, the chat API checks that each referenced principal path is present before the agent starts.</li>
 <li>The agent runs normally until a database read tool is called.</li>
 <li><code>DBFuncTool.read_query</code> validates that the original SQL is read-only.</li>
-<li>The configured plugin is loaded and called through <code>enforce_read(...)</code>.</li>
-<li>If the plugin denies the query, the tool returns the plugin's reason and does not execute SQL.</li>
-<li>If the plugin returns rewritten SQL, the agent revalidates that rewritten SQL is still read-only.</li>
+<li>The configured provider is loaded and called through <code>enforce_read(...)</code>.</li>
+<li>If the provider denies the query, the tool returns the provider's reason and does not execute SQL.</li>
+<li>If the provider returns rewritten SQL, the agent revalidates that rewritten SQL is still read-only.</li>
 <li>The validated SQL is executed against the target datasource.</li>
 </ol>
 <p>The pre-check in step 4 is intentionally generic. It scans the raw policy mapping for <code>value_from</code> strings that start with <code>principal.</code>. It does not assume a specific policy type, column name, or business field.</p>
@@ -4235,7 +4235,7 @@
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
 </span></code></pre></div>
 <p><code>enabled</code> turns on the framework. <code>provider</code> must be a Python class path in <code>module:Class</code> format.</p>
-<p>All other fields under <code>agent.sql_policy</code> are passed through unchanged as <code>SqlPolicyConfig.raw</code>. Your plugin can define any schema it needs:</p>
+<p>All other fields under <code>agent.sql_policy</code> are passed through unchanged as <code>SqlPolicyConfig.raw</code>. Your provider can define any schema it needs:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
@@ -4254,9 +4254,9 @@
 </span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">          </span><span class="nt">on_read</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filter</span>
 </span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">          </span><span class="nt">on_unhandled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
 </span></code></pre></div>
-<p>In this example, the open-source agent uses <code>enabled</code>, <code>provider</code>, and the <code>principal.tenant.id</code> reference for pre-checking. The plugin decides what <code>policies</code>, <code>type</code>, <code>applies_to</code>, <code>condition</code>, and <code>enforcement</code> mean.</p>
-<h2 id="plugin-interface">Plugin Interface<a class="headerlink" href="#plugin-interface" title="Permanent link">&para;</a></h2>
-<p>A plugin is a normal Python package installed in the same environment as <code>datus-api</code>. The provider class must accept a <code>SqlPolicyConfig</code> argument and implement <code>enforce_read(...)</code>.</p>
+<p>In this example, the open-source agent uses <code>enabled</code>, <code>provider</code>, and the <code>principal.tenant.id</code> reference for pre-checking. The provider decides what <code>policies</code>, <code>type</code>, <code>applies_to</code>, <code>condition</code>, and <code>enforcement</code> mean.</p>
+<h2 id="provider-interface">Provider Interface<a class="headerlink" href="#provider-interface" title="Permanent link">&para;</a></h2>
+<p>A SQL policy provider is a normal Python package installed in the same environment as <code>datus-api</code>. The provider class must accept a <code>SqlPolicyConfig</code> argument and implement <code>enforce_read(...)</code>.</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Optional</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.tools.sql_policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">SqlPolicyConfig</span><span class="p">,</span> <span class="n">EnforcementResult</span>
@@ -4286,7 +4286,7 @@
 </span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
 </span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>
 </span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_validate_policy_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># Raise an exception if required plugin-specific config is invalid.</span>
+</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># Raise an exception if required provider-specific config is invalid.</span>
 </span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>        <span class="k">pass</span>
 </span></code></pre></div>
 <p>The result controls what happens next:</p>
@@ -4303,10 +4303,10 @@
 </span></code></pre></div>
 <p>Use a SQL parser or database-safe query builder when rewriting SQL. Avoid string concatenation for policy predicates.</p>
 <h2 id="request-principal">Request Principal<a class="headerlink" href="#request-principal" title="Permanent link">&para;</a></h2>
-<p>The principal is the request-scoped input that policy plugins use for caller attributes. For the default API auth provider, principal fields are read from the <code>X-Datus-Principal</code> header as a JSON object:</p>
+<p>The principal is the request-scoped input that policy providers use for caller attributes. For the default API auth provider, principal fields are read from the <code>X-Datus-Principal</code> header as a JSON object:</p>
 <div class="language-http highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">X-Datus-Principal: {&quot;tenant&quot;:{&quot;id&quot;:&quot;tenant_001&quot;},&quot;market_codes&quot;:[&quot;MKT300&quot;,&quot;MKT301&quot;]}</span>
 </span></code></pre></div>
-<p>The plugin receives the parsed object:</p>
+<p>The provider receives the parsed object:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">&quot;tenant&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;tenant_001&quot;</span><span class="p">},</span>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">&quot;market_codes&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;MKT300&quot;</span><span class="p">,</span> <span class="s2">&quot;MKT301&quot;</span><span class="p">],</span>
@@ -4339,7 +4339,7 @@
 </tr>
 <tr>
 <td><code>SqlPolicyConfig.raw</code></td>
-<td>Full raw <code>agent.sql_policy</code> mapping passed to the plugin.</td>
+<td>Full raw <code>agent.sql_policy</code> mapping passed to the provider.</td>
 </tr>
 <tr>
 <td><code>enforce_read(sql, datasource, dialect, principal)</code></td>
@@ -4370,11 +4370,11 @@
 <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>SQL_POLICY_PRINCIPAL_REQUIRED
 </span></code></pre></div>
 <p>The error message includes the missing principal path, for example <code>principal.tenant.id</code>.</p>
-<p>If the plugin denies a query, SQL is not executed and the tool returns the plugin's <code>reason</code>.</p>
-<p>If the plugin rewrites SQL into a non-read statement or a multi-statement query, the read-query validator rejects it before execution.</p>
+<p>If the provider denies a query, SQL is not executed and the tool returns the provider's <code>reason</code>.</p>
+<p>If the provider rewrites SQL into a non-read statement or a multi-statement query, the read-query validator rejects it before execution.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li>The open-source agent does not include a built-in row-filter or SQL-injection review plugin.</li>
+<li>The open-source agent does not include a built-in row-filter or SQL-injection review provider.</li>
 <li>The framework does not define a required policy schema beyond <code>enabled</code>, <code>provider</code>, and the optional <code>principal.*</code> pre-check convention.</li>
 <li>CLI requests do not have HTTP headers. Request-scoped API principal input is available through the API auth context. For CLI or custom deployments, populate <code>AppContext.principal</code> through the relevant auth or runtime integration.</li>
 <li>Do not put <code>user_id</code> inside <code>X-Datus-Principal</code>; <code>user_id</code> is reserved for <code>X-Datus-User-Id</code>.</li>

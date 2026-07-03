@@ -2917,10 +2917,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#plugin" class="md-nav__link">
+  <a href="#provider" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Plugin 接口
+        Provider 接口
       
     </span>
   </a>
@@ -2939,7 +2939,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider" class="md-nav__link">
+  <a href="#provider_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Provider 契约
@@ -4109,10 +4109,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#plugin" class="md-nav__link">
+  <a href="#provider" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Plugin 接口
+        Provider 接口
       
     </span>
   </a>
@@ -4131,7 +4131,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#provider" class="md-nav__link">
+  <a href="#provider_1" class="md-nav__link">
     <span class="md-ellipsis">
       
         Provider 契约
@@ -4190,23 +4190,23 @@
 
 <h1 id="sql-policy">SQL Policy<a class="headerlink" href="#sql-policy" title="Permanent link">&para;</a></h1>
 <p>SQL policy 是一个扩展框架，用于在请求级别控制 SQL 读查询。适用于 API 请求只能访问调用方业务范围内数据的场景，例如租户、市场、区域或门店列表。</p>
-<p>开源 Agent 提供框架边界和运行时 hook 点，不内置具体策略引擎。需要执行策略的部署应提供自己的 plugin 包。</p>
+<p>开源 Agent 提供框架边界和运行时 hook 点，不内置具体策略引擎。需要执行策略的部署应提供自己的 SQL policy 包。</p>
 <h2 id="_1">框架边界<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <p>开源 Agent 负责：</p>
 <ul>
 <li>从 Agent 配置中加载 <code>agent.sql_policy</code>。</li>
-<li>从 <code>agent.sql_policy.provider</code> 加载配置的 plugin class。</li>
-<li>将完整的原始 <code>agent.sql_policy</code> mapping 传给 plugin。</li>
+<li>从 <code>agent.sql_policy.provider</code> 加载配置的 provider class。</li>
+<li>将完整的原始 <code>agent.sql_policy</code> mapping 传给 provider。</li>
 <li>将请求 principal 字段解析到 <code>AppContext.principal</code>。</li>
 <li>对必需的 <code>principal.*</code> 值执行通用 API pre-check。</li>
-<li>在读查询到达数据库前调用 plugin。</li>
-<li>在 plugin 改写 SQL 后重新校验 SQL。</li>
+<li>在读查询到达数据库前调用 provider。</li>
+<li>在 provider 改写 SQL 后重新校验 SQL。</li>
 <li>将策略拒绝原因返回给 tool/model 层。</li>
 </ul>
-<p>plugin 负责：</p>
+<p>provider 负责：</p>
 <ul>
 <li>定义 <code>agent.sql_policy</code> 下的策略 schema。</li>
-<li>校验 plugin 自己的策略字段。</li>
+<li>校验 provider 自己的策略字段。</li>
 <li>将策略匹配到 datasource、表、列或其他业务概念。</li>
 <li>从请求 principal 中解析策略值。</li>
 <li>改写读 SQL 或拒绝查询。</li>
@@ -4221,9 +4221,9 @@
 <li>如果原始策略配置引用了 <code>value_from: principal.&lt;path&gt;</code>，chat API 会在 Agent 启动前检查每个 principal path 是否存在。</li>
 <li>Agent 正常运行，直到调用数据库读工具。</li>
 <li><code>DBFuncTool.read_query</code> 校验原始 SQL 是否只读。</li>
-<li>通过 <code>enforce_read(...)</code> 加载并调用配置的 plugin。</li>
-<li>如果 plugin 拒绝查询，tool 返回 plugin 的拒绝原因，不执行 SQL。</li>
-<li>如果 plugin 返回改写后的 SQL，Agent 会重新校验改写后的 SQL 仍然只读。</li>
+<li>通过 <code>enforce_read(...)</code> 加载并调用配置的 provider。</li>
+<li>如果 provider 拒绝查询，tool 返回 provider 的拒绝原因，不执行 SQL。</li>
+<li>如果 provider 返回改写后的 SQL，Agent 会重新校验改写后的 SQL 仍然只读。</li>
 <li>校验通过的 SQL 被发送到目标 datasource 执行。</li>
 </ol>
 <p>第 4 步的 pre-check 是通用逻辑。它会扫描原始策略 mapping 中以 <code>principal.</code> 开头的 <code>value_from</code> 字符串，不假设特定 policy type、列名或业务字段。</p>
@@ -4235,7 +4235,7 @@
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">provider</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_company.sql_policies:SqlPolicyProvider</span>
 </span></code></pre></div>
 <p><code>enabled</code> 用于打开框架。<code>provider</code> 必须是 <code>module:Class</code> 格式的 Python class path。</p>
-<p><code>agent.sql_policy</code> 下的其他字段会原样放进 <code>SqlPolicyConfig.raw</code> 传给 plugin。你的 plugin 可以定义自己需要的 schema：</p>
+<p><code>agent.sql_policy</code> 下的其他字段会原样放进 <code>SqlPolicyConfig.raw</code> 传给 provider。你的 provider 可以定义自己需要的 schema：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">sql_policy</span><span class="p">:</span>
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
@@ -4254,9 +4254,9 @@
 </span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">          </span><span class="nt">on_read</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">filter</span>
 </span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">          </span><span class="nt">on_unhandled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deny</span>
 </span></code></pre></div>
-<p>在这个例子里，开源 Agent 使用 <code>enabled</code>、<code>provider</code>，并使用 <code>principal.tenant.id</code> 引用做 pre-check。<code>policies</code>、<code>type</code>、<code>applies_to</code>、<code>condition</code> 和 <code>enforcement</code> 的含义都由 plugin 决定。</p>
-<h2 id="plugin">Plugin 接口<a class="headerlink" href="#plugin" title="Permanent link">&para;</a></h2>
-<p>plugin 是一个安装在 <code>datus-api</code> 同一 Python 环境中的普通 Python 包。provider class 必须接收 <code>SqlPolicyConfig</code> 参数，并实现 <code>enforce_read(...)</code>。</p>
+<p>在这个例子里，开源 Agent 使用 <code>enabled</code>、<code>provider</code>，并使用 <code>principal.tenant.id</code> 引用做 pre-check。<code>policies</code>、<code>type</code>、<code>applies_to</code>、<code>condition</code> 和 <code>enforcement</code> 的含义都由 provider 决定。</p>
+<h2 id="provider">Provider 接口<a class="headerlink" href="#provider" title="Permanent link">&para;</a></h2>
+<p>SQL policy provider 是一个安装在 <code>datus-api</code> 同一 Python 环境中的普通 Python 包。provider class 必须接收 <code>SqlPolicyConfig</code> 参数，并实现 <code>enforce_read(...)</code>。</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">Optional</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus.tools.sql_policy</span><span class="w"> </span><span class="kn">import</span> <span class="n">SqlPolicyConfig</span><span class="p">,</span> <span class="n">EnforcementResult</span>
@@ -4286,7 +4286,7 @@
 </span><span id="__span-2-27"><a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="k">return</span> <span class="n">EnforcementResult</span><span class="p">(</span><span class="n">allowed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
 </span><span id="__span-2-28"><a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>
 </span><span id="__span-2-29"><a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_validate_policy_config</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># 如果 plugin 自己需要的配置不合法，在这里抛出异常。</span>
+</span><span id="__span-2-30"><a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="c1"># 如果 provider 自己需要的配置不合法，在这里抛出异常。</span>
 </span><span id="__span-2-31"><a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>        <span class="k">pass</span>
 </span></code></pre></div>
 <p>返回值决定后续行为：</p>
@@ -4303,10 +4303,10 @@
 </span></code></pre></div>
 <p>改写 SQL 时应使用 SQL parser 或数据库安全的 query builder，不要用字符串拼接生成策略谓词。</p>
 <h2 id="principal">请求 Principal<a class="headerlink" href="#principal" title="Permanent link">&para;</a></h2>
-<p>principal 是策略 plugin 使用的请求级调用方属性。默认 API auth provider 会从 <code>X-Datus-Principal</code> header 读取 principal 字段，header 值必须是 JSON object：</p>
+<p>principal 是策略 provider 使用的请求级调用方属性。默认 API auth provider 会从 <code>X-Datus-Principal</code> header 读取 principal 字段，header 值必须是 JSON object：</p>
 <div class="language-http highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="err">X-Datus-Principal: {&quot;tenant&quot;:{&quot;id&quot;:&quot;tenant_001&quot;},&quot;market_codes&quot;:[&quot;MKT300&quot;,&quot;MKT301&quot;]}</span>
 </span></code></pre></div>
-<p>plugin 会收到解析后的对象：</p>
+<p>provider 会收到解析后的对象：</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="s2">&quot;tenant&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;tenant_001&quot;</span><span class="p">},</span>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="s2">&quot;market_codes&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;MKT300&quot;</span><span class="p">,</span> <span class="s2">&quot;MKT301&quot;</span><span class="p">],</span>
@@ -4320,7 +4320,7 @@
 </span></code></pre></div>
 <p>API pre-check 会把缺失 key、<code>null</code>、空字符串和空数组都视为缺失值。</p>
 <p><code>X-Datus-User-Id</code> 和 SQL policy principal 是两件事。它用于调用方会话隔离，不会被复制进 <code>AppContext.principal</code>。</p>
-<h2 id="provider">Provider 契约<a class="headerlink" href="#provider" title="Permanent link">&para;</a></h2>
+<h2 id="provider_1">Provider 契约<a class="headerlink" href="#provider_1" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -4339,7 +4339,7 @@
 </tr>
 <tr>
 <td><code>SqlPolicyConfig.raw</code></td>
-<td>完整的原始 <code>agent.sql_policy</code> mapping，会传给 plugin。</td>
+<td>完整的原始 <code>agent.sql_policy</code> mapping，会传给 provider。</td>
 </tr>
 <tr>
 <td><code>enforce_read(sql, datasource, dialect, principal)</code></td>
@@ -4370,11 +4370,11 @@
 <div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>SQL_POLICY_PRINCIPAL_REQUIRED
 </span></code></pre></div>
 <p>错误信息会包含缺失的 principal path，例如 <code>principal.tenant.id</code>。</p>
-<p>如果 plugin 拒绝查询，SQL 不会执行，tool 会返回 plugin 的 <code>reason</code>。</p>
-<p>如果 plugin 将 SQL 改写成非读语句或多语句查询，读查询校验器会在执行前拒绝它。</p>
+<p>如果 provider 拒绝查询，SQL 不会执行，tool 会返回 provider 的 <code>reason</code>。</p>
+<p>如果 provider 将 SQL 改写成非读语句或多语句查询，读查询校验器会在执行前拒绝它。</p>
 <h2 id="_5">限制<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <ul>
-<li>开源 Agent 不包含内置 row-filter 或 SQL 注入审查 plugin。</li>
+<li>开源 Agent 不包含内置 row-filter 或 SQL 注入审查 provider。</li>
 <li>除了 <code>enabled</code>、<code>provider</code> 和可选的 <code>principal.*</code> pre-check 约定，框架不定义强制策略 schema。</li>
 <li>CLI 请求没有 HTTP header。请求级 API principal 输入来自 API auth context。对于 CLI 或自定义部署，需要通过对应 auth 或运行时集成填充 <code>AppContext.principal</code>。</li>
 <li>不要把 <code>user_id</code> 放进 <code>X-Datus-Principal</code>；<code>user_id</code> 是 <code>X-Datus-User-Id</code> 的保留字段。</li>
