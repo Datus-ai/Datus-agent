@@ -415,3 +415,133 @@ class TestBashToolOutputOffload:
         result = tool.bash("python -c \"print('ok')\"")
         assert result.success == 1
         assert result.result.strip() == "ok"
+
+
+class TestPipelineExecution:
+    """Real-shell execution: pipelines, operators, pipefail, timeout, gate."""
+
+    def test_pipeline_produces_piped_output(self, unrestricted_tool):
+        result = unrestricted_tool.bash("printf 'a\\nb\\nc\\n' | grep b | wc -l")
+        assert result.success == 1
+        assert result.result.strip() == "1"
+
+    def test_pipeline_stages_chain(self, unrestricted_tool):
+        result = unrestricted_tool.bash("echo hello world | tr ' ' '\\n' | sort")
+        assert result.success == 1
+        assert result.result.split() == ["hello", "world"]
+
+    def test_logical_and_executes_under_real_shell(self, unrestricted_tool):
+        result = unrestricted_tool.bash("echo first && echo second")
+        assert result.success == 1
+        assert "first" in result.result and "second" in result.result
+
+    def test_redirection_works(self, unrestricted_tool, temp_workspace):
+        result = unrestricted_tool.bash("echo persisted > out.txt")
+        assert result.success == 1
+        assert (temp_workspace / "out.txt").read_text().strip() == "persisted"
+
+    def test_pipeline_final_stage_failure_surfaces(self, unrestricted_tool):
+        # bash default: the pipeline's exit code is the LAST stage's. grep with
+        # no match exits 1 → the pipeline reports failure.
+        result = unrestricted_tool.bash("echo hello | grep nomatch")
+        assert result.success == 0
+
+    def test_pipeline_exit_zero_when_final_succeeds(self, unrestricted_tool):
+        # Upstream failure is masked by a succeeding final stage (bash default,
+        # no pipefail) — matches Claude Code semantics.
+        result = unrestricted_tool.bash("cat /nonexistent/xyz | cat")
+        assert result.success == 1
+
+    def test_pipeline_exit_zero_when_all_succeed(self, unrestricted_tool):
+        result = unrestricted_tool.bash("echo ok | cat | cat")
+        assert result.success == 1
+
+    def test_quoted_pipe_is_literal(self, unrestricted_tool):
+        result = unrestricted_tool.bash("echo 'a|b'")
+        assert result.success == 1
+        assert result.result.strip() == "a|b"
+
+    def test_sigpipe_upstream_terminates(self, unrestricted_tool):
+        # `yes` would run forever; `head -1` closes the pipe → upstream dies.
+        # With a short timeout this must still return promptly, not hang.
+        tool = BashTool(workspace_root=str(unrestricted_tool.workspace_root), allowed_patterns=["*"], timeout=10)
+        result = tool.bash("yes | head -1")
+        assert result.success == 1
+        assert result.result.strip() == "y"
+
+    def test_timeout_kills_whole_pipeline(self, temp_workspace):
+        tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["*"], timeout=1)
+        import time
+
+        start = time.monotonic()
+        result = tool.bash("sleep 30 | cat")
+        elapsed = time.monotonic() - start
+        assert result.success == 0
+        assert "timed out" in (result.error or "").lower()
+        # Must not wait for the full 30s sleep — process group was killed.
+        assert elapsed < 10
+
+    def test_extglob_disabled(self, unrestricted_tool):
+        # With extglob off, `!(...)` is not special; bash errors on the syntax.
+        result = unrestricted_tool.bash("echo !(foo)")
+        assert result.success == 0
+
+    def test_restrictive_whitelist_allows_matching_pipeline(self, temp_workspace):
+        tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["echo:*", "cat:*"])
+        result = tool.bash("echo hi | cat")
+        assert result.success == 1
+        assert result.result.strip() == "hi"
+
+    def test_restrictive_whitelist_blocks_unmatched_segment(self, temp_workspace):
+        tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["echo:*"])
+        result = tool.bash("echo hi | rm -rf x")
+        assert result.success == 0
+        assert "not allowed" in (result.error or "").lower()
+
+    def test_restrictive_whitelist_blocks_operator(self, temp_workspace):
+        tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["echo:*"])
+        result = tool.bash("echo hi && echo bye")
+        assert result.success == 0
+        assert "not allowed" in (result.error or "").lower()
+
+    def test_wildcard_allows_operators(self, unrestricted_tool):
+        result = unrestricted_tool.bash("echo a; echo b")
+        assert result.success == 1
+
+
+class TestBashTimeoutParam:
+    """Optional per-call timeout parameter."""
+
+    def test_per_call_timeout_overrides_default(self, unrestricted_tool):
+        import time
+
+        # Instance default is 60s; a per-call timeout of 1s must win.
+        start = time.monotonic()
+        result = unrestricted_tool.bash("sleep 30", timeout=1)
+        elapsed = time.monotonic() - start
+        assert result.success == 0
+        assert "timed out" in (result.error or "").lower()
+        assert elapsed < 10
+
+    def test_timeout_clamped_to_max(self, unrestricted_tool):
+        from datus.tools.func_tool.bash_tool import MAX_BASH_TIMEOUT
+
+        assert unrestricted_tool._resolve_timeout(999999) == MAX_BASH_TIMEOUT
+
+    def test_invalid_timeout_falls_back_to_default(self, unrestricted_tool):
+        assert unrestricted_tool._resolve_timeout(None) == unrestricted_tool.timeout
+        assert unrestricted_tool._resolve_timeout(0) == unrestricted_tool.timeout
+        assert unrestricted_tool._resolve_timeout(-5) == unrestricted_tool.timeout
+        assert unrestricted_tool._resolve_timeout(True) == unrestricted_tool.timeout
+
+    def test_default_timeout_used_when_omitted(self, unrestricted_tool):
+        # A fast command with no explicit timeout succeeds normally.
+        result = unrestricted_tool.bash("echo ok")
+        assert result.success == 1
+        assert result.result.strip() == "ok"
+
+    def test_timeout_exposed_in_tool_schema(self, unrestricted_tool):
+        tool = unrestricted_tool.available_tools()[0]
+        props = tool.params_json_schema.get("properties", {})
+        assert "command" in props
+        assert "timeout" in props

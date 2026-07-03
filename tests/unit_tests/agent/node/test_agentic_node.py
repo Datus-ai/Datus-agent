@@ -555,6 +555,31 @@ class TestSetupPermissionManager:
 
         assert node.permission_manager.active_profile == "normal"
 
+    def test_workflow_mode_respects_profile_when_print_mode_opts_in(self):
+        """Print mode sets ``workflow_permission_profile`` so ``datus -p``
+        runs under the configured / --permission-mode profile instead of the
+        forced ``dangerous`` baseline."""
+        from datus.tools.permission.permission_config import PermissionLevel
+
+        node, user_config = self._setup_node(execution_mode="workflow")
+        node.agent_config.workflow_permission_profile = "normal"
+        node._setup_permission_manager()
+
+        assert node.permission_manager.active_profile == "normal"
+        # The user's config (rules + posture) is preserved, not replaced.
+        assert any(rule.tool == "custom_marker_tool" for rule in node.permission_manager.global_config.rules)
+        assert node.permission_manager.global_config.default_permission == PermissionLevel.DENY
+
+    def test_workflow_mode_non_string_override_still_forces_dangerous(self):
+        """A mocked / invalid ``workflow_permission_profile`` must not flip the
+        branch — only an explicit profile string opts out of dangerous."""
+        node, _ = self._setup_node(execution_mode="workflow")
+        # MagicMock attribute (truthy but not a str) — same shape as legacy
+        # callers that never set the attribute on a mocked agent_config.
+        node._setup_permission_manager()
+
+        assert node.permission_manager.active_profile == "dangerous"
+
 
 # ---------------------------------------------------------------------------
 # TestGetAvailableSkillsContext

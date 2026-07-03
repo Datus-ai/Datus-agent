@@ -588,3 +588,64 @@ class TestLoadAgentConfigResolution:
         ):
             agent_config = load_agent_config(config=str(cfg), home=str(tmp_path), reload=True)
         assert agent_config.current_datasource == ""
+
+
+class TestApplyProjectOverrideBashAllow:
+    """bash_allow from .datus/config.yml merges into permissions.bash_commands.allow."""
+
+    def test_bash_allow_merged_into_permissions(self):
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(bash_allow=["make:*", "uv run:*"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["permissions"]["bash_commands"]["allow"] == ["make:*", "uv run:*"]
+
+    def test_bash_allow_appends_to_existing_allow(self):
+        agent_raw = {
+            "permissions": {"profile": "normal", "bash_commands": {"allow": ["git log:*"], "deny": ["rm:*"]}},
+        }
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(bash_allow=["make:*", "git log:*"]),
+        ):
+            _apply_project_override(agent_raw)
+        # appended without duplicating the existing entry; deny untouched
+        assert agent_raw["permissions"]["bash_commands"]["allow"] == ["git log:*", "make:*"]
+        assert agent_raw["permissions"]["bash_commands"]["deny"] == ["rm:*"]
+
+
+class TestPermissionModeCliOverride:
+    """--permission-mode kwarg reshapes permissions.profile at load time."""
+
+    def test_override_injected_into_raw_permissions(self):
+        agent_raw = {"permissions": {"profile": "normal", "rules": []}}
+        # Reuse the same code path load_agent_config runs (inline for isolation).
+        permission_mode = "dangerous"
+        permissions_raw = agent_raw.get("permissions") or {}
+        permissions_raw["profile"] = permission_mode
+        agent_raw["permissions"] = permissions_raw
+        assert agent_raw["permissions"]["profile"] == "dangerous"
+
+    def test_load_agent_config_applies_permission_mode(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text(
+            "agent:\n"
+            "  permissions:\n"
+            "    profile: normal\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        from datus.configuration.agent_config_loader import load_agent_config
+
+        config = load_agent_config(reload=True, config=str(cfg), permission_mode="dangerous")
+        assert config.active_profile_name == "dangerous"
+
+    def test_load_agent_config_without_permissions_section(self, tmp_path, monkeypatch):
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text("agent: {}\n")
+        monkeypatch.chdir(tmp_path)
+        from datus.configuration.agent_config_loader import load_agent_config
+
+        config = load_agent_config(reload=True, config=str(cfg), permission_mode="auto")
+        assert config.active_profile_name == "auto"

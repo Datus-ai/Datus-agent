@@ -18,6 +18,7 @@ import hashlib
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import uuid
@@ -27,12 +28,16 @@ from typing import Any, Callable, Dict, List, Optional
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
+from datus.tools.permission.bash_rules import split_pipeline
 from datus.utils.loggings import get_logger
 from datus.utils.tool_archive import build_archived_marker, make_single_line_preview
 
 logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 60
+# Upper bound for a per-call ``timeout`` the model may request, so a bad or
+# runaway value can't hang the agent indefinitely.
+MAX_BASH_TIMEOUT = 600
 MAX_OUTPUT_SIZE = 50000
 # Output larger than this is offloaded to a file under the session data dir and
 # replaced with a ``[DATUS_ARCHIVED]`` preview marker, so a huge command output
@@ -61,12 +66,22 @@ class BashTool:
       skills without ``allowed_commands``.
     - non-empty list: commands are filtered through ``_is_command_allowed``.
 
+    Execution model:
+    - Commands run through a real shell (``bash -c``) so pipelines and other
+      shell syntax work. Permission control (deny/ask/allow, per-segment
+      pipeline judging, safety ceiling for ``&&``/``$()``/redirection) happens
+      upstream in ``PermissionHooks`` + ``bash_rules`` — the execution layer
+      trusts an approved command. A hardening prefix (``shopt -u extglob``) is
+      prepended.
+    - When no ``bash`` is found (e.g. Windows without Git Bash), it falls back
+      to the legacy ``shell=False`` single-argv path (``shlex.split``); pipes
+      and shell operators are then NOT interpreted.
+
     Security features:
-    - Pattern-based filtering
+    - Pattern-based filtering (``allowed_patterns``; per-segment for pipelines)
     - Working directory locked to ``workspace_root``
-    - Timeout enforcement
+    - Timeout enforcement with process-group kill (no orphaned pipeline stages)
     - Output size limiting
-    - ``shell=False`` subprocess invocation (argv via ``shlex.split``)
     """
 
     permission_category: str = "bash_tools"
@@ -127,14 +142,31 @@ class BashTool:
         """Set tool context (called by framework before tool invocation)."""
         self._tool_context = ctx
 
-    def bash(self, command: str) -> FuncToolResult:
-        """Execute a shell command if it matches the allowed patterns.
+    def bash(self, command: str, timeout: Optional[int] = None) -> FuncToolResult:
+        """Run a shell command and return its output.
 
-        The command runs in ``workspace_root`` with ``shell=False``. Only
-        commands matching one of ``allowed_patterns`` are permitted.
+        The command runs through a real shell (bash), so pipelines and shell
+        syntax (``|``, ``&&``, redirection) work. It runs in a FIXED working
+        directory and each call is STATELESS: ``cd`` does NOT persist to the
+        next call, and shell state (variables, functions) is not carried over —
+        use absolute paths instead of relying on ``cd``. Commands cannot read
+        stdin (it is closed), so interactive prompts / ``read`` return EOF
+        immediately rather than hanging.
+
+        Prefer the dedicated tools when they fit — they are safer (scoped to
+        the project via the filesystem policy) and produce cleaner, reviewable
+        results:
+          * read a file  -> ``read_file`` (not ``cat``/``head``/``tail``)
+          * search text  -> ``grep`` (not raw ``grep``/``rg`` in bash)
+          * find files   -> ``glob`` (not ``find``/``ls``)
+        Use bash for things those tools cannot do (pipelines, running programs,
+        git, package managers, etc.).
 
         Args:
-            command: The command to execute (e.g., "python scripts/analyze.py").
+            command: The shell command to execute (e.g. "cat log | grep err").
+            timeout: Optional per-command timeout in SECONDS (capped at
+                ``MAX_BASH_TIMEOUT``). Defaults to the tool's configured
+                timeout. Raise it for a known slow command.
 
         Returns:
             FuncToolResult with stdout on success, error message on failure.
@@ -151,17 +183,14 @@ class BashTool:
                 error=f"Command not allowed. Allowed patterns: {', '.join(self.allowed_patterns) or '(none)'}",
             )
 
+        effective_timeout = self._resolve_timeout(timeout)
+
         try:
-            argv = shlex.split(command)
+            argv = self._build_spawn_argv(command)
         except ValueError as e:
             return FuncToolResult(success=0, error=f"Invalid command syntax: {e}")
 
-        # Resolve "python" to a real executable — handles environments
-        # where only "python3" exists (macOS, some Linux distros).
-        if argv and argv[0] == "python":
-            argv[0] = sys.executable or shutil.which("python3") or "python3"
-
-        logger.info("Executing command (identity=%s): %s", self.identity, command)
+        logger.info("Executing command (identity=%s, timeout=%ss): %s", self.identity, effective_timeout, command)
         output_dir = self._resolve_output_dir()
         try:
             if output_dir is not None:
@@ -169,14 +198,76 @@ class BashTool:
                 # a huge output never buffers in memory; decide by file size
                 # afterwards. Timeout is handled inside so the partial file is
                 # still surfaced.
-                return self._execute_with_redirect(argv, command, output_dir)
-            return self._execute_in_memory(argv)
+                return self._execute_with_redirect(argv, command, output_dir, effective_timeout)
+            return self._execute_in_memory(argv, effective_timeout)
         except subprocess.TimeoutExpired:
             logger.error("Command timed out (identity=%s): %s", self.identity, command)
-            return FuncToolResult(success=0, error=f"Command timed out after {self.timeout} seconds")
+            return FuncToolResult(success=0, error=f"Command timed out after {effective_timeout} seconds")
         except Exception as e:
             logger.error("Command execution failed (identity=%s): %s", self.identity, e)
             return FuncToolResult(success=0, error=f"Command execution failed: {str(e)}")
+
+    def _resolve_timeout(self, timeout: Optional[int]) -> int:
+        """Clamp an optional per-call timeout into ``(0, MAX_BASH_TIMEOUT]``.
+
+        Invalid / non-positive values fall back to the instance default so a
+        bad model-supplied timeout can't disable the limit or hang the call.
+        """
+        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
+            return self.timeout
+        return min(timeout, MAX_BASH_TIMEOUT)
+
+    # Cached bash path (None when unavailable → legacy single-argv fallback).
+    _bash_path_cache: Optional[str] = None
+    _bash_path_resolved: bool = False
+
+    @classmethod
+    def _resolve_bash(cls) -> Optional[str]:
+        if not cls._bash_path_resolved:
+            cls._bash_path_cache = shutil.which("bash")
+            cls._bash_path_resolved = True
+        return cls._bash_path_cache
+
+    def _shell_prefix(self) -> str:
+        """Hardening prefix prepended to every ``bash -c`` command.
+
+        - ``shopt -u extglob``: disable extended globs so a malicious filename
+          can't expand into something unexpected after permission validation
+          (mirrors Claude Code's bashProvider hardening).
+        - ``python`` shim: shadow ``python`` with the interpreter datus runs
+          under, preserving the legacy ``argv[0]=='python' -> sys.executable``
+          rewrite for environments where only ``python3`` exists.
+
+        NOTE: intentionally NO ``set -o pipefail`` — bash's default takes the
+        LAST stage's exit code, matching Claude Code. pipefail would flag the
+        ubiquitous ``... | head`` as a failure because the upstream stage dies
+        with SIGPIPE (exit 141) when ``head`` closes the pipe early.
+        """
+        parts = [
+            "shopt -u extglob 2>/dev/null || true",
+        ]
+        py = sys.executable or shutil.which("python3")
+        if py:
+            parts.append(f'python() {{ {shlex.quote(py)} "$@"; }}')
+        return "; ".join(parts) + "; "
+
+    def _build_spawn_argv(self, command: str) -> List[str]:
+        """Build the argv to spawn for ``command``.
+
+        Real-shell path: ``[bash, -c, <prefix><command>]``. Falls back to the
+        legacy ``shell=False`` single-argv (with the ``python`` rewrite) when
+        no bash is available — pipes/operators then don't work, which is the
+        pre-existing behavior on such platforms.
+        """
+        bash_path = self._resolve_bash()
+        if bash_path:
+            return [bash_path, "-c", self._shell_prefix() + command]
+
+        # Legacy fallback: no shell interpretation.
+        argv = shlex.split(command)
+        if argv and argv[0] == "python":
+            argv[0] = sys.executable or shutil.which("python3") or "python3"
+        return argv
 
     def _resolve_output_dir(self) -> Optional[Path]:
         """Resolve the offload directory lazily, tolerating any provider error.
@@ -201,7 +292,7 @@ class BashTool:
             return None
         return path
 
-    def _execute_with_redirect(self, argv: List[str], command: str, output_dir: Path) -> FuncToolResult:
+    def _execute_with_redirect(self, argv: List[str], command: str, output_dir: Path, timeout: int) -> FuncToolResult:
         """Run the command with stdout/stderr redirected to a file on disk.
 
         stderr is merged into the stdout file (``stderr=STDOUT``) so interleaved
@@ -220,30 +311,33 @@ class BashTool:
 
         timed_out = False
         returncode = 0
-        try:
-            with open(path, "wb") as fh:
-                proc = subprocess.run(
-                    argv,
-                    shell=False,
-                    cwd=str(self.workspace_root),
-                    stdout=fh,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL,
-                    timeout=self.timeout,
-                    env=self._get_safe_env(),
-                )
-            returncode = proc.returncode
-        except subprocess.TimeoutExpired:
-            # The child is killed but the file holds whatever it wrote so far.
-            timed_out = True
-            logger.error("Command timed out (identity=%s): %s", self.identity, command)
+        with open(path, "wb") as fh:
+            proc = subprocess.Popen(
+                argv,
+                shell=False,
+                cwd=str(self.workspace_root),
+                stdout=fh,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                env=self._get_safe_env(),
+                # New session/process group so a timeout can kill the whole
+                # pipeline (all stages), not just the bash launcher.
+                start_new_session=(os.name == "posix"),
+            )
+            try:
+                returncode = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # The tree is killed but the file holds whatever it wrote so far.
+                timed_out = True
+                logger.error("Command timed out (identity=%s): %s", self.identity, command)
+                self._kill_process_tree(proc)
 
         result_str = self._result_from_output_file(path)
 
         if timed_out:
             return FuncToolResult(
                 success=0,
-                error=f"Command timed out after {self.timeout} seconds",
+                error=f"Command timed out after {timeout} seconds",
                 result=result_str or None,
             )
         if returncode != 0:
@@ -285,15 +379,15 @@ class BashTool:
         except OSError:  # pragma: no cover - best effort cleanup
             pass
 
-    def _execute_in_memory(self, argv: List[str]) -> FuncToolResult:
+    def _execute_in_memory(self, argv: List[str], timeout: int) -> FuncToolResult:
         """Fallback path (no offload dir): capture output in memory + truncate."""
-        result = subprocess.run(
+        proc = subprocess.Popen(
             argv,
             shell=False,
             cwd=str(self.workspace_root),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=self.timeout,
             env=self._get_safe_env(),
             # Detach the child from the agent's stdin. Without this the child
             # inherits datus's terminal stdin and any command that reads it
@@ -302,42 +396,94 @@ class BashTool:
             # the same TTY and freezing the whole process. DEVNULL delivers
             # an immediate EOF so such commands fail fast instead of hanging.
             stdin=subprocess.DEVNULL,
+            # Process group so a timeout kills the whole pipeline, not just bash.
+            start_new_session=(os.name == "posix"),
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self._kill_process_tree(proc)
+            stdout, stderr = proc.communicate()
+            partial = stdout or ""
+            if stderr:
+                partial += f"\n[stderr]\n{stderr}"
+            return FuncToolResult(
+                success=0,
+                error=f"Command timed out after {timeout} seconds",
+                result=partial or None,
+            )
 
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[stderr]\n{result.stderr}"
+        output = stdout or ""
+        if stderr:
+            output += f"\n[stderr]\n{stderr}"
 
         if len(output) > MAX_OUTPUT_SIZE:
             output = output[:MAX_OUTPUT_SIZE] + f"\n... [truncated, total {len(output)} chars]"
 
-        if result.returncode != 0:
+        if proc.returncode != 0:
             return FuncToolResult(
                 success=0,
-                error=f"Command exited with code {result.returncode}",
+                error=f"Command exited with code {proc.returncode}",
                 result=output,
             )
 
         return FuncToolResult(success=1, result=output)
 
+    def _kill_process_tree(self, proc: "subprocess.Popen") -> None:
+        """Kill a timed-out process and its whole group (all pipeline stages).
+
+        On POSIX the child was started in a new session, so ``killpg`` reaches
+        every stage. Falls back to killing just the launcher elsewhere.
+        """
+        try:
+            if os.name == "posix":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:  # pragma: no cover - already dead
+                pass
+
     def _is_command_allowed(self, command: str) -> bool:
-        """Check if a command matches any allowed pattern."""
+        """Check if a command matches any allowed pattern.
+
+        The ``["*"]`` wildcard (used by AgenticNode, where the real gate is
+        ``PermissionManager``) short-circuits to allowed. For a restrictive
+        whitelist (skills) a pure pipeline is allowed only if EVERY segment
+        matches; any non-pipeline shell construct (``&&``, ``$()``, ...) is
+        rejected outright since per-segment matching can't reason about it.
+        """
         if not self.allowed_patterns:
             return False
+        if "*" in self.allowed_patterns:
+            return True
 
+        segments = split_pipeline(command)
+        if segments is None:
+            # ``||`` / ``|&`` / empty segment / unbalanced quotes — cannot be
+            # matched segment-by-segment under a restrictive whitelist.
+            return False
+        return all(self._segment_allowed(seg) for seg in segments)
+
+    def _segment_allowed(self, segment: str) -> bool:
+        """True if a single command segment matches any allowed pattern.
+
+        A segment containing non-pipe shell metacharacters (chaining, command
+        substitution, redirection) is rejected — the whitelist speaks about
+        one command, not a compound expression.
+        """
         try:
-            parts = shlex.split(command)
+            parts = shlex.split(segment)
         except ValueError:
-            parts = command.split()
+            return False
         if not parts:
             return False
+        if any(tok in ("&&", "||", ";", "|", "&", "`", "$(", ">", "<") for tok in parts):
+            return False
         base_cmd = parts[0]
-
-        for pattern in self.allowed_patterns:
-            if self._matches_pattern(command, base_cmd, pattern):
-                return True
-
-        return False
+        return any(self._matches_pattern(segment, base_cmd, pattern) for pattern in self.allowed_patterns)
 
     def _matches_pattern(self, full_command: str, base_cmd: str, pattern: str) -> bool:
         """Check if a command matches a specific pattern.

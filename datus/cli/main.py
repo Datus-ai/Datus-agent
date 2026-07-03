@@ -222,6 +222,34 @@ class ArgumentParser:
             ),
         )
 
+        self.parser.add_argument(
+            "--permission-mode",
+            dest="permission_mode",
+            type=str,
+            choices=["normal", "auto", "dangerous"],
+            default=None,
+            help=(
+                "Override permissions.profile from agent.yml for this run (REPL and --print). "
+                "In --print mode the run uses the configured profile by default (bash and other "
+                "tools only auto-run when an allow rule matches); pass 'dangerous' to restore "
+                "the legacy allow-everything print-mode behavior."
+            ),
+        )
+
+        self.parser.add_argument(
+            "--execution-mode",
+            dest="execution_mode",
+            type=str,
+            choices=["interactive", "workflow"],
+            default=None,
+            help=(
+                "--print only. 'workflow' (default): headless — ASK permissions fail fast with "
+                "PERMISSION_DENIED. 'interactive': permission/interaction prompts are streamed "
+                "as MessagePayload JSON on stdout and answers are read from stdin, so a driving "
+                "program can approve or deny each request."
+            ),
+        )
+
     def parse_args(self):
         return self.parser.parse_args()
 
@@ -256,6 +284,9 @@ class Application:
 
         if getattr(args, "plan_mode", False) and args.print_mode is None:
             self.arg_parser.parser.error("--plan-mode requires --print mode (use Shift+Tab in the REPL)")
+
+        if getattr(args, "execution_mode", None) and args.print_mode is None:
+            self.arg_parser.parser.error("--execution-mode requires --print mode (the REPL is always interactive)")
 
         if args.print_mode is not None:
             from datus.cli.print_mode import PrintModeRunner

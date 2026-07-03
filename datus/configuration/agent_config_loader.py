@@ -320,6 +320,19 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["language"] = override.language
     if override.reasoning_effort is not None:
         agent_raw["target_reasoning_effort"] = override.reasoning_effort
+    if override.bash_allow:
+        # Append project-level bash allow patterns into the permissions raw
+        # dict so they ride the normal parse/merge pipeline
+        # (AgentConfig._init_permissions_config -> build_effective_config).
+        permissions = agent_raw.setdefault("permissions", {}) or {}
+        agent_raw["permissions"] = permissions
+        bash_commands = permissions.setdefault("bash_commands", {}) or {}
+        permissions["bash_commands"] = bash_commands
+        allow = bash_commands.setdefault("allow", []) or []
+        bash_commands["allow"] = allow
+        for pattern in override.bash_allow:
+            if pattern not in allow:
+                allow.append(pattern)
     # ``dashboard`` / ``scheduler`` overrides reach AgentConfig through
     # dedicated kwargs so the project-level pin is consulted between the
     # explicit call-site argument and the global default flag at lookup
@@ -369,6 +382,17 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
         ).data
     )
     _apply_project_override(agent_raw)
+    # ``--permission-mode`` CLI override: reshapes ``permissions.profile`` before
+    # AgentConfig parses it, so ``permissions_config`` / ``active_profile_name``
+    # reflect the override everywhere (REPL status bar, print mode, hooks).
+    # User rules / bash_commands still layer on top via build_effective_config.
+    permission_mode = kwargs.get("permission_mode")
+    if permission_mode:
+        permissions_raw = agent_raw.get("permissions") or {}
+        if not isinstance(permissions_raw, dict):
+            permissions_raw = {}
+        permissions_raw["profile"] = permission_mode
+        agent_raw["permissions"] = permissions_raw
     pre_init_override_keys = _apply_pre_init_overrides(agent_raw, kwargs)
     nodes = {}
     if "nodes" in agent_raw:

@@ -217,6 +217,7 @@ class TestAllowedKeys:
                 "project_name",
                 "language",
                 "reasoning_effort",
+                "bash_allow",
             }
         )
 
@@ -324,3 +325,80 @@ class TestServiceDefaultFields:
         loaded = yaml.safe_load(written.read_text())
         assert "dashboard" in loaded
         assert "scheduler" not in loaded
+
+
+class TestBashAllow:
+    """Project-level bash_allow parsing and text-level appending."""
+
+    def _write(self, tmp_path, content: str):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return path
+
+    def test_parse_bash_allow_list(self, tmp_path):
+        self._write(tmp_path, yaml.safe_dump({"bash_allow": ["make:*", "git push:*"]}))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["make:*", "git push:*"]
+
+    def test_non_list_bash_allow_dropped(self, tmp_path):
+        self._write(tmp_path, yaml.safe_dump({"bash_allow": "make:*"}))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow is None
+
+    def test_non_string_entries_dropped(self, tmp_path):
+        self._write(tmp_path, yaml.safe_dump({"bash_allow": ["make:*", 42, ""]}))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["make:*"]
+
+    def test_append_creates_file(self, tmp_path):
+        from datus.configuration.project_config import append_project_bash_allow
+
+        append_project_bash_allow("make:*", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["make:*"]
+
+    def test_append_to_file_without_key(self, tmp_path):
+        from datus.configuration.project_config import append_project_bash_allow
+
+        self._write(tmp_path, "# my project config\nproject_name: proj_a\n")
+        append_project_bash_allow("uv run:*", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["uv run:*"]
+        assert result.project_name == "proj_a"
+        # comments preserved
+        text = (tmp_path / PROJECT_CONFIG_REL).read_text()
+        assert "# my project config" in text
+
+    def test_append_to_existing_key_preserves_entries_and_comments(self, tmp_path):
+        from datus.configuration.project_config import append_project_bash_allow
+
+        self._write(
+            tmp_path,
+            "# header comment\nbash_allow:\n  - \"make:*\"\nproject_name: proj_a\n",
+        )
+        append_project_bash_allow("git push:*", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert sorted(result.bash_allow) == ["git push:*", "make:*"]
+        assert result.project_name == "proj_a"
+        assert "# header comment" in (tmp_path / PROJECT_CONFIG_REL).read_text()
+
+    def test_append_is_idempotent(self, tmp_path):
+        from datus.configuration.project_config import append_project_bash_allow
+
+        append_project_bash_allow("make:*", str(tmp_path))
+        append_project_bash_allow("make:*", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["make:*"]
+
+    def test_append_empty_pattern_raises(self, tmp_path):
+        from datus.configuration.project_config import append_project_bash_allow
+
+        with pytest.raises(ValueError):
+            append_project_bash_allow("   ", str(tmp_path))
+
+    def test_save_round_trips_bash_allow(self, tmp_path):
+        override = ProjectOverride(bash_allow=["make:*"])
+        save_project_override(override, str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["make:*"]

@@ -9,6 +9,17 @@ This module provides pattern-based permission control (allow/deny/ask)
 for all tool types in Datus-agent, following Claude Code and OpenCode patterns.
 """
 
+from datus.tools.permission.bash_classifier import (
+    BashClassifierContext,
+    BashCommandClassifier,
+    ClassifierVerdict,
+    create_bash_classifier,
+)
+from datus.tools.permission.bash_rules import (
+    BashCommandRules,
+    BashRuleDecision,
+    evaluate_bash_command,
+)
 from datus.tools.permission.permission_config import (
     PermissionConfig,
     PermissionLevel,
@@ -29,4 +40,11 @@ __all__ = [
     "PermissionHooks",
     "PermissionDeniedException",
     "CompositeHooks",
+    "BashCommandRules",
+    "BashRuleDecision",
+    "evaluate_bash_command",
+    "BashCommandClassifier",
+    "BashClassifierContext",
+    "ClassifierVerdict",
+    "create_bash_classifier",
 ]

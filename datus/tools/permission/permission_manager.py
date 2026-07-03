@@ -82,6 +82,12 @@ class PermissionManager:
         # silently drop runtime-injected rules without this list.
         self._persistent_rules: List[PermissionRule] = []
 
+        # Bash allow patterns granted via "allow (project)" this session.
+        # Mirrors ``_persistent_rules``: replayed after ``switch_profile``
+        # rebuilds ``global_config`` so the grant survives a /permission
+        # switch (the on-disk ``.datus/config.yml`` copy covers restarts).
+        self._persistent_bash_allows: List[str] = []
+
         logger.debug(
             f"PermissionManager initialized: profile={self.active_profile}, "
             f"{len(self.global_config.rules)} global rules"
@@ -103,6 +109,9 @@ class PermissionManager:
         return PermissionConfig(
             default_permission=config.default_permission,
             rules=list(config.rules),
+            # Deep copy so runtime mutations (add_project_bash_allow) never
+            # bleed into the shared profile singletons in profiles.py.
+            bash_commands=config.bash_commands.model_copy(deep=True) if config.bash_commands else None,
         )
 
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
@@ -329,6 +338,44 @@ class PermissionManager:
         if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
             self.global_config.rules.insert(0, rule)
 
+    def _install_bash_allow(self, pattern: str) -> None:
+        """Add a bash allow pattern to the live ``global_config`` in place."""
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        if self.global_config.bash_commands is None:
+            self.global_config.bash_commands = BashCommandRules(allow=[pattern])
+        elif pattern not in self.global_config.bash_commands.allow:
+            self.global_config.bash_commands.allow.append(pattern)
+
+    def add_project_bash_allow(self, pattern: str, project_root: Optional[str] = None) -> bool:
+        """Grant a bash command prefix at project scope ("allow (project)").
+
+        Three effects:
+        1. Persist the pattern to ``./.datus/config.yml`` (``bash_allow`` key)
+           so it survives restarts — future sessions pick it up through
+           ``_apply_project_override`` at config load time.
+        2. Install it into the live ``global_config`` immediately.
+        3. Record it in ``_persistent_bash_allows`` so a runtime
+           ``switch_profile`` rebuild does not drop it.
+
+        Returns True when the pattern was persisted to disk; False when the
+        write failed (read-only checkout, etc.) — the in-memory grant still
+        applies, so callers may degrade to a session-level approval message.
+        """
+        self._install_bash_allow(pattern)
+        if pattern not in self._persistent_bash_allows:
+            self._persistent_bash_allows.append(pattern)
+
+        try:
+            from datus.configuration.project_config import append_project_bash_allow
+
+            append_project_bash_allow(pattern, project_root or ".")
+            logger.info(f"Project-level bash allow persisted: {pattern!r}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to persist project bash allow {pattern!r}: {e}; grant applies to this session only")
+            return False
+
     def switch_profile(
         self,
         profile_name: str,
@@ -372,6 +419,9 @@ class PermissionManager:
         for rule in self._persistent_rules:
             if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
                 self.global_config.rules.insert(0, rule)
+        # Re-apply project-scope bash allows granted earlier this session.
+        for pattern in self._persistent_bash_allows:
+            self._install_bash_allow(pattern)
         self.active_profile = profile_name
         self._session_approvals.clear()
         logger.info(

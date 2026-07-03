@@ -2100,7 +2100,18 @@ class AgenticNode(Node):
             from datus.tools.permission.permission_manager import PermissionManager
 
             is_workflow = getattr(self, "execution_mode", None) == "workflow"
-            if is_workflow:
+            # Print mode opts out of the forced-``dangerous`` posture by
+            # setting ``agent_config.workflow_permission_profile`` (the
+            # configured or ``--permission-mode`` profile), so ``datus -p``
+            # only auto-runs what the profile's allow rules cover. Unattended
+            # flows (bootstrap, scheduler, benchmarks) leave it ``None`` and
+            # keep the historical dangerous baseline. isinstance guards
+            # against mocked agent_configs in tests.
+            workflow_profile = getattr(self.agent_config, "workflow_permission_profile", None)
+            if is_workflow and isinstance(workflow_profile, str) and workflow_profile:
+                permissions_config = self.agent_config.permissions_config
+                active_profile = workflow_profile
+            elif is_workflow:
                 from datus.tools.permission.profiles import get_profile
 
                 permissions_config = get_profile("dangerous")
@@ -3539,6 +3550,13 @@ class AgenticNode(Node):
 
             # Never call ``_get_or_create_broker`` here — it resets the queue
             # and orphans any parent CLI listener when running as a sub-agent.
+            # Reserved LLM-classifier seam for bash commands: returns None
+            # until ``permissions.bash_commands.classifier.enabled`` gains a
+            # real implementation (see bash_classifier.py).
+            from datus.tools.permission.bash_classifier import create_bash_classifier
+
+            bash_rules = getattr(getattr(self.agent_config, "permissions_config", None), "bash_commands", None)
+
             self.permission_hooks = PermissionHooks(
                 broker=self.interaction_broker,
                 permission_manager=self.permission_manager,
@@ -3548,6 +3566,7 @@ class AgenticNode(Node):
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
+                bash_classifier=create_bash_classifier(bash_rules, self.agent_config),
             )
             logger.debug(
                 f"PermissionHooks attached to node '{self.get_node_name()}' "

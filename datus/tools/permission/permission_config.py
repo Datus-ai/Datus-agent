@@ -13,9 +13,12 @@ Provides:
 
 import fnmatch
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from datus.tools.permission.bash_rules import BashCommandRules
 
 
 class PermissionLevel(str, Enum):
@@ -103,11 +106,17 @@ class PermissionConfig(BaseModel):
     Attributes:
         rules: List of permission rules evaluated in order
         default_permission: Default permission when no rules match
+        bash_commands: Optional command-level bash rules (see ``bash_rules.py``);
+            consumed by ``PermissionHooks._handle_bash_permission``. When None,
+            the coarse ``bash_tools.bash`` rule governs as before.
     """
 
     rules: List[PermissionRule] = Field(default_factory=list, description="Permission rules evaluated in order")
     default_permission: PermissionLevel = Field(
         default=PermissionLevel.ALLOW, description="Default permission when no rules match"
+    )
+    bash_commands: Optional["BashCommandRules"] = Field(
+        default=None, description="Command-level allow/deny/ask rules for the bash tool"
     )
 
     class Config:
@@ -134,9 +143,13 @@ class PermissionConfig(BaseModel):
 
         rules = [PermissionRule.from_dict(r) for r in rules_data]
 
+        # Deferred import: bash_rules imports PermissionLevel from this module.
+        from datus.tools.permission.bash_rules import BashCommandRules
+
         return cls(
             default_permission=PermissionLevel(default),
             rules=rules,
+            bash_commands=BashCommandRules.from_dict(data.get("bash_commands")),
         )
 
     def merge_with(self, override: Optional["PermissionConfig"]) -> "PermissionConfig":
@@ -156,9 +169,30 @@ class PermissionConfig(BaseModel):
         # Override rules are appended (evaluated later, thus higher priority)
         merged_rules = self.rules + override.rules
 
+        # Bash command rules layer: lists concatenate, scalars override only
+        # when explicitly set (see BashCommandRules.merge_with).
+        if self.bash_commands is not None:
+            merged_bash = self.bash_commands.merge_with(override.bash_commands)
+        else:
+            merged_bash = override.bash_commands
+
         # Always use override's default_permission when override is provided
         # This allows overriding just the default without adding rules
         return PermissionConfig(
             default_permission=override.default_permission,
             rules=merged_rules,
+            bash_commands=merged_bash,
         )
+
+
+# Resolve the forward reference to BashCommandRules. bash_rules imports
+# PermissionLevel from this module, so whichever module finishes importing
+# second completes the rebuild: when this module loads first the import below
+# succeeds; when bash_rules loads first the import raises (bash_rules is
+# mid-initialization) and bash_rules performs the rebuild at its own bottom.
+try:
+    from datus.tools.permission.bash_rules import BashCommandRules
+
+    PermissionConfig.model_rebuild()
+except ImportError:  # pragma: no cover - depends on import order
+    pass

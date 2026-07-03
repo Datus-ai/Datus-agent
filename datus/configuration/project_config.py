@@ -34,6 +34,11 @@ pin a handful of values without copying the full config:
 - ``reasoning_effort``: one of ``off|minimal|low|medium|high`` — controls the
   reasoning/thinking effort passed to the active model, mapped to each
   vendor's native dialect by LiteLLM.
+- ``bash_allow``: list of bash command patterns (see
+  ``datus/tools/permission/bash_rules.py`` for the syntax) appended to
+  ``agent.permissions.bash_commands.allow`` at load time. Written by the
+  "allow (project)" choice in the bash permission prompt via
+  :func:`append_project_bash_allow`.
 
 Any other keys in the file are ignored with a warning so users do not
 mistakenly expect the overlay to accept arbitrary YAML.
@@ -61,6 +66,7 @@ ALLOWED_KEYS = frozenset(
         "project_name",
         "language",
         "reasoning_effort",
+        "bash_allow",
     }
 )
 REASONING_EFFORT_CHOICES = frozenset({"off", "minimal", "low", "medium", "high"})
@@ -100,6 +106,7 @@ class ProjectOverride:
     project_name: Optional[str] = None
     language: Optional[str] = None
     reasoning_effort: Optional[str] = None
+    bash_allow: Optional[list] = None
 
     def is_empty(self) -> bool:
         return (
@@ -111,6 +118,7 @@ class ProjectOverride:
             and self.project_name is None
             and self.language is None
             and self.reasoning_effort is None
+            and self.bash_allow is None
         )
 
 
@@ -186,7 +194,28 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         project_name=raw.get("project_name"),
         language=raw.get("language"),
         reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
+        bash_allow=_parse_bash_allow(raw.get("bash_allow")),
     )
+
+
+def _parse_bash_allow(raw: Any) -> Optional[list]:
+    """Normalize the ``bash_allow:`` field into a list of pattern strings.
+
+    Non-list values and non-string entries are dropped with a warning so a
+    typo cannot silently widen (or corrupt) the bash allow-list.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        logger.warning(f"bash_allow must be a list of strings, got {type(raw).__name__}. Ignoring.")
+        return None
+    patterns = []
+    for entry in raw:
+        if isinstance(entry, str) and entry.strip():
+            patterns.append(entry.strip())
+        else:
+            logger.warning(f"Ignoring non-string bash_allow entry: {entry!r}")
+    return patterns or None
 
 
 def _parse_optional_string(raw: Any, *, key: str) -> Optional[str]:
@@ -262,9 +291,66 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "project_name": override.project_name,
             "language": override.language,
             "reasoning_effort": override.reasoning_effort,
+            "bash_allow": override.bash_allow,
         }.items()
         if v is not None
     }
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(payload, f, sort_keys=False, default_flow_style=False)
+    return path
+
+
+def append_project_bash_allow(pattern: str, cwd: Optional[str] = None) -> Path:
+    """Append a bash allow pattern to ``./.datus/config.yml``'s ``bash_allow`` list.
+
+    Used by the "allow (project)" choice in the bash permission prompt.
+    Edits at the TEXT level (not load->dump) so user comments and formatting
+    in the rest of the file are preserved:
+
+    - file missing        -> create it with a commented ``bash_allow`` block
+    - no ``bash_allow:``  -> append the block at the end of the file
+    - key present         -> insert ``  - "<pattern>"`` right after the key line
+    - pattern already in the parsed list -> no-op
+
+    Raises ``OSError`` on write failures; callers (``PermissionManager.
+    add_project_bash_allow``) degrade to a session-level grant.
+    """
+    pattern = pattern.strip()
+    if not pattern:
+        raise ValueError("bash allow pattern must be non-empty")
+    path = project_config_path(cwd)
+    entry_line = f'  - "{pattern}"'
+
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            "# Project-level Datus overrides. See conf/agent.yml.example for the full schema.\n"
+            "# bash_allow patterns are appended to agent.permissions.bash_commands.allow.\n"
+            f"bash_allow:\n{entry_line}\n"
+        )
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    text = path.read_text(encoding="utf-8")
+
+    # No-op when the pattern is already present (compare parsed values, not
+    # raw text, so quoting style differences don't cause duplicates).
+    try:
+        existing = yaml.safe_load(text) or {}
+        if isinstance(existing, dict) and pattern in (existing.get("bash_allow") or []):
+            return path
+    except yaml.YAMLError:
+        logger.warning(f"{path} is not valid YAML; appending bash_allow anyway.")
+
+    lines = text.splitlines()
+    key_idx = next(
+        (i for i, line in enumerate(lines) if line.startswith("bash_allow:") and not line.lstrip().startswith("#")),
+        None,
+    )
+    if key_idx is None:
+        suffix = "" if (not text or text.endswith("\n")) else "\n"
+        path.write_text(f"{text}{suffix}bash_allow:\n{entry_line}\n", encoding="utf-8")
+    else:
+        lines.insert(key_idx + 1, entry_line)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

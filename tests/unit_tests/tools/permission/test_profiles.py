@@ -305,3 +305,69 @@ class TestBuildEffectiveConfig:
 
         with pytest.raises(ValueError, match="Unknown profile"):
             build_effective_config("yolo", {})
+
+
+class TestProfileBashCommands:
+    """Command-level bash rules attached to each profile."""
+
+    def test_normal_allows_readonly_commands(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import NORMAL
+
+        assert evaluate_bash_command("git status", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("ls -la", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("git log --oneline -5", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        # File readers / text filters are now allowed in normal (read-only).
+        assert evaluate_bash_command("cat README.md", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("head -5 data.csv", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("grep -n TODO src.py", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        # Read-only pipeline of allow-listed commands auto-allows.
+        assert evaluate_bash_command("cat log | grep err | wc -l", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+
+    def test_normal_asks_for_writes_and_codeexec(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import NORMAL
+
+        # Writes stay ASK.
+        assert evaluate_bash_command("rm -rf build", NORMAL.bash_commands).level == PermissionLevel.ASK
+        assert evaluate_bash_command("touch x", NORMAL.bash_commands).level == PermissionLevel.ASK
+        # Programmable tools (can exec / write in place) are NOT whitelisted.
+        assert evaluate_bash_command("awk '{print $1}' f", NORMAL.bash_commands).level == PermissionLevel.ASK
+        assert evaluate_bash_command("sed -i s/a/b/ f", NORMAL.bash_commands).level == PermissionLevel.ASK
+        assert evaluate_bash_command("find . -name x", NORMAL.bash_commands).level == PermissionLevel.ASK
+        # sort can write via -o, so it's auto-only.
+        assert evaluate_bash_command("sort f", NORMAL.bash_commands).level == PermissionLevel.ASK
+
+    def test_auto_extends_normal(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import AUTO
+
+        assert evaluate_bash_command("cat README.md", AUTO.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("git status", AUTO.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("sort data.txt", AUTO.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("mkdir newdir", AUTO.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("rm -rf build", AUTO.bash_commands).level == PermissionLevel.ASK
+
+    def test_dangerous_has_no_bash_rules(self):
+        from datus.tools.permission.profiles import DANGEROUS
+
+        assert DANGEROUS.bash_commands is None
+
+    def test_user_bash_commands_layer_over_profile(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config(
+            "normal",
+            {"bash_commands": {"allow": ["make:*"], "deny": ["git diff:*"]}},
+        )
+        # user allow appended after profile whitelist
+        assert evaluate_bash_command("make test", effective.bash_commands).level == PermissionLevel.ALLOW
+        # profile whitelist retained
+        assert evaluate_bash_command("git status", effective.bash_commands).level == PermissionLevel.ALLOW
+        # user deny overrides the profile's allow (deny wins by decision order)
+        assert evaluate_bash_command("git diff HEAD~1", effective.bash_commands).level == PermissionLevel.DENY

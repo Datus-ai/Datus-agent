@@ -1879,3 +1879,443 @@ class TestPermissionPromptContent:
         event = mock_broker.request.call_args.args[0][0]
         assert "**Arguments**" not in event.content
         assert "Permission Request" in event.content
+
+
+class TestBashCommandPermission:
+    """Command-level gating for ``bash_tools.bash`` via _handle_bash_permission."""
+
+    def _make_hooks(
+        self,
+        mock_broker,
+        bash_commands=None,
+        rules=None,
+        non_interactive=False,
+        project_root=None,
+        bash_classifier=None,
+        default=PermissionLevel.ASK,
+    ):
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = PermissionConfig(
+            default_permission=default,
+            rules=rules if rules is not None else [PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
+            bash_commands=BashCommandRules(**bash_commands) if isinstance(bash_commands, dict) else bash_commands,
+        )
+        manager = PermissionManager(global_config=config)
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+            project_root=project_root,
+            bash_classifier=bash_classifier,
+        )
+        return hooks, manager
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_allow_rule_bypasses_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+
+        await hooks.on_tool_start(self._ctx("git log --oneline -5"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_rule_raises_naming_pattern(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git:*"], "deny": ["git push:*"]})
+
+        with pytest.raises(PermissionDeniedException, match="git push"):
+            await hooks.on_tool_start(self._ctx("git push origin main"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unanchored_deny_catches_wrapped_command(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"deny": ["rm:*"]})
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("xargs rm -rf build"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_missing_ruleset_falls_back_to_coarse_ask(self, mock_broker):
+        """No bash_commands → legacy behavior: the coarse ASK rule prompts."""
+        hooks, _ = self._make_hooks(mock_broker, bash_commands=None)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git log"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_explicit_category_deny_defers_to_main_flow(self, mock_broker):
+        """A coarse bash_tools.bash DENY rule wins over command-level allows."""
+        hooks, _ = self._make_hooks(
+            mock_broker,
+            bash_commands={"allow": ["git log:*"]},
+            rules=[PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.DENY)],
+        )
+
+        with pytest.raises(PermissionDeniedException, match="blocked by"):
+            await hooks.on_tool_start(self._ctx("git log"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_ask_raises_without_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]}, non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ask_prompts_and_deny_choice_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+
+        with pytest.raises(PermissionDeniedException, match="rejected"):
+            await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_session_allow_buckets_by_prefix(self, mock_broker):
+        """'a' approves the bucket; same bucket skips, different bucket prompts."""
+        hooks, manager = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("git push origin main"), MagicMock(), self._tool())
+        assert manager._session_approvals.get("bash_tools.bash::git push") is True
+
+        # same bucket: no second prompt
+        await hooks.on_tool_start(self._ctx("git push origin dev"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+        # different bucket prompts again
+        await hooks.on_tool_start(self._ctx("git rebase main"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_project_allow_persists_and_applies(self, mock_broker, tmp_path):
+        """'p' writes .datus/config.yml, updates live config, caches session bucket."""
+        from datus.configuration.project_config import load_project_override
+
+        hooks, manager = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, project_root=str(tmp_path)
+        )
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        await hooks.on_tool_start(self._ctx("make test"), MagicMock(), self._tool())
+
+        override = load_project_override(str(tmp_path))
+        assert override.bash_allow == ["make test:*"]
+        assert "make test:*" in manager.global_config.bash_commands.allow
+        # later same-prefix command auto-allows via the live rule (no prompt)
+        await hooks.on_tool_start(self._ctx("make test -j4"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_safety_forced_prompt_offers_no_project_choice(self, mock_broker):
+        """Wrapper/metachar asks must not offer the persistent 'p' choice."""
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git status"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("git status && rm -rf /"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+        assert "y" in event.choices and "a" in event.choices and "n" in event.choices
+
+    @pytest.mark.asyncio
+    async def test_ask_rule_hit_offers_no_project_choice(self, mock_broker):
+        """Explicit ask rules mean 'review every time' — no 'p' offered."""
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"ask": ["docker:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("docker ps"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+    @pytest.mark.asyncio
+    async def test_unmatched_command_offers_project_choice(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["git log:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" in event.choices
+
+    @pytest.mark.asyncio
+    async def test_classifier_high_confidence_allow_skips_prompt(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.95, reason="safe")
+
+        hooks, _ = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, bash_classifier=StubClassifier()
+        )
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_classifier_low_confidence_falls_through_to_prompt(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.3, reason="unsure")
+
+        hooks, _ = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, bash_classifier=StubClassifier()
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_classifier_exception_fails_closed_to_prompt(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier
+
+        class BoomClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                raise RuntimeError("api down")
+
+        hooks, _ = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, bash_classifier=BoomClassifier()
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_classifier_not_consulted_for_safety_forced(self, mock_broker):
+        from datus.tools.permission.bash_classifier import BashCommandClassifier, ClassifierVerdict
+
+        calls = []
+
+        class StubClassifier(BashCommandClassifier):
+            async def classify(self, command, context):
+                calls.append(command)
+                return ClassifierVerdict(permission=PermissionLevel.ALLOW, confidence=0.99, reason="safe")
+
+        hooks, _ = self._make_hooks(mock_broker, bash_commands={"allow": ["ls:*"]}, bash_classifier=StubClassifier())
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("sudo ls"), MagicMock(), self._tool())
+
+        assert calls == []
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_switch_profile_clears_session_but_keeps_project_allows(self, mock_broker, tmp_path):
+        hooks, manager = self._make_hooks(
+            mock_broker, bash_commands={"allow": ["git log:*"]}, project_root=str(tmp_path)
+        )
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+        await hooks.on_tool_start(self._ctx("make test"), MagicMock(), self._tool())
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+        assert manager._session_approvals
+
+        manager.switch_profile("normal")
+
+        assert not manager._session_approvals  # session buckets cleared
+        assert "make test:*" in manager.global_config.bash_commands.allow  # project allow replayed
+
+
+class TestBashDangerousProfileWithUserRules:
+    """User deny/ask lists must not flip dangerous into ask-everything."""
+
+    def _make_hooks(self, mock_broker, non_interactive=True):
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        # dangerous profile + user bash rules from agent.yml — the real merge path.
+        config = build_effective_config(
+            "dangerous",
+            {"bash_commands": {"deny": ["rm:*"], "ask": ["docker:*"]}},
+        )
+        manager = PermissionManager(global_config=config, active_profile="dangerous")
+        return PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+        )
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_unmatched_command_inherits_dangerous_allow(self, mock_broker):
+        hooks = self._make_hooks(mock_broker)
+
+        await hooks.on_tool_start(self._ctx("touch newfile.txt"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_rule_still_blocks_under_dangerous(self, mock_broker):
+        hooks = self._make_hooks(mock_broker)
+
+        with pytest.raises(PermissionDeniedException, match="rm"):
+            await hooks.on_tool_start(self._ctx("rm README.md"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_ask_rule_still_asks_under_dangerous(self, mock_broker):
+        hooks = self._make_hooks(mock_broker)
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("docker ps"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_explicit_default_ask_is_respected(self, mock_broker):
+        """A user who explicitly sets default: ask under dangerous gets ask."""
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = build_effective_config(
+            "dangerous",
+            {"bash_commands": {"deny": ["rm:*"], "default": "ask"}},
+        )
+        manager = PermissionManager(global_config=config, active_profile="dangerous")
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=True,
+        )
+
+        with pytest.raises(PermissionDeniedException, match="non-interactively"):
+            await hooks.on_tool_start(self._ctx("touch x"), MagicMock(), self._tool())
+
+
+class TestBashPipelinePermission:
+    """Hook-level behavior for pipelines under _handle_bash_permission."""
+
+    def _make_hooks(self, mock_broker, bash_commands=None, non_interactive=False):
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            rules=[PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
+            bash_commands=BashCommandRules(**bash_commands) if bash_commands else None,
+        )
+        manager = PermissionManager(global_config=config)
+        return (
+            PermissionHooks(
+                broker=mock_broker,
+                permission_manager=manager,
+                node_name="chat",
+                tool_registry=registry,
+                non_interactive=non_interactive,
+            ),
+            manager,
+        )
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_all_allow_pipeline_no_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["cat:*", "grep:*", "wc:*"]})
+
+        await hooks.on_tool_start(self._ctx("cat log | grep err | wc -l"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_deny_segment_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["cat:*"], "deny": ["rm:*"]})
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("cat x | xargs rm"), MagicMock(), self._tool())
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unmatched_segment_prompts_with_that_bucket(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker, {"allow": ["cat:*"]})
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())
+
+        assert manager._session_approvals.get("bash_tools.bash::frobnicate") is True
+
+    @pytest.mark.asyncio
+    async def test_wrapper_segment_safety_no_project_option(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["ls:*", "echo:*"]})
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("ls | xargs echo"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+    @pytest.mark.asyncio
+    async def test_non_interactive_pipeline_ask_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, {"allow": ["cat:*"]}, non_interactive=True)
+
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())

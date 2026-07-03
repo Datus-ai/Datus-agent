@@ -909,6 +909,13 @@ class AgentConfig:
         # init raises.
         self.active_profile_name: str = "normal"
         self._raw_permissions: Dict[str, Any] = {}
+        # Profile that ``execution_mode="workflow"`` nodes should run under.
+        # ``None`` (default) keeps the historical forced-``dangerous`` posture
+        # for unattended flows (bootstrap, scheduler subagents, benchmarks).
+        # Print mode sets this so ``datus -p`` respects the configured /
+        # ``--permission-mode`` profile instead — see
+        # ``AgenticNode._setup_permission_manager``.
+        self.workflow_permission_profile: Optional[str] = None
         # Initialize unified permission system
         self.permissions_config = self._init_permissions_config(kwargs.get("permissions", {}))
 

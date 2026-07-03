@@ -96,6 +96,29 @@ agent:
   #   #   - tool: db_tools
   #   #     pattern: execute_ddl
   #   #     permission: deny
+  #   #
+  #   # Command-level bash rules (optional; profile whitelist applies when
+  #   # omitted). Pattern syntax — no colon = exact command; "prefix:*" =
+  #   # prefix match; "prefix:glob" = prefix + first-argument glob. Decision
+  #   # order: deny (also matches wrapped commands like ``xargs rm``) →
+  #   # safety ceiling (bash -c / sudo / && / $() / redirection always ask) →
+  #   # ask → allow → default (ask). A PURE pipeline (``a | b | c``) is judged
+  #   # per segment: it auto-runs only if every segment is allowed, and any
+  #   # denied segment blocks the whole pipeline. The confirmation prompt
+  #   # offers once / session / project scopes; "project" appends the prefix
+  #   # to ``.datus/config.yml``'s ``bash_allow`` list.
+  #   # bash_commands:
+  #   #   allow:
+  #   #     - "git status"            # exact: not "git status --short"
+  #   #     - "git log:*"             # prefix: any arguments
+  #   #     - "python:scripts/*.py"   # first arg must match the glob
+  #   #   deny:
+  #   #     - "rm:*"                  # also catches "xargs rm", "find -exec rm"
+  #   #     - "git push:*"            # deny always beats allow
+  #   #   ask:
+  #   #     - "docker:*"              # confirm every call (session approval per bucket)
+  #   #   classifier:                 # reserved: LLM classifier (not implemented)
+  #   #     enabled: false
 
 
   nodes:
