@@ -4349,6 +4349,14 @@
 </span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">    </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># Refresh observed profile descriptions in an existing YAML</span>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">    </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">    </span>--components<span class="w"> </span>semantic_model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span>--kb_update_strategy<span class="w"> </span>refresh-profile<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span>--semantic_yaml<span class="w"> </span>path/to/semantic_model.yaml<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span>--success_story<span class="w"> </span>path/to/success_story.csv
 </span></code></pre></div>
 <h3 id="key-parameters">Key Parameters<a class="headerlink" href="#key-parameters" title="Permanent link">&para;</a></h3>
 <table>
@@ -4376,23 +4384,27 @@
 <tr>
 <td><code>--success_story</code></td>
 <td>⚠️</td>
-<td>CSV file with historical SQLs (required if no <code>--semantic_yaml</code>)</td>
+<td>CSV file with historical SQLs. Required for generation from SQL history and for <code>refresh-profile</code>.</td>
 <td><code>success_story.csv</code></td>
 </tr>
 <tr>
 <td><code>--semantic_yaml</code></td>
 <td>⚠️</td>
-<td>Semantic model YAML file (required if no <code>--success_story</code>)</td>
+<td>Semantic model YAML file. Required for YAML import and for <code>refresh-profile</code>.</td>
 <td><code>semantic_model.yaml</code></td>
 </tr>
 <tr>
 <td><code>--kb_update_strategy</code></td>
-<td>✅</td>
-<td>Update strategy</td>
-<td><code>overwrite</code>/<code>incremental</code></td>
+<td>❌</td>
+<td>Update strategy. Defaults to <code>check</code>; <code>refresh-profile</code> is semantic-model only.</td>
+<td><code>check</code>/<code>overwrite</code>/<code>incremental</code>/<code>refresh-profile</code></td>
 </tr>
 </tbody>
 </table>
+<p><code>refresh-profile</code> updates an existing MetricFlow or OSI semantic YAML in place. It re-runs bounded, read-only data
+profiling guided by the historical SQLs in <code>--success_story</code>, replaces the generated <code>Observed profile:</code> suffixes in
+table and column descriptions, and syncs the updated YAML back to the semantic model vector store. It does not run full
+LLM semantic-model generation and does not truncate the semantic model store.</p>
 <h2 id="data-source-formats">Data Source Formats<a class="headerlink" href="#data-source-formats" title="Permanent link">&para;</a></h2>
 <h3 id="csv-format">CSV Format<a class="headerlink" href="#csv-format" title="Permanent link">&para;</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>question,sql
