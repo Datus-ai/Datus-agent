@@ -8,36 +8,16 @@ Shared factory functions for creating interactive agentic nodes and their inputs
 Used by CLI print mode and interactive REPL to avoid duplicating node creation logic.
 """
 
-import logging
 from typing import TYPE_CHECKING, Literal, Optional
+
+from datus.utils.constants import HIDDEN_SYS_SUB_AGENTS, SYS_SUB_AGENTS
+from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
 
 
-logger = logging.getLogger(__name__)
-
-_BUILTIN_SUBAGENT_NAMES = frozenset(
-    {
-        "ask_dashboard",
-        "ask_metrics",
-        "ask_report",
-        "explore",
-        "feedback",
-        "gen_dashboard",
-        "gen_job",
-        "gen_metrics",
-        "gen_report",
-        "gen_semantic_model",
-        "gen_skill",
-        "gen_sql",
-        "gen_sql_summary",
-        "gen_table",
-        "gen_visual_dashboard",
-        "gen_visual_report",
-        "scheduler",
-    }
-)
+logger = get_logger(__name__)
 
 
 def _configured_agentic_node_names(agent_config: "AgentConfig") -> frozenset[str]:
@@ -45,6 +25,31 @@ def _configured_agentic_node_names(agent_config: "AgentConfig") -> frozenset[str
     if not agentic_nodes or not hasattr(agentic_nodes, "keys"):
         return frozenset()
     return frozenset(str(name) for name in agentic_nodes.keys())
+
+
+def _visible_subagent_names(agent_config: "AgentConfig") -> frozenset[str]:
+    visible_names = set(SYS_SUB_AGENTS - HIDDEN_SYS_SUB_AGENTS)
+    agentic_nodes = getattr(agent_config, "agentic_nodes", None)
+    if not agentic_nodes or not hasattr(agentic_nodes, "items"):
+        return frozenset(visible_names)
+
+    current_db = getattr(agent_config, "current_datasource", None)
+    for name, sub_config in agentic_nodes.items():
+        name = str(name)
+        if name in SYS_SUB_AGENTS or name == "chat":
+            continue
+        if hasattr(sub_config, "model_dump"):
+            sub_config = sub_config.model_dump()
+        if isinstance(sub_config, dict):
+            scoped_context = sub_config.get("scoped_context") or {}
+            if hasattr(scoped_context, "model_dump"):
+                scoped_context = scoped_context.model_dump()
+            if isinstance(scoped_context, dict):
+                scoped_datasource = scoped_context.get("datasource")
+                if scoped_datasource and scoped_datasource != current_db:
+                    continue
+        visible_names.add(name)
+    return frozenset(visible_names)
 
 
 def create_interactive_node(
@@ -299,12 +304,8 @@ def create_interactive_node(
 
         else:
             configured_agentic_node_names = _configured_agentic_node_names(agent_config)
-            if (
-                subagent_name not in _BUILTIN_SUBAGENT_NAMES
-                and subagent_name not in configured_agentic_node_names
-                and node_class_type not in _BUILTIN_SUBAGENT_NAMES
-            ):
-                available_names = ", ".join(sorted(_BUILTIN_SUBAGENT_NAMES | configured_agentic_node_names))
+            if subagent_name not in SYS_SUB_AGENTS and subagent_name not in configured_agentic_node_names:
+                available_names = ", ".join(sorted(_visible_subagent_names(agent_config)))
                 logger.warning(
                     "Unknown subagent %r; falling back to gen_sql. Available subagents: %s",
                     subagent_name,
