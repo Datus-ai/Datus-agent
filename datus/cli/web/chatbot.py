@@ -59,6 +59,9 @@ def _build_agent_args(args: argparse.Namespace) -> argparse.Namespace:
         interactive=True,
         output_dir=getattr(args, "output_dir", "./output"),
         log_level="DEBUG" if getattr(args, "debug", False) else "INFO",
+        # Forward the CLI permission override so ``load_agent_config`` applies
+        # it for ``datus --web`` the same way it does for REPL / --print.
+        permission_mode=getattr(args, "permission_mode", None),
     )
     return agent_args
 

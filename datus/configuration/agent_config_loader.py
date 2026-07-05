@@ -324,11 +324,21 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         # Append project-level bash allow patterns into the permissions raw
         # dict so they ride the normal parse/merge pipeline
         # (AgentConfig._init_permissions_config -> build_effective_config).
-        permissions = agent_raw.setdefault("permissions", {}) or {}
+        # Tolerate malformed YAML shapes (string/list where a mapping is
+        # expected) the same way ``AgentConfig._init_permissions_config`` and
+        # the ``permission_mode`` override below do: replace with an empty
+        # container instead of crashing config loading.
+        permissions = agent_raw.get("permissions")
+        if not isinstance(permissions, dict):
+            permissions = {}
         agent_raw["permissions"] = permissions
-        bash_commands = permissions.setdefault("bash_commands", {}) or {}
+        bash_commands = permissions.get("bash_commands")
+        if not isinstance(bash_commands, dict):
+            bash_commands = {}
         permissions["bash_commands"] = bash_commands
-        allow = bash_commands.setdefault("allow", []) or []
+        allow = bash_commands.get("allow")
+        if not isinstance(allow, list):
+            allow = []
         bash_commands["allow"] = allow
         for pattern in override.bash_allow:
             if pattern not in allow:

@@ -204,7 +204,8 @@ class TestBashToolExecution:
     def test_bash_with_args(self, python_tool):
         result = python_tool.bash("python scripts/analyze.py --input test.json")
         assert result.success == 1
-        assert "--input" in result.result or "test.json" in result.result
+        # analyze.py echoes sys.argv[1:] verbatim.
+        assert "Args: ['--input', 'test.json']" in result.result
 
     def test_execute_denied_command(self, python_tool):
         result = python_tool.bash("rm -rf /")
@@ -230,7 +231,9 @@ class TestBashToolExecution:
         # Script doesn't exist — Python exits non-zero.
         result = python_tool.bash("python scripts/nonexistent.py")
         assert result.success == 0
-        assert result.error is not None
+        assert result.error.startswith("Command exited with code ")
+        # Python's stderr is merged into the result and names the missing file.
+        assert "nonexistent.py" in result.result
 
     def test_empty_patterns_blocks_execution(self, empty_tool):
         result = empty_tool.bash("python anything.py")
@@ -257,7 +260,8 @@ class TestBashToolWorkspaceIsolation:
         (temp_workspace / "scripts" / "pwd_test.py").write_text("import os\nprint(os.getcwd())\n")
         result = multi_pattern_tool.bash("python scripts/pwd_test.py")
         assert result.success == 1
-        assert str(temp_workspace) in result.result or temp_workspace.name in result.result
+        # cwd is locked to the resolved workspace root (symlinks resolved).
+        assert result.result.strip() == str(temp_workspace.resolve())
 
 
 class TestBashToolExtraEnv:
@@ -306,11 +310,12 @@ class TestBashToolEdgeCases:
         assert "3" in result.result
 
     def test_invalid_shlex_syntax_returns_error(self, wildcard_tool):
-        # Unclosed quote: ``bash`` calls ``shlex.split`` and reports
-        # the syntax error rather than crashing.
+        # Unclosed quote: the restrictive whitelist can't parse the command
+        # (``split_pipeline`` returns None on unbalanced quotes), so it is
+        # rejected before spawning rather than crashing.
         result = wildcard_tool.bash('python -c "unclosed')
         assert result.success == 0
-        assert "syntax" in result.error.lower() or "not allowed" in result.error.lower()
+        assert result.error.startswith("Command not allowed")
 
 
 class TestBashToolTimeout:

@@ -331,6 +331,11 @@ class BashTool:
                 timed_out = True
                 logger.error("Command timed out (identity=%s): %s", self.identity, command)
                 self._kill_process_tree(proc)
+                try:
+                    # Reap the launcher so it doesn't linger as a zombie.
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:  # pragma: no cover - kill already sent
+                    pass
 
         result_str = self._result_from_output_file(path)
 

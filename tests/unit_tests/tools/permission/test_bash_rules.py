@@ -150,6 +150,43 @@ class TestSafetyCeiling:
     @pytest.mark.parametrize(
         "command",
         [
+            "python -c 'print(1)'",
+            "python3 -c 'print(1)'",
+            "python3.12 -uc 'print(1)'",  # short-option cluster still contains -c
+            "perl -e 'unlink foo'",
+            "ruby -e 'puts 1'",
+            "node --eval 'process.exit()'",
+            "node -p '1+1'",
+            "php -r 'echo 1;'",
+        ],
+    )
+    def test_interpreter_inline_code_forces_ask(self, command):
+        """``python -c`` / ``perl -e`` … execute a string the rules cannot see,
+        so even a blanket interpreter allow rule never auto-runs them."""
+        rules = BashCommandRules(allow=["python:*", "python3:*", "python3.12:*", "perl:*", "ruby:*", "node:*", "php:*"])
+        decision = evaluate_bash_command(command, rules)
+        assert decision.level == PermissionLevel.ASK
+        assert decision.source == BashDecisionSource.SAFETY
+        assert decision.safety_forced is True
+
+    def test_interpreter_script_path_still_allowed(self):
+        """Interpreters are NOT blanket wrappers: the documented
+        ``python:scripts/*.py`` allow form must keep working."""
+        rules = BashCommandRules(allow=["python:scripts/*.py"])
+        decision = evaluate_bash_command("python scripts/etl.py", rules)
+        assert decision.level == PermissionLevel.ALLOW
+        assert decision.matched_pattern == "python:scripts/*.py"
+
+    def test_interpreter_script_own_dash_c_arg_not_flagged(self):
+        """A ``-c`` AFTER the script path belongs to the script, not the
+        interpreter — option scanning stops at the first non-option token."""
+        rules = BashCommandRules(allow=["python:*"])
+        decision = evaluate_bash_command("python tool.py -c config.yml", rules)
+        assert decision.level == PermissionLevel.ALLOW
+
+    @pytest.mark.parametrize(
+        "command",
+        [
             "git status && rm -rf /",
             "ls || rm x",  # logical OR is not a pipeline
             "ls |& grep foo",  # stderr pipe is not a simple pipeline

@@ -419,9 +419,14 @@ class PermissionManager:
         for rule in self._persistent_rules:
             if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
                 self.global_config.rules.insert(0, rule)
-        # Re-apply project-scope bash allows granted earlier this session.
-        for pattern in self._persistent_bash_allows:
-            self._install_bash_allow(pattern)
+        # Re-apply project-scope bash allows granted earlier this session —
+        # but only when the rebuilt config already carries a command-level
+        # ruleset. Installing one where the profile intentionally left
+        # ``bash_commands`` unset (``dangerous``) would flip its documented
+        # zero-friction bash posture and start force-ASKing wrapper commands.
+        if self.global_config.bash_commands is not None:
+            for pattern in self._persistent_bash_allows:
+                self._install_bash_allow(pattern)
         self.active_profile = profile_name
         self._session_approvals.clear()
         logger.info(

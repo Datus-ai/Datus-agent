@@ -525,3 +525,33 @@ class TestPermissionManagerPersistentRules:
         assert not any(r.pattern == "only_a" for r in mgr_b.global_config.rules)
         # The shared profile itself is untouched.
         assert len(get_profile("normal").rules) == before
+
+
+class TestPermissionManagerProjectBashAllows:
+    """Project-scope bash allows replay across profile switches — except onto
+    a profile that intentionally carries no command-level ruleset."""
+
+    def _manager_with_grant(self):
+        from unittest.mock import patch
+
+        from datus.tools.permission.permission_manager import PermissionManager
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
+        with patch("datus.configuration.project_config.append_project_bash_allow"):
+            mgr.add_project_bash_allow("make:*")
+        assert "make:*" in mgr.global_config.bash_commands.allow
+        return mgr
+
+    def test_switch_to_dangerous_does_not_reenable_bash_gating(self):
+        """``dangerous`` keeps ``bash_commands`` unset so the fine-grained
+        bash gate steps aside entirely; replaying a project grant onto it
+        would flip that documented zero-friction posture."""
+        mgr = self._manager_with_grant()
+        mgr.switch_profile("dangerous")
+        assert mgr.global_config.bash_commands is None
+
+    def test_switch_between_rule_profiles_replays_grant(self):
+        mgr = self._manager_with_grant()
+        mgr.switch_profile("auto")
+        assert "make:*" in mgr.global_config.bash_commands.allow

@@ -375,7 +375,7 @@ class TestBashAllow:
 
         self._write(
             tmp_path,
-            "# header comment\nbash_allow:\n  - \"make:*\"\nproject_name: proj_a\n",
+            '# header comment\nbash_allow:\n  - "make:*"\nproject_name: proj_a\n',
         )
         append_project_bash_allow("git push:*", str(tmp_path))
         result = load_project_override(str(tmp_path))
@@ -393,9 +393,25 @@ class TestBashAllow:
 
     def test_append_empty_pattern_raises(self, tmp_path):
         from datus.configuration.project_config import append_project_bash_allow
+        from datus.utils.exceptions import DatusException
 
-        with pytest.raises(ValueError):
+        with pytest.raises(DatusException):
             append_project_bash_allow("   ", str(tmp_path))
+
+    def test_append_pattern_with_quote_does_not_corrupt_file(self, tmp_path):
+        """A pattern containing ``"`` (or a trailing backslash) must be
+        escaped — an invalid YAML line would silently drop EVERY override
+        in the file, not just ``bash_allow``."""
+        from datus.configuration.project_config import append_project_bash_allow
+
+        self._write(tmp_path, "project_name: proj_a\n")
+        append_project_bash_allow('grep:"quoted"', str(tmp_path))
+        append_project_bash_allow("find:*\\", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        # Later appends insert right after the key line, hence the order.
+        assert result.bash_allow == ["find:*\\", 'grep:"quoted"']
+        # The rest of the file still parses.
+        assert result.project_name == "proj_a"
 
     def test_save_round_trips_bash_allow(self, tmp_path):
         override = ProjectOverride(bash_allow=["make:*"])

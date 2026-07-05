@@ -1902,7 +1902,9 @@ class TestBashCommandPermission:
         registry.register_tools("bash_tools", [tool_mock])
         config = PermissionConfig(
             default_permission=default,
-            rules=rules if rules is not None else [PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
+            rules=rules
+            if rules is not None
+            else [PermissionRule(tool="bash_tools", pattern="bash", permission=PermissionLevel.ASK)],
             bash_commands=BashCommandRules(**bash_commands) if isinstance(bash_commands, dict) else bash_commands,
         )
         manager = PermissionManager(global_config=config)

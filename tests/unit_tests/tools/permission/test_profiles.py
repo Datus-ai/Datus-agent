@@ -340,6 +340,19 @@ class TestProfileBashCommands:
         # sort can write via -o, so it's auto-only.
         assert evaluate_bash_command("sort f", NORMAL.bash_commands).level == PermissionLevel.ASK
 
+    def test_normal_date_hostname_readonly_forms_only(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import NORMAL
+
+        # Bare inspection and ``date +FORMAT`` auto-allow.
+        assert evaluate_bash_command("date", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("date +%Y-%m-%d", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        assert evaluate_bash_command("hostname", NORMAL.bash_commands).level == PermissionLevel.ALLOW
+        # Mutating forms (``date -s`` / ``hostname NAME``) fall through to ASK.
+        assert evaluate_bash_command("date -s 2026-01-01", NORMAL.bash_commands).level == PermissionLevel.ASK
+        assert evaluate_bash_command("hostname newname", NORMAL.bash_commands).level == PermissionLevel.ASK
+
     def test_auto_extends_normal(self):
         from datus.tools.permission.bash_rules import evaluate_bash_command
         from datus.tools.permission.permission_config import PermissionLevel

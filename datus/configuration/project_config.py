@@ -44,6 +44,7 @@ Any other keys in the file are ignored with a warning so users do not
 mistakenly expect the overlay to accept arbitrary YAML.
 """
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +52,7 @@ from typing import Any, Optional, Union
 
 import yaml
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -317,9 +319,19 @@ def append_project_bash_allow(pattern: str, cwd: Optional[str] = None) -> Path:
     """
     pattern = pattern.strip()
     if not pattern:
-        raise ValueError("bash allow pattern must be non-empty")
+        raise DatusException(
+            code=ErrorCode.COMMON_FIELD_INVALID,
+            message_args={
+                "field_name": "bash allow pattern",
+                "except_values": "non-empty string",
+                "your_value": pattern,
+            },
+        )
     path = project_config_path(cwd)
-    entry_line = f'  - "{pattern}"'
+    # json.dumps yields a valid double-quoted YAML scalar with proper
+    # escaping, so a pattern containing ``"`` or a trailing backslash cannot
+    # corrupt the file (a parse failure would drop ALL project overrides).
+    entry_line = f"  - {json.dumps(pattern)}"
 
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -615,6 +615,26 @@ class TestApplyProjectOverrideBashAllow:
         assert agent_raw["permissions"]["bash_commands"]["allow"] == ["git log:*", "make:*"]
         assert agent_raw["permissions"]["bash_commands"]["deny"] == ["rm:*"]
 
+    def test_malformed_permissions_replaced_not_crashed(self):
+        """A non-dict ``permissions`` section must not crash config loading."""
+        agent_raw = {"permissions": "oops"}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(bash_allow=["make:*"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["permissions"] == {"bash_commands": {"allow": ["make:*"]}}
+
+    def test_malformed_nested_bash_commands_replaced(self):
+        agent_raw = {"permissions": {"profile": "normal", "bash_commands": ["not", "a", "dict"]}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(bash_allow=["make:*"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["permissions"]["profile"] == "normal"
+        assert agent_raw["permissions"]["bash_commands"] == {"allow": ["make:*"]}
+
 
 class TestPermissionModeCliOverride:
     """--permission-mode kwarg reshapes permissions.profile at load time."""
@@ -630,11 +650,7 @@ class TestPermissionModeCliOverride:
 
     def test_load_agent_config_applies_permission_mode(self, tmp_path, monkeypatch):
         cfg = tmp_path / "agent.yml"
-        cfg.write_text(
-            "agent:\n"
-            "  permissions:\n"
-            "    profile: normal\n"
-        )
+        cfg.write_text("agent:\n  permissions:\n    profile: normal\n")
         monkeypatch.chdir(tmp_path)
         from datus.configuration.agent_config_loader import load_agent_config
 

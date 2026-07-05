@@ -919,7 +919,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 
         async def raising_stream(*args, **kwargs):
             raise RuntimeError("Simulated LLM failure")
-            yield  # noqa: unreachable - makes this an async generator
+            yield  # unreachable - makes this an async generator
 
         mock_llm_create.generate_with_tools_stream = raising_stream
 
@@ -964,7 +964,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 
         async def cancel_stream(*args, **kwargs):
             raise ExecutionInterrupted("Ctrl+C")
-            yield  # noqa: unreachable
+            yield  # unreachable - makes this an async generator
 
         mock_llm_create.generate_with_tools_stream = cancel_stream
 
@@ -995,7 +995,7 @@ class TestChatAgenticNodeExecuteStreamErrors:
 
         async def interrupt_stream(*args, **kwargs):
             raise ExecutionInterrupted("Ctrl+C pressed")
-            yield  # noqa: unreachable
+            yield  # unreachable - makes this an async generator
 
         mock_llm_create.generate_with_tools_stream = interrupt_stream
 

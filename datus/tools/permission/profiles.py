@@ -184,9 +184,13 @@ _NORMAL_BASH_ALLOW = [
     "pwd",
     "whoami",
     "id:*",
-    "hostname:*",
+    # ``hostname NAME`` / ``date -s`` are mutating forms (root-only, but they
+    # still break the read-only contract), so no blanket ``:*`` here: exact
+    # match only, plus ``date +FORMAT`` for the common read-only formatting.
+    "hostname",
     "uname:*",
-    "date:*",
+    "date",
+    "date:+*",
     "which:*",
     "type:*",
     "printenv:*",

@@ -39,8 +39,11 @@ asymmetry of aggressive deny / conservative allow):
                                  pipeline segment ``... | xargs rm``)
 3. safety ceiling             -> ASK (safety_forced) for shell wrappers
                                  (``bash -c`` re-introduces a shell that the
-                                 outer argv match is blind to) and non-pipe
-                                 shell metacharacters; allow rules cannot override
+                                 outer argv match is blind to), interpreter
+                                 inline-code flags (``python -c`` / ``perl -e``
+                                 execute a string the rules cannot see), and
+                                 non-pipe shell metacharacters; allow rules
+                                 cannot override
 4. ask rules                  -> ASK (anchored)
 5. allow rules                -> ALLOW (anchored only, never unanchored)
 6. rules.default              -> usually ASK
@@ -56,7 +59,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from datus.tools.permission.permission_config import PermissionLevel
 from datus.utils.loggings import get_logger
@@ -103,6 +106,50 @@ _WRAPPER_COMMANDS = frozenset(
         "script",
     }
 )
+
+# Script interpreters are NOT blanket wrappers: an allow rule can
+# meaningfully match the script path (the documented ``python:scripts/*.py``
+# form), so listing them in ``_WRAPPER_COMMANDS`` would make every such rule
+# dead (the safety ceiling runs before allow matching). But their inline-code
+# flags (``python -c``, ``perl -e``, ``node --eval`` …) execute an arbitrary
+# string the rules cannot see — exactly the wrapper problem — so those forms
+# hit the safety ceiling instead of ever auto-allowing. Values are
+# (short option letters, long flags); short letters are matched inside
+# combined clusters too (``-uc`` contains ``c``). Options precede the
+# script/program path for all of these interpreters, so scanning stops at the
+# first non-option token to avoid false ASKs on script-owned arguments.
+_INTERPRETER_INLINE_CODE_FLAGS: Dict[str, tuple] = {
+    "python": (frozenset("c"), frozenset()),
+    "perl": (frozenset("eE"), frozenset()),
+    "ruby": (frozenset("e"), frozenset()),
+    "node": (frozenset("ep"), frozenset({"--eval", "--print"})),
+    "nodejs": (frozenset("ep"), frozenset({"--eval", "--print"})),
+    "php": (frozenset("r"), frozenset()),
+}
+
+# ``python``, ``python3``, ``python3.12`` … all resolve to the python spec.
+_PYTHON_VERSIONED_RE = re.compile(r"^python\d*(\.\d+)*$")
+
+
+def _has_inline_code_flag(argv: List[str]) -> bool:
+    """True when a known interpreter is invoked with an inline-code flag."""
+    spec = _INTERPRETER_INLINE_CODE_FLAGS.get(argv[0])
+    if spec is None and _PYTHON_VERSIONED_RE.match(argv[0]):
+        spec = _INTERPRETER_INLINE_CODE_FLAGS["python"]
+    if spec is None:
+        return False
+    short_letters, long_flags = spec
+    for token in argv[1:]:
+        if not token.startswith("-") or token == "-":
+            break
+        if token.startswith("--"):
+            if token.split("=", 1)[0] in long_flags:
+                return True
+            continue
+        if any(letter in token[1:] for letter in short_letters):
+            return True
+    return False
+
 
 # Multi-command CLIs whose first subcommand carries the semantics; session
 # buckets use the first two tokens so approving ``git log`` never covers
@@ -155,8 +202,7 @@ class BashCommandRules(BaseModel):
     )
     classifier: BashClassifierConfig = Field(default_factory=BashClassifierConfig)
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
     @classmethod
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["BashCommandRules"]:
@@ -423,6 +469,15 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
             source=BashDecisionSource.SAFETY,
             matched_pattern=None,
             reason=f"'{argv[0]}' executes its arguments as a new command; rules cannot see the wrapped command",
+            bucket=session_bucket_for(argv, None),
+            safety_forced=True,
+        )
+    if _has_inline_code_flag(argv):
+        return BashRuleDecision(
+            level=PermissionLevel.ASK,
+            source=BashDecisionSource.SAFETY,
+            matched_pattern=None,
+            reason=f"'{argv[0]}' with an inline-code flag executes an arbitrary string; rules cannot see the code",
             bucket=session_bucket_for(argv, None),
             safety_forced=True,
         )

@@ -4,7 +4,7 @@
 
 """Unit tests for the bash classifier interface seam."""
 
-import asyncio
+import pytest
 
 from datus.tools.permission.bash_classifier import (
     BashClassifierContext,
@@ -29,8 +29,9 @@ class TestCreateBashClassifier:
         classifier = create_bash_classifier(rules, agent_config=None)
         assert isinstance(classifier, NoopBashCommandClassifier)
 
-    def test_noop_never_renders_verdict(self):
+    @pytest.mark.asyncio
+    async def test_noop_never_renders_verdict(self):
         classifier = NoopBashCommandClassifier()
         context = BashClassifierContext(cwd="/tmp", node_name="chat")
-        verdict = asyncio.run(classifier.classify("git status", context))
+        verdict = await classifier.classify("git status", context)
         assert verdict is None

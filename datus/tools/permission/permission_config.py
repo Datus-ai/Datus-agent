@@ -194,5 +194,10 @@ try:
     from datus.tools.permission.bash_rules import BashCommandRules
 
     PermissionConfig.model_rebuild()
-except ImportError:  # pragma: no cover - depends on import order
-    pass
+except ImportError as _exc:  # pragma: no cover - depends on import order
+    # Expected only for the circular-import case (bash_rules is
+    # mid-initialization and performs the rebuild at its own bottom). Log so
+    # a genuine import failure in bash_rules is not silently swallowed.
+    from datus.utils.loggings import get_logger
+
+    get_logger(__name__).debug("Deferring PermissionConfig.model_rebuild() to bash_rules: %s", _exc)
