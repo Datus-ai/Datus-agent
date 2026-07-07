@@ -1,8 +1,8 @@
 # 语义层配置（Semantic Layer）
 
-语义适配器统一配置在 `agent.services.semantic_layer` 下。**至少要配置一条**——空 section 不再静默 fallback 到 metricflow,而是 raise `No semantic layer configured`。
+语义适配器统一配置在 `agent.services.semantic_layer` 下。如果不配置或配置为空，Datus 使用内置默认语义适配器。当前默认是 `metricflow`；未来可以切到 `osi`，不需要为每个 node 单独改配置。
 
-> **迁移说明**:旧版本会在 section 缺失时隐式注入 metricflow 默认值,新版要求显式写入 yaml 条目。`conf/agent.yml.example` 已经默认带上 `metricflow: {}`,新装用户开箱仍能用。
+语义层选择是项目级全局设置。旧配置里 node 级的语义格式字段会被忽略；需要显式 pin 时，只改这里。
 
 ## 配置结构
 
@@ -16,27 +16,20 @@ agent:
         default: true                   # 全局默认:无 project pin 时被选用
 
       osi:
-        execution_backend: metricflow   # 可选 OSI authoring 适配器
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-
-    gen_metrics:
-      semantic_adapter: metricflow
+        # execution_backend 默认是 metricflow，通常不需要配置。
 ```
 
 ## 选择规则
 
 `AgentConfig.resolve_semantic_adapter` 解析活动语义适配器的顺序与 BI Dashboard / Scheduler 完全一致:
 
-1. 调用处显式传入的 `adapter_type`(或 agentic node 上的 `semantic_adapter`)。
+1. 服务管理类调用处显式传入的 `adapter_type`。
 2. `./.datus/config.yml` 中的项目级 pin —— `semantic:` 字段。
 3. YAML 全局 `default: true` 标志:`services.semantic_layer` 中至多一条可标 default,多于一条会在加载阶段直接报错。
 4. 单条快捷:仅有一条 semantic adapter 时,自动使用它。
-5. 否则抛错:
-   - section 为空 → `No semantic layer configured ...`
-   - 多条无 default → `Multiple semantic layers are configured ...`
+5. section 为空时使用内置默认。
+
+如果配置了多条 semantic adapter 但没有 `default: true`，Datus 会认为配置有歧义并报错。
 
 `services.semantic_layer` 下的 key **必须等于 adapter type**(例如 `metricflow`)。如果同时写了 `type:` 字段,其值必须与 key 一致,否则 Datus 会在启动时抛出配置错误。比较时会先 lowercase + trim,因此 `MetricFlow`、` metricflow ` 都会被视为与 `metricflow` 匹配。
 
@@ -51,8 +44,8 @@ agent:
 
 - OSI 是和 MetricFlow 并列的 semantic adapter。
 - OSI 模式编写 strict OSI core YAML，并把 Datus 执行提示放在 `custom_extensions` 中。
-- 当前 OSI 执行后端是 MetricFlow，通过 `execution_backend: metricflow` 配置。
-- 在 `gen_semantic_model`、`gen_metrics` 或 `ask_metrics` 上设置 `semantic_adapter: osi` 即可选择该路径。
+- 当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 `execution_backend`。
+- 配置 `services.semantic_layer.osi: {}` 即可在项目内全局选择 OSI。
 
 ## 通过 CLI 配置（`/services`）
 

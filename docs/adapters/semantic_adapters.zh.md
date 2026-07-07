@@ -63,19 +63,10 @@ agent:
 
       osi:
         execution_backend: metricflow
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-
-    gen_metrics:
-      semantic_adapter: metricflow
-
-    ask_metrics:
-      semantic_adapter: metricflow
 ```
 
 `services.semantic_layer` 下的 key 必须等于 adapter type，例如 `metricflow` 或 `osi`。如果同时写了 `type:` 字段，其值必须与 key 一致。
+语义适配器选择是全局的。旧的 node 级 `semantic_adapter` 和 `authoring_format` 字段会被忽略。
 
 选择规则、默认适配器和项目级 pin 见 [语义层配置](../configuration/semantic_layer.zh.md)。
 

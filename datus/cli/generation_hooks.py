@@ -305,6 +305,9 @@ class GenerationHooks(AgentHooks):
             if not self._result_success(result):
                 logger.info(f"Skipping semantic model sync because generation tool failed: {result}")
                 return
+            if self.generation_evidence.semantic_kb_sync_passed:
+                logger.info("Skipping semantic model hook sync because generation tool already published it")
+                return
 
             file_paths = self._extract_filepaths_from_result(result)
 
@@ -333,6 +336,9 @@ class GenerationHooks(AgentHooks):
         try:
             if not self._result_success(result):
                 logger.info(f"Skipping metric sync because generation tool failed: {result}")
+                return
+            if self.generation_evidence.metric_kb_sync_passed:
+                logger.info("Skipping metric hook sync because generation tool already published it")
                 return
 
             metric_file, semantic_model_file, metric_sqls = self._extract_metric_generation_result(result)

@@ -63,19 +63,10 @@ agent:
 
       osi:
         execution_backend: metricflow
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-
-    gen_metrics:
-      semantic_adapter: metricflow
-
-    ask_metrics:
-      semantic_adapter: metricflow
 ```
 
 The key under `services.semantic_layer` must equal the adapter type, for example `metricflow` or `osi`. If a `type:` field is present, it must match the key.
+The selected semantic adapter is global. Legacy node-level `semantic_adapter` and `authoring_format` fields are ignored.
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for selection rules, defaults, and project-level pins.
 

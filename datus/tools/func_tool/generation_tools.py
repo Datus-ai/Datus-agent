@@ -88,11 +88,16 @@ class GenerationTools:
         self,
         agent_config: AgentConfig,
         generation_evidence: Optional[GenerationEvidence] = None,
-        authoring_format: str = "metricflow",
+        authoring_format: Optional[str] = None,
     ):
         self.agent_config = agent_config
         self.generation_evidence = generation_evidence or GenerationEvidence()
-        self.authoring_format = (authoring_format or "metricflow").strip().lower()
+        if authoring_format:
+            self.authoring_format = str(authoring_format).strip().lower()
+        else:
+            from datus.agent.node.semantic_authoring import resolve_authoring_format
+
+            self.authoring_format = resolve_authoring_format(agent_config)
         self.metric_rag = MetricRAG(agent_config)
         self.semantic_rag = SemanticModelRAG(agent_config)
         self.table_semantic_profile_rag = None

@@ -9,6 +9,7 @@ from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_OSI,
     default_osi_semantic_model_file,
     default_osi_semantic_model_name,
+    osi_expression_dialect,
     osi_prompt_version,
     osi_template_name,
     resolve_authoring_format,
@@ -21,18 +22,19 @@ class _DbScope:
     database: str = ""
     schema: str = ""
     catalog: str = ""
+    type: str = ""
 
 
 def _agent_config(adapter):
     return SimpleNamespace(resolve_semantic_adapter=lambda requested=None: requested or adapter)
 
 
-def test_explicit_node_config_override_wins():
-    assert resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"}) == AUTHORING_FORMAT_OSI
+def test_legacy_node_config_fields_are_ignored():
     assert (
-        resolve_authoring_format(_agent_config("osi"), {"authoring_format": "metricflow"})
+        resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"})
         == AUTHORING_FORMAT_METRICFLOW
     )
+    assert resolve_authoring_format(_agent_config("osi"), {"authoring_format": "metricflow"}) == AUTHORING_FORMAT_OSI
 
 
 def test_derives_from_active_semantic_adapter():
@@ -40,8 +42,11 @@ def test_derives_from_active_semantic_adapter():
     assert resolve_authoring_format(_agent_config("metricflow"), None) == AUTHORING_FORMAT_METRICFLOW
 
 
-def test_derives_from_node_semantic_adapter():
-    assert resolve_authoring_format(_agent_config("metricflow"), {"semantic_adapter": "osi"}) == AUTHORING_FORMAT_OSI
+def test_legacy_node_semantic_adapter_is_ignored():
+    assert (
+        resolve_authoring_format(_agent_config("metricflow"), {"semantic_adapter": "osi"})
+        == AUTHORING_FORMAT_METRICFLOW
+    )
 
 
 def test_default_osi_semantic_model_name_uses_database_scope():
@@ -102,6 +107,36 @@ def test_default_osi_semantic_model_name_uses_agent_scope_fallbacks():
 
     assert default_osi_semantic_model_name(config) == "project_alpha"
     assert default_osi_semantic_model_file(config) == "subject/semantic_models/default/project_alpha.yml"
+
+
+def test_osi_expression_dialect_follows_datasource_type():
+    config = SimpleNamespace(
+        current_datasource="starrocks",
+        db_type="",
+        current_db_config=lambda: _DbScope(type="starrocks"),
+    )
+
+    assert osi_expression_dialect(config) == "starrocks"
+
+
+def test_osi_expression_dialect_uses_generic_datasource_type_without_allowlist():
+    config = SimpleNamespace(
+        current_datasource="custom",
+        db_type="",
+        current_db_config=lambda: _DbScope(type="Acme Warehouse"),
+    )
+
+    assert osi_expression_dialect(config) == "acme_warehouse"
+
+
+def test_osi_expression_dialect_falls_back_to_ansi_sql_without_datasource_type():
+    config = SimpleNamespace(
+        current_datasource="",
+        db_type="",
+        current_db_config=lambda: _DbScope(),
+    )
+
+    assert osi_expression_dialect(config) == "ANSI_SQL"
 
 
 def test_defaults_to_metricflow_when_unknown():
@@ -166,6 +201,26 @@ def test_osi_metrics_template_renders_despite_injected_metricflow_version():
     version = osi_prompt_version(None, "gen_metrics", "1.2")
     text = pm.render_template(template_name="gen_metrics_osi_system", version=version)
     assert "OSI" in text
+
+
+def test_osi_templates_render_datasource_expression_dialect():
+    pm = get_prompt_manager()
+
+    semantic_text = pm.render_template(
+        template_name="gen_semantic_model_osi_system",
+        version="1.0",
+        osi_expression_dialect="starrocks",
+    )
+    metrics_text = pm.render_template(
+        template_name="gen_metrics_osi_system",
+        version="1.0",
+        osi_expression_dialect="starrocks",
+    )
+
+    assert "dialect: starrocks" in semantic_text
+    assert "dialect: starrocks" in metrics_text
+    assert "OSI expression dialect for this datasource: `starrocks`" in semantic_text
+    assert "OSI expression dialect for this datasource: `starrocks`" in metrics_text
 
 
 def test_osi_skill_skip_handles_missing_node_config(monkeypatch):

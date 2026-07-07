@@ -218,8 +218,9 @@ class GenReportAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for report analysis."""
         try:
-            # Get adapter_type from configuration
-            adapter_type = self.node_config.get("adapter_type", "metricflow")
+            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
+            adapter_type = resolve_semantic_adapter_type(self.agent_config)
             self.semantic_tools = SemanticTools(
                 agent_config=self.agent_config,
                 sub_agent_name=self.node_config.get("system_prompt"),
@@ -256,7 +257,9 @@ class GenReportAgenticNode(AgenticNode):
         try:
             if tool_type == "semantic_tools":
                 if not self.semantic_tools:
-                    adapter_type = self.node_config.get("adapter_type", "metricflow")
+                    from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
+                    adapter_type = resolve_semantic_adapter_type(self.agent_config)
                     self.semantic_tools = SemanticTools(
                         agent_config=self.agent_config,
                         sub_agent_name=self.node_config.get("system_prompt"),

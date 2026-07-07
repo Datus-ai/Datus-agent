@@ -23,6 +23,13 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
     MetricFlow YAML files are merged structurally.
     """
 
+    def __init__(self, *args, authoring_format: str = "metricflow", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.authoring_format = (authoring_format or "metricflow").strip().lower()
+
+    def _is_metricflow_authoring(self) -> bool:
+        return self.authoring_format == "metricflow"
+
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
         resolved = self._classify(path)
         policy_error = self._reject_write_policy(resolved)
@@ -34,6 +41,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         if not preprocess_result.success:
             return preprocess_result
         content = str(preprocess_result.result or "")
+
+        if not self._is_metricflow_authoring():
+            return super().write_file(path, content, file_type)
 
         if self._is_metric_file_path(target_path):
             if not self._should_merge_metric_file(target_path):

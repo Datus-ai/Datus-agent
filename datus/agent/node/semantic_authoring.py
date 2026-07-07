@@ -6,18 +6,15 @@
 
 Datus can author semantic assets in two formats:
 
-- ``metricflow`` (default): the LLM writes MetricFlow YAML directly. This is the
-  original behavior and is left untouched.
+- ``metricflow``: the LLM writes MetricFlow YAML directly. This is the original
+  behavior and is left untouched.
 - ``osi``: the LLM writes OSI semantic models + Datus business hints, which the
   Datus OSI compiler later lowers to a backend (e.g. MetricFlow). The LLM never
   writes backend YAML.
 
-The format is resolved (in priority order) from:
-
-1. an explicit per-node/workflow ``authoring_format`` in ``node_config``;
-2. the active semantic adapter (the consumer of the generated assets) -- when it
-   is ``osi``, author OSI;
-3. the ``metricflow`` default.
+The format is resolved from the global active semantic adapter so semantic model
+generation, metric generation, query, and ask flows stay on one semantic layer
+for a project. Legacy node-level semantic format fields are ignored.
 
 OSI mode uses a *separate* prompt template name (``{node}_osi_system``) so the
 default ``{node}_system`` latest-version scan is never affected.
@@ -41,26 +38,17 @@ def resolve_authoring_format(
     agent_config: Any = None,
     node_config: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Resolve the semantic authoring format. Defaults to ``metricflow``."""
-    if node_config:
-        explicit = node_config.get("authoring_format")
-        if explicit:
-            normalized = str(explicit).strip().lower()
-            if normalized in (AUTHORING_FORMAT_METRICFLOW, AUTHORING_FORMAT_OSI):
-                return normalized
+    """Resolve the semantic authoring format from the global semantic adapter."""
+    del node_config
 
     adapter: Optional[str] = None
-    adapter_type: Optional[str] = None
-    if node_config:
-        adapter_type = node_config.get("semantic_adapter") or node_config.get("adapter_type")
     if agent_config is not None and hasattr(agent_config, "resolve_semantic_adapter"):
         try:
-            adapter = agent_config.resolve_semantic_adapter(adapter_type)
+            adapter = agent_config.resolve_semantic_adapter()
         except Exception as exc:
             logger.debug(
                 "Failed to resolve semantic adapter for authoring format; "
-                "falling back to metricflow. adapter_type=%r agent_config=%r error=%s",
-                adapter_type,
+                "falling back to metricflow. agent_config=%r error=%s",
                 agent_config,
                 exc,
             )
@@ -71,9 +59,29 @@ def resolve_authoring_format(
     return AUTHORING_FORMAT_METRICFLOW
 
 
+def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
+    """Resolve the active semantic adapter, defaulting to MetricFlow."""
+    resolver = getattr(agent_config, "resolve_semantic_adapter", None)
+    if callable(resolver):
+        try:
+            adapter = resolver()
+        except Exception as exc:
+            logger.debug(
+                "Failed to resolve semantic adapter; falling back to metricflow. agent_config=%r error=%s",
+                agent_config,
+                exc,
+            )
+        else:
+            normalized = str(adapter or "").strip().lower()
+            if normalized:
+                return normalized
+    return AUTHORING_FORMAT_METRICFLOW
+
+
 def is_osi_authoring(agent_config: Any = None, node_config: Optional[Dict[str, Any]] = None) -> bool:
     """Return ``True`` when this node should author OSI instead of MetricFlow."""
-    return resolve_authoring_format(agent_config, node_config) == AUTHORING_FORMAT_OSI
+    del node_config
+    return resolve_authoring_format(agent_config) == AUTHORING_FORMAT_OSI
 
 
 def _normalize_model_name(value: Any) -> str:
@@ -104,6 +112,35 @@ def _config_field_value(config: Any, field_name: str) -> Any:
     else:
         return ""
     return "" if callable(value) else value
+
+
+def osi_expression_dialect(agent_config: Any = None) -> str:
+    """Return the OSI expression dialect for the active datasource.
+
+    OSI authoring should follow the physical datasource type because
+    expressions often contain datasource-specific functions. Keep this generic:
+    new datasource types should work without changing an allowlist.
+    """
+    candidates = []
+    if agent_config is not None:
+        try:
+            db_config = agent_config.current_db_config()
+        except Exception:
+            db_config = None
+        if db_config is not None:
+            candidates.append(_config_field_value(db_config, "type"))
+        candidates.extend(
+            [
+                getattr(agent_config, "db_type", ""),
+                getattr(agent_config, "current_datasource", ""),
+            ]
+        )
+
+    for candidate in candidates:
+        dialect = _normalize_model_name(candidate)
+        if dialect:
+            return dialect
+    return "ANSI_SQL"
 
 
 def default_osi_semantic_model_name(agent_config: Any = None) -> str:

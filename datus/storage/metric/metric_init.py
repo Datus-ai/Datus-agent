@@ -240,16 +240,8 @@ def _agent_config_dialect(agent_config: AgentConfig) -> str:
     return value if isinstance(value, str) and value.strip() else "snowflake"
 
 
-def _metrics_node_config(agent_config: AgentConfig) -> dict[str, Any]:
-    nodes = getattr(agent_config, "agentic_nodes", None)
-    if not isinstance(nodes, dict):
-        return {}
-    node_config = nodes.get(METRICS_NODE_NAME) or {}
-    return node_config if isinstance(node_config, dict) else {}
-
-
 def _metrics_authoring_format(agent_config: AgentConfig) -> str:
-    return resolve_authoring_format(agent_config, _metrics_node_config(agent_config))
+    return resolve_authoring_format(agent_config)
 
 
 def _project_relative_path(agent_config: AgentConfig, path_value: str) -> Path:

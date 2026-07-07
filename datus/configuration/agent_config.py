@@ -1489,7 +1489,7 @@ class AgentConfig:
 
         Order: explicit ``adapter_type`` argument -> project-level pin
         (``./.datus/config.yml`` ``semantic:``) -> global ``default: true``
-        flag / single-entry shortcut -> built-in ``metricflow`` fallback when
+        flag / single-entry shortcut -> built-in default fallback when
         no semantic layer is configured. Raises when multiple semantic layers
         are configured without a clear default.
         """
@@ -1525,7 +1525,7 @@ class AgentConfig:
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
                 "Multiple semantic layers are configured in `agent.services.semantic_layer`, "
-                "set `semantic_adapter` on the semantic node or mark one entry with `default: true`."
+                "mark exactly one entry with `default: true`."
             ),
         )
 
@@ -1547,6 +1547,8 @@ class AgentConfig:
 
         config = self.get_semantic_layer_config(resolved_adapter)
         config.setdefault("type", resolved_adapter)
+        if resolved_adapter == "osi":
+            config.setdefault("execution_backend", "metricflow")
         effective_runtime_db_context = (
             runtime_db_context if runtime_db_context is not None else self.runtime_db_context()
         )
@@ -2305,7 +2307,14 @@ class AgentConfig:
 
     def init_semantic_layer(self, param: Dict[str, Any]):
         if not isinstance(param, dict):
-            return
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    "`agent.services.semantic_layer` must be a mapping such as "
+                    "`semantic_layer: {metricflow: {}}` or `semantic_layer: {osi: {}}`; "
+                    "scalar values like `semantic_layer: osi` are not supported."
+                ),
+            )
 
         self.semantic_layer_configs = {}
         for service_name, raw_config in param.items():

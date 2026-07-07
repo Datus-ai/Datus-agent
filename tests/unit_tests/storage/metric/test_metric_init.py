@@ -628,8 +628,7 @@ class TestEnsureSemanticModelsForMetrics:
         config = SimpleNamespace(
             project_root=str(tmp_path),
             current_datasource="warehouse",
-            agentic_nodes={"gen_metrics": {"semantic_adapter": "osi"}},
-            resolve_semantic_adapter=lambda requested=None: requested or "metricflow",
+            resolve_semantic_adapter=lambda requested=None: "osi",
         )
         semantic_rag = MagicMock()
         semantic_rag.get_size.return_value = 0
@@ -674,8 +673,7 @@ class TestEnsureSemanticModelsForMetrics:
         from unittest.mock import patch
 
         config = SimpleNamespace(
-            agentic_nodes={"gen_metrics": {"semantic_adapter": "metricflow"}},
-            resolve_semantic_adapter=lambda requested=None: requested or "metricflow",
+            resolve_semantic_adapter=lambda requested=None: "metricflow",
         )
         records = [{"sql": "SELECT COUNT(*) FROM orders JOIN customers USING (customer_id)", "question": "Orders?"}]
         sql_list = [records[0]["sql"]]

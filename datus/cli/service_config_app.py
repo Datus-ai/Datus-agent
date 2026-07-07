@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 _BUILTIN_TYPES: Dict[str, Tuple[str, ...]] = {
     "bi_platforms": ("superset", "grafana"),
     "schedulers": ("airflow",),
-    "semantic_layer": ("metricflow",),
+    "semantic_layer": ("metricflow", "osi"),
 }
 
 
@@ -478,7 +478,7 @@ class ServiceConfigApp:
     def _render_footer_hint(self) -> List[Tuple[str, str]]:
         if self._view == _View.LIST:
             if self._tab == _Tab.SEMANTIC:
-                # ``e edit`` is hidden on this tab — metricflow has no
+                # ``e edit`` is hidden on this tab — semantic adapters have no
                 # editable fields. ``d`` / ``p`` work the same as on the
                 # other tabs.
                 base = (

@@ -1,16 +1,13 @@
 # Semantic Layer Configuration
 
 Semantic adapters are configured under `agent.services.semantic_layer`.
-At least one entry must be configured — running a semantic node with an
-empty `services.semantic_layer` block now raises
-`No semantic layer configured` instead of silently falling back to a
-hard-coded `metricflow` default.
+If the section is omitted or empty, Datus uses its built-in semantic
+adapter default. That default is currently `metricflow`; a future release
+can switch it to `osi` without requiring per-node config changes.
 
-> **Migration note**: previous Datus releases inserted an implicit
-> `metricflow` default when the section was missing. The default now
-> requires an explicit YAML entry. The bundled `conf/agent.yml.example`
-> already ships with `metricflow: {}`, so fresh installs continue to
-> Just Work.
+Semantic layer selection is global for the project. Node-level semantic
+format fields from older configs are ignored; use this section to pin a
+format explicitly.
 
 ## Structure
 
@@ -24,14 +21,8 @@ agent:
         default: true                   # global default — picked when no project pin set
 
       osi:
-        execution_backend: metricflow   # optional OSI authoring adapter
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-
-    gen_metrics:
-      semantic_adapter: metricflow
+        # execution_backend defaults to metricflow and normally does not need
+        # to be configured.
 ```
 
 ## Selection Rules
@@ -40,17 +31,16 @@ agent:
 adapter in this order — identical to BI Dashboard and Scheduler
 resolution:
 
-1. Explicit `adapter_type` argument at the call site (or
-   `semantic_adapter` on the agentic node).
+1. Explicit `adapter_type` argument at service-management call sites.
 2. Project-level pin in `./.datus/config.yml`'s `semantic:` field.
 3. Global `default: true` flag — at most one entry under
    `services.semantic_layer` may carry it; multiple defaults are
    rejected at config load time.
 4. Single-entry shortcut when only one semantic adapter is configured.
-5. Otherwise raise:
-   - `No semantic layer configured ...` when the section is empty.
-   - `Multiple semantic layers are configured ...` when there are
-     multiple without a default.
+5. Built-in default when the section is empty.
+
+Multiple configured semantic adapters without a `default: true` entry are
+rejected as ambiguous.
 
 The key under `services.semantic_layer` **must equal the adapter type**
 (for example `metricflow`). If a `type:` field is present, it must match
@@ -68,8 +58,8 @@ Comparison is case-insensitive and trims surrounding whitespace.
 
 - OSI is a peer semantic adapter to MetricFlow.
 - OSI mode authors strict OSI core YAML and stores Datus execution hints in `custom_extensions`.
-- The current OSI execution backend is MetricFlow, configured with `execution_backend: metricflow`.
-- Use `semantic_adapter: osi` on `gen_semantic_model`, `gen_metrics`, or `ask_metrics` to select this path.
+- The current OSI execution backend is MetricFlow by default. You normally do not need to set `execution_backend`.
+- Configure `services.semantic_layer.osi: {}` to select this path globally.
 
 ## Configuring through the CLI (`/services`)
 

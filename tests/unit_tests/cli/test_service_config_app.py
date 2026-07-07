@@ -366,6 +366,7 @@ class TestCursor:
         ("bi_platforms", "superset"),
         ("bi_platforms", "grafana"),
         ("schedulers", "airflow"),
+        ("semantic_layer", "osi"),
         ("semantic_layer", "metricflow"),
     ],
 )
@@ -384,13 +385,10 @@ def test_schedulers_currently_only_airflow():
     assert _BUILTIN_TYPES["schedulers"] == ("airflow",)
 
 
-def test_semantic_layer_currently_only_metricflow():
-    """Lock the semantic picker to ``metricflow`` until another adapter
-    package ships. Removing it would break the sole supported semantic
-    layer entry."""
+def test_semantic_layer_lists_supported_builtin_adapters():
     from datus.cli.service_config_app import _BUILTIN_TYPES
 
-    assert _BUILTIN_TYPES["semantic_layer"] == ("metricflow",)
+    assert _BUILTIN_TYPES["semantic_layer"] == ("metricflow", "osi")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -424,11 +422,11 @@ class TestSemanticTab:
         flat = "".join(text for _, text in rendered)
         assert "Add new semantic" in flat
 
-    def test_type_picker_for_semantic_lists_metricflow(self):
+    def test_type_picker_for_semantic_lists_supported_adapters(self):
         app = _build_app()
         app._tab = _Tab.SEMANTIC
         app._enter_type_picker()
-        assert app._type_choices == ["metricflow"]
+        assert app._type_choices == ["metricflow", "osi"]
 
     def test_type_picker_enter_emits_save_without_form(self):
         app = _build_app()

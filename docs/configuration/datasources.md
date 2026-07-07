@@ -66,7 +66,7 @@ agent:
 | Section | Purpose | Selector |
 |---------|---------|----------|
 | `services.datasources` | Database connections used by SQL and KB operations | `--datasource` / current database / default database |
-| `services.semantic_layer` | Semantic adapter configuration such as MetricFlow | `semantic_adapter` |
+| `services.semantic_layer` | Semantic adapter configuration such as MetricFlow or OSI | active/default semantic layer |
 | `services.bi_platforms` | BI platform credentials and dataset materialization config | `bi_platform` |
 | `services.schedulers` | Scheduler service instances such as Airflow | `scheduler_service` |
 

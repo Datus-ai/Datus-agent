@@ -183,14 +183,10 @@ class GenSemanticModelAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic function tools (for querying metrics via adapters)."""
         try:
+            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
-            adapter_type = None
-            if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
-                node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
-                if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
-                    adapter_type = node_config.get("semantic_adapter")
-            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
+            adapter_type = resolve_semantic_adapter_type(self.agent_config)
 
             # Initialize semantic func tool
             self.semantic_func_tool = SemanticTools(
@@ -230,7 +226,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             self.generation_tools = GenerationTools(
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
-                authoring_format=resolve_authoring_format(self.agent_config, self.node_config),
+                authoring_format=resolve_authoring_format(self.agent_config),
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
@@ -245,7 +241,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import is_osi_authoring
 
         node_config = getattr(self, "node_config", None) or {}
-        if is_osi_authoring(self.agent_config, node_config) and "skills" not in node_config:
+        if is_osi_authoring(self.agent_config) and "skills" not in node_config:
             logger.info("Skipping default MetricFlow skills for OSI semantic-model authoring")
             return
         super()._setup_skill_func_tools()
@@ -309,10 +305,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import (
             default_osi_semantic_model_file,
             default_osi_semantic_model_name,
+            osi_expression_dialect,
         )
 
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
+        context["osi_expression_dialect"] = osi_expression_dialect(self.agent_config)
 
         logger.debug(f"Prepared template context: {context}")
         return context
@@ -344,7 +342,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         # template's signature parity with the other nodes.
         # OSI mode uses a separate template name so the default metricflow
         # template and its latest-version scan are left untouched.
-        authoring_format = resolve_authoring_format(self.agent_config, self.node_config)
+        authoring_format = resolve_authoring_format(self.agent_config)
         if authoring_format == AUTHORING_FORMAT_OSI:
             template_name = osi_template_name(self.NODE_NAME)
             requested = prompt_version or self.node_config.get("prompt_version")
@@ -571,7 +569,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
             from datus.agent.node.semantic_authoring import is_osi_authoring
 
-            if is_osi_authoring(self.agent_config, self.node_config):
+            if is_osi_authoring(self.agent_config):
                 if not self.generation_tools:
                     logger.error("Generation tools unavailable for OSI semantic sync")
                     return False

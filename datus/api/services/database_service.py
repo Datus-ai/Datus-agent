@@ -3,6 +3,7 @@ Service for handling Database Management operations.
 """
 
 import os
+import tempfile
 from typing import List, Optional
 
 from datus_db_core import BaseSqlConnector
@@ -72,6 +73,39 @@ class DatasourceService:
             )
         self.semantic_rag = SemanticModelRAG(self.agent_config, datasource_id=self.current_datasource)
         return self.semantic_rag
+
+    def _active_semantic_adapter(self) -> str:
+        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+        if callable(resolver):
+            return str(resolver() or "").strip().lower()
+        return ""
+
+    def _is_osi_semantic_layer(self) -> bool:
+        return self._active_semantic_adapter() == "osi"
+
+    @staticmethod
+    def _validate_osi_semantic_yaml(yaml_content: str, file_path: str) -> tuple[bool, List[str]]:
+        try:
+            from datus_semantic_osi.profile import load_osi_path
+        except ImportError as exc:
+            return False, [f"datus-semantic-osi is required to validate OSI semantic YAML: {exc}"]
+
+        suffix = os.path.splitext(file_path or "")[1] or ".yml"
+        temp_file_path = ""
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=suffix, delete=False) as tmp:
+                tmp.write(yaml_content)
+                temp_file_path = tmp.name
+            load_osi_path(temp_file_path, normalize=True)
+            return True, []
+        except Exception as exc:
+            return False, [str(exc)]
+        finally:
+            if temp_file_path:
+                try:
+                    os.unlink(temp_file_path)
+                except OSError:
+                    pass
 
     def _get_database_type(self, database_name: Optional[str] = None) -> tuple[str, str]:
         """
@@ -552,12 +586,20 @@ class DatasourceService:
 
         # Step 4: Sync semantic model to database
         try:
-            sync_result = GenerationHooks._sync_semantic_to_db(
-                semantic_file_path,
-                self.agent_config,
-                include_semantic_objects=True,
-                include_metrics=False,
-            )
+            if self._is_osi_semantic_layer():
+                from datus.tools.func_tool.generation_tools import GenerationTools
+
+                sync_result = GenerationTools(
+                    agent_config=self.agent_config,
+                    authoring_format="osi",
+                ).sync_osi_semantic_to_db(semantic_file_path)
+            else:
+                sync_result = GenerationHooks._sync_semantic_to_db(
+                    semantic_file_path,
+                    self.agent_config,
+                    include_semantic_objects=True,
+                    include_metrics=False,
+                )
             if not sync_result.get("success", False):
                 error_msg = sync_result.get("error", "Unknown error")
                 return Result[dict](
@@ -611,18 +653,21 @@ class DatasourceService:
             # Get semantic file path from result
             semantic_file_path = semantic_model.get("yaml_path", "")
 
-            # Validate using shared utility (deep validation when metricflow is available)
-            from datus.api.utils.semantic_validation import validate_semantic_yaml
+            if self._is_osi_semantic_layer():
+                is_valid, error_messages = self._validate_osi_semantic_yaml(request.yaml, semantic_file_path)
+            else:
+                # Validate using shared utility (deep validation when metricflow is available)
+                from datus.api.utils.semantic_validation import validate_semantic_yaml
 
-            is_valid, error_messages = validate_semantic_yaml(
-                yaml_content=request.yaml,
-                file_path=semantic_file_path,
-                datus_home=self.agent_config.home,
-                datasource=self.agent_config.current_datasource,
-                catalog=request.catalog,
-                database=request.database,
-                db_schema=request.db_schema,
-            )
+                is_valid, error_messages = validate_semantic_yaml(
+                    yaml_content=request.yaml,
+                    file_path=semantic_file_path,
+                    datus_home=self.agent_config.home,
+                    datasource=self.agent_config.current_datasource,
+                    catalog=request.catalog,
+                    database=request.database,
+                    db_schema=request.db_schema,
+                )
 
             if not is_valid:
                 return Result[ValidateSemanticModelData](

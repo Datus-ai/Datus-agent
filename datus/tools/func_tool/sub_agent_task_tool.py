@@ -138,13 +138,13 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "dashboard_slug, app_jsx_path, render_file_count, template_count, tokens_used}."
     ),
     "gen_semantic_model": (
-        "Generate MetricFlow semantic model YAML files from database table structures. "
+        "Generate semantic model YAML files from database table structures. "
         "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
         "Prompt MUST contain table name(s), e.g. 'orders' or 'orders, customers, products'. "
         "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
     ),
     "gen_metrics": (
-        "Define and generate MetricFlow metric definitions. "
+        "Define and generate semantic metric definitions. "
         "Three input modes: "
         "(1) SQL-based: provide SQL queries for metric extraction. "
         "(2) Natural language: describe the business metric or calculation rules, "

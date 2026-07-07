@@ -262,12 +262,9 @@ def _validate_semantic_model_sync(agent_config: AgentConfig, *, scope: str = "al
         return False, f"semantic_tools unavailable: {exc}"
 
     try:
-        adapter_type = None
-        agentic_nodes = getattr(agent_config, "agentic_nodes", None) or {}
-        node_config = agentic_nodes.get("gen_semantic_model", {}) or {}
-        if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
-            adapter_type = node_config.get("semantic_adapter")
-        adapter_type = agent_config.resolve_semantic_adapter(adapter_type)
+        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
+        adapter_type = resolve_semantic_adapter_type(agent_config)
 
         tools = SemanticTools(agent_config=agent_config, adapter_type=adapter_type)
         if not tools.adapter:

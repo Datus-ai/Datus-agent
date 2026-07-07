@@ -46,7 +46,7 @@ pip install -e "../datus-semantic-adapter/datus-semantic-osi[metricflow]"
 
 ## 配置
 
-在 `agent.yml` 里把 semantic layer 配成 `osi`，并让相关节点使用 `semantic_adapter: osi`。
+在 `agent.yml` 里把 semantic layer 配成 `osi`。语义层选择是全局的，会同时作用于 semantic model、metric 和 metric query 工作流。
 
 ```yaml
 agent:
@@ -63,27 +63,17 @@ agent:
 
     semantic_layer:
       osi:
-        execution_backend: metricflow
         default: true
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: osi
-      # authoring_format 可省略；semantic_adapter=osi 时会自动使用 OSI authoring。
-      # authoring_format: osi
-
-    gen_metrics:
-      semantic_adapter: osi
-
-    ask_metrics:
-      semantic_adapter: osi
 ```
 
-`datus-agent` 的 authoring format 解析规则是：
+`execution_backend` 默认是 `metricflow`；只有需要换 OSI 执行后端时才需要显式配置。
 
-1. 如果节点显式配置 `authoring_format: osi`，使用 OSI。
-2. 如果节点使用的 `semantic_adapter` 解析为 `osi`，自动使用 OSI。
-3. 否则保持默认 MetricFlow authoring。
+`datus-agent` 会从全局 active semantic adapter 推导 authoring format：
+
+1. 当 `agent.services.semantic_layer.osi` 是 active adapter 时，使用 OSI authoring。
+2. 否则保持 MetricFlow authoring。
+
+旧的 node 级 `semantic_adapter` 和 `authoring_format` 字段会被忽略。
 
 ## 生成语义模型
 

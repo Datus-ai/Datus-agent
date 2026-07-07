@@ -143,6 +143,7 @@ class GenMetricsAgenticNode(AgenticNode):
         logger.info(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
 
     def _make_filesystem_tool(self, **kwargs):
+        from datus.agent.node.semantic_authoring import resolve_authoring_format
         from datus.configuration.inherited_memory_overrides import get_inherited_memory
         from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
@@ -170,6 +171,7 @@ class GenMetricsAgenticNode(AgenticNode):
             strict=strict,
             inherited_memory_node=inherited_memory_node,
             session_data_dir=session_data_dir,
+            authoring_format=resolve_authoring_format(self.agent_config),
             **kwargs,
         )
 
@@ -192,7 +194,7 @@ class GenMetricsAgenticNode(AgenticNode):
             self.generation_tools = GenerationTools(
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
-                authoring_format=resolve_authoring_format(self.agent_config, self.node_config),
+                authoring_format=resolve_authoring_format(self.agent_config),
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
@@ -210,7 +212,7 @@ class GenMetricsAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import is_osi_authoring
 
         node_config = getattr(self, "node_config", None) or {}
-        if is_osi_authoring(self.agent_config, node_config) and "skills" not in node_config:
+        if is_osi_authoring(self.agent_config) and "skills" not in node_config:
             logger.info("Skipping default MetricFlow skills for OSI metrics authoring")
             return
         super()._setup_skill_func_tools()
@@ -218,14 +220,10 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_semantic_tools(self):
         """Setup semantic tools for metrics querying and exploration."""
         try:
+            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
             from datus.tools.func_tool.semantic_tools import SemanticTools
 
-            adapter_type = None
-            if hasattr(self.agent_config, "agentic_nodes") and self.NODE_NAME in self.agent_config.agentic_nodes:
-                node_config = self.agent_config.agentic_nodes[self.NODE_NAME]
-                if isinstance(node_config, dict) and node_config.get("semantic_adapter"):
-                    adapter_type = node_config.get("semantic_adapter")
-            adapter_type = self.agent_config.resolve_semantic_adapter(adapter_type)
+            adapter_type = resolve_semantic_adapter_type(self.agent_config)
 
             # Initialize semantic func tool
             self.semantic_tools = SemanticTools(
@@ -327,10 +325,12 @@ class GenMetricsAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import (
             default_osi_semantic_model_file,
             default_osi_semantic_model_name,
+            osi_expression_dialect,
         )
 
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
+        context["osi_expression_dialect"] = osi_expression_dialect(self.agent_config)
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -371,7 +371,7 @@ class GenMetricsAgenticNode(AgenticNode):
         # Select the authoring format (metricflow YAML vs OSI + Datus hints).
         # OSI mode uses a separate template name so the default metricflow
         # template and its latest-version scan are left untouched.
-        authoring_format = resolve_authoring_format(self.agent_config, self.node_config)
+        authoring_format = resolve_authoring_format(self.agent_config)
         if authoring_format == AUTHORING_FORMAT_OSI:
             template_name = osi_template_name(self.NODE_NAME)
             requested = (
@@ -429,7 +429,7 @@ class GenMetricsAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import is_osi_authoring
 
         self._osi_metrics_baseline_artifact_json = None
-        if not is_osi_authoring(self.agent_config, self.node_config):
+        if not is_osi_authoring(self.agent_config):
             return
         try:
             from datus_semantic_osi.profile import load_osi_path, to_core_schema_document
@@ -626,7 +626,7 @@ class GenMetricsAgenticNode(AgenticNode):
         """Ensure generated metric artifacts are published without relying on one LLM tool call."""
         from datus.agent.node.semantic_authoring import is_osi_authoring
 
-        if is_osi_authoring(self.agent_config, self.node_config):
+        if is_osi_authoring(self.agent_config):
             self._finalize_osi_metric_generation(
                 semantic_model_files=semantic_model_files,
                 metric_file=metric_file,

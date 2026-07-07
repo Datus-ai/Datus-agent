@@ -27,16 +27,6 @@ agent:
         timeout: 300
         config_path: ./conf/agent.yml   # optional advanced override
         default: true
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-
-    gen_metrics:
-      semantic_adapter: metricflow
-
-    ask_metrics:
-      semantic_adapter: metricflow
 ```
 
 `config_path` is optional. In normal use, Datus builds the MetricFlow runtime config from:
@@ -94,7 +84,7 @@ metric:
 
 ## Generation Flow
 
-With `semantic_adapter: metricflow`:
+With MetricFlow as the active semantic layer:
 
 1. `gen_semantic_model` writes MetricFlow semantic model YAML.
 2. `gen_metrics` writes MetricFlow metric YAML.

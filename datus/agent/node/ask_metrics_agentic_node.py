@@ -122,11 +122,9 @@ class AskMetricsAgenticNode(AgenticNode):
         return self.configured_node_name or self.NODE_NAME
 
     def _resolve_adapter_type(self) -> Optional[str]:
-        adapter_type = self.node_config.get("adapter_type") or self.node_config.get("semantic_adapter") or "metricflow"
-        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
-        if callable(resolver):
-            return resolver(adapter_type)
-        return adapter_type
+        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
+        return resolve_semantic_adapter_type(self.agent_config)
 
     def _resolve_subject_tree_prompt_limit(self) -> int:
         raw_limit = self.node_config.get("subject_tree_prompt_limit", self.SUBJECT_TREE_PROMPT_LIMIT)

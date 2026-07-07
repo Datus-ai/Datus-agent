@@ -756,6 +756,27 @@ class TestAgentConfigServiceSelectors:
         assert config["type"] == "metricflow"
         assert config["datasource"] == "demo"
 
+    def test_build_semantic_adapter_config_defaults_osi_execution_backend_to_metricflow(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            services={
+                "datasources": {
+                    "demo": {
+                        "type": "duckdb",
+                        "uri": "duckdb:///:memory:",
+                        "default": True,
+                    }
+                },
+                "semantic_layer": {"osi": {}},
+            },
+        )
+
+        config = cfg.build_semantic_adapter_config()
+
+        assert config["type"] == "osi"
+        assert config["execution_backend"] == "metricflow"
+        assert config["datasource"] == "demo"
+
     def test_build_semantic_adapter_config_preserves_snowflake_key_pair_fields(self, tmp_path):
         cfg = self._make(
             tmp_path,

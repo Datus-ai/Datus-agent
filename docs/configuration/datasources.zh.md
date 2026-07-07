@@ -66,7 +66,7 @@ agent:
 | 配置段 | 用途 | 选择方式 |
 |--------|------|----------|
 | `services.datasources` | SQL 与知识库操作使用的数据库连接 | `--datasource` / 当前数据库 / 默认数据库 |
-| `services.semantic_layer` | 语义适配器配置，例如 MetricFlow | `semantic_adapter` |
+| `services.semantic_layer` | 语义适配器配置，例如 MetricFlow 或 OSI | active/default semantic layer |
 | `services.bi_platforms` | BI 平台凭据与数据集物化配置 | `bi_platform` |
 | `services.schedulers` | 调度器服务实例，例如 Airflow | `scheduler_service` |
 

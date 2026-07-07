@@ -336,9 +336,10 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 - `workspace_root`
 - `scoped_context`
 - `subagents`
-- `semantic_adapter` for semantic-model and metrics agents
 - `bi_platform` for dashboard agents
 - `scheduler_service` for scheduler agents
+
+Semantic adapter selection is global under `agent.services.semantic_layer`. Legacy node-level `semantic_adapter` and `authoring_format` fields are ignored.
 
 `scoped_kb_path` is deprecated. New configs use shared global storage with query-time filters instead of per-subagent scoped KB directories.
 
@@ -402,7 +403,6 @@ agent:
     semantic_metrics:
       node_class: gen_metrics
       model: claude
-      semantic_adapter: metricflow
       max_turns: 30
 
     etl_scheduler:

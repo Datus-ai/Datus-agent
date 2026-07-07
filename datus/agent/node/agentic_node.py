@@ -2039,7 +2039,6 @@ class AgenticNode(Node):
             "scoped_context",
             "scoped_kb_path",
             "adapter_type",
-            "semantic_adapter",
             "subject_tree_prompt_limit",
             "require_final_result_selection",
             "sql_file_threshold",

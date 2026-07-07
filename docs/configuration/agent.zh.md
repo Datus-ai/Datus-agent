@@ -294,9 +294,10 @@ codex:
 - `workspace_root`
 - `scoped_context`
 - `subagents`
-- semantic 节点使用的 `semantic_adapter`
 - dashboard agent 使用的 `bi_platform`
 - scheduler 节点使用的 `scheduler_service`
+
+语义适配器选择统一配置在 `agent.services.semantic_layer`。旧的 node 级 `semantic_adapter` 和 `authoring_format` 字段会被忽略。
 
 `scoped_kb_path` 已废弃。新配置使用共享的全局存储，并在查询时应用过滤，而不是为每个 subagent 持有独立 scoped KB 目录。
 
@@ -360,7 +361,6 @@ agent:
     semantic_metrics:
       node_class: gen_metrics
       model: claude
-      semantic_adapter: metricflow
       max_turns: 30
 
     etl_scheduler:

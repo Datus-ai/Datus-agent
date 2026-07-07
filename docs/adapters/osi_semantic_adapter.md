@@ -46,7 +46,7 @@ The `metricflow` extra installs dependencies required by the MetricFlow executio
 
 ## Configuration
 
-Configure the semantic layer as `osi` in `agent.yml`, and point semantic nodes to `semantic_adapter: osi`.
+Configure the semantic layer as `osi` in `agent.yml`. The selected semantic layer is global for semantic-model, metric, and metric-query workflows.
 
 ```yaml
 agent:
@@ -63,27 +63,17 @@ agent:
 
     semantic_layer:
       osi:
-        execution_backend: metricflow
         default: true
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: osi
-      # authoring_format is optional; semantic_adapter=osi enables OSI authoring.
-      # authoring_format: osi
-
-    gen_metrics:
-      semantic_adapter: osi
-
-    ask_metrics:
-      semantic_adapter: osi
 ```
 
-`datus-agent` resolves the authoring format in this order:
+`execution_backend` defaults to `metricflow`; set it only when you need a different OSI execution backend.
 
-1. Use `authoring_format: osi` when explicitly configured on the node.
-2. Use OSI authoring when the resolved `semantic_adapter` is `osi`.
-3. Otherwise, keep the default MetricFlow authoring path.
+`datus-agent` resolves the authoring format from the active global semantic adapter:
+
+1. Use OSI authoring when `agent.services.semantic_layer.osi` is the active adapter.
+2. Otherwise, keep the MetricFlow authoring path.
+
+Legacy node-level `semantic_adapter` and `authoring_format` fields are ignored.
 
 ## Semantic Model Generation
 

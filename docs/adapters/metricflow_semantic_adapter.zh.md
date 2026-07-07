@@ -27,16 +27,6 @@ agent:
         timeout: 300
         config_path: ./conf/agent.yml   # 可选高级覆盖项
         default: true
-
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-
-    gen_metrics:
-      semantic_adapter: metricflow
-
-    ask_metrics:
-      semantic_adapter: metricflow
 ```
 
 `config_path` 是可选项。正常情况下，Datus 会从以下信息构造 MetricFlow 运行时配置：
@@ -94,7 +84,7 @@ metric:
 
 ## 生成流程
 
-配置 `semantic_adapter: metricflow` 后：
+当 MetricFlow 是 active semantic layer 时：
 
 1. `gen_semantic_model` 写入 MetricFlow semantic model YAML。
 2. `gen_metrics` 写入 MetricFlow metric YAML。

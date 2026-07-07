@@ -33,6 +33,11 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool, SemanticDiscoveryTools
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
+
+def _set_global_semantic_adapter(agent_config, adapter: str) -> None:
+    agent_config.resolve_semantic_adapter = MagicMock(return_value=adapter)
+
+
 # ---------------------------------------------------------------------------
 # Initialization Tests
 # ---------------------------------------------------------------------------
@@ -488,8 +493,8 @@ class TestPrepareTemplateContext:
 
 class TestGetSystemPrompt:
     def test_osi_authoring_uses_osi_prompt_template(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create)
-        node.node_config["authoring_format"] = "osi"
 
         with (
             patch("datus.agent.node.semantic_authoring.osi_prompt_version", return_value="osi-latest") as version_mock,
@@ -802,8 +807,8 @@ class TestSaveToDb:
             sync_mock.assert_not_called()
 
     def test_osi_save_to_db_uses_generation_tools_sync(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create)
-        node.node_config["authoring_format"] = "osi"
         datasource = real_agent_config.current_datasource
         semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
         semantic_dir.mkdir(parents=True, exist_ok=True)
@@ -817,8 +822,8 @@ class TestSaveToDb:
         assert node.generation_evidence.semantic_kb_sync_passed is True
 
     def test_osi_save_to_db_fails_without_generation_tools(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create)
-        node.node_config["authoring_format"] = "osi"
         datasource = real_agent_config.current_datasource
         semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
         semantic_dir.mkdir(parents=True, exist_ok=True)
@@ -828,8 +833,8 @@ class TestSaveToDb:
         assert node._save_to_db(f"subject/semantic_models/{datasource}/orders.yml") is False
 
     def test_osi_save_to_db_reports_sync_failure(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create)
-        node.node_config["authoring_format"] = "osi"
         datasource = real_agent_config.current_datasource
         semantic_dir = real_agent_config.path_manager.semantic_model_path(datasource)
         semantic_dir.mkdir(parents=True, exist_ok=True)

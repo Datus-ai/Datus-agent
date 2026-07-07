@@ -87,8 +87,6 @@ agent:
         dags_folder: "${AIRFLOW_DAGS_DIR}"
 
   agentic_nodes:
-    gen_metrics:
-      semantic_adapter: metricflow
     gen_dashboard:
       bi_platform: superset
     scheduler:
