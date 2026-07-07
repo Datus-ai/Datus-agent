@@ -23,7 +23,7 @@
 - `gen_sql`（默认）
 - `gen_report`
 
-如果你希望创建更高级的 alias，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`、`scheduler`，需要手工编辑 `agent.yml`。
+如果你希望创建更高级的 alias，例如 `explore`、`gen_table`、`gen_skill`、`gen_dashboard`，需要手工编辑 `agent.yml`。
 
 ## 向导字段
 
@@ -135,10 +135,6 @@ agent:
       bi_platform: superset
       max_turns: 30
 
-    etl_scheduler:
-      node_class: scheduler
-      model: claude
-      max_turns: 30
 ```
 
 支持的节点类别以及运行时行为，见 [Subagent 指南](./introduction.zh.md) 和 [内置 subagent](./builtin_subagents.zh.md)。

@@ -44,8 +44,8 @@ class FuncToolListResult(BaseModel):
 
     Put ``FuncToolListResult(...).model_dump()`` inside ``FuncToolResult.result``
     whenever a tool method conceptually returns "a list of records" (BI
-    ``list_dashboards``, scheduler ``list_scheduler_jobs``, semantic
-    ``list_metrics``, ...). Separating row data (``items``) from pagination
+    ``list_dashboards``, semantic ``list_metrics``, ...). Separating row data
+    (``items``) from pagination
     signals (``total`` / ``has_more``) and tool-specific metadata (``extra``)
     lets CLI / LLM / agent consumers share one shape instead of each inventing
     their own heuristic.

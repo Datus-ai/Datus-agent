@@ -74,7 +74,6 @@ class TestPermissionCategoryDeclarations:
             ("datus.tools.func_tool.memory_filesystem_tools", "MemoryFilesystemFuncTool", "filesystem_tools"),
             ("datus.tools.func_tool.metric_filesystem_tools", "MetricFilesystemFuncTool", "filesystem_tools"),
             ("datus.tools.func_tool.memory_tools", "MemoryFuncTool", "memory_tools"),
-            ("datus.tools.func_tool.scheduler_tools", "SchedulerTools", "scheduler_tools"),
             ("datus.tools.func_tool.bash_tool", "BashTool", "bash_tools"),
             ("datus.tools.func_tool.date_parsing_tools", "DateParsingTools", "date_parsing_tools"),
             ("datus.tools.func_tool.sub_agent_task_tool", "SubAgentTaskTool", "sub_agent_tools"),
@@ -160,14 +159,14 @@ class TestPopulateToolRegistry:
             raise RuntimeError("no introspection")
 
         group = SimpleNamespace(
-            permission_category="scheduler_tools",
-            available_tools=lambda: [_named("list_scheduler_jobs")],
+            permission_category="bi_tools",
+            available_tools=lambda: [_named("list_dashboards")],
             all_tools_name=_boom,
         )
-        node.scheduler_tools = group
+        node.bi_func_tool = group
 
         node._populate_tool_registry()
-        assert node.tool_registry.to_dict()["list_scheduler_jobs"] == "scheduler_tools"
+        assert node.tool_registry.to_dict()["list_dashboards"] == "bi_tools"
 
     def test_skips_groups_without_string_category(self):
         """Mock auto-attributes are not strings, so bare mocks (common in node

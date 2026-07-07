@@ -67,7 +67,6 @@ class NodeType:
     TYPE_GEN_JOB = "gen_job"  # For data pipeline jobs: single-database ETL AND cross-database migration
     TYPE_GEN_SKILL = "gen_skill"  # For interactive skill creation and optimization
     TYPE_GEN_DASHBOARD = "gen_dashboard"  # For BI dashboard creation and management
-    TYPE_SCHEDULER = "scheduler"  # For job scheduler management and monitoring
     TYPE_FEEDBACK = "feedback"  # For conversation feedback analysis and knowledge archival
 
     ACTION_TYPES = [
@@ -93,7 +92,6 @@ class NodeType:
         TYPE_GEN_JOB,
         TYPE_GEN_SKILL,
         TYPE_GEN_DASHBOARD,
-        TYPE_SCHEDULER,
         TYPE_FEEDBACK,
     ]
 
@@ -131,7 +129,6 @@ class NodeType:
         ),
         TYPE_GEN_SKILL: "Interactive skill creation and optimization",
         TYPE_GEN_DASHBOARD: "BI dashboard creation and management",
-        TYPE_SCHEDULER: "Job scheduler management and monitoring",
         TYPE_FEEDBACK: "Conversation feedback analysis and knowledge archival",
     }
 
@@ -196,10 +193,6 @@ class NodeType:
             from datus.schemas.gen_dashboard_agentic_node_models import GenDashboardNodeInput
 
             input_data_cls = GenDashboardNodeInput
-        elif node_type == NodeType.TYPE_SCHEDULER:
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-            input_data_cls = SchedulerNodeInput
         elif node_type == NodeType.TYPE_FEEDBACK:
             input_data_cls = FeedbackNodeInput
         else:

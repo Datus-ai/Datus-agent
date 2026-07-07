@@ -6,7 +6,7 @@ BI 仪表盘生成 subagent 通过 AI 助手在 Apache Superset 和 Grafana 上�
 
 `gen_dashboard` 不用 BI 工具直接搬数据，也不再派发数据准备 subagent。Dashboard 创建应作为第二步执行：
 
-1. 先用 `gen_job` 或 `scheduler` 单独准备 / 刷新 serving 表。
+1. 先用 `gen_job` 或调度任务单独准备 / 刷新 serving 表。
 2. 再调用 `gen_dashboard`，传入已经存在的表或 SQL dataset。
 3. `gen_dashboard` 加载平台 skill，基于 `bi_database_name` 对应的 BI 数据库创建 dataset / chart / dashboard。
 
@@ -90,7 +90,7 @@ graph LR
 | `get_bi_serving_target` | 已配置 `dataset_db` | 给编排层返回 serving DB 契约 |
 
 `gen_dashboard` 不再暴露直接物化工具。数据搬运应在 dashboard 创建前作为单独的
-`gen_job` / `scheduler` 步骤完成。
+`gen_job` / 调度任务步骤完成。
 
 ## 配置
 

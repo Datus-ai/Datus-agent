@@ -41,7 +41,6 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
                 "datus-db-core>=0.1.3",
                 "datus-semantic-core>=0.2.0",
                 "datus-bi-core>=0.1.2",
-                "datus-scheduler-core>=0.1.1",
             ]
 
             [dependency-groups]
@@ -59,7 +58,6 @@ def _write_release_repo(tmp_path: Path, *, version: str = "0.2.6") -> Path:
             datus-db-core>=0.1.3
             datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
-            datus-scheduler-core>=0.1.1
             """
         ).strip(),
         encoding="utf-8",
@@ -128,7 +126,6 @@ def test_adapter_dependency_consistency_accepts_matching_lower_bounds(tmp_path, 
         "datus-db-core": Version("0.1.3"),
         "datus-semantic-core": Version("0.2.0"),
         "datus-bi-core": Version("0.1.2"),
-        "datus-scheduler-core": Version("0.1.1"),
     }
 
 
@@ -140,7 +137,6 @@ def test_adapter_dependency_consistency_rejects_mismatched_requirements_lower_bo
             datus-db-core>=0.1.2
             datus-semantic-core>=0.2.0
             datus-bi-core>=0.1.2
-            datus-scheduler-core>=0.1.1
             """
         ).strip(),
         encoding="utf-8",
@@ -197,7 +193,6 @@ def test_adapter_latest_check_rejects_stale_lower_bound(tmp_path, check_release_
             "datus-db-core": Version("0.1.4"),
             "datus-semantic-core": Version("0.2.0"),
             "datus-bi-core": Version("0.1.2"),
-            "datus-scheduler-core": Version("0.1.1"),
         }[package_name],
     )
 

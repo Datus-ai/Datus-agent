@@ -91,7 +91,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     ),
     SlashSpec("session-summarize", "Summarize the current session into persistent stores", "system"),
     SlashSpec("memory-organize", "Audit and reorganize all persistent stores", "system"),
-    SlashSpec("services", "Configure dashboards/schedulers (TUI) or list read-only methods", "system"),
+    SlashSpec("services", "Configure dashboards/semantic layers (TUI) or list read-only methods", "system"),
     SlashSpec(
         "permission",
         "Switch the permission profile (normal / auto / dangerous)",

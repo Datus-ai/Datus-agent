@@ -23,10 +23,10 @@ class TestPackageFor:
         assert pkg == "datus-bi-superset"
         assert mod == "datus_bi_superset"
 
-    def test_schedulers_mapping(self):
-        pkg, mod = sai.package_for("schedulers", "AIRFLOW")
-        assert pkg == "datus-scheduler-airflow"
-        assert mod == "datus_scheduler_airflow"
+    def test_schedulers_section_removed(self):
+        """The scheduler section is gone from the installer mapping."""
+        with pytest.raises(ValueError):
+            sai.package_for("schedulers", "hello")
 
     def test_semantic_layer_mapping(self):
         pkg, mod = sai.package_for("semantic_layer", "MetricFlow")
@@ -88,11 +88,11 @@ class TestEnsureAdapter:
         monkeypatch.setattr(sai.subprocess, "run", fake_run)
         monkeypatch.setattr(sai.importlib, "invalidate_caches", lambda: None)
 
-        result = sai.ensure_adapter("schedulers", "airflow")
+        result = sai.ensure_adapter("bi_platforms", "grafana")
         assert result.ok is True
-        assert result.package == "datus-scheduler-airflow"
+        assert result.package == "datus-bi-grafana"
         assert captured["cmd"][:3] == [sai.sys.executable, "-m", "pip"]
-        assert "datus-scheduler-airflow" in captured["cmd"]
+        assert "datus-bi-grafana" in captured["cmd"]
 
     def test_uses_uv_when_uv_on_path(self, monkeypatch):
         """When ``uv`` is discoverable, we must shell out to
@@ -230,18 +230,19 @@ class TestHotReloadAdapter:
         """Adapter packages don't auto-register on import — ``hot_reload_adapter``
         must explicitly load the matching entry-point and call its register
         callable. Otherwise an entry-point-only adapter (the actual shape
-        of ``datus-bi-superset`` and ``datus-scheduler-airflow``) ends up
-        importable but absent from ``adapter_registry``."""
+        of ``datus-bi-superset``) ends up importable but absent from
+        ``adapter_registry``."""
         called = []
         register = lambda: called.append("register")  # noqa: E731
 
         monkeypatch.setattr(sai.importlib, "import_module", lambda name: object())
-        monkeypatch.delitem(sai.sys.modules, "datus_scheduler_airflow", raising=False)
-        fake = _FakeEntryPoints({"datus.schedulers": [_FakeEntryPoint("airflow", register)]})
+        monkeypatch.delitem(sai.sys.modules, "datus_semantic_metricflow", raising=False)
+        fake = _FakeEntryPoints({"datus.semantic_adapters": [_FakeEntryPoint("metricflow", register)]})
         import importlib.metadata as metadata
 
         monkeypatch.setattr(metadata, "entry_points", lambda: fake)
-        assert sai.hot_reload_adapter("schedulers", "airflow") is True
+        with patch.dict(sai.sys.modules, {"datus.tools.semantic_tools.registry": SimpleNamespace()}):
+            assert sai.hot_reload_adapter("semantic_layer", "metricflow") is True
         assert called == ["register"]
 
     def test_returns_false_when_entry_point_missing(self, monkeypatch):
@@ -250,12 +251,13 @@ class TestHotReloadAdapter:
         a "package installed but adapter not registered" error rather
         than letting the probe fail with a deeper exception."""
         monkeypatch.setattr(sai.importlib, "import_module", lambda name: object())
-        monkeypatch.delitem(sai.sys.modules, "datus_scheduler_airflow", raising=False)
+        monkeypatch.delitem(sai.sys.modules, "datus_semantic_metricflow", raising=False)
         empty = _FakeEntryPoints({})
         import importlib.metadata as metadata
 
         monkeypatch.setattr(metadata, "entry_points", lambda: empty)
-        assert sai.hot_reload_adapter("schedulers", "airflow") is False
+        with patch.dict(sai.sys.modules, {"datus.tools.semantic_tools.registry": SimpleNamespace()}):
+            assert sai.hot_reload_adapter("semantic_layer", "metricflow") is False
 
     def test_reloads_already_imported_module(self, monkeypatch):
         cached = {}
@@ -266,13 +268,14 @@ class TestHotReloadAdapter:
             return mod
 
         register = lambda: cached.setdefault("registered", True)  # noqa: E731
-        monkeypatch.setitem(sai.sys.modules, "datus_scheduler_airflow", sentinel)
+        monkeypatch.setitem(sai.sys.modules, "datus_semantic_metricflow", sentinel)
         monkeypatch.setattr(sai.importlib, "reload", fake_reload)
-        fake = _FakeEntryPoints({"datus.schedulers": [_FakeEntryPoint("airflow", register)]})
+        fake = _FakeEntryPoints({"datus.semantic_adapters": [_FakeEntryPoint("metricflow", register)]})
         import importlib.metadata as metadata
 
         monkeypatch.setattr(metadata, "entry_points", lambda: fake)
-        assert sai.hot_reload_adapter("schedulers", "airflow") is True
+        with patch.dict(sai.sys.modules, {"datus.tools.semantic_tools.registry": SimpleNamespace()}):
+            assert sai.hot_reload_adapter("semantic_layer", "metricflow") is True
         assert cached["reloaded"] is sentinel
         assert cached["registered"] is True
 
@@ -281,8 +284,8 @@ class TestHotReloadAdapter:
             raise ImportError("nope")
 
         monkeypatch.setattr(sai.importlib, "import_module", boom)
-        monkeypatch.delitem(sai.sys.modules, "datus_scheduler_airflow", raising=False)
-        assert sai.hot_reload_adapter("schedulers", "airflow") is False
+        monkeypatch.delitem(sai.sys.modules, "datus_semantic_metricflow", raising=False)
+        assert sai.hot_reload_adapter("semantic_layer", "metricflow") is False
 
     def test_bi_branch_invokes_register_then_discover(self, monkeypatch):
         """For BI we still call ``discover_adapters`` after the explicit
@@ -309,8 +312,8 @@ class TestHotReloadAdapter:
 
     def test_semantic_branch_uses_semantic_entry_point_group(self, monkeypatch):
         """Semantic adapter packages register under ``datus.semantic_adapters``
-        — verify ``hot_reload_adapter`` looks up that group (not the BI /
-        scheduler ones) and runs the matching ``register`` callable."""
+        — verify ``hot_reload_adapter`` looks up that group (not the BI one)
+        and runs the matching ``register`` callable."""
         monkeypatch.setattr(sai.importlib, "import_module", lambda name: object())
         monkeypatch.delitem(sai.sys.modules, "datus_semantic_metricflow", raising=False)
         register_calls = []

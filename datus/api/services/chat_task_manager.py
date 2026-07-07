@@ -776,7 +776,7 @@ class ChatTaskManager:
         so the API path matches the CLI exactly: every built-in sub_agent is wired to
         its dedicated AgenticNode subclass, and custom sub_agents honour their
         ``node_class`` field (``gen_report`` / ``gen_table`` / ``gen_dashboard`` /
-        ``scheduler`` / ``gen_skill`` / ``explore``) instead of always falling back
+        ``gen_skill`` / ``explore``) instead of always falling back
         to ``GenSQLAgenticNode``.
 
         ``user_id`` is propagated as the node ``scope`` so that session files

@@ -81,7 +81,7 @@ class ServiceCommands:
           configuration TUI on the default Dashboard tab. Bare
           ``/services`` lands on the menu directly so the TUI is the
           primary entry point.
-        - ``dashboard`` / ``scheduler`` — open the TUI with the matching
+        - ``dashboard`` / ``semantic`` — open the TUI with the matching
           tab pre-selected.
         - ``list`` — render the read-only listing (kept for scripting /
           quick inspection without entering the TUI).
@@ -89,9 +89,6 @@ class ServiceCommands:
         token = (args or "").strip().lower()
         if token in ("dashboard", "bi", "bi_platforms"):
             self._run_config_menu(initial_tab="dashboard")
-            return
-        if token in ("scheduler", "schedulers"):
-            self._run_config_menu(initial_tab="scheduler")
             return
         if token in ("semantic", "semantic_layer"):
             self._run_config_menu(initial_tab="semantic")
@@ -107,7 +104,7 @@ class ServiceCommands:
         self._render_listing()
         print_info(
             self.cli.console,
-            "Use `/services dashboard`, `/services scheduler`, or `/services semantic` to open the configuration TUI.",
+            "Use `/services dashboard` or `/services semantic` to open the configuration TUI.",
         )
 
     # ------------------------------------------------------------------ #
@@ -119,7 +116,7 @@ class ServiceCommands:
         if not rows:
             print_warning(
                 self.cli.console,
-                "No services configured. Run `/services dashboard` or `/services scheduler` to configure one.",
+                "No services configured. Run `/services dashboard` or `/services semantic` to configure one.",
             )
             return
         table = Table(title="Configured services", show_header=True, header_style=TABLE_HEADER_STYLE)
@@ -135,7 +132,7 @@ class ServiceCommands:
     # ------------------------------------------------------------------ #
 
     _MAX_CONFIG_LOOPS = 32
-    # Hard timeout for the connectivity probe. BI / scheduler adapters hit
+    # Hard timeout for the connectivity probe. BI adapters hit
     # external HTTP endpoints whose socket timeout we cannot rely on; a hung
     # TCP connect must not freeze the prompt_toolkit Application driving
     # ``/service``.
@@ -145,7 +142,7 @@ class ServiceCommands:
         """Loop the configuration TUI until the user cancels.
 
         Each round re-reads ``agent_config.dashboard_config`` /
-        ``scheduler_services`` so edits persisted in the previous round
+        ``semantic_layer_configs`` so edits persisted in the previous round
         are visible immediately. The loop bound is a safety net against
         runaway re-entry, not a UX limit — typical sessions exit after
         one or two iterations.
@@ -163,9 +160,7 @@ class ServiceCommands:
             selection = self._run_app(app)
             if selection is None:
                 return
-            if selection.section == "schedulers":
-                seed_tab = "scheduler"
-            elif selection.section == "semantic_layer":
+            if selection.section == "semantic_layer":
                 seed_tab = "semantic"
             else:
                 seed_tab = "dashboard"
@@ -261,7 +256,6 @@ class ServiceCommands:
         # Clear the project-level default if it pointed at the deleted entry.
         active_map = {
             "bi_platforms": ("active_dashboard", "set_active_dashboard"),
-            "schedulers": ("active_scheduler", "set_active_scheduler"),
             "semantic_layer": ("active_semantic", "set_active_semantic"),
         }
         if sel.section in active_map:
@@ -283,7 +277,7 @@ class ServiceCommands:
         print_error(self.cli.console, f"Probe failed for `{sel.name}`: {msg}", prefix=False)
         return f"Probe failed for `{sel.name}`: {msg}"
 
-    _SET_DEFAULT_SECTIONS = ("bi_platforms", "schedulers", "semantic_layer")
+    _SET_DEFAULT_SECTIONS = ("bi_platforms", "semantic_layer")
 
     def _do_set_global_default(self, sel: ServiceConfigSelection) -> Optional[str]:
         from datus.configuration.agent_config_loader import configuration_manager
@@ -319,9 +313,6 @@ class ServiceCommands:
         if sel.section == "bi_platforms":
             setter = getattr(self.cli.agent_config, "set_active_dashboard", None)
             label = "dashboard"
-        elif sel.section == "schedulers":
-            setter = getattr(self.cli.agent_config, "set_active_scheduler", None)
-            label = "scheduler"
         elif sel.section == "semantic_layer":
             setter = getattr(self.cli.agent_config, "set_active_semantic", None)
             label = "semantic layer"
@@ -379,11 +370,10 @@ class ServiceCommands:
         a one-liner up to the App's status row. Any exception from the
         adapter is caught — the goal is signal, not stack traces.
 
-        The semantic-layer branch is a pure in-memory registry lookup so
-        it runs on the calling thread; bi_platforms / schedulers reach
-        external HTTP endpoints and are isolated in a daemon thread with
-        ``_PROBE_TIMEOUT_SECS`` so a stuck TCP connect cannot freeze the
-        REPL.
+        The semantic-layer branch is a pure in-memory registry lookup so it
+        runs on the calling thread; bi_platforms reaches external HTTP
+        endpoints and is isolated in a daemon thread with
+        ``_PROBE_TIMEOUT_SECS`` so a stuck TCP connect cannot freeze the REPL.
         """
         if section == "semantic_layer":
             # MetricFlow's ``list_metrics`` requires a bound datasource;
@@ -411,13 +401,6 @@ class ServiceCommands:
                     rows = tool.list_dashboards()
                     count = self._count_envelope(rows)
                     holder.append((True, f"{count} dashboards"))
-                elif section == "schedulers":
-                    from datus.tools.func_tool.scheduler_tools import SchedulerTools
-
-                    tool = SchedulerTools(self.cli.agent_config, scheduler_service=name)
-                    rows = tool.list_scheduler_jobs()
-                    count = self._count_envelope(rows)
-                    holder.append((True, f"{count} scheduler jobs"))
                 else:
                     holder.append((False, f"Unsupported section `{section}`"))
             except BaseException as exc:
@@ -518,7 +501,6 @@ class ServiceCommands:
     # users into thinking they had to install two separate packages.
     _ADAPTER_PACKAGE_HINTS = {
         "bi_platforms": "datus-bi-<platform>  (e.g. datus-bi-superset, datus-bi-grafana)",
-        "schedulers": "datus-scheduler-<platform>  (e.g. datus-scheduler-airflow)",
         "semantic_layer": "datus-semantic-<type>  (e.g. datus-semantic-metricflow)",
     }
 
@@ -1040,7 +1022,7 @@ class ServiceCommands:
 
         ``ServiceCommands`` is invoked synchronously from the REPL thread.
         The allow-listed service methods are synchronous Python (typically a
-        blocking HTTP call into Superset/Airflow/MetricFlow) and
+        blocking HTTP call into Superset/MetricFlow) and
         ``trans_to_function_tool`` runs them inline inside the coroutine.
         Scheduling this on the shared ``DatusCLI._bg_loop`` would freeze
         every *other* background task (``_async_init_agent``, session

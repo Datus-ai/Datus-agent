@@ -119,6 +119,13 @@ agent:
   #   #     - "docker:*"              # confirm every call (session approval per bucket)
   #   #   classifier:                 # reserved: LLM classifier (not implemented)
   #   #     enabled: false
+  #   #
+  #   # Installed plugins may declare bash rules for their own ``datus <plugin>``
+  #   # namespace (normal/auto only), layered between the profile base and the
+  #   # rules above — a user ``deny`` always beats a plugin ``allow``. A
+  #   # plugin ``ask`` rule can be relaxed per project via the prompt's
+  #   # "allow (project)" choice (or a matching ``bash_allow`` entry in
+  #   # ``.datus/config.yml``): an exact-match grant auto-runs that pattern.
 
 
   nodes:
@@ -219,23 +226,9 @@ agent:
         # default: true             # uncomment to make this the global default BI
         extra: # Special configurations for different platforms
           provider: db
-    schedulers:
-      airflow_local:
-        name: airflow_local
-        type: airflow
-        api_base_url: http://localhost:8080/api/v1
-        username: ${AIRFLOW_USERNAME}
-        password: ${AIRFLOW_PASSWORD}
-        # default: true             # uncomment to make this the global default scheduler
-        dags_folder: /path/to/airflow/dags
-        dag_discovery_timeout: 60
-        dag_discovery_poll_interval: 5
-        # Available Airflow Connection IDs for scheduled jobs.
-        # Create these connections in Airflow (Admin > Connections) first,
-        # then list them here so the agent knows which conn_id to use.
-        connections:
-          starrocks_default: "StarRocks production database"
-          # pg_analytics: "PostgreSQL analytics warehouse"
+
+  # Scheduler access is provided by datus-plugin packages;
+  # configure profiles under `agent.plugins.<plugin>.<profile>` instead.
 
   storage:
     # Data path is now fixed at {agent.home}/data

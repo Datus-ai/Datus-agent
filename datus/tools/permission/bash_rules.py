@@ -57,7 +57,7 @@ import re
 import shlex
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -156,6 +156,9 @@ def _has_inline_code_flag(argv: List[str]) -> bool:
 # ``git push``.
 _GROUP_COMMANDS = frozenset(
     {
+        # datus itself hosts plugin CLIs (``datus <plugin> ...``); approving
+        # one plugin's namespace must not green-light the others.
+        "datus",
         "git",
         "docker",
         "npm",
@@ -172,6 +175,53 @@ _GROUP_COMMANDS = frozenset(
         "conda",
     }
 )
+
+
+def _normalize_datus_plugin_argv(argv: List[str]) -> List[str]:
+    """Drop leading datus-global ``--profile`` flags from ``datus <plugin> ...``.
+
+    The plugin dispatcher (``datus/cli/main.py`` ``_split_plugin_globals``)
+    consumes ``--profile <p>`` / ``--profile=<p>`` appearing between the
+    plugin name and the first command token, so ``datus hello --profile prod
+    config set x`` runs the same subcommand as ``datus hello config set x``.
+    Rule matching must see through that, or every profile-qualified
+    invocation falls out of the plugin's declared allow/ask/deny patterns.
+
+    Deliberately NOT stripped:
+
+    * ``--config <path>`` — pointing datus at a different agent.yml rebinds
+      the plugin's credentials/endpoints; a grant persisted for one config
+      must not silently cover another. Commands carrying it fall through to
+      the default decision (ask).
+    * ``--profile`` in sub-command position (``datus hello greet --profile
+      x``) — from the first command token onward every flag belongs to the
+      plugin, mirroring the dispatcher.
+
+    Tradeoff: because ask/allow matching sees through ``--profile``, an allow
+    rule or project grant approved under one profile also covers the others —
+    profiles of one plugin share a trust domain by design (unlike ``--config``,
+    which swaps the whole config file). Users who need to fence off a specific
+    profile can write a deny rule mentioning it: deny rules are additionally
+    matched against the RAW argv (see ``_evaluate_single_command``).
+    """
+    if len(argv) < 3 or argv[0] != "datus" or argv[1].startswith("-"):
+        return argv
+    i = 2
+    n = len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok == "--profile":
+            if i + 1 >= n:
+                break
+            i += 2
+            continue
+        if tok.startswith("--profile="):
+            i += 1
+            continue
+        break
+    if i == 2:
+        return argv
+    return argv[:2] + argv[i:]
 
 
 class BashClassifierConfig(BaseModel):
@@ -285,6 +335,12 @@ class BashRuleDecision:
             unparseable command. Such decisions must never be auto-resolved by
             the future LLM classifier, and must not be offered as persistent
             project-level allows.
+        segment_ask_patterns: For an ASK pipeline decision, the
+            ``(source, matched_pattern)`` of EVERY non-allow segment. The hook's
+            project-grant bypass must cover each segment, not just the
+            representative one — otherwise a grant for one plugin ask rule
+            would auto-run an entire pipeline including unreviewed segments.
+            ``None`` for single-command decisions.
     """
 
     level: PermissionLevel
@@ -293,6 +349,7 @@ class BashRuleDecision:
     reason: str
     bucket: str
     safety_forced: bool = False
+    segment_ask_patterns: Optional[Tuple[Tuple[BashDecisionSource, Optional[str]], ...]] = None
 
 
 def _split_pattern(pattern: str) -> tuple[List[str], Optional[str]]:
@@ -447,11 +504,30 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
             safety_forced=True,
         )
 
+    # ``datus <plugin> --profile <p> <subcommand>`` runs the same subcommand
+    # as its unqualified form — normalize so plugin-declared rules and
+    # session buckets keep matching (see _normalize_datus_plugin_argv).
+    raw_argv = argv
+    argv = _normalize_datus_plugin_argv(argv)
+
     # 1. Deny — most aggressive: anchored and unanchored, before everything
     # else so a deny can never be downgraded by a later stage. Unanchored
     # matching means a deny on ``rm:*`` also catches a segment ``xargs rm``.
+    # Deny also matches the RAW (pre-normalization) argv, so a user rule like
+    # ``datus hello --profile prod:*`` can block a specific plugin profile
+    # even though ask/allow matching sees through the flag.
     for pattern in rules.deny:
-        if command_matches_pattern(argv, pattern, anchor=True) or command_matches_pattern(argv, pattern, anchor=False):
+        if (
+            command_matches_pattern(argv, pattern, anchor=True)
+            or command_matches_pattern(argv, pattern, anchor=False)
+            or (
+                raw_argv is not argv
+                and (
+                    command_matches_pattern(raw_argv, pattern, anchor=True)
+                    or command_matches_pattern(raw_argv, pattern, anchor=False)
+                )
+            )
+        ):
             return BashRuleDecision(
                 level=PermissionLevel.DENY,
                 source=BashDecisionSource.DENY_RULE,
@@ -591,6 +667,7 @@ def _evaluate_pipeline(command: str, segments: List[str], rules: BashCommandRule
         reason=f"Pipeline requires confirmation: {rep.reason}",
         bucket=rep.bucket,
         safety_forced=False,
+        segment_ask_patterns=tuple((d.source, d.matched_pattern) for d in non_allow),
     )
 
 

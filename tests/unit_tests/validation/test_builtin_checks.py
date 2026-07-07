@@ -4,9 +4,9 @@
 
 """Unit tests for ``datus.validation.builtin_checks`` — Layer A dispatches.
 
-Focus on the new BI / scheduler target dispatches added in Chunk 4. The
-existing table / transfer paths are covered via ``test_hook.py`` at the
-``on_end`` integration level.
+Focus on the new BI target dispatches added in Chunk 4. The existing table /
+transfer paths are covered via ``test_hook.py`` at the ``on_end`` integration
+level.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from datus.validation.report import (
     ChartTarget,
     DashboardTarget,
     DatasetTarget,
-    SchedulerJobTarget,
     SessionTarget,
 )
 
@@ -68,21 +67,6 @@ class EmptyPayloadBITool(FakeBITool):
     def get_dashboard(self, dashboard_id):
         self.calls.append(("get_dashboard", dashboard_id))
         return FuncToolResult(result={})
-
-
-class FakeSchedulerTool:
-    """Mock SchedulerTools with configurable get_scheduler_job behavior."""
-
-    def __init__(self, found=True, status="active"):
-        self.found = found
-        self.status = status
-        self.calls: list = []
-
-    def get_scheduler_job(self, job_id):
-        self.calls.append(("get_scheduler_job", job_id))
-        if self.found:
-            return FuncToolResult(result={"found": True, "job_id": job_id, "status": self.status})
-        return FuncToolResult(result={"found": False, "job_id": job_id})
 
 
 class TestCheckDashboard:
@@ -163,68 +147,20 @@ class TestCheckDataset:
         assert failed and failed[0].severity == "blocking"
 
 
-class TestCheckSchedulerJob:
-    @pytest.mark.asyncio
-    async def test_found_active_passes(self):
-        tool = FakeSchedulerTool(found=True, status="active")
-        target = SchedulerJobTarget(platform="airflow", job_id="j-1")
-        report = await run_builtin_checks(target, scheduler_tool=tool)
-        exists = [c for c in report.checks if c.name == "scheduler_job_exists"]
-        status = [c for c in report.checks if c.name == "scheduler_job_status"]
-        assert exists and exists[0].passed
-        assert status and status[0].passed
-
-    @pytest.mark.asyncio
-    async def test_not_found_blocks(self):
-        tool = FakeSchedulerTool(found=False)
-        target = SchedulerJobTarget(platform="airflow", job_id="j-1")
-        report = await run_builtin_checks(target, scheduler_tool=tool)
-        failed = [c for c in report.checks if c.name == "scheduler_job_exists" and not c.passed]
-        assert failed and failed[0].severity == "blocking"
-
-    @pytest.mark.asyncio
-    async def test_failed_status_blocks(self):
-        tool = FakeSchedulerTool(found=True, status="failed")
-        target = SchedulerJobTarget(platform="airflow", job_id="j-1")
-        report = await run_builtin_checks(target, scheduler_tool=tool)
-        status = [c for c in report.checks if c.name == "scheduler_job_status" and not c.passed]
-        assert status and status[0].severity == "blocking"
-
-    @pytest.mark.asyncio
-    async def test_pending_status_advisory(self):
-        """Pending is neither definitely good nor definitely bad — advisory."""
-        tool = FakeSchedulerTool(found=True, status="pending")
-        target = SchedulerJobTarget(platform="airflow", job_id="j-1")
-        report = await run_builtin_checks(target, scheduler_tool=tool)
-        status = [c for c in report.checks if c.name == "scheduler_job_status"]
-        assert status
-        # pending is allowed (passed=True) but with an advisory note in observed
-        assert status[0].passed is True
-
-    @pytest.mark.asyncio
-    async def test_missing_scheduler_tool_skips(self):
-        target = SchedulerJobTarget(platform="airflow", job_id="j-1")
-        report = await run_builtin_checks(target, scheduler_tool=None)
-        assert report.checks == []
-
-
 class TestSessionTargetWithMixedTypes:
     @pytest.mark.asyncio
     async def test_session_dispatches_per_target_type(self):
         """SessionTarget recursion routes each inner target to the right tool."""
         bi = FakeBITool(dashboard_found=True, chart_found=True, dataset_found=True)
-        sched = FakeSchedulerTool(found=True, status="active")
         session = SessionTarget(
             targets=[
                 DashboardTarget(platform="superset", dashboard_id="42"),
                 ChartTarget(platform="superset", chart_id="c1"),
-                SchedulerJobTarget(platform="airflow", job_id="j-1"),
             ]
         )
-        report = await run_session_builtin_checks(session, bi_tool=bi, scheduler_tool=sched)
+        report = await run_session_builtin_checks(session, bi_tool=bi)
         names = [c.name for c in report.checks]
         assert "dashboard_exists" in names
         assert "chart_exists" in names
-        assert "scheduler_job_exists" in names
         # Checks must be tagged with their originating inner target
         assert all(c.observed and c.observed.get("_target") for c in report.checks)

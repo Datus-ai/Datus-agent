@@ -51,7 +51,6 @@ DELIVERABLE_TEMPLATES = [
     "gen_table_system_1.0.j2",
     "gen_dashboard_system_1.0.j2",
     "gen_job_system_1.0.j2",
-    "scheduler_system_1.0.j2",
 ]
 
 
@@ -434,6 +433,60 @@ class TestInjectRuntimeContext:
         node._runtime_context_current_date = lambda: "1999-12-31"
         out = node._inject_runtime_context("BASE")
         assert "Current date: 1999-12-31" in out
+
+
+class TestInjectPluginContext:
+    def test_appends_plugin_sections(self, session_manager, monkeypatch):
+        from datus.plugins import registry as registry_module
+
+        monkeypatch.setattr(
+            registry_module,
+            "plugin_system_prompt_sections",
+            lambda _cfg: ["## Hello\nGreet users.", "## Demo\nRun demos."],
+        )
+        node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
+        out = node._inject_plugin_context("BASE")
+        assert out.startswith("BASE")
+        assert "## Hello\nGreet users." in out
+        assert "## Demo\nRun demos." in out
+
+    def test_no_sections_leaves_prompt_unchanged(self, session_manager, monkeypatch):
+        from datus.plugins import registry as registry_module
+
+        monkeypatch.setattr(registry_module, "plugin_system_prompt_sections", lambda _cfg: [])
+        node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
+        assert node._inject_plugin_context("BASE") == "BASE"
+
+    def test_registry_failure_returns_base_prompt(self, session_manager, monkeypatch):
+        from datus.plugins import registry as registry_module
+
+        def boom(_cfg):
+            raise RuntimeError("registry exploded")
+
+        monkeypatch.setattr(registry_module, "plugin_system_prompt_sections", boom)
+        node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
+        assert node._inject_plugin_context("BASE") == "BASE"
+
+    def test_no_agent_config_is_noop(self, session_manager):
+        node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
+        node.agent_config = None
+        assert node._inject_plugin_context("BASE") == "BASE"
+
+    def test_plugins_disabled_skips_injection(self, session_manager, monkeypatch):
+        from datus.plugins import registry as registry_module
+
+        called = []
+
+        def spy(_cfg):
+            called.append(True)
+            return ["## Hello\nGreet users."]
+
+        monkeypatch.setattr(registry_module, "plugin_system_prompt_sections", spy)
+        node = _SnapshotNode(session_manager, _agent_config(), db_func_tool=None)
+        node.agent_config.plugins_enabled = False
+        # The switch short-circuits before the registry is even consulted.
+        assert node._inject_plugin_context("BASE") == "BASE"
+        assert called == []
 
 
 class TestReferenceDateOverrides:

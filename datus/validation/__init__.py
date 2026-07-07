@@ -3,20 +3,17 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Validation infrastructure for table-, chart-, dashboard-, dataset-, and
-scheduler job-producing subagents.
+Validation infrastructure for table-, chart-, dashboard-, and
+dataset-producing subagents.
 
 This module provides hook-driven validation that fires automatically after
 mutating tool calls (execute_sql writes/DDL, transfer_query_result,
-create_chart, create_dashboard, create_dataset, submit_sql_job, update_job) and
+create_chart, create_dashboard, create_dataset) and
 at the end of an agent run. It separates validation into two layers:
 
 - Layer A (builtin_checks): code-level invariants (table exists, row count,
-  cross-DB row count parity, BI resources exist, scheduler job exists/status).
+  cross-DB row count parity, BI resources exist).
   Always enforced.
-- Scheduler runtime validation: deterministic trigger/poll/log collection for
-  delivered scheduler jobs, run after Layer A and before scheduler validator
-  skills when scheduler tools are available.
 - Layer B (llm_runner): LLM-interpreted validator skills. Gated by
   ``agent.validation.skill_validators_enabled``.
 
@@ -34,7 +31,6 @@ from datus.validation.report import (
     DatasetTarget,
     DBRef,
     DeliverableTarget,
-    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TargetFilter,
@@ -49,7 +45,6 @@ __all__ = [
     "DatasetTarget",
     "DBRef",
     "DeliverableTarget",
-    "SchedulerJobTarget",
     "SessionTarget",
     "TableTarget",
     "TargetFilter",

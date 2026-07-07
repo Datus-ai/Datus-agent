@@ -51,14 +51,6 @@ agent:
         api_base_url: http://localhost:8088
         username: ${SUPERSET_USER}
         password: ${SUPERSET_PASSWORD}
-
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: ${AIRFLOW_URL}
-        username: ${AIRFLOW_USER}
-        password: ${AIRFLOW_PASSWORD}
-        dags_folder: ${AIRFLOW_DAGS_DIR}
 ```
 
 ## 服务分组
@@ -68,7 +60,10 @@ agent:
 | `services.datasources` | SQL 与知识库操作使用的数据库连接 | `--datasource` / 当前数据库 / 默认数据库 |
 | `services.semantic_layer` | 语义适配器配置，例如 MetricFlow | `semantic_adapter` |
 | `services.bi_platforms` | BI 平台凭据与数据集物化配置 | `bi_platform` |
-| `services.schedulers` | 调度器服务实例，例如 Airflow | `scheduler_service` |
+
+插件扩展的配置写在 `agent.plugins.<plugin>.<profile>` 下，与 `agent.services`
+分开。本页只说明 `agent.services.datasources`;插件配置面详见
+[插件](../plugin/introduction.zh.md)。
 
 ## 支持的数据库类型
 
@@ -268,5 +263,4 @@ password: "actual_password"
 - [数据库适配器](../adapters/db_adapters.md) - 安装 MySQL、Snowflake、StarRocks 等插件适配器
 - [语义层配置](semantic_layer.md) - 配置语义适配器
 - [BI 平台配置](bi_platforms.md) - 配置 Superset 或 Grafana
-- [调度器配置](schedulers.md) - 配置 Airflow 等调度器
 - [CLI 命令](../cli/other_commands.zh.md) - 查看 `configure`、`init`、`service` 等完整命令说明

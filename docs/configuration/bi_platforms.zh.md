@@ -68,7 +68,7 @@ agent:
 
 ## 选择规则
 
-`BIFuncTool._resolved_platform` 解析活动 BI 服务的顺序与 Scheduler / Semantic 完全一致:
+`BIFuncTool._resolved_platform` 解析活动 BI 服务的顺序与 Semantic 完全一致:
 
 1. 调用处显式传入的 `bi_service`(或 agentic node 上的 `bi_platform`)。
 2. `./.datus/config.yml` 中的项目级 pin —— `dashboard:` 字段。
@@ -91,7 +91,7 @@ agent:
 ## 通过 CLI 配置（`/services`）
 
 在 Datus REPL 内执行 `/services` 即可直接进入交互式 TUI（默认 Dashboard
-tab；`/services scheduler` 直接落到 Scheduler tab；`/services list` 退回
+tab；`/services semantic` 直接落到 Semantic tab；`/services list` 退回
 到原先的只读列表）：
 
 - 列表最后一行 `+ Add new dashboard`，按 `Enter` 进入新增流程。选择 `type`
@@ -112,7 +112,7 @@ service 定义会写入 `~/.datus/conf/agent.yml`，跨项目共享凭据；只�
 
 仪表盘创建被拆成三步：
 
-1. `gen_job` 或 `scheduler` 在 `dataset_db.datasource_ref` 对应的 serving DB 里
+1. `gen_job` 或调度任务在 `dataset_db.datasource_ref` 对应的 serving DB 里
    准备 / 刷新数据。
 2. `gen_dashboard` 基于 BI 已注册数据库中的现成表 / SQL dataset 创建 dataset /
    chart / dashboard。

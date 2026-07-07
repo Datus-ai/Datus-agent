@@ -2,7 +2,7 @@
 
 本指南使用开源的 DAComp 数据工程数据集，串起一条完整的本地 Datus
 工作流：理解数仓分层设计、在本地 DuckDB workbench 文件中交互式建表、
-生成 ETL、产出 marts 数据、提交 Airflow 天级任务，并把结果写入 Superset
+生成 ETL、产出 marts 数据、提交天级调度任务，并把结果写入 Superset
 创建仪表盘。
 
 本地开源 quickstart **不需要** Iceberg、MinIO 或 S3。SaaS Studio tour
@@ -78,22 +78,19 @@ cd "$DATUS_QUICKSTART_STACK/superset"
 docker compose up -d
 ```
 
-启动 Airflow：
-
-```bash
-cd "$DATUS_QUICKSTART_STACK/airflow"
-docker compose up -d
-```
+stack 包里还带了步骤 6 会用到的调度器服务。用同样的方式进入
+`$DATUS_QUICKSTART_STACK` 下对应目录启动它（目录名、访问地址和账号密码见
+stack 包自带的 README）。
 
 本地默认访问方式：
 
 - Superset：`http://127.0.0.1:8088`，用户名 `admin`，密码 `admin`
-- Airflow：`http://127.0.0.1:8080`，用户名 `admin`，密码 `admin`
+- 调度器：见 stack 包 README
 
 这套 quickstart 的 Superset compose 已经带了本地演示用的元数据库和管理员默认值。
 
-Airflow compose 会把 `${DACOMP_HOME}` 挂载到容器中，并暴露一个名为
-`duckdb_dacomp_lever` 的 Airflow connection，指向
+调度器的 compose 会把 `${DACOMP_HOME}` 挂载到容器中，并暴露一个名为
+`duckdb_dacomp_lever` 的连接，指向
 `/workspace/lever_workbench.duckdb`。
 
 ## 步骤 3：配置 `agent.yml`
@@ -129,16 +126,6 @@ agent:
           datasource_ref: superset_serving
           bi_database_name: examples
 
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: http://127.0.0.1:8080/api/v1
-        username: admin
-        password: admin
-        dags_folder: "${DATUS_QUICKSTART_STACK}/airflow/dags"
-        connections:
-          duckdb_dacomp_lever: DAComp Lever DuckDB
-
     semantic_layer:
       metricflow:
         type: metricflow
@@ -146,9 +133,13 @@ agent:
   agentic_nodes:
     gen_dashboard:
       bi_platform: superset
-    scheduler:
-      scheduler_service: airflow_prod
 ```
+
+调度器能力由独立的 datus 调度器 plugin 包提供，安装后会新增
+`datus <plugin> ...` CLI 及配套 skill。安装与 stack 包内调度器匹配的 plugin，
+并把 profile 写在 `agent.plugins.<plugin>.<profile>` 下（API 地址、账号密码、
+stack 挂载进调度器容器的主机侧 `dags_folder`，以及 `duckdb_dacomp_lever`
+连接映射）——具体字段见该 plugin 自己的文档和自带的 setup skill。
 
 然后使用 `lever_duckdb` datasource 启动 Datus。这个 datasource 指向可写的
 workbench 文件：
@@ -167,10 +158,6 @@ datus-cli --datasource lever_duckdb
 选择 provider/model，并按提示填写凭据。`/model` 会把 provider 凭据写入
 `~/.datus/conf/agent.yml` 的 `agent.providers`，并把当前项目使用的
 provider/model 写入 `./.datus/config.yml`。
-
-这里的 `dags_folder` 是 Datus 在主机上写入 DAG 文件的目录。Airflow compose
-会把这个目录挂载到 Airflow 容器内的 `/opt/airflow/dags`，所以 Datus
-生成的新 DAG 会被 Airflow 自动发现。
 
 ## 步骤 4：创建必要的 staging 表
 
@@ -232,10 +219,10 @@ staging -> intermediate -> marts
 SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
 ```
 
-## 步骤 6：提交天级 Airflow 任务
+## 步骤 6：提交天级调度任务
 
 现在可以要求 agent 把 marts 刷新过程提交给 scheduler。quickstart 自带的
-Airflow 已经预置好了 `duckdb_dacomp_lever` 连接。
+调度器已经预置好了 `duckdb_dacomp_lever` 连接。
 
 提交一个每天早上 8 点运行的 SQL 任务，刷新同一条从契约生成的链路：
 
@@ -251,10 +238,10 @@ Trigger daily_lever_requisition_enhanced once now and show me the latest run sta
 
 你应该会看到：
 
-- `${DATUS_QUICKSTART_STACK}/airflow/dags` 下生成新的 DAG 文件
-- 同一份文件会在 Airflow 容器内显示为 `/opt/airflow/dags/<dag_id>.py`
+- plugin profile 里配置的 `dags_folder` 下生成新的 DAG 文件
+- 同一份文件会出现在调度器容器内的 DAG 目录中
 - scheduler 返回 `job_id`
-- Airflow UI 中出现对应任务
+- 调度器 UI 中出现对应任务
 
 ## 步骤 7：把 marts 表同步到 Superset serving DB
 
@@ -288,7 +275,7 @@ SQL dataset 已经存在于 BI 已注册的数据库中。
 
 - `lever_workbench.duckdb` 中已经有 `staging`、`intermediate` 和 `marts` schema
 - `marts.lever__requisition_enhanced` 是从 raw 数据经 staging 和 intermediate 层逐层加工得到的
-- Airflow 中能看到日常调度任务
+- 调度器中能看到日常调度任务
 - 仪表盘生成流程返回了 Superset dashboard URL
 
 ## SaaS Studio Tour 变体
@@ -298,7 +285,7 @@ SQL dataset 已经存在于 BI 已注册的数据库中。
 
 - 共享只读 raw namespace：`lake.demo_raw`
 - 每个 workspace 独立可写 namespace：`lake.ws_<workspace_id>`
-- SaaS Airflow connection：`duckdb_lever_workbench`
+- SaaS 调度器连接：`duckdb_lever_workbench`
 
 每个用户都应该在独立 workspace 中运行 tour。backend 会按当前 workspace
 渲染 seed 进去的 `docs/data_contract.yaml`，所以输出会写到
@@ -316,6 +303,6 @@ SaaS tour 中不要使用 `raw.*`、`staging.*`、`intermediate.*`、`marts.*`
 这类未限定的物理 schema 名。它们只表示逻辑层级；真实可写边界是 workspace
 namespace。
 
-如果 demo project 或 Airflow DAG 是在 workspace namespace 改造前生成的，
+如果 demo project 或调度器 DAG 是在 workspace namespace 改造前生成的，
 需要重置或重建 demo project，并重新生成 job，确保 DAG 使用
 `lake.ws_<workspace_id>`，而不是旧的硬编码 namespace。

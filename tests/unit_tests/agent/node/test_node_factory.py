@@ -199,18 +199,6 @@ class TestCreateInteractiveNode:
         assert call_kwargs["execution_mode"] == "interactive"
         assert call_kwargs["scope"] == "team-a"
 
-    @patch("datus.agent.node.scheduler_agentic_node.SchedulerAgenticNode.__init__", return_value=None)
-    @patch("datus.agent.node.node_factory._resolve_node_class_type", return_value="scheduler")
-    def test_config_driven_scheduler(self, mock_resolve, mock_init):
-        config = _mock_agent_config()
-        create_interactive_node("etl_scheduler", config, node_id_suffix="_cli", scope="team-a")
-        mock_init.assert_called_once()
-        call_kwargs = mock_init.call_args[1]
-        assert call_kwargs["node_id"] == "etl_scheduler_cli"
-        assert call_kwargs["node_name"] == "etl_scheduler"
-        assert call_kwargs["execution_mode"] == "interactive"
-        assert call_kwargs["scope"] == "team-a"
-
     @patch("datus.agent.node.feedback_agentic_node.FeedbackAgenticNode.__init__", return_value=None)
     def test_feedback_routes_to_feedback_node(self, mock_init):
         """`/feedback` must land on FeedbackAgenticNode, not the gen_sql fallback."""

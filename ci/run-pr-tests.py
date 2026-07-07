@@ -84,7 +84,6 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/storage/test_feedback_store.py",
     "tests/unit_tests/tools/func_tool/test_bi_tools.py",
     "tests/unit_tests/tools/func_tool/test_reference_template_tools.py",
-    "tests/unit_tests/tools/func_tool/test_scheduler_tools.py",
     "tests/unit_tests/tools/func_tool/test_sub_agent_task_tool.py",
     "tests/unit_tests/tools/skill_tools/test_skill.py",
     "tests/unit_tests/utils/test_memory_loader.py",

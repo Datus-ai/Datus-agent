@@ -28,7 +28,6 @@ __all__ = [
     "ExploreAgenticNode",
     "SkillCreatorAgenticNode",
     "GenDashboardAgenticNode",
-    "SchedulerAgenticNode",
     "FeedbackAgenticNode",
     "Node",
 ]
@@ -57,7 +56,6 @@ from .output_node import OutputNode
 from .parallel_node import ParallelNode
 from .reason_sql_node import ReasonSQLNode
 from .reflect_node import ReflectNode
-from .scheduler_agentic_node import SchedulerAgenticNode
 from .schema_linking_node import SchemaLinkingNode
 from .search_metrics_node import SearchMetricsNode
 from .selection_node import SelectionNode

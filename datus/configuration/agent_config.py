@@ -269,7 +269,7 @@ class DbConfig:
 
 @dataclass
 class ServicesConfig:
-    """Structured services configuration: datasources, semantic layer, BI tools, schedulers.
+    """Structured services configuration: datasources, semantic layer, BI tools.
 
     Each datasource is an independent entry.
     """
@@ -277,7 +277,6 @@ class ServicesConfig:
     datasources: Dict[str, DbConfig] = field(default_factory=dict)
     semantic_layer: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     bi_platforms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def default_datasource(self) -> Optional[str]:
@@ -313,7 +312,6 @@ class ServicesConfig:
             datasources={},  # populated by AgentConfig._init_services_config()
             semantic_layer=raw.get("semantic_layer", {}),
             bi_platforms=bi_platforms_raw or {},
-            schedulers=raw.get("schedulers", {}),
         )
 
 
@@ -698,7 +696,6 @@ class AgentConfig:
     _project_name: str
     _trajectory_dir: str
     services: ServicesConfig
-    scheduler_services: Dict[str, Dict[str, Any]]
     semantic_layer_configs: Dict[str, Dict[str, Any]]
     compact: "CompactConfig"
     # Free-form sidecar metadata for ``agent.models`` entries, keyed by
@@ -766,12 +763,17 @@ class AgentConfig:
         # means "no project override" — service resolution falls back to
         # the explicit call-site argument, then the global ``default: true``
         # flag, then the unique-entry shortcut. Validated lazily at the
-        # consumer ( ``BIFuncTool._resolved_platform`` /
-        # ``AgentConfig.get_scheduler_config``) so a missing service name
-        # does not block ``AgentConfig`` construction itself.
+        # consumer (``BIFuncTool._resolved_platform``) so a missing service
+        # name does not block ``AgentConfig`` construction itself.
         self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
-        self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
         self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
+        # Project-level active plugin profile pins forwarded by
+        # ``_apply_project_override`` from ``./.datus/config.yml`` ``plugins:``.
+        # Maps a plugin name to the profile ``datus <plugin>`` should use when
+        # ``--profile`` is omitted. Empty means "no project pin" — profile
+        # resolution then falls back to the ``default: true`` flag / sole entry.
+        _active_plugins_raw = kwargs.get("active_plugins")
+        self._active_plugins: Dict[str, str] = _active_plugins_raw if isinstance(_active_plugins_raw, dict) else {}
         self._runtime_db_context: Dict[str, str] = {}
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
@@ -812,9 +814,27 @@ class AgentConfig:
         self.observability = ObservabilityConfig.from_dict(_resolve_nested_value(kwargs.get("observability")))
         self.agentic_nodes = kwargs.get("agentic_nodes", {})
         self.dashboard_config: Dict[str, DashboardConfig] = {}
-        self.scheduler_services = {}
-        self.scheduler_config: Dict[str, Any] = {}
         self.semantic_layer_configs = {}
+        # ``plugins_enabled`` is the master switch for the datus-plugin
+        # system. When ``False`` no plugin functionality is active: ``datus
+        # <plugin>`` dispatch is refused, plugin-bundled skills are not
+        # discovered, and no plugin context is injected into system prompts.
+        # Intended for API/web deployments where the agent must not be guided
+        # to edit configuration files.
+        self.plugins_enabled = _coerce_bool(kwargs.get("plugins_enabled"), True)
+        # Plugin config: plugin name -> profile name -> profile config dict.
+        # Populated from ``agent.plugins`` by ``init_plugin_services``.
+        self.plugin_services: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        # Raw project-scope bash grants (``.datus/config.yml`` bash_allow),
+        # forwarded by ``_apply_project_override``. Passed to
+        # PermissionManager as an exact-match grant set so a project grant
+        # can bypass an ask-rule hit (merged allow entries cannot).
+        raw_project_bash_allow = kwargs.get("project_bash_allow")
+        self.project_bash_allow: List[str] = (
+            [p for p in raw_project_bash_allow if isinstance(p, str)]
+            if isinstance(raw_project_bash_allow, list)
+            else []
+        )
 
         for name, raw_config in self.agentic_nodes.items():
             if not _SAFE_NAME_RE.match(name):
@@ -851,7 +871,7 @@ class AgentConfig:
             if k != "plan":
                 # Store workflow configuration, supporting both list format and {steps: [], config: {}} format
                 self.custom_workflows[k] = v
-        # Initialize services config (datasources, semantic layer, BI tools, schedulers)
+        # Initialize services config (datasources, semantic layer, BI tools)
         services_raw = kwargs.get("services") or {}
         if not isinstance(services_raw, dict):
             services_raw = {}
@@ -859,7 +879,7 @@ class AgentConfig:
         self._init_services_config(services_raw.get("datasources", {}))
         self.init_semantic_layer(self.services.semantic_layer)
         self.init_dashboard(self.services.bi_platforms)
-        self.init_scheduler_services(self.services.schedulers)
+        self.init_plugin_services(kwargs.get("plugins", {}))
 
         # SaaS mode: skip _init_dirs() because callers want only derived paths here,
         # not full local directory / backend initialization.
@@ -1168,10 +1188,28 @@ class AgentConfig:
             logger.warning(f"Invalid profile {requested_profile!r} in agent.yml: {e}. Falling back to 'normal'.")
             self.active_profile_name = "normal"
 
+        # Bash rules declared by installed plugins for their own CLI
+        # namespaces (``datus <plugin> ...``), keyed by profile name. Stored
+        # so PermissionManager can re-apply them across runtime profile
+        # switches. Additive convenience only — collection failure just means
+        # extra ASK prompts, so it must never block config load.
+        self.plugin_bash_rules = {}
+        if getattr(self, "plugins_enabled", True):
+            try:
+                from datus.plugins.registry import collect_plugin_cli_permissions
+
+                self.plugin_bash_rules = collect_plugin_cli_permissions()
+            except Exception as e:
+                logger.warning(f"Plugin CLI permission collection failed: {e}; continuing without plugin rules")
+
         # Remove the ``profile`` key so the helper only sees user overrides.
         user_raw = {k: v for k, v in permissions_raw.items() if k != "profile"}
         try:
-            return build_effective_config(self.active_profile_name, user_raw)
+            return build_effective_config(
+                self.active_profile_name,
+                user_raw,
+                plugin_bash_rules=self.plugin_bash_rules.get(self.active_profile_name),
+            )
         except Exception as e:
             # Fail closed: malformed ``permissions.rules`` almost always means the
             # user was trying to *tighten* an otherwise permissive profile. If
@@ -1293,72 +1331,68 @@ class AgentConfig:
             return [p["name"] for p in get_files_from_glob_pattern(cfg.path_pattern, cfg.type)]
         return [cfg.database] if cfg.database else []
 
-    def default_scheduler_service(self) -> Optional[str]:
-        defaults = [name for name, cfg in self.scheduler_services.items() if cfg.get("default")]
+    def get_plugin_profile(self, plugin: str, profile: Optional[str] = None) -> Dict[str, Any]:
+        """Resolve the active profile config dict for ``plugin``.
+
+        Resolution order when ``profile`` is not given explicitly:
+        ``--profile`` argument → project pin (``./.datus/config.yml``
+        ``plugins.<plugin>``) → the profile flagged ``default: true`` (more
+        than one is an error) → the sole profile. When the plugin has no
+        ``agent.plugins.<plugin>`` section at all, an empty dict is returned so
+        config-free plugins still run. A plugin with multiple profiles and no
+        way to disambiguate raises, asking the user to pass ``--profile``.
+        """
+        profiles = self.plugin_services.get(plugin) or {}
+
+        if profile:
+            if profile not in profiles:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=(f"No profile named `{profile}` for plugin `{plugin}`. Configured: {sorted(profiles)}"),
+                )
+            return profiles[profile]
+
+        if not profiles:
+            return {}
+
+        pinned = self._active_plugins.get(plugin)
+        if pinned:
+            if pinned in profiles:
+                return profiles[pinned]
+            logger.warning(
+                "Project pin plugins.%s=`%s` is not configured under `agent.plugins.%s`; "
+                "falling back to the default profile.",
+                plugin,
+                pinned,
+                plugin,
+            )
+
+        defaults = [name for name, cfg in profiles.items() if isinstance(cfg, dict) and cfg.get("default")]
         if len(defaults) > 1:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
                 message=(
-                    "Multiple scheduler services are marked with `default: true` in "
-                    "`agent.services.schedulers`. Keep at most one default scheduler."
+                    f"Multiple profiles for plugin `{plugin}` are marked `default: true` in "
+                    f"`agent.plugins.{plugin}`. Keep at most one default profile."
                 ),
             )
         if defaults:
-            return defaults[0]
-        if len(self.scheduler_services) == 1:
-            return next(iter(self.scheduler_services))
-        return None
-
-    def get_scheduler_config(self, service_name: Optional[str] = None) -> Dict[str, Any]:
-        if service_name:
-            if service_name not in self.scheduler_services:
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR,
-                    message=(
-                        f"No scheduler service named `{service_name}` found. "
-                        f"Available: {list(self.scheduler_services.keys())}"
-                    ),
-                )
-            return self.scheduler_services[service_name]
-
-        # Project-level override from ``./.datus/config.yml`` wins over the
-        # global ``default: true`` flag so a project can pin a different
-        # scheduler than the workspace-wide default without rewriting
-        # agent.yml. A stale override (service deleted from agent.yml) is
-        # ignored with a warning so the user sees one clear error rather
-        # than a confusing "no scheduler configured" later.
-        active_override = self._active_scheduler
-        if active_override:
-            if active_override in self.scheduler_services:
-                return self.scheduler_services[active_override]
-            logger.warning(
-                "Project override active_scheduler=`%s` is not configured under "
-                "`agent.services.schedulers`; falling back to global default.",
-                active_override,
-            )
-
-        default_service = self.default_scheduler_service()
-        if default_service:
-            return self.scheduler_services[default_service]
-
-        if not self.scheduler_services:
-            raise DatusException(
-                ErrorCode.COMMON_CONFIG_ERROR,
-                message="No scheduler configured in `agent.services.schedulers`.",
-            )
+            return profiles[defaults[0]]
+        if len(profiles) == 1:
+            return next(iter(profiles.values()))
 
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
-                "Multiple scheduler services are configured in `agent.services.schedulers`, "
-                "set `scheduler_service` on the scheduler node."
+                f"Multiple profiles configured for plugin `{plugin}` and none marked "
+                f"`default: true`; pass --profile <name>. Configured: {sorted(profiles)}"
             ),
         )
 
     def default_dashboard_service(self) -> Optional[str]:
         """Return the dashboard service marked as the global default, or ``None``.
 
-        Mirrors :meth:`default_scheduler_service`: at most one entry under
+        At most one entry under
         ``services.bi_platforms`` may carry ``default: true`` (multiple
         defaults are an explicit error so the user fixes the config rather
         than us silently picking one). When no entry is flagged, fall
@@ -1390,14 +1424,6 @@ class AgentConfig:
         """
         return self._active_dashboard
 
-    def active_scheduler(self) -> Optional[str]:
-        """Return the project-level default scheduler service, or ``None``.
-
-        Read by :meth:`get_scheduler_config` between the explicit
-        ``service_name`` argument and the global ``default: true`` flag.
-        """
-        return self._active_scheduler
-
     def active_semantic(self) -> Optional[str]:
         """Return the project-level default semantic adapter, or ``None``.
 
@@ -1420,16 +1446,6 @@ class AgentConfig:
         self._active_dashboard = cleaned
         if persist:
             self._persist_project_field("dashboard", cleaned)
-
-    def set_active_scheduler(self, name: Optional[str], persist: bool = True) -> None:
-        """Pin (or clear) the project-level default scheduler service.
-
-        Mirrors :meth:`set_active_dashboard` for the scheduler section.
-        """
-        cleaned = (name or "").strip() or None
-        self._active_scheduler = cleaned
-        if persist:
-            self._persist_project_field("scheduler", cleaned)
 
     def set_active_semantic(self, name: Optional[str], persist: bool = True) -> None:
         """Pin (or clear) the project-level default semantic adapter.
@@ -1462,8 +1478,7 @@ class AgentConfig:
     def default_semantic_adapter(self) -> Optional[str]:
         """Return the semantic adapter marked as the global default, or ``None``.
 
-        Mirrors :meth:`default_scheduler_service` /
-        :meth:`default_dashboard_service`: at most one entry under
+        Mirrors :meth:`default_dashboard_service`: at most one entry under
         ``services.semantic_layer`` may carry ``default: true``; multiple
         defaults are rejected here so the user fixes the YAML rather than
         having us silently pick one. Falls back to the single-entry
@@ -2278,30 +2293,33 @@ class AgentConfig:
                 default=bool(auth_params.get("default", False)),
             )
 
-    def init_scheduler_services(self, param: Dict[str, Any]):
-        if not isinstance(param, dict):
+    def init_plugin_services(self, param: Dict[str, Any]):
+        """Parse ``agent.plugins`` into ``self.plugin_services``.
+
+        Shape: ``plugins.<plugin_name>.<profile_name>`` → a config dict. Each
+        profile is ``${VAR}``-expanded up front (mirroring how semantic
+        services are resolved) so a plugin receives fully-resolved
+        values. Malformed entries (non-mapping plugin or profile) are skipped
+        rather than raising — a plugin needs no config at all, and datus must
+        stay startable even when a plugin section is half-written.
+
+        When ``plugins_enabled`` is ``False`` the section is ignored entirely,
+        leaving ``plugin_services`` empty.
+        """
+        self.plugin_services = {}
+        if not self.plugins_enabled or not isinstance(param, dict):
             return
-
-        self.scheduler_services = {}
-        for service_name, raw_config in param.items():
-            if not isinstance(raw_config, dict):
+        for plugin_name, profiles in param.items():
+            if not isinstance(profiles, dict):
                 continue
-            resolved = _resolve_nested_value(raw_config)
-            resolved.setdefault("name", service_name)
-            scheduler_type = str(resolved.get("type") or "").lower().strip()
-            if not scheduler_type:
-                raise DatusException(
-                    ErrorCode.COMMON_CONFIG_ERROR,
-                    message=(
-                        f"Scheduler service `{service_name}` must declare a scheduler `type` in "
-                        f"`agent.services.schedulers.{service_name}`."
-                    ),
-                )
-            resolved["type"] = scheduler_type
-            self.scheduler_services[service_name] = resolved
-
-        default_service = self.default_scheduler_service()
-        self.scheduler_config = self.scheduler_services.get(default_service, {}) if default_service else {}
+            resolved_profiles: Dict[str, Dict[str, Any]] = {}
+            for profile_name, raw_config in profiles.items():
+                if not isinstance(raw_config, dict):
+                    continue
+                resolved = _resolve_nested_value(raw_config)
+                resolved.setdefault("name", profile_name)
+                resolved_profiles[profile_name] = resolved
+            self.plugin_services[plugin_name] = resolved_profiles
 
     def init_semantic_layer(self, param: Dict[str, Any]):
         if not isinstance(param, dict):

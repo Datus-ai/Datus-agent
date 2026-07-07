@@ -296,7 +296,6 @@ codex:
 - `subagents`
 - semantic 节点使用的 `semantic_adapter`
 - dashboard agent 使用的 `bi_platform`
-- scheduler 节点使用的 `scheduler_service`
 
 `scoped_kb_path` 已废弃。新配置使用共享的全局存储，并在查询时应用过滤，而不是为每个 subagent 持有独立 scoped KB 目录。
 
@@ -363,11 +362,6 @@ agent:
       semantic_adapter: metricflow
       max_turns: 30
 
-    etl_scheduler:
-      node_class: scheduler
-      model: claude
-      scheduler_service: airflow_prod
-      max_turns: 30
 ```
 
 > 上下文压缩（在长会话中自动运行的 minor/major 压缩，使会话保持在模型上下文窗口内）通过 `agent.compact` 配置。其工作方式与可调参数见[上下文压缩](compact.md)。

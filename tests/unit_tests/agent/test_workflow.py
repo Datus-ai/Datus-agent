@@ -270,6 +270,40 @@ class TestWorkflow:
         assert loaded_node2.description == "Second node"
         assert loaded_node2.type == NodeType.TYPE_EXECUTE_SQL
 
+    def test_workflow_load_skips_unknown_node_types(self, tmp_path, real_agent_config):
+        """A checkpoint containing a node type that no longer exists (e.g. the
+        removed ``scheduler``) must not fail recovery of the whole workflow."""
+        import yaml
+
+        workflow = Workflow(
+            name="test_workflow", task=SqlTask(task="Recovery with removed node type"), agent_config=real_agent_config
+        )
+        workflow.add_node(Node.new_instance(node_id="node1", description="First node", node_type=NodeType.TYPE_GEN_SQL))
+        workflow.add_node(
+            Node.new_instance(node_id="node2", description="Second node", node_type=NodeType.TYPE_EXECUTE_SQL)
+        )
+        workflow.current_node_index = 1
+        save_path = tmp_path / "test_workflow.yaml"
+        workflow.save(str(save_path))
+
+        # Inject a node with a type this build no longer knows, positioned
+        # BEFORE the resume index so the index shift is exercised too.
+        data = yaml.safe_load(save_path.read_text())
+        legacy_node = dict(data["workflow"]["nodes"][0])
+        legacy_node["id"] = "legacy"
+        legacy_node["type"] = "scheduler"
+        data["workflow"]["nodes"].insert(0, legacy_node)
+        data["workflow"]["node_order"] = ["legacy", "node1", "node2"]
+        data["workflow"]["current_node_index"] = 2
+        save_path.write_text(yaml.safe_dump(data))
+
+        loaded = Workflow.load(str(save_path), agent_config=real_agent_config)
+
+        assert set(loaded.nodes) == {"node1", "node2"}
+        assert loaded.node_order == ["node1", "node2"]
+        # Index shifted left by the one skipped node that preceded it.
+        assert loaded.current_node_index == 1
+
 
 # ---------------------------------------------------------------------------
 # Helper: create a Workflow with _init_tools patched out

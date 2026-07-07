@@ -4,7 +4,7 @@
 
 """Self-contained ``/services`` configuration TUI.
 
-Two-tab picker (Dashboard / Scheduler) modeled on
+Two-tab picker (Dashboard / Semantic) modeled on
 :class:`datus.cli.model_app.ModelApp`. The whole interaction — list,
 adapter-type picker, credential form — lives inside **one**
 prompt_toolkit Application so the outer :class:`DatusApp` only needs to
@@ -57,7 +57,6 @@ logger = get_logger(__name__)
 # (e.g. when a private adapter is registered before the TUI opens).
 _BUILTIN_TYPES: Dict[str, Tuple[str, ...]] = {
     "bi_platforms": ("superset", "grafana"),
-    "schedulers": ("airflow",),
     "semantic_layer": ("metricflow",),
 }
 
@@ -67,16 +66,14 @@ _MASKED_PLACEHOLDER = "••••••••"
 
 class _Tab(Enum):
     DASHBOARD = "dashboard"
-    SCHEDULER = "scheduler"
     SEMANTIC = "semantic"
 
 
-_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.DASHBOARD, _Tab.SCHEDULER, _Tab.SEMANTIC)
+_TAB_CYCLE: Tuple[_Tab, ...] = (_Tab.DASHBOARD, _Tab.SEMANTIC)
 
 
 _SECTION_OF: Dict[_Tab, str] = {
     _Tab.DASHBOARD: "bi_platforms",
-    _Tab.SCHEDULER: "schedulers",
     _Tab.SEMANTIC: "semantic_layer",
 }
 
@@ -103,8 +100,7 @@ class ServiceConfigSelection:
     - ``"delete"`` — caller should drop ``services.<section>.<name>``.
     - ``"test"`` — caller should run a connection probe against the
       already-saved entry and surface the result.
-    - ``"set_default"`` — flip the global ``default: true`` flag (only
-      issued from the Scheduler tab).
+    - ``"set_default"`` — flip the global ``default: true`` flag.
     """
 
     action: str
@@ -116,11 +112,12 @@ class ServiceConfigSelection:
 @dataclass
 class _Entry:
     """Row in the LIST view — pre-flattened from ``DashboardConfig`` /
-    ``scheduler_services``. Built by :meth:`ServiceConfigApp._load_entries`."""
+    ``semantic_layer_configs``. Built by :meth:`ServiceConfigApp._reload_entries`
+    (which delegates to ``_build_dashboard_entries`` / ``_build_semantic_entries``)."""
 
     name: str
     adapter_type: str
-    is_default: bool  # global ``default: true`` (scheduler) or single-entry
+    is_default: bool  # global ``default: true`` flag
     is_project_default: bool  # project-level pin from .datus/config.yml
     raw: Dict[str, Any]
 
@@ -149,10 +146,8 @@ class ServiceConfigApp:
         self._cfg = agent_config
         self._console = console
         self._extra_types = extra_types or {}
-        if initial_tab == "scheduler":
-            self._tab: _Tab = _Tab.SCHEDULER
-        elif initial_tab == "semantic":
-            self._tab = _Tab.SEMANTIC
+        if initial_tab == "semantic":
+            self._tab: _Tab = _Tab.SEMANTIC
         else:
             self._tab = _Tab.DASHBOARD
         self._view: _View = _View.LIST
@@ -177,7 +172,6 @@ class ServiceConfigApp:
         # Cached per-tab snapshots so the LIST view paints without
         # recomputing on every render.
         self._dashboard_entries: List[_Entry] = []
-        self._scheduler_entries: List[_Entry] = []
         self._semantic_entries: List[_Entry] = []
         self._reload_entries()
 
@@ -195,7 +189,6 @@ class ServiceConfigApp:
         )
         self._fld_datasource_ref = TextArea(height=1, multiline=False, prompt="datasource_ref:  ", focus_on_click=True)
         self._fld_bi_database = TextArea(height=1, multiline=False, prompt="bi_database_name:", focus_on_click=True)
-        self._fld_dags_folder = TextArea(height=1, multiline=False, prompt="dags_folder:     ", focus_on_click=True)
 
         term_height = shutil.get_terminal_size((120, 40)).lines
         # title(1) + tabs(1) + 2 sep(2) + error(1) + status(1) + footer(1) = 7
@@ -282,7 +275,6 @@ class ServiceConfigApp:
 
     def _reload_entries(self) -> None:
         self._dashboard_entries = self._build_dashboard_entries()
-        self._scheduler_entries = self._build_scheduler_entries()
         self._semantic_entries = self._build_semantic_entries()
 
     def _build_dashboard_entries(self) -> List[_Entry]:
@@ -321,25 +313,6 @@ class ServiceConfigApp:
             )
         return out
 
-    def _build_scheduler_entries(self) -> List[_Entry]:
-        services = getattr(self._cfg, "scheduler_services", {}) or {}
-        active_fn = getattr(self._cfg, "active_scheduler", None)
-        active = active_fn() if callable(active_fn) else None
-        out: List[_Entry] = []
-        for name in sorted(services.keys()):
-            cfg = dict(services[name])
-            adapter_type = str(cfg.get("type") or "").strip().lower() or name
-            out.append(
-                _Entry(
-                    name=name,
-                    adapter_type=adapter_type,
-                    is_default=bool(cfg.get("default")),
-                    is_project_default=(name == active),
-                    raw=cfg,
-                )
-            )
-        return out
-
     def _build_semantic_entries(self) -> List[_Entry]:
         # ``init_semantic_layer`` already enforces ``key == type`` and
         # resolves env vars, so iterating ``semantic_layer_configs`` is
@@ -366,8 +339,6 @@ class ServiceConfigApp:
     def _entries_for(self, tab: _Tab) -> List[_Entry]:
         if tab == _Tab.DASHBOARD:
             return self._dashboard_entries
-        if tab == _Tab.SCHEDULER:
-            return self._scheduler_entries
         return self._semantic_entries
 
     # ─────────────────────────────────────────────────────────────────
@@ -406,22 +377,12 @@ class ServiceConfigApp:
                 self._fld_bi_database,
             ]
         )
-        scheduler_form = HSplit(
-            [
-                Window(FormattedTextControl(self._render_form_header, focusable=False), height=Dimension(min=1, max=3)),
-                self._fld_name,
-                self._fld_api_base_url,
-                self._fld_username,
-                self._fld_password,
-                self._fld_dags_folder,
-            ]
-        )
 
         def _body_container():
             if self._view == _View.TYPE_PICKER:
                 return type_window
             if self._view == _View.FORM:
-                return bi_form if self._form_section == "bi_platforms" else scheduler_form
+                return bi_form
             return list_window
 
         body = DynamicContainer(_body_container)
@@ -466,7 +427,6 @@ class ServiceConfigApp:
         parts: List[Tuple[str, str]] = [("", "  ")]
         for tab, label in (
             (_Tab.DASHBOARD, " Dashboard "),
-            (_Tab.SCHEDULER, " Scheduler "),
             (_Tab.SEMANTIC, " Semantic "),
         ):
             style = "reverse bold" if tab == self._tab else ""
@@ -525,8 +485,6 @@ class ServiceConfigApp:
         self._type_cursor = max(0, min(self._type_cursor, len(self._type_choices) - 1))
         if self._tab == _Tab.DASHBOARD:
             section_label = "BI dashboard"
-        elif self._tab == _Tab.SCHEDULER:
-            section_label = "scheduler"
         else:
             section_label = "semantic layer"
         lines: List[Tuple[str, str]] = [
@@ -544,7 +502,7 @@ class ServiceConfigApp:
 
     def _render_form_header(self) -> List[Tuple[str, str]]:
         verb = "Edit" if self._form_is_edit else "Create"
-        section_label = "BI dashboard" if self._form_section == "bi_platforms" else "scheduler"
+        section_label = "BI dashboard"
         type_label = self._form_type or "(?)"
         return [
             ("bold", f"  {verb} {section_label}: type={type_label}\n"),
@@ -638,7 +596,6 @@ class ServiceConfigApp:
             self._fld_api_key,
             self._fld_datasource_ref,
             self._fld_bi_database,
-            self._fld_dags_folder,
         ):
             ta.text = ""
         self._fld_name.text = adapter_type  # convenient default
@@ -665,36 +622,24 @@ class ServiceConfigApp:
         # placeholder before overwriting.
         self._fld_password.text = _MASKED_PLACEHOLDER if raw.get("password") else ""
         self._fld_api_key.text = _MASKED_PLACEHOLDER if raw.get("api_key") else ""
-        if self._form_section == "bi_platforms":
-            dsdb = raw.get("dataset_db") or {}
-            self._fld_datasource_ref.text = str(dsdb.get("datasource_ref", "") or "")
-            self._fld_bi_database.text = str(dsdb.get("bi_database_name") or "")
-        else:
-            self._fld_dags_folder.text = str(raw.get("dags_folder", "") or "")
+        dsdb = raw.get("dataset_db") or {}
+        self._fld_datasource_ref.text = str(dsdb.get("datasource_ref", "") or "")
+        self._fld_bi_database.text = str(dsdb.get("bi_database_name") or "")
         # See ``_enter_form_for_new`` — switch view before focusing.
         self._view = _View.FORM
         self._wire_form_focus()
         self._error_message = None
 
     def _wire_form_focus(self) -> None:
-        if self._form_section == "bi_platforms":
-            self._form_focus_order = [
-                self._fld_name,
-                self._fld_api_base_url,
-                self._fld_username,
-                self._fld_password,
-                self._fld_api_key,
-                self._fld_datasource_ref,
-                self._fld_bi_database,
-            ]
-        else:
-            self._form_focus_order = [
-                self._fld_name,
-                self._fld_api_base_url,
-                self._fld_username,
-                self._fld_password,
-                self._fld_dags_folder,
-            ]
+        self._form_focus_order = [
+            self._fld_name,
+            self._fld_api_base_url,
+            self._fld_username,
+            self._fld_password,
+            self._fld_api_key,
+            self._fld_datasource_ref,
+            self._fld_bi_database,
+        ]
         self._form_focus_idx = 0
         self._focus(self._form_focus_order[0])
 
@@ -707,10 +652,7 @@ class ServiceConfigApp:
         if not name:
             self._error_message = "name is required"
             return
-        if self._form_section == "bi_platforms":
-            payload = self._build_bi_payload()
-        else:
-            payload = self._build_scheduler_payload()
+        payload = self._build_bi_payload()
         if payload is None:
             return  # error already set
         # Reject collisions on add (edit is allowed to keep the same name).
@@ -754,21 +696,6 @@ class ServiceConfigApp:
             if bi_database:
                 dataset_db["bi_database_name"] = bi_database
             payload["dataset_db"] = dataset_db
-        return payload
-
-    def _build_scheduler_payload(self) -> Optional[Dict[str, Any]]:
-        api_base_url = self._fld_api_base_url.text.strip()
-        password = self._read_secret(self._fld_password.text, edit=self._form_is_edit, key="password")
-        payload: Dict[str, Any] = {
-            "type": self._form_type,
-            "api_base_url": api_base_url,
-            "username": self._fld_username.text.strip(),
-        }
-        if password is not None:
-            payload["password"] = password
-        dags_folder = self._fld_dags_folder.text.strip()
-        if dags_folder:
-            payload["dags_folder"] = dags_folder
         return payload
 
     @staticmethod

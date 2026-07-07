@@ -693,7 +693,6 @@ dependencies = [
     { name = "charset-normalizer" },
     { name = "datus-bi-core" },
     { name = "datus-db-core" },
-    { name = "datus-scheduler-core" },
     { name = "datus-semantic-core" },
     { name = "datus-storage-base" },
     { name = "defusedxml" },
@@ -773,7 +772,6 @@ requires-dist = [
     { name = "charset-normalizer", specifier = ">=3.4.2" },
     { name = "datus-bi-core", specifier = ">=0.1.2" },
     { name = "datus-db-core", specifier = ">=0.1.4" },
-    { name = "datus-scheduler-core", specifier = ">=0.1.1" },
     { name = "datus-semantic-core", specifier = ">=0.2.0" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
@@ -920,18 +918,6 @@ wheels = [
 snowflake = [
     { name = "snowflake-connector-python" },
     { name = "snowflake-sqlalchemy" },
-]
-
-[[package]]
-name = "datus-scheduler-core"
-version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c2/07/122db09074a25db1dc29475044abc5fb2eb5dbd4a461063738c5762f492a/datus_scheduler_core-0.1.1.tar.gz", hash = "sha256:15eb35fbec842c6ba60f6e7d36ab105a581cd8e3739061313e1c0df946e62b73", size = 9252, upload-time = "2026-04-24T09:33:20.306Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/c6/8de2c93f13b243993bd5830a6f4149ce41b6f8fe1fc8f4c6bd04a791f6ec/datus_scheduler_core-0.1.1-py3-none-any.whl", hash = "sha256:87072bbc88844726876b0e5347f08d919c322cc91398bdd069fbfdebaf165903", size = 11953, upload-time = "2026-04-24T09:33:18.889Z" },
 ]
 
 [[package]]

@@ -39,8 +39,10 @@ class _FakeBITool:
 
 
 class TestReadMethodsAllowList:
-    def test_allowlist_covers_three_service_types(self):
-        assert set(READ_METHODS.keys()) == {"bi_platforms", "schedulers", "semantic_layer"}
+    def test_allowlist_covers_service_types(self):
+        # Schedulers are no longer dispatched as in-process tools, so they
+        # are intentionally absent from the read-only allow-list.
+        assert set(READ_METHODS.keys()) == {"bi_platforms", "semantic_layer"}
 
     def test_no_write_methods_leak(self):
         write_prefixes = ("create_", "update_", "delete_", "write_", "submit_", "add_")
@@ -180,12 +182,6 @@ class TestServiceClientAvailableToolsFilter:
         assert names == ["list_dashboards"]
 
 
-class _FakeSchedulerTool:
-    def list_scheduler_jobs(self):
-        """List scheduled jobs."""
-        return {"success": 1, "result": []}
-
-
 class _FakeSemanticTool:
     def list_metrics(self):
         """List available metrics."""
@@ -200,20 +196,22 @@ class TestServiceClientRegistry:
         assert registry.has("nothing") is False
 
     def test_discover_lists_all_service_types(self):
+        # Schedulers are no longer discovered/constructed by the registry
+        # (``_FACTORIES`` only covers bi_platforms + semantic_layer), so a
+        # configured scheduler must not appear in ``list_services()``.
         cfg = _fake_agent_config(
             bi_platforms={"superset": {"api_base_url": "x"}, "grafana": {"api_base_url": "y"}},
-            schedulers={"airflow": {"type": "airflow"}},
+            schedulers={"hello": {"type": "hello"}},
             semantic_layer={"metricflow": {"datasource": "x"}},
         )
-        always_available = {k: (lambda c, n: True) for k in ("bi_platforms", "schedulers", "semantic_layer")}
+        always_available = {k: (lambda c, n: True) for k in ("bi_platforms", "semantic_layer")}
         with patch.dict("datus.cli.service_client._PROBES", always_available):
             registry = ServiceClientRegistry(cfg)
             rows = registry.list_services()
         names = {r[0] for r in rows}
         types = {r[0]: r[1] for r in rows}
-        assert names == {"superset", "grafana", "airflow", "metricflow"}
+        assert names == {"superset", "grafana", "metricflow"}
         assert types["superset"] == "bi_platforms"
-        assert types["airflow"] == "schedulers"
         assert types["metricflow"] == "semantic_layer"
         # All "configured" at list time — adapter available, client not yet built.
         assert all(r[2] == "configured" for r in rows)
@@ -260,15 +258,14 @@ class TestServiceClientRegistry:
             # Still listed — the name is configured; it just fails to build.
             assert registry.list_services()[0][0] == "broken"
 
-    def test_scheduler_factory_wired(self):
-        cfg = _fake_agent_config(schedulers={"airflow": {"type": "airflow"}})
-        factory = MagicMock(return_value=_FakeSchedulerTool())
-        with patch.dict("datus.cli.service_client._FACTORIES", {"schedulers": factory}):
-            registry = ServiceClientRegistry(cfg)
-            client = registry.get("airflow")
-            assert isinstance(client, ServiceClient)
-            assert client.service_type == "schedulers"
-            factory.assert_called_once_with(cfg, "airflow")
+    def test_scheduler_config_is_not_discovered(self):
+        # Schedulers were removed from ``_FACTORIES``; even when configured,
+        # the registry must not surface or construct a scheduler client.
+        cfg = _fake_agent_config(schedulers={"hello": {"type": "hello"}})
+        registry = ServiceClientRegistry(cfg)
+        assert registry.list_services() == []
+        assert registry.get("hello") is None
+        assert registry.has("hello") is False
 
     def test_semantic_factory_wired(self):
         cfg = _fake_agent_config(semantic_layer={"metricflow": {}})
@@ -456,40 +453,6 @@ class TestAdapterProbes:
         with patch.dict("sys.modules", {"datus_bi_core": stub_module}):
             assert _probe_bi_adapter(None, "superset") is False
 
-    def test_scheduler_probe_checks_platform_registration(self):
-        """Platform adapter missing → probe returns False.
-
-        ``datus-scheduler-core`` is a hard dep and always importable; the
-        real-world gap is the platform-specific package (e.g.
-        ``datus-scheduler-airflow``) that registers the adapter into
-        ``SchedulerAdapterRegistry``.
-        """
-        from datus.cli.service_client import _probe_scheduler_adapter
-
-        mock_registry = MagicMock()
-        mock_registry.get_adapter_class.return_value = None
-        mock_registry.has_adapter.return_value = None
-        mock_registry.get.return_value = None
-        cfg = SimpleNamespace(
-            get_scheduler_config=lambda name: {"type": "airflow"},
-        )
-        with patch("datus.cli.service_client.SchedulerAdapterRegistry", mock_registry):
-            assert _probe_scheduler_adapter(cfg, "airflow_local") is False
-
-    def test_scheduler_probe_returns_true_when_platform_registered(self):
-        from datus.cli.service_client import _probe_scheduler_adapter
-
-        mock_registry = MagicMock()
-        mock_registry.get_adapter_class.return_value = object()
-        cfg = SimpleNamespace(
-            get_scheduler_config=lambda name: {"type": "airflow"},
-        )
-        with patch("datus.cli.service_client.SchedulerAdapterRegistry", mock_registry):
-            assert _probe_scheduler_adapter(cfg, "airflow_local") is True
-            # The getter was asked about the platform from the config, not the
-            # service name (which is only a user-chosen alias).
-            mock_registry.get_adapter_class.assert_called_with("airflow")
-
     def test_probe_helper_defensive_on_exception(self):
         from datus.cli.service_client import _probe
 
@@ -502,23 +465,25 @@ class TestAdapterProbes:
 
 class TestRegistryFactoriesWired:
     def test_registry_uses_expected_factories(self):
-        """Registry honors the mocked factory for each service type."""
+        """Registry honors the mocked factory for each service type.
+
+        Schedulers are intentionally omitted — they are no longer wired
+        into ``_FACTORIES`` — so a configured scheduler is never built.
+        """
         cfg = _fake_agent_config(
             bi_platforms={"s1": {}},
             schedulers={"s2": {}},
             semantic_layer={"s3": {}},
         )
         bi_factory = MagicMock(return_value=MagicMock(spec=[]))
-        sched_factory = MagicMock(return_value=MagicMock(spec=[]))
         sem_factory = MagicMock(return_value=MagicMock(spec=[]))
         with patch.dict(
             "datus.cli.service_client._FACTORIES",
-            {"bi_platforms": bi_factory, "schedulers": sched_factory, "semantic_layer": sem_factory},
+            {"bi_platforms": bi_factory, "semantic_layer": sem_factory},
         ):
             registry = ServiceClientRegistry(cfg)
             registry.get("s1")
-            registry.get("s2")
+            assert registry.get("s2") is None  # scheduler not discoverable
             registry.get("s3")
             bi_factory.assert_called_once()
-            sched_factory.assert_called_once()
             sem_factory.assert_called_once()

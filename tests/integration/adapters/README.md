@@ -53,7 +53,7 @@ docker compose down -v
 
 Several adapters use default ports that are commonly occupied:
 - postgresql (5432) — conflicts with any local Postgres / superset-db
-- trino (8080) — conflicts with Airflow / many web dev servers
+- trino (8080) — conflicts with many web dev servers
 - starrocks (9030) — conflicts with existing StarRocks instances
 - hive / spark (10000) — both default to the HiveServer2/Spark Thrift port; run one suite at a time or remap one service
 

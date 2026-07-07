@@ -235,10 +235,6 @@ class TestRegistryRouting:
             "list_metrics",
             "query_metrics",
             "validate_semantic",
-            # gen / scheduler
-            "submit_sql_job",
-            "list_scheduler_jobs",
-            "get_run_log",
             # context / template
             "list_subject_tree",
             "search_reference_template",
@@ -255,7 +251,7 @@ class TestRegistryRouting:
         }
         missing = must_have - names
         assert not missing, f"Registry missing formatters for: {sorted(missing)}"
-        assert len(names) >= 80, f"Expected ~85 formatters, only got {len(names)}"
+        assert len(names) >= 70, f"Expected ~74 formatters, only got {len(names)}"
 
 
 # ── Per-tool formatters (success path) ─────────────────────────────────
@@ -536,66 +532,6 @@ class TestGenerationFormatters:
         assert out == "1 metric cand + da…"
 
 
-class TestSchedulerFormatters:
-    def test_submit_sql_job(self):
-        out = _summarize(
-            "submit_sql_job",
-            {"success": 1, "result": {"job_id": "dag_42", "job_name": "daily_etl", "status": "submitted"}},
-        )
-        assert out == "+job dag_42"
-
-    def test_submit_sparksql_job(self):
-        out = _summarize(
-            "submit_sparksql_job",
-            {"success": 1, "result": {"job_id": "spark_1", "job_name": "agg"}},
-        )
-        assert out == "+spark spark_1"
-
-    def test_trigger_scheduler_job(self):
-        out = _summarize(
-            "trigger_scheduler_job",
-            {"success": 1, "result": {"run_id": "r99", "job_id": "dag_42", "status": "running"}},
-        )
-        assert out == "dag_42→r99"
-
-    def test_get_scheduler_job_found(self):
-        out = _summarize(
-            "get_scheduler_job",
-            {"success": 1, "result": {"found": True, "job_id": "j", "job_name": "daily", "status": "active"}},
-        )
-        assert out == "daily: active"
-
-    def test_get_scheduler_job_not_found(self):
-        out = _summarize(
-            "get_scheduler_job",
-            {"success": 1, "result": {"found": False, "job_id": "ghost"}},
-        )
-        assert out == "ghost not found"
-
-    def test_list_scheduler_jobs(self):
-        out = _summarize(
-            "list_scheduler_jobs",
-            {"success": 1, "result": {"items": [{"job_name": "a"}, {"job_name": "b"}], "total": 2, "has_more": False}},
-        )
-        assert out == "2 jobs"
-
-    def test_pause_resume_delete_update(self):
-        for tool in ("pause_job", "resume_job", "delete_job", "update_job"):
-            assert _summarize(tool, {"success": 1, "result": {"job_id": "x", "status": "paused"}}).endswith("x")
-
-    def test_get_run_log_with_lines(self):
-        log = "line1\nline2\nline3"
-        out = _summarize("get_run_log", {"success": 1, "result": {"run_id": "r1", "log": log}})
-        assert out == "r1: 3 lines"
-
-    def test_list_scheduler_connections(self):
-        out = _summarize(
-            "list_scheduler_connections",
-            {"success": 1, "result": {"total": 4, "connections": []}},
-        )
-        assert out == "4 connections"
-
-
 class TestContextSearchFormatters:
     def test_list_subject_tree_aggregates_total_count(self):
         tree = {
@@ -871,7 +807,6 @@ class TestPlatformDocFormatters:
     [
         "read_query",
         "list_metrics",
-        "submit_sql_job",
         "ask_user",
         "task",
         "list_document_nav",
@@ -940,12 +875,6 @@ def test_failure_path_uniform(tool: str):
             {"data_profiled": False, "tables": {"orders": {}}},
             "1 table profiled",
         ),
-        # Scheduler fallbacks
-        ("submit_sql_job", {"job_id": "j"}, "+job j"),
-        ("submit_sparksql_job", {"job_id": "j2"}, "+spark j2"),
-        ("trigger_scheduler_job", {"job_id": "j3"}, "trig j3"),
-        ("get_scheduler_job", {"job_id": "j4"}, "job j4"),
-        ("get_run_log", {"run_id": "r2"}, "log: r2"),
         # Context search fallbacks
         ("get_metrics", [{"name": "a"}, {"name": "b"}], "2 metrics"),
         ("get_reference_sql", [{"name": "s"}], "1 SQL"),
@@ -969,7 +898,6 @@ def test_failure_path_uniform(tool: str):
         ("task", {"sql_summary_file": "x"}, "SQL summary saved"),
         ("task", {"report_result": {}}, "report ready"),
         ("task", {"skill_path": "/tmp", "skill_name": "x"}, 'skill "x" generated'),
-        ("task", {"scheduler_result": {}}, "scheduler updated"),
         ("task", {"items_saved": 3}, "feedback saved"),
         # Platform docs fallbacks
         ("list_document_nav", {"total_docs": 5}, "5 docs"),
@@ -1049,21 +977,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("analyze_column_usage_patterns", {"column_patterns": {str(i): {} for i in range(99)}}),
     ("profile_semantic_model_evidence", {"data_profiled": True, "tables": {str(i): {} for i in range(99)}}),
     ("get_multiple_tables_ddl", [{}] * 99),
-    # scheduler
-    ("submit_sql_job", {"job_id": "very_long_job_id_here"}),
-    ("submit_sparksql_job", {"job_id": "very_long_spark_id_here"}),
-    ("trigger_scheduler_job", {"job_id": "long_job", "run_id": "long_run"}),
-    ("get_scheduler_job", {"found": True, "job_id": "j", "job_name": "long_name", "status": "running"}),
-    ("get_scheduler_job", {"found": False, "job_id": "very_long_job_id"}),
-    ("list_scheduler_jobs", {"items": [{}] * 99, "total": 9999, "has_more": True}),
-    ("pause_job", {"job_id": "very_long_job_id_here"}),
-    ("resume_job", {"job_id": "very_long_job_id_here"}),
-    ("delete_job", {"job_id": "very_long_job_id_here"}),
-    ("delete_scheduler_job", {"job_id": "very_long_job_id_here"}),
-    ("update_job", {"job_id": "very_long_job_id_here"}),
-    ("list_job_runs", {"items": [{}] * 99}),
-    ("get_run_log", {"run_id": "very_long_run_id", "log": "line\n" * 999}),
-    ("list_scheduler_connections", {"total": 99999}),
     # context search
     ("list_subject_tree", {"a": {"metrics": ["m"] * 999}}),
     ("get_metrics", {"name": "very_long_metric_name_here"}),

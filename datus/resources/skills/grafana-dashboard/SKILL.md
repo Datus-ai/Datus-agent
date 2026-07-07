@@ -156,7 +156,7 @@ the agent run ends.
 1. **Data movement is outside scope.** If the target table doesn't exist in
    the Grafana datasource, stop and return a structured error naming the
    missing table. The caller must prepare or refresh data separately with
-   `gen_job` or `scheduler` before retrying dashboard creation.
+   `gen_job` before retrying dashboard creation.
 2. **Chart SQL must reference tables the Grafana datasource can see** — never
    use source-warehouse table names in `create_chart(sql=...)`.
 3. **`dashboard_id` is required** for `create_chart` — create the dashboard before creating charts.

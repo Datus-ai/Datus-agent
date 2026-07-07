@@ -29,9 +29,6 @@ name: report-generator
 description: Generate analysis reports from SQL query results with multiple output formats (HTML, Markdown, JSON)
 tags: [report, analysis, visualization, export]
 version: "1.0.0"
-allowed_commands:
-  - "python:scripts/*.py"
-  - "sh:scripts/*.sh"
 ---
 
 # Report Generator Skill
@@ -295,7 +292,6 @@ This skill runs in an isolated Explore subagent for thorough investigation.
 | `description` | 是 | 在可用技能列表中显示的简短描述 |
 | `tags` | 否 | 用于分类的标签列表 |
 | `version` | 否 | 语义版本字符串 |
-| `allowed_commands` | 否 | 允许的脚本模式列表 |
 | `context` | 否 | 设为 `"fork"` 以在 subagent 中运行 |
 | `agent` | 否 | Subagent 类型：`Explore`、`Plan`、`general-purpose` |
 | `disable_model_invocation` | 否 | 如为 true，仅用户可调用 |
@@ -328,12 +324,6 @@ prefix:glob_pattern
 1. 检查技能目录是否在 `skills.directories` 配置中
 2. 验证 SKILL.md 具有有效的 YAML frontmatter（在 `---` 标记之间）
 3. `name` 和 `description` 字段都是必需的
-
-### 脚本执行被拒绝
-
-1. 验证命令是否匹配 `allowed_commands` 模式
-2. 确保先通过 `load_skill()` 加载了技能
-3. 检查模式格式：`prefix:glob_pattern`
 
 ### 调试日志
 
@@ -466,7 +456,7 @@ datus skill publish ./skills/sql-optimization --marketplace http://datus-marketp
 
 - 目录必须包含带有 YAML frontmatter 的有效 `SKILL.md`
 - 必需的 frontmatter 字段：`name`、`description`
-- 推荐字段：`version`、`tags`、`allowed_commands`、`license`
+- 推荐字段：`version`、`tags`、`license`
 
 `SKILL.md` 示例：
 
@@ -479,9 +469,6 @@ version: "1.0.0"
 license: Apache-2.0
 compatibility:
   datus: ">=0.2.0"
-allowed_commands:
-  - "python:scripts/*.py"
-  - "sh:scripts/*.sh"
 ---
 
 # SQL Optimization Skill
@@ -555,8 +542,6 @@ name: my-etl-helper
 description: Helper utilities for ETL pipeline development
 tags: [etl, pipeline, data-engineering]
 version: "1.0.0"
-allowed_commands:
-  - "python:scripts/*.py"
 ---
 
 # ETL Helper Skill

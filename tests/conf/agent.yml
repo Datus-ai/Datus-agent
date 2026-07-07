@@ -125,7 +125,7 @@ agent:
       system_prompt: gen_sql
       prompt_language: en
       max_turns: 30
-      tools: db_tools.*, context_search_tools.*, filesystem_tools.*, scheduler_tools.*
+      tools: db_tools.*, context_search_tools.*, filesystem_tools.*
       agent_description: "You are a specialized AI assistant for SQL generation"
       rules:
         - Use filesystem tools to read SQL files from the current directory (*/*.sql) as reference examples
@@ -138,7 +138,7 @@ agent:
       system_prompt: gen_sql
       prompt_language: en
       max_turns: 30
-      tools: db_tools.*, context_search_tools.*, filesystem_tools.*, scheduler_tools.*
+      tools: db_tools.*, context_search_tools.*, filesystem_tools.*
       agent_description: "You are a specialized AI assistant for SQL generation"
       rules:
         - Use filesystem tools to read SQL files from the current directory (*/*.sql) as reference examples
@@ -238,16 +238,6 @@ agent:
         password: admin
         extra:
           provider: db
-    schedulers:
-      airflow_local:
-        name: airflow_local
-        type: airflow
-        api_base_url: http://localhost:8080/api/v1
-        username: admin
-        password: admin123
-        dags_folder: /tmp/dags
-        dag_discovery_timeout: 60
-        dag_discovery_poll_interval: 5
   storage:
     base_path: data
     embedding_device_type: cpu

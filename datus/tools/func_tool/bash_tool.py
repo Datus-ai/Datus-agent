@@ -62,8 +62,7 @@ class BashTool:
     ``allowed_patterns`` semantics:
     - ``None`` or ``[]``: no commands are allowed; ``available_tools()``
       returns an empty list, so the tool is effectively hidden. This is
-      the safe default and matches the legacy SkillBashTool behavior for
-      skills without ``allowed_commands``.
+      the safe default.
     - non-empty list: commands are filtered through ``_is_command_allowed``.
 
     Execution model:
@@ -152,6 +151,19 @@ class BashTool:
         use absolute paths instead of relying on ``cd``. Commands cannot read
         stdin (it is closed), so interactive prompts / ``read`` return EOF
         immediately rather than hanging.
+
+        IMPORTANT — one simple command per call. Compound commands (``;``,
+        ``&&``, ``$()``, ``${}``, backticks, redirection) ALWAYS require
+        manual user confirmation and can never be auto-approved, while a
+        plain single command can auto-run when it matches an allow rule. So
+        instead of chaining, split the work into separate calls and pass
+        LITERAL argument values: run the producing command first (e.g.
+        ``date -u +%Y%m%dT%H%M%SZ``), read its output, then paste that value
+        verbatim into the next command. Never define-and-reference shell
+        variables across or within calls — each call is a fresh shell, so
+        ``$VAR`` from a previous call expands to an empty string anyway.
+        Read-only pipelines (``cat log | grep err``) are the one chaining
+        form that can still auto-run.
 
         Prefer the dedicated tools when they fit — they are safer (scoped to
         the project via the filesystem policy) and produce cleaner, reviewable

@@ -212,8 +212,8 @@ class TestAllowedKeys:
                 "target",
                 "default_datasource",
                 "dashboard",
-                "scheduler",
                 "semantic",
+                "plugins",
                 "project_name",
                 "language",
                 "reasoning_effort",
@@ -232,8 +232,8 @@ class TestProjectOverrideDataclass:
             ("target", "x"),
             ("default_datasource", "y"),
             ("dashboard", "superset"),
-            ("scheduler", "airflow"),
             ("semantic", "metricflow"),
+            ("plugins", {"hello": "prod"}),
             ("project_name", "z"),
             ("language", "zh"),
             ("reasoning_effort", "high"),
@@ -245,31 +245,24 @@ class TestProjectOverrideDataclass:
 
 
 class TestServiceDefaultFields:
-    """``dashboard`` / ``scheduler`` / ``semantic`` overrides — project-level
-    pins for the three service sections. Loaded by
-    ``_apply_project_override`` and surfaced via
-    ``AgentConfig.active_dashboard()`` / ``active_scheduler()`` /
-    ``active_semantic()``."""
+    """``dashboard`` / ``semantic`` overrides — project-level pins for the
+    service sections. Loaded by ``_apply_project_override`` and surfaced via
+    ``AgentConfig.active_dashboard()`` / ``active_semantic()``."""
 
-    def test_load_all_three_service_pins(self, tmp_path):
+    def test_load_all_service_pins(self, tmp_path):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
-        path.write_text(
-            yaml.safe_dump({"dashboard": "superset_prod", "scheduler": "airflow", "semantic": "metricflow"})
-        )
+        path.write_text(yaml.safe_dump({"dashboard": "superset_prod", "semantic": "metricflow"}))
         result = load_project_override(str(tmp_path))
         assert result.dashboard == "superset_prod"
-        assert result.scheduler == "airflow"
         assert result.semantic == "metricflow"
-        assert not result.is_empty()
 
-    def test_load_dashboard_and_scheduler(self, tmp_path):
+    def test_load_dashboard_only(self, tmp_path):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"dashboard": "superset_prod", "scheduler": "airflow"}))
+        path.write_text(yaml.safe_dump({"dashboard": "superset_prod"}))
         result = load_project_override(str(tmp_path))
         assert result.dashboard == "superset_prod"
-        assert result.scheduler == "airflow"
         assert result.semantic is None
         assert not result.is_empty()
 
@@ -291,7 +284,7 @@ class TestServiceDefaultFields:
         assert "semantic" in warning_text
 
     def test_save_round_trip_with_semantic(self, tmp_path):
-        original = ProjectOverride(dashboard="superset", scheduler="airflow", semantic="metricflow")
+        original = ProjectOverride(dashboard="superset", semantic="metricflow")
         save_project_override(original, cwd=str(tmp_path))
         loaded = load_project_override(str(tmp_path))
         assert loaded == original
@@ -303,18 +296,18 @@ class TestServiceDefaultFields:
         result = load_project_override(str(tmp_path))
         assert result.dashboard is None
 
-    def test_non_string_scheduler_dropped(self, tmp_path, caplog):
+    def test_non_string_dashboard_dropped(self, tmp_path, caplog):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"scheduler": 42}))
+        path.write_text(yaml.safe_dump({"dashboard": 42}))
         with caplog.at_level(logging.WARNING):
             result = load_project_override(str(tmp_path))
-        assert result.scheduler is None
+        assert result.dashboard is None
         warning_text = " ".join(r.message for r in caplog.records)
-        assert "scheduler" in warning_text
+        assert "dashboard" in warning_text
 
     def test_save_round_trip(self, tmp_path):
-        original = ProjectOverride(dashboard="superset", scheduler="airflow")
+        original = ProjectOverride(dashboard="superset", semantic="metricflow")
         save_project_override(original, cwd=str(tmp_path))
         loaded = load_project_override(str(tmp_path))
         assert loaded == original
@@ -324,7 +317,7 @@ class TestServiceDefaultFields:
         written = save_project_override(override, cwd=str(tmp_path))
         loaded = yaml.safe_load(written.read_text())
         assert "dashboard" in loaded
-        assert "scheduler" not in loaded
+        assert "semantic" not in loaded
 
 
 class TestBashAllow:
@@ -418,3 +411,33 @@ class TestBashAllow:
         save_project_override(override, str(tmp_path))
         result = load_project_override(str(tmp_path))
         assert result.bash_allow == ["make:*"]
+
+
+class TestPluginsPin:
+    """``plugins:`` maps a plugin name to the profile ``datus <plugin>`` uses."""
+
+    def test_load_plugins_mapping(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod", "dagster": "dev"}}))
+        result = load_project_override(str(tmp_path))
+        assert result.plugins == {"hello": "prod", "dagster": "dev"}
+        assert not result.is_empty()
+
+    def test_non_mapping_dropped(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": "hello"}))
+        assert load_project_override(str(tmp_path)).plugins is None
+
+    def test_non_string_profile_dropped(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod", "bad": 123}}))
+        assert load_project_override(str(tmp_path)).plugins == {"hello": "prod"}
+
+    def test_plugins_save_round_trip(self, tmp_path):
+        save_project_override(ProjectOverride(plugins={"hello": "staging"}), cwd=str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.plugins == {"hello": "staging"}
+        assert not result.is_empty()

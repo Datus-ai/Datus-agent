@@ -35,27 +35,20 @@ def _fake_cli(agent_config) -> SimpleNamespace:
 def _make_agent(
     *,
     dashboards=None,
-    schedulers=None,
     semantic=None,
     active_dash=None,
-    active_sched=None,
     active_semantic=None,
     default_dash=None,
-    default_sched=None,
     default_semantic=None,
 ):
     cfg = MagicMock()
     cfg.dashboard_config = dashboards or {}
-    cfg.scheduler_services = schedulers or {}
     cfg.semantic_layer_configs = semantic or {}
     cfg.active_dashboard = MagicMock(return_value=active_dash)
-    cfg.active_scheduler = MagicMock(return_value=active_sched)
     cfg.active_semantic = MagicMock(return_value=active_semantic)
     cfg.default_dashboard_service = MagicMock(return_value=default_dash)
-    cfg.default_scheduler_service = MagicMock(return_value=default_sched)
     cfg.default_semantic_adapter = MagicMock(return_value=default_semantic)
     cfg.set_active_dashboard = MagicMock()
-    cfg.set_active_scheduler = MagicMock()
     cfg.set_active_semantic = MagicMock()
     return cfg
 
@@ -114,7 +107,6 @@ class TestBootstrapDefault:
         cli = _fake_cli(cfg)
         sb.run(cli)
         cfg.set_active_dashboard.assert_not_called()
-        cfg.set_active_scheduler.assert_not_called()
         cfg.set_active_semantic.assert_not_called()
 
     def test_skips_when_already_pinned(self):
@@ -176,17 +168,17 @@ class TestBootstrapDefault:
 
         cfg = _make_agent(
             dashboards={"a": MagicMock(default=True), "b": MagicMock(default=True)},
-            schedulers={"airflow": {"type": "airflow"}},
-            default_sched="airflow",
+            semantic={"metricflow": {"type": "metricflow"}},
+            default_semantic="metricflow",
         )
         cfg.default_dashboard_service.side_effect = DatusException(
             ErrorCode.COMMON_CONFIG_ERROR, message="multiple default true"
         )
         cli = _fake_cli(cfg)
         sb.run(cli)
-        # Dashboard pin skipped, but scheduler still pinned.
+        # Dashboard pin skipped, but semantic still pinned.
         cfg.set_active_dashboard.assert_not_called()
-        cfg.set_active_scheduler.assert_called_once_with("airflow")
+        cfg.set_active_semantic.assert_called_once_with("metricflow")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -310,12 +302,12 @@ class TestQuickPickService:
     def test_returns_none_on_blank(self, monkeypatch):
         cli = SimpleNamespace(console=Console(file=io.StringIO(), no_color=True, force_terminal=False))
         monkeypatch.setattr("builtins.input", lambda _: "")
-        assert sb.quick_pick_service(cli, "schedulers", ["airflow"]) is None
+        assert sb.quick_pick_service(cli, "semantic_layer", ["metricflow"]) is None
 
     def test_returns_none_on_q(self, monkeypatch):
         cli = SimpleNamespace(console=Console(file=io.StringIO(), no_color=True, force_terminal=False))
         monkeypatch.setattr("builtins.input", lambda _: "q")
-        assert sb.quick_pick_service(cli, "schedulers", ["airflow"]) is None
+        assert sb.quick_pick_service(cli, "semantic_layer", ["metricflow"]) is None
 
     def test_reprompts_on_out_of_range(self, monkeypatch):
         cli = SimpleNamespace(console=Console(file=io.StringIO(), no_color=True, force_terminal=False))

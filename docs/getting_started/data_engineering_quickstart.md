@@ -3,7 +3,7 @@
 This guide walks through a complete local Datus workflow using the open DAComp
 data-engineering dataset. You will inspect the warehouse design, build layered
 tables interactively in a local DuckDB workbench file, generate ETL jobs,
-produce marts data, submit a daily Airflow job, and publish the result to
+produce marts data, submit a daily scheduled job, and publish the result to
 Superset.
 
 The local open-source quickstart does **not** require Iceberg, MinIO, or S3.
@@ -80,23 +80,20 @@ cd "$DATUS_QUICKSTART_STACK/superset"
 docker compose up -d
 ```
 
-Start Airflow:
-
-```bash
-cd "$DATUS_QUICKSTART_STACK/airflow"
-docker compose up -d
-```
+The stack bundle also contains a scheduler service used by Step 6. Start it
+the same way from its directory inside `$DATUS_QUICKSTART_STACK` (see the
+bundle's README for the directory name, endpoint, and credentials).
 
 Default local endpoints:
 
 - Superset: `http://127.0.0.1:8088`, username `admin`, password `admin`
-- Airflow: `http://127.0.0.1:8080`, username `admin`, password `admin`
+- Scheduler: see the stack bundle's README
 
 For this quickstart, the Superset compose file uses local demo defaults for the
 metadata database and admin user.
 
-The Airflow compose file mounts `${DACOMP_HOME}` into the container and exposes
-an Airflow connection named `duckdb_dacomp_lever`, which points to
+The scheduler compose file mounts `${DACOMP_HOME}` into the container and
+exposes a connection named `duckdb_dacomp_lever`, which points to
 `/workspace/lever_workbench.duckdb`.
 
 ## Step 3: Configure `agent.yml`
@@ -133,16 +130,6 @@ agent:
           datasource_ref: superset_serving
           bi_database_name: examples
 
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: http://127.0.0.1:8080/api/v1
-        username: admin
-        password: admin
-        dags_folder: "${DATUS_QUICKSTART_STACK}/airflow/dags"
-        connections:
-          duckdb_dacomp_lever: DAComp Lever DuckDB
-
     semantic_layer:
       metricflow:
         type: metricflow
@@ -150,9 +137,15 @@ agent:
   agentic_nodes:
     gen_dashboard:
       bi_platform: superset
-    scheduler:
-      scheduler_service: airflow_prod
 ```
+
+Scheduler access is provided by a separate datus scheduler plugin package,
+which adds a `datus <plugin> ...` CLI and its skills. Install the plugin that
+matches the bundled scheduler and add its profile under
+`agent.plugins.<plugin>.<profile>` (API endpoint, credentials, the host-side
+`dags_folder` the stack mounts into the scheduler container, and the
+`duckdb_dacomp_lever` connection mapping) — the plugin's own documentation
+and bundled setup skill cover the exact fields.
 
 Then start Datus with the `lever_duckdb` datasource, which points at the
 writable workbench file:
@@ -171,8 +164,6 @@ If the CLI says no model is configured, configure one before continuing:
 Choose a provider/model and enter credentials if prompted. `/model` writes
 provider credentials under `agent.providers` in `~/.datus/conf/agent.yml` and
 writes the active provider/model for this project to `./.datus/config.yml`.
-
-Here `dags_folder` is the host-side directory where Datus writes generated DAG files. The Airflow compose file mounts that directory into the Airflow container as `/opt/airflow/dags`, so newly generated DAGs are picked up automatically.
 
 ## Step 4: Create the Required Staging Tables
 
@@ -240,9 +231,9 @@ After the marts table is built, validate it directly:
 SELECT COUNT(*) FROM marts.lever__requisition_enhanced;
 ```
 
-## Step 6: Submit a Daily Airflow Job
+## Step 6: Submit a Daily Scheduled Job
 
-Ask the agent to operationalize a daily marts refresh. The Airflow quickstart environment already exposes the `duckdb_dacomp_lever` connection.
+Ask the agent to operationalize a daily marts refresh. The quickstart scheduler environment already exposes the `duckdb_dacomp_lever` connection.
 
 Submit a daily SQL job at 8 AM that rebuilds the same contract-derived chain:
 
@@ -258,10 +249,10 @@ Trigger daily_lever_requisition_enhanced once now and show me the latest run sta
 
 What to expect:
 
-- a DAG file appears under `${DATUS_QUICKSTART_STACK}/airflow/dags`
-- the same file is visible inside the Airflow container as `/opt/airflow/dags/<dag_id>.py`
-- Airflow returns a `job_id`
-- the job becomes visible in the Airflow UI
+- a DAG file appears under the `dags_folder` configured in the plugin profile
+- the same file is visible inside the scheduler container's DAG directory
+- the scheduler returns a `job_id`
+- the job becomes visible in the scheduler UI
 
 ## Step 7: Promote the Marts Table to the Superset Serving DB
 
@@ -299,7 +290,7 @@ You should now have:
 
 - `staging`, `intermediate`, and `marts` schemas in `lever_workbench.duckdb`
 - `marts.lever__requisition_enhanced` built from raw data through staging and intermediate layers
-- a daily Airflow job visible in the scheduler UI
+- a daily job visible in the scheduler UI
 - a Superset dashboard URL returned by the dashboard generation flow
 
 ## SaaS Studio Tour Variant
@@ -310,7 +301,7 @@ DuckDB + Iceberg lakehouse:
 
 - shared read-only raw namespace: `lake.demo_raw`
 - per-workspace writable namespace: `lake.ws_<workspace_id>`
-- SaaS Airflow connection: `duckdb_lever_workbench`
+- SaaS scheduler connection: `duckdb_lever_workbench`
 
 Every user should run the tour in a separate workspace. The backend renders the
 seeded `docs/data_contract.yaml` for that workspace, so outputs target
@@ -328,6 +319,6 @@ Do not use unqualified physical schemas such as `raw.*`, `staging.*`,
 `intermediate.*`, or `marts.*` in the SaaS tour. Those names are logical layers
 only; the physical write boundary is the workspace namespace.
 
-If a demo project or Airflow DAG was generated before the workspace-namespace
+If a demo project or scheduler DAG was generated before the workspace-namespace
 change, reset or recreate the demo project and regenerate the job so the DAG
 uses `lake.ws_<workspace_id>` instead of an old hard-coded namespace.

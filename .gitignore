@@ -55,6 +55,7 @@ ci/pytest-coverage.txt
 ci/test-report.md
 ci/dir-cover.json
 ci/.coverage
+ci/*.xml
 
 # Scratch/debug scripts
 test.py

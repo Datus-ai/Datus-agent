@@ -4,7 +4,7 @@
 
 The **Builtin Subagent** are specialized AI assistants integrated within the Datus Agent system. Each subagent focuses on a specific aspect of data engineering automation — analyzing SQL, generating semantic models, and converting queries into reusable metrics — together forming a closed-loop workflow from raw SQL to knowledge-aware data products.
 
-This document covers thirteen core subagents:
+This document covers twelve core subagents:
 
 1. **[gen_sql_summary](#gen_sql_summary)** — Summarizes and classifies SQL queries
 2. **[gen_semantic_model](#gen_semantic_model)** — Generates MetricFlow semantic models
@@ -18,7 +18,6 @@ This document covers thirteen core subagents:
 10. **[gen_skill](#gen_skill)** — Skill creation and optimization
 11. **[gen_dashboard](#gen_dashboard)** — BI dashboard CRUD for Superset and Grafana
 12. **[gen_visual_report](gen_visual_report.md)** — Self-contained visual report under `reports/<slug>/`
-13. **[scheduler](#scheduler)** — Airflow job lifecycle management
 
 ## Configuration
 
@@ -75,9 +74,6 @@ agent:
       max_turns: 30            # Optional: defaults to 30
       report_dist: ~/report_dist  # Optional: local dist path for offline HTML compilation
 
-    scheduler:
-      model: claude     # Optional: defaults to configured model
-      max_turns: 30     # Optional: defaults to 30
 ```
 
 **Optional configuration parameters:**
@@ -812,7 +808,7 @@ The gen_dashboard subagent creates, updates, and manages BI dashboards on Supers
 
 - **Multi-platform**: Supports Apache Superset and Grafana; platform is explicit via `bi_platform` or auto-detected from `agent.services.bi_platforms`
 - **Dynamic tool exposure**: Tools are exposed based on adapter Mixin capabilities — only operations the platform actually supports appear as LLM tools
-- **Existing serving data only**: data preparation is handled separately by `gen_job` / `scheduler`; gen_dashboard builds BI dataset / chart / dashboard assets
+- **Existing serving data only**: data preparation is handled separately by `gen_job` or a scheduled job; gen_dashboard builds BI dataset / chart / dashboard assets
 - **Skill-guided workflows**: Platform skills (`superset-dashboard`, `grafana-dashboard`) provide step-by-step workflow guidance; `bi-validation` runs automatically after creation
 
 ### Configuration
@@ -922,109 +918,6 @@ agent:
 
 ---
 
-## scheduler
-
-### Overview
-
-The scheduler subagent submits, monitors, updates, and troubleshoots scheduled jobs on Apache Airflow. It is invoked by the chat agent via `task(type="scheduler")` and provides the full Airflow job lifecycle through LLM function calling.
-
-### Key Features
-
-- **Full job lifecycle**: Submit, trigger, pause, resume, update, and delete Airflow DAG jobs
-- **SQL and SparkSQL support**: Submit both SQL and SparkSQL job types
-- **SQL file management**: Create or update job SQL files with filesystem tools before submission
-- **Monitoring**: List job runs, fetch run logs, and troubleshoot failures
-- **Connection discovery**: List available Airflow connections for job configuration
-
-### Configuration
-
-```yaml
-agent:
-  services:
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: "${AIRFLOW_URL}"
-        username: "${AIRFLOW_USER}"
-        password: "${AIRFLOW_PASSWORD}"
-        dags_folder: "${AIRFLOW_DAGS_DIR}"
-
-  agentic_nodes:
-    scheduler:
-      model: claude                  # Optional: defaults to configured model
-      max_turns: 30                  # Optional: defaults to 30
-      scheduler_service: airflow_prod
-```
-
-**Requirements:**
-- `agent.services.schedulers` section in `agent.yml` with Airflow credentials
-- `datus-scheduler-airflow` package installed (`datus-scheduler-core` is pulled in transitively)
-
-### How It Works
-
-```mermaid
-graph LR
-    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
-    B --> C[LLM Function Calling]
-    C --> D[write_file / edit_file]
-    D --> E[submit_sql_job / submit_sparksql_job]
-    C --> F[trigger_scheduler_job]
-    C --> G[pause_job / resume_job]
-    C --> H[list_job_runs / get_run_log]
-```
-
-### Available Tools
-
-| Tool | Description |
-|------|-------------|
-| `submit_sql_job` | Submit a scheduled SQL job from a `.sql` file with cron expression |
-| `submit_sparksql_job` | Submit a scheduled SparkSQL job from a `.sql` file |
-| `read_file` / `write_file` / `edit_file` | Read, create, or update SQL files used by scheduled jobs |
-| `trigger_scheduler_job` | Manually trigger an existing job run |
-| `pause_job` | Pause a scheduled job |
-| `resume_job` | Resume a paused job |
-| `delete_job` | Delete a scheduled job |
-| `update_job` | Update job schedule or configuration |
-| `get_scheduler_job` | Get job details and current status |
-| `list_scheduler_jobs` | List all scheduled jobs |
-| `list_scheduler_connections` | List available Airflow connections |
-| `list_job_runs` | List recent runs for a job |
-| `get_run_log` | Fetch logs for a specific job run |
-
-### Output Format
-
-```json
-{
-  "response": "Submitted daily SQL job 'daily_revenue' scheduled at 8:00 AM every day.",
-  "scheduler_result": {
-    "job_id": "daily_revenue_dag",
-    "status": "active",
-    "schedule": "0 8 * * *"
-  },
-  "tokens_used": 1580
-}
-```
-
-### Usage
-
-The scheduler subagent is invoked automatically by the chat agent via `task(type="scheduler")`, or launched manually:
-
-```bash
-/scheduler Submit /opt/sql/daily_revenue.sql as a daily job at 8am using the postgres_prod connection
-```
-
-You can also create a custom subagent using the `scheduler` node class:
-
-```yaml
-agent:
-  agentic_nodes:
-    etl_scheduler:
-      node_class: scheduler
-      max_turns: 30
-```
-
----
-
 ## Summary
 
 | Subagent | Purpose | Output | Stored In | Key Features |
@@ -1041,7 +934,6 @@ agent:
 | `gen_skill` | Create or optimize skills | Skill path | Skills directory | Interactive authoring, validation, skill loading |
 | `gen_dashboard` | BI dashboard CRUD (Superset, Grafana) | Dashboard result | BI platform | Dynamic tool exposure, existing serving data, multi-platform |
 | `gen_visual_report` | Self-contained visual report (narrative, pre-baked queries) | `reports/<slug>/` (executable SQL + executed results + report components) | Project root | Modular section-by-section edits, generate from metrics or your own SQL, CLI auto-opens the report in your browser |
-| `scheduler` | Airflow job lifecycle management | Scheduler result | Airflow | Submit, monitor, update, and troubleshoot jobs |
 
 **Built-in Features Across All Subagents:**
 - Minimal configuration required (only `model` and `max_turns` optional)

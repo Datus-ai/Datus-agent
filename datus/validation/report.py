@@ -122,15 +122,6 @@ class DatasetTarget(BaseModel):
     dataset_name: Optional[str] = None
 
 
-class SchedulerJobTarget(BaseModel):
-    """Deliverable target: a scheduler job submitted or updated by a mutating scheduler tool."""
-
-    type: Literal["scheduler_job"] = "scheduler_job"
-    platform: str = Field(..., description="Scheduler platform key (e.g. airflow, dolphinscheduler)")
-    job_id: str = Field(..., description="Scheduler job id")
-    job_name: Optional[str] = None
-
-
 # Discriminated union used by tools to report the deliverable produced by a
 # single mutating tool call. ``DeliverableTarget.model_validate(dict)`` will
 # pick the right subclass based on the ``type`` discriminator.
@@ -140,7 +131,6 @@ DeliverableTarget = Union[
     DashboardTarget,
     ChartTarget,
     DatasetTarget,
-    SchedulerJobTarget,
 ]
 
 
@@ -159,7 +149,6 @@ class SessionTarget(BaseModel):
             DashboardTarget,
             ChartTarget,
             DatasetTarget,
-            SchedulerJobTarget,
         ]
     ] = Field(default_factory=list)
 
@@ -167,7 +156,7 @@ class SessionTarget(BaseModel):
     def database(self) -> Optional[str]:
         """Convenience: the database of the first table-bearing target, if any.
 
-        Non-db targets (dashboard / chart / dataset / scheduler_job) don't have
+        Non-db targets (dashboard / chart / dataset) don't have
         a database, so they are skipped.
         """
         for t in self.targets:
@@ -183,16 +172,16 @@ class TargetFilter(BaseModel):
     field is a wildcard. A skill with an empty ``targets: []`` matches every
     target.
 
-    For BI / scheduler target types (``dashboard`` / ``chart`` / ``dataset`` /
-    ``scheduler_job``) the table-oriented fields (``database`` / ``db_schema``
-    / ``table`` / ``table_pattern``) are exclusive to table-like targets. If
-    any table-oriented field is set, the filter will not match BI / scheduler
-    targets — skill authors typically just filter by ``type``.
+    For BI target types (``dashboard`` / ``chart`` / ``dataset``) the
+    table-oriented fields (``database`` / ``db_schema`` / ``table`` /
+    ``table_pattern``) are exclusive to table-like targets. If any
+    table-oriented field is set, the filter will not match BI targets —
+    skill authors typically just filter by ``type``.
     """
 
     model_config = ConfigDict(protected_namespaces=(), populate_by_name=True)
 
-    type: Optional[Literal["table", "transfer", "dashboard", "chart", "dataset", "scheduler_job"]] = None
+    type: Optional[Literal["table", "transfer", "dashboard", "chart", "dataset"]] = None
     database: Optional[str] = None
     db_schema: Optional[str] = Field(default=None, alias="schema")
     table: Optional[str] = None
@@ -221,7 +210,6 @@ class ValidationReport(BaseModel):
             DashboardTarget,
             ChartTarget,
             DatasetTarget,
-            SchedulerJobTarget,
             SessionTarget,
         ]
     ] = Field(default=None, description="The deliverable this report concerns")
@@ -244,7 +232,6 @@ class ValidationReport(BaseModel):
                 DashboardTarget,
                 ChartTarget,
                 DatasetTarget,
-                SchedulerJobTarget,
                 SessionTarget,
             ]
         ] = None,
@@ -305,7 +292,7 @@ class ValidationReport(BaseModel):
             elif isinstance(tgt, SessionTarget):
                 lines.append(f"**Target:** session with {len(tgt.targets)} deliverable(s)")
             else:
-                # BI / scheduler targets share the same descriptor as describe_target().
+                # BI targets share the same descriptor as describe_target().
                 lines.append(f"**Target:** {describe_target(tgt)}")
 
         failed = [c for c in self.checks if not c.passed]
@@ -346,7 +333,6 @@ def skill_matches_target(
         DashboardTarget,
         ChartTarget,
         DatasetTarget,
-        SchedulerJobTarget,
         SessionTarget,
     ],
 ) -> bool:
@@ -379,7 +365,6 @@ _FilterableTarget = Union[
     DashboardTarget,
     ChartTarget,
     DatasetTarget,
-    SchedulerJobTarget,
 ]
 
 
@@ -396,7 +381,7 @@ def _filter_any_match(
 def _filter_matches(flt: TargetFilter, target: _FilterableTarget) -> bool:
     """Single filter vs single target match. All set fields must match.
 
-    Non-table targets (dashboard / chart / dataset / scheduler_job) don't have
+    Non-table targets (dashboard / chart / dataset) don't have
     ``database`` / ``db_schema`` / ``table`` fields. Table-oriented filter
     fields are exclusive to table-like targets, so setting any of them makes
     the filter inapplicable to non-table targets.
@@ -417,7 +402,7 @@ def _filter_matches(flt: TargetFilter, target: _FilterableTarget) -> bool:
         schema_name = target.target.db_schema
         database_name = target.database
     else:
-        # Non-table target (dashboard / chart / dataset / scheduler_job): the
+        # Non-table target (dashboard / chart / dataset): the
         # table-oriented filter fields are not applicable. If any of them are
         # set, the filter cannot match.
         if flt.database or flt.db_schema or flt.table or flt.table_pattern:
@@ -443,7 +428,6 @@ def describe_target(
         DashboardTarget,
         ChartTarget,
         DatasetTarget,
-        SchedulerJobTarget,
         SessionTarget,
     ],
 ) -> str:
@@ -464,9 +448,6 @@ def describe_target(
     if isinstance(target, DatasetTarget):
         name = f" '{target.dataset_name}'" if target.dataset_name else ""
         return f"dataset {target.platform}:{target.dataset_id}{name}"
-    if isinstance(target, SchedulerJobTarget):
-        name = f" '{target.job_name}'" if target.job_name else ""
-        return f"scheduler_job {target.platform}:{target.job_id}{name}"
     if isinstance(target, SessionTarget):
         return f"session[{len(target.targets)}]"
     return repr(target)
@@ -499,12 +480,6 @@ def _repair_hint_for(target: _FilterableTarget) -> str:
             "inspect with get_dataset and reuse reachable datasets that match "
             "the expected schema or SQL. If a concrete mismatch remains, "
             "create or update a dataset with the expected definition."
-        )
-    if isinstance(target, SchedulerJobTarget):
-        return (
-            "the job exists but may have the wrong SQL / schedule — inspect "
-            "with get_scheduler_job and re-run update_job. If a run already "
-            "failed, check get_run_log for the error."
         )
     return ""
 

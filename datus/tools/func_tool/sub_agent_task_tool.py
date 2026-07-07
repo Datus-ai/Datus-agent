@@ -61,7 +61,6 @@ NODE_CLASS_MAP = {
     "gen_job": NodeType.TYPE_GEN_JOB,
     "gen_skill": NodeType.TYPE_GEN_SKILL,
     "gen_dashboard": NodeType.TYPE_GEN_DASHBOARD,
-    "scheduler": NodeType.TYPE_SCHEDULER,
 }
 
 # Descriptions for built-in system subagents (used in task tool description for LLM)
@@ -193,19 +192,11 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Create, update, and manage BI dashboards on the configured BI platform "
         "(Superset, Grafana, or any future adapter). Builds BI assets on top of "
         "tables or SQL datasets that already exist in a BI-registered database. "
-        "Data preparation belongs to a separate gen_job or scheduler step before "
+        "Data preparation belongs to a separate gen_job step before "
         "calling gen_dashboard. Prompt: provide the BI platform, serving table "
         "or SQL dataset, dimensions, time range, chart type, and dashboard title. "
         "Also supports read-only ops (list/get dashboards, list charts and "
         "datasets). Returns JSON with {response, dashboard_result, tokens_used}."
-    ),
-    "scheduler": (
-        "Submit, monitor, update, and troubleshoot scheduled jobs on Airflow. "
-        "Handles the full lifecycle: submit SQL/SparkSQL jobs with cron schedules, "
-        "monitor job status and run history, view run logs, troubleshoot failures, "
-        "update job SQL/config, pause/resume/delete jobs, trigger manual runs. "
-        "Prompt: describe what scheduler operation you need. "
-        "Returns JSON with {response, scheduler_result, tokens_used}."
     ),
 }
 
@@ -555,16 +546,6 @@ class SubAgentTaskTool:
                 is_subagent=True,
                 session_id=session_id,
             )
-        elif subagent_type == "scheduler":
-            from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-            return SchedulerAgenticNode(
-                agent_config=self.agent_config,
-                execution_mode=self._resolve_execution_mode(),
-                node_id=f"task_scheduler_{uuid.uuid4().hex[:8]}",
-                is_subagent=True,
-                session_id=session_id,
-            )
         else:
             raise ValueError(f"Unknown builtin subagent type: {subagent_type}")
 
@@ -609,7 +590,6 @@ class SubAgentTaskTool:
             "gen_table": (NodeType.TYPE_GEN_TABLE, "gen_table"),
             "gen_job": (NodeType.TYPE_GEN_JOB, "gen_job"),
             "gen_dashboard": (NodeType.TYPE_GEN_DASHBOARD, "gen_dashboard"),
-            "scheduler": (NodeType.TYPE_SCHEDULER, "scheduler"),
         }
         if subagent_type in builtin_type_map:
             return builtin_type_map[subagent_type]
@@ -1060,15 +1040,6 @@ class SubAgentTaskTool:
                 user_message=prompt,
             )
 
-        from datus.agent.node.scheduler_agentic_node import SchedulerAgenticNode
-
-        if isinstance(node, SchedulerAgenticNode):
-            from datus.schemas.scheduler_agentic_node_models import SchedulerNodeInput
-
-            return SchedulerNodeInput(
-                user_message=prompt,
-            )
-
         from datus.agent.node.gen_report_agentic_node import GenReportAgenticNode
 
         if isinstance(node, GenReportAgenticNode):
@@ -1264,17 +1235,6 @@ class SubAgentTaskTool:
                     "app_jsx_path": output.get("app_jsx_path"),
                     "render_file_count": output.get("render_file_count", 0),
                     "template_count": output.get("template_count", 0),
-                    "tokens_used": tokens,
-                }
-            )
-
-        # Scheduler result: has 'scheduler_result' key
-        scheduler_result = output.get("scheduler_result")
-        if scheduler_result is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "scheduler_result": scheduler_result,
                     "tokens_used": tokens,
                 }
             )

@@ -44,7 +44,7 @@ class GenDashboardAgenticNode(DeliverableAgenticNode):
     # the base-class fallback does not over-expose unrelated platforms.
     DEFAULT_SKILLS: ClassVar[Optional[str]] = None
     # gen_dashboard only builds BI assets on top of tables that already exist
-    # in the BI serving DB. Data preparation belongs to gen_job / scheduler.
+    # in the BI serving DB. Data preparation belongs to gen_job.
     DEFAULT_SUBAGENTS: ClassVar[str] = ""
 
     def __init__(

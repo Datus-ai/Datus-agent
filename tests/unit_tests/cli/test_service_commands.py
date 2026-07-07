@@ -40,7 +40,7 @@ def _fake_cli():
     cli.console = MagicMock()
     cli._bg_loop = None  # commands use asyncio.run in this case
     cli.agent_config = SimpleNamespace(
-        services=SimpleNamespace(bi_platforms={"superset": {}}, schedulers={}, semantic_layer={}),
+        services=SimpleNamespace(bi_platforms={"superset": {}}, semantic_layer={}),
     )
     return cli
 
@@ -125,7 +125,7 @@ class TestDispatchServiceListing:
         """``list`` on an empty config still emits the "no services" hint."""
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, semantic_layer={}),
         )
         cmd = ServiceCommands(cli)
         cmd.cmd_services("list")
@@ -426,27 +426,6 @@ class TestPreflightMissingAdapter:
         assert "not installed" in msg
         # The normal "read methods" table is NOT shown when the adapter is missing.
         assert "read methods" not in msg
-
-    def test_scheduler_missing_mentions_scheduler_package(self):
-        cli = _fake_cli()
-        cmd = ServiceCommands(cli)
-        registry = ServiceClientRegistry.__new__(ServiceClientRegistry)
-        registry._agent_config = cli.agent_config
-        registry._entries = {"airflow": ("schedulers", "airflow")}
-        registry._fingerprint = None
-        registry._adapter_available = {"airflow": False}
-        registry._clients = {
-            "airflow": ServiceClient(
-                service_type="schedulers",
-                service_name="airflow",
-                tool_instance=_BiToolStub(),  # stub; never reached
-                method_names=READ_METHODS["schedulers"],
-            ),
-        }
-        cmd._registry = registry
-        cmd.dispatch("/airflow.list_scheduler_jobs", "")
-        msg = " ".join(str(c) for c in cli.console.print.call_args_list)
-        assert "datus-scheduler" in msg
 
 
 class TestRenderHelpers:
@@ -758,7 +737,7 @@ class TestQueryEnvelopeRendering:
 
 class TestServiceConfigDispatch:
     """``cmd_services`` token dispatch — the TUI path is invoked by
-    ``dashboard`` / ``scheduler`` / ``config`` tokens; bare and ``list``
+    ``dashboard`` / ``semantic`` / ``config`` tokens; bare and ``list``
     tokens render the read-only listing instead."""
 
     def test_bare_token_opens_menu_on_dashboard_tab(self):
@@ -784,12 +763,22 @@ class TestServiceConfigDispatch:
         menu.assert_called_once()
         assert menu.call_args.kwargs == {"initial_tab": "dashboard"}
 
-    def test_scheduler_token_opens_menu_with_scheduler_tab(self):
+    def test_semantic_token_opens_menu_with_semantic_tab(self):
         cmd, _ = _make_commands_with_bi_stub()
         with patch.object(ServiceCommands, "_run_config_menu") as menu:
-            cmd.cmd_services("scheduler")
+            cmd.cmd_services("semantic")
         menu.assert_called_once()
-        assert menu.call_args.kwargs == {"initial_tab": "scheduler"}
+        assert menu.call_args.kwargs == {"initial_tab": "semantic"}
+
+    def test_scheduler_token_no_longer_opens_menu(self):
+        """``scheduler`` is not a recognised token anymore — it falls back
+        to the listing-plus-hint path like any unknown token."""
+        cmd, cli = _make_commands_with_bi_stub()
+        with patch.object(ServiceCommands, "_run_config_menu") as menu:
+            cmd.cmd_services("scheduler")
+        menu.assert_not_called()
+        rendered = _printed_text(cli)
+        assert "Use `/services dashboard` or `/services semantic` to open the configuration TUI." in rendered
 
     def test_unknown_token_falls_back_to_listing_with_hint(self):
         cmd, cli = _make_commands_with_bi_stub()
@@ -797,10 +786,7 @@ class TestServiceConfigDispatch:
             cmd.cmd_services("foobar")
         menu.assert_not_called()
         rendered = _printed_text(cli)
-        assert (
-            "Use `/services dashboard`, `/services scheduler`, or `/services semantic` to open the configuration TUI."
-            in rendered
-        )
+        assert "Use `/services dashboard` or `/services semantic` to open the configuration TUI." in rendered
 
 
 class TestApplySelectionPersistence:
@@ -812,11 +798,11 @@ class TestApplySelectionPersistence:
         cli = _fake_cli()
         # Set ``services`` shape so the listing path doesn't crash.
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"old": {}}, semantic_layer={}),
             set_active_dashboard=MagicMock(),
-            set_active_scheduler=MagicMock(),
+            set_active_semantic=MagicMock(),
             active_dashboard=MagicMock(return_value=None),
-            active_scheduler=MagicMock(return_value=None),
+            active_semantic=MagicMock(return_value=None),
         )
         return ServiceCommands(cli), cli
 
@@ -831,7 +817,7 @@ class TestApplySelectionPersistence:
             payload={"type": "superset", "api_base_url": "http://x", "username": "u"},
         )
         mgr = MagicMock()
-        mgr.get = MagicMock(return_value={"bi_platforms": {}, "schedulers": {}, "semantic_layer": {}})
+        mgr.get = MagicMock(return_value={"bi_platforms": {}, "semantic_layer": {}})
         with (
             patch("datus.cli.service_adapter_installer.ensure_adapter") as ensure,
             patch("datus.cli.service_adapter_installer.hot_reload_adapter") as hot,
@@ -914,7 +900,7 @@ class TestApplySelectionPersistence:
         cmd, _ = self._commands_with_writable_cli()
         sel = ServiceConfigSelection(action="delete", section="bi_platforms", name="old")
         mgr = MagicMock()
-        mgr.get = MagicMock(return_value={"bi_platforms": {"old": {}}, "schedulers": {}})
+        mgr.get = MagicMock(return_value={"bi_platforms": {"old": {}}, "semantic_layer": {}})
         with (
             patch("datus.cli.service_commands.ServiceCommands._reload_agent_config"),
             patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
@@ -928,13 +914,13 @@ class TestApplySelectionPersistence:
         from datus.cli.service_config_app import ServiceConfigSelection
 
         cmd, _ = self._commands_with_writable_cli()
-        sel = ServiceConfigSelection(action="set_default", section="schedulers", name="airflow_dev")
+        sel = ServiceConfigSelection(action="set_default", section="semantic_layer", name="dbt")
         mgr = MagicMock()
         mgr.get = MagicMock(
             return_value={
-                "schedulers": {
-                    "airflow_prod": {"type": "airflow", "default": True},
-                    "airflow_dev": {"type": "airflow"},
+                "semantic_layer": {
+                    "metricflow": {"type": "metricflow", "default": True},
+                    "dbt": {"type": "dbt"},
                 },
             }
         )
@@ -946,9 +932,9 @@ class TestApplySelectionPersistence:
         mgr.update_item.assert_called_once()
         # The committed payload should mark the new entry default and strip the old one.
         committed = mgr.update_item.call_args.args[1]
-        schedulers = committed["schedulers"]
-        assert schedulers["airflow_dev"]["default"] is True
-        assert "default" not in schedulers["airflow_prod"]
+        semantic = committed["semantic_layer"]
+        assert semantic["dbt"]["default"] is True
+        assert "default" not in semantic["metricflow"]
 
     def test_set_project_default_calls_setter(self):
         from datus.cli.service_config_app import ServiceConfigSelection
@@ -962,9 +948,9 @@ class TestApplySelectionPersistence:
         from datus.cli.service_config_app import ServiceConfigSelection
 
         cmd, cli = self._commands_with_writable_cli()
-        sel = ServiceConfigSelection(action="set_project_default", section="schedulers", name="")
+        sel = ServiceConfigSelection(action="set_project_default", section="semantic_layer", name="")
         cmd._apply_selection(sel)
-        cli.agent_config.set_active_scheduler.assert_called_once_with(None)
+        cli.agent_config.set_active_semantic.assert_called_once_with(None)
 
 
 class TestRunConfigMenu:
@@ -1002,7 +988,7 @@ class TestRunConfigMenu:
 
         cmd, _ = _make_commands_with_bi_stub()
         sequences = [
-            ServiceConfigSelection(action="test", section="schedulers", name="airflow"),
+            ServiceConfigSelection(action="test", section="semantic_layer", name="metricflow"),
             None,
         ]
         captured_tabs = []
@@ -1018,8 +1004,8 @@ class TestRunConfigMenu:
         ):
             cmd._run_config_menu(initial_tab="dashboard")
         # First app starts on dashboard (initial_tab); second app re-seeded
-        # to scheduler because the prior selection.section == "schedulers".
-        assert captured_tabs == ["dashboard", "scheduler"]
+        # to semantic because the prior selection.section == "semantic_layer".
+        assert captured_tabs == ["dashboard", "semantic"]
 
     def test_run_app_uses_run_wizard_when_tui_active(self):
         """When the parent TUI has an active loop, the wizard is
@@ -1060,7 +1046,7 @@ class TestApplySelectionMissingType:
 
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, semantic_layer={}),
         )
         cmd = ServiceCommands(cli)
         sel = ServiceConfigSelection(action="save", section="bi_platforms", name="x", payload={})
@@ -1084,11 +1070,9 @@ class TestDeleteEdgeCases:
     def _fresh_cmd(self):
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={"old": {}}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={"old": {}}, semantic_layer={}),
             active_dashboard=MagicMock(return_value="old"),
-            active_scheduler=MagicMock(return_value=None),
             set_active_dashboard=MagicMock(),
-            set_active_scheduler=MagicMock(),
         )
         return ServiceCommands(cli), cli
 
@@ -1144,10 +1128,10 @@ class TestTestAndDefaultEdgeCases:
 
         cmd, _ = _make_commands_with_bi_stub()
         mgr = MagicMock()
-        mgr.get = MagicMock(return_value={"schedulers": {}})
+        mgr.get = MagicMock(return_value={"semantic_layer": {}})
         with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
             status = cmd._apply_selection(
-                ServiceConfigSelection(action="set_default", section="schedulers", name="ghost")
+                ServiceConfigSelection(action="set_default", section="semantic_layer", name="ghost")
             )
         mgr.update_item.assert_not_called()
         assert "not found" in (status or "")
@@ -1157,16 +1141,16 @@ class TestTestAndDefaultEdgeCases:
 
         cmd, _ = _make_commands_with_bi_stub()
         mgr = MagicMock()
-        mgr.get = MagicMock(return_value={"schedulers": {"airflow": {"type": "airflow"}}})
+        mgr.get = MagicMock(return_value={"semantic_layer": {"metricflow": {"type": "metricflow"}}})
         mgr.update_item = MagicMock(side_effect=RuntimeError("disk full"))
         with patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr):
             status = cmd._apply_selection(
-                ServiceConfigSelection(action="set_default", section="schedulers", name="airflow")
+                ServiceConfigSelection(action="set_default", section="semantic_layer", name="metricflow")
             )
         assert "failed" in (status or "").lower()
 
     def test_set_global_default_skips_non_dict_entries(self):
-        """Defensive: a non-dict entry under ``schedulers`` (legacy YAML
+        """Defensive: a non-dict entry under ``semantic_layer`` (legacy YAML
         glitch) is left alone instead of crashing the loop."""
         from datus.cli.service_config_app import ServiceConfigSelection
 
@@ -1174,8 +1158,8 @@ class TestTestAndDefaultEdgeCases:
         mgr = MagicMock()
         mgr.get = MagicMock(
             return_value={
-                "schedulers": {
-                    "airflow": {"type": "airflow"},
+                "semantic_layer": {
+                    "metricflow": {"type": "metricflow"},
                     "stale_token": "not-a-dict",  # malformed entry
                 }
             }
@@ -1184,17 +1168,19 @@ class TestTestAndDefaultEdgeCases:
             patch("datus.configuration.agent_config_loader.configuration_manager", return_value=mgr),
             patch.object(ServiceCommands, "_reload_agent_config"),
         ):
-            cmd._apply_selection(ServiceConfigSelection(action="set_default", section="schedulers", name="airflow"))
+            cmd._apply_selection(
+                ServiceConfigSelection(action="set_default", section="semantic_layer", name="metricflow")
+            )
         mgr.update_item.assert_called_once()
-        committed = mgr.update_item.call_args.args[1]["schedulers"]
-        # Non-dict entry preserved verbatim; default flag flipped on the airflow entry.
+        committed = mgr.update_item.call_args.args[1]["semantic_layer"]
+        # Non-dict entry preserved verbatim; default flag flipped on the metricflow entry.
         assert committed["stale_token"] == "not-a-dict"
-        assert committed["airflow"]["default"] is True
+        assert committed["metricflow"]["default"] is True
 
     def test_set_global_default_works_for_bi_platforms(self):
-        """``set_default`` is now generic across BI / Scheduler / Semantic.
-        For bi_platforms, the YAML ``default`` flag flips on the chosen
-        entry and clears from the others, mirroring the scheduler test
+        """``set_default`` is generic across BI / Semantic. For
+        bi_platforms, the YAML ``default`` flag flips on the chosen
+        entry and clears from the others, mirroring the semantic test
         above."""
         from datus.cli.service_config_app import ServiceConfigSelection
 
@@ -1260,7 +1246,7 @@ class TestTestAndDefaultEdgeCases:
         cli = _fake_cli()
         setter = MagicMock()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, semantic_layer={}),
             set_active_semantic=setter,
         )
         cmd = ServiceCommands(cli)
@@ -1285,7 +1271,7 @@ class TestTestAndDefaultEdgeCases:
         cli = _fake_cli()
         # Strip the setters so the helper sees ``None``.
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, semantic_layer={}),
         )
         cmd = ServiceCommands(cli)
         result = cmd._apply_selection(
@@ -1299,9 +1285,8 @@ class TestTestAndDefaultEdgeCases:
 
         cli = _fake_cli()
         cli.agent_config = SimpleNamespace(
-            services=SimpleNamespace(bi_platforms={}, schedulers={}, semantic_layer={}),
+            services=SimpleNamespace(bi_platforms={}, semantic_layer={}),
             set_active_dashboard=MagicMock(side_effect=RuntimeError("disk full")),
-            set_active_scheduler=MagicMock(),
         )
         cmd = ServiceCommands(cli)
         result = cmd._apply_selection(
@@ -1340,8 +1325,9 @@ class TestMergeServiceEntry:
 
 
 class TestProbeImplementation:
-    """``_probe`` runs a real (mocked) ``BIFuncTool`` / ``SchedulerTools``
-    call so connection errors surface as ``(False, message)``."""
+    """``_probe`` runs a real (mocked) ``BIFuncTool`` call so connection
+    errors surface as ``(False, message)``; semantic_layer is a pure
+    in-memory registry lookup."""
 
     def test_probe_bi_success_counts_envelope(self):
         cmd, _ = _make_commands_with_bi_stub()
@@ -1352,14 +1338,13 @@ class TestProbeImplementation:
         assert ok is True
         assert "2 dashboards" in msg
 
-    def test_probe_scheduler_success(self):
+    def test_probe_schedulers_section_now_unsupported(self):
+        """The scheduler section was removed; probing it falls through to
+        the generic unsupported-section error."""
         cmd, _ = _make_commands_with_bi_stub()
-        fake_tool = MagicMock()
-        fake_tool.list_scheduler_jobs = MagicMock(return_value=[{"name": "a"}, {"name": "b"}])
-        with patch("datus.tools.func_tool.scheduler_tools.SchedulerTools", return_value=fake_tool):
-            ok, msg = cmd._probe("schedulers", "airflow")
-        assert ok is True
-        assert "2 scheduler jobs" in msg
+        ok, msg = cmd._probe("schedulers", "hello")
+        assert ok is False
+        assert "Unsupported section" in msg
 
     def test_probe_exception_is_caught(self):
         cmd, _ = _make_commands_with_bi_stub()
@@ -1402,8 +1387,8 @@ class TestProbeImplementation:
 
 class TestProbeTimeout:
     """Verify that ``_probe`` enforces ``_PROBE_TIMEOUT_SECS`` for the
-    network-bound branches (bi_platforms, schedulers) so a hung adapter
-    cannot freeze the REPL.
+    network-bound bi_platforms branch so a hung adapter cannot freeze the
+    REPL. The semantic-layer branch is a pure registry lookup — not threaded.
     """
 
     def test_probe_bi_times_out_and_returns_error(self):
@@ -1423,21 +1408,20 @@ class TestProbeTimeout:
         finally:
             release.set()
 
-    def test_probe_scheduler_times_out_and_returns_error(self):
-        import threading as _threading
-
+    def test_probe_semantic_skips_threading_path(self):
+        """Semantic probe must run on the calling thread (no timeout)
+        because it's a pure in-memory registry lookup, not an external
+        HTTP call."""
         cmd, _ = _make_commands_with_bi_stub()
-        cmd._PROBE_TIMEOUT_SECS = 0.05
-        release = _threading.Event()
-        try:
-            fake_tool = MagicMock()
-            fake_tool.list_scheduler_jobs = MagicMock(side_effect=lambda: release.wait(2.0) or [])
-            with patch("datus.tools.func_tool.scheduler_tools.SchedulerTools", return_value=fake_tool):
-                ok, msg = cmd._probe("schedulers", "airflow")
-            assert ok is False
-            assert "timeout" in msg.lower()
-        finally:
-            release.set()
+        cmd._PROBE_TIMEOUT_SECS = 0.0  # would trip immediately if threaded
+        fake_registry = SimpleNamespace(get_metadata=lambda name: {"name": name})
+        with patch.dict(
+            "sys.modules",
+            {"datus.tools.semantic_tools.registry": SimpleNamespace(semantic_adapter_registry=fake_registry)},
+        ):
+            ok, msg = cmd._probe("semantic_layer", "metricflow")
+        assert ok is True
+        assert "registered" in msg
 
     def test_probe_bi_returns_quickly_when_adapter_responds(self):
         """Sanity check: a fast adapter response under the timeout still

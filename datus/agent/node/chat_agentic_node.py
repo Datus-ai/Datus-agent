@@ -229,6 +229,8 @@ class ChatAgenticNode(AgenticNode):
                 global_config=base_config,
                 node_overrides=self._get_node_permission_overrides(),
                 active_profile=getattr(self.agent_config, "active_profile_name", None) or "normal",
+                plugin_bash_rules=getattr(self.agent_config, "plugin_bash_rules", None),
+                project_bash_allows=getattr(self.agent_config, "project_bash_allow", None),
             )
             self.permission_manager.set_permission_callback(self._handle_permission_ask)
 
@@ -272,6 +274,11 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.ask_user_tool.available_tools())
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()
+        # The rebuilt list holds fresh, unwrapped FunctionTool instances —
+        # force plugin tool transformers to re-apply on the next hook
+        # composition or the policy wrappers silently vanish mid-session
+        # (e.g. after a task-database switch).
+        self._tool_transformers_applied = False
 
     def _update_database_connection(self, database_name: str):
         """Rebuild the DB tool bound to ``database_name`` and remember it as the active database.

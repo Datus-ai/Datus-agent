@@ -13,8 +13,8 @@ The three profiles embody three security postures:
 
 * ``normal``:    read-only tools, semantic tools, and skill loading allowed,
   all other writes ASK, named destructive tools DENY. Default for new installs.
-* ``auto``:      Normal + workspace writes auto-execute, BI/scheduler
-  non-trigger writes auto, DB writes still ASK.
+* ``auto``:      Normal + workspace writes auto-execute, BI non-trigger
+  writes auto, DB writes still ASK.
 * ``dangerous``: everything ALLOW, including EXTERNAL filesystem paths in
   interactive mode. Workflow (non-interactive) flows still fail closed on
   EXTERNAL paths regardless of profile.
@@ -89,10 +89,6 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),
     _rule("semantic_tools", "generate_*_id", PermissionLevel.ALLOW),
     _rule("semantic_tools", "*", PermissionLevel.ALLOW),
-    # scheduler read + destructive deny
-    _rule("scheduler_tools", "list_*", PermissionLevel.ALLOW),
-    _rule("scheduler_tools", "get_*", PermissionLevel.ALLOW),
-    _rule("scheduler_tools", "delete_job", PermissionLevel.DENY),
     # filesystem read. Writes are handled by the zone × profile gate in
     # ``PermissionHooks._handle_filesystem_zone`` — see this file's docstring
     # for the full decision matrix. Patterns here must match a real
@@ -274,7 +270,7 @@ NORMAL = PermissionConfig(
 )
 
 # --- Auto --------------------------------------------------------------------
-# Normal's rules + workspace writes + BI create/update + scheduler non-trigger.
+# Normal's rules + workspace writes + BI create/update.
 # DB writes remain ASK (no env detection in MVP). Named destructives are
 # *downgraded* from DENY to ASK — the user is already in a productive
 # posture, so forcing them to switch to ``dangerous`` just to remove one
@@ -295,12 +291,6 @@ _AUTO_EXTRA_RULES = [
     _rule("bi_tools", "create_*", PermissionLevel.ALLOW),
     _rule("bi_tools", "update_*", PermissionLevel.ALLOW),
     _rule("bi_tools", "add_*", PermissionLevel.ALLOW),
-    # scheduler non-trigger writes
-    _rule("scheduler_tools", "submit_*", PermissionLevel.ALLOW),
-    _rule("scheduler_tools", "update_job", PermissionLevel.ALLOW),
-    _rule("scheduler_tools", "pause_job", PermissionLevel.ALLOW),
-    _rule("scheduler_tools", "resume_job", PermissionLevel.ALLOW),
-    _rule("scheduler_tools", "trigger_*", PermissionLevel.ASK),
     # db writes: always ASK. ``execute_sql`` writes/DDL are gated dynamically by
     # ``PermissionHooks._handle_sql_permission`` (read-only bypass), so only the
     # standalone cross-DB transfer tool needs an explicit ASK rule here.
@@ -309,7 +299,6 @@ _AUTO_EXTRA_RULES = [
     # can confirm at the prompt; DENY would force a profile switch to
     # ``dangerous`` (which is far more permissive than just ``delete``).
     _rule("bi_tools", "delete_*", PermissionLevel.ASK),
-    _rule("scheduler_tools", "delete_job", PermissionLevel.ASK),
 ]
 
 AUTO = PermissionConfig(
@@ -386,6 +375,7 @@ def build_user_overrides(
 def build_effective_config(
     profile_name: str,
     user_raw: Optional[dict] = None,
+    plugin_bash_rules: Optional[BashCommandRules] = None,
 ) -> PermissionConfig:
     """Build the effective permission config for a profile + user overrides.
 
@@ -404,12 +394,27 @@ def build_effective_config(
             unknown names.
         user_raw: The raw user permissions dict (without the ``profile``
             key). ``None`` or ``{}`` yields the bare profile base.
+        plugin_bash_rules: Bash rules declared by installed plugins for this
+            profile (``collect_plugin_cli_permissions()[profile_name]``).
+            Layered between the profile base and the user rules: since
+            ``evaluate_bash_command`` applies deny > safety > ask > allow
+            regardless of list order, a plugin ``allow`` can never override a
+            user ``deny``. Ignored when the profile carries no
+            ``bash_commands`` ruleset (dangerous stays fully open).
 
     Returns:
         The merged ``PermissionConfig`` ready to install on
         ``AgentConfig.permissions_config`` and ``PermissionManager.global_config``.
     """
     base = get_profile(profile_name)
+    if plugin_bash_rules is not None and not plugin_bash_rules.is_empty() and base.bash_commands is not None:
+        # Rebuild instead of mutating: ``get_profile`` returns shared
+        # module-level singletons.
+        base = PermissionConfig(
+            default_permission=base.default_permission,
+            rules=list(base.rules),
+            bash_commands=base.bash_commands.merge_with(plugin_bash_rules),
+        )
     if not user_raw:
         return base
 

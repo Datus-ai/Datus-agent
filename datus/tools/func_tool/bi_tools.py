@@ -25,7 +25,7 @@ class BIFuncTool:
     """
     LLM function calling layer for BI adapters.
 
-    Aligned with ``SemanticTools`` / ``SchedulerTools`` pattern: takes
+    Aligned with the ``SemanticTools`` pattern: takes
     ``agent_config`` plus an optional service name and constructs the underlying
     BI adapter lazily via ``datus_bi_core.adapter_registry``.
 
@@ -62,8 +62,7 @@ class BIFuncTool:
     def _resolved_platform(self) -> Optional[str]:
         """Return the BI platform name to use.
 
-        Preference order (matches ``get_scheduler_config`` /
-        ``resolve_semantic_adapter``):
+        Preference order (matches ``resolve_semantic_adapter``):
         1. Explicit ``bi_service`` passed to the constructor.
         2. Project-level default from ``./.datus/config.yml`` (read via
            ``agent_config.active_dashboard()``). A stale override that
@@ -594,7 +593,7 @@ class BIFuncTool:
         """Expose the BI serving DB's identity for orchestrator hand-off.
 
         Returns ``{datus_datasource, database, schema, bi_database_name}`` so a
-        parent agent can prepare data with ``gen_job`` / ``scheduler`` and then
+        parent agent can prepare data with ``gen_job`` and then
         build BI assets with ``gen_dashboard`` without re-parsing agent.yml.
         """
         ds_db = self.serving_dataset_db

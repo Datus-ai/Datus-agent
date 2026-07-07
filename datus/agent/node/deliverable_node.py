@@ -3,8 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 """
-Shared base class for deliverable-producing subagents — ``gen_table`` and
-``gen_job`` today; ``gen_dashboard`` and ``scheduler`` join in follow-up chunks.
+Shared base class for deliverable-producing subagents — ``gen_table``,
+``gen_job``, and ``gen_dashboard``.
 
 Centralizes ~85 % of the boilerplate that used to be copy-pasted across nodes:
 tool / filesystem / prompt setup, the stream loop, session handling, and
@@ -38,7 +38,7 @@ class ValidationHookRetryPolicy:
     """:class:`~datus.agent.node.retry_policy.RetryPolicy` driven by ``ValidationHook``.
 
     Used exclusively by :class:`DeliverableAgenticNode` and its subclasses
-    (gen_dashboard, scheduler, gen_table, gen_job). After each stream
+    (gen_dashboard, gen_table, gen_job). After each stream
     completes, the policy inspects ``hook.final_report`` and reschedules
     with a context-aware retry prompt when a blocking failure is recorded.
 
@@ -98,7 +98,7 @@ class ValidationHookRetryPolicy:
 
 class DeliverableAgenticNode(AgenticNode):
     """Base class for subagents that produce validation-worthy deliverables
-    (tables, transfers, dashboards, charts, datasets, scheduler jobs, ...).
+    (tables, transfers, dashboards, charts, datasets, ...).
 
     Subclasses must set the four class constants below and implement
     :meth:`_setup_domain_tools`. Everything else (including the validation retry
@@ -130,7 +130,7 @@ class DeliverableAgenticNode(AgenticNode):
     DEFAULT_MAX_TURNS: ClassVar[int] = 50
 
     # Default ``result_class`` — gen_table / gen_job use SemanticNodeResult;
-    # gen_dashboard / scheduler override with their specialised models.
+    # gen_dashboard overrides with its specialised model.
     result_class = SemanticNodeResult
 
     # ── constructor ───────────────────────────────────────────────────
@@ -235,7 +235,6 @@ class DeliverableAgenticNode(AgenticNode):
                 model=self.model,
                 db_func_tool=self.db_func_tool,
                 bi_tool=getattr(self, "bi_func_tool", None),
-                scheduler_tool=getattr(self, "scheduler_func_tool", None),
                 skill_validators_enabled=enabled,
             )
 
@@ -362,7 +361,7 @@ class DeliverableAgenticNode(AgenticNode):
         )
 
     def _build_error_result(self, exc: BaseException, ctx: StreamRunContext) -> Any:
-        # Deliverable subclasses (gen_dashboard / scheduler) override
+        # Deliverable subclasses (gen_dashboard) override
         # ``_make_error_result`` to return their typed NodeResult.
         return self._make_error_result(
             error=self._format_execution_error(exc),
@@ -372,7 +371,7 @@ class DeliverableAgenticNode(AgenticNode):
     # ── result construction hooks ─────────────────────────────────────
     #
     # Subclasses with their own *NodeResult schema (gen_dashboard →
-    # GenDashboardNodeResult, scheduler → SchedulerNodeResult) override these
+    # GenDashboardNodeResult) override these
     # two hooks. The default returns a :class:`SemanticNodeResult` so gen_table
     # and gen_job keep working unchanged.
 
@@ -422,7 +421,7 @@ class DeliverableAgenticNode(AgenticNode):
         # Per-turn datasource/dialect line — the frozen system prompt never
         # carries the current selection. The reminder already merges
         # catalog/database/schema, superseding the legacy Context line; nodes
-        # without a DB tool (gen_dashboard, scheduler) get an empty reminder
+        # without a DB tool (gen_dashboard) get an empty reminder
         # and keep the legacy fallback below.
         datasource_reminder = self._build_datasource_reminder(user_input)
         if datasource_reminder:

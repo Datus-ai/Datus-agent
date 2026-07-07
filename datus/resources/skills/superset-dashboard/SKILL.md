@@ -179,7 +179,7 @@ separate update request.
 1. **Data movement is outside scope.** If the target table doesn't exist in
    the BI database, stop and return a structured error naming the missing
    table. The caller must prepare or refresh data separately with `gen_job`
-   or `scheduler` before retrying dashboard creation.
+   before retrying dashboard creation.
 2. **Use a Superset BI database ID** for `create_dataset` — obtain it from
    `list_bi_databases`, not from a source connector.
 3. **Language**: Match the user's language (Chinese input -> Chinese output).

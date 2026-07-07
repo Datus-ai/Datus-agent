@@ -6,7 +6,7 @@ Subagents are specialized AI assistants in Datus. They share the same project co
 
 A subagent can be:
 
-- A built-in system subagent such as `gen_sql`, `explore`, or `scheduler`
+- A built-in system subagent such as `gen_sql`, `explore`, or `gen_dashboard`
 - A custom subagent defined in `agent.agentic_nodes` in `agent.yml`
 
 ## What a Subagent Includes
@@ -34,7 +34,6 @@ The current built-in set comes from `SYS_SUB_AGENTS` in code:
 9. `gen_skill`: skill creation and optimization
 10. `gen_dashboard`: BI dashboard creation and management
 11. `gen_visual_report`: Self-contained visual report under `reports/<slug>/`
-12. `scheduler`: Airflow job lifecycle management
 
 See [Built-in subagents](./builtin_subagents.md) for details.
 
@@ -42,7 +41,7 @@ See [Built-in subagents](./builtin_subagents.md) for details.
 
 Custom subagents are configured under `agent.agentic_nodes`.
 
-The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized node classes such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
+The unified agent TUI (`/agent` or `/subagent`) Custom-tab wizard currently creates `gen_sql`-style or `gen_report`-style custom subagents. If you want to alias more specialized node classes such as `explore`, `gen_table`, `gen_skill`, or `gen_dashboard`, edit `agent.yml` manually.
 
 Example:
 
@@ -149,5 +148,4 @@ Important behavior:
 | `gen_skill` | Create or optimize skills |
 | `gen_dashboard` | Create or manage BI dashboards |
 | `gen_visual_report` | Produce a self-contained visual report under `reports/<slug>/` |
-| `scheduler` | Submit or operate Airflow jobs |
 | Custom names | Any discoverable custom subagent defined in `agent.yml` |

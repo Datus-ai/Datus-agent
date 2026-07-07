@@ -15,7 +15,6 @@ from datus.validation.report import (
     DatasetTarget,
     DBRef,
     DeliverableTarget,
-    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TargetFilter,
@@ -122,24 +121,6 @@ class TestDatasetTarget:
         dumped = t.model_dump()
         restored = TypeAdapter(DeliverableTarget).validate_python(dumped)
         assert isinstance(restored, DatasetTarget)
-
-
-class TestSchedulerJobTarget:
-    def test_basic_construction(self):
-        t = SchedulerJobTarget(platform="airflow", job_id="dag-123", job_name="nightly-etl")
-        assert t.type == "scheduler_job"
-        assert t.platform == "airflow"
-        assert t.job_id == "dag-123"
-
-    def test_job_name_optional(self):
-        t = SchedulerJobTarget(platform="dolphinscheduler", job_id="j-1")
-        assert t.job_name is None
-
-    def test_discriminated_union_roundtrip(self):
-        t = SchedulerJobTarget(platform="airflow", job_id="dag-123")
-        dumped = t.model_dump()
-        restored = TypeAdapter(DeliverableTarget).validate_python(dumped)
-        assert isinstance(restored, SchedulerJobTarget)
 
 
 class TestValidationReport:
@@ -277,21 +258,16 @@ class TestTargetFilter:
         filters = [TargetFilter(type="dataset")]
         assert skill_matches_target(filters, DatasetTarget(platform="superset", dataset_id="d1"))
 
-    def test_scheduler_job_type_filter(self):
-        filters = [TargetFilter(type="scheduler_job")]
-        assert skill_matches_target(filters, SchedulerJobTarget(platform="airflow", job_id="j-1"))
-        assert not skill_matches_target(filters, DashboardTarget(platform="superset", dashboard_id="42"))
-
-    def test_session_with_bi_and_scheduler_targets(self):
-        """Session containing mixed BI + scheduler targets — filter by any type matches."""
+    def test_session_with_bi_targets(self):
+        """Session containing mixed BI targets — filter by any type matches."""
         session = SessionTarget(
             targets=[
                 DashboardTarget(platform="superset", dashboard_id="42"),
-                SchedulerJobTarget(platform="airflow", job_id="j-1"),
+                ChartTarget(platform="superset", chart_id="c1"),
             ]
         )
         assert skill_matches_target([TargetFilter(type="dashboard")], session)
-        assert skill_matches_target([TargetFilter(type="scheduler_job")], session)
+        assert skill_matches_target([TargetFilter(type="chart")], session)
         assert not skill_matches_target([TargetFilter(type="transfer")], session)
 
 
@@ -337,12 +313,6 @@ class TestDescribeTarget:
         out = describe_target(t)
         assert "dataset" in out
         assert "d1" in out
-
-    def test_scheduler_job(self):
-        t = SchedulerJobTarget(platform="airflow", job_id="j-123", job_name="nightly")
-        out = describe_target(t)
-        assert "scheduler_job" in out
-        assert "j-123" in out
 
 
 class TestBuildRetryPrompt:
@@ -455,12 +425,3 @@ class TestBuildRetryPrompt:
         out = build_retry_prompt(report, [t])
         assert "Failed targets" in out
         assert "42" in out
-
-    def test_failed_scheduler_job_target_partitioning(self):
-        """SchedulerJobTarget with blocking failure lands in the failed section."""
-        t = SchedulerJobTarget(platform="airflow", job_id="dag-123", job_name="nightly")
-        check = self._fail_check(describe_target(t), name="job_status", observed={"status": "failed"})
-        report = ValidationReport(target=None, checks=[check])
-        out = build_retry_prompt(report, [t])
-        assert "Failed targets" in out
-        assert "dag-123" in out

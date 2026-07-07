@@ -669,100 +669,6 @@ def _fmt_analyze_metric_candidates_from_history(result: Any) -> str:
     return ""
 
 
-# === Scheduler tools ===
-
-
-def _fmt_submit_sql_job(result: Any) -> str:
-    if isinstance(result, dict):
-        job_id = result.get("job_id")
-        if job_id:
-            return f"+job {job_id}"
-    return ""
-
-
-def _fmt_submit_sparksql_job(result: Any) -> str:
-    if isinstance(result, dict):
-        job_id = result.get("job_id")
-        if job_id:
-            return f"+spark {job_id}"
-    return ""
-
-
-def _fmt_trigger_scheduler_job(result: Any) -> str:
-    if isinstance(result, dict):
-        run_id = result.get("run_id")
-        job_id = result.get("job_id")
-        if job_id and run_id:
-            return f"{job_id}→{run_id}"
-        if job_id:
-            return f"trig {job_id}"
-    return ""
-
-
-def _fmt_get_scheduler_job(result: Any) -> str:
-    if isinstance(result, dict):
-        if result.get("found") is False:
-            return f"{result.get('job_id', '?')} not found"
-        job_name = result.get("job_name")
-        status = result.get("status")
-        if job_name and status:
-            return f"{job_name}: {status}"
-        if result.get("job_id"):
-            return f"job {result['job_id']}"
-    return ""
-
-
-def _fmt_list_scheduler_jobs(result: Any) -> str:
-    return _envelope_with_label(result, "job", "jobs")
-
-
-def _fmt_pause_job(result: Any) -> str:
-    if isinstance(result, dict) and result.get("job_id"):
-        return f"paused {result['job_id']}"
-    return ""
-
-
-def _fmt_resume_job(result: Any) -> str:
-    if isinstance(result, dict) and result.get("job_id"):
-        return f"resumed {result['job_id']}"
-    return ""
-
-
-def _fmt_delete_job(result: Any) -> str:
-    if isinstance(result, dict) and result.get("job_id"):
-        return f"deleted {result['job_id']}"
-    return ""
-
-
-def _fmt_update_job(result: Any) -> str:
-    if isinstance(result, dict) and result.get("job_id"):
-        return f"updated {result['job_id']}"
-    return ""
-
-
-def _fmt_list_job_runs(result: Any) -> str:
-    return _envelope_with_label(result, "run", "runs")
-
-
-def _fmt_get_run_log(result: Any) -> str:
-    if isinstance(result, dict):
-        run_id = result.get("run_id")
-        log = result.get("log")
-        if run_id and isinstance(log, str):
-            lines = len(log.splitlines())
-            return f"{run_id}: {lines} lines" if lines != 1 else f"{run_id}: 1 line"
-        if run_id:
-            return f"log: {run_id}"
-    return ""
-
-
-def _fmt_list_scheduler_connections(result: Any) -> str:
-    if isinstance(result, dict) and isinstance(result.get("total"), int):
-        n = result["total"]
-        return f"{n} connection" if n == 1 else f"{n} connections"
-    return ""
-
-
 # === Context search tools ===
 
 
@@ -1050,8 +956,6 @@ def _fmt_task(result: Any) -> str:
         return f'skill "{skill_name}" generated' if skill_name else "skill generated"
     if result.get("dashboard_result") is not None:
         return "dashboard updated"
-    if result.get("scheduler_result") is not None:
-        return "scheduler updated"
     if result.get("items_saved") is not None:
         return "feedback saved"
     response = result.get("response")
@@ -1250,20 +1154,6 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         "analyze_metric_candidates_from_history": _fmt_analyze_metric_candidates_from_history,
         "get_multiple_tables_ddl": _fmt_get_multiple_tables_ddl,
-        # Scheduler tools
-        "submit_sql_job": _fmt_submit_sql_job,
-        "submit_sparksql_job": _fmt_submit_sparksql_job,
-        "trigger_scheduler_job": _fmt_trigger_scheduler_job,
-        "get_scheduler_job": _fmt_get_scheduler_job,
-        "list_scheduler_jobs": _fmt_list_scheduler_jobs,
-        "pause_job": _fmt_pause_job,
-        "resume_job": _fmt_resume_job,
-        "delete_job": _fmt_delete_job,
-        "delete_scheduler_job": _fmt_delete_job,
-        "update_job": _fmt_update_job,
-        "list_job_runs": _fmt_list_job_runs,
-        "get_run_log": _fmt_get_run_log,
-        "list_scheduler_connections": _fmt_list_scheduler_connections,
         # Context search
         "list_subject_tree": _fmt_list_subject_tree,
         "get_metrics": _fmt_get_metrics,

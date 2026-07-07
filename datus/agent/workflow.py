@@ -485,8 +485,23 @@ class Workflow:
 
         workflow_data = data["workflow"]
 
-        # Convert nodes list back to dict format
-        nodes = {node["id"]: Node.from_dict(node, agent_config) for node in workflow_data["nodes"]}
+        # Convert nodes list back to dict format. Skip nodes whose type no
+        # longer exists (e.g. a checkpoint written before a node type was
+        # removed) instead of failing recovery of the whole workflow.
+        nodes = {}
+        skipped_node_ids = set()
+        for node_data in workflow_data["nodes"]:
+            try:
+                nodes[node_data["id"]] = Node.from_dict(node_data, agent_config)
+            except (ValueError, NotImplementedError) as e:
+                skipped_node_ids.add(node_data.get("id"))
+                logger.warning(
+                    "Skipping unrecoverable node %r (type %r) while loading %s: %s",
+                    node_data.get("id"),
+                    node_data.get("type"),
+                    file_path,
+                    e,
+                )
         # FIXME global_config
 
         # Create task from description if there's no task
@@ -505,8 +520,16 @@ class Workflow:
         )
 
         workflow.nodes = nodes
-        workflow.node_order = workflow_data["node_order"]
-        workflow.current_node_index = workflow_data["current_node_index"]
+        node_order = workflow_data["node_order"]
+        current_node_index = workflow_data["current_node_index"]
+        if skipped_node_ids:
+            # Drop skipped ids from the order and shift the resume index left
+            # for every skipped node that preceded it, so the workflow resumes
+            # at the same logical position.
+            current_node_index -= sum(1 for node_id in node_order[:current_node_index] if node_id in skipped_node_ids)
+            node_order = [node_id for node_id in node_order if node_id not in skipped_node_ids]
+        workflow.node_order = node_order
+        workflow.current_node_index = current_node_index
         workflow.status = workflow_data["status"]
         workflow.creation_time = workflow_data["creation_time"]
         workflow.completion_time = workflow_data.get("completion_time")

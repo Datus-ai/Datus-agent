@@ -3,7 +3,7 @@
 Get started with Datus Agent in minutes: install → configure → first query.
 
 !!! tip "Need the full warehouse workflow?"
-    For an end-to-end example covering layered warehouse design, ETL generation, Airflow scheduling, semantic assets, and Superset dashboards, see [Data Engineering Quickstart](./data_engineering_quickstart.md).
+    For an end-to-end example covering layered warehouse design, ETL generation, job scheduling, semantic assets, and Superset dashboards, see [Data Engineering Quickstart](./data_engineering_quickstart.md).
 
 ## 1. Install
 
@@ -101,7 +101,7 @@ For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and 
 
 ## Next Steps
 
-- **[Data Engineering Quickstart](./data_engineering_quickstart.md)** — layered warehouse + Airflow + Superset, end-to-end
+- **[Data Engineering Quickstart](./data_engineering_quickstart.md)** — layered warehouse + scheduler + Superset, end-to-end
 - **[Contextual Data Engineering](./contextual_data_engineering.md)** — `@` references, knowledge base, context management
 - **[Configuration Guide](../configuration/introduction.md)** — connect your own databases and customize settings
 - **[CLI Reference](../cli/introduction.md)** — all commands and options

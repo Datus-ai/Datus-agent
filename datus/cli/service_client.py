@@ -5,9 +5,9 @@
 """CLI service client registry.
 
 Exposes read-only tool methods from ``services.bi_platforms`` /
-``services.schedulers`` / ``services.semantic_layer`` to the CLI via
-``ServiceClientRegistry``. Write methods are never registered here — the CLI
-is a read surface; mutating operations belong to the agent.
+``services.semantic_layer`` to the CLI via ``ServiceClientRegistry``. Write
+methods are never registered here — the CLI is a read surface; mutating
+operations belong to the agent.
 
 Keyed by the service name the user configured in ``agent.yml``. Multiple BI
 services (e.g. ``superset`` and ``superset_prod``) are supported: each gets its
@@ -17,8 +17,6 @@ own ``ServiceClient`` entry, and the CLI addresses them by name.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
-
-from datus_scheduler_core.registry import SchedulerAdapterRegistry
 
 from datus.utils.loggings import get_logger
 
@@ -43,13 +41,6 @@ READ_METHODS: Dict[str, Set[str]] = {
         "get_chart_data",
         "list_datasets",
         "list_bi_databases",
-    },
-    "schedulers": {
-        "list_scheduler_jobs",
-        "get_scheduler_job",
-        "list_job_runs",
-        "get_run_log",
-        "list_scheduler_connections",
     },
     "semantic_layer": {
         "list_metrics",
@@ -153,12 +144,6 @@ def _build_bi_tool(agent_config: "AgentConfig", service_name: str) -> Any:
     return BIFuncTool(agent_config, bi_service=service_name)
 
 
-def _build_scheduler_tool(agent_config: "AgentConfig", service_name: str) -> Any:
-    from datus.tools.func_tool.scheduler_tools import SchedulerTools
-
-    return SchedulerTools(agent_config, scheduler_service=service_name)
-
-
 def _build_semantic_tool(agent_config: "AgentConfig", service_name: str) -> Any:
     from datus.tools.func_tool.semantic_tools import SemanticTools
 
@@ -172,7 +157,6 @@ def _build_semantic_tool(agent_config: "AgentConfig", service_name: str) -> Any:
 # ``list_services`` output is stable.
 _FACTORIES: Dict[str, _FactoryFn] = {
     "bi_platforms": _build_bi_tool,
-    "schedulers": _build_scheduler_tool,
     "semantic_layer": _build_semantic_tool,
 }
 
@@ -194,7 +178,6 @@ _FACTORIES: Dict[str, _FactoryFn] = {
 # the source of truth for config lookups; this mapping is display-only.
 TYPE_LABELS: Dict[str, str] = {
     "bi_platforms": "BI platform",
-    "schedulers": "scheduler",
     "semantic_layer": "semantic layer",
 }
 
@@ -243,47 +226,8 @@ def _probe_semantic_adapter(agent_config: "AgentConfig", service_name: str) -> b
         return False
 
 
-def _probe_scheduler_adapter(agent_config: "AgentConfig", service_name: str) -> bool:
-    """True when the platform adapter package is importable / registered.
-
-    ``datus-scheduler-core`` is a hard dependency, so its presence is
-    guaranteed; a scheduler service entry has a ``type`` field (e.g.
-    ``airflow``) that points at a platform-specific adapter, and the
-    per-platform adapter (``datus-scheduler-airflow`` /
-    ``datus-scheduler-dolphinscheduler`` / ...) is what actually
-    registers ``SchedulerAdapterRegistry`` entries.
-    """
-    # Read the platform from the service's config.
-    platform = "airflow"
-    try:
-        cfg_fn = getattr(agent_config, "get_scheduler_config", None)
-        if callable(cfg_fn):
-            scheduler_cfg = cfg_fn(service_name) or {}
-            platform = scheduler_cfg.get("type", platform) or platform
-    except Exception as exc:
-        logger.debug(f"Could not resolve scheduler platform for '{service_name}': {exc}")
-
-    # Registry may expose one of several getter names depending on
-    # ``datus-scheduler-core`` version. Try them in order before giving up.
-    for attr in ("get_adapter_class", "has_adapter", "get"):
-        getter = getattr(SchedulerAdapterRegistry, attr, None)
-        if not callable(getter):
-            continue
-        try:
-            result = getter(platform)
-        except Exception:
-            continue
-        return bool(result)
-
-    # Fallback: core is importable but neither getter API is present.
-    # Assume the platform adapter may or may not be there; surface as
-    # available so invocation isn't preemptively blocked.
-    return True
-
-
 _PROBES: Dict[str, _ProbeFn] = {
     "bi_platforms": _probe_bi_adapter,
-    "schedulers": _probe_scheduler_adapter,
     "semantic_layer": _probe_semantic_adapter,
 }
 
@@ -381,7 +325,7 @@ class ServiceClientRegistry:
 
         ``ServiceClientRegistry`` discovers from ``agent.yml``; that tells us
         the service is *configured*, not that its adapter package
-        (``datus-bi-<platform>``, ``datus-scheduler-core``, ``datus-semantic-<type>``)
+        (``datus-bi-<platform>``, ``datus-semantic-<type>``)
         is installed. The result is cached until the datasource fingerprint
         changes.
         """

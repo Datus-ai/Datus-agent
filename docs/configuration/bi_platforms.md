@@ -73,7 +73,7 @@ by name.
 ## Selection rules
 
 `BIFuncTool._resolved_platform` resolves the active BI service in this
-order — identical to Scheduler and Semantic resolution:
+order — identical to Semantic resolution:
 
 1. Explicit `bi_service` argument at the call site (or `bi_platform` on
    the agentic node).
@@ -101,8 +101,8 @@ agent:
 ## Configuring through the CLI (`/services`)
 
 Run `/services` inside the Datus REPL to enter the configuration TUI
-directly (Dashboard tab by default; pass `/services scheduler` to land on
-the Scheduler tab; `/services list` keeps the legacy read-only listing).
+directly (Dashboard tab by default; pass `/services semantic` to land on
+the Semantic tab; `/services list` keeps the legacy read-only listing).
 The two-tab TUI lets you:
 
 - Add a new dashboard with `Enter` on the trailing `+ Add new dashboard` row.
@@ -133,7 +133,7 @@ project-local.
 
 Dashboard creation is split into three explicit steps:
 
-1. `gen_job` or `scheduler` prepares / refreshes data in the serving DB
+1. `gen_job` or a scheduled job prepares / refreshes data in the serving DB
    referenced by `dataset_db.datasource_ref`.
 2. `gen_dashboard` builds the dataset / chart / dashboard on the BI side
    from tables or SQL datasets that already exist in that BI-registered DB.

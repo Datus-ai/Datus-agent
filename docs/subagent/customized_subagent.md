@@ -23,7 +23,7 @@ The wizard currently supports two custom node styles:
 - `gen_sql` (default)
 - `gen_report`
 
-If you want advanced aliases such as `explore`, `gen_table`, `gen_skill`, `gen_dashboard`, or `scheduler`, edit `agent.yml` manually.
+If you want advanced aliases such as `explore`, `gen_table`, `gen_skill`, or `gen_dashboard`, edit `agent.yml` manually.
 
 ## Wizard Fields
 
@@ -135,10 +135,6 @@ agent:
       bi_platform: superset
       max_turns: 30
 
-    etl_scheduler:
-      node_class: scheduler
-      model: claude
-      max_turns: 30
 ```
 
 See [Subagent Guide](./introduction.md) and [Built-in subagents](./builtin_subagents.md) for the supported node classes and runtime behavior.

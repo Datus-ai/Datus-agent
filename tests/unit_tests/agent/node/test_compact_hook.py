@@ -144,6 +144,7 @@ def test_compose_hooks_wires_compact_hook():
     node.execution_mode = "interactive"
     node._ensure_permission_hooks = lambda: None
     node.permission_hooks = None
+    node._ensure_tool_transformers = lambda: None
     # Disable the per-LLM-call ``TokenUsageHook`` so the assertion can pin
     # ``CompactHook`` as the sole returned object; the dedicated tests for
     # ``TokenUsageHook`` cover its own wiring.
@@ -181,6 +182,7 @@ def test_compact_hook_disabled_when_compact_off():
     node.execution_mode = "interactive"
     node._ensure_permission_hooks = lambda: None
     node.permission_hooks = None
+    node._ensure_tool_transformers = lambda: None
     cfg = CompactConfig()
     cfg.major.enabled = False
     cfg.minor.enabled = False

@@ -40,14 +40,12 @@ from datus.validation.report import (
     DashboardTarget,
     DatasetTarget,
     DeliverableTarget,
-    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TransferTarget,
     ValidationReport,
     skill_matches_target,
 )
-from datus.validation.scheduler_runtime import run_scheduler_runtime_validation
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.database import DBFuncTool
@@ -71,7 +69,6 @@ class ValidationHook(AgentHooks):
         model: Any,
         db_func_tool: Optional["DBFuncTool"] = None,
         bi_tool: Optional[Any] = None,
-        scheduler_tool: Optional[Any] = None,
         skill_validators_enabled: bool = True,
         node_class: Optional[str] = None,
     ):
@@ -81,7 +78,6 @@ class ValidationHook(AgentHooks):
         self.model = model
         self.db_func_tool = db_func_tool
         self.bi_tool = bi_tool
-        self.scheduler_tool = scheduler_tool
         self.skill_validators_enabled = skill_validators_enabled
 
         # Per-run state — reset() must be called at run boundaries.
@@ -171,7 +167,6 @@ class ValidationHook(AgentHooks):
                 session,
                 db_func_tool=self.db_func_tool,
                 bi_tool=self.bi_tool,
-                scheduler_tool=self.scheduler_tool,
             )
             combined.checks.extend(a_report.checks)
             combined.warnings.extend(a_report.warnings)
@@ -184,21 +179,6 @@ class ValidationHook(AgentHooks):
             # (the agent has already decided it's done). execute_stream reads
             # self.final_report after the run and acts on blocking failures
             # there.
-            self._final_report = combined
-            return
-
-        try:
-            runtime_report = await run_scheduler_runtime_validation(
-                session,
-                scheduler_tool=self.scheduler_tool,
-            )
-            combined.checks.extend(runtime_report.checks)
-            combined.warnings.extend(runtime_report.warnings)
-        except Exception as e:
-            logger.exception("Scheduler runtime validation raised")
-            combined.add_warning({"type": "scheduler_runtime_validation_error", "error": str(e)})
-
-        if combined.has_blocking_failure():
             self._final_report = combined
             return
 
@@ -242,8 +222,6 @@ class ValidationHook(AgentHooks):
                 return ChartTarget.model_validate(target_dict)
             if target_type == "dataset":
                 return DatasetTarget.model_validate(target_dict)
-            if target_type == "scheduler_job":
-                return SchedulerJobTarget.model_validate(target_dict)
         except Exception as e:
             logger.warning("Failed to validate deliverable_target payload: %s", e)
             return None
@@ -279,7 +257,6 @@ class ValidationHook(AgentHooks):
                     model=self.model,
                     db_func_tool=self.db_func_tool,
                     bi_tool=self.bi_tool,
-                    scheduler_tool=self.scheduler_tool,
                     precheck_context=precheck_context,
                     parent_session=self._parent_session,
                 )

@@ -375,16 +375,16 @@ class TestApplyProjectOverride:
         ):
             _apply_project_override(agent_raw)
         assert agent_raw["active_dashboard"] == "superset_prod"
-        assert "active_scheduler" not in agent_raw
+        assert "active_semantic" not in agent_raw
 
-    def test_scheduler_override_forwarded_as_active_scheduler(self):
+    def test_semantic_override_forwarded_as_active_semantic(self):
         agent_raw = self._base_raw()
         with patch(
             "datus.configuration.agent_config_loader.load_project_override",
-            return_value=ProjectOverride(scheduler="airflow_dev"),
+            return_value=ProjectOverride(semantic="metricflow"),
         ):
             _apply_project_override(agent_raw)
-        assert agent_raw["active_scheduler"] == "airflow_dev"
+        assert agent_raw["active_semantic"] == "metricflow"
         assert "active_dashboard" not in agent_raw
 
     def test_no_service_overrides_leaves_agent_raw_clean(self):
@@ -395,7 +395,7 @@ class TestApplyProjectOverride:
         ):
             _apply_project_override(agent_raw)
         assert "active_dashboard" not in agent_raw
-        assert "active_scheduler" not in agent_raw
+        assert "active_semantic" not in agent_raw
 
 
 class TestLoadNodeConfig:
@@ -634,6 +634,27 @@ class TestApplyProjectOverrideBashAllow:
             _apply_project_override(agent_raw)
         assert agent_raw["permissions"]["profile"] == "normal"
         assert agent_raw["permissions"]["bash_commands"] == {"allow": ["make:*"]}
+
+    def test_raw_grant_list_forwarded_for_ask_rule_bypass(self):
+        """The raw bash_allow list also rides as ``project_bash_allow`` so
+        PermissionManager can bypass ask-rule hits on an exact grant match
+        (merged allow entries lose to ask rules at evaluation time)."""
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(bash_allow=["datus hello config set:*"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["project_bash_allow"] == ["datus hello config set:*"]
+
+    def test_no_bash_allow_leaves_grant_list_unset(self):
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(project_name="p"),
+        ):
+            _apply_project_override(agent_raw)
+        assert "project_bash_allow" not in agent_raw
 
 
 class TestPermissionModeCliOverride:

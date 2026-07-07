@@ -68,15 +68,6 @@ VALIDATOR_READONLY_TOOL_NAMES: set[str] = {
     "list_datasets",
     "get_dataset",
     "list_bi_databases",
-    # Scheduler read tools (scheduler validators). trigger_scheduler_job is
-    # intentionally excluded from LLM validators — deterministic runtime
-    # firing, when enabled by profile/tool availability, is owned by
-    # ValidationHook.
-    "list_scheduler_jobs",
-    "get_scheduler_job",
-    "list_job_runs",
-    "get_run_log",
-    "list_scheduler_connections",
 }
 
 
@@ -125,7 +116,6 @@ async def run_llm_validator(
     precheck_context: Optional[ValidationReport] = None,
     parent_session: Optional[Any] = None,
     bi_tool: Optional[Any] = None,
-    scheduler_tool: Optional[Any] = None,
 ) -> ValidationReport:
     """Execute a single validator skill as an isolated LLM sub-agent run.
 
@@ -166,7 +156,7 @@ async def run_llm_validator(
     instructions = content + OUTPUT_CONTRACT_INSTRUCTIONS
 
     # ── tools ─────────────────────────────────────────────────────────
-    tools = _select_readonly_tools(db_func_tool, bi_tool=bi_tool, scheduler_tool=scheduler_tool)
+    tools = _select_readonly_tools(db_func_tool, bi_tool=bi_tool)
 
     # ── prompt ────────────────────────────────────────────────────────
     prompt = _build_prompt(target, precheck_context)
@@ -272,12 +262,11 @@ def _parse_validator_checks(parsed: dict, skill_name: str) -> List[CheckResult]:
 def _select_readonly_tools(
     db_func_tool: Optional["DBFuncTool"],
     bi_tool: Optional[Any] = None,
-    scheduler_tool: Optional[Any] = None,
 ) -> List[Any]:
     """Return the subset of each tool source's ``available_tools()`` matching
     :data:`VALIDATOR_READONLY_TOOL_NAMES`.
 
-    DB / BI / scheduler ``available_tools()`` already exclude mutation tools
+    DB / BI ``available_tools()`` already exclude mutation tools
     where applicable, but we still filter by the whitelist to be safe against
     future additions. ``None`` sources are simply skipped — validators for
     pure-table subagents only need ``db_func_tool``; BI validators only need
@@ -298,7 +287,7 @@ def _select_readonly_tools(
 
     allowed: List[Any] = []
     seen: set = set()
-    for source in (db_func_tool, bi_tool, scheduler_tool):
+    for source in (db_func_tool, bi_tool):
         if source is None:
             continue
         try:

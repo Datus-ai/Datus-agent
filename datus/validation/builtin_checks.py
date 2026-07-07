@@ -11,7 +11,6 @@ Deterministic, LLM-free checks dispatched by target type:
 - ``TransferTarget`` → target ``table_exists`` + ``transfer_row_count_parity``
 - ``DashboardTarget`` / ``ChartTarget`` / ``DatasetTarget`` → existence via
   the BI tool's ``get_dashboard`` / ``get_chart`` / ``get_dataset``
-- ``SchedulerJobTarget`` → ``scheduler_job_exists`` + ``scheduler_job_status``
 
 Always enforced, regardless of ``agent.validation.skill_validators_enabled``.
 """
@@ -28,7 +27,6 @@ from datus.validation.report import (
     DashboardTarget,
     DatasetTarget,
     DeliverableTarget,
-    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TransferTarget,
@@ -46,7 +44,6 @@ async def run_builtin_checks(
     target: DeliverableTarget,
     db_func_tool: Optional["DBFuncTool"] = None,
     bi_tool: Optional[Any] = None,
-    scheduler_tool: Optional[Any] = None,
 ) -> ValidationReport:
     """Run Layer A invariants for a single target.
 
@@ -56,8 +53,6 @@ async def run_builtin_checks(
         db_func_tool: DB tool instance for table / transfer checks. Skipped
             if ``None``.
         bi_tool: BI tool instance for dashboard / chart / dataset checks.
-            Skipped if ``None``.
-        scheduler_tool: Scheduler tool instance for scheduler_job checks.
             Skipped if ``None``.
 
     Returns:
@@ -91,18 +86,12 @@ async def run_builtin_checks(
             logger.info("Layer A skipped for %s: no BI tool available", _target_descriptor(target))
             return report
         await asyncio.to_thread(_check_dataset, target, bi_tool, report)
-    elif isinstance(target, SchedulerJobTarget):
-        if scheduler_tool is None:
-            logger.info("Layer A skipped for %s: no scheduler tool available", _target_descriptor(target))
-            return report
-        await asyncio.to_thread(_check_scheduler_job, target, scheduler_tool, report)
     elif isinstance(target, SessionTarget):
         for inner in target.targets:
             nested = await run_builtin_checks(
                 inner,
                 db_func_tool=db_func_tool,
                 bi_tool=bi_tool,
-                scheduler_tool=scheduler_tool,
             )
             inner_tag = describe_target(inner)
             for check in nested.checks:
@@ -125,9 +114,7 @@ async def run_builtin_checks(
 
 
 def _target_descriptor(target: DeliverableTarget) -> str:
-    if isinstance(
-        target, (TableTarget, TransferTarget, DashboardTarget, ChartTarget, DatasetTarget, SchedulerJobTarget)
-    ):
+    if isinstance(target, (TableTarget, TransferTarget, DashboardTarget, ChartTarget, DatasetTarget)):
         return describe_target(target)
     if isinstance(target, SessionTarget):
         return f"session[{len(target.targets)} target(s)]"
@@ -138,14 +125,13 @@ async def run_session_builtin_checks(
     session: SessionTarget,
     db_func_tool: Optional["DBFuncTool"] = None,
     bi_tool: Optional[Any] = None,
-    scheduler_tool: Optional[Any] = None,
 ) -> ValidationReport:
     """``on_end`` entrypoint — wrap each accumulated target in its own checks.
 
     Identical to calling :func:`run_builtin_checks` with the ``SessionTarget``
     directly; kept as a named alias so ``ValidationHook.on_end`` reads cleanly.
     """
-    return await run_builtin_checks(session, db_func_tool=db_func_tool, bi_tool=bi_tool, scheduler_tool=scheduler_tool)
+    return await run_builtin_checks(session, db_func_tool=db_func_tool, bi_tool=bi_tool)
 
 
 async def _check_table(
@@ -239,7 +225,7 @@ def _run_row_count_parity(target: TransferTarget) -> Optional[CheckResult]:
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# BI / scheduler Layer A checks
+# BI Layer A checks
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -354,63 +340,5 @@ def _check_dataset(target: DatasetTarget, bi_tool: Any, report: ValidationReport
             observed={"dataset_id": target.dataset_id, "found": exists},
             expected={"found": True},
             error=None if exists else f"dataset {target.dataset_id} not found",
-        )
-    )
-
-
-# Scheduler job status classification.
-# - ``failed`` / ``error`` → definitive failure (blocking)
-# - ``pending`` / ``queued`` → indeterminate (passed with advisory observed)
-# - Everything else (``active`` / ``running`` / ``paused`` / ``succeeded`` ...)
-#   → assumed healthy (passed)
-_SCHEDULER_STATUS_BAD = {"failed", "error"}
-_SCHEDULER_STATUS_INDETERMINATE = {"pending", "queued"}
-
-
-def _check_scheduler_job(target: SchedulerJobTarget, scheduler_tool: Any, report: ValidationReport) -> None:
-    """Job exists (``get_scheduler_job(job_id).found``) + status is not
-    definitively failed."""
-    try:
-        result = scheduler_tool.get_scheduler_job(job_id=target.job_id)
-    except Exception as e:
-        report.checks.append(
-            CheckResult(
-                name="scheduler_job_exists",
-                passed=False,
-                severity="blocking",
-                source="builtin",
-                error=f"get_scheduler_job raised: {e}",
-            )
-        )
-        return
-
-    payload = getattr(result, "result", None) or {}
-    found = bool(payload.get("found")) if isinstance(payload, dict) else False
-    report.checks.append(
-        CheckResult(
-            name="scheduler_job_exists",
-            passed=found,
-            severity="blocking",
-            source="builtin",
-            observed={"job_id": target.job_id, "found": found},
-            expected={"found": True},
-            error=None if found else f"scheduler job {target.job_id} not found",
-        )
-    )
-    if not found:
-        return
-
-    status = str(payload.get("status", "")).lower() if isinstance(payload, dict) else ""
-    is_bad = status in _SCHEDULER_STATUS_BAD
-    is_indeterminate = status in _SCHEDULER_STATUS_INDETERMINATE
-    report.checks.append(
-        CheckResult(
-            name="scheduler_job_status",
-            passed=not is_bad,
-            severity="blocking" if is_bad else "advisory",
-            source="builtin",
-            observed={"job_id": target.job_id, "status": status, "indeterminate": is_indeterminate},
-            expected={"status_not_in": sorted(_SCHEDULER_STATUS_BAD)},
-            error=f"scheduler job status={status}" if is_bad else None,
         )
     )

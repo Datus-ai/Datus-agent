@@ -148,12 +148,15 @@ def apply_proxy_tools(
 # ── Internal helpers ─────────────────────────────────────────────────
 
 
-def _parse_patterns(patterns: List[str]) -> List[Tuple[Optional[str], str]]:
+def parse_tool_patterns(patterns: List[str]) -> List[Tuple[Optional[str], str]]:
     """Parse ``"category.method_glob"`` patterns into ``(category, method_glob)`` tuples.
 
     - ``"filesystem_tools.*"``  → ``("filesystem_tools", "*")``
     - ``"read_file"``           → ``(None, "read_file")``
     - ``"*"``                   → ``(None, "*")``
+
+    Public API shared with the tool middleware so both the proxy and the
+    transformer layers speak one pattern syntax.
     """
     result: List[Tuple[Optional[str], str]] = []
     for p in patterns:
@@ -165,8 +168,11 @@ def _parse_patterns(patterns: List[str]) -> List[Tuple[Optional[str], str]]:
     return result
 
 
-def _matches(tool_name: str, registry: Dict[str, str], patterns: List[Tuple[Optional[str], str]]) -> bool:
-    """Check if a tool name matches any of the parsed patterns."""
+def tool_name_matches(tool_name: str, registry: Dict[str, str], patterns: List[Tuple[Optional[str], str]]) -> bool:
+    """Check if a tool name matches any of the parsed patterns.
+
+    Public API shared with the tool middleware (see :func:`parse_tool_patterns`).
+    """
     category = registry.get(tool_name)
 
     for pat_cat, pat_method in patterns:
@@ -180,3 +186,10 @@ def _matches(tool_name: str, registry: Dict[str, str], patterns: List[Tuple[Opti
                 return True
 
     return False
+
+
+# Backward-compatible private aliases: existing in-module call sites and the
+# proxy unit tests reference these names. New callers should use the public
+# ``parse_tool_patterns`` / ``tool_name_matches`` above.
+_parse_patterns = parse_tool_patterns
+_matches = tool_name_matches

@@ -966,7 +966,6 @@ class TestSkillAllowedAgentsConsistency:
             ("gen_metrics", ["gen-metrics", "metricflow-semantic-authoring"]),
             ("gen_dashboard", ["bi-validation", "grafana-dashboard", "superset-dashboard"]),
             ("gen_skill", ["create-skill", "optimize-skill"]),
-            ("scheduler", ["airflow-workflow", "scheduler-validation"]),
         ],
     )
     def test_skill_frontmatter_whitelists_expected_node(self, node_name, skills):

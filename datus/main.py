@@ -54,7 +54,7 @@ def create_parser() -> argparse.ArgumentParser:
     # service command
     service_parser = subparsers.add_parser(
         "service",
-        help="Manage services (databases, semantic layer, BI tools, schedulers)",
+        help="Manage services (databases, semantic layer, BI tools)",
         parents=[global_parser],
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

@@ -167,7 +167,6 @@ class SkillMarketplaceClient:
             "license": frontmatter.get("license"),
             "compatibility": frontmatter.get("compatibility"),
             "skill_md_content": content,
-            "allowed_commands": frontmatter.get("allowed_commands", []),
             "changelog": frontmatter.get("changelog"),
         }
 

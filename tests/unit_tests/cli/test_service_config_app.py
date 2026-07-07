@@ -27,14 +27,13 @@ from datus.cli.service_config_app import (
 )
 
 
-def _stub_agent_config(*, dashboards=None, schedulers=None, semantic=None, active_dash=None, active_sched=None):
+def _stub_agent_config(*, dashboards=None, semantic=None, active_dash=None, active_semantic=None):
     """Minimal in-memory ``AgentConfig`` shim sufficient for the App."""
     cfg = SimpleNamespace()
     cfg.dashboard_config = dashboards or {}
-    cfg.scheduler_services = schedulers or {}
     cfg.semantic_layer_configs = semantic or {}
     cfg.active_dashboard = MagicMock(return_value=active_dash)
-    cfg.active_scheduler = MagicMock(return_value=active_sched)
+    cfg.active_semantic = MagicMock(return_value=active_semantic)
     return cfg
 
 
@@ -70,16 +69,16 @@ class TestTabCycle:
         app = _build_app()
         assert app._tab == _Tab.DASHBOARD
 
-    def test_initial_tab_scheduler_when_requested(self):
+    def test_initial_tab_scheduler_falls_back_to_dashboard(self):
+        """``scheduler`` is no longer a tab; an unknown initial_tab lands
+        on the default Dashboard tab."""
         cfg = _stub_agent_config()
         with patch("datus.cli.service_config_app.ServiceConfigApp._is_installed", return_value=True):
             app = ServiceConfigApp(cfg, Console(file=io.StringIO()), initial_tab="scheduler")
-        assert app._tab == _Tab.SCHEDULER
+        assert app._tab == _Tab.DASHBOARD
 
     def test_cycle_swaps_tabs(self):
         app = _build_app()
-        app._cycle_tab(+1)
-        assert app._tab == _Tab.SCHEDULER
         app._cycle_tab(+1)
         assert app._tab == _Tab.SEMANTIC
         app._cycle_tab(+1)
@@ -103,17 +102,17 @@ class TestListEntries:
         assert "superset" in flat
         assert "Add new dashboard" in flat
 
-    def test_scheduler_default_flag_marks_entry(self):
+    def test_semantic_default_flag_marks_entry(self):
         app = _build_app(
-            schedulers={
-                "airflow_prod": {"type": "airflow", "default": True},
-                "airflow_dev": {"type": "airflow"},
+            semantic={
+                "metricflow": {"type": "metricflow", "default": True},
+                "dbt": {"type": "dbt"},
             },
         )
-        app._tab = _Tab.SCHEDULER
-        entries = app._entries_for(_Tab.SCHEDULER)
+        app._tab = _Tab.SEMANTIC
+        entries = app._entries_for(_Tab.SEMANTIC)
         names = {e.name: e.is_default for e in entries}
-        assert names == {"airflow_prod": True, "airflow_dev": False}
+        assert names == {"metricflow": True, "dbt": False}
 
     def test_project_default_marker_set_from_active_dashboard(self):
         app = _build_app(
@@ -267,16 +266,6 @@ class TestSetGlobalDefault:
         assert result.section == "bi_platforms"
         assert result.name == "grafana"
 
-    def test_d_emits_set_default_on_scheduler_tab(self):
-        app = _build_app(schedulers={"airflow_prod": {"type": "airflow"}, "airflow_dev": {"type": "airflow"}})
-        app._tab = _Tab.SCHEDULER
-        app._list_cursor = 0  # airflow_dev sorts before airflow_prod alphabetically
-        with patch.object(app, "_finish") as mock_exit:
-            app._on_set_default()
-        result = mock_exit.call_args.args[0]
-        assert result.action == "set_default"
-        assert result.section == "schedulers"
-
     def test_d_emits_set_default_on_semantic_tab(self):
         app = _build_app(
             semantic={
@@ -365,7 +354,6 @@ class TestCursor:
     [
         ("bi_platforms", "superset"),
         ("bi_platforms", "grafana"),
-        ("schedulers", "airflow"),
         ("semantic_layer", "metricflow"),
     ],
 )
@@ -375,13 +363,12 @@ def test_builtin_types_present(section, type_name):
     assert type_name in _BUILTIN_TYPES[section]
 
 
-def test_schedulers_currently_only_airflow():
-    """Lock the scheduler picker to ``airflow`` until another adapter
-    package ships. Adding more here is fine; *removing* ``airflow`` would
-    silently break the only working scheduler entry."""
+def test_schedulers_section_removed_from_builtin_types():
+    """The scheduler section is gone from the TUI — its picker types must
+    not resurface."""
     from datus.cli.service_config_app import _BUILTIN_TYPES
 
-    assert _BUILTIN_TYPES["schedulers"] == ("airflow",)
+    assert "schedulers" not in _BUILTIN_TYPES
 
 
 def test_semantic_layer_currently_only_metricflow():
@@ -466,8 +453,8 @@ class TestSemanticTab:
         mock_exit.assert_not_called()
 
     def test_p_emits_set_project_default_for_semantic(self):
-        """Semantic now supports project-level pinning (``set_active_semantic``)
-        on par with Dashboard / Scheduler."""
+        """Semantic supports project-level pinning (``set_active_semantic``)
+        on par with Dashboard."""
         app = _build_app(semantic={"metricflow": {"type": "metricflow"}})
         app._tab = _Tab.SEMANTIC
         app._list_cursor = 0

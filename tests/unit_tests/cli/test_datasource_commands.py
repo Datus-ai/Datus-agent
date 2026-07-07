@@ -51,7 +51,6 @@ class _FakeServicesConfig:
     datasources: Dict[str, _FakeDbConfig] = field(default_factory=dict)
     semantic_layer: Dict = field(default_factory=dict)
     bi_platforms: Dict = field(default_factory=dict)
-    schedulers: Dict = field(default_factory=dict)
 
     @property
     def default_datasource(self):

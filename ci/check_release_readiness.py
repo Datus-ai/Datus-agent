@@ -28,7 +28,6 @@ ADAPTER_CORE_PACKAGES = (
     "datus-db-core",
     "datus-semantic-core",
     "datus-bi-core",
-    "datus-scheduler-core",
 )
 CI_DEPENDENCY_GROUP = "ci"
 CI_ADAPTER_PACKAGES = (

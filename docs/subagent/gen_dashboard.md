@@ -6,7 +6,7 @@ The BI dashboard generation subagent creates, updates, and manages dashboards on
 
 `gen_dashboard` does not move data with BI tools and does not dispatch data-preparation subagents. Treat dashboard creation as the second step:
 
-1. Use `gen_job` or `scheduler` separately to prepare / refresh the serving table.
+1. Use `gen_job` or a scheduled job separately to prepare / refresh the serving table.
 2. Invoke `gen_dashboard` with the existing table or SQL dataset.
 3. `gen_dashboard` loads the platform skill and builds dataset / chart / dashboard against the BI database identified by `bi_database_name`.
 
@@ -90,7 +90,7 @@ Tools are exposed dynamically based on which Mixins the platform adapter impleme
 | `get_bi_serving_target` | `dataset_db` configured | Return the serving DB contract for orchestrator hand-off |
 
 `gen_dashboard` does not expose a direct materialization tool. Data movement
-belongs to a separate `gen_job` / `scheduler` step before dashboard creation.
+belongs to a separate `gen_job` / scheduled-job step before dashboard creation.
 
 ## Configuration
 

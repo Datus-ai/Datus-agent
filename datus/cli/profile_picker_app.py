@@ -330,7 +330,7 @@ class DangerousConfirmApp:
             ("", "\n"),
             ("", "  Switching to Dangerous will auto-execute:\n"),
             ("", "    \u2022 All DB writes (including DDL, DELETE)\n"),
-            ("", "    \u2022 All BI/Scheduler writes (including deletes)\n"),
+            ("", "    \u2022 All BI writes (including deletes)\n"),
             ("", "    \u2022 All MCP tools\n"),
             ("", "    \u2022 All skills\n"),
             ("", "\n"),

@@ -1843,7 +1843,7 @@ class DatusCLI:
         """Execute a slash command resolved via ``SLASH_COMMANDS`` registry.
 
         Falls back to :meth:`ServiceCommands.dispatch` for dynamic
-        ``/<service>.<method>`` routes (BI / scheduler / semantic methods
+        ``/<service>.<method>`` routes (BI / semantic methods
         enumerated at runtime, not statically registered in the registry).
 
         Returns ``EXIT_SENTINEL`` when the handler requested shutdown (``/exit``
@@ -2038,8 +2038,9 @@ class DatusCLI:
         # change both.
         raw_permissions = getattr(self.agent_config, "_raw_permissions", {}) or {}
         raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
+        plugin_rules_map = getattr(self.agent_config, "plugin_bash_rules", {}) or {}
         try:
-            new_effective = build_effective_config(choice, raw_user)
+            new_effective = build_effective_config(choice, raw_user, plugin_bash_rules=plugin_rules_map.get(choice))
         except Exception as e:
             # Mirror startup: if ``permissions.rules`` can't be parsed, refuse
             # to install a permissive profile base that would silently drop

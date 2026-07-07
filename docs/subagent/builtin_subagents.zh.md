@@ -4,7 +4,7 @@
 
 **内置 Subagent**  是集成在 Datus Agent 系统中的专用 AI 助手。每个subagent专注于数据工程自动化的特定方面——分析 SQL、生成语义模型、将查询转换为可复用指标——共同构成从原始 SQL 到具备知识感知的数据产品的闭环工作流。
 
-本文档涵盖十三个核心 subagent：
+本文档涵盖十二个核心 subagent：
 
 1. **[gen_sql_summary](#gen_sql_summary)** — 总结和分类 SQL 查询
 2. **[gen_semantic_model](#gen_semantic_model)** — 生成 MetricFlow 语义模型
@@ -18,7 +18,6 @@
 10. **[gen_skill](#gen_skill)** — skill 创建与优化
 11. **[gen_dashboard](#gen_dashboard)** — Superset 和 Grafana 的 BI 仪表盘 CRUD
 12. **[gen_visual_report](gen_visual_report.zh.md)** — 在 `reports/<slug>/` 下产出自包含的可视化报告
-13. **[scheduler](#scheduler)** — Airflow 作业生命周期管理
 
 ## 配置
 
@@ -75,9 +74,6 @@ agent:
       max_turns: 30            # 可选：默认为 30
       report_dist: ~/report_dist  # 可选：HTML 离线编译时使用的本地 dist 目录
 
-    scheduler:
-      model: claude     # 可选：默认使用已配置的模型
-      max_turns: 30     # 可选：默认为 30
 ```
 
 **可选配置参数**：
@@ -811,7 +807,7 @@ gen_dashboard subagent 在 Superset 和 Grafana 上创建、更新和管理 BI �
 
 - **多平台支持**：支持 Apache Superset 和 Grafana；平台可通过 `bi_platform` 显式指定，或从 `agent.services.bi_platforms` 自动检测
 - **动态工具暴露**：工具根据 adapter Mixin 能力动态暴露——只有平台实际支持的操作才作为 LLM 工具出现
-- **只处理已就位的 serving 数据**：数据准备由 `gen_job` / `scheduler` 单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
+- **只处理已就位的 serving 数据**：数据准备由 `gen_job` 或调度任务单独完成；gen_dashboard 负责创建 BI dataset / chart / dashboard 资产
 - **Skill 引导**：平台 skill（`superset-dashboard`、`grafana-dashboard`）提供分步工作流；`bi-validation` 在创建结束后自动运行
 
 ### 配置
@@ -921,109 +917,6 @@ agent:
 
 ---
 
-## scheduler
-
-### 概览
-
-scheduler subagent 在 Apache Airflow 上提交、监控、更新和排查定时作业。它由聊天 agent 通过 `task(type="scheduler")` 调用，通过 LLM function calling 提供完整的 Airflow 作业生命周期管理。
-
-### 关键特性
-
-- **完整作业生命周期**：提交、触发、暂停、恢复、更新和删除 Airflow DAG 作业
-- **SQL 和 SparkSQL 支持**：支持提交 SQL 和 SparkSQL 两种作业类型
-- **SQL 文件管理**：提交前可用文件系统工具创建或更新作业 SQL 文件
-- **监控能力**：列出作业运行记录、获取运行日志、排查故障
-- **连接发现**：列出可用的 Airflow 连接，用于作业配置
-
-### 配置
-
-```yaml
-agent:
-  services:
-    schedulers:
-      airflow_prod:
-        type: airflow
-        api_base_url: "${AIRFLOW_URL}"
-        username: "${AIRFLOW_USER}"
-        password: "${AIRFLOW_PASSWORD}"
-        dags_folder: "${AIRFLOW_DAGS_DIR}"
-
-  agentic_nodes:
-    scheduler:
-      model: claude                  # 可选：默认使用已配置的模型
-      max_turns: 30                  # 可选：默认为 30
-      scheduler_service: airflow_prod
-```
-
-**前置条件**：
-- `agent.yml` 中包含 `agent.services.schedulers` 配置段及 Airflow 凭据
-- 已安装 `datus-scheduler-airflow` 包（会自动拉取 `datus-scheduler-core`）
-
-### 工作原理
-
-```mermaid
-graph LR
-    A[chat agent] -->|task type=scheduler| B[SchedulerAgenticNode]
-    B --> C[LLM Function Calling]
-    C --> D[write_file / edit_file]
-    D --> E[submit_sql_job / submit_sparksql_job]
-    C --> F[trigger_scheduler_job]
-    C --> G[pause_job / resume_job]
-    C --> H[list_job_runs / get_run_log]
-```
-
-### 可用工具
-
-| 工具 | 说明 |
-|------|------|
-| `submit_sql_job` | 从 `.sql` 文件提交带 cron 表达式的定时 SQL 作业 |
-| `submit_sparksql_job` | 从 `.sql` 文件提交定时 SparkSQL 作业 |
-| `read_file` / `write_file` / `edit_file` | 读取、创建或更新定时作业使用的 SQL 文件 |
-| `trigger_scheduler_job` | 手动触发一次现有作业运行 |
-| `pause_job` | 暂停定时作业 |
-| `resume_job` | 恢复已暂停的作业 |
-| `delete_job` | 删除定时作业 |
-| `update_job` | 更新作业调度或配置 |
-| `get_scheduler_job` | 获取作业详情和当前状态 |
-| `list_scheduler_jobs` | 列出所有定时作业 |
-| `list_scheduler_connections` | 列出可用的 Airflow 连接 |
-| `list_job_runs` | 列出某作业的近期运行记录 |
-| `get_run_log` | 获取特定作业运行的日志 |
-
-### 输出格式
-
-```json
-{
-  "response": "已提交每日 SQL 作业 'daily_revenue'，每天早上 8:00 运行。",
-  "scheduler_result": {
-    "job_id": "daily_revenue_dag",
-    "status": "active",
-    "schedule": "0 8 * * *"
-  },
-  "tokens_used": 1580
-}
-```
-
-### 使用方式
-
-scheduler subagent 通常由聊天 agent 通过 `task(type="scheduler")` 自动调用，也可手动启动：
-
-```bash
-/scheduler 提交 /opt/sql/daily_revenue.sql 作为每天早上 8 点运行的定时作业，使用 postgres_prod 连接
-```
-
-也可以使用 `scheduler` 节点类创建自定义 subagent：
-
-```yaml
-agent:
-  agentic_nodes:
-    etl_scheduler:
-      node_class: scheduler
-      max_turns: 30
-```
-
----
-
 ## 总结
 
 | subagent | 用途 | 输出 | 存储位置 | 关键特性 |
@@ -1040,7 +933,6 @@ agent:
 | `gen_skill` | 创建或优化 skill | skill 路径 | skills 目录 | 交互式编写、校验、加载现有 skill |
 | `gen_dashboard` | BI 仪表盘 CRUD（Superset、Grafana） | 仪表盘结果 | BI 平台 | 动态工具暴露、基于已就位 serving 数据、多平台支持 |
 | `gen_visual_report` | 自包含的可视化报告（叙事文档，查询提前烘焙） | `reports/<slug>/`（可执行 SQL + 执行结果 + 报告组件） | 项目根目录 | 按模块独立修改、可基于 metric 或自定义 SQL 生成、CLI 模式直接在浏览器中打开 |
-| `scheduler` | Airflow 作业生命周期管理 | 调度结果 | Airflow | 提交、监控、更新和排障 |
 
 **所有 subagent 的内置特性：**
 - 最小化配置（仅 `model` 和 `max_turns` 可选）

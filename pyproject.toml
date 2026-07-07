@@ -76,8 +76,6 @@ dependencies = [
     "datus-semantic-core>=0.2.0",
     # BI platform adapters (core models & interfaces)
     "datus-bi-core>=0.1.2",
-    # Workflow scheduler adapters (core framework)
-    "datus-scheduler-core>=0.1.1",
 ]
 
 [project.urls]

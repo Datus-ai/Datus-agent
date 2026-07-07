@@ -17,7 +17,6 @@ def _make_agent_config(datasources=None):
     services.default_datasource = next(iter(db_map), None)
     services.semantic_layer = {}
     services.bi_platforms = {}
-    services.schedulers = {}
     agent_config = MagicMock()
     agent_config.services = services
     return agent_config
@@ -226,11 +225,11 @@ class TestServiceManagerList:
             ret = sm.list()
             assert ret == 0
 
-    def test_list_shows_schedulers_when_present(self):
-        """list() prints schedulers section when schedulers are configured."""
+    def test_list_shows_semantic_layer_when_present(self):
+        """list() prints the semantic layer section when configured."""
         db_cfg = _make_db_config()
         mock_config = _make_agent_config({"my_db": db_cfg})
-        mock_config.services.schedulers = {"airflow": {"url": "http://airflow"}}
+        mock_config.services.semantic_layer = {"metricflow": {"type": "metricflow"}}
 
         with (
             patch("datus.cli.service_manager.load_agent_config", return_value=mock_config),
@@ -242,7 +241,7 @@ class TestServiceManagerList:
             ret = sm.list()
             assert ret == 0
             calls = [str(c) for c in mock_console.print.call_args_list]
-            assert any("Schedulers" in c or "airflow" in c for c in calls)
+            assert any("Semantic Layer" in c or "metricflow" in c for c in calls)
 
     def test_list_marks_default_datasource(self):
         """list() marks the default database with '*' in the Default column."""

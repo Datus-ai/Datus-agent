@@ -18,6 +18,7 @@ from datus.tools.permission.profiles import get_profile
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.base import Tool
+    from datus.tools.permission.bash_rules import BashCommandRules
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ class PermissionManager:
         global_config: Optional[PermissionConfig] = None,
         node_overrides: Optional[Dict[str, PermissionConfig]] = None,
         active_profile: str = "normal",
+        plugin_bash_rules: Optional[Dict[str, "BashCommandRules"]] = None,
+        project_bash_allows: Optional[List[str]] = None,
     ):
         """Initialize the permission manager.
 
@@ -64,6 +67,17 @@ class PermissionManager:
                 baked into ``global_config`` are authoritative; this string
                 is what the status bar displays and what :meth:`switch_profile`
                 mutates. Defaults to ``"normal"``.
+            plugin_bash_rules: Per-profile bash rules declared by installed
+                plugins (``AgentConfig.plugin_bash_rules``). NOT applied at
+                init — the incoming ``global_config`` already carries the
+                active profile's plugin rules — but kept so
+                :meth:`switch_profile` can re-apply them for the new profile.
+            project_bash_allows: Patterns granted at project scope
+                (``./.datus/config.yml`` ``bash_allow``). Besides riding the
+                normal allow-list merge, these are kept as an exact-match
+                grant set that lets the hook bypass an *ask-rule* hit whose
+                matched pattern the project explicitly allowed — plain allow
+                entries cannot beat ask rules at evaluation time.
         """
         # Copy the incoming config — ``get_profile`` returns shared module-level
         # objects, and ``add_persistent_rule`` mutates ``global_config.rules``
@@ -87,6 +101,17 @@ class PermissionManager:
         # rebuilds ``global_config`` so the grant survives a /permission
         # switch (the on-disk ``.datus/config.yml`` copy covers restarts).
         self._persistent_bash_allows: List[str] = []
+
+        # Per-profile plugin-declared bash rules, re-applied on every
+        # ``switch_profile`` rebuild (a rebuild starts from the bare profile
+        # singleton and would silently drop them otherwise).
+        self._plugin_bash_rules: Dict[str, "BashCommandRules"] = dict(plugin_bash_rules or {})
+
+        # Exact-match project grants (``.datus/config.yml`` bash_allow, plus
+        # anything granted via "allow (project)" this session). Consulted by
+        # the hook to bypass ask-rule hits the project explicitly allowed;
+        # unaffected by profile switches — the on-disk grant is user intent.
+        self._project_bash_grants: set = set(project_bash_allows or [])
 
         logger.debug(
             f"PermissionManager initialized: profile={self.active_profile}, "
@@ -365,6 +390,7 @@ class PermissionManager:
         self._install_bash_allow(pattern)
         if pattern not in self._persistent_bash_allows:
             self._persistent_bash_allows.append(pattern)
+        self._project_bash_grants.add(pattern)
 
         try:
             from datus.configuration.project_config import append_project_bash_allow
@@ -375,6 +401,30 @@ class PermissionManager:
         except Exception as e:
             logger.warning(f"Failed to persist project bash allow {pattern!r}: {e}; grant applies to this session only")
             return False
+
+    def has_project_bash_grant(self, pattern: Optional[str]) -> bool:
+        """True when ``pattern`` was granted at project scope (exact match).
+
+        Used by the hook to let a project grant bypass an ask-rule hit: the
+        grant string is the matched pattern itself, so equality — not glob
+        matching — is the contract. A broader hand-written allow never
+        silences a narrower ask rule.
+        """
+        return bool(pattern) and pattern in self._project_bash_grants
+
+    def is_plugin_ask_pattern(self, pattern: Optional[str]) -> bool:
+        """True when ``pattern`` is an ask rule declared by a plugin for the
+        active profile.
+
+        The confirmation prompt offers "allow (project)" for these — a plugin
+        ask is a third-party default the user may relax per project — but not
+        for ask rules the user wrote in agent.yml (those are the user's own
+        explicit posture; relaxing them belongs in their config).
+        """
+        if not pattern:
+            return False
+        plugin_rules = self._plugin_bash_rules.get(self.active_profile)
+        return plugin_rules is not None and pattern in plugin_rules.ask
 
     def switch_profile(
         self,
@@ -419,6 +469,13 @@ class PermissionManager:
         for rule in self._persistent_rules:
             if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
                 self.global_config.rules.insert(0, rule)
+        # Re-apply plugin-declared bash rules for the new profile — a rebuild
+        # starts from the bare profile singleton, which never carries them.
+        # Same ``bash_commands is not None`` guard as below: ``dangerous``
+        # intentionally has no command-level ruleset and stays fully open.
+        plugin_rules = self._plugin_bash_rules.get(profile_name)
+        if plugin_rules is not None and self.global_config.bash_commands is not None:
+            self.global_config.bash_commands = self.global_config.bash_commands.merge_with(plugin_rules)
         # Re-apply project-scope bash allows granted earlier this session —
         # but only when the rebuilt config already carries a command-level
         # ruleset. Installing one where the profile intentionally left

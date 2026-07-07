@@ -29,7 +29,6 @@ nav:
       - Generate Metrics: subagent/gen_metrics.md
       - Ask Metrics: subagent/ask_metrics.md
       - Generate Semantic Model: subagent/gen_semantic_model.md
-      - Scheduler: subagent/scheduler.md
       - Generate SQL Summary: subagent/gen_sql_summary.md
       - Table Generation: subagent/gen_table.md
       - Data Pipeline (ETL + Migration): subagent/gen_job.md
@@ -44,6 +43,9 @@ nav:
         - Extract Knowledge: skills/extract_knowledge.md
         - Memory Organization: skills/memory_organization.md
         - Session Summarize: skills/session_summarize.md
+    - Plugin:
+      - Introduction: plugin/introduction.md
+      - Development: plugin/development.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
@@ -80,7 +82,6 @@ nav:
         - Datasources: configuration/datasources.md
         - Semantic Layer: configuration/semantic_layer.md
         - BI Platforms: configuration/bi_platforms.md
-        - Schedulers: configuration/schedulers.md
       - Storage: configuration/storage.md
       - Nodes: configuration/nodes.md
     - Adapters:
@@ -90,7 +91,6 @@ nav:
         - MetricFlow Semantic Adapter: adapters/metricflow_semantic_adapter.md
         - OSI Semantic Adapter: adapters/osi_semantic_adapter.md
       - BI Adapters: adapters/bi_adapters.md
-      - Scheduler Adapters: adapters/scheduler_adapters.md
     - Benchmark:
       - Introduction: benchmark/benchmark_manual.md
     - Integration:
@@ -143,7 +143,6 @@ plugins:
             Generate Metrics: 生成指标
             Ask Metrics: 指标问答
             Generate Semantic Model: 生成语义模型
-            Scheduler: 调度器
             Chatbot: chatbot
             IM Gateway: IM 网关
             Slack: Slack
@@ -170,14 +169,12 @@ plugins:
             Databases: 数据库
             Semantic Layer: 语义层
             BI Platforms: BI 平台
-            Schedulers: 调度器
             Adapters: 适配器
             Database Adapters: 数据库适配器
             Semantic Adapters: 语义层适配器
             MetricFlow Semantic Adapter: MetricFlow 语义适配器
             OSI Semantic Adapter: OSI 语义适配器
             BI Adapters: BI 适配器
-            Scheduler Adapters: Scheduler 适配器
             Benchmark: 基准测试
             SQL Policy: SQL Policy
             Integration: 集成
@@ -192,6 +189,8 @@ plugins:
             Session Summarize: 会话总结
             Validation: 校验
             Auto Memory: 自动记忆
+            Plugin: 插件
+            Development: 开发指南
             Develop: 开发
             Observability: 可观测性
             VSCode Extension: VSCode 插件

@@ -45,7 +45,9 @@ def test_service_config_structure(agent_config: AgentConfig):
     assert "local_duckdb" in agent_config.services.datasources
     assert "metricflow" in agent_config.services.semantic_layer
     assert "superset" in agent_config.services.bi_platforms
-    assert "airflow_local" in agent_config.services.schedulers
+    # Scheduler config moved to the plugin framework (`agent.plugins`);
+    # ServicesConfig no longer exposes a schedulers section.
+    assert not hasattr(agent_config.services, "schedulers")
 
 
 @pytest.mark.parametrize("database", ["bird_school", "snowflake", "local_duckdb"])

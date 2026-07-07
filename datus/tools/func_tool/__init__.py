@@ -48,10 +48,3 @@ __all__ = [
     "OrchestratorIssueTools",
     "WebTool",
 ]
-
-try:
-    from datus.tools.func_tool.scheduler_tools import SchedulerTools  # noqa: F401
-
-    __all__.append("SchedulerTools")
-except ImportError:
-    pass

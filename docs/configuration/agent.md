@@ -338,7 +338,6 @@ The runtime currently reads these commonly used fields from `agentic_nodes` entr
 - `subagents`
 - `semantic_adapter` for semantic-model and metrics agents
 - `bi_platform` for dashboard agents
-- `scheduler_service` for scheduler agents
 
 `scoped_kb_path` is deprecated. New configs use shared global storage with query-time filters instead of per-subagent scoped KB directories.
 
@@ -405,11 +404,6 @@ agent:
       semantic_adapter: metricflow
       max_turns: 30
 
-    etl_scheduler:
-      node_class: scheduler
-      model: claude
-      scheduler_service: airflow_prod
-      max_turns: 30
 ```
 
 > Context compaction (automatic minor/major passes that keep a long session within the model's context window) is configured under `agent.compact`. See [Context Compaction](compact.md) for how it works and the tunable parameters.

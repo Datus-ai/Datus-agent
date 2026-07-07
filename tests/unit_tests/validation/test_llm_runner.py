@@ -31,7 +31,6 @@ from datus.validation.report import (
     DashboardTarget,
     DatasetTarget,
     DBRef,
-    SchedulerJobTarget,
     SessionTarget,
     TableTarget,
     TransferTarget,
@@ -317,21 +316,6 @@ class TestSelectReadonlyTools:
         ):
             assert tool_name in VALIDATOR_READONLY_TOOL_NAMES
 
-    def test_scheduler_read_tools_in_whitelist(self):
-        """Scheduler read tools (for scheduler validators) must pass through."""
-        for tool_name in (
-            "list_scheduler_jobs",
-            "get_scheduler_job",
-            "list_job_runs",
-            "get_run_log",
-            "list_scheduler_connections",
-        ):
-            assert tool_name in VALIDATOR_READONLY_TOOL_NAMES
-
-    def test_trigger_scheduler_job_excluded(self):
-        """trigger_scheduler_job is NOT in the LLM validator whitelist."""
-        assert "trigger_scheduler_job" not in VALIDATOR_READONLY_TOOL_NAMES
-
     def test_bi_write_tools_excluded(self):
         """BI mutating tools must never be exposed to a validator sub-agent."""
         for tool_name in (
@@ -345,19 +329,6 @@ class TestSelectReadonlyTools:
             "delete_dataset",
             "add_chart_to_dashboard",
             "write_query",
-        ):
-            assert tool_name not in VALIDATOR_READONLY_TOOL_NAMES
-
-    def test_scheduler_write_tools_excluded(self):
-        """Scheduler mutating tools must never be exposed to a validator sub-agent."""
-        for tool_name in (
-            "submit_sql_job",
-            "submit_sparksql_job",
-            "update_job",
-            "trigger_scheduler_job",
-            "pause_job",
-            "resume_job",
-            "delete_job",
         ):
             assert tool_name not in VALIDATOR_READONLY_TOOL_NAMES
 
@@ -393,20 +364,18 @@ class TestBuildPromptExtras:
         assert "d.a" in prompt
         assert "d.b" in prompt
 
-    def test_session_target_lists_bi_and_scheduler_targets(self):
+    def test_session_target_lists_bi_targets(self):
         s = SessionTarget(
             targets=[
                 DashboardTarget(platform="superset", dashboard_id="dash-1", dashboard_name="Revenue"),
                 ChartTarget(platform="superset", chart_id="chart-1", chart_name="Trend", dashboard_id="dash-1"),
                 DatasetTarget(platform="superset", dataset_id="ds-1", dataset_name="rpt_daily"),
-                SchedulerJobTarget(platform="airflow", job_id="job-1", job_name="daily refresh"),
             ]
         )
         prompt = _build_prompt(s, precheck=None)
         assert "dashboard superset:dash-1 'Revenue'" in prompt
         assert "chart superset:chart-1 'Trend' in dashboard dash-1" in prompt
         assert "dataset superset:ds-1 'rpt_daily'" in prompt
-        assert "scheduler_job airflow:job-1 'daily refresh'" in prompt
 
     def test_precheck_context_rendered(self):
         from datus.validation.report import CheckResult

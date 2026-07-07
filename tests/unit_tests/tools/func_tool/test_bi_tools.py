@@ -919,8 +919,8 @@ class TestGetBiServingTarget:
 class TestBIFuncToolResolvePlatform:
     """``_resolved_platform`` resolution order — explicit > project pin >
     global ``default: true`` flag (or single-entry shortcut) > error.
-    Mirrors ``get_scheduler_config`` / ``resolve_semantic_adapter`` so all
-    three sections behave identically."""
+    Mirrors ``resolve_semantic_adapter`` so both sections behave
+    identically."""
 
     def _agent_cfg(self, *, dashboards, active=None, default=None):
         """Build a minimal AgentConfig stub.

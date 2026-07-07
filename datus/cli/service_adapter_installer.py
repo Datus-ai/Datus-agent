@@ -5,8 +5,8 @@
 """Adapter package auto-installer + hot-reloader for the ``/services`` TUI.
 
 When the user picks a ``type`` for a new ``services.bi_platforms`` or
-``services.schedulers`` entry, the underlying adapter package
-(``datus-bi-<type>`` / ``datus-scheduler-<type>``) might not be
+``services.semantic_layer`` entry, the underlying adapter package
+(``datus-bi-<type>`` / ``datus-semantic-<type>``) might not be
 installed yet. The TUI calls into this module to:
 
 1. Detect whether the adapter is already importable
@@ -18,7 +18,7 @@ installed yet. The TUI calls into this module to:
    ``sys.executable -m pip install <pkg>``. Either way the package
    lands in the interpreter that loaded ``datus-cli`` (venv / pipx /
    uv-installed CLIs).
-3. Import the adapter module and refresh the BI / scheduler registries
+3. Import the adapter module and refresh the BI / semantic registries
    without restarting the process (:func:`hot_reload_adapter`).
 
 Pure Python on purpose — the module has no prompt_toolkit dependency so
@@ -45,26 +45,23 @@ logger = get_logger(__name__)
 # field to either prefix to obtain the actual pip distribution name and
 # the importable module name. The mapping mirrors the package naming
 # convention documented in the data-engineering quickstart guide
-# (``datus-bi-superset`` ships ``datus_bi_superset``;
-# ``datus-scheduler-airflow`` ships ``datus_scheduler_airflow``).
+# (``datus-bi-superset`` ships ``datus_bi_superset``).
 _PKG_PREFIXES: dict[str, Tuple[str, str]] = {
     "bi_platforms": ("datus-bi-", "datus_bi_"),
-    "schedulers": ("datus-scheduler-", "datus_scheduler_"),
     "semantic_layer": ("datus-semantic-", "datus_semantic_"),
 }
 
 
 # Entry-point group each section's adapter packages register under.
 # ``datus-bi-<x>`` exposes ``datus.bi_adapters`` → ``<x> = datus_bi_<x>:register``;
-# ``datus-scheduler-<x>`` exposes ``datus.schedulers`` similarly. Importing
-# the module alone does NOT register the adapter — registration runs only
-# inside the ``register`` callable that the entry-point points at, so
-# :func:`hot_reload_adapter` resolves and calls it directly. Bypasses the
+# ``datus-semantic-<x>`` exposes ``datus.semantic_adapters`` similarly.
+# Importing the module alone does NOT register the adapter — registration
+# runs only inside the ``register`` callable that the entry-point points at,
+# so :func:`hot_reload_adapter` resolves and calls it directly. Bypasses the
 # caching that ``adapter_registry.discover_adapters()`` would otherwise
 # apply on second-and-later calls.
 _EP_GROUPS: dict[str, str] = {
     "bi_platforms": "datus.bi_adapters",
-    "schedulers": "datus.schedulers",
     "semantic_layer": "datus.semantic_adapters",
 }
 
@@ -202,7 +199,7 @@ def hot_reload_adapter(section: str, adapter_type: str) -> bool:
     """Import the freshly-installed adapter module and call its registrar.
 
     Adapter packages declare their registration callable through an
-    entry-point (``datus.bi_adapters`` / ``datus.schedulers``); importing
+    entry-point (``datus.bi_adapters`` / ``datus.semantic_adapters``); importing
     the package itself does **not** register the adapter — the registrar
     is only invoked when something walks those entry points. We do that
     walk explicitly here so a pip install + this function brings the
