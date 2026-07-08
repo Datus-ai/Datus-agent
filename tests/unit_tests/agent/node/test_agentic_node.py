@@ -1805,3 +1805,156 @@ class TestEnsurePermissionHooksProxyWiring:
 
         kwargs = ph_cls.call_args.kwargs
         assert kwargs["proxied_tool_names"] == set()
+
+
+# ---------------------------------------------------------------------------
+# _ensure_tool_transformers (plugin tool argument middleware wiring)
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureToolTransformers:
+    """Drive the unbound method with a minimal fake node.
+
+    The method only touches ``_tool_transformers_applied``, ``agent_config``,
+    ``get_node_name`` and (via ``apply_tool_transformers``) the tool list
+    attributes, so a SimpleNamespace keeps the tests free of the heavyweight
+    AgenticNode constructor.
+    """
+
+    @staticmethod
+    def _make_fake_node(plugins_enabled=True, tools=None):
+        from types import SimpleNamespace
+
+        from agents import FunctionTool
+
+        from datus.tools.registry.tool_registry import ToolRegistry
+
+        async def invoke(tool_ctx, args_str):
+            return {"success": 1, "result": "ok", "error": None}
+
+        default_tool = FunctionTool(
+            name="execute_sql",
+            description="t",
+            params_json_schema={"type": "object"},
+            on_invoke_tool=invoke,
+            strict_json_schema=False,
+        )
+        return SimpleNamespace(
+            _tool_transformers_applied=False,
+            agent_config=SimpleNamespace(plugins_enabled=plugins_enabled, project_root="/proj"),
+            get_node_name=lambda: "chat",
+            tools=tools if tools is not None else [default_tool],
+            tool_registry=ToolRegistry({"execute_sql": "db_tools"}),
+            proxied_tool_names=set(),
+            db_func_tool=None,
+        )
+
+    def test_wraps_tools_when_plugin_declares_transformers(self):
+        node = self._make_fake_node()
+        original_tool = node.tools[0]
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"execute_sql": [lambda n, a, c: a]},
+        ):
+            AgenticNode._ensure_tool_transformers(node)
+
+        assert node._tool_transformers_applied is True
+        assert node.tools[0] is not original_tool
+        assert node.tools[0].name == "execute_sql"
+
+    def test_idempotent_across_calls(self):
+        node = self._make_fake_node()
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"execute_sql": [lambda n, a, c: a]},
+        ) as collect:
+            AgenticNode._ensure_tool_transformers(node)
+            wrapped_once = node.tools[0]
+            AgenticNode._ensure_tool_transformers(node)
+
+        assert collect.call_count == 1
+        assert node.tools[0] is wrapped_once
+
+    def test_noop_when_no_plugin_transformers(self):
+        node = self._make_fake_node()
+        original_tool = node.tools[0]
+
+        with patch("datus.plugins.registry.collect_plugin_tool_transformers", return_value={}):
+            AgenticNode._ensure_tool_transformers(node)
+
+        assert node._tool_transformers_applied is True
+        assert node.tools[0] is original_tool
+
+    def test_gated_by_plugins_enabled(self):
+        node = self._make_fake_node(plugins_enabled=False)
+        original_tool = node.tools[0]
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"execute_sql": [lambda n, a, c: a]},
+        ) as collect:
+            AgenticNode._ensure_tool_transformers(node)
+
+        collect.assert_not_called()
+        assert node.tools[0] is original_tool
+
+    def test_apply_failure_raises_fail_closed(self):
+        from datus.utils.exceptions import DatusException
+
+        node = self._make_fake_node()
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"execute_sql": [lambda n, a, c: a]},
+        ):
+            with patch(
+                "datus.tools.middleware.apply_tool_transformers",
+                side_effect=RuntimeError("wrap exploded"),
+            ):
+                with pytest.raises(DatusException):
+                    AgenticNode._ensure_tool_transformers(node)
+
+    def test_apply_failure_stays_unapplied_and_retries_fail_closed(self):
+        """A failed apply must NOT flip the applied flag: the next call has to
+        retry (and keep raising) instead of silently running unwrapped tools."""
+        from datus.utils.exceptions import DatusException
+
+        node = self._make_fake_node()
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"execute_sql": [lambda n, a, c: a]},
+        ):
+            with patch(
+                "datus.tools.middleware.apply_tool_transformers",
+                side_effect=RuntimeError("wrap exploded"),
+            ):
+                with pytest.raises(DatusException):
+                    AgenticNode._ensure_tool_transformers(node)
+                assert node._tool_transformers_applied is False
+                # Second turn on the same node: still fail closed, not fail open.
+                with pytest.raises(DatusException):
+                    AgenticNode._ensure_tool_transformers(node)
+
+            # Once the transient failure clears, wrapping applies normally.
+            AgenticNode._ensure_tool_transformers(node)
+            assert node._tool_transformers_applied is True
+
+    def test_wrapping_mutates_tool_list_in_place(self):
+        """Callers capture ``self.tools`` before hooks compose (argument
+        evaluation order); the wrap must be visible through that reference."""
+        node = self._make_fake_node()
+        captured = node.tools
+        original_tool = captured[0]
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"execute_sql": [lambda n, a, c: a]},
+        ):
+            AgenticNode._ensure_tool_transformers(node)
+
+        assert node.tools is captured
+        assert captured[0] is not original_tool
+        assert captured[0].name == "execute_sql"

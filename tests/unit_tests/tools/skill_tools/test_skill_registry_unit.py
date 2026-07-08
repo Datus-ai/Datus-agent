@@ -348,9 +348,21 @@ class TestBuiltinSkillsResolution:
         # First-wins: the description must come from the override, not the built-in.
         assert skill.description == "User-shadow init"
 
-    def test_from_dict_does_not_duplicate_builtin(self):
+    def test_from_dict_does_not_duplicate_builtin(self, monkeypatch):
         """from_dict must be idempotent when the user already lists the packaged dir."""
+        import importlib.metadata as importlib_metadata
+
         from datus.tools.skill_tools.skill_config import _builtin_skills_dir
+
+        # Isolate from any installed plugin/adapter skill dirs (datus.plugins /
+        # datus.skills) so the assertion reflects only builtin de-duplication.
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [])
+
+        class _NoEntryPoints:
+            def select(self, *, group, name=None):
+                return []
+
+        monkeypatch.setattr(importlib_metadata, "entry_points", lambda: _NoEntryPoints())
 
         builtin = _builtin_skills_dir()
         assert isinstance(builtin, str)

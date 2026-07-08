@@ -207,6 +207,11 @@ class AgenticNode(Node):
 
         self.tool_registry = ToolRegistry()
 
+        # Plugin-declared tool argument transformers are applied lazily on the
+        # first ``_compose_hooks`` call, after ``setup_tools`` and any
+        # ``apply_proxy_tools`` rewrites — see ``_ensure_tool_transformers``.
+        self._tool_transformers_applied = False
+
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
 
@@ -1139,6 +1144,11 @@ class AgenticNode(Node):
         base_prompt = self._inject_runtime_context(base_prompt)
         base_prompt = self._inject_datasource_runtime_context(base_prompt)
 
+        # Inject installed-plugin context (available scheduling/plugin
+        # environments and what they do), grouped with the other "what's
+        # available" context above.
+        base_prompt = self._inject_plugin_context(base_prompt)
+
         # Inject AGENTS.md project context if present in cwd
         agents_md = self._load_agents_md()
         if agents_md:
@@ -1234,6 +1244,31 @@ class AgenticNode(Node):
             return base_prompt
         if section and section.strip():
             base_prompt = base_prompt + "\n\n" + section.strip()
+        return base_prompt
+
+    def _inject_plugin_context(self, base_prompt: str) -> str:
+        """Append self-describing context contributed by installed plugins.
+
+        Each ``datus.plugins`` package may expose a class-level
+        ``system_prompt(profiles)`` returning a markdown block (e.g. the
+        available scheduler environments). datus collects those sections and
+        appends them verbatim — the plugin owns formatting and is responsible
+        for surfacing only non-secret fields. Skipped entirely when the
+        plugin system is disabled (``agent.plugins_enabled: false``).
+        """
+        agent_config = getattr(self, "agent_config", None)
+        if agent_config is None or not getattr(agent_config, "plugins_enabled", True):
+            return base_prompt
+        try:
+            from datus.plugins.registry import plugin_system_prompt_sections
+
+            sections = plugin_system_prompt_sections(agent_config)
+        except Exception as e:
+            logger.warning(f"Failed to inject plugin context: {e}")
+            return base_prompt
+        for section in sections:
+            if section and section.strip():
+                base_prompt = base_prompt + "\n\n" + section.strip()
         return base_prompt
 
     def _inject_response_language(self, base_prompt: str) -> str:
@@ -2129,6 +2164,8 @@ class AgenticNode(Node):
                 global_config=permissions_config,
                 node_overrides={self.get_node_name(): node_permissions} if node_permissions else {},
                 active_profile=active_profile,
+                plugin_bash_rules=getattr(self.agent_config, "plugin_bash_rules", None),
+                project_bash_allows=getattr(self.agent_config, "project_bash_allow", None),
             )
             # Forward existing callback to permission manager
             if self._permission_callback:
@@ -2921,6 +2958,11 @@ class AgenticNode(Node):
             else None
         )
         effective_max_turns = explicit_turns if explicit_turns is not None else self.max_turns
+        # Wrap tools with plugin transformers BEFORE the stream call below
+        # captures ``self.tools``: call arguments evaluate left to right, so
+        # deferring to ``hooks=self._compose_run_hooks(ctx)`` would be one
+        # argument too late and the first run would execute unwrapped tools.
+        self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
         try:
             async for stream_action in self.model.generate_with_tools_stream(
@@ -3585,6 +3627,59 @@ class AgenticNode(Node):
                 message_args={"config_error": f"Permission hook setup failed for {self.get_node_name()}: {e}"},
             ) from e
 
+    def _ensure_tool_transformers(self) -> None:
+        """Wrap ``self.tools`` with plugin-declared argument transformers, once.
+
+        Invoked lazily from :meth:`_compose_hooks` so wrapping happens after
+        ``setup_tools`` and any ``apply_proxy_tools`` rewrite (proxied tools
+        are skipped — they execute client-side). Idempotent via a flag so a
+        node reused across turns never double-wraps.
+
+        Gated by ``agent.plugins_enabled`` like every other plugin surface.
+        Collection failures are swallowed inside the registry (a broken plugin
+        must not break the agent), but once a plugin *has* declared
+        transformers, a failure to apply them raises: transformers are policy
+        code, and running without them would silently drop enforcement.
+        """
+        # Defensive getattr: test doubles that bypass ``AgenticNode.__init__``
+        # may carry neither the flag nor an agent_config (same rationale as the
+        # ``interaction_broker`` getattr in ``_stream_once``).
+        if getattr(self, "_tool_transformers_applied", False):
+            return
+        if not getattr(getattr(self, "agent_config", None), "plugins_enabled", True):
+            self._tool_transformers_applied = True
+            return
+        from datus.plugins.registry import collect_plugin_tool_transformers
+
+        transformers_by_pattern = collect_plugin_tool_transformers()
+        if not transformers_by_pattern:
+            self._tool_transformers_applied = True
+            return
+        try:
+            from datus.tools.middleware import apply_tool_transformers
+
+            wrapped = apply_tool_transformers(self, transformers_by_pattern)
+            logger.debug(
+                "Applied plugin tool transformers on node '%s': %d tool(s) wrapped",
+                self.get_node_name(),
+                wrapped,
+            )
+            # Only mark applied on success: setting the flag before the
+            # attempt would turn the fail-closed raise below into fail-open
+            # on the next turn (the early return above would skip wrapping
+            # entirely and matched tools would run unenforced).
+            self._tool_transformers_applied = True
+        except Exception as e:
+            # Fail closed: a declared transformer that cannot be applied means
+            # policy enforcement would silently vanish for matched tools.
+            from datus.utils.exceptions import DatusException, ErrorCode
+
+            logger.exception("Failed to apply plugin tool transformers for %s", self.get_node_name())
+            raise DatusException(
+                code=ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Tool transformer setup failed for {self.get_node_name()}: {e}"},
+            ) from e
+
     @staticmethod
     def _extract_total_tokens(actions: List[ActionHistory]) -> int:
         """Walk the current root turn and return its assistant token count.
@@ -3656,6 +3751,7 @@ class AgenticNode(Node):
         ``datus/agent/node/token_usage_hook.py``).
         """
         self._ensure_permission_hooks()
+        self._ensure_tool_transformers()
         compact_hook = self._get_or_create_compact_hook()
         token_usage_hook = self._get_or_create_token_usage_hook()
 

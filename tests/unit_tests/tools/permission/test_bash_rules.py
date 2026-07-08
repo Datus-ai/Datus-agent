@@ -244,6 +244,13 @@ class TestSessionBuckets:
         decision = evaluate_bash_command("git push origin main", BashCommandRules())
         assert decision.bucket == "git push"
 
+    def test_datus_buckets_per_plugin_namespace(self):
+        # ``datus`` is a group command: approving one plugin's namespace must
+        # not green-light another plugin's.
+        assert session_bucket_for(argv("datus hello greet world"), None) == "datus hello"
+        assert session_bucket_for(argv("datus other doit"), None) == "datus other"
+        assert session_bucket_for(argv("datus --help"), None) == "datus"
+
 
 class TestBashCommandRulesModel:
     """Tests for from_dict / merge_with / is_empty."""
@@ -420,3 +427,85 @@ class TestPipelineEvaluation:
         assert d.level == PermissionLevel.ASK
         assert d.source == BashDecisionSource.SAFETY
         assert d.safety_forced is True
+
+    def test_ask_pipeline_carries_all_non_allow_segments(self):
+        """The hook's project-grant bypass must see EVERY non-allow segment,
+        not just the representative one."""
+        rules = BashCommandRules(allow=["cat:*"], ask=["docker:*"])
+        d = evaluate_bash_command("frobnicate | docker ps | cat x", rules)
+        assert d.segment_ask_patterns == (
+            (BashDecisionSource.DEFAULT, None),
+            (BashDecisionSource.ASK_RULE, "docker:*"),
+        )
+
+    def test_single_command_has_no_segment_patterns(self):
+        rules = BashCommandRules(ask=["docker:*"])
+        d = evaluate_bash_command("docker ps", rules)
+        assert d.segment_ask_patterns is None
+
+
+class TestDatusProfileFlagNormalization:
+    """Leading ``--profile`` datus globals must not defeat plugin rules."""
+
+    RULES = BashCommandRules(
+        allow=["datus hello greet:*"],
+        ask=["datus hello config set:*"],
+        deny=["datus hello config wipe:*"],
+    )
+
+    def test_deny_matches_profile_qualified_raw_argv(self):
+        """Deny rules additionally match the RAW (pre-normalization) argv so a
+        user can fence off a specific plugin profile even though ask/allow
+        matching sees through the ``--profile`` flag."""
+        rules = BashCommandRules(allow=["datus hello greet:*"], deny=["datus hello --profile prod:*"])
+        d = evaluate_bash_command("datus hello --profile prod greet Ada", rules)
+        assert d.level == PermissionLevel.DENY
+        assert d.matched_pattern == "datus hello --profile prod:*"
+        # Other profiles are unaffected by the profile-scoped deny.
+        d = evaluate_bash_command("datus hello --profile dev greet Ada", rules)
+        assert d.level == PermissionLevel.ALLOW
+
+    def test_profile_space_form_matches_allow(self):
+        d = evaluate_bash_command("datus hello --profile prod greet Ada", self.RULES)
+        assert d.level == PermissionLevel.ALLOW
+        assert d.matched_pattern == "datus hello greet:*"
+
+    def test_profile_equals_form_matches_ask_with_pattern_bucket(self):
+        d = evaluate_bash_command("datus hello --profile=prod config set k v", self.RULES)
+        assert d.level == PermissionLevel.ASK
+        assert d.matched_pattern == "datus hello config set:*"
+        assert d.bucket == "datus hello config set:*"
+
+    def test_profile_flag_cannot_dodge_deny(self):
+        d = evaluate_bash_command("datus hello --profile prod config wipe all", self.RULES)
+        assert d.level == PermissionLevel.DENY
+        assert d.matched_pattern == "datus hello config wipe:*"
+
+    def test_repeated_profile_flags_all_stripped(self):
+        d = evaluate_bash_command("datus hello --profile a --profile=b greet Ada", self.RULES)
+        assert d.level == PermissionLevel.ALLOW
+
+    def test_config_flag_is_not_stripped(self):
+        # ``--config`` rebinds credentials/endpoints; commands carrying it
+        # fall through to the default decision instead of matching rules.
+        d = evaluate_bash_command("datus hello --config /tmp/x.yml config set k v", self.RULES)
+        assert d.level == PermissionLevel.ASK
+        assert d.matched_pattern is None
+        assert d.bucket == "datus hello"
+
+    def test_subcommand_position_profile_belongs_to_plugin(self):
+        # From the first command token onward flags belong to the plugin;
+        # ``greet:*`` covers the remainder, no stripping involved.
+        d = evaluate_bash_command("datus hello config set --profile x", self.RULES)
+        assert d.level == PermissionLevel.ASK
+        assert d.matched_pattern == "datus hello config set:*"
+
+    def test_trailing_profile_without_value_left_alone(self):
+        d = evaluate_bash_command("datus hello --profile", self.RULES)
+        assert d.level == PermissionLevel.ASK
+        assert d.matched_pattern is None
+
+    def test_non_datus_commands_untouched(self):
+        rules = BashCommandRules(allow=["git greet:*"])
+        d = evaluate_bash_command("git --profile prod greet", rules)
+        assert d.level == PermissionLevel.ASK  # no normalization outside datus

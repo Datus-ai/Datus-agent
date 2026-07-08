@@ -343,6 +343,12 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         for pattern in override.bash_allow:
             if pattern not in allow:
                 allow.append(pattern)
+        # Also forward the raw grant list: merged allow entries cannot beat
+        # ask rules (deny > ask > allow), so PermissionManager keeps these as
+        # an exact-match grant set that lets a project grant bypass an
+        # ask-rule hit (e.g. a plugin-declared ask persisted via the
+        # "allow (project)" prompt choice).
+        agent_raw["project_bash_allow"] = list(override.bash_allow)
     # ``dashboard`` / ``scheduler`` overrides reach AgentConfig through
     # dedicated kwargs so the project-level pin is consulted between the
     # explicit call-site argument and the global default flag at lookup
@@ -355,6 +361,12 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["active_scheduler"] = override.scheduler
     if override.semantic is not None:
         agent_raw["active_semantic"] = override.semantic
+    # ``plugins`` pins the active profile per plugin for ``datus <plugin>``
+    # invocations; forwarded to AgentConfig and consulted by
+    # ``get_plugin_profile`` between the explicit ``--profile`` argument and
+    # the profile ``default: true`` flag.
+    if override.plugins is not None:
+        agent_raw["active_plugins"] = override.plugins
 
 
 _PRE_INIT_OVERRIDE_KEYS = {"home", "project_root", "project_name"}

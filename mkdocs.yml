@@ -44,6 +44,9 @@ nav:
         - Extract Knowledge: skills/extract_knowledge.md
         - Memory Organization: skills/memory_organization.md
         - Session Summarize: skills/session_summarize.md
+    - Plugin:
+      - Introduction: plugin/introduction.md
+      - Development: plugin/development.md
     - Chatbot: web_chatbot/introduction.md
     - IM Gateway:
       - Introduction: gateway/introduction.md
@@ -192,6 +195,8 @@ plugins:
             Session Summarize: 会话总结
             Validation: 校验
             Auto Memory: 自动记忆
+            Plugin: 插件
+            Development: 开发指南
             Develop: 开发
             Observability: 可观测性
             VSCode Extension: VSCode 插件

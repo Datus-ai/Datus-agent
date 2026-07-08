@@ -2458,3 +2458,153 @@ class TestAgentConfigModelExtras:
     def test_get_extra_unknown_name_returns_empty(self, tmp_path):
         cfg = self._make(tmp_path, model_extras={"primary": {"foo": "bar"}})
         assert cfg.get_model_extra("custom/unknown") == {}
+
+
+class TestPluginProfiles:
+    """``init_plugin_services`` parsing + ``get_plugin_profile`` resolution."""
+
+    def _make(self, tmp_path, plugins=None, active_plugins=None):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            plugins=plugins or {},
+            active_plugins=active_plugins,
+            skip_init_dirs=True,
+        )
+
+    def test_parses_profiles_and_interpolates_env(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("AF_PW", "s3cret")
+        cfg = self._make(
+            tmp_path,
+            plugins={
+                "hello": {
+                    "prod": {"api_base_url": "http://h/api/v1", "password": "${AF_PW}"},
+                    "staging": {"api_base_url": "http://s/api/v1"},
+                }
+            },
+        )
+        assert set(cfg.plugin_services["hello"]) == {"prod", "staging"}
+        # ``name`` is defaulted to the profile key; ``${VAR}`` is expanded.
+        assert cfg.plugin_services["hello"]["prod"]["name"] == "prod"
+        assert cfg.plugin_services["hello"]["prod"]["password"] == "s3cret"
+
+    def test_skips_malformed_entries(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"good": {"api_base_url": "x"}, "bad": "not-a-mapping"}, "junk": "nope"},
+        )
+        assert set(cfg.plugin_services["hello"]) == {"good"}
+        # A non-mapping plugin section is skipped entirely.
+        assert "junk" not in cfg.plugin_services
+
+    def test_explicit_profile_wins(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"prod": {"api_base_url": "p"}, "staging": {"api_base_url": "s"}}},
+        )
+        assert cfg.get_plugin_profile("hello", "staging")["api_base_url"] == "s"
+
+    def test_explicit_missing_profile_raises(self, tmp_path):
+        cfg = self._make(tmp_path, plugins={"hello": {"prod": {"api_base_url": "p"}}})
+        with pytest.raises(DatusException):
+            cfg.get_plugin_profile("hello", "nope")
+
+    def test_project_pin_between_flag_and_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"prod": {"api_base_url": "p"}, "staging": {"api_base_url": "s"}}},
+            active_plugins={"hello": "staging"},
+        )
+        # No explicit profile → project pin selects ``staging``.
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "s"
+
+    def test_default_flag_selected(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={
+                "hello": {
+                    "prod": {"api_base_url": "p", "default": True},
+                    "staging": {"api_base_url": "s"},
+                }
+            },
+        )
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "p"
+
+    def test_multiple_defaults_raises(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={
+                "hello": {
+                    "a": {"api_base_url": "a", "default": True},
+                    "b": {"api_base_url": "b", "default": True},
+                }
+            },
+        )
+        with pytest.raises(DatusException):
+            cfg.get_plugin_profile("hello")
+
+    def test_sole_profile_selected(self, tmp_path):
+        cfg = self._make(tmp_path, plugins={"hello": {"only": {"api_base_url": "o"}}})
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "o"
+
+    def test_ambiguous_without_default_raises(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"a": {"api_base_url": "a"}, "b": {"api_base_url": "b"}}},
+        )
+        with pytest.raises(DatusException):
+            cfg.get_plugin_profile("hello")
+
+    def test_no_config_returns_empty_dict(self, tmp_path):
+        cfg = self._make(tmp_path, plugins={})
+        # A plugin with no ``agent.plugins`` section → config-free, returns {}.
+        assert cfg.get_plugin_profile("hello") == {}
+
+    def test_stale_pin_falls_back_to_default(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins={"hello": {"prod": {"api_base_url": "p", "default": True}}},
+            active_plugins={"hello": "deleted"},
+        )
+        # Pin points at a profile that no longer exists → fall back to default.
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "p"
+
+
+class TestPluginsEnabledSwitch:
+    """``agent.plugins_enabled`` master switch for the plugin system."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_enabled(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.plugins_enabled is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "off", "0"])
+    def test_disabled_values(self, tmp_path, value):
+        cfg = self._make(tmp_path, plugins_enabled=value)
+        assert cfg.plugins_enabled is False
+
+    @pytest.mark.parametrize("value", [True, "true", "yes", "on", "1"])
+    def test_enabled_values(self, tmp_path, value):
+        cfg = self._make(tmp_path, plugins_enabled=value)
+        assert cfg.plugins_enabled is True
+
+    def test_disabled_ignores_plugins_section(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugins_enabled=False,
+            plugins={"hello": {"prod": {"api_base_url": "p", "default": True}}},
+        )
+        # The whole ``agent.plugins`` section is ignored when disabled.
+        assert cfg.plugin_services == {}
+        assert cfg.get_plugin_profile("hello") == {}

@@ -555,3 +555,130 @@ class TestPermissionManagerProjectBashAllows:
         mgr = self._manager_with_grant()
         mgr.switch_profile("auto")
         assert "make:*" in mgr.global_config.bash_commands.allow
+
+
+class TestPermissionManagerPluginBashRules:
+    """Plugin-declared bash rules survive runtime profile switches."""
+
+    @staticmethod
+    def _plugin_rules_map():
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        return {
+            "normal": BashCommandRules(allow=["datus hello greet:*"], ask=["datus hello config set:*"]),
+            "auto": BashCommandRules(allow=["datus hello:*"]),
+        }
+
+    def _manager(self):
+        from datus.tools.permission.profiles import build_effective_config
+
+        rules_map = self._plugin_rules_map()
+        return PermissionManager(
+            global_config=build_effective_config("normal", None, plugin_bash_rules=rules_map["normal"]),
+            active_profile="normal",
+            plugin_bash_rules=rules_map,
+        )
+
+    def test_initial_config_carries_normal_plugin_rules(self):
+        mgr = self._manager()
+        assert "datus hello greet:*" in mgr.global_config.bash_commands.allow
+
+    def test_switch_to_auto_applies_auto_plugin_rules(self):
+        mgr = self._manager()
+        mgr.switch_profile("auto")
+        assert "datus hello:*" in mgr.global_config.bash_commands.allow
+        # normal-only rules are not carried across profiles.
+        assert "datus hello greet:*" not in mgr.global_config.bash_commands.allow
+
+    def test_switch_to_dangerous_stays_ungated(self):
+        mgr = self._manager()
+        mgr.switch_profile("dangerous")
+        assert mgr.global_config.bash_commands is None
+
+    def test_switch_back_to_normal_restores_plugin_rules(self):
+        mgr = self._manager()
+        mgr.switch_profile("dangerous")
+        mgr.switch_profile("normal")
+        assert "datus hello greet:*" in mgr.global_config.bash_commands.allow
+        assert "datus hello config set:*" in mgr.global_config.bash_commands.ask
+
+    def test_plugin_rules_coexist_with_project_bash_allows(self):
+        from unittest.mock import patch
+
+        mgr = self._manager()
+        with patch("datus.configuration.project_config.append_project_bash_allow"):
+            mgr.add_project_bash_allow("make:*")
+        mgr.switch_profile("auto")
+        assert "make:*" in mgr.global_config.bash_commands.allow
+        assert "datus hello:*" in mgr.global_config.bash_commands.allow
+
+    def test_profile_singletons_never_mutated_by_switches(self):
+        from datus.tools.permission.profiles import get_profile
+
+        before = list(get_profile("auto").bash_commands.allow)
+        mgr = self._manager()
+        mgr.switch_profile("auto")
+        mgr.switch_profile("normal")
+        assert get_profile("auto").bash_commands.allow == before
+
+    def test_manager_without_plugin_rules_unchanged(self):
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
+        mgr.switch_profile("auto")
+        assert all("datus hello" not in p for p in mgr.global_config.bash_commands.allow)
+
+
+class TestProjectBashGrants:
+    """Exact-match project grants that can bypass ask-rule hits."""
+
+    def test_constructor_seeds_grants(self):
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(
+            global_config=get_profile("normal"),
+            project_bash_allows=["datus hello config set:*"],
+        )
+        assert mgr.has_project_bash_grant("datus hello config set:*")
+        assert not mgr.has_project_bash_grant("datus hello:*")
+        assert not mgr.has_project_bash_grant(None)
+
+    def test_add_project_bash_allow_registers_grant(self):
+        from unittest.mock import patch
+
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(global_config=get_profile("normal"))
+        with patch("datus.configuration.project_config.append_project_bash_allow"):
+            mgr.add_project_bash_allow("datus hello config set:*")
+        assert mgr.has_project_bash_grant("datus hello config set:*")
+
+    def test_grants_survive_profile_switches(self):
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(
+            global_config=get_profile("normal"),
+            project_bash_allows=["datus hello config set:*"],
+        )
+        mgr.switch_profile("auto")
+        assert mgr.has_project_bash_grant("datus hello config set:*")
+
+    def test_is_plugin_ask_pattern_scoped_to_active_profile(self):
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(
+            global_config=get_profile("normal"),
+            active_profile="normal",
+            plugin_bash_rules={
+                "normal": BashCommandRules(ask=["datus hello config set:*"]),
+                "auto": BashCommandRules(ask=["datus hello config del:*"]),
+            },
+        )
+        assert mgr.is_plugin_ask_pattern("datus hello config set:*")
+        assert not mgr.is_plugin_ask_pattern("datus hello config del:*")  # auto-only
+        assert not mgr.is_plugin_ask_pattern("docker:*")
+        assert not mgr.is_plugin_ask_pattern(None)
+        mgr.switch_profile("auto")
+        assert mgr.is_plugin_ask_pattern("datus hello config del:*")
+        assert not mgr.is_plugin_ask_pattern("datus hello config set:*")

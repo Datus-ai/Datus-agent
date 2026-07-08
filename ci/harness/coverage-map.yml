@@ -25,6 +25,8 @@ docs_coverage_policy:
       reason: Documentation site landing page, not a user-facing flow.
     - path: docs/develop/README.md
       reason: Contributor/development guide, not a product flow.
+    - path: docs/plugin/development.md
+      reason: Contributor/development guide for plugin authors, not a product flow.
     - path: docs/release_notes.md
       reason: Release notes, not a user-facing flow.
     - path: docs/configuration/introduction.md
@@ -892,6 +894,47 @@ flow_groups:
               Local skill discovery, permission filtering, and real-LLM skill execution are covered.
               Marketplace install/update/remove/publish requires the external Town Backend and is
               classified as an external dependency, not a nightly gap.
+          weekly_benchmark:
+            status: not_applicable
+        gaps:
+          - https://github.com/Datus-ai/Datus-agent/issues/910
+
+      - id: extension.plugins
+        title: Datus plugin discovery, dispatch, and agent integration
+        priority: p1
+        quality_sensitive: false
+        docs:
+          - docs/plugin/introduction.md
+        entrypoints:
+          - "CLI: datus <plugin> subcommand dispatch"
+          - Plugin profile resolution and project pins
+          - Plugin-bundled skill discovery
+          - System-prompt injection
+          - Plugin CLI bash permissions
+          - Tool argument transformers
+        contracts:
+          - Installed datus.plugins entry points dispatch before argparse and fall through cleanly when absent.
+          - Active-profile resolution (--profile > project pin > default > sole > empty) stays deterministic.
+          - User permission rules always beat plugin-declared rules; plugin rules never escape their namespace.
+          - Tool argument transformers rewrite or deny matched tool calls fail-closed.
+        coverage:
+          pr_acceptance:
+            status: covered
+            nodeids:
+              - tests/unit_tests/plugins/test_registry.py
+              - tests/unit_tests/cli/test_plugin_dispatch.py
+              - tests/unit_tests/tools/middleware/test_tool_middleware.py
+          merge_queue:
+            status: covered
+            nodeids:
+              - tests/unit_tests/plugins/test_registry.py
+              - tests/unit_tests/cli/test_plugin_dispatch.py
+              - tests/unit_tests/tools/middleware/test_tool_middleware.py
+          nightly:
+            status: gap
+            notes: >
+              No integration test installs a real plugin package end-to-end
+              (entry-point discovery through pip-installed distribution).
           weekly_benchmark:
             status: not_applicable
         gaps:

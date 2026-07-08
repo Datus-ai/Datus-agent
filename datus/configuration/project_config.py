@@ -48,7 +48,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 import yaml
 
@@ -65,6 +65,7 @@ ALLOWED_KEYS = frozenset(
         "dashboard",
         "scheduler",
         "semantic",
+        "plugins",
         "project_name",
         "language",
         "reasoning_effort",
@@ -105,6 +106,7 @@ class ProjectOverride:
     dashboard: Optional[str] = None
     scheduler: Optional[str] = None
     semantic: Optional[str] = None
+    plugins: Optional[Dict[str, str]] = None
     project_name: Optional[str] = None
     language: Optional[str] = None
     reasoning_effort: Optional[str] = None
@@ -117,6 +119,7 @@ class ProjectOverride:
             and self.dashboard is None
             and self.scheduler is None
             and self.semantic is None
+            and self.plugins is None
             and self.project_name is None
             and self.language is None
             and self.reasoning_effort is None
@@ -193,6 +196,7 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         dashboard=_parse_optional_string(raw.get("dashboard"), key="dashboard"),
         scheduler=_parse_optional_string(raw.get("scheduler"), key="scheduler"),
         semantic=_parse_optional_string(raw.get("semantic"), key="semantic"),
+        plugins=_parse_plugins(raw.get("plugins")),
         project_name=raw.get("project_name"),
         language=raw.get("language"),
         reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
@@ -236,6 +240,32 @@ def _parse_optional_string(raw: Any, *, key: str) -> Optional[str]:
         return None
     value = raw.strip()
     return value or None
+
+
+def _parse_plugins(raw: Any) -> Optional[Dict[str, str]]:
+    """Normalize the ``plugins:`` field into a ``{plugin: profile}`` mapping.
+
+    Pins the active profile per plugin for ``datus <plugin>`` invocations when
+    ``--profile`` is omitted. Non-mapping values, and entries whose plugin name
+    or profile is not a non-empty string, are dropped with a warning so a typo
+    fails loudly rather than silently selecting the wrong profile. ``None`` /
+    empty means "no pin".
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        logger.warning(f"plugins must be a mapping, got {type(raw).__name__}. Ignoring.")
+        return None
+    parsed: Dict[str, str] = {}
+    for plugin, profile in raw.items():
+        if not isinstance(plugin, str) or not plugin.strip():
+            logger.warning(f"plugins key must be a non-empty string, got {plugin!r}. Ignoring.")
+            continue
+        if not isinstance(profile, str) or not profile.strip():
+            logger.warning(f"plugins['{plugin}'] must be a non-empty string profile, got {profile!r}. Ignoring.")
+            continue
+        parsed[plugin.strip()] = profile.strip()
+    return parsed or None
 
 
 def _parse_reasoning_effort(raw: Any) -> Optional[str]:
@@ -290,6 +320,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "dashboard": override.dashboard,
             "scheduler": override.scheduler,
             "semantic": override.semantic,
+            "plugins": override.plugins,
             "project_name": override.project_name,
             "language": override.language,
             "reasoning_effort": override.reasoning_effort,

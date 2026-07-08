@@ -772,6 +772,13 @@ class AgentConfig:
         self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
         self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
         self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
+        # Project-level active plugin profile pins forwarded by
+        # ``_apply_project_override`` from ``./.datus/config.yml`` ``plugins:``.
+        # Maps a plugin name to the profile ``datus <plugin>`` should use when
+        # ``--profile`` is omitted. Empty means "no project pin" — profile
+        # resolution then falls back to the ``default: true`` flag / sole entry.
+        _active_plugins_raw = kwargs.get("active_plugins")
+        self._active_plugins: Dict[str, str] = _active_plugins_raw if isinstance(_active_plugins_raw, dict) else {}
         self._runtime_db_context: Dict[str, str] = {}
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
@@ -815,6 +822,26 @@ class AgentConfig:
         self.scheduler_services = {}
         self.scheduler_config: Dict[str, Any] = {}
         self.semantic_layer_configs = {}
+        # ``plugins_enabled`` is the master switch for the datus-plugin
+        # system. When ``False`` no plugin functionality is active: ``datus
+        # <plugin>`` dispatch is refused, plugin-bundled skills are not
+        # discovered, and no plugin context is injected into system prompts.
+        # Intended for API/web deployments where the agent must not be guided
+        # to edit configuration files.
+        self.plugins_enabled = _coerce_bool(kwargs.get("plugins_enabled"), True)
+        # Plugin config: plugin name -> profile name -> profile config dict.
+        # Populated from ``agent.plugins`` by ``init_plugin_services``.
+        self.plugin_services: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        # Raw project-scope bash grants (``.datus/config.yml`` bash_allow),
+        # forwarded by ``_apply_project_override``. Passed to
+        # PermissionManager as an exact-match grant set so a project grant
+        # can bypass an ask-rule hit (merged allow entries cannot).
+        raw_project_bash_allow = kwargs.get("project_bash_allow")
+        self.project_bash_allow: List[str] = (
+            [p for p in raw_project_bash_allow if isinstance(p, str)]
+            if isinstance(raw_project_bash_allow, list)
+            else []
+        )
 
         for name, raw_config in self.agentic_nodes.items():
             if not _SAFE_NAME_RE.match(name):
@@ -860,6 +887,7 @@ class AgentConfig:
         self.init_semantic_layer(self.services.semantic_layer)
         self.init_dashboard(self.services.bi_platforms)
         self.init_scheduler_services(self.services.schedulers)
+        self.init_plugin_services(kwargs.get("plugins", {}))
 
         # SaaS mode: skip _init_dirs() because callers want only derived paths here,
         # not full local directory / backend initialization.
@@ -1168,10 +1196,28 @@ class AgentConfig:
             logger.warning(f"Invalid profile {requested_profile!r} in agent.yml: {e}. Falling back to 'normal'.")
             self.active_profile_name = "normal"
 
+        # Bash rules declared by installed plugins for their own CLI
+        # namespaces (``datus <plugin> ...``), keyed by profile name. Stored
+        # so PermissionManager can re-apply them across runtime profile
+        # switches. Additive convenience only — collection failure just means
+        # extra ASK prompts, so it must never block config load.
+        self.plugin_bash_rules = {}
+        if getattr(self, "plugins_enabled", True):
+            try:
+                from datus.plugins.registry import collect_plugin_cli_permissions
+
+                self.plugin_bash_rules = collect_plugin_cli_permissions()
+            except Exception as e:
+                logger.warning(f"Plugin CLI permission collection failed: {e}; continuing without plugin rules")
+
         # Remove the ``profile`` key so the helper only sees user overrides.
         user_raw = {k: v for k, v in permissions_raw.items() if k != "profile"}
         try:
-            return build_effective_config(self.active_profile_name, user_raw)
+            return build_effective_config(
+                self.active_profile_name,
+                user_raw,
+                plugin_bash_rules=self.plugin_bash_rules.get(self.active_profile_name),
+            )
         except Exception as e:
             # Fail closed: malformed ``permissions.rules`` almost always means the
             # user was trying to *tighten* an otherwise permissive profile. If
@@ -1352,6 +1398,64 @@ class AgentConfig:
             message=(
                 "Multiple scheduler services are configured in `agent.services.schedulers`, "
                 "set `scheduler_service` on the scheduler node."
+            ),
+        )
+
+    def get_plugin_profile(self, plugin: str, profile: Optional[str] = None) -> Dict[str, Any]:
+        """Resolve the active profile config dict for ``plugin``.
+
+        Resolution order when ``profile`` is not given explicitly:
+        ``--profile`` argument → project pin (``./.datus/config.yml``
+        ``plugins.<plugin>``) → the profile flagged ``default: true`` (more
+        than one is an error) → the sole profile. When the plugin has no
+        ``agent.plugins.<plugin>`` section at all, an empty dict is returned so
+        config-free plugins still run. A plugin with multiple profiles and no
+        way to disambiguate raises, asking the user to pass ``--profile``.
+        """
+        profiles = self.plugin_services.get(plugin) or {}
+
+        if profile:
+            if profile not in profiles:
+                raise DatusException(
+                    ErrorCode.COMMON_CONFIG_ERROR,
+                    message=(f"No profile named `{profile}` for plugin `{plugin}`. Configured: {sorted(profiles)}"),
+                )
+            return profiles[profile]
+
+        if not profiles:
+            return {}
+
+        pinned = self._active_plugins.get(plugin)
+        if pinned:
+            if pinned in profiles:
+                return profiles[pinned]
+            logger.warning(
+                "Project pin plugins.%s=`%s` is not configured under `agent.plugins.%s`; "
+                "falling back to the default profile.",
+                plugin,
+                pinned,
+                plugin,
+            )
+
+        defaults = [name for name, cfg in profiles.items() if isinstance(cfg, dict) and cfg.get("default")]
+        if len(defaults) > 1:
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message=(
+                    f"Multiple profiles for plugin `{plugin}` are marked `default: true` in "
+                    f"`agent.plugins.{plugin}`. Keep at most one default profile."
+                ),
+            )
+        if defaults:
+            return profiles[defaults[0]]
+        if len(profiles) == 1:
+            return next(iter(profiles.values()))
+
+        raise DatusException(
+            ErrorCode.COMMON_CONFIG_ERROR,
+            message=(
+                f"Multiple profiles configured for plugin `{plugin}` and none marked "
+                f"`default: true`; pass --profile <name>. Configured: {sorted(profiles)}"
             ),
         )
 
@@ -2304,6 +2408,34 @@ class AgentConfig:
 
         default_service = self.default_scheduler_service()
         self.scheduler_config = self.scheduler_services.get(default_service, {}) if default_service else {}
+
+    def init_plugin_services(self, param: Dict[str, Any]):
+        """Parse ``agent.plugins`` into ``self.plugin_services``.
+
+        Shape: ``plugins.<plugin_name>.<profile_name>`` → a config dict. Each
+        profile is ``${VAR}``-expanded up front (mirroring how semantic
+        services are resolved) so a plugin receives fully-resolved
+        values. Malformed entries (non-mapping plugin or profile) are skipped
+        rather than raising — a plugin needs no config at all, and datus must
+        stay startable even when a plugin section is half-written.
+
+        When ``plugins_enabled`` is ``False`` the section is ignored entirely,
+        leaving ``plugin_services`` empty.
+        """
+        self.plugin_services = {}
+        if not self.plugins_enabled or not isinstance(param, dict):
+            return
+        for plugin_name, profiles in param.items():
+            if not isinstance(profiles, dict):
+                continue
+            resolved_profiles: Dict[str, Dict[str, Any]] = {}
+            for profile_name, raw_config in profiles.items():
+                if not isinstance(raw_config, dict):
+                    continue
+                resolved = _resolve_nested_value(raw_config)
+                resolved.setdefault("name", profile_name)
+                resolved_profiles[profile_name] = resolved
+            self.plugin_services[plugin_name] = resolved_profiles
 
     def init_semantic_layer(self, param: Dict[str, Any]):
         if not isinstance(param, dict):
