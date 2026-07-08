@@ -13,8 +13,10 @@ from datus.agent.node.semantic_authoring import (
     osi_prompt_version,
     osi_template_name,
     resolve_authoring_format,
+    resolve_semantic_adapter_type,
 )
 from datus.prompts.prompt_manager import get_prompt_manager
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 @dataclass
@@ -139,6 +141,19 @@ def test_osi_expression_dialect_falls_back_to_ansi_sql_without_datasource_type()
     assert osi_expression_dialect(config) == "ANSI_SQL"
 
 
+def test_osi_expression_dialect_uses_agent_fallback_when_db_config_fails():
+    def _boom():
+        raise RuntimeError("datasource not ready")
+
+    config = SimpleNamespace(
+        current_datasource="",
+        db_type="Snowflake",
+        current_db_config=_boom,
+    )
+
+    assert osi_expression_dialect(config) == "snowflake"
+
+
 def test_defaults_to_metricflow_when_unknown():
     assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_METRICFLOW
     assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_METRICFLOW
@@ -162,6 +177,31 @@ def test_resolution_logs_agent_config_errors():
 
     mock_logger.debug.assert_called_once()
     assert "Failed to resolve semantic adapter" in mock_logger.debug.call_args.args[0]
+
+
+def test_resolution_warns_for_semantic_layer_config_errors():
+    def _boom():
+        raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="multiple semantic layers")
+
+    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
+    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
+        assert resolve_authoring_format(bad, None) == AUTHORING_FORMAT_METRICFLOW
+
+    mock_logger.warning.assert_called_once()
+    mock_logger.debug.assert_not_called()
+    assert "configuration error" in mock_logger.warning.call_args.args[0]
+
+
+def test_adapter_type_resolution_uses_same_error_logging():
+    def _boom():
+        raise RuntimeError("resolver unavailable")
+
+    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
+    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
+        assert resolve_semantic_adapter_type(bad) == AUTHORING_FORMAT_METRICFLOW
+
+    mock_logger.debug.assert_called_once()
+    assert mock_logger.debug.call_args.args[1] == "adapter type"
 
 
 def test_osi_template_name_is_isolated_from_metricflow_template():

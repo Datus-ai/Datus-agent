@@ -489,7 +489,8 @@ class TestStaticHelpers:
         incoming = {"sql_table": "different_table"}
         err = MetricFilesystemFuncTool._merge_stable_scalar(merged, incoming, "sql_table", "orders")
         assert err != ""
-        assert "original_table" in err or "different_table" in err
+        assert "original_table" in err
+        assert "different_table" in err
 
     def test_merge_data_sources_name_conflict_returns_error(self):
         tool = MetricFilesystemFuncTool.__new__(MetricFilesystemFuncTool)

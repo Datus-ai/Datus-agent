@@ -59,7 +59,7 @@ Comparison is case-insensitive and trims surrounding whitespace.
 - OSI is a peer semantic adapter to MetricFlow.
 - OSI mode authors strict OSI core YAML and stores Datus execution hints in `custom_extensions`.
 - The current OSI execution backend is MetricFlow by default. You normally do not need to set `execution_backend`.
-- Configure `services.semantic_layer.osi: {}` to select this path globally.
+- Configure `services.semantic_layer.osi` and mark it `default: true` to select this path globally when other adapters are also configured. An empty `osi: {}` entry is selected automatically only when it is the sole semantic adapter, or when the current project pins `semantic: osi`.
 
 ## Configuring through the CLI (`/services`)
 

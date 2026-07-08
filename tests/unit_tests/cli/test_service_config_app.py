@@ -536,7 +536,7 @@ class TestEmbeddedPanel:
             panel = app.build_embedded_panel(fut)
             assert isinstance(panel, EmbeddedWizard)
             assert panel.done_future is fut
-            assert app._on_done is not None
+            assert callable(app._on_done)
         finally:
             loop.close()
 

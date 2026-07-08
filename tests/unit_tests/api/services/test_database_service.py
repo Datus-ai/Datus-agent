@@ -1,11 +1,26 @@
 """Tests for datus.api.services.database_service — datasource management."""
 
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
 from datus.api.models.base_models import Result
 from datus.api.models.database_models import ListDatabasesInput
+from datus.api.models.table_models import SemanticModelInput, ValidateSemanticModelData
 from datus.api.services.database_service import DatasourceService
 from datus.tools.db_tools.db_manager import DBManager
+
+
+def _service_with_semantic_adapter(adapter: str = "metricflow") -> DatasourceService:
+    svc = DatasourceService.__new__(DatasourceService)
+    svc.agent_config = SimpleNamespace(
+        home="/datus-home",
+        current_datasource="warehouse",
+        resolve_semantic_adapter=lambda: adapter,
+    )
+    return svc
 
 
 class TestDatasourceServiceInit:
@@ -57,6 +72,151 @@ class TestDatabaseServiceGetDatabaseType:
         db_type, ds_id = svc._get_database_type()
         assert db_type == "sqlite"
         assert ds_id == svc.current_db_name
+
+
+class TestSemanticLayerServiceBranches:
+    def test_active_semantic_adapter_normalizes_resolved_name(self):
+        svc = _service_with_semantic_adapter(" OSI ")
+
+        assert svc._active_semantic_adapter() == "osi"
+        assert svc._is_osi_semantic_layer() is True
+
+    def test_active_semantic_adapter_returns_empty_without_resolver(self):
+        svc = DatasourceService.__new__(DatasourceService)
+        svc.agent_config = SimpleNamespace()
+
+        assert svc._active_semantic_adapter() == ""
+        assert svc._is_osi_semantic_layer() is False
+
+    def test_validate_osi_semantic_yaml_success(self, monkeypatch):
+        calls = []
+        package_mod = ModuleType("datus_semantic_osi")
+        profile_mod = ModuleType("datus_semantic_osi.profile")
+
+        def _load_osi_path(path, *, normalize):
+            calls.append((path, normalize))
+
+        profile_mod.load_osi_path = _load_osi_path
+        package_mod.profile = profile_mod
+        monkeypatch.setitem(sys.modules, "datus_semantic_osi", package_mod)
+        monkeypatch.setitem(sys.modules, "datus_semantic_osi.profile", profile_mod)
+
+        is_valid, errors = DatasourceService._validate_osi_semantic_yaml("kind: semantic_model\n", "orders.yml")
+
+        assert is_valid is True
+        assert errors == []
+        assert len(calls) == 1
+        assert calls[0][1] is True
+
+    def test_validate_osi_semantic_yaml_reports_errors_and_ignores_cleanup_failure(self, monkeypatch):
+        package_mod = ModuleType("datus_semantic_osi")
+        profile_mod = ModuleType("datus_semantic_osi.profile")
+
+        def _load_osi_path(path, *, normalize):
+            raise ValueError("bad osi yaml")
+
+        def _raise_os_error(path):
+            raise OSError("busy")
+
+        profile_mod.load_osi_path = _load_osi_path
+        package_mod.profile = profile_mod
+        monkeypatch.setitem(sys.modules, "datus_semantic_osi", package_mod)
+        monkeypatch.setitem(sys.modules, "datus_semantic_osi.profile", profile_mod)
+        monkeypatch.setattr("datus.api.services.database_service.os.unlink", _raise_os_error)
+
+        is_valid, errors = DatasourceService._validate_osi_semantic_yaml("not: osi\n", "orders.yml")
+
+        assert is_valid is False
+        assert errors == ["bad osi yaml"]
+
+    @pytest.mark.asyncio
+    async def test_validate_semantic_model_uses_osi_validator(self):
+        svc = _service_with_semantic_adapter("osi")
+        svc._get_semantic_model = MagicMock(return_value={"yaml_path": "/tmp/orders.yml"})
+        svc._validate_osi_semantic_yaml = MagicMock(return_value=(False, ["missing semantic_models"]))
+        request = SemanticModelInput(table="orders", yaml="kind: semantic_model\n")
+
+        result = await svc.validate_semantic_model(request)
+
+        assert result.success is True
+        assert result.data == ValidateSemanticModelData(valid=False, invalid_message=["missing semantic_models"])
+        svc._validate_osi_semantic_yaml.assert_called_once_with(request.yaml, "/tmp/orders.yml")
+
+    @pytest.mark.asyncio
+    async def test_validate_semantic_model_uses_metricflow_validator(self):
+        svc = _service_with_semantic_adapter("metricflow")
+        svc._get_semantic_model = MagicMock(return_value={"yaml_path": "/tmp/orders.yml"})
+        request = SemanticModelInput(
+            table="orders",
+            yaml="semantic_model:\n  name: orders\n",
+            catalog="cat",
+            database="db",
+            db_schema="schema",
+        )
+
+        with patch("datus.api.utils.semantic_validation.validate_semantic_yaml", return_value=(True, [])) as validate:
+            result = await svc.validate_semantic_model(request)
+
+        assert result.success is True
+        assert result.data == ValidateSemanticModelData(valid=True, invalid_message=None)
+        validate.assert_called_once_with(
+            yaml_content=request.yaml,
+            file_path="/tmp/orders.yml",
+            datus_home="/datus-home",
+            datasource="warehouse",
+            catalog="cat",
+            database="db",
+            db_schema="schema",
+        )
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_uses_osi_sync_tool(self, tmp_path):
+        svc = _service_with_semantic_adapter("osi")
+        yaml_file = tmp_path / "orders.yml"
+        svc.validate_semantic_model = AsyncMock(
+            return_value=Result(
+                success=True,
+                data=ValidateSemanticModelData(valid=True, invalid_message=None),
+            )
+        )
+        svc._get_semantic_model = MagicMock(return_value={"yaml_path": str(yaml_file)})
+        request = SemanticModelInput(table="orders", yaml="kind: semantic_model\n")
+
+        with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
+            tools_cls.return_value.sync_osi_semantic_to_db.return_value = {"success": True}
+            result = await svc.save_semantic_model(request)
+
+        assert result.success is True
+        assert yaml_file.read_text(encoding="utf-8") == request.yaml
+        tools_cls.assert_called_once_with(agent_config=svc.agent_config, authoring_format="osi")
+        tools_cls.return_value.sync_osi_semantic_to_db.assert_called_once_with(str(yaml_file))
+
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_uses_metricflow_sync(self, tmp_path):
+        svc = _service_with_semantic_adapter("metricflow")
+        yaml_file = tmp_path / "orders.yml"
+        svc.validate_semantic_model = AsyncMock(
+            return_value=Result(
+                success=True,
+                data=ValidateSemanticModelData(valid=True, invalid_message=None),
+            )
+        )
+        svc._get_semantic_model = MagicMock(return_value={"yaml_path": str(yaml_file)})
+        request = SemanticModelInput(table="orders", yaml="semantic_model:\n  name: orders\n")
+
+        with patch(
+            "datus.api.services.database_service.GenerationHooks._sync_semantic_to_db",
+            return_value={"success": True},
+        ) as sync:
+            result = await svc.save_semantic_model(request)
+
+        assert result.success is True
+        sync.assert_called_once_with(
+            str(yaml_file),
+            svc.agent_config,
+            include_semantic_objects=True,
+            include_metrics=False,
+        )
 
 
 class TestGetSemanticModel:

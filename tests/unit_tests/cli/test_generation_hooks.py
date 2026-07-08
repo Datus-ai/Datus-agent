@@ -435,6 +435,16 @@ class TestHandleEndSemanticModelGeneration:
 
         hooks._process_single_file.assert_not_called()
 
+    async def test_already_synced_by_generation_tool_skips_hook_sync(self, hooks):
+        hooks.generation_evidence.semantic_kb_sync_passed = True
+        hooks._extract_filepaths_from_result = MagicMock()
+        hooks._process_single_file = AsyncMock()
+
+        await hooks._handle_end_semantic_model_generation({"result": {"semantic_model_files": ["/tmp/a.yaml"]}})
+
+        hooks._extract_filepaths_from_result.assert_not_called()
+        hooks._process_single_file.assert_not_called()
+
     async def test_no_file_paths_logs_warning(self, hooks):
         hooks._process_single_file = AsyncMock()
         result = {"result": {}}  # no semantic_model_files
@@ -1673,6 +1683,18 @@ class TestHandleEndMetricGeneration:
         )
 
         await hooks._handle_end_metric_generation(result)
+
+        hooks._extract_metric_generation_result.assert_not_called()
+        hooks._process_single_file.assert_not_called()
+        hooks._process_metric_with_semantic_model.assert_not_called()
+
+    async def test_already_synced_by_generation_tool_skips_hook_sync(self, hooks):
+        hooks.generation_evidence.metric_kb_sync_passed = True
+        hooks._extract_metric_generation_result = MagicMock()
+        hooks._process_single_file = AsyncMock()
+        hooks._process_metric_with_semantic_model = AsyncMock()
+
+        await hooks._handle_end_metric_generation({"result": {"metric_file": "metrics/orders.yml"}})
 
         hooks._extract_metric_generation_result.assert_not_called()
         hooks._process_single_file.assert_not_called()

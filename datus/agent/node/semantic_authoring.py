@@ -26,12 +26,46 @@ import re
 from dataclasses import fields, is_dataclass
 from typing import Any, Dict, Optional
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
 
 logger = get_logger(__name__)
+
+
+def _safe_resolve_semantic_adapter(agent_config: Any = None, *, context: str) -> Optional[str]:
+    resolver = getattr(agent_config, "resolve_semantic_adapter", None)
+    if not callable(resolver):
+        return None
+
+    try:
+        return resolver()
+    except DatusException as exc:
+        if exc.code == ErrorCode.COMMON_CONFIG_ERROR:
+            logger.warning(
+                "Failed to resolve semantic adapter for %s due to configuration error; "
+                "falling back to metricflow. agent_config=%r error=%s",
+                context,
+                agent_config,
+                exc,
+            )
+        else:
+            logger.debug(
+                "Failed to resolve semantic adapter for %s; falling back to metricflow. agent_config=%r error=%s",
+                context,
+                agent_config,
+                exc,
+            )
+    except Exception as exc:
+        logger.debug(
+            "Failed to resolve semantic adapter for %s; falling back to metricflow. agent_config=%r error=%s",
+            context,
+            agent_config,
+            exc,
+        )
+    return None
 
 
 def resolve_authoring_format(
@@ -41,18 +75,7 @@ def resolve_authoring_format(
     """Resolve the semantic authoring format from the global semantic adapter."""
     del node_config
 
-    adapter: Optional[str] = None
-    if agent_config is not None and hasattr(agent_config, "resolve_semantic_adapter"):
-        try:
-            adapter = agent_config.resolve_semantic_adapter()
-        except Exception as exc:
-            logger.debug(
-                "Failed to resolve semantic adapter for authoring format; "
-                "falling back to metricflow. agent_config=%r error=%s",
-                agent_config,
-                exc,
-            )
-            adapter = None
+    adapter = _safe_resolve_semantic_adapter(agent_config, context="authoring format")
 
     if adapter and str(adapter).strip().lower() == AUTHORING_FORMAT_OSI:
         return AUTHORING_FORMAT_OSI
@@ -61,20 +84,10 @@ def resolve_authoring_format(
 
 def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
     """Resolve the active semantic adapter, defaulting to MetricFlow."""
-    resolver = getattr(agent_config, "resolve_semantic_adapter", None)
-    if callable(resolver):
-        try:
-            adapter = resolver()
-        except Exception as exc:
-            logger.debug(
-                "Failed to resolve semantic adapter; falling back to metricflow. agent_config=%r error=%s",
-                agent_config,
-                exc,
-            )
-        else:
-            normalized = str(adapter or "").strip().lower()
-            if normalized:
-                return normalized
+    adapter = _safe_resolve_semantic_adapter(agent_config, context="adapter type")
+    normalized = str(adapter or "").strip().lower()
+    if normalized:
+        return normalized
     return AUTHORING_FORMAT_METRICFLOW
 
 

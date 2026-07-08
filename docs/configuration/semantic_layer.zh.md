@@ -45,7 +45,7 @@ agent:
 - OSI 是和 MetricFlow 并列的 semantic adapter。
 - OSI 模式编写 strict OSI core YAML，并把 Datus 执行提示放在 `custom_extensions` 中。
 - 当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 `execution_backend`。
-- 配置 `services.semantic_layer.osi: {}` 即可在项目内全局选择 OSI。
+- 配置 `services.semantic_layer.osi` 并标记 `default: true`，可在同时配置其他 adapter 时全局选择 OSI。空的 `osi: {}` 只有在它是唯一 semantic adapter，或当前项目 pin 到 `semantic: osi` 时才会被选中。
 
 ## 通过 CLI 配置（`/services`）
 
