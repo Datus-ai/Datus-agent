@@ -30,11 +30,31 @@ def test_osi_metrics_template_is_backend_agnostic():
     assert "metric_generation_skips" in text
     assert "offset_window" in text
     assert "window_aggregation" in text
+    assert "publish reusable comparison outputs as fixed, standalone metrics" in text
+    assert "comparison context computed from the same base aggregate" in text
+    assert "Do NOT generate helper metrics" not in text
     assert "Allowed values are `sum`, `avg`, `min`, `max`, `count`, and `row_count`" in text
     assert "ROW_NUMBER()`, `RANK() OVER`, TopN per group" in text
     assert "Target semantic model file: `subject/semantic_models/<datasource>/<model_name>.yml`" in text
     assert '"metric_file": "subject/semantic_models/<datasource>/<model_name>.yml"' in text
     assert "a separate metric file is allowed" not in text
+
+
+def test_osi_metrics_template_uses_osi_schema_expression_dialect_for_sql_datasources():
+    pm = get_prompt_manager()
+    for datasource in ("starrocks", "mysql"):
+        text = pm.render_template(template_name="gen_metrics_osi_system", current_datasource=datasource)
+        assert f"- Active datasource: `{datasource}`" in text
+        assert "- OSI expression dialect: `ANSI_SQL`" in text
+        assert "- dialect: ANSI_SQL" in text
+        assert f"- dialect: {datasource}" not in text
+
+
+def test_osi_metrics_template_uses_osi_native_dialect_when_schema_supports_it():
+    pm = get_prompt_manager()
+    text = pm.render_template(template_name="gen_metrics_osi_system", current_datasource="snowflake")
+    assert "- OSI expression dialect: `SNOWFLAKE`" in text
+    assert "- dialect: SNOWFLAKE" in text
 
 
 def test_osi_semantic_model_template_is_backend_agnostic():
@@ -61,6 +81,23 @@ def test_osi_semantic_model_template_is_backend_agnostic():
     assert '"semantic_model_files": ["subject/semantic_models/<datasource>/<model_name>.yml"]' in text
     assert "One canonical dataset per physical table" not in text
     assert "<table_name>.yml" not in text
+
+
+def test_osi_semantic_model_template_uses_osi_schema_expression_dialect_for_sql_datasources():
+    pm = get_prompt_manager()
+    for datasource in ("starrocks", "mysql"):
+        text = pm.render_template(template_name="gen_semantic_model_osi_system", current_datasource=datasource)
+        assert f"- Active datasource: `{datasource}`" in text
+        assert "- OSI expression dialect: `ANSI_SQL`" in text
+        assert "- dialect: ANSI_SQL" in text
+        assert f"- dialect: {datasource}" not in text
+
+
+def test_osi_semantic_model_template_uses_osi_native_dialect_when_schema_supports_it():
+    pm = get_prompt_manager()
+    text = pm.render_template(template_name="gen_semantic_model_osi_system", current_datasource="databricks")
+    assert "- OSI expression dialect: `DATABRICKS`" in text
+    assert "- dialect: DATABRICKS" in text
 
 
 def test_default_metricflow_templates_are_unchanged():

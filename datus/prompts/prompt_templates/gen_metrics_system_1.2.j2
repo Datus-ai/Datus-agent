@@ -112,9 +112,10 @@ Before generating metrics, verify that semantic models exist for all involved ta
 - Preserve output time grain from `time_grain_evidence`. If SQL projects a day-grain field such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt`, expose the same day-grain time dimension instead of using raw `create_time` as the primary time dimension.
 - Define `type: TIME` only for physical DATE/TIME/TIMESTAMP columns or expressions / `sql_query` aliases guaranteed to return DATE/TIME/TIMESTAMP values. Do not use numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as TIME dimensions; join/convert to a real date first.
 - Preserve `post_aggregation_constraints` such as HAVING clauses as query constraints, metric usage notes, or later derived data sources. Do not silently drop them or push them into base measures.
+- Treat direct candidates with `metric_type: period_over_period` as fixed final period-over-period outputs mined from the success story, not as helper metrics. In MetricFlow authoring, generate the exact dedicated output metric required by the candidate; add only the minimal base/input metric needed by MetricFlow if it does not already exist.
 - Treat `derived_metric_candidates` as second-stage metrics over existing or newly generated metrics. Generate non-derived metrics first, validate, refresh `list_metrics`, then generate derived metrics only when every referenced metric exists.
-- For period-over-period SQL that projects both a prior-period value and a delta/rate, generate both derived metrics. The prior-period value metric should use the shifted input alias as its `expr` (for example `{metric_name}_previous_period`), and the delta/rate metric should reference both the current metric and shifted input alias (for example `{metric_name}_period_delta`).
-- Materialize EVERY `derived_metric_candidates` entry whose inputs carry `offset_window`, including previous-period identity candidates whose `expr` is just the shifted input alias (for example `previous_month_{metric_name}`). A delta metric that references the same shifted alias does NOT replace the identity metric — publish both. The bootstrap host verifies offset candidate completeness after all batches and re-runs generation for anything missing.
+- Treat ordinary period-over-period SQL (`LAG`, previous period, DoD/WoW/MoM/QoQ/YoY, delta, or rate) as fixed long-term metric evidence when it is a final business output in the success story. Generate a dedicated metric for the exact fixed output: monthly YoY is distinct from weekly YoY, MoM rate is distinct from MoM delta, and previous-period value is distinct from a rate.
+- Do not publish intermediate helper metrics whose only purpose is to support another output. Publish a previous-period metric only when the success story asks for that previous-period value as the final business metric.
 - Use the candidate's `name` exactly as the published metric name. When a candidate lists `equivalent_names`, those are acceptable aliases for the same metric — publish ONE metric (prefer the candidate `name`), never one per alias.
 - Treat `identity_metric_references` as evidence that the SQL selected an existing metric without a new formula. Do not generate a new metric for those references.
 - Natural-language fields in the candidate plan (`question`, `name`, `summary`, or `source_context`) are naming and business-meaning evidence only. They should never override the SQL expression structure or turn a detail query into a metric by themselves.
@@ -349,30 +350,19 @@ metric:
       - "subject_tree: {domain}/{layer1}/{layer2}"
 ```
 
-Period-over-period example — a MoM SQL like `LAG(metric_a) OVER (ORDER BY month) AS previous_month_metric_a` yields TWO derived metrics, an identity metric for the prior-period value (named after the SQL alias) and a delta metric:
+Period-over-period example — a MoM SQL whose final output is `metric_a_mom_delta` should publish a fixed MoM delta metric, not a query-time compare instruction and not a previous-value helper unless that helper is itself the final requested output:
 ```yaml
 metric:
-  name: previous_month_metric_a
-  description: "{metric_a description} of the previous month"
-  type: derived
-  type_params:
-    metrics:
-      - name: metric_a
-        alias: previous_month_metric_a
-        offset_window: 1 month
-    expr: "previous_month_metric_a"
----
-metric:
   name: metric_a_mom_delta
-  description: "Month-over-month {metric_a description} delta"
+  description: "{metric_a month-over-month delta description}"
   type: derived
   type_params:
     metrics:
       - name: metric_a
       - name: metric_a
-        alias: previous_month_metric_a
+        alias: metric_a_prev
         offset_window: 1 month
-    expr: "metric_a - previous_month_metric_a"
+    expr: "metric_a - metric_a_prev"
 ```
 
 **cumulative** (running total over time):

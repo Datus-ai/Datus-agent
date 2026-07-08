@@ -446,9 +446,10 @@ class AskMetricsAgenticNode(AgenticNode):
         N/Bottom N, also pass order_by so the truncation has stable business
         meaning.
 
-        For period-over-period and window metrics, AskMetrics expands the
-        request to include related executable metrics when they are already
-        present in the catalog.
+        For fixed period-over-period metrics such as month-over-month or
+        year-over-year, query the dedicated catalog metric directly. For window
+        metrics, AskMetrics expands the request to include related executable
+        metrics when they are already present in the catalog.
 
         For joined dimensions, use semantic join policies instead of SQL join
         types: match_only for normal matched dimension grouping,
@@ -515,30 +516,8 @@ class AskMetricsAgenticNode(AgenticNode):
         self._selected_final_metric_result_id = result_id
         return FuncToolResult(result={"result_id": result_id})
 
-    def _expand_period_over_period_metrics(self, metrics: Optional[List[str]]) -> List[str]:
-        requested_metrics = self._normalize_string_list(metrics)
-        if not requested_metrics:
-            return []
-
-        catalog = self._metric_catalog()
-        if not catalog:
-            return requested_metrics
-
-        expanded: List[str] = []
-        for metric_name in requested_metrics:
-            metric = catalog.get(metric_name)
-            if not metric:
-                self._append_unique(expanded, metric_name)
-                continue
-
-            for bundled_metric in self._period_over_period_metric_bundle(metric_name, metric, catalog):
-                self._append_unique(expanded, bundled_metric)
-
-        return expanded
-
     def _expand_metric_dependencies(self, metrics: Optional[List[str]]) -> List[str]:
-        expanded_metrics = self._expand_period_over_period_metrics(metrics)
-        return self._expand_window_metrics(expanded_metrics)
+        return self._expand_window_metrics(metrics)
 
     def _expand_window_metrics(self, metrics: Optional[List[str]]) -> List[str]:
         requested_metrics = self._normalize_string_list(metrics)
@@ -815,82 +794,6 @@ class AskMetricsAgenticNode(AgenticNode):
             if value:
                 return value
         return ""
-
-    @classmethod
-    def _period_over_period_metric_bundle(
-        cls,
-        metric_name: str,
-        metric: Dict[str, Any],
-        catalog: Dict[str, Dict[str, Any]],
-    ) -> List[str]:
-        metadata = metric.get("metadata") if isinstance(metric, dict) else {}
-        if not isinstance(metadata, dict):
-            return [metric_name]
-
-        inputs = metadata.get("inputs")
-        if not isinstance(inputs, list):
-            return [metric_name]
-
-        base_metrics: List[str] = []
-        previous_metrics: List[str] = []
-        has_current_input = False
-        has_offset_input = False
-        for item in inputs:
-            if not isinstance(item, dict):
-                continue
-
-            base_name = item.get("name")
-            if not isinstance(base_name, str) or base_name not in catalog:
-                continue
-
-            if item.get("offset_window"):
-                has_offset_input = True
-                alias = item.get("alias")
-                if isinstance(alias, str) and alias in catalog:
-                    cls._append_unique(previous_metrics, alias)
-                for equivalent_metric in cls._equivalent_offset_identity_metrics(base_name, item, catalog):
-                    cls._append_unique(previous_metrics, equivalent_metric)
-            else:
-                has_current_input = True
-                cls._append_unique(base_metrics, base_name)
-
-        if not has_current_input or not has_offset_input:
-            return [metric_name]
-
-        return [*base_metrics, *previous_metrics, metric_name]
-
-    @classmethod
-    def _equivalent_offset_identity_metrics(
-        cls,
-        base_name: str,
-        offset_input: Dict[str, Any],
-        catalog: Dict[str, Dict[str, Any]],
-    ) -> List[str]:
-        offset_window = str(offset_input.get("offset_window") or "").strip()
-        offset_to_grain = str(offset_input.get("offset_to_grain") or "").strip()
-        if not offset_window:
-            return []
-
-        equivalent_metrics: List[str] = []
-        for candidate_name, candidate in catalog.items():
-            metadata = candidate.get("metadata") if isinstance(candidate, dict) else {}
-            inputs = metadata.get("inputs") if isinstance(metadata, dict) else None
-            if not isinstance(inputs, list) or len(inputs) != 1:
-                continue
-            candidate_input = inputs[0]
-            if not isinstance(candidate_input, dict):
-                continue
-            if candidate_input.get("name") != base_name:
-                continue
-            if str(candidate_input.get("offset_window") or "").strip() != offset_window:
-                continue
-            if str(candidate_input.get("offset_to_grain") or "").strip() != offset_to_grain:
-                continue
-            alias = candidate_input.get("alias")
-            expr = metadata.get("expr")
-            if isinstance(alias, str) and isinstance(expr, str) and expr.strip() == alias and candidate_name == alias:
-                cls._append_unique(equivalent_metrics, candidate_name)
-        return equivalent_metrics
 
     @staticmethod
     def _normalize_string_list(value: Optional[List[str]]) -> List[str]:

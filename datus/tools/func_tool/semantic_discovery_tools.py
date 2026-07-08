@@ -491,7 +491,7 @@ class SemanticDiscoveryTools:
                     self._merge_metric_candidate(metric_candidates, candidate)
                     for measure in candidate.get("base_measures", []):
                         self._merge_base_measure(base_measures, measure)
-                for candidate in pop_candidates["derived_metric_candidates"]:
+                for candidate in pop_candidates["period_metric_candidates"]:
                     entry_has_metric_evidence = True
                     found_candidate = True
                     entry_candidates.append(candidate)
@@ -1873,11 +1873,11 @@ class SemanticDiscoveryTools:
         source_context: str,
         existing_metric_catalog: Dict[str, Dict[str, Any]],
     ) -> Dict[str, List[Dict[str, Any]]]:
-        """Extract derived metric candidates from LAG-style period comparisons."""
+        """Extract fixed period-over-period metric candidates from LAG-style comparisons."""
         from sqlglot import expressions as exp
 
         base_candidates: Dict[str, Dict[str, Any]] = {}
-        derived_candidates: Dict[str, Dict[str, Any]] = {}
+        period_candidates: Dict[str, Dict[str, Any]] = {}
 
         for parsed in parsed_expressions:
             projection_index = self._named_projection_index(parsed)
@@ -1912,17 +1912,6 @@ class SemanticDiscoveryTools:
                         if base_candidate:
                             base_candidates[self._metric_candidate_merge_key(base_candidate)] = base_candidate
 
-                        previous_candidate = self._previous_period_candidate_from_shift(
-                            detail=detail,
-                            source_name=source_name,
-                            select_name=select_name,
-                            existing_metric_catalog=existing_metric_catalog,
-                        )
-                        if previous_candidate:
-                            derived_candidates[self._metric_candidate_merge_key(previous_candidate)] = (
-                                previous_candidate
-                            )
-
             for select_name, select in self._named_selects_for_period_analysis(parsed):
                 source_names = self._direct_source_names(select)
                 visible_shifts = self._visible_period_shift_outputs(
@@ -1935,6 +1924,7 @@ class SemanticDiscoveryTools:
                     candidate = self._period_over_period_candidate_from_projection(
                         projection=projection,
                         source_name=source_name,
+                        source_context=source_context,
                         select_name=select_name,
                         shift_outputs=visible_shifts,
                         source_names=source_names,
@@ -1942,11 +1932,11 @@ class SemanticDiscoveryTools:
                         existing_metric_catalog=existing_metric_catalog,
                     )
                     if candidate:
-                        derived_candidates[self._metric_candidate_merge_key(candidate)] = candidate
+                        period_candidates[self._metric_candidate_merge_key(candidate)] = candidate
 
         return {
             "base_metric_candidates": sorted(base_candidates.values(), key=lambda item: item["name"]),
-            "derived_metric_candidates": sorted(derived_candidates.values(), key=lambda item: item["name"]),
+            "period_metric_candidates": sorted(period_candidates.values(), key=lambda item: item["name"]),
         }
 
     def _window_aggregate_metric_candidates(
@@ -2486,10 +2476,13 @@ class SemanticDiscoveryTools:
         source_context: str,
         existing_metric_catalog: Dict[str, Dict[str, Any]],
         projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+        skip_existing_input: bool = True,
     ) -> Optional[Dict[str, Any]]:
         """Return the upstream aggregate candidate required by a period shift."""
         input_metric = self._normalize_identifier(detail.get("input_metric", ""))
-        if not input_metric or input_metric in existing_metric_catalog:
+        if not input_metric:
+            return None
+        if skip_existing_input and input_metric in existing_metric_catalog:
             return None
         for source in detail.get("source_names", []):
             projection_info = projection_index.get(source, {}).get(input_metric)
@@ -2509,52 +2502,6 @@ class SemanticDiscoveryTools:
                 candidate["source_select"] = projection_info.get("select_name", source)
                 return candidate
         return None
-
-    def _previous_period_candidate_from_shift(
-        self,
-        detail: Dict[str, Any],
-        source_name: str,
-        select_name: str,
-        existing_metric_catalog: Dict[str, Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        """Return a derived metric exposing the previous-period metric value itself."""
-        alias = self._safe_name(detail.get("alias", ""))
-        input_metric = self._safe_name(detail.get("input_metric", ""))
-        offset_window = detail.get("offset_window", "")
-        if not alias or not input_metric or not offset_window:
-            return None
-
-        referenced_metric_names = {self._normalize_identifier(input_metric)}
-        missing_inputs = sorted(name for name in referenced_metric_names if name not in existing_metric_catalog)
-        return {
-            "name": alias,
-            "metric_type": "derived",
-            "metric_kind": "derived",
-            "expression": alias,
-            "source_alias": alias,
-            "source_sql_name": source_name,
-            "source_select": select_name,
-            "inputs": [
-                {
-                    "name": input_metric,
-                    "alias": alias,
-                    "offset_window": offset_window,
-                }
-            ],
-            "offset_window": offset_window,
-            "tables": [],
-            "dimensions": [],
-            "filters": [],
-            "base_measures": [],
-            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
-            "required_input_metrics": missing_inputs,
-            "confidence": "high",
-            "source_count": 1,
-            "score_reasons": [
-                "LAG window maps to a derived metric input with offset_window",
-                "SQL projects the previous-period value as an output column",
-            ],
-        }
 
     def _visible_period_shift_outputs(
         self,
@@ -2576,24 +2523,111 @@ class SemanticDiscoveryTools:
         self,
         projection: Any,
         source_name: str,
+        source_context: str,
         select_name: str,
         shift_outputs: Dict[str, Dict[str, Any]],
         source_names: List[str],
         projection_index: Dict[str, Dict[str, Dict[str, Any]]],
         existing_metric_catalog: Dict[str, Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
-        """Build a derived metric candidate from expressions over shifted metric aliases."""
+        """Build a fixed period-over-period candidate from shifted metric output evidence."""
         from sqlglot import expressions as exp
 
-        if not isinstance(projection, exp.Alias):
+        expr = projection.this if isinstance(projection, exp.Alias) else projection
+        alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+        if not alias:
             return None
-        expr = projection.this
-        alias = projection.alias
-        if not alias or not self._has_real_metric_math(expr):
+
+        source_expression, analysis_expr, inline_shift_aliases = self._period_over_period_analysis_expression(
+            expr=expr,
+            source_names=source_names,
+            projection_index=projection_index,
+            shift_outputs=shift_outputs,
+        )
+        calculation_detail = self._period_over_period_projection_calculation(analysis_expr, shift_outputs)
+        if not calculation_detail:
             return None
-        column_names = {self._normalize_identifier(col.name) for col in expr.find_all(exp.Column)}
-        shift_aliases = sorted(column_names & set(shift_outputs))
-        expression = expr.sql()
+        calculation, detail = calculation_detail
+        if calculation == "previous_value" and select_name != "__outer__" and inline_shift_aliases:
+            return None
+
+        base_candidate = self._base_candidate_for_period_shift(
+            detail=detail,
+            source_name=source_name,
+            source_context=source_context,
+            existing_metric_catalog=existing_metric_catalog,
+            projection_index=projection_index,
+            skip_existing_input=False,
+        )
+        if not base_candidate:
+            return None
+
+        time_grain = self._period_shift_time_grain(detail, projection_index)
+        time_dimension = self._period_shift_time_dimension(detail, projection_index)
+        if not time_grain or not time_dimension:
+            return None
+
+        score_reasons = list(base_candidate.get("score_reasons", []))
+        score_reasons.extend(
+            [
+                "LAG window maps to a fixed period_over_period metric",
+                "published metric keeps the base aggregate expression and stores fixed comparison semantics separately",
+            ]
+        )
+        if calculation == "previous_value":
+            score_reasons.append("source SQL exposes the prior-period value as a final output")
+        else:
+            score_reasons.append("final SELECT expression combines current and prior-period values")
+
+        candidate = dict(base_candidate)
+        candidate.update(
+            {
+                "evidence_kind": "period_over_period_metric_projection",
+                "candidate_classification": "exact_metric",
+                "expression_kind": "period_over_period_expr",
+                "aggregation_scope": "period_over_period",
+                "representable_as": "period_over_period",
+                "equivalence": "exact",
+                "requires_validation": False,
+                "name": self._metric_candidate_name(alias, expr),
+                "metric_type": "period_over_period",
+                "expression": base_candidate.get("expression", ""),
+                "source_alias": alias,
+                "source_expression": source_expression,
+                "source_sql_name": source_name,
+                "source_select": select_name,
+                "source_context": source_context,
+                "base_metric_name": detail.get("input_metric", ""),
+                "time_dimension": time_dimension,
+                "period_over_period": {
+                    "time_grain": time_grain,
+                    "offset_window": detail.get("offset_window", ""),
+                    "calculation": calculation,
+                },
+                "confidence": "high",
+                "score_reasons": score_reasons,
+                "source_count": 1,
+                "referenced_metrics": [],
+            }
+        )
+        candidate.pop("inputs", None)
+        candidate.pop("required_input_metrics", None)
+        candidate.pop("offset_window", None)
+        return candidate
+
+    def _period_over_period_analysis_expression(
+        self,
+        expr: Any,
+        source_names: List[str],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+        shift_outputs: Dict[str, Dict[str, Any]],
+    ) -> tuple:
+        """Return an expression where inline LAG windows are replaced with stable aliases."""
+        from sqlglot import expressions as exp
+
+        source_expression = expr.sql()
+        rewritten_expression = source_expression
+        inline_shift_aliases: List[str] = []
         for window in expr.find_all(exp.Window):
             detail = self._period_shift_output_detail(
                 window=window,
@@ -2602,62 +2636,220 @@ class SemanticDiscoveryTools:
                 projection_index=projection_index,
             )
             if detail:
-                expression = expression.replace(window.sql(), detail["alias"])
-                shift_aliases.append(self._normalize_identifier(detail["alias"]))
-                shift_outputs[self._normalize_identifier(detail["alias"])] = detail
+                rewritten_expression = rewritten_expression.replace(window.sql(), detail["alias"])
+                normalized_alias = self._normalize_identifier(detail["alias"])
+                inline_shift_aliases.append(normalized_alias)
+                shift_outputs[normalized_alias] = detail
 
-        if not shift_aliases:
+        if not inline_shift_aliases:
+            return source_expression, expr, inline_shift_aliases
+
+        try:
+            parsed = self._parse_sql(f"SELECT {rewritten_expression} AS period_over_period_expr")[0]
+            analysis_expr = parsed.expressions[0].this
+        except Exception:
+            analysis_expr = expr
+        return rewritten_expression, analysis_expr, inline_shift_aliases
+
+    def _period_over_period_projection_calculation(
+        self,
+        expr: Any,
+        shift_outputs: Dict[str, Dict[str, Any]],
+    ) -> Optional[tuple]:
+        """Return the fixed PoP calculation and shift detail represented by a projection."""
+        from sqlglot import expressions as exp
+
+        column_names = {self._normalize_identifier(col.name) for col in expr.find_all(exp.Column)}
+        shift_aliases = sorted(column_names & set(shift_outputs))
+        if len(shift_aliases) != 1:
             return None
 
-        inputs: List[Dict[str, Any]] = []
-        base_names = {shift_outputs[shift_alias]["input_metric"] for shift_alias in shift_aliases}
-        for col_name in sorted(column_names - set(shift_outputs)):
-            if col_name in base_names:
-                self._append_unique(inputs, {"name": col_name}, ["name", "alias", "offset_window"])
-        for base_name in sorted(base_names):
-            self._append_unique(inputs, {"name": base_name}, ["name", "alias", "offset_window"])
-        for shift_alias in shift_aliases:
-            detail = shift_outputs[shift_alias]
-            self._append_unique(
-                inputs,
-                {
-                    "name": detail["input_metric"],
-                    "alias": detail["alias"],
-                    "offset_window": detail["offset_window"],
-                },
-                ["name", "alias", "offset_window"],
+        shift_alias = shift_aliases[0]
+        detail = shift_outputs[shift_alias]
+        base_names = {self._normalize_identifier(detail.get("input_metric", ""))}
+        previous_names = {shift_alias}
+
+        if self._is_period_column_ref(expr, previous_names):
+            return "previous_value", detail
+        if self._is_period_percent_change_expr(expr, base_names, previous_names):
+            return "percent_change", detail
+        if self._is_period_delta_expr(expr, base_names, previous_names):
+            return "delta", detail
+        if self._is_period_ratio_expr(expr, base_names, previous_names):
+            return "ratio", detail
+        return None
+
+    def _is_period_column_ref(self, expr: Any, names: set) -> bool:
+        """Return true when an expression is a direct reference to one of the names."""
+        from sqlglot import expressions as exp
+
+        if expr is None:
+            return False
+        core_expr = self._unwrap_metric_candidate_expr(expr)
+        return isinstance(core_expr, exp.Column) and self._normalize_identifier(core_expr.name) in names
+
+    def _is_period_delta_expr(self, expr: Any, base_names: set, previous_names: set) -> bool:
+        """Return true for current-period minus previous-period expressions."""
+        from sqlglot import expressions as exp
+
+        core_expr = self._unwrap_metric_candidate_expr(expr)
+        if not isinstance(core_expr, exp.Sub):
+            return False
+        return self._is_period_column_ref(core_expr.args.get("this"), base_names) and self._is_period_column_ref(
+            core_expr.args.get("expression"),
+            previous_names,
+        )
+
+    def _is_period_percent_change_expr(self, expr: Any, base_names: set, previous_names: set) -> bool:
+        """Return true for standard (current - previous) / previous expressions."""
+        from sqlglot import expressions as exp
+
+        core_expr = self._strip_period_numeric_scale(expr)
+        if isinstance(core_expr, exp.Div):
+            numerator = self._strip_period_numeric_scale(core_expr.args.get("this"))
+            return self._is_period_delta_expr(
+                numerator,
+                base_names,
+                previous_names,
+            ) and self._is_period_previous_denominator(core_expr.args.get("expression"), previous_names)
+        if isinstance(core_expr, exp.Sub) and self._is_numeric_one(core_expr.args.get("expression")):
+            return self._is_period_ratio_expr(core_expr.args.get("this"), base_names, previous_names)
+        return False
+
+    def _is_period_ratio_expr(self, expr: Any, base_names: set, previous_names: set) -> bool:
+        """Return true for current-period divided by previous-period expressions."""
+        from sqlglot import expressions as exp
+
+        core_expr = self._strip_period_numeric_scale(expr)
+        if not isinstance(core_expr, exp.Div):
+            return False
+        numerator = self._strip_period_numeric_scale(core_expr.args.get("this"))
+        return self._is_period_column_ref(
+            numerator,
+            base_names,
+        ) and self._is_period_previous_denominator(core_expr.args.get("expression"), previous_names)
+
+    def _is_period_previous_denominator(self, expr: Any, previous_names: set) -> bool:
+        """Return true for previous-period denominator references, including NULLIF guards."""
+        from sqlglot import expressions as exp
+
+        core_expr = self._unwrap_metric_candidate_expr(expr)
+        if isinstance(core_expr, exp.Nullif):
+            return self._is_period_column_ref(core_expr.args.get("this"), previous_names)
+        return self._is_period_column_ref(core_expr, previous_names)
+
+    def _strip_period_numeric_scale(self, expr: Any) -> Any:
+        """Remove numeric percentage scale factors from a comparison expression."""
+        from sqlglot import expressions as exp
+
+        core_expr = self._unwrap_metric_candidate_expr(expr)
+        if isinstance(core_expr, exp.Mul):
+            left = core_expr.args.get("this")
+            right = core_expr.args.get("expression")
+            if self._is_numeric_literal(left):
+                return self._unwrap_metric_candidate_expr(right)
+            if self._is_numeric_literal(right):
+                return self._unwrap_metric_candidate_expr(left)
+        return core_expr
+
+    def _is_numeric_literal(self, expr: Any) -> bool:
+        """Return true for numeric SQL literals."""
+        from sqlglot import expressions as exp
+
+        return isinstance(expr, exp.Literal) and not expr.is_string
+
+    def _is_numeric_one(self, expr: Any) -> bool:
+        """Return true for numeric literal 1."""
+        if not self._is_numeric_literal(expr):
+            return False
+        try:
+            return float(getattr(expr, "this", "")) == 1.0
+        except (TypeError, ValueError):
+            return False
+
+    def _period_shift_time_grain(
+        self,
+        detail: Dict[str, Any],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> str:
+        """Return the fixed query grain for a period-shift metric."""
+        order_projection = self._period_shift_order_projection(detail, projection_index)
+        grain = ""
+        if order_projection:
+            grain = (
+                self._time_grain_for_expr(order_projection["expr"])
+                or self._time_grain_from_alias(self._period_shift_order_name(detail))
+                or ""
             )
-        if len(inputs) < 2:
-            return None
+        if not grain:
+            grain = self._period_time_grain_from_offset_window(detail.get("offset_window", ""))
+        return grain.lower()
 
-        referenced_metric_names = {self._normalize_identifier(item["name"]) for item in inputs}
-        missing_inputs = sorted(name for name in referenced_metric_names if name not in existing_metric_catalog)
-        return {
-            "name": self._metric_candidate_name(alias, expr),
-            "metric_type": "derived",
-            "metric_kind": "derived",
-            "expression": expression,
-            "source_alias": alias,
-            "source_sql_name": source_name,
-            "source_select": select_name,
-            "inputs": inputs,
-            "offset_window": next(
-                (item.get("offset_window") for item in inputs if item.get("offset_window")),
-                "",
-            ),
-            "tables": [],
-            "dimensions": [],
-            "filters": [],
-            "base_measures": [],
-            "referenced_metrics": self._referenced_metric_items(referenced_metric_names, existing_metric_catalog),
-            "required_input_metrics": missing_inputs,
-            "confidence": "high",
-            "source_count": 1,
-            "score_reasons": [
-                "LAG window maps to derived metric input with offset_window",
-                "final SELECT expression combines current and prior-period metric values",
-            ],
-        }
+    def _period_shift_time_dimension(
+        self,
+        detail: Dict[str, Any],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> str:
+        """Return the time dimension backing a period-shift metric."""
+        from sqlglot import expressions as exp
+
+        expressions = []
+        order_projection = self._period_shift_order_projection(detail, projection_index)
+        if order_projection:
+            expressions.append(order_projection["expr"])
+
+        order_expr = self._period_shift_order_expr(detail)
+        if order_expr:
+            try:
+                parsed_order = self._parse_sql(f"SELECT {order_expr} AS order_expr")[0]
+                expressions.append(parsed_order.expressions[0].this)
+            except Exception:
+                pass
+
+        for expr in expressions:
+            for column in expr.find_all(exp.Column):
+                if column.name:
+                    return self._safe_name(column.name)
+        return ""
+
+    def _period_shift_order_projection(
+        self,
+        detail: Dict[str, Any],
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return the upstream projection that provides the LAG ORDER BY key."""
+        order_name = self._period_shift_order_name(detail)
+        if not order_name:
+            return None
+        for source_name in detail.get("source_names", []):
+            projection = projection_index.get(source_name, {}).get(order_name)
+            if projection:
+                return projection
+        return None
+
+    def _period_shift_order_name(self, detail: Dict[str, Any]) -> str:
+        """Return the normalized first ORDER BY expression name for a period shift."""
+        order_expr = self._period_shift_order_expr(detail)
+        if not order_expr:
+            return ""
+        return self._normalize_identifier(order_expr.split(".")[-1])
+
+    def _period_shift_order_expr(self, detail: Dict[str, Any]) -> str:
+        """Return the first ORDER BY expression for a period shift."""
+        order_items = detail.get("window", {}).get("order_by") or []
+        if not order_items:
+            return ""
+        return str(order_items[0].get("expr") or "")
+
+    def _period_time_grain_from_offset_window(self, offset_window: str) -> str:
+        """Infer a fixed grain from an offset window such as '12 months'."""
+        parts = str(offset_window or "").strip().lower().split()
+        if len(parts) < 2:
+            return ""
+        unit = parts[1].rstrip("s")
+        if unit in {"second", "minute", "hour", "day", "week", "month", "quarter", "year"}:
+            return unit
+        return ""
 
     def _extract_semantic_preservation_evidence(
         self,
@@ -3816,6 +4008,7 @@ class SemanticDiscoveryTools:
                 f"time_grain:{candidate.get('time_grain', '')}",
                 f"window_aggregation:{candidate.get('window_aggregation', '')}",
                 f"window_order_by:{json.dumps(candidate.get('window_order_by', []), sort_keys=True, default=str)}",
+                f"period_over_period:{json.dumps(candidate.get('period_over_period', {}), sort_keys=True, default=str)}",
                 *[f"measure:{part}" for part in sorted(measure_parts)],
                 *[f"input:{part}" for part in sorted(input_parts)],
             ]

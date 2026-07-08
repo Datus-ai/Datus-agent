@@ -112,16 +112,17 @@ class TestAskMetricsAgenticNode:
         assert "do not call `list_subject_tree`" in prompt
         assert "do not call `search_metrics` for metrics that match these entries directly" in prompt
         assert "When the subject tree gives a direct metric/path match" in prompt
-        assert "`offset_window` metadata" in prompt
-        assert 'dimensions=["metric_time__month"]' in prompt
-        assert "query the complete metric bundle" in prompt
-        assert "Previous-period aliases inside a derived metric are calculation inputs" in prompt
-        assert "first period" in prompt
+        assert "dedicated catalog metric" in prompt
+        assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
         assert "Query complete metric results by default" in prompt
         assert "Do not pass `limit` just to preview data" in prompt
         assert "also pass `order_by`" in prompt
         assert "full result is cached" in prompt
+        assert "Never pass empty JSON values" in prompt
+        assert "request those metrics in one `query_metrics(metrics=[...])` call" in prompt
+        assert "query all requested catalog metrics together" in prompt
+        assert "do not add sibling display/name/label dimensions" in prompt
         assert node.subject_tree_prompt_limit == 100
 
     def test_reference_date_is_injected_into_runtime_context(self, real_agent_config, mock_llm_create):
@@ -292,52 +293,24 @@ class TestAskMetricsAgenticNode:
             "attribution_analyze",
         ]
 
-    def test_query_metrics_expands_period_over_period_bundle(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_queries_fixed_period_metric_directly(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={"Sales": {"Orders": {"metrics": ["order_count_mom_delta"]}}},
+            tree={"Sales": {"Orders": {"metrics": ["order_count_month_yoy"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={
                 "items": [
                     {"name": "order_count", "metadata": {"metric_kind": "measure_proxy"}},
                     {
-                        "name": "previous_month_order_count",
+                        "name": "order_count_month_yoy",
                         "metadata": {
-                            "expr": "previous_month_order_count",
-                            "inputs": [
-                                {
-                                    "name": "order_count",
-                                    "alias": "previous_month_order_count",
-                                    "offset_window": "1 month",
-                                }
-                            ],
-                        },
-                    },
-                    {
-                        "name": "order_count_previous_month",
-                        "metadata": {
-                            "expr": "order_count_previous_month",
-                            "inputs": [
-                                {
-                                    "name": "order_count",
-                                    "alias": "order_count_previous_month",
-                                    "offset_window": "1 month",
-                                }
-                            ],
-                        },
-                    },
-                    {
-                        "name": "order_count_mom_delta",
-                        "metadata": {
-                            "inputs": [
-                                {"name": "order_count"},
-                                {
-                                    "name": "order_count",
-                                    "alias": "previous_month_order_count",
-                                    "offset_window": "1 month",
-                                },
-                            ]
+                            "metric_kind": "aggregate",
+                            "period_over_period": {
+                                "time_grain": "month",
+                                "offset_window": "1 year",
+                                "calculation": "percent_change",
+                            },
                         },
                     },
                 ],
@@ -347,34 +320,27 @@ class TestAskMetricsAgenticNode:
         semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
 
         result = node.query_metrics(
-            metrics=["order_count", "order_count_mom_delta"],
-            dimensions=["customer_segment", "metric_time__month"],
-            time_start="2025-04-01",
-            time_end="2025-10-31",
-            time_granularity="month",
-            order_by=["metric_time__month", "customer_segment"],
+            metrics=["order_count_month_yoy"],
+            dimensions=["customer_segment"],
+            time_start="2026-01-01",
+            time_end="2026-12-31",
         )
 
         assert result.success == 1
         semantic_tools.query_metrics.assert_called_once_with(
-            metrics=[
-                "order_count",
-                "previous_month_order_count",
-                "order_count_previous_month",
-                "order_count_mom_delta",
-            ],
-            dimensions=["customer_segment", "metric_time__month"],
+            metrics=["order_count_month_yoy"],
+            dimensions=["customer_segment"],
             path=None,
-            time_start="2025-04-01",
-            time_end="2025-10-31",
-            time_granularity="month",
+            time_start="2026-01-01",
+            time_end="2026-12-31",
+            time_granularity=None,
             where=None,
             limit=None,
-            order_by=["metric_time__month", "customer_segment"],
+            order_by=None,
             dry_run=False,
         )
 
-    def test_query_metrics_does_not_invent_missing_previous_period_metric(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_does_not_expand_offset_input_metrics(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
             tree={"Sales": {"Orders": {"metrics": ["order_count_mom_delta"]}}},
@@ -405,7 +371,7 @@ class TestAskMetricsAgenticNode:
         node.query_metrics(metrics=["order_count_mom_delta"])
 
         semantic_tools.query_metrics.assert_called_once_with(
-            metrics=["order_count", "order_count_mom_delta"],
+            metrics=["order_count_mom_delta"],
             dimensions=None,
             path=None,
             time_start=None,

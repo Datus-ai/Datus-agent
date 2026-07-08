@@ -11,6 +11,15 @@ CRITICAL MODEL RULE - **build the model once, then only add metrics**:
 
 {% set target_model_name = default_osi_semantic_model_name | default('<model_name>', true) %}
 {% set target_model_file = default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) %}
+{% set datasource_type = current_datasource | default('', true) | lower %}
+{% set osi_expression_dialect_by_datasource = {
+    'databricks': 'DATABRICKS',
+    'maql': 'MAQL',
+    'mdx': 'MDX',
+    'snowflake': 'SNOWFLAKE',
+    'tableau': 'TABLEAU',
+} %}
+{% set osi_expression_dialect = osi_expression_dialect_by_datasource.get(datasource_type, 'ANSI_SQL') %}
 
 {% if native_tools %}- Native tools: {{ native_tools }}{% endif %}
 {% if mcp_tools %}- MCP servers: {{ mcp_tools }}{% endif %}
@@ -36,19 +45,19 @@ semantic_model:
           instructions: "<how AI should use this metric, including grain, conditions, time field, and join caveats>"
         expression:
           dialects:
-            - dialect: ANSI_SQL
+            - dialect: {{ osi_expression_dialect }}
               expression: "COUNT(DISTINCT id)" # aggregate business expression; no OVER/LAG/RANK
         custom_extensions:
           - vendor_name: DATUS
             data: '{"dataset":"<existing_dataset_name>","time_dimension":"<date_column>","format":"0.00%","unit":"<unit>"}'
 ```
 
-Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `inputs`, `numerator`, `denominator`, `window`, `grain_to_date`, `window_aggregation`, `offset_window`, `subject_path`, `format`, and `unit` MUST be encoded in the metric's DATUS `custom_extensions[].data` JSON string. They are not OSI core top-level metric fields.
+Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `inputs`, `numerator`, `denominator`, `window`, `grain_to_date`, `window_aggregation`, `offset_window`, `period_over_period`, `subject_path`, `format`, and `unit` MUST be encoded in the metric's DATUS `custom_extensions[].data` JSON string. They are not OSI core top-level metric fields.
 
 ## Authoring rules
 
 1. **Reference, don't rebuild.** Every metric's DATUS `dataset` hint must reference an existing dataset of the semantic model. If a needed dataset, field, time field, or relationship is missing, do not invent a conflicting one; note it and minimally update the semantic model only if truly absent.
-2. **Aggregates**: write the natural business expression in OSI core `expression.dialects[0].expression`, e.g. `COUNT(DISTINCT order_id)`, `SUM(amount)`, `AVG(score)`.
+2. **Aggregates**: write the natural business expression in OSI core `expression.dialects[0].expression`, e.g. `COUNT(DISTINCT order_id)`, `SUM(amount)`, `AVG(score)`. The OSI expression dialect for this run is `{{ osi_expression_dialect }}`. This is the OSI core schema dialect label, derived from the allowed enum, and may differ from the active datasource connector type. Use this exact value in every `expression.dialects[].dialect`.
 3. **Conditional aggregates**: keep the CASE inside the expression, e.g. `COUNT(DISTINCT CASE WHEN <condition> THEN id END)`. Preserve literal values exactly.
 4. **Conditional semantics**: encode metric-specific business conditions inside the OSI core metric expression, e.g. `COUNT(DISTINCT CASE WHEN status = 'paid' THEN id END)`. Do NOT create a separate dataset for a metric-only condition. Fixed logical dataset scope belongs in the dataset `source` query plus `description`/`ai_context`. Do NOT bury query-time date ranges into the metric; time ranges are query parameters.
 5. **Ratios**: if the expression is unambiguous, write the division expression. If numerator/denominator cannot be parsed unambiguously, use DATUS hints `{"metric_kind":"ratio","numerator":"...","denominator":"..."}`.
@@ -61,33 +70,25 @@ Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `input
        - name: revenue_l7d
          expression:
            dialects:
-             - dialect: ANSI_SQL
+             - dialect: {{ osi_expression_dialect }}
                expression: "SUM(amount)"
          custom_extensions:
            - vendor_name: DATUS
              data: '{"dataset":"orders","time_dimension":"order_date","window":"7 days","window_aggregation":"sum"}'
      ```
-   - Period-over-period (`LAG() OVER`, MoM/YoY): write a derived metric over a base metric with an input `offset_window`. Do NOT write `LAG`/`OVER` in the OSI expression. If `analyze_metric_candidates_from_history` returns a `derived_metric_candidates` item with `metric_kind: derived`, `inputs`, and `offset_window`, encode that shape in DATUS extension JSON.
-   - Materialize EVERY offset `derived_metric_candidates` entry, including the previous-period identity candidate whose expression is just the shifted input alias. A delta/rate metric referencing the same shifted alias does NOT replace the identity metric — publish both. Use the candidate's `name` exactly as the metric name; `equivalent_names` are aliases of the same metric, publish only one. The bootstrap host verifies offset candidate completeness after all batches and re-runs generation for anything missing.
-     A MoM SQL like `LAG(revenue) OVER (ORDER BY month) AS revenue_prev` yields TWO derived metrics:
+   - Period-over-period (`LAG() OVER`, previous period, DoD/WoW/MoM/QoQ/YoY): publish reusable comparison outputs as fixed, standalone metrics. A comparison output is a business metric such as YoY rate, YoY delta, MoM rate, MoM delta, WoW ratio, or a previous-period value when that shifted value is the primary reusable business result on its own. Author the OSI expression as the base aggregate expression, and put the fixed comparison semantics in the DATUS `period_over_period` extension. When a SQL result presents current value, previous-period value, and comparison in one answer, publish the comparison metric as the reusable metric and describe current/previous values as comparison context computed from the same base aggregate.
+     A monthly YoY SQL over revenue should publish one fixed monthly YoY metric:
      ```yaml
      metrics:
-       - name: revenue_prev
+       - name: revenue_month_yoy
+         description: "Monthly year-over-year revenue growth rate"
          expression:
            dialects:
-             - dialect: ANSI_SQL
-               expression: "revenue_prev"
+             - dialect: {{ osi_expression_dialect }}
+               expression: "SUM(amount)"
          custom_extensions:
            - vendor_name: DATUS
-             data: '{"metric_kind":"derived","inputs":[{"name":"revenue","alias":"revenue_prev","offset_window":"1 month"}]}'
-       - name: revenue_mom
-         expression:
-           dialects:
-             - dialect: ANSI_SQL
-               expression: "(revenue - revenue_prev) / NULLIF(revenue_prev, 0)"
-         custom_extensions:
-           - vendor_name: DATUS
-             data: '{"metric_kind":"derived","inputs":[{"name":"revenue"},{"name":"revenue","alias":"revenue_prev","offset_window":"1 month"}]}'
+             data: '{"dataset":"orders","time_dimension":"order_date","period_over_period":{"time_grain":"month","offset_window":"1 year","calculation":"percent_change"},"format":"0.00%","unit":"%"}'
      ```
 7. **Joins**: to group or slice by another table, use the existing semantic-model relationships. If the link is truly absent, add one OSI core relationship under the semantic model object:
    ```yaml
@@ -122,12 +123,17 @@ Before writing any YAML, classify the source SQL:
 
 ## Workflow
 
-{% if current_datasource %}- Active datasource: `{{ current_datasource }}`{% endif %}
-{% if kind_subdir %}- Write OSI core YAML under `{{ kind_subdir }}/...` only.{% endif %}
+{% if current_datasource %}
+- Active datasource: `{{ current_datasource }}`
+- OSI expression dialect: `{{ osi_expression_dialect }}`
+{% endif %}
+{% if kind_subdir %}
+- Write OSI core YAML under `{{ kind_subdir }}/...` only.
+{% endif %}
 - Target semantic model name: `{{ target_model_name }}`
 - Target semantic model file: `{{ target_model_file }}`
 - FIRST, load the existing model from `{{ target_model_file }}` to learn dataset names, fields, time fields, and relationships. Call `list_metrics()` to see metrics that already exist.
-- For provided SQL/history, call `analyze_metric_candidates_from_history` before writing files. Use `direct_metric_candidates` for base metrics and `derived_metric_candidates` for second-stage OSI metrics. If it returns `metric_generation_skips`, skip those SQLs instead of writing metric YAML.
+- For provided SQL/history, call `analyze_metric_candidates_from_history` before writing files. Use `direct_metric_candidates` for base metrics and fixed `period_over_period` final metrics; use `derived_metric_candidates` only for second-stage OSI metrics that explicitly depend on published input metrics. If it returns `metric_generation_skips`, skip those SQLs instead of writing metric YAML.
 - Reference, reconcile, reuse: point each metric's DATUS `dataset` hint at an existing dataset. If a metric with the same meaning already exists (`check_semantic_object_exists(name, kind='metric')`), reuse/skip it. For a derived metric, make sure its input metrics already exist.
 - From SQL: find the table (FROM), aggregate expression(s), and business conditions vs query-time ranges. Anchor the metric on the aggregated table's existing dataset; encode metric-specific conditions with CASE inside the metric expression.
 - When a required business input is missing or ambiguous, ASK for the business semantics; do not guess.

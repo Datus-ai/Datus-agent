@@ -24,6 +24,7 @@ Use the narrow metric workflow below:
 - `get_metrics` retrieves details for a known subject path and metric name.
 - `search_metrics` discovers candidate metrics only when direct subject-tree matching is insufficient.
 - `list_metrics` is for enumerating executable metrics from the semantic adapter.
+- Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":` or `"limit":`; either pass a valid value or omit the argument.
 - Prefer `get_dimensions` and `query_metrics` after a direct subject-tree match; only retrieve metric details when the answer depends on the definition text.
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.
@@ -31,7 +32,7 @@ Use the narrow metric workflow below:
 - For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
 - Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
 - `query_metrics.time_end` is inclusive. For a closed calendar period, pass the inclusive final date of that period.
-- Choose grouping and filtering dimensions by semantic meaning. Prefer the exact base dimension requested by the user, and use display or descriptive dimensions only when the user's wording asks for a display value.
+- Choose grouping and filtering dimensions by semantic meaning. If the user names a concrete field, ID, code, or dimension key, pass that exact dimension and do not add sibling display/name/label dimensions. Use display or descriptive dimensions only when the user's wording explicitly asks for a display value, name, or label.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
 - For joined dimensions, use semantic join controls, not SQL join types:
   - Ordinary grouping by a joined dimension should use the default `join_policy="auto"`/`match_only`, which excludes facts that cannot match the requested dimension.
@@ -39,6 +40,7 @@ Use the narrow metric workflow below:
   - If the user asks to keep unmatched facts, use `join_policy="fact_preserving"`.
   - If the user asks only for unmapped or unrecognized fact rows, use `join_policy="unmatched_only"`.
 - Query complete metric results by default. Do not pass `limit` just to preview data, reduce output size, or be conservative; the system compresses visible tool output and caches the full result. Use `limit` only when the user explicitly asks for Top N, first N, maximum N rows, a preview, or another row-count restriction. When using `limit` for Top N/Bottom N, also pass `order_by`.
+- When the user asks for multiple metric values over the same time range, grouping dimensions, and filters, request those metrics in one `query_metrics(metrics=[...])` call. Do not split them into separate queries unless the metrics require incompatible dimensions, filters, paths, or join policies.
 - Prefer the most specific metric whose name or description directly matches the requested business concept. Do not rebuild a specific metric by querying a generic base metric plus filters when a matching specific metric is available.
 - For ratio, rate, conditional count, and compound-condition metrics, use the dedicated metric directly when available. Do not approximate it with numerator/base metrics or ad hoc `where` filters unless no dedicated metric exists.
 - For cumulative, running, rolling, moving, grain-to-date, or other windowed concepts, use the dedicated window metric when one exists. Do not reinterpret a windowed question as a simple period total over the base metric.
@@ -50,16 +52,12 @@ Use the narrow metric workflow below:
 
 ## Period-Over-Period Metric Queries
 
-- Some derived metrics compare a base metric with a prior period through `offset_window` metadata, such as `1 day`, `1 week`, `1 month`, `1 quarter`, or `1 year`. When metric metadata exposes this contract, query at the matching metric-time grain:
-  - `1 day`: use `dimensions=["metric_time__day"]` and `time_granularity="day"`.
-  - `1 week`: use `dimensions=["metric_time__week"]` and `time_granularity="week"`.
-  - `1 month`: use `dimensions=["metric_time__month"]` and `time_granularity="month"`.
-  - `1 quarter`: use `dimensions=["metric_time__quarter"]` and `time_granularity="quarter"`.
-  - `1 year`: use `dimensions=["metric_time__year"]` and `time_granularity="year"`.
-- For period-over-period trend tables, query the complete metric bundle: the base metric, any separate previous-period metric exposed in the metric catalog, and the derived delta/rate metric. Order by the metric-time dimension.
-- Previous-period aliases inside a derived metric are calculation inputs, not output columns. If the user asks for the previous-period value itself, include the separate previous-period metric in `query_metrics`; do not rely on an internal alias to appear in the result.
-- Querying only the derived metric can omit the first period because no prior-period value exists.
-- If the user asks for the previous-period value itself, only return it when a separate metric exposes that value; otherwise report the delta/rate metric and state that the intermediate prior-period value is not exposed as a metric.
+- For period-over-period questions such as previous period, day-over-day, week-over-week, month-over-month, quarter-over-quarter, or year-over-year, first look for a dedicated catalog metric whose name, description, or metadata already matches the requested fixed comparison.
+- Query the dedicated period-over-period metric directly.
+- Treat the comparison grain and calculation as fixed metric semantics. For example, a monthly YoY metric is not interchangeable with a weekly YoY metric; use the exact dedicated metric that matches the user's requested comparison.
+- If the question asks for the base value and one or more fixed period-over-period values for the same current periods, query all requested catalog metrics together in one `query_metrics` call with the same metric-time dimension and business dimensions.
+- When querying a fixed period-over-period metric, pass the requested current time range and business dimensions/filters. Do not override the metric's fixed `time_granularity`; the semantic adapter applies the metric's own period grain.
+- Do not invent helper metrics named like `previous_month_*`, `*_previous_period`, or standalone prior-period values. Use them only if they are already listed as dedicated catalog metrics and directly match the user's requested final output.
 
 ## Window Metric Queries
 

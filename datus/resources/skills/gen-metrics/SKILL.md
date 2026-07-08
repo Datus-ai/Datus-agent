@@ -84,7 +84,7 @@ Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `e
    Define `type: TIME` only for physical DATE/TIME/TIMESTAMP columns or SQL expressions / `sql_query` aliases guaranteed to return DATE/TIME/TIMESTAMP values. Numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys must be identifiers or categorical dimensions unless converted to a real date.
 9. **Preserve post-aggregation constraints** — if `post_aggregation_constraints` is present, keep each HAVING/post-aggregation condition as a query constraint, metric usage note, or later derived data source. Do not silently drop it or push it into a base measure.
 10. **Cross-reference with Phase 0** — remove any candidate that already exists in the knowledge base.
-11. **Separate derived metrics** — treat `derived_metric_candidates` as second-stage metrics over existing metrics. Do not mix them into base semantic model or measure generation.
+11. **Separate fixed comparison and derived metrics** — treat `direct_metric_candidates` with `metric_type: period_over_period` as fixed final period-over-period metrics. Treat `derived_metric_candidates` only as second-stage metrics over existing metrics. Do not mix true derived metrics into base semantic model or measure generation.
 12. **Ignore passthrough references** — entries in `identity_metric_references` show existing metrics selected without new business formula; do not generate new metrics for them.
 13. **Do not promote support measures** — a SELECT projection that only supports another final KPI, such as a denominator, row count, or intermediate aggregation, may be added as a semantic-model measure. Do not also wrap it as a top-level business metric unless the user question or candidate plan identifies it as a final KPI.
 14. **Respect `support_measure_candidates`** — these are dependency or comparison measures, not direct metrics. You may add them to a semantic model only if a generated metric needs them, but do not publish a `metric:` block for them.
@@ -245,7 +245,7 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 
 6. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, expr, derived, or cumulative — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
 
-7. **Derived metrics are second-stage**: Generate non-derived metrics first, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
+7. **Derived metrics are second-stage**: Generate non-derived metrics first, including fixed `period_over_period` direct candidates, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
 
 8. **Support measures are not always metrics**: Add support measures needed for ratios, expressions, filters, and validation, but do not publish each support measure as a separate metric unless it is itself a requested/final business KPI.
 
