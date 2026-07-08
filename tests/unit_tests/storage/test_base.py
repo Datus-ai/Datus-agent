@@ -554,6 +554,41 @@ class TestSearchRouting:
         assert result.num_rows >= 0
         assert "vector" not in result.column_names
 
+    def test_search_hybrid_success_without_fallback(self, tmp_path):
+        """search() with query_type='hybrid' returns hybrid results when available."""
+        store = self._make_store(tmp_path)
+        table = MagicMock()
+        table.count_rows.return_value = 2
+        table.search_hybrid.return_value = pa.Table.from_pylist(
+            [
+                {"identifier": "id_1", "table_name": "table_1"},
+                {"identifier": "id_2", "table_name": "table_2"},
+            ]
+        )
+        store.table = table
+        store._open_existing_table_for_read = MagicMock(return_value=table)
+        store._ensure_embedding_cache_ready_for_search = MagicMock()
+        store._ensure_table_ready = MagicMock()
+
+        result = store.search("table", query_type="hybrid", top_n=1, allow_hybrid_fallback=False)
+
+        assert result.num_rows == 1
+        assert result.to_pylist()[0]["table_name"] == "table_1"
+
+    def test_search_hybrid_without_fallback_raises(self, tmp_path):
+        """search() with fallback disabled surfaces the hybrid error."""
+        store = self._make_store(tmp_path)
+        table = MagicMock()
+        table.count_rows.return_value = 1
+        table.search_hybrid.side_effect = RuntimeError("fts index missing")
+        store.table = table
+        store._open_existing_table_for_read = MagicMock(return_value=table)
+        store._ensure_embedding_cache_ready_for_search = MagicMock()
+        store._ensure_table_ready = MagicMock()
+
+        with pytest.raises(DatusException, match="fts index missing"):
+            store.search("table", query_type="hybrid", top_n=1, allow_hybrid_fallback=False)
+
 
 # ---------------------------------------------------------------------------
 # table_size

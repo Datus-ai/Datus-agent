@@ -10,7 +10,8 @@ execution paths are mocked.
 """
 
 import argparse
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -324,6 +325,17 @@ class TestFinalizeWorkflow:
 
 
 class TestWorkflowRunnerRun:
+    def test_ensure_prerequisites_hybrid_checks_database_storage(self):
+        cfg = _make_config()
+        cfg.kb_search = SimpleNamespace(enabled=True, mode="hybrid")
+        cfg.kb_search_mode = "fts"
+        runner = _make_runner(config=cfg)
+        runner.init_or_load_workflow = MagicMock(return_value=True)
+
+        assert runner._ensure_prerequisites(_make_sql_task(), check_storage=True) is True
+
+        cfg.check_init_storage_config.assert_has_calls([call("database"), call("metrics")])
+
     def test_run_returns_empty_when_prerequisites_fail(self):
         runner = _make_runner()
         # No task, no checkpoint -> _ensure_prerequisites returns False

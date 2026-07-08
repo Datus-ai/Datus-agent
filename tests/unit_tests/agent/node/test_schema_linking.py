@@ -1,12 +1,15 @@
 import os
 import shutil
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import pyarrow as pa
 import pytest
 import yaml
 
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.schemas.schema_linking_node_models import SchemaLinkingInput
+from datus.schemas.schema_linking_node_models import SchemaLinkingInput, SchemaLinkingResult
 from datus.tools.db_tools.config import SQLiteConfig
 from datus.tools.db_tools.sqlite_connector import SQLiteConnector
 from datus.tools.lineage_graph_tools.schema_lineage import SchemaLineageTool
@@ -158,6 +161,86 @@ def test_schema_linking_no_exist(agent_config):
     assert res["success"] is True  # Operation succeeds but returns no results
     assert res["schema_count"] == 0
     assert res["value_count"] == 0
+
+
+def test_search_similar_schemas_by_schema_requires_legacy_schema_store():
+    tool = SchemaLineageTool(storage=object(), agent_config=None)
+    res = tool.search_similar_schemas_by_schema(
+        SchemaLinkingInput(
+            input_text="test query",
+            database_type=DBType.SQLITE,
+            catalog_name="",
+            database_name="",
+            schema_name="",
+            matching_rate="fast",
+            sql_context=None,
+        )
+    )
+
+    assert res["success"] is False
+    assert "legacy schema metadata storage" in res["error"]
+
+
+def test_from_llm_without_legacy_schema_store_falls_back_to_metadata_search():
+    storage = SimpleNamespace(
+        search_similar=MagicMock(return_value=(pa.Table.from_pylist([]), pa.Table.from_pylist([])))
+    )
+    tool = SchemaLineageTool(storage=storage, agent_config=None)
+    res = tool.execute(
+        SchemaLinkingInput(
+            input_text="test query",
+            database_type=DBType.SQLITE,
+            catalog_name="",
+            database_name="",
+            schema_name="",
+            matching_rate="from_llm",
+            sql_context=None,
+        )
+    )
+
+    assert res["success"] is True
+    assert res["schema_count"] == 0
+    storage.search_similar.assert_called_once_with(
+        "test query",
+        top_n=20,
+        catalog_name="",
+        database_name="",
+        schema_name="",
+        table_type="table",
+    )
+
+
+def test_search_similar_schemas_by_schema_delegates_to_legacy_schema_store():
+    expected = SchemaLinkingResult(
+        success=True,
+        error=None,
+        schema_count=0,
+        value_count=0,
+        table_schemas=[],
+        table_values=[],
+    )
+    schema_store = SimpleNamespace(search_top_tables_by_every_schema=MagicMock(return_value=expected))
+    tool = SchemaLineageTool(storage=SimpleNamespace(schema_store=schema_store), agent_config=None)
+    res = tool.search_similar_schemas_by_schema(
+        SchemaLinkingInput(
+            input_text="test query",
+            database_type=DBType.SQLITE,
+            catalog_name="catalog",
+            database_name="db",
+            schema_name="",
+            matching_rate="fast",
+            sql_context=None,
+        ),
+        top_n=7,
+    )
+
+    assert res == expected
+    schema_store.search_top_tables_by_every_schema.assert_called_once_with(
+        "test query",
+        database_name="db",
+        catalog_name="catalog",
+        top_n=7,
+    )
 
 
 def test_get_schema_from_db(schema_lineage_tool: SchemaLineageTool, sqlite_connector: SQLiteConnector):

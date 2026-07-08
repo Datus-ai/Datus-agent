@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 import pyarrow as pa
-from datus_storage_base.conditions import And, Node, WhereExpr, and_, eq, or_
+from datus_storage_base.conditions import And, Node, WhereExpr, and_, eq, in_, or_
 
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
@@ -38,6 +38,17 @@ class KbSearchMode(StrEnum):
     HYBRID = "hybrid"
 
 
+def resolve_kb_search_mode(agent_config: Any) -> KbSearchMode:
+    """Resolve KB retrieval mode from the public kb.search config."""
+
+    kb_search = getattr(agent_config, "kb_search", None)
+    mode = getattr(kb_search, "mode", None) if kb_search is not None else None
+    if not isinstance(mode, str) or not mode.strip():
+        mode = getattr(agent_config, "kb_search_mode", KbSearchMode.FTS.value)
+    mode = str(mode or KbSearchMode.FTS.value).strip().lower()
+    return KbSearchMode.HYBRID if mode == KbSearchMode.HYBRID.value else KbSearchMode.FTS
+
+
 def metadata_fts_enabled(agent_config: Any) -> bool:
     """Return True when public KB search config enables the metadata retrieval path."""
 
@@ -45,22 +56,19 @@ def metadata_fts_enabled(agent_config: Any) -> bool:
     if kb_search is None:
         return False
     enabled = getattr(kb_search, "enabled", None)
-    mode = getattr(kb_search, "mode", None)
     return (
         isinstance(enabled, bool)
         and enabled
-        and isinstance(mode, str)
-        and mode.lower()
+        and resolve_kb_search_mode(agent_config)
         in {
-            KbSearchMode.FTS.value,
-            KbSearchMode.HYBRID.value,
+            KbSearchMode.FTS,
+            KbSearchMode.HYBRID,
         }
     )
 
 
 def _search_mode(agent_config: Any) -> KbSearchMode:
-    mode = str(getattr(agent_config, "kb_search_mode", KbSearchMode.FTS.value) or KbSearchMode.FTS.value).lower()
-    return KbSearchMode.HYBRID if mode == KbSearchMode.HYBRID.value else KbSearchMode.FTS
+    return resolve_kb_search_mode(agent_config)
 
 
 def _utc_now() -> datetime:
@@ -657,6 +665,7 @@ class MetadataFtsRAG:
                     where=where,
                     query_type=KbSearchMode.HYBRID.value,
                     select_fields=None,
+                    allow_hybrid_fallback=False,
                 )
             except DatusException as exc:
                 self._record_search_info(
@@ -984,12 +993,18 @@ class MetadataFtsRAG:
         if metadata.num_rows == 0:
             return self.facts_store._empty_result(self.SCHEMA_SELECT_FIELDS)
 
+        hits = metadata.to_pylist()
+        fact_ids = self._unique_nonempty(hit.get("entity_key") for hit in hits)
+        identifiers = self._unique_nonempty(hit.get("identifier") for hit in hits)
+        fact_by_id, fact_by_identifier = self._fact_lookup_maps(fact_ids=fact_ids, identifiers=identifiers)
         rows: List[Dict[str, Any]] = []
-        for hit in metadata.to_pylist():
-            fact_rows = self._facts_for_hit(hit)
-            if not fact_rows:
+        for hit in hits:
+            fact = fact_by_id.get(str(hit.get("entity_key") or "").strip())
+            if fact is None:
+                fact = fact_by_identifier.get(str(hit.get("identifier") or "").strip())
+            if fact is None:
                 continue
-            schema_row = {field: fact_rows[0].get(field, "") for field in self.SCHEMA_SELECT_FIELDS}
+            schema_row = {field: fact.get(field, "") for field in self.SCHEMA_SELECT_FIELDS}
             for field in self.SCORE_FIELDS:
                 if hit.get(field) is not None:
                     schema_row[field] = hit[field]
@@ -998,43 +1013,57 @@ class MetadataFtsRAG:
             return self.facts_store._empty_result(self.SCHEMA_SELECT_FIELDS)
         return pa.Table.from_pylist(rows)
 
-    def _facts_for_hit(self, hit: Dict[str, Any]) -> List[Dict[str, Any]]:
-        fact_id = str(hit.get("entity_key") or "").strip()
-        if fact_id:
-            rows = self.facts_store._search_all(
-                where=and_(datasource_condition(self.datasource_id), eq("fact_id", fact_id)),
-                select_fields=self.SCHEMA_SELECT_FIELDS,
-                limit=1,
-            ).to_pylist()
-            if rows:
-                return rows
-
-        identifier = str(hit.get("identifier") or "").strip()
-        if not identifier:
-            return []
-        return self.facts_store._search_all(
-            where=and_(datasource_condition(self.datasource_id), eq("identifier", identifier)),
-            select_fields=self.SCHEMA_SELECT_FIELDS,
-            limit=1,
+    def _fact_lookup_maps(
+        self, *, fact_ids: Sequence[str], identifiers: Sequence[str]
+    ) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+        lookup_conditions = []
+        if fact_ids:
+            lookup_conditions.append(in_("fact_id", list(fact_ids)))
+        if identifiers:
+            lookup_conditions.append(in_("identifier", list(identifiers)))
+        if not lookup_conditions:
+            return {}, {}
+        lookup_where = lookup_conditions[0] if len(lookup_conditions) == 1 else or_(*lookup_conditions)
+        rows = self.facts_store._search_all(
+            where=and_(datasource_condition(self.datasource_id), lookup_where),
+            select_fields=["fact_id", *self.SCHEMA_SELECT_FIELDS],
         ).to_pylist()
+        fact_by_id = {str(row.get("fact_id") or ""): row for row in rows if row.get("fact_id")}
+        fact_by_identifier = {str(row.get("identifier") or ""): row for row in rows if row.get("identifier")}
+        return fact_by_id, fact_by_identifier
 
     def _sample_rows_for_metadata(self, metadata: pa.Table) -> pa.Table:
         if metadata.num_rows == 0:
             return self.facts_store._empty_result(self.VALUE_SELECT_FIELDS)
-        identifiers = [row.get("identifier") for row in metadata.to_pylist() if row.get("identifier")]
+        identifiers = self._unique_nonempty(row.get("identifier") for row in metadata.to_pylist())
         if not identifiers:
             return self.facts_store._empty_result(self.VALUE_SELECT_FIELDS)
-        rows = []
-        for identifier in identifiers:
-            rows.extend(
-                self.facts_store._search_all(
-                    where=and_(datasource_condition(self.datasource_id), eq("identifier", identifier)),
-                    select_fields=self.VALUE_SELECT_FIELDS,
-                    limit=1,
-                ).to_pylist()
-            )
-        rows = [row for row in rows if row.get("sample_rows")]
+        rows_by_identifier = {
+            str(row.get("identifier") or ""): row
+            for row in self.facts_store._search_all(
+                where=and_(datasource_condition(self.datasource_id), in_("identifier", list(identifiers))),
+                select_fields=self.VALUE_SELECT_FIELDS,
+            ).to_pylist()
+            if row.get("identifier")
+        }
+        rows = [
+            rows_by_identifier[identifier]
+            for identifier in identifiers
+            if rows_by_identifier.get(identifier, {}).get("sample_rows")
+        ]
         return pa.Table.from_pylist(rows) if rows else self.facts_store._empty_result(self.VALUE_SELECT_FIELDS)
+
+    @staticmethod
+    def _unique_nonempty(values: Sequence[Any]) -> List[str]:
+        result: List[str] = []
+        seen: set[str] = set()
+        for value in values:
+            text = str(value or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            result.append(text)
+        return result
 
     def _sample_rows_by_identifier(self, values: List[Dict[str, Any]]) -> Dict[str, str]:
         result: Dict[str, str] = {}

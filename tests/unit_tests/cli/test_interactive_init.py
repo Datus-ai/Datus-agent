@@ -12,6 +12,7 @@ from datus.cli.interactive_init import (
     ReferenceSqlStreamHandler,
     _format_reference_sql_line,
     do_init_sql_and_log_result,
+    init_metadata_and_log_result,
     overwrite_sql_and_log_result,
     parse_subject_tree,
 )
@@ -272,6 +273,58 @@ class TestInit:
 
                 assert mock_metadata.call_count == 1, "Metadata init should be called when accepted"
                 assert mock_sql.call_count == 1, "SQL init should be called when accepted"
+
+    def test_init_metadata_uses_fts_metadata_store_without_database_cleanup(self):
+        config = MagicMock()
+        config.rag_storage_path.return_value = "/tmp/rag"
+        config.kb_search_mode = "fts"
+        config.datasource_configs = {"test_ns": {"type": "sqlite"}}
+        metadata_store = MagicMock()
+        metadata_store.get_schema_size.return_value = 2
+        metadata_store.get_value_size.return_value = 3
+
+        with (
+            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
+            patch("datus.storage.kb_retrieval.metadata_fts_enabled", return_value=True),
+            patch("datus.storage.schema_metadata.create_metadata_rag", return_value=metadata_store) as create_rag,
+            patch("datus.storage.schema_metadata.local_init.init_local_schema") as init_schema,
+            patch("datus.tools.db_tools.db_manager.db_manager_instance", return_value=MagicMock()) as db_manager,
+        ):
+            init_metadata_and_log_result("test_ns", "/tmp/agent.yml", _make_console())
+
+        assert config.current_datasource == "test_ns"
+        create_rag.assert_called_once_with(config)
+        metadata_store.truncate.assert_called_once_with()
+        config.save_storage_config.assert_not_called()
+        db_manager.assert_called_once_with(config.datasource_configs)
+        init_schema.assert_called_once()
+
+    def test_init_metadata_overwrite_cleans_legacy_vector_tables(self):
+        config = MagicMock()
+        config.rag_storage_path.return_value = "/tmp/rag"
+        config.kb_search_mode = "hybrid"
+        config.project_name = "demo"
+        config.datasource_configs = {"test_ns": {"type": "sqlite"}}
+        metadata_store = MagicMock()
+        db = MagicMock()
+
+        with (
+            patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
+            patch("datus.storage.kb_retrieval.metadata_fts_enabled", return_value=True),
+            patch("datus.storage.schema_metadata.create_metadata_rag", return_value=metadata_store) as create_rag,
+            patch("datus.storage.schema_metadata.local_init.init_local_schema") as init_schema,
+            patch("datus.tools.db_tools.db_manager.db_manager_instance", return_value=MagicMock()),
+            patch("datus.storage.backend_holder.create_vector_connection", return_value=db) as create_vector,
+        ):
+            init_metadata_and_log_result("test_ns", "/tmp/agent.yml", _make_console())
+
+        config.save_storage_config.assert_called_once_with("database")
+        create_vector.assert_called_once_with("demo")
+        db.drop_table.assert_any_call("schema_metadata", ignore_missing=True)
+        db.drop_table.assert_any_call("schema_value", ignore_missing=True)
+        db.close.assert_called_once_with()
+        create_rag.assert_called_once_with(config)
+        init_schema.assert_called_once()
 
 
 def _make_console():

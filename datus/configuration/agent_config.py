@@ -1838,7 +1838,12 @@ class AgentConfig:
         if kwargs.get("search_metrics_rate", ""):
             self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("kb_search_mode", ""):
-            self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
+            self.kb_search = KbSearchConfig.from_dict(
+                {
+                    "enabled": getattr(getattr(self, "kb_search", None), "enabled", True),
+                    "mode": kwargs["kb_search_mode"],
+                }
+            )
             self.kb_search_mode = self.kb_search.mode
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]

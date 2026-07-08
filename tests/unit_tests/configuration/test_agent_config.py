@@ -1399,6 +1399,12 @@ class TestAgentConfigKnowledgeBase:
 
         assert cfg.knowledge_base == {}
 
+    def test_kb_config_rejects_non_dict(self, tmp_path):
+        cfg = self._make(tmp_path, kb="bad")
+
+        assert cfg.kb_search == KbSearchConfig(enabled=True, mode="fts")
+        assert cfg.kb_search_mode == "fts"
+
     def test_kb_search_defaults_to_fts(self, tmp_path):
         cfg = self._make(tmp_path)
 
@@ -1425,6 +1431,14 @@ class TestAgentConfigKnowledgeBase:
     def test_kb_search_rejects_vector_only_mode(self, tmp_path):
         with pytest.raises(DatusException):
             self._make(tmp_path, kb={"search": {"mode": "vector"}})
+
+    def test_override_kb_search_mode_preserves_enabled_flag(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"enabled": False}})
+
+        cfg.override_by_args(kb_search_mode="hybrid")
+
+        assert cfg.kb_search == KbSearchConfig(enabled=False, mode="hybrid")
+        assert cfg.kb_search_mode == "hybrid"
 
 
 class TestAgentConfigChannels:

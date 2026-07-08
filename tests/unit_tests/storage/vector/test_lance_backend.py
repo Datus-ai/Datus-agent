@@ -188,6 +188,29 @@ class TestLanceVectorDatabase:
         db = LanceVectorDatabase(raw_db)
         assert db.table_exists("missing") is False
 
+    def test_table_exists_false_for_corrupt_lance_table_metadata(self):
+        """table_exists() treats incomplete Lance table directories as missing."""
+        raw_db = MagicMock()
+        raw_db.open_table.side_effect = RuntimeError('FileDoesNotExist("meta.json")')
+        db = LanceVectorDatabase(raw_db)
+        assert db.table_exists("missing") is False
+
+    def test_table_exists_reraises_non_missing_errors(self):
+        raw_db = MagicMock()
+        raw_db.open_table.side_effect = RuntimeError("connection lost")
+        db = LanceVectorDatabase(raw_db)
+
+        with pytest.raises(RuntimeError, match="connection lost"):
+            db.table_exists("my_table")
+
+    def test_table_exists_reraises_meta_json_errors_without_missing_table_signature(self):
+        raw_db = MagicMock()
+        raw_db.open_table.side_effect = RuntimeError("failed to parse meta.json")
+        db = LanceVectorDatabase(raw_db)
+
+        with pytest.raises(RuntimeError, match="failed to parse meta.json"):
+            db.table_exists("my_table")
+
     def test_create_table_passes_kwargs(self):
         """create_table() passes schema to db connection without embedding."""
         raw_db = MagicMock()

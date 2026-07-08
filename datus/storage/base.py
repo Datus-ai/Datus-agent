@@ -566,6 +566,7 @@ class BaseEmbeddingStore(StorageBase):
         top_n: Optional[int] = None,
         where: WhereExpr = None,
         query_type: str = "vector",
+        allow_hybrid_fallback: bool = True,
     ) -> pa.Table:
         table = self._open_existing_table_for_read()
         if table is None:
@@ -578,7 +579,9 @@ class BaseEmbeddingStore(StorageBase):
         self._ensure_table_ready()
 
         if query_type == "hybrid":
-            search_result = self._search_hybrid(query_txt, select_fields, top_n, where)
+            search_result = self._search_hybrid(
+                query_txt, select_fields, top_n, where, allow_fallback=allow_hybrid_fallback
+            )
         else:
             search_result = self._search_vector(query_txt, select_fields, top_n, where)
         if self.vector_column_name in search_result.column_names:
@@ -591,6 +594,7 @@ class BaseEmbeddingStore(StorageBase):
         select_fields: Optional[List[str]] = None,
         top_n: Optional[int] = None,
         where: WhereExpr = None,
+        allow_fallback: bool = True,
     ) -> pa.Table:
         try:
             if not top_n:
@@ -606,6 +610,9 @@ class BaseEmbeddingStore(StorageBase):
                 results = results[:top_n]
             return results
         except Exception as e:
+            if allow_fallback:
+                logger.warning("Hybrid search failed for %s; falling back to vector search: %s", self.table_name, e)
+                return self._search_vector(query_txt, select_fields, top_n, where)
             raise DatusException(
                 ErrorCode.STORAGE_SEARCH_FAILED,
                 message_args={

@@ -19,7 +19,7 @@ from datus.models.base import LLMBaseModel
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.node_models import SqlTask
-from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled
+from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled, resolve_kb_search_mode
 from datus.storage.metric.metric_init import init_semantic_yaml_metrics, init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
 from datus.storage.schema_metadata import SchemaWithValueRAG, create_metadata_rag
@@ -419,12 +419,13 @@ class Agent:
             # Initialize corresponding stores
             if component == "metadata":
                 use_fts_metadata = metadata_fts_enabled(self.global_config)
-                search_mode = getattr(self.global_config, "kb_search_mode", KbSearchMode.FTS.value)
+                search_mode = resolve_kb_search_mode(self.global_config)
+                needs_database_storage = (not use_fts_metadata) or search_mode == KbSearchMode.HYBRID
                 if kb_update_strategy == "check":
                     if not os.path.exists(dir_path):
                         raise ValueError("metadata is not built, please run bootstrap_kb with overwrite strategy first")
                     else:
-                        if not use_fts_metadata:
+                        if needs_database_storage:
                             self.global_config.check_init_storage_config("database")
 
                         self.metadata_store = (
@@ -443,7 +444,6 @@ class Agent:
                         results[component] = result
                         continue
 
-                needs_database_storage = (not use_fts_metadata) or search_mode == KbSearchMode.HYBRID.value
                 if needs_database_storage:
                     if kb_update_strategy == "overwrite":
                         self.global_config.save_storage_config("database")
@@ -764,7 +764,7 @@ class Agent:
             self.global_config.check_init_storage_config("metric")
             result = self.benchmark_semantic_layer(benchmark_path, target_task_ids, run_id=run_id)
         else:
-            if getattr(self.global_config, "kb_search_mode", KbSearchMode.FTS.value) == KbSearchMode.HYBRID.value:
+            if resolve_kb_search_mode(self.global_config) == KbSearchMode.HYBRID:
                 self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
             result = self.do_benchmark(benchmark_platform, target_task_ids, run_id=run_id)

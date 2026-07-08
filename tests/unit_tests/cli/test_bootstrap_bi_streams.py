@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 from typing import AsyncGenerator
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -89,7 +89,7 @@ async def test_stream_bi_metadata_yields_entry_exit_messages(agent_config) -> No
 
     with (
         patch("datus.storage.schema_metadata.local_init.init_local_schema_async", side_effect=_ok),
-        patch("datus.storage.schema_metadata.store.SchemaWithValueRAG"),
+        patch("datus.storage.schema_metadata.create_metadata_rag", return_value=MagicMock()),
         patch("datus.tools.db_tools.db_manager.db_manager_instance"),
     ):
         actions = await _consume(stream_bi_metadata(agent_config, table_names=["t1", "t2"]))
@@ -107,7 +107,7 @@ async def test_stream_bi_metadata_yields_failed_on_helper_exception(agent_config
 
     with (
         patch("datus.storage.schema_metadata.local_init.init_local_schema_async", side_effect=_boom),
-        patch("datus.storage.schema_metadata.store.SchemaWithValueRAG"),
+        patch("datus.storage.schema_metadata.create_metadata_rag", return_value=MagicMock()),
         patch("datus.tools.db_tools.db_manager.db_manager_instance"),
     ):
         actions = await _consume(stream_bi_metadata(agent_config, table_names=["t1"]))

@@ -4,6 +4,7 @@
 
 """Tests for datus/storage/schema_metadata/store.py — SchemaStorage and _build_where_clause."""
 
+import pyarrow as pa
 import pytest
 from datus_db_core import ConnectorRegistry
 from datus_storage_base.conditions import And, Condition, build_where, eq
@@ -853,6 +854,29 @@ class TestMetadataFtsRAG:
         real_agent_config.kb_search.enabled = False
         assert isinstance(create_metadata_rag(real_agent_config), SchemaWithValueRAG)
 
+    def test_metadata_fts_uses_public_kb_search_as_mode_source(self, real_agent_config):
+        from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled, resolve_kb_search_mode
+
+        real_agent_config.kb_search.enabled = True
+        real_agent_config.kb_search.mode = "hybrid"
+        real_agent_config.kb_search_mode = "fts"
+
+        assert metadata_fts_enabled(real_agent_config) is True
+        assert resolve_kb_search_mode(real_agent_config) == KbSearchMode.HYBRID
+
+    def test_kb_retrieval_text_and_where_helpers_handle_empty_and_structured_values(self):
+        from datus.storage.kb_retrieval.store import _as_text, _build_where_clause
+
+        assert _as_text(None) == ""
+        assert _as_text({"b": 2, "a": 1}) == '{"a": 1, "b": 2}'
+        assert "object" in _as_text(object())
+
+        where = _build_where_clause(catalog_name="cat", table_type="full", extra=eq("region", "north"))
+        clause = build_where(where)
+        assert "catalog_name = 'cat'" in clause
+        assert "region = 'north'" in clause
+        assert _build_where_clause(table_type="full") is None
+
     def test_store_batch_writes_facts_docs_and_samples(self, real_agent_config):
         from datus.schemas.node_models import TableSchema
         from datus.storage.kb_retrieval import MetadataFtsRAG
@@ -885,6 +909,44 @@ class TestMetadataFtsRAG:
         table_schemas = TableSchema.from_arrow(metadata)
         assert table_schemas[0].definition == "CREATE TABLE order_facts (order_id INT, gross_revenue DECIMAL)"
         assert sample_values.num_rows == 1
+
+    def test_metadata_enrichment_uses_batched_fact_lookup(self, real_agent_config, monkeypatch):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+
+        rag = MetadataFtsRAG(real_agent_config)
+        rag.store_batch(
+            [
+                self._make_schema_row("orders", definition="CREATE TABLE orders (order_id INT)"),
+                self._make_schema_row("customers", definition="CREATE TABLE customers (customer_id INT)"),
+            ],
+            [
+                self._make_value_row("orders", sample_rows=[{"order_id": 1}]),
+                self._make_value_row("customers", sample_rows=[{"customer_id": 1}]),
+            ],
+        )
+        rag.after_init()
+
+        calls = []
+        original_search_all = rag.facts_store._search_all
+
+        def _counting_search_all(*args, **kwargs):
+            calls.append(kwargs.get("where"))
+            return original_search_all(*args, **kwargs)
+
+        monkeypatch.setattr(rag.facts_store, "_search_all", _counting_search_all)
+        metadata = pa.Table.from_pylist(
+            [
+                {"identifier": "db.public.orders", "_score": 2.0},
+                {"identifier": "db.public.customers", "_score": 1.5},
+            ]
+        )
+
+        schemas = rag._schema_rows_for_metadata(metadata)
+        samples = rag._sample_rows_for_metadata(schemas)
+
+        assert [row["table_name"] for row in schemas.to_pylist()] == ["orders", "customers"]
+        assert samples.num_rows == 2
+        assert len(calls) == 2
 
     def test_hybrid_search_fails_when_vector_projection_is_empty(self, real_agent_config):
         from datus.storage.kb_retrieval import MetadataFtsRAG

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import List
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -36,6 +37,27 @@ def _make_action(text: str, status: ActionStatus = ActionStatus.SUCCESS) -> Acti
         input_data={"function_name": "probe"},
         status=status,
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_metadata_uses_metadata_rag_factory() -> None:
+    from datus.cli.bootstrap_streams import stream_metadata
+
+    async def _ok(*_args, **_kwargs):
+        return None
+
+    agent_config = SimpleNamespace(current_datasource="", datasource_configs={"local": {}})
+    metadata_store = MagicMock()
+    with (
+        patch("datus.storage.schema_metadata.create_metadata_rag", return_value=metadata_store) as create_metadata_rag,
+        patch("datus.storage.schema_metadata.local_init.init_local_schema_async", side_effect=_ok),
+        patch("datus.tools.db_tools.db_manager.db_manager_instance"),
+    ):
+        actions = [action async for action in stream_metadata(agent_config, datasource="local")]
+
+    create_metadata_rag.assert_called_once_with(agent_config)
+    assert agent_config.current_datasource == "local"
+    assert "finished" in actions[-1].messages.lower()
 
 
 @pytest.mark.asyncio

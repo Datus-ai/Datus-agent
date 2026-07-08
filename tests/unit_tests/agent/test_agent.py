@@ -17,6 +17,7 @@ NO MOCK EXCEPT LLM. Uses real AgentConfig (from config dict) and real print capt
 import argparse
 import os
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -953,6 +954,40 @@ class TestBootstrapKbMetadata:
             result = agent.bootstrap_kb()
         assert result["status"] == "success"
 
+    def test_metadata_check_strategy_hybrid_validates_database_storage(self, tmp_path):
+        args = _make_args_ext(components=["metadata"], kb_update_strategy="check", benchmark=None)
+        agent = _make_agent_ext(args=args)
+        agent.global_config.rag_storage_path.return_value = str(tmp_path)
+        agent.global_config.kb_search = SimpleNamespace(enabled=True, mode="hybrid")
+        agent.global_config.kb_search_mode = "hybrid"
+
+        mock_store = MagicMock()
+        mock_store.get_schema_size.return_value = 5
+        mock_store.get_value_size.return_value = 10
+        with patch("datus.agent.agent.create_metadata_rag", return_value=mock_store):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        agent.global_config.check_init_storage_config.assert_called_with("database")
+
+    def test_metadata_incremental_legacy_path_validates_database_storage(self):
+        args = _make_args_ext(components=["metadata"], kb_update_strategy="incremental", benchmark=None)
+        agent = _make_agent_ext(args=args)
+
+        mock_store = MagicMock()
+        mock_store.get_schema_size.return_value = 3
+        mock_store.get_value_size.return_value = 7
+
+        with (
+            patch("datus.agent.agent.SchemaWithValueRAG", return_value=mock_store),
+            patch("datus.agent.agent.init_local_schema"),
+            patch.object(agent, "check_db", return_value={"status": "success"}),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "success"
+        agent.global_config.check_init_storage_config.assert_called_with("database")
+
     def test_metadata_overwrite_local(self, tmp_path):
         args = _make_args_ext(components=["metadata"], kb_update_strategy="overwrite", benchmark=None)
         agent = _make_agent_ext(args=args)
@@ -1031,6 +1066,28 @@ class TestBootstrapKbMetadata:
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# benchmark storage checks
+# ---------------------------------------------------------------------------
+
+
+class TestBenchmarkStorageChecks:
+    def test_benchmark_hybrid_mode_validates_database_storage(self, tmp_path):
+        args = _make_args_ext(benchmark="baisheng")
+        agent = _make_agent_ext(args=args)
+        agent.global_config.benchmark_path.return_value = str(tmp_path)
+        agent.global_config.kb_search = SimpleNamespace(enabled=True, mode="hybrid")
+        agent.global_config.kb_search_mode = "fts"
+
+        with patch.object(agent, "do_benchmark", return_value={"status": "success"}) as do_benchmark:
+            result = agent.benchmark(run_id="run-1")
+
+        assert result["status"] == "success"
+        agent.global_config.check_init_storage_config.assert_any_call("database")
+        agent.global_config.check_init_storage_config.assert_any_call("metric")
+        do_benchmark.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

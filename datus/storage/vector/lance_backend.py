@@ -262,12 +262,30 @@ class LanceVectorDatabase(VectorDatabase):
     def __init__(self, db_connection: DBConnection) -> None:
         self._db = db_connection
 
+    @staticmethod
+    def _is_missing_table_error(exc: Exception) -> bool:
+        if isinstance(exc, FileNotFoundError):
+            return True
+        exc_name = type(exc).__name__.lower()
+        exc_text = str(exc).lower()
+        if "filedoesnotexist" in exc_name or "filedoesnotexist" in exc_text:
+            return True
+        if "tablenotfound" in exc_name:
+            return True
+        if "table not found" in exc_text or "table does not exist" in exc_text:
+            return True
+        if isinstance(exc, ValueError) and ("not found" in exc_text or "does not exist" in exc_text):
+            return True
+        return False
+
     def table_exists(self, table_name: str) -> bool:
         try:
             self._db.open_table(table_name)
             return True
-        except ValueError:
-            return False
+        except Exception as exc:
+            if self._is_missing_table_error(exc):
+                return False
+            raise
 
     def table_names(self, limit: int = 100) -> List[str]:
         return self._db.table_names(limit=limit)

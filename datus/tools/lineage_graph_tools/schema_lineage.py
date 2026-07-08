@@ -123,7 +123,17 @@ class SchemaLineageTool(BaseTool):
         Returns:
             SchemaLinkingResult: The result of the search
         """
-        return self.store.schema_store.search_top_tables_by_every_schema(
+        schema_store = getattr(self.store, "schema_store", None)
+        if schema_store is None:
+            return SchemaLinkingResult(
+                success=False,
+                error="Schema-by-schema linking requires legacy schema metadata storage",
+                schema_count=0,
+                value_count=0,
+                table_schemas=[],
+                table_values=[],
+            )
+        return schema_store.search_top_tables_by_every_schema(
             input_param.input_text,
             database_name=input_param.database_name,
             catalog_name=input_param.catalog_name,

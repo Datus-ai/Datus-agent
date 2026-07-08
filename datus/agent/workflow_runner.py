@@ -11,6 +11,7 @@ from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseResult
 from datus.schemas.node_models import SqlTask
+from datus.storage.kb_retrieval import KbSearchMode, resolve_kb_search_mode
 from datus.utils.loggings import get_logger
 from datus.utils.trace_context import build_workflow_trace_context_from_runner
 from datus.utils.traceable_utils import get_trace_reference, optional_traceable
@@ -145,7 +146,7 @@ class WorkflowRunner:
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:
         if check_storage:
-            if getattr(self.global_config, "kb_search_mode", "fts") == "hybrid":
+            if resolve_kb_search_mode(self.global_config) == KbSearchMode.HYBRID:
                 self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metrics")
 
