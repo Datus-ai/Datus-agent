@@ -79,6 +79,10 @@ def test_osi_semantic_model_template_is_backend_agnostic():
     assert "business domain / semantic model scope" in text
     assert "Target semantic model file: `subject/semantic_models/<datasource>/<model_name>.yml`" in text
     assert '"semantic_model_files": ["subject/semantic_models/<datasource>/<model_name>.yml"]' in text
+    assert "Field type classification must follow actual data type and analytical usage" in text
+    assert "A numeric field does not become categorical" in text
+    assert 'data: \'{"type":"numeric"}\'' in text
+    assert "Numeric-coded categories" in text
     assert "One canonical dataset per physical table" not in text
     assert "<table_name>.yml" not in text
 
@@ -108,3 +112,13 @@ def test_default_metricflow_templates_are_unchanged():
     assert pm.get_latest_version("gen_semantic_model_system") == "1.1"
     # OSI templates have their own independent versioning.
     assert pm.get_latest_version("gen_metrics_osi_system") == "1.0"
+
+
+def test_metricflow_semantic_model_template_classifies_numeric_fields_by_usage():
+    pm = get_prompt_manager()
+    text = pm.render_template(template_name="gen_semantic_model_system")
+    assert "Classify each column by actual data type and analytical usage" in text
+    assert "DECIMAL/NUMERIC/INTEGER/FLOAT/DOUBLE" in text
+    assert "Do not model an aggregatable numeric business value as a categorical dimension" in text
+    assert "AVG(<field>)" in text
+    assert "Numeric-coded categories" in text

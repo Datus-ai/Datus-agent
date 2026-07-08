@@ -75,6 +75,12 @@ Please strictly follow the instructions below:
      - Append compact observed distribution evidence from `profile_semantic_model_evidence` when available: null rate, numeric ranges and percentiles, date spans/freshness/duration, distinct counts, representative stable values, referential coverage, common filter templates, and enum/code mappings
      - Append Enum-like patterns (e.g., "status: 1=Active, 2=Inactive")
    - **Describe what a column means first, then add concise observed evidence.** Capture business meaning, encodings, term→column mappings, and compact profiler observations. Avoid long SQL snippets or procedural query instructions; mention operator/function usage only when it is directly supported by evidence and helps interpret the column.
+   - **Classify each column by actual data type and analytical usage, not by display convenience alone**:
+     - Put DECIMAL/NUMERIC/INTEGER/FLOAT/DOUBLE or equivalent fields in `measures` when they represent measured quantities, scores, rates, prices, amounts, durations, counts, percentages, or other arithmetic values and historical SQL uses them in arithmetic, range predicates, numeric ordering, or numeric aggregates such as `AVG`, `SUM`, `MIN`, `MAX`, `STD`, `VARIANCE`, `CORR`, or `COVAR`.
+     - Do not model an aggregatable numeric business value as a categorical dimension just because it is selected, displayed, filtered, sorted, or appears in a WHERE clause. For example, a DECIMAL field used by `AVG(<field>)` should be a measure with an appropriate aggregate such as `AVG`.
+     - Put text/enums/labels/booleans and numeric-coded category fields in `dimensions` when their values identify groups or labels and averaging or summing the raw value has no business meaning. Numeric-coded categories such as status codes, product type codes, or channel codes can be categorical dimensions; explain the code semantics in the description.
+     - Put primary keys, foreign keys, unique entity IDs, and opaque IDs in `identifiers`. Do not classify identifiers as measures merely because their physical storage type is integer.
+     - If schema type and SQL usage appear to conflict, prefer concrete SQL usage plus column comments/profiler evidence, and ask only when the modeling choice is business-critical.
    - **YAML String Quoting Rule**: ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`.
    - **Example dimension with usage pattern**:
      ```yaml

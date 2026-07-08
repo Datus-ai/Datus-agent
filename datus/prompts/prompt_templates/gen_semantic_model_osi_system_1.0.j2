@@ -50,17 +50,28 @@ semantic_model:
             custom_extensions:
               - vendor_name: DATUS
                 data: '{"type":"time","time_granularity":"day"}'
-          - name: <business_column>
+          - name: <categorical_business_column>
             expression:
               dialects:
                 - dialect: {{ osi_expression_dialect }}
-                  expression: <business_column>
+                  expression: <categorical_business_column>
             dimension:
               is_time: false
             description: "<business meaning of the column>"
             custom_extensions:
               - vendor_name: DATUS
                 data: '{"type":"categorical"}'
+          - name: <numeric_business_column>
+            expression:
+              dialects:
+                - dialect: {{ osi_expression_dialect }}
+                  expression: <numeric_business_column>
+            dimension:
+              is_time: false
+            description: "<business meaning of the measured numeric value>"
+            custom_extensions:
+              - vendor_name: DATUS
+                data: '{"type":"numeric"}'
     relationships:
       - name: <fact_dataset>_to_<dimension_dataset>
         from: <fact_or_many_side_dataset>
@@ -82,9 +93,16 @@ semantic_model:
 7. **Primary / unique keys** -> OSI core `primary_key: [<column>]`. Use real columns only.
 8. **Time dimension**: mark the primary date/time field with `dimension.is_time: true` and Datus extension `{"type":"time","time_granularity":"day|week|month|quarter|year"}`. Point it at a real date/time column, never a numeric surrogate key.
 9. **Fields**: include every business-meaningful column the user may group or slice by. Populate `description` for ALL non-obvious fields by combining the column comment, sample values, profiler evidence, and external knowledge. Useful profiler evidence may include null rate, numeric ranges/percentiles, date span/freshness/duration, distinct counts, representative stable values, common filter templates, and relationship coverage/fanout. Wrap descriptions in double quotes and keep each description concise.
-10. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
-11. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
-12. Preserve literal values and column names exactly; do not invent columns.
+10. **Field type classification must follow actual data type and analytical usage.** The DATUS `custom_extensions.data.type` value is not a display hint; it is the semantic field type.
+   - Use `{"type":"numeric"}` for DECIMAL/NUMERIC/INTEGER/FLOAT/DOUBLE or equivalent fields that represent measured quantities, scores, rates, prices, amounts, durations, counts, percentages, or other arithmetic values.
+   - Keep a field `numeric` when historical SQL uses it in arithmetic, range predicates, numeric ordering, or numeric aggregates such as `AVG`, `SUM`, `MIN`, `MAX`, `STD`, `VARIANCE`, `CORR`, or `COVAR`. A numeric field does not become categorical just because it is selected, displayed, filtered, or grouped.
+   - Use `{"type":"categorical"}` for text/enums/labels/booleans and code fields whose values are categories, not quantities. Numeric-coded categories such as status codes, product type codes, or channel codes can be categorical when averaging or summing the code would have no business meaning; explain the code semantics in the description.
+   - Use `{"type":"identifier"}` for primary keys, foreign keys, unique entity IDs, or opaque IDs. Do not classify identifiers as numeric merely because their physical storage type is integer.
+   - Use `{"type":"time","time_granularity":"..."}` only for real date/time values as described above.
+   - If evidence conflicts, prefer the physical column type plus concrete SQL usage. For example, a DECIMAL field used by `AVG(<field>)` or numeric threshold filters must be `numeric`, while an integer status code used only as labels/groups should be `categorical`.
+11. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
+12. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
+13. Preserve literal values and column names exactly; do not invent columns.
 
 ## Workflow
 
