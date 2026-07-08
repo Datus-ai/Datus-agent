@@ -2,7 +2,7 @@
 
 ## Overview
 
-The semantic model generation feature helps you create semantic models from database tables through an AI-powered assistant. The authored YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow YAML, while `osi` generates strict OSI core YAML. The assistant analyzes your table structure and generates configuration files for the selected adapter.
+The semantic model generation feature helps you create semantic models from database tables through an AI-powered assistant. The YAML format is selected by the configured semantic adapter: `metricflow` generates MetricFlow YAML, while `osi` generates strict OSI core YAML. The assistant analyzes your table structure and generates configuration files for the selected adapter.
 
 ## What is a Semantic Model?
 
@@ -60,11 +60,40 @@ agent:
       model: claude      # Optional: defaults to configured model
       max_turns: 30      # Optional: defaults to 30
       semantic_adapter: metricflow   # Optional when only one semantic layer is configured
+      # Optional: enable historical SQL profiling before YAML generation.
+      # Keep the default MetricFlow semantic-model skill when overriding skills.
+      skills: "metricflow-semantic-authoring, semantic-sql-history-profiler"
 ```
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the full set of options.
 
-For OSI authoring, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.md).
+For OSI generation, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.md).
+
+### Optional Historical SQL Profiling
+
+`semantic-sql-history-profiler` is an internal skill for `gen_semantic_model`, not a chat command or user-invocable skill. Enable it on the `gen_semantic_model` node when you want semantic-model generation to use historical SQL or success-story SQL as modeling evidence.
+
+When the skill is available and the request includes historical SQL or success-story SQL, the subagent loads it before generating YAML and calls `profile_semantic_model_evidence`. The evidence is used to infer join relationships, commonly filtered or grouped dimensions, aggregate candidates, time fields, compact distribution notes, and relationship reliability hints.
+
+For MetricFlow generation, keep the default MetricFlow semantic-model skill when you override `skills`:
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_semantic_model:
+      semantic_adapter: metricflow
+      skills: "metricflow-semantic-authoring, semantic-sql-history-profiler"
+```
+
+For OSI generation, enable only the profiler unless you intentionally need another skill:
+
+```yaml
+agent:
+  agentic_nodes:
+    gen_semantic_model:
+      semantic_adapter: osi
+      skills: "semantic-sql-history-profiler"
+```
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Database tools, generation tools, and filesystem tools
