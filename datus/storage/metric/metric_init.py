@@ -644,6 +644,10 @@ async def _generate_metrics_batch(
             "This plan was mined once from the full success-story SQL set before this batch. "
             "Use it as Phase 1 metric-candidate evidence; do not call analyze_metric_candidates_from_history again "
             "unless this JSON is malformed or insufficient for the requested generation.\n"
+            "Treat `direct_metric_candidates` and `derived_metric_candidates` as a publication checklist: every "
+            "candidate must end this batch either published or reported in your final output with a concrete "
+            "blocker. Cumulative/window/period_over_period candidates are standalone metrics; they are never "
+            "covered by an already-published base metric.\n"
             f"{candidate_plan_json}"
         )
 
