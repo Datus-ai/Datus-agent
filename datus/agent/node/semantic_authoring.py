@@ -26,7 +26,6 @@ import re
 from dataclasses import fields, is_dataclass
 from typing import Any, Dict, Optional
 
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
@@ -35,37 +34,11 @@ AUTHORING_FORMAT_OSI = "osi"
 logger = get_logger(__name__)
 
 
-def _safe_resolve_semantic_adapter(agent_config: Any = None, *, context: str) -> Optional[str]:
+def _resolve_semantic_adapter(agent_config: Any = None) -> Optional[str]:
     resolver = getattr(agent_config, "resolve_semantic_adapter", None)
     if not callable(resolver):
         return None
-
-    try:
-        return resolver()
-    except DatusException as exc:
-        if exc.code == ErrorCode.COMMON_CONFIG_ERROR:
-            logger.warning(
-                "Failed to resolve semantic adapter for %s due to configuration error; "
-                "falling back to metricflow. agent_config=%r error=%s",
-                context,
-                agent_config,
-                exc,
-            )
-        else:
-            logger.debug(
-                "Failed to resolve semantic adapter for %s; falling back to metricflow. agent_config=%r error=%s",
-                context,
-                agent_config,
-                exc,
-            )
-    except Exception as exc:
-        logger.debug(
-            "Failed to resolve semantic adapter for %s; falling back to metricflow. agent_config=%r error=%s",
-            context,
-            agent_config,
-            exc,
-        )
-    return None
+    return resolver(None)
 
 
 def resolve_authoring_format(
@@ -75,7 +48,7 @@ def resolve_authoring_format(
     """Resolve the semantic authoring format from the global semantic adapter."""
     del node_config
 
-    adapter = _safe_resolve_semantic_adapter(agent_config, context="authoring format")
+    adapter = _resolve_semantic_adapter(agent_config)
 
     if adapter and str(adapter).strip().lower() == AUTHORING_FORMAT_OSI:
         return AUTHORING_FORMAT_OSI
@@ -84,7 +57,7 @@ def resolve_authoring_format(
 
 def resolve_semantic_adapter_type(agent_config: Any = None) -> str:
     """Resolve the active semantic adapter, defaulting to MetricFlow."""
-    adapter = _safe_resolve_semantic_adapter(agent_config, context="adapter type")
+    adapter = _resolve_semantic_adapter(agent_config)
     normalized = str(adapter or "").strip().lower()
     if normalized:
         return normalized
@@ -125,35 +98,6 @@ def _config_field_value(config: Any, field_name: str) -> Any:
     else:
         return ""
     return "" if callable(value) else value
-
-
-def osi_expression_dialect(agent_config: Any = None) -> str:
-    """Return the OSI expression dialect for the active datasource.
-
-    OSI authoring should follow the physical datasource type because
-    expressions often contain datasource-specific functions. Keep this generic:
-    new datasource types should work without changing an allowlist.
-    """
-    candidates = []
-    if agent_config is not None:
-        try:
-            db_config = agent_config.current_db_config()
-        except Exception:
-            db_config = None
-        if db_config is not None:
-            candidates.append(_config_field_value(db_config, "type"))
-        candidates.extend(
-            [
-                getattr(agent_config, "db_type", ""),
-                getattr(agent_config, "current_datasource", ""),
-            ]
-        )
-
-    for candidate in candidates:
-        dialect = _normalize_model_name(candidate)
-        if dialect:
-            return dialect
-    return "ANSI_SQL"
 
 
 def default_osi_semantic_model_name(agent_config: Any = None) -> str:

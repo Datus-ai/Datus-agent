@@ -305,12 +305,10 @@ class GenSemanticModelAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import (
             default_osi_semantic_model_file,
             default_osi_semantic_model_name,
-            osi_expression_dialect,
         )
 
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
-        context["osi_expression_dialect"] = osi_expression_dialect(self.agent_config)
 
         logger.debug(f"Prepared template context: {context}")
         return context

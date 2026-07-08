@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_METRICFLOW,
     AUTHORING_FORMAT_OSI,
     default_osi_semantic_model_file,
     default_osi_semantic_model_name,
-    osi_expression_dialect,
     osi_prompt_version,
     osi_template_name,
     resolve_authoring_format,
@@ -24,7 +25,6 @@ class _DbScope:
     database: str = ""
     schema: str = ""
     catalog: str = ""
-    type: str = ""
 
 
 def _agent_config(adapter):
@@ -111,97 +111,36 @@ def test_default_osi_semantic_model_name_uses_agent_scope_fallbacks():
     assert default_osi_semantic_model_file(config) == "subject/semantic_models/default/project_alpha.yml"
 
 
-def test_osi_expression_dialect_follows_datasource_type():
-    config = SimpleNamespace(
-        current_datasource="starrocks",
-        db_type="",
-        current_db_config=lambda: _DbScope(type="starrocks"),
-    )
-
-    assert osi_expression_dialect(config) == "starrocks"
-
-
-def test_osi_expression_dialect_uses_generic_datasource_type_without_allowlist():
-    config = SimpleNamespace(
-        current_datasource="custom",
-        db_type="",
-        current_db_config=lambda: _DbScope(type="Acme Warehouse"),
-    )
-
-    assert osi_expression_dialect(config) == "acme_warehouse"
-
-
-def test_osi_expression_dialect_falls_back_to_ansi_sql_without_datasource_type():
-    config = SimpleNamespace(
-        current_datasource="",
-        db_type="",
-        current_db_config=lambda: _DbScope(),
-    )
-
-    assert osi_expression_dialect(config) == "ANSI_SQL"
-
-
-def test_osi_expression_dialect_uses_agent_fallback_when_db_config_fails():
-    def _boom():
-        raise RuntimeError("datasource not ready")
-
-    config = SimpleNamespace(
-        current_datasource="",
-        db_type="Snowflake",
-        current_db_config=_boom,
-    )
-
-    assert osi_expression_dialect(config) == "snowflake"
-
-
 def test_defaults_to_metricflow_when_unknown():
     assert resolve_authoring_format(None, None) == AUTHORING_FORMAT_METRICFLOW
     assert resolve_authoring_format(_agent_config(None), {}) == AUTHORING_FORMAT_METRICFLOW
 
 
-def test_resolution_is_resilient_to_agent_config_errors():
-    def _boom():
-        raise RuntimeError("no semantic layer")
-
-    bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    assert resolve_authoring_format(bad, None) == AUTHORING_FORMAT_METRICFLOW
-
-
-def test_resolution_logs_agent_config_errors():
+def test_resolution_propagates_agent_config_errors():
     def _boom(_requested=None):
         raise RuntimeError("no semantic layer")
 
     bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
-        assert resolve_authoring_format(bad, {"semantic_adapter": "osi"}) == AUTHORING_FORMAT_METRICFLOW
-
-    mock_logger.debug.assert_called_once()
-    assert "Failed to resolve semantic adapter" in mock_logger.debug.call_args.args[0]
+    with pytest.raises(RuntimeError, match="no semantic layer"):
+        resolve_authoring_format(bad, None)
 
 
-def test_resolution_warns_for_semantic_layer_config_errors():
-    def _boom():
+def test_resolution_propagates_semantic_layer_config_errors():
+    def _boom(_requested=None):
         raise DatusException(ErrorCode.COMMON_CONFIG_ERROR, message="multiple semantic layers")
 
     bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
-        assert resolve_authoring_format(bad, None) == AUTHORING_FORMAT_METRICFLOW
-
-    mock_logger.warning.assert_called_once()
-    mock_logger.debug.assert_not_called()
-    assert "configuration error" in mock_logger.warning.call_args.args[0]
+    with pytest.raises(DatusException, match="multiple semantic layers"):
+        resolve_authoring_format(bad, None)
 
 
-def test_adapter_type_resolution_uses_same_error_logging():
-    def _boom():
+def test_adapter_type_resolution_propagates_agent_config_errors():
+    def _boom(_requested=None):
         raise RuntimeError("resolver unavailable")
 
     bad = SimpleNamespace(resolve_semantic_adapter=_boom)
-    with patch("datus.agent.node.semantic_authoring.logger") as mock_logger:
-        assert resolve_semantic_adapter_type(bad) == AUTHORING_FORMAT_METRICFLOW
-
-    mock_logger.debug.assert_called_once()
-    assert mock_logger.debug.call_args.args[1] == "adapter type"
+    with pytest.raises(RuntimeError, match="resolver unavailable"):
+        resolve_semantic_adapter_type(bad)
 
 
 def test_osi_template_name_is_isolated_from_metricflow_template():
@@ -241,26 +180,6 @@ def test_osi_metrics_template_renders_despite_injected_metricflow_version():
     version = osi_prompt_version(None, "gen_metrics", "1.2")
     text = pm.render_template(template_name="gen_metrics_osi_system", version=version)
     assert "OSI" in text
-
-
-def test_osi_templates_render_datasource_expression_dialect():
-    pm = get_prompt_manager()
-
-    semantic_text = pm.render_template(
-        template_name="gen_semantic_model_osi_system",
-        version="1.0",
-        osi_expression_dialect="starrocks",
-    )
-    metrics_text = pm.render_template(
-        template_name="gen_metrics_osi_system",
-        version="1.0",
-        osi_expression_dialect="starrocks",
-    )
-
-    assert "dialect: starrocks" in semantic_text
-    assert "dialect: starrocks" in metrics_text
-    assert "OSI expression dialect for this datasource: `starrocks`" in semantic_text
-    assert "OSI expression dialect for this datasource: `starrocks`" in metrics_text
 
 
 def test_osi_skill_skip_handles_missing_node_config(monkeypatch):
