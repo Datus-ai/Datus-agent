@@ -4125,10 +4125,8 @@
 
 
 <h1 id="semantic-layer">语义层配置（Semantic Layer）<a class="headerlink" href="#semantic-layer" title="Permanent link">&para;</a></h1>
-<p>语义适配器统一配置在 <code>agent.services.semantic_layer</code> 下。<strong>至少要配置一条</strong>——空 section 不再静默 fallback 到 metricflow,而是 raise <code>No semantic layer configured</code>。</p>
-<blockquote>
-<p><strong>迁移说明</strong>:旧版本会在 section 缺失时隐式注入 metricflow 默认值,新版要求显式写入 yaml 条目。<code>conf/agent.yml.example</code> 已经默认带上 <code>metricflow: {}</code>,新装用户开箱仍能用。</p>
-</blockquote>
+<p>语义适配器统一配置在 <code>agent.services.semantic_layer</code> 下。如果不配置或配置为空，Datus 使用内置默认语义适配器。当前默认是 <code>metricflow</code>；未来可以切到 <code>osi</code>，不需要为每个 node 单独改配置。</p>
+<p>语义层选择是项目级全局设置。旧配置里 node 级的语义格式字段会被忽略；需要显式 pin 时，只改这里。</p>
 <h2 id="_1">配置结构<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -4139,26 +4137,18 @@
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                   </span><span class="c1"># 全局默认:无 project pin 时被选用</span>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="nt">execution_backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span><span class="w">   </span><span class="c1"># 可选 OSI authoring 适配器</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="nt">gen_semantic_model</span><span class="p">:</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">    </span><span class="nt">gen_metrics</span><span class="p">:</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># execution_backend 默认是 metricflow，通常不需要配置。</span>
 </span></code></pre></div>
 <h2 id="_2">选择规则<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p><code>AgentConfig.resolve_semantic_adapter</code> 解析活动语义适配器的顺序与 BI Dashboard / Scheduler 完全一致:</p>
 <ol>
-<li>调用处显式传入的 <code>adapter_type</code>(或 agentic node 上的 <code>semantic_adapter</code>)。</li>
+<li>服务管理类调用处显式传入的 <code>adapter_type</code>。</li>
 <li><code>./.datus/config.yml</code> 中的项目级 pin —— <code>semantic:</code> 字段。</li>
 <li>YAML 全局 <code>default: true</code> 标志:<code>services.semantic_layer</code> 中至多一条可标 default,多于一条会在加载阶段直接报错。</li>
 <li>单条快捷:仅有一条 semantic adapter 时,自动使用它。</li>
-<li>否则抛错:</li>
-<li>section 为空 → <code>No semantic layer configured ...</code></li>
-<li>多条无 default → <code>Multiple semantic layers are configured ...</code></li>
+<li>section 为空时使用内置默认。</li>
 </ol>
+<p>如果配置了多条 semantic adapter 但没有 <code>default: true</code>，Datus 会认为配置有歧义并报错。</p>
 <p><code>services.semantic_layer</code> 下的 key <strong>必须等于 adapter type</strong>(例如 <code>metricflow</code>)。如果同时写了 <code>type:</code> 字段,其值必须与 key 一致,否则 Datus 会在启动时抛出配置错误。比较时会先 lowercase + trim,因此 <code>MetricFlow</code>、<code>metricflow</code> 都会被视为与 <code>metricflow</code> 匹配。</p>
 <h2 id="metricflow">MetricFlow 说明<a class="headerlink" href="#metricflow" title="Permanent link">&para;</a></h2>
 <ul>
@@ -4171,8 +4161,8 @@
 <ul>
 <li>OSI 是和 MetricFlow 并列的 semantic adapter。</li>
 <li>OSI 模式编写 strict OSI core YAML，并把 Datus 执行提示放在 <code>custom_extensions</code> 中。</li>
-<li>当前 OSI 执行后端是 MetricFlow，通过 <code>execution_backend: metricflow</code> 配置。</li>
-<li>在 <code>gen_semantic_model</code>、<code>gen_metrics</code> 或 <code>ask_metrics</code> 上设置 <code>semantic_adapter: osi</code> 即可选择该路径。</li>
+<li>当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 <code>execution_backend</code>。</li>
+<li>配置 <code>services.semantic_layer.osi</code> 并标记 <code>default: true</code>，可在同时配置其他 adapter 时全局选择 OSI。空的 <code>osi: {}</code> 只有在它是唯一 semantic adapter，或当前项目 pin 到 <code>semantic: osi</code> 时才会被选中。</li>
 </ul>
 <h2 id="cli-services">通过 CLI 配置（<code>/services</code>）<a class="headerlink" href="#cli-services" title="Permanent link">&para;</a></h2>
 <p>在 Datus REPL 中运行 <code>/services semantic</code>（或者从其他 tab 按 <code>Tab</code> 切过来）会进入配置 TUI 的 <strong>Semantic</strong> tab。该 tab 支持：</p>

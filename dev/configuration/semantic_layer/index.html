@@ -4126,17 +4126,12 @@
 
 <h1 id="semantic-layer-configuration">Semantic Layer Configuration<a class="headerlink" href="#semantic-layer-configuration" title="Permanent link">&para;</a></h1>
 <p>Semantic adapters are configured under <code>agent.services.semantic_layer</code>.
-At least one entry must be configured — running a semantic node with an
-empty <code>services.semantic_layer</code> block now raises
-<code>No semantic layer configured</code> instead of silently falling back to a
-hard-coded <code>metricflow</code> default.</p>
-<blockquote>
-<p><strong>Migration note</strong>: previous Datus releases inserted an implicit
-<code>metricflow</code> default when the section was missing. The default now
-requires an explicit YAML entry. The bundled <code>conf/agent.yml.example</code>
-already ships with <code>metricflow: {}</code>, so fresh installs continue to
-Just Work.</p>
-</blockquote>
+If the section is omitted or empty, Datus uses its built-in semantic
+adapter default. That default is currently <code>metricflow</code>; a future release
+can switch it to <code>osi</code> without requiring per-node config changes.</p>
+<p>Semantic layer selection is global for the project. Node-level semantic
+format fields from older configs are ignored; use this section to pin a
+format explicitly.</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
@@ -4147,32 +4142,24 @@ Just Work.</p>
 </span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                   </span><span class="c1"># global default — picked when no project pin set</span>
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="nt">execution_backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span><span class="w">   </span><span class="c1"># optional OSI authoring adapter</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">    </span><span class="nt">gen_semantic_model</span><span class="p">:</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">    </span><span class="nt">gen_metrics</span><span class="p">:</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># execution_backend defaults to metricflow and normally does not need</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="c1"># to be configured.</span>
 </span></code></pre></div>
 <h2 id="selection-rules">Selection Rules<a class="headerlink" href="#selection-rules" title="Permanent link">&para;</a></h2>
 <p><code>AgentConfig.resolve_semantic_adapter</code> resolves the active semantic
 adapter in this order — identical to BI Dashboard and Scheduler
 resolution:</p>
 <ol>
-<li>Explicit <code>adapter_type</code> argument at the call site (or
-   <code>semantic_adapter</code> on the agentic node).</li>
+<li>Explicit <code>adapter_type</code> argument at service-management call sites.</li>
 <li>Project-level pin in <code>./.datus/config.yml</code>'s <code>semantic:</code> field.</li>
 <li>Global <code>default: true</code> flag — at most one entry under
    <code>services.semantic_layer</code> may carry it; multiple defaults are
    rejected at config load time.</li>
 <li>Single-entry shortcut when only one semantic adapter is configured.</li>
-<li>Otherwise raise:</li>
-<li><code>No semantic layer configured ...</code> when the section is empty.</li>
-<li><code>Multiple semantic layers are configured ...</code> when there are
-     multiple without a default.</li>
+<li>Built-in default when the section is empty.</li>
 </ol>
+<p>Multiple configured semantic adapters without a <code>default: true</code> entry are
+rejected as ambiguous.</p>
 <p>The key under <code>services.semantic_layer</code> <strong>must equal the adapter type</strong>
 (for example <code>metricflow</code>). If a <code>type:</code> field is present, it must match
 the key; otherwise Datus raises a configuration error at startup.
@@ -4188,8 +4175,8 @@ Comparison is case-insensitive and trims surrounding whitespace.</p>
 <ul>
 <li>OSI is a peer semantic adapter to MetricFlow.</li>
 <li>OSI mode authors strict OSI core YAML and stores Datus execution hints in <code>custom_extensions</code>.</li>
-<li>The current OSI execution backend is MetricFlow, configured with <code>execution_backend: metricflow</code>.</li>
-<li>Use <code>semantic_adapter: osi</code> on <code>gen_semantic_model</code>, <code>gen_metrics</code>, or <code>ask_metrics</code> to select this path.</li>
+<li>The current OSI execution backend is MetricFlow by default. You normally do not need to set <code>execution_backend</code>.</li>
+<li>Configure <code>services.semantic_layer.osi</code> and mark it <code>default: true</code> to select this path globally when other adapters are also configured. An empty <code>osi: {}</code> entry is selected automatically only when it is the sole semantic adapter, or when the current project pins <code>semantic: osi</code>.</li>
 </ul>
 <h2 id="configuring-through-the-cli-services">Configuring through the CLI (<code>/services</code>)<a class="headerlink" href="#configuring-through-the-cli-services" title="Permanent link">&para;</a></h2>
 <p>Run <code>/services semantic</code> inside the Datus REPL (or press <code>Tab</code> from any

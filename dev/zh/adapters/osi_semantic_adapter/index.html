@@ -4288,7 +4288,7 @@
 </span></code></pre></div>
 <p><code>metricflow</code> extra 会安装 MetricFlow 执行后端需要的依赖。只做 OSI 编译或静态校验时可以不安装 extra，但要通过 Datus 查询指标时需要可用的执行后端。</p>
 <h2 id="_3">配置<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>在 <code>agent.yml</code> 里把 semantic layer 配成 <code>osi</code>，并让相关节点使用 <code>semantic_adapter: osi</code>。</p>
+<p>在 <code>agent.yml</code> 里把 semantic layer 配成 <code>osi</code>。语义层选择是全局的，会同时作用于 semantic model、metric 和 metric query 工作流。</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">services</span><span class="p">:</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">datasources</span><span class="p">:</span>
@@ -4303,27 +4303,15 @@
 </span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>
 </span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">    </span><span class="nt">semantic_layer</span><span class="p">:</span>
 </span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
-</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="nt">execution_backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>
-</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">    </span><span class="nt">gen_semantic_model</span><span class="p">:</span>
-</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">osi</span>
-</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="w">      </span><span class="c1"># authoring_format 可省略；semantic_adapter=osi 时会自动使用 OSI authoring。</span>
-</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="w">      </span><span class="c1"># authoring_format: osi</span>
-</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
-</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="w">    </span><span class="nt">gen_metrics</span><span class="p">:</span>
-</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">osi</span>
-</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>
-</span><span id="__span-3-27"><a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="w">    </span><span class="nt">ask_metrics</span><span class="p">:</span>
-</span><span id="__span-3-28"><a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">osi</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </span></code></pre></div>
-<p><code>datus-agent</code> 的 authoring format 解析规则是：</p>
+<p><code>execution_backend</code> 默认是 <code>metricflow</code>；只有需要换 OSI 执行后端时才需要显式配置。</p>
+<p><code>datus-agent</code> 会从全局 active semantic adapter 推导 authoring format：</p>
 <ol>
-<li>如果节点显式配置 <code>authoring_format: osi</code>，使用 OSI。</li>
-<li>如果节点使用的 <code>semantic_adapter</code> 解析为 <code>osi</code>，自动使用 OSI。</li>
-<li>否则保持默认 MetricFlow authoring。</li>
+<li>当 <code>agent.services.semantic_layer.osi</code> 是 active adapter 时，使用 OSI authoring。</li>
+<li>否则保持 MetricFlow authoring。</li>
 </ol>
+<p>旧的 node 级 <code>semantic_adapter</code> 和 <code>authoring_format</code> 字段会被忽略。</p>
 <h2 id="_4">生成语义模型<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
 <p>在 OSI 模式下，<code>gen_semantic_model</code> 生成的是严格 OSI core document。根结构固定为：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2.0.dev0</span>
