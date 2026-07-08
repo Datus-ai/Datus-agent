@@ -1,0 +1,9 @@
+{% macro expression_dialect(datasource_type) -%}
+{{- {
+    'databricks': 'DATABRICKS',
+    'maql': 'MAQL',
+    'mdx': 'MDX',
+    'snowflake': 'SNOWFLAKE',
+    'tableau': 'TABLEAU',
+}.get(datasource_type | default('', true) | lower, 'ANSI_SQL') -}}
+{%- endmacro %}

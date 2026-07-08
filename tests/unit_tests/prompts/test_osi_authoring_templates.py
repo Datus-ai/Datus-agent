@@ -99,9 +99,10 @@ def test_osi_semantic_model_template_uses_osi_schema_expression_dialect_for_sql_
 
 def test_osi_semantic_model_template_uses_osi_native_dialect_when_schema_supports_it():
     pm = get_prompt_manager()
-    text = pm.render_template(template_name="gen_semantic_model_osi_system", current_datasource="databricks")
-    assert "- OSI expression dialect: `DATABRICKS`" in text
-    assert "- dialect: DATABRICKS" in text
+    for datasource, expected_dialect in (("databricks", "DATABRICKS"), ("snowflake", "SNOWFLAKE")):
+        text = pm.render_template(template_name="gen_semantic_model_osi_system", current_datasource=datasource)
+        assert f"- OSI expression dialect: `{expected_dialect}`" in text
+        assert f"- dialect: {expected_dialect}" in text
 
 
 def test_default_metricflow_templates_are_unchanged():

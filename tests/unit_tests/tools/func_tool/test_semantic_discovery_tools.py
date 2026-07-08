@@ -1088,6 +1088,45 @@ class TestAnalyzeMetricCandidatesFromHistory:
         }
         assert "inputs" not in delta
 
+    def test_inline_lag_aliases_do_not_leak_to_later_plain_columns(self):
+        tools = _make_tools()
+        result = tools.analyze_metric_candidates_from_history(
+            sql_queries=[
+                """
+                WITH monthly_orders AS (
+                    SELECT
+                        DATE_TRUNC('month', order_date) AS metric_month,
+                        COUNT(DISTINCT order_id) AS order_count,
+                        SUM(previous_count) AS order_count_prev
+                    FROM fact_orders
+                    GROUP BY DATE_TRUNC('month', order_date)
+                )
+                SELECT
+                    metric_month,
+                    order_count - LAG(order_count) OVER (ORDER BY metric_month) AS order_count_period_delta,
+                    order_count_prev
+                FROM monthly_orders
+                ORDER BY metric_month
+                """
+            ]
+        )
+
+        assert result.success == 1
+        direct = result.result["direct_metric_candidates"]
+        delta = next(candidate for candidate in direct if candidate["name"] == "order_count_period_delta")
+        assert delta["metric_type"] == "period_over_period"
+        assert delta["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 month",
+            "calculation": "delta",
+        }
+        leaked = [
+            candidate
+            for candidate in direct
+            if candidate["name"] == "order_count_prev" and candidate.get("metric_type") == "period_over_period"
+        ]
+        assert leaked == []
+
     def test_lag_percent_change_becomes_fixed_period_metric(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
@@ -1473,6 +1512,23 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert {candidate["expression"] for candidate in candidates} == {"COUNT(*)", "SUM(amount)"}
         assert all(candidate["name"] == "revenue" for candidate in candidates)
         assert all(candidate["source_count"] == 1 for candidate in candidates)
+
+    def test_period_over_period_merge_key_includes_time_dimension(self):
+        tools = _make_tools()
+        candidate = {
+            "name": "order_count_yoy",
+            "metric_type": "period_over_period",
+            "expression": "COUNT(DISTINCT order_id)",
+            "time_dimension": "order_date",
+            "period_over_period": {
+                "time_grain": "month",
+                "offset_window": "1 year",
+                "calculation": "percent_change",
+            },
+        }
+        alternate = {**candidate, "time_dimension": "ship_date"}
+
+        assert tools._metric_candidate_merge_key(candidate) != tools._metric_candidate_merge_key(alternate)
 
     def test_repeated_blocked_candidates_do_not_reappear_as_direct_candidates(self):
         tools = _make_tools()

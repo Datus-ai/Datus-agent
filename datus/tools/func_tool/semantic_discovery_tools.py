@@ -2538,13 +2538,17 @@ class SemanticDiscoveryTools:
         if not alias:
             return None
 
+        projection_shift_outputs = dict(shift_outputs)
         source_expression, analysis_expr, inline_shift_aliases = self._period_over_period_analysis_expression(
             expr=expr,
             source_names=source_names,
             projection_index=projection_index,
-            shift_outputs=shift_outputs,
+            shift_outputs=projection_shift_outputs,
         )
-        calculation_detail = self._period_over_period_projection_calculation(analysis_expr, shift_outputs)
+        calculation_detail = self._period_over_period_projection_calculation(
+            analysis_expr,
+            projection_shift_outputs,
+        )
         if not calculation_detail:
             return None
         calculation, detail = calculation_detail
@@ -4006,6 +4010,7 @@ class SemanticDiscoveryTools:
                 f"window:{candidate.get('window', '')}",
                 f"grain_to_date:{candidate.get('grain_to_date', '')}",
                 f"time_grain:{candidate.get('time_grain', '')}",
+                f"time_dimension:{candidate.get('time_dimension', '')}",
                 f"window_aggregation:{candidate.get('window_aggregation', '')}",
                 f"window_order_by:{json.dumps(candidate.get('window_order_by', []), sort_keys=True, default=str)}",
                 f"period_over_period:{json.dumps(candidate.get('period_over_period', {}), sort_keys=True, default=str)}",

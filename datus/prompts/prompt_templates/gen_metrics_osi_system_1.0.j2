@@ -11,15 +11,9 @@ CRITICAL MODEL RULE - **build the model once, then only add metrics**:
 
 {% set target_model_name = default_osi_semantic_model_name | default('<model_name>', true) %}
 {% set target_model_file = default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) %}
+{% import "_osi_dialect_map.j2" as osi_dialect_map %}
 {% set datasource_type = current_datasource | default('', true) | lower %}
-{% set osi_expression_dialect_by_datasource = {
-    'databricks': 'DATABRICKS',
-    'maql': 'MAQL',
-    'mdx': 'MDX',
-    'snowflake': 'SNOWFLAKE',
-    'tableau': 'TABLEAU',
-} %}
-{% set osi_expression_dialect = osi_expression_dialect_by_datasource.get(datasource_type, 'ANSI_SQL') %}
+{% set osi_expression_dialect = osi_dialect_map.expression_dialect(datasource_type) %}
 
 {% if native_tools %}- Native tools: {{ native_tools }}{% endif %}
 {% if mcp_tools %}- MCP servers: {{ mcp_tools }}{% endif %}

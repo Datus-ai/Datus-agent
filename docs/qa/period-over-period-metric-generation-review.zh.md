@@ -18,8 +18,8 @@ success story / 历史 SQL 通常不是一次性查询样例，而是用户沉�
 ```yaml
 - name: activity_count_mom_percent_change
   description: "活动数量月环比增长率，本月活动数量相对于上月活动数量的变化百分比。"
-    expression:
-      dialects:
+  expression:
+    dialects:
       - dialect: ANSI_SQL
         expression: "COUNT(DISTINCT ac_code)"
   custom_extensions:
