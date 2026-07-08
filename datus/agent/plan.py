@@ -267,10 +267,10 @@ def generate_workflow(
     for node in nodes:
         workflow.add_node(node)
     if task.tables and agent_config is not None:
-        from datus.storage.schema_metadata import SchemaWithValueRAG
+        from datus.storage.schema_metadata import create_metadata_rag
 
         try:
-            rag = SchemaWithValueRAG(agent_config=agent_config)
+            rag = create_metadata_rag(agent_config)
             schemas, values = rag.search_tables(
                 task.tables, task.catalog_name, task.database_name, task.schema_name, dialect=task.database_type
             )

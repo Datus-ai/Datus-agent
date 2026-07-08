@@ -232,6 +232,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Number of threads to initialize bootstrap-kb, default is 4",
     )
     bootstrap_parser.add_argument(
+        "--kb_search_mode",
+        type=str,
+        choices=["fts", "hybrid"],
+        default="",
+        help="Knowledge-base search mode for metadata indexing and runtime retrieval (default: config or fts)",
+    )
+    bootstrap_parser.add_argument(
         "--success_story",
         type=str,
         default="benchmark/semantic_layer/success_story.csv",

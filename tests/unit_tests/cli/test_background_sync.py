@@ -90,7 +90,7 @@ class TestScheduleRunsInitAndReloads:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 
@@ -118,7 +118,7 @@ class TestScheduleRunsInitAndReloads:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 
@@ -149,7 +149,7 @@ class TestScheduleCoalesce:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 
@@ -189,7 +189,7 @@ class TestScheduleCancelPrevious:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 
@@ -237,7 +237,7 @@ class TestFailureKeepsOldData:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 
@@ -269,7 +269,7 @@ class TestFailureKeepsOldData:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: fake_store,
         )
 
@@ -302,7 +302,7 @@ class TestDriftGuard:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 
@@ -331,7 +331,7 @@ class TestIsRunningLifecycle:
             fake_init_async,
         )
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: MagicMock(),
         )
 

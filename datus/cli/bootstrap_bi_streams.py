@@ -85,8 +85,8 @@ async def stream_bi_metadata(
     it crawls the configured datasource end-to-end. We log the requested
     scope on entry so the operator can see what's expected.
     """
+    from datus.storage.schema_metadata import create_metadata_rag
     from datus.storage.schema_metadata.local_init import init_local_schema_async
-    from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     if not table_names:
@@ -95,7 +95,7 @@ async def stream_bi_metadata(
 
     yield message_action(f"Crawling metadata for {len(table_names)} table(s)…")
 
-    metadata_store = SchemaWithValueRAG(agent_config)
+    metadata_store = create_metadata_rag(agent_config)
     db_manager = db_manager_instance(agent_config.datasource_configs)
 
     async def _factory(emit: Callable[[BatchEvent], None]):

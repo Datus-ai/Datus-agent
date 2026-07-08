@@ -3,6 +3,8 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
+import csv
+import io
 import json
 import os
 import re
@@ -16,6 +18,8 @@ from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
+from datus.storage.kb_retrieval import metadata_fts_enabled
+from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
@@ -166,7 +170,10 @@ class DBFuncTool:
         self.principal: Dict[str, Any] = dict(principal_source) if isinstance(principal_source, dict) else {}
         self.sub_agent_name = sub_agent_name
         self.read_only = read_only
-        self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
+        if agent_config and metadata_fts_enabled(agent_config):
+            self.schema_rag = create_metadata_rag(agent_config, sub_agent_name)
+        else:
+            self.schema_rag = SchemaWithValueRAG(agent_config, sub_agent_name) if agent_config else None
         self._field_order = self._determine_field_order()
         self._scoped_patterns = self._load_scoped_patterns(scoped_tables)
 
@@ -177,7 +184,7 @@ class DBFuncTool:
                 self._table_semantic_profiles = TableSemanticProfileRAG(agent_config, sub_agent_name)
             except Exception as exc:
                 logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
-        self.has_schema = self.schema_rag and self.schema_rag.schema_store.table_size() > 0
+        self.has_schema = self._has_schema_storage()
 
         self.has_semantic_models = self._semantic_storage and self._semantic_storage.get_size() > 0
         try:
@@ -187,6 +194,133 @@ class DBFuncTool:
         except Exception:
             self._table_semantic_profiles = None
             self.has_table_semantic_profiles = False
+
+    def _has_schema_storage(self) -> bool:
+        if not self.schema_rag:
+            return False
+        get_schema_size = getattr(self.schema_rag, "get_schema_size", None)
+        if callable(get_schema_size):
+            try:
+                return get_schema_size() > 0
+            except Exception:
+                return False
+        schema_store = getattr(self.schema_rag, "schema_store", None)
+        table_size = getattr(schema_store, "table_size", None)
+        if callable(table_size):
+            try:
+                return table_size() > 0
+            except Exception:
+                return False
+        return False
+
+    @staticmethod
+    def _metadata_search_rows(metadata: Any) -> List[Dict[str, Any]]:
+        rows = metadata.to_pylist()
+        result: List[Dict[str, Any]] = []
+        metadata_fields = [
+            "catalog_name",
+            "database_name",
+            "schema_name",
+            "table_name",
+            "table_type",
+            "identifier",
+        ]
+        for row in rows:
+            payload: Dict[str, Any] = {}
+            payload_json = row.get("payload_json")
+            if payload_json:
+                try:
+                    decoded = json.loads(payload_json)
+                    if isinstance(decoded, dict):
+                        description = decoded.get("description")
+                        if description:
+                            payload["description"] = description
+                except (TypeError, ValueError):
+                    pass
+            for field in metadata_fields:
+                if row.get(field) not in (None, ""):
+                    payload[field] = row[field]
+                else:
+                    payload.setdefault(field, "")
+            result.append(payload)
+        return result
+
+    @staticmethod
+    def _qualified_table_name(row: Dict[str, Any]) -> str:
+        parts = [
+            str(row.get("catalog_name") or "").strip(),
+            str(row.get("database_name") or "").strip(),
+            str(row.get("schema_name") or "").strip(),
+            str(row.get("table_name") or "").strip(),
+        ]
+        qualified_name = ".".join(part for part in parts if part)
+        return qualified_name or str(row.get("identifier") or row.get("table_name") or "").strip()
+
+    @staticmethod
+    def _format_sample_rows(value: Any) -> list[Any]:
+        if value in (None, "", [], {}):
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            return [value]
+        text = str(value).strip()
+        if not text:
+            return []
+        if text.startswith("[") or text.startswith("{"):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return parsed
+                if isinstance(parsed, dict):
+                    return [parsed]
+            except (TypeError, ValueError):
+                pass
+        try:
+            rows = list(csv.DictReader(io.StringIO(text)))
+            if rows:
+                return rows
+        except csv.Error:
+            pass
+        return [text]
+
+    @classmethod
+    def _sample_rows_by_identifier(cls, sample_values: Any) -> Dict[str, list[Any]]:
+        if sample_values is None:
+            return {}
+        if getattr(sample_values, "num_rows", None) == 0:
+            return {}
+        selected_fields = ["identifier", "sample_rows"]
+        available_fields = getattr(sample_values, "column_names", None)
+        if available_fields is not None:
+            selected_fields = [field for field in selected_fields if field in available_fields]
+        if not selected_fields:
+            return {}
+        rows = sample_values.select(selected_fields).to_pylist()
+        result: Dict[str, list[Any]] = {}
+        for row in rows:
+            identifier = str(row.get("identifier") or "").strip()
+            if not identifier:
+                continue
+            sample_rows = cls._format_sample_rows(row.get("sample_rows"))
+            if sample_rows:
+                result[identifier] = sample_rows
+        return result
+
+    @classmethod
+    def _search_table_result_row(
+        cls,
+        metadata_row: Dict[str, Any],
+        sample_rows_by_identifier: Dict[str, list[Any]],
+    ) -> Dict[str, Any]:
+        result: Dict[str, Any] = {"table_name": cls._qualified_table_name(metadata_row)}
+        description = str(metadata_row.get("description") or "").strip()
+        if description:
+            result["description"] = description
+        sample_rows = sample_rows_by_identifier.get(str(metadata_row.get("identifier") or "").strip())
+        if sample_rows:
+            result["sample_rows"] = sample_rows
+        return result
 
     def _init_single_db_connector(self, connector: BaseSqlConnector):
         # Legacy single connector mode
@@ -806,10 +940,10 @@ class DBFuncTool:
         simple_sample_data: bool = True,
     ) -> FuncToolResult:
         """
-        Retrieve table candidates by semantic similarity over stored schema metadata and optional sample rows.
+        Retrieve table candidates from indexed metadata and optional semantic profile text.
         Use this tool when the agent needs tables matching a natural-language description.
         This tool helps find relevant tables by searching through table names, schemas (DDL),
-        and sample data using semantic search.
+        and sample data using configured metadata search.
 
         Use this tool when you need to:
         - Find tables related to a specific business concept or domain
@@ -818,7 +952,7 @@ class DBFuncTool:
         - Understand what tables are available in a datasource
 
         **Application Guidance**:
-        1. If table matches (via definition/description/dimensions/measures/sample_data), use it directly
+        1. If table matches (via description/sample_rows), inspect it with describe_table before writing SQL
         2. If partitioned (e.g., date-based in definition), explore correct partition via describe_table
         3. If no match, use list_tables for broader exploration
 
@@ -832,11 +966,12 @@ class DBFuncTool:
                 Leave empty for MySQL (database = schema), StarRocks, SQLite.
             datasource: Optional datasource to route the search to. Defaults to the current datasource.
             top_n: Maximum number of rows to return after scoping filters.
-            simple_sample_data: If True, sample rows omit catalog/database/schema fields for brevity.
+            simple_sample_data: Deprecated compatibility argument; sample rows are returned inline.
 
         Returns:
             FuncToolResult where:
-                - success=1 with result={"metadata": [...], "sample_data": [...]} (empty lists when no matches).
+                - success=1 with result={"metadata": [...]} (empty list when no matches).
+                  Each metadata item contains table_name, optional description, and optional sample_rows.
                 - success=0 with error text if schema storage is unavailable or lookup fails.
         """
         if not self.has_schema:
@@ -849,33 +984,38 @@ class DBFuncTool:
                 schema_name,
                 datasource,
             )
-            metadata, sample_values = self.schema_rag.search_similar(
-                query_text,
-                catalog_name=catalog,
-                database_name=database or self._reset_database_for_rag(datasource),
-                schema_name=schema_name,
-                table_type="full",
-                top_n=top_n,
-            )
-            result_dict: Dict[str, List[Dict[str, Any]]] = {"metadata": [], "sample_data": []}
+            result_dict: Dict[str, Any] = {"metadata": []}
+            rag_database = database or self._reset_database_for_rag(datasource)
+
+            if metadata_fts_enabled(self.agent_config) and hasattr(self.schema_rag, "search_table"):
+                metadata = self.schema_rag.search_table(
+                    query_text,
+                    catalog_name=catalog,
+                    database_name=rag_database,
+                    schema_name=schema_name,
+                    table_type="full",
+                    top_n=top_n,
+                )
+                sample_rows_for_search_results = getattr(self.schema_rag, "sample_rows_for_search_results", None)
+                sample_values = (
+                    sample_rows_for_search_results(metadata) if callable(sample_rows_for_search_results) else None
+                )
+            else:
+                metadata, sample_values = self.schema_rag.search_similar(
+                    query_text,
+                    catalog_name=catalog,
+                    database_name=rag_database,
+                    schema_name=schema_name,
+                    table_type="full",
+                    top_n=top_n,
+                )
 
             metadata_rows: List[Dict[str, Any]] = []
-            if metadata:
-                metadata_rows = metadata.select(
-                    [
-                        "catalog_name",
-                        "database_name",
-                        "schema_name",
-                        "table_name",
-                        "table_type",
-                        "identifier",
-                        "_distance",
-                    ]
-                ).to_pylist()
+            if metadata is not None and getattr(metadata, "num_rows", 1) != 0:
+                metadata_rows = self._metadata_search_rows(metadata)
             if not metadata_rows:
                 return FuncToolResult(success=1, result=result_dict)
 
-            current_has_semantic = False
             if self.has_semantic_models:
                 for metadata_row in metadata_rows:
                     semantic_model = self._get_semantic_model(
@@ -885,37 +1025,12 @@ class DBFuncTool:
                         metadata_row["table_name"],
                     )
                     if semantic_model:
-                        current_has_semantic = True
-                        metadata_row["semantic_model_name"] = semantic_model["semantic_model_name"]
-                        metadata_row["description"] = semantic_model["description"]
-                        metadata_row["dimensions"] = semantic_model["dimensions"]
-                        metadata_row["measures"] = semantic_model["measures"]
-                        metadata_row["identifiers"] = semantic_model["identifiers"]
-                        # Only enrich the top match to prioritize the most relevant table
-                        break
+                        metadata_row["description"] = semantic_model.get("description", "")
 
-            result_dict["metadata"] = metadata_rows
-            if current_has_semantic:
-                result_dict["sample_data"] = self.compressor.compress([])
-                return FuncToolResult(success=1, result=result_dict)
-
-            sample_rows: List[Dict[str, Any]] = []
-            if sample_values:
-                if simple_sample_data:
-                    selected_fields = ["identifier", "table_type", "sample_rows", "_distance"]
-                else:
-                    selected_fields = [
-                        "identifier",
-                        "catalog_name",
-                        "database_name",
-                        "schema_name",
-                        "table_type",
-                        "table_name",
-                        "sample_rows",
-                        "_distance",
-                    ]
-                sample_rows = sample_values.select(selected_fields).to_pylist()
-            result_dict["sample_data"] = self.compressor.compress(sample_rows)
+            sample_rows_by_identifier = self._sample_rows_by_identifier(sample_values)
+            result_dict["metadata"] = [
+                self._search_table_result_row(metadata_row, sample_rows_by_identifier) for metadata_row in metadata_rows
+            ]
             return FuncToolResult(result=result_dict)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))

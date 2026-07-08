@@ -4,7 +4,7 @@
 
 元数据模块主要用于使 LLM 能够根据用户问题快速匹配可能相关的表定义信息和样本数据。
 
-当你使用 `bootstrap-kb` 命令时，我们会将你指定的数据源中创建表/视图/物化视图的 SQL 语句和样本数据初始化到向量数据库中。
+当你使用 `bootstrap-kb` 命令时，我们会将你指定的数据源中创建表/视图/物化视图的 SQL 语句和样本数据初始化到本地知识库存储中。
 
 此模块包含两种类型的信息：**表定义**和**样本数据**。
 
@@ -47,6 +47,29 @@ datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [ch
     - `check`：检查当前构建的数据条目数
     - `overwrite`：完全覆盖现有数据
     - `incremental`：增量更新：如果现有数据已更改，则更新它并追加不存在的数据
+- `--kb_search_mode`：可选的元数据搜索模式。默认值是 `fts`。使用 `hybrid` 可以保留向量 + 全文检索路径。
+
+### 元数据搜索模式
+
+默认情况下，metadata bootstrap 会存储物理表事实和用于全文检索的 retrieval document。这样在大规模表目录下不需要为每张表生成 embedding，同时 `search_table`、autocomplete、schema linking 和 `@Table` 引用仍然可以基于表名、DDL、样本数据以及附加的 semantic profile 找表。
+
+如果需要使用原有的向量辅助检索路径，可以设置 `kb.search.mode` 为 `hybrid`：
+
+```yaml
+kb:
+  search:
+    mode: hybrid
+```
+
+`hybrid` 模式需要配置 database embedding storage，并且需要使用 `--kb_search_mode hybrid` 生成 context。如果 `search_table` 运行在 `hybrid` 模式，但向量检索投影不存在或为空，工具会返回明确的检索错误，不会静默降级到 FTS。默认的 `fts` 模式不需要 embedding。
+
+如果需要临时使用旧的 schema metadata 路径，可以显式关闭新的 metadata search：
+
+```yaml
+kb:
+  search:
+    enabled: false
+```
 
 ## 使用示例
 

@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_PROFILE_TABLE_FIELDS = ["catalog_name", "database_name", "schema_name", "table_name"]
+
 
 class TableSemanticProfileStorage(BaseEmbeddingStore):
     """Table-level semantic profile projection used by database tools.
@@ -82,6 +84,7 @@ class TableSemanticProfileRAG:
         from datus.storage.rag_scope import _build_sub_agent_filter
         from datus.storage.registry import get_storage
 
+        self.agent_config = agent_config
         self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self.storage: TableSemanticProfileStorage = get_storage(
             TableSemanticProfileStorage,
@@ -98,13 +101,18 @@ class TableSemanticProfileRAG:
         return conditions
 
     def truncate(self) -> None:
+        rows = self._profile_table_refs(where=And(self._sub_agent_conditions()))
         self.storage.delete_datasource_rows(self.datasource_id)
+        self._refresh_metadata_documents_for_tables(rows)
 
     def delete_artifact_rows(self, yaml_path: str) -> None:
         """Delete table profile rows projected from a single YAML artifact."""
         if not yaml_path:
             return
-        self.storage._delete_rows(And([eq("yaml_path", yaml_path)] + self._sub_agent_conditions()))
+        where = And([eq("yaml_path", yaml_path)] + self._sub_agent_conditions())
+        rows = self._profile_table_refs(where=where)
+        self.storage._delete_rows(where)
+        self._refresh_metadata_documents_for_tables(rows)
 
     def delete_artifact_rows_except(self, yaml_path: str, keep_ids: List[str]) -> None:
         """Delete stale table profile rows for one YAML artifact after replacement succeeds."""
@@ -114,9 +122,10 @@ class TableSemanticProfileRAG:
         if not normalized_keep_ids:
             self.delete_artifact_rows(yaml_path)
             return
-        self.storage._delete_rows(
-            And([eq("yaml_path", yaml_path), not_(in_("id", normalized_keep_ids))] + self._sub_agent_conditions())
-        )
+        where = And([eq("yaml_path", yaml_path), not_(in_("id", normalized_keep_ids))] + self._sub_agent_conditions())
+        rows = self._profile_table_refs(where=where)
+        self.storage._delete_rows(where)
+        self._refresh_metadata_documents_for_tables(rows)
 
     def list_artifact_rows(self, yaml_path: str) -> List[Dict[str, Any]]:
         """Return table profile rows projected from a single YAML artifact."""
@@ -210,9 +219,40 @@ class TableSemanticProfileRAG:
 
     def store_batch(self, profiles: List[Dict[str, Any]]) -> None:
         self.storage.store_batch(add_datasource_scope_to_rows(profiles, self.datasource_id))
+        self._refresh_metadata_documents_with_profiles(profiles)
 
     def upsert_batch(self, profiles: List[Dict[str, Any]]) -> None:
         self.storage.upsert_batch(add_datasource_scope_to_rows(profiles, self.datasource_id), on_column="storage_key")
+        self._refresh_metadata_documents_with_profiles(profiles)
+
+    def _profile_table_refs(self, where) -> List[Dict[str, Any]]:
+        try:
+            return self.storage._search_all(where=where, select_fields=_PROFILE_TABLE_FIELDS).to_pylist()
+        except Exception as exc:
+            logger.debug("Failed to load table semantic profile rows before deletion: %s", exc)
+            return []
+
+    def _refresh_metadata_documents_with_profiles(self, profiles: List[Dict[str, Any]]) -> None:
+        if not profiles:
+            return
+        try:
+            from datus.storage.kb_retrieval import MetadataFtsRAG, metadata_fts_enabled
+
+            if metadata_fts_enabled(self.agent_config):
+                MetadataFtsRAG(self.agent_config, datasource_id=self.datasource_id).refresh_profiles(profiles)
+        except Exception as exc:
+            logger.debug("Failed to refresh metadata retrieval documents from table semantic profiles: %s", exc)
+
+    def _refresh_metadata_documents_for_tables(self, table_refs: List[Dict[str, Any]]) -> None:
+        if not table_refs:
+            return
+        try:
+            from datus.storage.kb_retrieval import MetadataFtsRAG, metadata_fts_enabled
+
+            if metadata_fts_enabled(self.agent_config):
+                MetadataFtsRAG(self.agent_config, datasource_id=self.datasource_id).refresh_tables(table_refs)
+        except Exception as exc:
+            logger.debug("Failed to refresh metadata retrieval documents from table semantic profiles: %s", exc)
 
     def create_indices(self) -> None:
         self.storage.create_indices()

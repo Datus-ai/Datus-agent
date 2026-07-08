@@ -2,6 +2,7 @@
 Test cases for DBFuncTool class in datus/tools/tools.py
 """
 
+import json
 import os
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -1291,6 +1292,43 @@ class TestDBFuncToolIntegration:
             ]
         )
 
+    def _build_csv_sample_batch(self):
+        return FakeRecordBatch(
+            [
+                {
+                    "identifier": "db1.public.orders",
+                    "table_type": "table",
+                    "sample_rows": "id,total\n1,10\n",
+                }
+            ]
+        )
+
+    def _build_metadata_doc_batch(self):
+        return FakeRecordBatch(
+            [
+                {
+                    "catalog_name": "",
+                    "database_name": "db1",
+                    "schema_name": "public",
+                    "table_name": "orders",
+                    "table_type": "table",
+                    "identifier": "db1.public.orders",
+                    "title": "db1.public.orders",
+                    "payload_json": json.dumps(
+                        {
+                            "identifier": "db1.public.orders",
+                            "catalog_name": "",
+                            "database_name": "db1",
+                            "schema_name": "public",
+                            "table_name": "orders",
+                            "table_type": "table",
+                        }
+                    ),
+                    "_score": 3.5,
+                }
+            ]
+        )
+
     def test_search_table_returns_metadata_and_samples(self, db_func_tool):
         """search_table should emit metadata and sample rows when available."""
         db_func_tool.has_schema = True
@@ -1304,11 +1342,12 @@ class TestDBFuncToolIntegration:
 
         assert result.success == 1
         metadata = result.result["metadata"]
-        samples = result.result["sample_data"]
-        assert metadata[0]["table_name"] == "orders"
-        assert isinstance(samples, dict)
-        assert samples["original_rows"] == 1
-        assert "sample_rows" in samples["compressed_data"]
+        assert "sample_data" not in result.result
+        assert metadata[0] == {
+            "table_name": "db1.public.orders",
+            "sample_rows": [{"id": 1, "total": 10}],
+        }
+        assert "_distance" not in metadata[0]
 
     def test_search_table_enriches_semantic_model(self, db_func_tool):
         """When semantic models exist, metadata rows should include enriched context."""
@@ -1330,13 +1369,69 @@ class TestDBFuncToolIntegration:
 
         assert result.success == 1
         metadata = result.result["metadata"]
+        assert metadata[0]["table_name"] == "db1.public.orders"
         assert metadata[0]["description"] == "Orders summary"
-        assert metadata[0]["dimensions"] == ["order_id"]
-        assert metadata[0]["measures"] == ["total_amount"]
-        # sample_data is a compressed empty dict (semantic early-return fires before sample population)
-        assert isinstance(result.result["sample_data"], dict)
-        assert result.result["sample_data"]["original_rows"] == 0
+        assert metadata[0]["sample_rows"] == [{"id": 1, "total": 10}]
+        assert "semantic_model_name" not in metadata[0]
+        assert "dimensions" not in metadata[0]
+        assert "measures" not in metadata[0]
+        assert "identifiers" not in metadata[0]
+        assert "sample_data" not in result.result
         db_func_tool._get_semantic_model.assert_called_once()
+
+    def test_search_table_uses_metadata_fts_rag_entrypoint(self, db_func_tool):
+        """FTS metadata configs should query the metadata search_table API directly."""
+        db_func_tool.agent_config = SimpleNamespace(
+            kb_search=SimpleNamespace(enabled=True, mode="fts"),
+            kb_search_mode="fts",
+        )
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_table.return_value = self._build_metadata_doc_batch()
+        db_func_tool.schema_rag.sample_rows_for_search_results.return_value = self._build_sample_batch()
+        db_func_tool.schema_rag.last_search_info = {
+            "requested_mode": "fts",
+            "actual_mode": "fts",
+            "index_ready": True,
+            "fallback": False,
+        }
+        db_func_tool.schema_rag.search_similar.side_effect = AssertionError("legacy search should not be called")
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        metadata = result.result["metadata"]
+        assert metadata[0]["table_name"] == "db1.public.orders"
+        assert "_score" not in metadata[0]
+        assert "_relevance_score" not in metadata[0]
+        assert "_distance" not in metadata[0]
+        assert metadata[0]["sample_rows"] == [{"id": 1, "total": 10}]
+        assert "sample_data" not in result.result
+        assert "retrieval" not in result.result
+        db_func_tool.schema_rag.search_table.assert_called_once_with(
+            "orders table",
+            catalog_name="",
+            database_name="db1",
+            schema_name="",
+            table_type="full",
+            top_n=5,
+        )
+        db_func_tool.schema_rag.sample_rows_for_search_results.assert_called_once()
+        db_func_tool.schema_rag.search_similar.assert_not_called()
+
+    def test_search_table_parses_csv_sample_rows_inline(self, db_func_tool):
+        """Stored CSV sample rows should be returned inline on the matching metadata item."""
+        db_func_tool.has_schema = True
+        db_func_tool.schema_rag = Mock()
+        db_func_tool.schema_rag.search_similar.return_value = (
+            self._build_metadata_batch(),
+            self._build_csv_sample_batch(),
+        )
+
+        result = db_func_tool.search_table("orders table")
+
+        assert result.success == 1
+        assert result.result["metadata"][0]["sample_rows"] == [{"id": "1", "total": "10"}]
 
     def test_tool_transformation_integration(self, db_func_tool):
         """Test that tools can be transformed properly."""

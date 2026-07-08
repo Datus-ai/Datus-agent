@@ -145,7 +145,8 @@ class WorkflowRunner:
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:
         if check_storage:
-            self.global_config.check_init_storage_config("database")
+            if getattr(self.global_config, "kb_search_mode", "fts") == "hybrid":
+                self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metrics")
 
         if not self.init_or_load_workflow(sql_task):

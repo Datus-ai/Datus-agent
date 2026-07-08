@@ -271,8 +271,8 @@ async def stream_metadata(
     ``pool_size`` are kept at sensible defaults; the simplified ``/bootstrap``
     Schema tab does not expose them.
     """
+    from datus.storage.schema_metadata import create_metadata_rag
     from datus.storage.schema_metadata.local_init import init_local_schema_async
-    from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     if not datasource:
@@ -283,7 +283,7 @@ async def stream_metadata(
 
     yield message_action(f"Crawling schema from datasource `{datasource}` (mode={build_mode})…")
 
-    metadata_store = SchemaWithValueRAG(agent_config)
+    metadata_store = create_metadata_rag(agent_config)
     db_manager = db_manager_instance(agent_config.datasource_configs)
 
     async def _factory(emit):

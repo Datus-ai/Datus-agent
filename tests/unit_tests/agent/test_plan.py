@@ -321,7 +321,7 @@ class TestGenerateWorkflow:
         mock_rag.search_tables.return_value = ([], [])
 
         with _patched_workflow():
-            with patch("datus.storage.schema_metadata.SchemaWithValueRAG", return_value=mock_rag):
+            with patch("datus.storage.schema_metadata.create_metadata_rag", return_value=mock_rag):
                 wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
 
         assert isinstance(wf, Workflow)
@@ -336,7 +336,7 @@ class TestGenerateWorkflow:
         mock_rag_cls.return_value.search_tables.side_effect = RuntimeError("rag failure")
 
         with _patched_workflow():
-            with patch("datus.storage.schema_metadata.SchemaWithValueRAG", mock_rag_cls):
+            with patch("datus.storage.schema_metadata.create_metadata_rag", mock_rag_cls):
                 wf = generate_workflow(task, plan_type="reflection", agent_config=cfg)
 
         assert isinstance(wf, Workflow)

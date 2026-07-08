@@ -636,7 +636,7 @@ class TestTableCompleterBuildSnapshotByDbType:
         fake_storage = MagicMock()
         fake_storage.search_all_schemas.return_value = schema_table
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: fake_storage,
         )
 
@@ -692,7 +692,7 @@ class TestTableCompleterBuildSnapshotByDbType:
         fake_storage = MagicMock()
         fake_storage.search_all_schemas.side_effect = RuntimeError("boom")
         monkeypatch.setattr(
-            "datus.storage.schema_metadata.store.SchemaWithValueRAG",
+            "datus.storage.schema_metadata.create_metadata_rag",
             lambda *a, **kw: fake_storage,
         )
         tc = self._table_completer(db_type="sqlite")

@@ -1,4 +1,5 @@
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 
@@ -68,7 +69,10 @@ def test_get_profile_lowercase_fallback_runs_after_ambiguous_broad_lookup():
 
 def _artifact_rag():
     rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
+    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(enabled=False, mode="fts"), kb_search_mode="fts")
+    rag.datasource_id = "test_datasource"
     rag.storage = Mock()
+    rag.storage._search_all.return_value = _Rows([])
     rag._sub_agent_conditions = Mock(return_value=[])
     return rag
 
@@ -88,6 +92,7 @@ def test_delete_artifact_rows_uses_sub_agent_scope():
     rag.delete_artifact_rows("semantic/orders.yml")
 
     rag._sub_agent_conditions.assert_called_once_with()
+    rag.storage._search_all.assert_called_once()
     rag.storage._delete_rows.assert_called_once()
 
 
@@ -106,7 +111,34 @@ def test_delete_artifact_rows_except_keeps_current_ids():
     rag.delete_artifact_rows_except("semantic/orders.yml", ["profile:orders"])
 
     rag._sub_agent_conditions.assert_called_once_with()
+    rag.storage._search_all.assert_called_once()
     rag.storage._delete_rows.assert_called_once()
+
+
+def test_delete_artifact_rows_refreshes_metadata_documents_for_deleted_tables():
+    rag = _artifact_rag()
+    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(enabled=True, mode="fts"), kb_search_mode="fts")
+    deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "table_name": "orders"}]
+    rag.storage._search_all.return_value = _Rows(deleted_rows)
+
+    with patch("datus.storage.kb_retrieval.MetadataFtsRAG") as metadata_cls:
+        rag.delete_artifact_rows("semantic/orders.yml")
+
+    metadata_cls.assert_called_once_with(rag.agent_config, datasource_id=rag.datasource_id)
+    metadata_cls.return_value.refresh_tables.assert_called_once_with(deleted_rows)
+
+
+def test_truncate_refreshes_metadata_documents_for_deleted_tables():
+    rag = _artifact_rag()
+    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(enabled=True, mode="fts"), kb_search_mode="fts")
+    deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "table_name": "orders"}]
+    rag.storage._search_all.return_value = _Rows(deleted_rows)
+
+    with patch("datus.storage.kb_retrieval.MetadataFtsRAG") as metadata_cls:
+        rag.truncate()
+
+    rag.storage.delete_datasource_rows.assert_called_once_with("test_datasource")
+    metadata_cls.return_value.refresh_tables.assert_called_once_with(deleted_rows)
 
 
 def test_list_artifact_rows_handles_empty_and_non_empty_paths():

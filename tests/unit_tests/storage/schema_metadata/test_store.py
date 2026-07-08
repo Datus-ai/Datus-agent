@@ -6,7 +6,7 @@
 
 import pytest
 from datus_db_core import ConnectorRegistry
-from datus_storage_base.conditions import And, Condition, build_where
+from datus_storage_base.conditions import And, Condition, build_where, eq
 
 from datus.storage.embedding_models import get_db_embedding_model
 from datus.storage.schema_metadata import SchemaStorage
@@ -794,3 +794,199 @@ class TestSchemaWithValueRAGTruncate:
         # After truncate, rows for this datasource are deleted (table still exists)
         assert rag.get_schema_size() == 0
         assert rag.get_value_size() == 0
+
+
+# ---------------------------------------------------------------------------
+# MetadataFtsRAG
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataFtsRAG:
+    """Tests for the FTS-first metadata retrieval store."""
+
+    def _make_schema_row(
+        self,
+        table_name: str,
+        *,
+        definition: str,
+        identifier: str = "",
+        database_name: str = "db",
+        schema_name: str = "public",
+    ) -> dict:
+        identifier = identifier or f"{database_name}.{schema_name}.{table_name}"
+        return {
+            "identifier": identifier,
+            "catalog_name": "",
+            "database_name": database_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "table_type": "table",
+            "definition": definition,
+        }
+
+    def _make_value_row(
+        self,
+        table_name: str,
+        *,
+        sample_rows,
+        identifier: str = "",
+        database_name: str = "db",
+        schema_name: str = "public",
+    ) -> dict:
+        identifier = identifier or f"{database_name}.{schema_name}.{table_name}"
+        return {
+            "identifier": identifier,
+            "catalog_name": "",
+            "database_name": database_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "table_type": "table",
+            "sample_rows": sample_rows,
+        }
+
+    def test_create_metadata_rag_defaults_real_config_to_fts_store(self, real_agent_config):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+        from datus.storage.schema_metadata import SchemaWithValueRAG, create_metadata_rag
+
+        assert isinstance(create_metadata_rag(real_agent_config), MetadataFtsRAG)
+
+        real_agent_config.kb_search.enabled = False
+        assert isinstance(create_metadata_rag(real_agent_config), SchemaWithValueRAG)
+
+    def test_store_batch_writes_facts_docs_and_samples(self, real_agent_config):
+        from datus.schemas.node_models import TableSchema
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+
+        rag = MetadataFtsRAG(real_agent_config)
+        schemas = [
+            self._make_schema_row(
+                "order_facts",
+                definition="CREATE TABLE order_facts (order_id INT, gross_revenue DECIMAL)",
+            )
+        ]
+        values = [
+            self._make_value_row(
+                "order_facts",
+                sample_rows=[{"order_id": 1, "gross_revenue": 10.5}],
+            )
+        ]
+
+        rag.store_batch(schemas, values)
+        rag.after_init()
+
+        assert rag.get_schema_size() == 1
+        assert rag.get_value_size() == 1
+        metadata, sample_values = rag.search_similar("gross revenue", top_n=5, table_type="full")
+        assert "definition" in metadata.column_names
+        assert any(row["table_name"] == "order_facts" for row in metadata.to_pylist())
+        assert rag.last_search_info["requested_mode"] == "fts"
+        assert rag.last_search_info["actual_mode"] == "fts"
+        assert rag.last_search_info["fallback"] is False
+        table_schemas = TableSchema.from_arrow(metadata)
+        assert table_schemas[0].definition == "CREATE TABLE order_facts (order_id INT, gross_revenue DECIMAL)"
+        assert sample_values.num_rows == 1
+
+    def test_hybrid_search_fails_when_vector_projection_is_empty(self, real_agent_config):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+        from datus.utils.exceptions import DatusException
+
+        real_agent_config.kb_search.mode = "hybrid"
+        real_agent_config.kb_search_mode = "hybrid"
+        rag = MetadataFtsRAG(real_agent_config)
+
+        with pytest.raises(DatusException, match="vector projection has no rows"):
+            rag.search_table("orders", top_n=5, table_type="full")
+
+        assert rag.last_search_info["requested_mode"] == "hybrid"
+        assert rag.last_search_info["actual_mode"] == ""
+        assert rag.last_search_info["index_ready"] is False
+        assert rag.last_search_info["fallback"] is False
+        assert rag.last_search_info["error_reason"] == "hybrid_vector_projection_empty"
+
+    def test_refresh_profiles_adds_semantic_text_to_metadata_document(self, real_agent_config):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+
+        rag = MetadataFtsRAG(real_agent_config)
+        rag.store_batch(
+            [
+                self._make_schema_row(
+                    "orders",
+                    definition="CREATE TABLE orders (order_id INT, customer_id INT)",
+                )
+            ],
+            [],
+        )
+        rag.after_init()
+
+        updated = rag.refresh_profiles(
+            [
+                {
+                    "id": "orders_profile",
+                    "format": "metricflow",
+                    "physical_table_fq_name": "db.public.orders",
+                    "catalog_name": "",
+                    "database_name": "db",
+                    "schema_name": "public",
+                    "table_name": "orders",
+                    "semantic_model_name": "commerce",
+                    "dataset_name": "orders",
+                    "data_source_name": "orders",
+                    "description": "Customer lifetime value and retention order history",
+                    "ai_context_json": "",
+                    "columns_json": "",
+                    "relationships_json": "",
+                    "custom_extensions_json": "",
+                    "yaml_path": "semantic_models/orders.yml",
+                    "search_text": "Customer lifetime value and retention order history",
+                }
+            ]
+        )
+
+        assert updated == 1
+        results = rag.search_table("lifetime value retention", top_n=5, table_type="full").to_pylist()
+        assert any(row["table_name"] == "orders" for row in results)
+
+    def test_refresh_tables_removes_stale_semantic_text(self, real_agent_config):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+
+        rag = MetadataFtsRAG(real_agent_config)
+        rag.store_batch(
+            [
+                self._make_schema_row(
+                    "orders",
+                    definition="CREATE TABLE orders (order_id INT, customer_id INT)",
+                )
+            ],
+            [],
+        )
+        rag.after_init()
+        profile = {
+            "id": "orders_profile",
+            "format": "metricflow",
+            "physical_table_fq_name": "db.public.orders",
+            "catalog_name": "",
+            "database_name": "db",
+            "schema_name": "public",
+            "table_name": "orders",
+            "semantic_model_name": "commerce",
+            "dataset_name": "orders",
+            "data_source_name": "orders",
+            "description": "Customer lifetime value and retention order history",
+            "ai_context_json": "",
+            "columns_json": "",
+            "relationships_json": "",
+            "custom_extensions_json": "",
+            "yaml_path": "semantic_models/orders.yml",
+            "search_text": "Customer lifetime value and retention order history",
+        }
+
+        assert rag.refresh_profiles([profile]) == 1
+        assert rag.refresh_tables([profile]) == 1
+
+        docs = rag.document_store._search_all(
+            where=eq("table_name", "orders"),
+            select_fields=["search_text", "payload_json"],
+        ).to_pylist()
+        assert len(docs) == 1
+        assert "lifetime value" not in docs[0]["search_text"]
+        assert "semantic_profile_applied" not in docs[0]["payload_json"]

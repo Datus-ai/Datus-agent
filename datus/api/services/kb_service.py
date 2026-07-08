@@ -17,7 +17,7 @@ from datus.storage.metric.metric_init import init_success_story_metrics
 from datus.storage.metric.store import MetricRAG
 from datus.storage.reference_sql import ReferenceSqlRAG
 from datus.storage.reference_sql.reference_sql_init import init_reference_sql
-from datus.storage.schema_metadata import SchemaWithValueRAG
+from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.local_init import init_local_schema
 from datus.storage.semantic_model.semantic_model_init import (
     init_success_story_semantic_model,
@@ -222,7 +222,7 @@ class KbService:
         emit=None,
     ) -> dict:
         if strategy == "check":
-            store = SchemaWithValueRAG(config)
+            store = create_metadata_rag(config)
             return {
                 "status": "success",
                 "message": f"metadata already built, schema_size={store.get_schema_size()}, "
@@ -230,11 +230,11 @@ class KbService:
             }
 
         if strategy == "overwrite":
-            store = SchemaWithValueRAG(config)
+            store = create_metadata_rag(config)
             store.truncate()
             logger.info("Truncated schema metadata tables for overwrite")
 
-        store = SchemaWithValueRAG(config)
+        store = create_metadata_rag(config)
         db_manager = DBManager(config.datasource_configs)
         init_local_schema(
             store,

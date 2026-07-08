@@ -215,6 +215,31 @@ class CompactConfig:
 
 
 @dataclass
+class KbSearchConfig:
+    """Knowledge-base retrieval mode shared by bootstrap and runtime search."""
+
+    enabled: bool = True
+    mode: str = "fts"
+
+    @classmethod
+    def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "KbSearchConfig":
+        if not isinstance(raw, dict):
+            raw = {}
+        enabled = _coerce_bool(raw.get("enabled"), True)
+        mode = str(raw.get("mode") or "fts").strip().lower()
+        if mode not in {"fts", "hybrid"}:
+            raise DatusException(
+                code=ErrorCode.COMMON_FIELD_INVALID,
+                message_args={
+                    "field_name": "kb.search.mode",
+                    "except_values": {"fts", "hybrid"},
+                    "your_value": mode,
+                },
+            )
+        return cls(enabled=enabled, mode=mode)
+
+
+@dataclass
 class DbConfig:
     path_pattern: str = field(default="", init=True)
     type: str = field(default="", init=True)
@@ -790,6 +815,14 @@ class AgentConfig:
         self.knowledge_base: Dict[str, Any] = (
             _resolve_nested_value(knowledge_base_raw) if isinstance(knowledge_base_raw, dict) else {}
         )
+        kb_raw = kwargs.get("kb", {}) or {}
+        if not isinstance(kb_raw, dict):
+            kb_raw = {}
+        kb_search_raw = kb_raw.get("search")
+        if not isinstance(kb_search_raw, dict) and isinstance(self.knowledge_base.get("search"), dict):
+            kb_search_raw = self.knowledge_base.get("search")
+        self.kb_search = KbSearchConfig.from_dict(_resolve_nested_value(kb_search_raw))
+        self.kb_search_mode = self.kb_search.mode
         # ``filesystem_strict`` is a process-wide safety switch that makes
         # ``FilesystemFuncTool`` fail-closed for EXTERNAL paths (outside the
         # project root) instead of prompting the broker. Set via
@@ -1804,6 +1837,9 @@ class AgentConfig:
             self.schema_linking_rate = kwargs["schema_linking_rate"]
         if kwargs.get("search_metrics_rate", ""):
             self.search_metrics_rate = kwargs["search_metrics_rate"]
+        if kwargs.get("kb_search_mode", ""):
+            self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
+            self.kb_search_mode = self.kb_search.mode
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]
         if kwargs.get("action", "") not in ["probe-llm", "generate-dataset", "service", "platform-doc"]:

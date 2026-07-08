@@ -680,12 +680,12 @@ class TableCompleter(DynamicAtReferenceCompleter):
         self.sub_agent_name = sub_agent_name
 
     def _build_snapshot(self) -> Tuple[Union[List[str], Dict[str, Any]], Dict[str, Any], int]:
-        from datus.storage.schema_metadata.store import SchemaWithValueRAG
+        from datus.storage.schema_metadata import create_metadata_rag
 
         flatten: Dict[str, Any] = {}
         max_level = 0
 
-        storage = SchemaWithValueRAG(self.agent_config, sub_agent_name=self.sub_agent_name or None)
+        storage = create_metadata_rag(self.agent_config, sub_agent_name=self.sub_agent_name or None)
         try:
             schema_table = storage.search_all_schemas(
                 select_fields=[

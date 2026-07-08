@@ -4,7 +4,7 @@
 
 The metadata module is primarily used to enable LLMs to quickly match possible related table definition information and sample data based on user questions.
 
-When you use the `bootstrap-kb` command, we initialize the SQL statements and sample data for creating tables/views/materialized views in the data source you specify into a vector database.
+When you use the `bootstrap-kb` command, we initialize the SQL statements and sample data for creating tables/views/materialized views in the data source you specify into local knowledge-base storage.
 
 This module contains two types of information: **table definition** and **sample data**.
 
@@ -47,6 +47,29 @@ datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [ch
     - `check`: Check the number of data entries currently constructed
     - `overwrite`: Fully overwrite existing data
     - `incremental`: Incremental update: if existing data has changed, update it and append non-existent data
+- `--kb_search_mode`: Optional metadata search mode. The default is `fts`. Use `hybrid` to keep the vector + full-text retrieval path.
+
+### Metadata Search Mode
+
+By default, metadata bootstrap stores physical table facts and retrieval documents for full-text search. This avoids generating table embeddings for large catalogs while still allowing `search_table`, autocomplete, schema linking, and `@Table` references to find tables from table names, DDL, sample rows, and attached semantic profiles.
+
+Set `kb.search.mode` to `hybrid` when you want the previous vector-assisted retrieval path:
+
+```yaml
+kb:
+  search:
+    mode: hybrid
+```
+
+The `hybrid` mode requires the database embedding storage configuration and a context generated with `--kb_search_mode hybrid`. If `search_table` is run in `hybrid` mode but the vector projection is missing or empty, the tool returns an explicit retrieval error instead of silently falling back to FTS. The default `fts` mode does not require embeddings.
+
+To temporarily use the legacy schema metadata path, disable the new metadata search path explicitly:
+
+```yaml
+kb:
+  search:
+    enabled: false
+```
 
 ## Usage Examples
 

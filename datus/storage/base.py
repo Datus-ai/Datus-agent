@@ -597,7 +597,7 @@ class BaseEmbeddingStore(StorageBase):
                 top_n = self.table.count_rows(where) if where else self.table.count_rows()
             results = self.table.search_hybrid(
                 query_txt,
-                self.vector_source_name,
+                self.vector_column_name,
                 top_n,
                 where=where,
                 select_fields=select_fields,
@@ -606,8 +606,15 @@ class BaseEmbeddingStore(StorageBase):
                 results = results[:top_n]
             return results
         except Exception as e:
-            logger.warning(f"Failed to search hybrid: {str(e)}, use vector search instead")
-            return self._search_vector(query_txt, select_fields, top_n, where)
+            raise DatusException(
+                ErrorCode.STORAGE_SEARCH_FAILED,
+                message_args={
+                    "error_message": str(e),
+                    "query": query_txt,
+                    "where_clause": str(where) if where else "(none)",
+                    "top_n": str(top_n or "all"),
+                },
+            ) from e
 
     def _search_vector(
         self,

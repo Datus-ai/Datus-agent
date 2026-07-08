@@ -164,18 +164,29 @@ class LanceVectorTable(VectorTable):
     def search_hybrid(
         self,
         query_text: str,
-        vector_source_column: str,
+        vector_column: str,
         top_n: int,
         where: WhereExpr = None,
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
         compiled = build_where(where)
-        query_builder = self._table.search(
-            query=query_text, query_type="hybrid", vector_column_name=vector_source_column
-        )
+        query_builder = self._table.search(query=query_text, query_type="hybrid", vector_column_name=vector_column)
         query_builder = self._fill_query(query_builder, select_fields, compiled)
         reranker = LinearCombinationReranker()
         return query_builder.limit(top_n * 2).rerank(reranker).to_arrow()
+
+    def search_fts(
+        self,
+        query_text: str,
+        fts_columns: Union[str, List[str]],
+        top_n: int,
+        where: WhereExpr = None,
+        select_fields: Optional[List[str]] = None,
+    ) -> pa.Table:
+        compiled = build_where(where)
+        query_builder = self._table.search(query=query_text, query_type="fts", fts_columns=fts_columns)
+        query_builder = self._fill_query(query_builder, select_fields, compiled)
+        return query_builder.limit(top_n).to_arrow()
 
     def search_all(
         self,

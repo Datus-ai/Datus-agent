@@ -714,7 +714,6 @@ class ReferenceSqlStreamHandler:
 def init_metadata_and_log_result(datasource_name: str, config_path: str, console: Console):
     from datus.configuration.agent_config_loader import load_agent_config
     from datus.storage.schema_metadata.local_init import init_local_schema
-    from datus.storage.schema_metadata.store import SchemaWithValueRAG
     from datus.tools.db_tools.db_manager import db_manager_instance
 
     agent_config = load_agent_config(reload=True, config=config_path)
@@ -724,7 +723,14 @@ def init_metadata_and_log_result(datasource_name: str, config_path: str, console
 
     with console.status(f"→ Initializing metadata for {datasource_name} with path `{storage_path}`..."):
         try:
-            if kb_update_strategy == "overwrite":
+            from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled
+            from datus.storage.schema_metadata import create_metadata_rag
+
+            if metadata_fts_enabled(agent_config) and agent_config.kb_search_mode != KbSearchMode.HYBRID.value:
+                metadata_store = create_metadata_rag(agent_config)
+                if kb_update_strategy == "overwrite":
+                    metadata_store.truncate()
+            elif kb_update_strategy == "overwrite":
                 agent_config.save_storage_config("database")
                 from datus.storage.backend_holder import create_vector_connection
 
@@ -735,10 +741,11 @@ def init_metadata_and_log_result(datasource_name: str, config_path: str, console
                     logger.info("Dropped existing schema_metadata and schema_value tables")
                 finally:
                     db.close()
+                metadata_store = create_metadata_rag(agent_config)
             else:
                 agent_config.check_init_storage_config("database")
+                metadata_store = create_metadata_rag(agent_config)
 
-            metadata_store = SchemaWithValueRAG(agent_config)
             db_manager = db_manager_instance(agent_config.datasource_configs)
             init_local_schema(
                 metadata_store,

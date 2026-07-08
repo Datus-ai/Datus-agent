@@ -137,8 +137,8 @@ class BackgroundSchemaSyncManager:
     ) -> None:
         # Defer imports to avoid pulling storage stack into CLI startup
         # when the feature is disabled.
+        from datus.storage.schema_metadata import create_metadata_rag
         from datus.storage.schema_metadata.local_init import init_local_schema_async
-        from datus.storage.schema_metadata.store import SchemaWithValueRAG
 
         try:
             # Drift guard: main thread may have switched datasource again
@@ -154,7 +154,7 @@ class BackgroundSchemaSyncManager:
                 )
                 return
 
-            store = SchemaWithValueRAG(cli.agent_config)
+            store = create_metadata_rag(cli.agent_config)
             if reason == "startup":
                 cache_ready, reason_message = self._embedding_cache_ready_for_noncritical_sync(store)
                 if not cache_ready:

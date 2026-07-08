@@ -187,7 +187,7 @@ class TestCmdSchemaLinking:
         mock_rag = MagicMock()
         mock_rag.search_similar.return_value = (empty_table, empty_table)
 
-        with patch("datus.storage.schema_metadata.SchemaWithValueRAG", return_value=mock_rag):
+        with patch("datus.storage.schema_metadata.create_metadata_rag", return_value=mock_rag):
             with patch.object(agent_commands, "_prompt_db_layers", return_value=("", "testdb", "")):
                 agent_commands.cli.prompt_input = lambda *a, **kw: kw.get("default", "5")
                 agent_commands.cmd_schema_linking("find tables about revenue")
@@ -200,7 +200,7 @@ class TestCmdSchemaLinking:
             "error_code=300019 error_message=Embedding model cache is missing"
         )
 
-        with patch("datus.storage.schema_metadata.SchemaWithValueRAG", return_value=mock_rag):
+        with patch("datus.storage.schema_metadata.create_metadata_rag", return_value=mock_rag):
             with patch.object(agent_commands, "_prompt_db_layers", return_value=("", "testdb", "")):
                 agent_commands.cli.prompt_input = MagicMock(return_value="5")
                 agent_commands.cmd_schema_linking("find tables about revenue")

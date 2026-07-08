@@ -23,6 +23,7 @@ from datus.configuration.agent_config import (
     DatasetDbConfig,
     DbConfig,
     DocumentConfig,
+    KbSearchConfig,
     ModelConfig,
     NodeConfig,
     ServicesConfig,
@@ -1363,7 +1364,7 @@ class TestAgentConfigApiSection:
 
 
 class TestAgentConfigKnowledgeBase:
-    def _make(self, tmp_path, knowledge_base=None):
+    def _make(self, tmp_path, knowledge_base=None, kb=None):
         kwargs = dict(
             nodes={"test": NodeConfig(model="test-model", input=None)},
             home=str(tmp_path / "h"),
@@ -1380,6 +1381,8 @@ class TestAgentConfigKnowledgeBase:
         )
         if knowledge_base is not None:
             kwargs["knowledge_base"] = knowledge_base
+        if kb is not None:
+            kwargs["kb"] = kb
         return AgentConfig(**kwargs)
 
     def test_knowledge_base_config_resolves_nested_env_values(self, tmp_path, monkeypatch):
@@ -1395,6 +1398,33 @@ class TestAgentConfigKnowledgeBase:
         cfg = self._make(tmp_path, knowledge_base="bad")
 
         assert cfg.knowledge_base == {}
+
+    def test_kb_search_defaults_to_fts(self, tmp_path):
+        cfg = self._make(tmp_path)
+
+        assert cfg.kb_search == KbSearchConfig(enabled=True, mode="fts")
+        assert cfg.kb_search_mode == "fts"
+        assert not hasattr(cfg, "_metadata_fts_enabled")
+
+    def test_kb_search_can_disable_metadata_fts_path(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"enabled": "false"}})
+
+        assert cfg.kb_search == KbSearchConfig(enabled=False, mode="fts")
+        assert cfg.kb_search_mode == "fts"
+
+    def test_kb_search_accepts_top_level_hybrid_mode(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"mode": "hybrid"}})
+
+        assert cfg.kb_search_mode == "hybrid"
+
+    def test_kb_search_keeps_legacy_knowledge_base_search_compatibility(self, tmp_path):
+        cfg = self._make(tmp_path, knowledge_base={"search": {"mode": "hybrid"}})
+
+        assert cfg.kb_search_mode == "hybrid"
+
+    def test_kb_search_rejects_vector_only_mode(self, tmp_path):
+        with pytest.raises(DatusException):
+            self._make(tmp_path, kb={"search": {"mode": "vector"}})
 
 
 class TestAgentConfigChannels:

@@ -400,9 +400,9 @@ class AgentCommands:
         # The PDF mentions table_type, but the tool implementation has it fixed to "full".
         # I will omit prompting for it as it won't be used.
 
-        from datus.storage.schema_metadata import SchemaWithValueRAG
+        from datus.storage.schema_metadata import create_metadata_rag
 
-        schema_rag = SchemaWithValueRAG(self.cli.agent_config)
+        schema_rag = create_metadata_rag(self.cli.agent_config)
 
         try:
             with self.console.status("[green]Searching for relevant tables...[/]"):
