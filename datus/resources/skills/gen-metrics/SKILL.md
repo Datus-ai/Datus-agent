@@ -18,7 +18,7 @@ Guide the user through metric generation using natural language business descrip
 ## Phase 0: Discovery — Scan Existing Assets
 
 Before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Build an existing metric catalog JSON array with each metric's exact `name`, `type`, `description` when available, and `subject_path` when available. Use this throughout the remaining phases to:
-- **Skip redundant work** — don't recreate metrics that already exist
+- **Skip redundant work** — don't recreate metrics that already exist. "Already exists" requires the same aggregation AND the same window/offset semantics: a cumulative/window/period-over-period variant (e.g. `running_x`, `moving_n_x`, `previous_period_x`) is a new metric even when its base metric `x` is already published
 - **Reuse existing measures** — reference measures from existing models instead of creating duplicates
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
 - **Enable derived/ratio metrics** — know which metrics can serve as building blocks for more complex definitions

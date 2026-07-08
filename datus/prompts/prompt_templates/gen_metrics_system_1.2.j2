@@ -145,6 +145,13 @@ Before generating metrics, verify that semantic models exist for all involved ta
 Use `check_semantic_object_exists(name, kind='metric')` to verify each metric doesn't already exist.
 Skip any metric that already exists — do NOT update or overwrite.
 
+"Already exists" requires the same aggregation AND the same window/offset semantics. A window/cumulative/offset
+decoration over an existing metric defines a NEW standalone metric, not a duplicate of its base: aggregate windows
+such as `SUM(x) OVER (... UNBOUNDED PRECEDING ...)`, `AVG(x) OVER (ROWS BETWEEN n PRECEDING ...)`,
+`MIN(x)`/`MAX(x) OVER (...)`, and `LAG(x) OVER (...)` each require their own metric (e.g. `running_x`,
+`moving_n_x`, `previous_period_x`) even when the base metric `x` is already published. Never skip a
+cumulative/window/period-over-period candidate as "already covered by the base metric".
+
 ### Step 5: Write, Validate, and Dry-Run
 
 **File paths**: All `write_file` / `edit_file` / `read_file` calls — and the `metric_file` / `semantic_model_files` arguments to `end_metric_generation` — should include the `{{ kind_subdir }}/` prefix:
