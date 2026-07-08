@@ -384,3 +384,75 @@ class TestProfileBashCommands:
         assert evaluate_bash_command("git status", effective.bash_commands).level == PermissionLevel.ALLOW
         # user deny overrides the profile's allow (deny wins by decision order)
         assert evaluate_bash_command("git diff HEAD~1", effective.bash_commands).level == PermissionLevel.DENY
+
+
+class TestPluginBashRulesMerge:
+    """Plugin-declared bash rules layered into build_effective_config."""
+
+    @staticmethod
+    def _plugin_rules():
+        from datus.tools.permission.bash_rules import BashCommandRules
+
+        return BashCommandRules(
+            allow=["datus hello greet:*"],
+            ask=["datus hello config set:*"],
+            deny=["datus hello config wipe:*"],
+        )
+
+    def test_plugin_rules_merged_into_normal(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config("normal", None, plugin_bash_rules=self._plugin_rules())
+
+        assert evaluate_bash_command("datus hello greet Ada", effective.bash_commands).level == PermissionLevel.ALLOW
+        ask = evaluate_bash_command("datus hello config set k v", effective.bash_commands)
+        assert ask.level == PermissionLevel.ASK
+        assert ask.bucket == "datus hello config set:*"
+        assert evaluate_bash_command("datus hello config wipe all", effective.bash_commands).level == (
+            PermissionLevel.DENY
+        )
+        # Profile whitelist retained alongside plugin rules.
+        assert evaluate_bash_command("git status", effective.bash_commands).level == PermissionLevel.ALLOW
+
+    def test_profile_singleton_not_mutated(self):
+        from datus.tools.permission.profiles import NORMAL, build_effective_config, get_profile
+
+        before_allow = list(NORMAL.bash_commands.allow)
+        build_effective_config("normal", None, plugin_bash_rules=self._plugin_rules())
+        assert get_profile("normal").bash_commands.allow == before_allow
+
+    def test_user_deny_beats_plugin_allow(self):
+        from datus.tools.permission.bash_rules import evaluate_bash_command
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config(
+            "normal",
+            {"bash_commands": {"deny": ["datus hello greet:*"]}},
+            plugin_bash_rules=self._plugin_rules(),
+        )
+        assert evaluate_bash_command("datus hello greet Ada", effective.bash_commands).level == PermissionLevel.DENY
+
+    def test_user_explicit_default_still_wins(self):
+        from datus.tools.permission.permission_config import PermissionLevel
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config(
+            "normal", {"default": "allow", "rules": []}, plugin_bash_rules=self._plugin_rules()
+        )
+        assert effective.default_permission == PermissionLevel.ALLOW
+
+    def test_dangerous_ignores_plugin_rules(self):
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config("dangerous", None, plugin_bash_rules=self._plugin_rules())
+        assert effective.bash_commands is None
+
+    def test_empty_plugin_rules_are_noop(self):
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import NORMAL, build_effective_config
+
+        effective = build_effective_config("normal", None, plugin_bash_rules=BashCommandRules())
+        assert effective is NORMAL

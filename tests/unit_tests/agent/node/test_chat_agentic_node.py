@@ -1701,6 +1701,24 @@ class TestChatAgenticNodeRebuildTools:
         tool_names = [t.name for t in node.tools]
         assert "ask_user" in tool_names
 
+    def test_rebuild_tools_resets_transformer_flag(self, real_agent_config, mock_llm_create):
+        """Rebuilding replaces wrapped FunctionTools with fresh unwrapped ones,
+        so plugin tool transformers must re-apply on the next hook composition
+        (e.g. after a mid-session task-database switch)."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        node = ChatAgenticNode(
+            node_id="test_rebuild_flag",
+            description="Test rebuild resets transformer flag",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+        node._tool_transformers_applied = True
+
+        node._rebuild_tools()
+
+        assert node._tool_transformers_applied is False
+
     def test_rebuild_tools_with_no_optional_components(self, real_agent_config, mock_llm_create):
         """_rebuild_tools works when optional tool components are None."""
         from datus.agent.node.chat_agentic_node import ChatAgenticNode

@@ -90,6 +90,21 @@ def _isolate_project_cwd(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
 
+@pytest.fixture(autouse=True)
+def _reset_plugin_registry_cache():
+    """Invalidate the process-level plugin class cache around every test.
+
+    ``datus.plugins.registry`` memoizes loaded entry-point classes for the
+    process lifetime; tests that monkeypatch ``importlib.metadata.entry_points``
+    would otherwise see stale plugins from a previous test.
+    """
+    from datus.plugins.registry import invalidate_plugin_cache
+
+    invalidate_plugin_cache()
+    yield
+    invalidate_plugin_cache()
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _disable_langsmith_tracing():
     """Disable LangSmith/LangChain tracing for the unit test session only.

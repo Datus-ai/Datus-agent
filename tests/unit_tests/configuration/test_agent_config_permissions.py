@@ -8,15 +8,19 @@ from datus.configuration.agent_config import AgentConfig
 from datus.tools.permission.permission_config import PermissionLevel
 
 
-def _make_config(permissions_raw):
+def _make_config(permissions_raw, plugins_enabled=False):
     """Build a bare AgentConfig exercising only ``_init_permissions_config``.
 
     Real AgentConfig.__init__ requires substantial YAML; for these tests we
     instantiate with ``__new__`` and call the helper directly. If the
     project adds a richer fixture helper later, prefer that.
+
+    ``plugins_enabled`` defaults to False so assertions stay hermetic on
+    machines that happen to have real datus plugins installed.
     """
     cfg = AgentConfig.__new__(AgentConfig)
     cfg.active_profile_name = "normal"  # pre-seed so loader can overwrite
+    cfg.plugins_enabled = plugins_enabled
     cfg.permissions_config = cfg._init_permissions_config(permissions_raw or {})
     return cfg
 
@@ -197,3 +201,75 @@ def test_non_string_profile_field_falls_back_to_normal(caplog):
         "Invalid permissions.profile" in rec.message or "Falling back to 'normal'" in rec.message
         for rec in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Plugin-declared CLI bash rules
+# ---------------------------------------------------------------------------
+
+
+def _hello_rules_map():
+    from datus.tools.permission.bash_rules import BashCommandRules
+
+    return {"normal": BashCommandRules(allow=["datus hello greet:*"])}
+
+
+def test_plugin_rules_collected_and_merged_when_enabled(monkeypatch):
+    from datus.plugins import registry
+
+    monkeypatch.setattr(registry, "collect_plugin_cli_permissions", _hello_rules_map)
+    cfg = _make_config({}, plugins_enabled=True)
+
+    assert set(cfg.plugin_bash_rules) == {"normal"}
+    assert "datus hello greet:*" in cfg.permissions_config.bash_commands.allow
+
+
+def test_plugin_rules_not_collected_when_disabled(monkeypatch):
+    from datus.plugins import registry
+
+    called = []
+
+    def spy():
+        called.append(True)
+        return _hello_rules_map()
+
+    monkeypatch.setattr(registry, "collect_plugin_cli_permissions", spy)
+    cfg = _make_config({}, plugins_enabled=False)
+
+    assert called == []
+    assert cfg.plugin_bash_rules == {}
+    assert all("datus hello" not in p for p in cfg.permissions_config.bash_commands.allow)
+
+
+def test_plugin_collection_failure_does_not_block_config(monkeypatch, caplog):
+    import logging
+
+    from datus.plugins import registry
+
+    def boom():
+        raise RuntimeError("collector exploded")
+
+    monkeypatch.setattr(registry, "collect_plugin_cli_permissions", boom)
+    with caplog.at_level(logging.WARNING):
+        cfg = _make_config({}, plugins_enabled=True)
+
+    assert cfg.plugin_bash_rules == {}
+    assert cfg.permissions_config is not None
+    assert "Plugin CLI permission collection failed" in caplog.text
+
+
+def test_plugin_rules_inactive_profile_not_merged(monkeypatch):
+    from datus.plugins import registry
+    from datus.tools.permission.bash_rules import BashCommandRules
+
+    monkeypatch.setattr(
+        registry,
+        "collect_plugin_cli_permissions",
+        lambda: {"auto": BashCommandRules(allow=["datus hello greet:*"])},
+    )
+    cfg = _make_config({}, plugins_enabled=True)  # active profile: normal
+
+    # The auto-only declaration is stored for runtime switches but not merged
+    # into the normal effective config.
+    assert set(cfg.plugin_bash_rules) == {"auto"}
+    assert all("datus hello" not in p for p in cfg.permissions_config.bash_commands.allow)

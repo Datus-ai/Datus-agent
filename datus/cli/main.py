@@ -556,6 +556,175 @@ class Application:
         run_web_interface(args)
 
 
+# Subcommand tokens owned by built-in handlers in ``main()``. An installed
+# adapter must never shadow these via the ``datus.cli_commands`` entry-point
+# group. Kept in one place so the reserved set is easy to extend.
+_RESERVED_SUBCOMMANDS = frozenset({"upgrade", "skill"})
+
+
+def _coerce_exit_code(rc: object, name: str) -> int:
+    """Map a handler's return value onto a process exit code.
+
+    The documented contract is ``int | None`` (``None`` meaning success), but
+    legacy handlers cannot be assumed compliant — a non-int return after an
+    otherwise successful run must not crash the CLI. ``True``/``False`` map to
+    success/failure (``int(True)`` would read success as exit code 1).
+    """
+    if rc is None or rc is True:
+        return 0
+    if rc is False:
+        return 1
+    if isinstance(rc, int):
+        return rc
+    logger.warning("Command '%s' returned non-int %r; treating as success.", name, rc)
+    return 0
+
+
+def _dispatch_external_command(argv: "list[str]") -> "int | None":
+    """Dispatch ``datus <name> ...`` to a ``datus.cli_commands`` entry point.
+
+    Adapter packages register a console handler under the
+    ``datus.cli_commands`` group — ``hello = datus_hello.cli:main`` — so
+    installing the adapter adds a ``datus hello ...`` subcommand without any
+    change to datus-agent.
+
+    Runs before argparse (the main parser declares only optional flags, so an
+    unknown positional would otherwise error out). Returns the handler's exit
+    code, or ``None`` when no entry point matches so the caller falls through to
+    the REPL / argparse path. The handler contract is ``main(argv: list[str]) ->
+    int | None``; it receives the arguments *after* the subcommand name.
+    """
+    import sys
+
+    if not argv or argv[0].startswith("-") or argv[0] in _RESERVED_SUBCOMMANDS:
+        return None
+
+    name = argv[0]
+    from datus.plugins.registry import entry_points_for_group
+
+    candidates = entry_points_for_group("datus.cli_commands", name=name)
+    if not candidates:
+        return None
+    if len(candidates) > 1:
+        logger.warning("Multiple datus.cli_commands entry points named %r; using the first.", name)
+
+    try:
+        handler = candidates[0].load()
+    except Exception as exc:  # noqa: BLE001 - a broken adapter must not crash the CLI
+        logger.error("Failed to load '%s' command from adapter: %s", name, exc)
+        return 1
+
+    try:
+        rc = handler(argv[1:])
+    except Exception as exc:  # noqa: BLE001 - a broken adapter must not crash the CLI
+        logger.error("Adapter command '%s' failed: %s", name, exc)
+        print(f"datus {name}: {exc}", file=sys.stderr)
+        return 1
+    return _coerce_exit_code(rc, name)
+
+
+def _split_plugin_globals(args: "list[str]") -> "tuple[str | None, str | None, list[str]]":
+    """Consume leading datus globals ``--profile`` / ``--config`` for a plugin.
+
+    Only options appearing *before* the first non-option token are treated as
+    datus globals; everything from the first command token onward belongs to
+    the plugin. Returns ``(profile, config, remaining_args)``.
+
+    The permission layer mirrors the ``--profile`` part of this stripping
+    (``bash_rules._normalize_datus_plugin_argv``) so plugin-declared rules
+    match profile-qualified invocations — keep the two in sync.
+    """
+    profile: "str | None" = None
+    config: "str | None" = None
+    i = 0
+    n = len(args)
+    while i < n:
+        tok = args[i]
+        if tok in ("--profile", "--config"):
+            if i + 1 >= n:
+                # Missing value — hand the token back to the plugin unchanged.
+                break
+            value = args[i + 1]
+            if tok == "--profile":
+                profile = value
+            else:
+                config = value
+            i += 2
+            continue
+        if tok.startswith("--profile="):
+            profile = tok.split("=", 1)[1]
+            i += 1
+            continue
+        if tok.startswith("--config="):
+            config = tok.split("=", 1)[1]
+            i += 1
+            continue
+        break
+    return profile, config, args[i:]
+
+
+def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
+    """Dispatch ``datus <plugin> ...`` to a ``datus.plugins`` entry point.
+
+    A plugin package registers a plugin class under the ``datus.plugins`` group
+    (``hello = datus_hello.plugin:HelloPlugin``). datus strips
+    its own leading ``--profile`` / ``--config`` globals, resolves the active
+    profile from ``agent.plugins.<name>.<profile>`` (env-expanded), constructs
+    the plugin with that profile, and calls ``run_cli`` with the rest.
+
+    Runs before :func:`_dispatch_external_command` (the legacy
+    ``datus.cli_commands`` path). Returns the plugin's exit code, or ``None``
+    when no plugin claims the token so the caller falls through.
+    """
+    import sys
+
+    if not argv or argv[0].startswith("-") or argv[0] in _RESERVED_SUBCOMMANDS:
+        return None
+
+    name = argv[0]
+    from datus.plugins.registry import load_plugin_class, plugin_entry_point_exists
+
+    # Metadata-only probe: with ``plugins_enabled: false`` the plugin package
+    # must not even be imported, so the master switch is checked before
+    # ``load_plugin_class`` (whose ``ep.load()`` runs module-level code).
+    if not plugin_entry_point_exists(name):
+        return None
+
+    profile_name, config_path, rest = _split_plugin_globals(argv[1:])
+
+    try:
+        from datus.configuration.agent_config_loader import load_agent_config
+
+        kwargs = {"config": config_path} if config_path else {}
+        agent_config = load_agent_config(**kwargs)
+        if not getattr(agent_config, "plugins_enabled", True):
+            print(
+                f"datus {name}: plugins are disabled (`agent.plugins_enabled: false`)",
+                file=sys.stderr,
+            )
+            return 3
+        profile = agent_config.get_plugin_profile(name, profile_name)
+    except Exception as exc:  # noqa: BLE001 - surface a clean error, do not crash
+        logger.error("Failed to resolve config for plugin '%s': %s", name, exc)
+        print(f"datus {name}: {exc}", file=sys.stderr)
+        return 3
+
+    plugin_cls = load_plugin_class(name)
+    if plugin_cls is None:
+        # Entry point exists but the package is broken; fall through so a
+        # same-named ``datus.cli_commands`` handler still gets its chance.
+        return None
+
+    try:
+        plugin = plugin_cls(profile=profile)
+        rc = plugin.run_cli(rest)
+    except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash the CLI
+        logger.error("Plugin '%s' failed: %s", name, exc)
+        print(f"datus {name}: {exc}", file=sys.stderr)
+        return 1
+    return _coerce_exit_code(rc, name)
+
+
 def main():
     """Entry point for console scripts"""
     import signal
@@ -580,6 +749,18 @@ def main():
         from datus.cli.skill_cli import run_skill_command
 
         sys.exit(run_skill_command(args))
+
+    # Intercept plugin subcommands (``datus hello ...``) registered under the
+    # ``datus.plugins`` entry-point group, then legacy adapter subcommands under
+    # ``datus.cli_commands`` (``datus mwaa ...``). Plugins win when both claim a
+    # name. Falls through to the REPL when nothing claims the token.
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("-") and sys.argv[1] not in _RESERVED_SUBCOMMANDS:
+        configure_logging(False, console_output=False)
+        rc = _dispatch_plugin_command(sys.argv[1:])
+        if rc is None:
+            rc = _dispatch_external_command(sys.argv[1:])
+        if rc is not None:
+            sys.exit(rc)
 
     app = Application()
     try:

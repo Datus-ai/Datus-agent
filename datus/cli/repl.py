@@ -2038,8 +2038,9 @@ class DatusCLI:
         # change both.
         raw_permissions = getattr(self.agent_config, "_raw_permissions", {}) or {}
         raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
+        plugin_rules_map = getattr(self.agent_config, "plugin_bash_rules", {}) or {}
         try:
-            new_effective = build_effective_config(choice, raw_user)
+            new_effective = build_effective_config(choice, raw_user, plugin_bash_rules=plugin_rules_map.get(choice))
         except Exception as e:
             # Mirror startup: if ``permissions.rules`` can't be parsed, refuse
             # to install a permissive profile base that would silently drop

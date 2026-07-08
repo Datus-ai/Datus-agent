@@ -119,6 +119,13 @@ agent:
   #   #     - "docker:*"              # confirm every call (session approval per bucket)
   #   #   classifier:                 # reserved: LLM classifier (not implemented)
   #   #     enabled: false
+  #   #
+  #   # Installed plugins may declare bash rules for their own ``datus <plugin>``
+  #   # namespace (normal/auto only), layered between the profile base and the
+  #   # rules above — a user ``deny`` always beats a plugin ``allow``. A
+  #   # plugin ``ask`` rule can be relaxed per project via the prompt's
+  #   # "allow (project)" choice (or a matching ``bash_allow`` entry in
+  #   # ``.datus/config.yml``): an exact-match grant auto-runs that pattern.
 
 
   nodes:

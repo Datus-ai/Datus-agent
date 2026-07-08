@@ -214,6 +214,7 @@ class TestAllowedKeys:
                 "dashboard",
                 "scheduler",
                 "semantic",
+                "plugins",
                 "project_name",
                 "language",
                 "reasoning_effort",
@@ -234,6 +235,7 @@ class TestProjectOverrideDataclass:
             ("dashboard", "superset"),
             ("scheduler", "airflow"),
             ("semantic", "metricflow"),
+            ("plugins", {"hello": "prod"}),
             ("project_name", "z"),
             ("language", "zh"),
             ("reasoning_effort", "high"),
@@ -412,6 +414,36 @@ class TestBashAllow:
         assert result.bash_allow == ["find:*\\", 'grep:"quoted"']
         # The rest of the file still parses.
         assert result.project_name == "proj_a"
+
+
+class TestPluginsPin:
+    """``plugins:`` maps a plugin name to the profile ``datus <plugin>`` uses."""
+
+    def test_load_plugins_mapping(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod", "dagster": "dev"}}))
+        result = load_project_override(str(tmp_path))
+        assert result.plugins == {"hello": "prod", "dagster": "dev"}
+        assert not result.is_empty()
+
+    def test_non_mapping_dropped(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": "hello"}))
+        assert load_project_override(str(tmp_path)).plugins is None
+
+    def test_non_string_profile_dropped(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod", "bad": 123}}))
+        assert load_project_override(str(tmp_path)).plugins == {"hello": "prod"}
+
+    def test_plugins_save_round_trip(self, tmp_path):
+        save_project_override(ProjectOverride(plugins={"hello": "staging"}), cwd=str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.plugins == {"hello": "staging"}
+        assert not result.is_empty()
 
     def test_save_round_trips_bash_allow(self, tmp_path):
         override = ProjectOverride(bash_allow=["make:*"])

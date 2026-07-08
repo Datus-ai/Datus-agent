@@ -635,6 +635,27 @@ class TestApplyProjectOverrideBashAllow:
         assert agent_raw["permissions"]["profile"] == "normal"
         assert agent_raw["permissions"]["bash_commands"] == {"allow": ["make:*"]}
 
+    def test_raw_grant_list_forwarded_for_ask_rule_bypass(self):
+        """The raw bash_allow list also rides as ``project_bash_allow`` so
+        PermissionManager can bypass ask-rule hits on an exact grant match
+        (merged allow entries lose to ask rules at evaluation time)."""
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(bash_allow=["datus hello config set:*"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["project_bash_allow"] == ["datus hello config set:*"]
+
+    def test_no_bash_allow_leaves_grant_list_unset(self):
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(project_name="p"),
+        ):
+            _apply_project_override(agent_raw)
+        assert "project_bash_allow" not in agent_raw
+
 
 class TestPermissionModeCliOverride:
     """--permission-mode kwarg reshapes permissions.profile at load time."""

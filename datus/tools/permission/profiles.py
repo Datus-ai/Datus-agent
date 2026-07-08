@@ -386,6 +386,7 @@ def build_user_overrides(
 def build_effective_config(
     profile_name: str,
     user_raw: Optional[dict] = None,
+    plugin_bash_rules: Optional[BashCommandRules] = None,
 ) -> PermissionConfig:
     """Build the effective permission config for a profile + user overrides.
 
@@ -404,12 +405,27 @@ def build_effective_config(
             unknown names.
         user_raw: The raw user permissions dict (without the ``profile``
             key). ``None`` or ``{}`` yields the bare profile base.
+        plugin_bash_rules: Bash rules declared by installed plugins for this
+            profile (``collect_plugin_cli_permissions()[profile_name]``).
+            Layered between the profile base and the user rules: since
+            ``evaluate_bash_command`` applies deny > safety > ask > allow
+            regardless of list order, a plugin ``allow`` can never override a
+            user ``deny``. Ignored when the profile carries no
+            ``bash_commands`` ruleset (dangerous stays fully open).
 
     Returns:
         The merged ``PermissionConfig`` ready to install on
         ``AgentConfig.permissions_config`` and ``PermissionManager.global_config``.
     """
     base = get_profile(profile_name)
+    if plugin_bash_rules is not None and not plugin_bash_rules.is_empty() and base.bash_commands is not None:
+        # Rebuild instead of mutating: ``get_profile`` returns shared
+        # module-level singletons.
+        base = PermissionConfig(
+            default_permission=base.default_permission,
+            rules=list(base.rules),
+            bash_commands=base.bash_commands.merge_with(plugin_bash_rules),
+        )
     if not user_raw:
         return base
 
