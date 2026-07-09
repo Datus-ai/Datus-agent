@@ -4,7 +4,7 @@ description: OSI core schema semantic model authoring specification — dataset 
 tags:
   - semantic-model
   - osi
-version: "1.0.0"
+version: "1.1.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -98,9 +98,11 @@ semantic_model:
     - Use `{"type":"identifier"}` for primary keys, foreign keys, unique entity IDs, or opaque IDs. Do not classify identifiers as numeric merely because their physical storage type is integer.
     - Use `{"type":"time","time_granularity":"..."}` only for real date/time values as described above.
     - If evidence conflicts, prefer the physical column type plus concrete SQL usage. A DECIMAL field used by `AVG(<field>)` or numeric threshold filters must be `numeric`; an integer status code used only as labels/groups should be `categorical`.
-11. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
-12. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
-13. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
+11. **One column, one type model-wide.** A given column name must carry the SAME `type` everywhere it appears across ALL datasets and in `primary_key`. Do not model the same column as `identifier` in one place and `categorical`/`dimension` in another. Decide its role once from its strongest signal: a key/foreign-key/join column is an `identifier` even when it also appears in a `GROUP BY`; a code/label column is `categorical`. If `validate_semantic` reports a column "used as multiple types", fix every occurrence to a SINGLE type and re-validate — never toggle it back and forth between validation attempts.
+12. **Do not model columns no query uses.** Include a field only when the provided SQL selects, filters, groups, joins, or aggregates by it, or it is the dataset primary key or primary time field. A key column present in the DDL but never referenced by any provided SQL should be a plain `identifier` (or the dataset `primary_key`) consistently — do not guess whether it is a dimension. When in doubt about an unused column, omit it rather than introduce an ambiguous type.
+13. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
+14. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
+15. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
 
 ## Workflow notes
 
