@@ -59,6 +59,19 @@ def _normalized_identifier(value: str) -> str:
     return ".".join(parts).lower()
 
 
+def _hierarchy_compatible(want: str, have: str) -> bool:
+    """Whether a stored hierarchy field matches a wanted one.
+
+    Empty on either side is compatible (legacy rows / unqualified references);
+    two populated-but-different values are not.
+    """
+    want_norm = _strip_identifier_quotes(want).lower()
+    have_norm = _strip_identifier_quotes(have).lower()
+    if not want_norm or not have_norm:
+        return True
+    return want_norm == have_norm
+
+
 class SemanticModelStorage(BaseEmbeddingStore):
     """Storage for field-level semantic objects (tables, columns) - excluding metrics."""
 
@@ -363,6 +376,49 @@ class SemanticModelRAG:
             And([eq("yaml_path", yaml_path), not_(in_("id", normalized_keep_ids))] + self._sub_agent_conditions())
         )
 
+    def delete_shadowed_table_rows(self, objects: List[Dict[str, Any]]) -> None:
+        """Best-effort post-commit cleanup of stale rows shadowed by ``objects``.
+
+        For each table scope in ``objects``, delete table/column rows in the
+        exact same scope (empty hierarchy matches only empty — never a wildcard)
+        whose id was not just written, e.g. legacy simple-name ids or
+        cross-yaml_path duplicates. Never raises.
+        """
+        keep_ids = [obj.get("id", "") for obj in objects if obj.get("id")]
+        if not keep_ids:
+            # No ids to preserve — deleting anything could wipe the new rows too.
+            return
+        seen_scopes = set()
+        for obj in objects:
+            if obj.get("kind") != "table":
+                continue
+            scope = (
+                obj.get("table_name", ""),
+                obj.get("catalog_name", ""),
+                obj.get("database_name", ""),
+                obj.get("schema_name", ""),
+            )
+            if not scope[0] or scope in seen_scopes:
+                continue
+            seen_scopes.add(scope)
+            table_name, catalog_name, database_name, schema_name = scope
+            conditions = [
+                in_("kind", ["table", "column"]),
+                eq("table_name", table_name),
+                eq("catalog_name", catalog_name),
+                eq("database_name", database_name),
+                eq("schema_name", schema_name),
+                not_(in_("id", keep_ids)),
+            ]
+            try:
+                self.storage._delete_rows(And(conditions + self._sub_agent_conditions()))
+            except Exception as cleanup_exc:
+                logger.warning(
+                    f"Best-effort cleanup of shadowed semantic rows failed for table "
+                    f"{table_name!r} (catalog={catalog_name!r}, database={database_name!r}, "
+                    f"schema={schema_name!r}): {cleanup_exc}"
+                )
+
     def list_artifact_rows(self, yaml_path: str) -> List[Dict[str, Any]]:
         """Return semantic rows projected from a single YAML artifact."""
         if not yaml_path:
@@ -379,6 +435,38 @@ class SemanticModelRAG:
         if rows:
             self.upsert_batch(rows)
         self.create_indices()
+
+    def table_exists(
+        self,
+        table_name: str,
+        catalog_name: str = "",
+        database_name: str = "",
+        schema_name: str = "",
+    ) -> bool:
+        """Whether a table semantic model exists for the given hierarchy scope.
+
+        Table name matches case-insensitively; hierarchy fields must match when
+        populated on both sides, while an empty value on either side stays
+        compatible (keeps legacy rows and unqualified references working).
+        """
+        if not table_name:
+            return False
+        # eq() is case-sensitive; query realistic case variants, compare client-side.
+        name_variants = list({table_name, table_name.lower(), table_name.upper()})
+        conditions = [eq("kind", "table"), in_("table_name", name_variants)] + self._sub_agent_conditions()
+        candidates = self.storage._search_all(
+            where=And(conditions),
+            select_fields=["table_name", "catalog_name", "database_name", "schema_name"],
+        ).to_pylist()
+        for row in candidates:
+            if (
+                row.get("table_name", "").lower() == table_name.lower()
+                and _hierarchy_compatible(catalog_name, row.get("catalog_name", ""))
+                and _hierarchy_compatible(database_name, row.get("database_name", ""))
+                and _hierarchy_compatible(schema_name, row.get("schema_name", ""))
+            ):
+                return True
+        return False
 
     def get_semantic_model(
         self,

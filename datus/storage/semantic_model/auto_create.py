@@ -191,28 +191,28 @@ def find_missing_semantic_models(
         return []
 
     semantic_rag = SemanticModelRAG(agent_config)
+    try:
+        current_db_config = agent_config.current_db_config()
+    except Exception as e:
+        logger.warning(f"Failed to resolve current db config, checking tables without defaults: {e}")
+        current_db_config = None
     missing = []
 
     for table_fq_name in tables:
-        # Parse table name (may be database.schema.table format)
-        parts = table_fq_name.split(".")
-        table_name = parts[-1]  # Last part is the table name
-
-        # Search for existing semantic model
         try:
-            result = semantic_rag.storage.search_objects(
-                query_text=table_name,
-                kinds=["table"],
-                top_n=5,
+            # Resolve the reference to a hierarchy scope so same-named tables
+            # in different databases/schemas are told apart.
+            target = _resolved_table_target(table_fq_name, agent_config, current_db_config)
+            exists = semantic_rag.table_exists(
+                table_name=target["table_name"],
+                catalog_name=target["catalog_name"],
+                database_name=target["database_name"],
+                schema_name=target["schema_name"],
             )
-
-            # Exact match on table name (case insensitive)
-            exists = any(obj.get("name", "").lower() == table_name.lower() for obj in result)
-
             if not exists:
                 missing.append(table_fq_name)
         except Exception as e:
-            logger.warning(f"Error checking semantic model for {table_name}: {e}")
+            logger.warning(f"Error checking semantic model for {table_fq_name}: {e}")
             missing.append(table_fq_name)
 
     return missing

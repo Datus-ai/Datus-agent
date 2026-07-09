@@ -1473,7 +1473,7 @@ class GenerationTools:
 
                 semantic_objects.append(
                     {
-                        "id": f"table:{table_name}",
+                        "id": f"table:{table_fq_name}",
                         "kind": "table",
                         "name": table_name,
                         "fq_name": table_fq_name,
@@ -1497,7 +1497,7 @@ class GenerationTools:
                         "entity": "",
                     }
                 )
-                synced_items.append(f"table:{table_name}")
+                synced_items.append(f"table:{table_fq_name}")
 
                 primary_keys = getattr(dataset, "primary_key", None) or []
                 if isinstance(primary_keys, str):
@@ -1585,6 +1585,8 @@ class GenerationTools:
                         f"{', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
+            # Post-commit, best-effort cleanup of shadowed stale rows; never raises.
+            self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
             return {
                 "success": True,
                 "message": f"Synced {len(semantic_objects)} OSI semantic object(s): {', '.join(synced_items[:5])}",
@@ -1612,7 +1614,7 @@ class GenerationTools:
         time_granularity: str = "",
     ) -> dict:
         return {
-            "id": f"column:{table_name}.{name}",
+            "id": f"column:{table_fq_name}.{name}",
             "kind": "column",
             "name": name,
             "fq_name": f"{table_fq_name}.{name}",

@@ -58,57 +58,90 @@ class CatalogUpdater:
                 return None
         return None
 
+    @staticmethod
+    def _build_fq_name(old_values: Dict[str, Any]) -> str:
+        """Rebuild the qualified name used in storage ids (empty parts skipped),
+        mirroring the write-side id construction."""
+        parts = [
+            old_values.get("catalog_name", ""),
+            old_values.get("database_name", ""),
+            old_values.get("schema_name", ""),
+            old_values.get("table_name", ""),
+        ]
+        return ".".join(part for part in parts if part)
+
+    def _update_entry_with_fallback(self, entry_id: str, legacy_entry_id: str, changes: Dict[str, Any]) -> bool:
+        """Update by qualified id, falling back to the pre-#1084 simple-name id
+        so edits on legacy rows aren't dropped. Returns True when updated."""
+        try:
+            self._update_entry(entry_id, changes)
+            return True
+        except DatusException as e:
+            if e.code != ErrorCode.STORAGE_ENTRY_NOT_FOUND:
+                raise
+        if legacy_entry_id and legacy_entry_id != entry_id:
+            try:
+                self._update_entry(legacy_entry_id, changes)
+                return True
+            except DatusException as e:
+                if e.code != ErrorCode.STORAGE_ENTRY_NOT_FOUND:
+                    raise
+        logger.warning(f"Semantic entry not found: {entry_id}")
+        return False
+
     def update_semantic_model(self, old_values: Dict[str, Any], update_values: Dict[str, Any]):
+        table_fq_name = self._build_fq_name(old_values)
         table_name = old_values.get("table_name", "")
         semantic_model_name = old_values.get("semantic_model_name", "")
 
         # 1. Update table-level record (description)
         if "description" in update_values:
-            entry_id = f"table:{table_name}"
-            try:
-                self._update_entry(entry_id, {"description": update_values["description"]})
-            except DatusException as e:
-                if e.code == ErrorCode.STORAGE_ENTRY_NOT_FOUND:
-                    logger.warning(f"Table entry not found: {entry_id}")
-                else:
-                    raise
-            else:
+            updated = self._update_entry_with_fallback(
+                f"table:{table_fq_name}",
+                f"table:{table_name}" if table_name else "",
+                {"description": update_values["description"]},
+            )
+            if updated:
                 logger.debug("Updated table-level semantic model description")
 
         # 2. Update column-level records (dimensions, measures, identifiers)
         self._update_columns(
-            table_name,
+            table_fq_name,
             semantic_model_name,
             old_values.get("dimensions"),
             update_values.get("dimensions"),
             "is_dimension",
             {"description", "expr", "column_type", "is_partition", "time_granularity"},
+            legacy_table_name=table_name,
         )
         self._update_columns(
-            table_name,
+            table_fq_name,
             semantic_model_name,
             old_values.get("measures"),
             update_values.get("measures"),
             "is_measure",
             {"description", "expr", "agg", "create_metric", "agg_time_dimension"},
+            legacy_table_name=table_name,
         )
         self._update_columns(
-            table_name,
+            table_fq_name,
             semantic_model_name,
             old_values.get("identifiers"),
             update_values.get("identifiers"),
             "is_entity_key",
             {"description", "expr", "column_type", "entity"},
+            legacy_table_name=table_name,
         )
 
     def _update_columns(
         self,
-        table_name: str,
+        table_fq_name: str,
         semantic_model_name: str,
         old_columns: Any,
         new_columns: Any,
         kind_field: str,
         allowed_fields: set,
+        legacy_table_name: str = "",
     ):
         """Update column-level records by matching old and new values."""
         old_list = self._parse_json_field(old_columns) or []
@@ -137,13 +170,10 @@ class CatalogUpdater:
             if not changed:
                 continue
 
-            entry_id = f"column:{table_name}.{col_name}"
-            try:
-                self._update_entry(entry_id, changed)
-            except DatusException as e:
-                if e.code == ErrorCode.STORAGE_ENTRY_NOT_FOUND:
-                    logger.warning(f"Column entry not found: {entry_id}")
-                else:
-                    raise
-            else:
+            updated = self._update_entry_with_fallback(
+                f"column:{table_fq_name}.{col_name}",
+                f"column:{legacy_table_name}.{col_name}" if legacy_table_name else "",
+                changed,
+            )
+            if updated:
                 logger.debug(f"Updated column '{col_name}' ({kind_field}): {list(changed.keys())}")

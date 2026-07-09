@@ -132,7 +132,7 @@ class TestUpdateColumnsFieldMapping:
         new = [{"name": "col1", "type": "integer", "description": "A column"}]
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
@@ -158,7 +158,7 @@ class TestUpdateColumnsFieldMapping:
         item = [{"name": "col1", "type": "string", "description": "desc", "expr": "x"}]
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=item,
             new_columns=item,
@@ -181,7 +181,7 @@ class TestUpdateColumnsFieldMapping:
         new = [{"name": "col1", "type": "string", "description": "new desc"}]
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
@@ -207,7 +207,7 @@ class TestUpdateColumnsFieldMapping:
         new = [{"name": "col1", "description": "new desc", "type": "string"}]
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
@@ -247,7 +247,7 @@ class TestUpdateColumnsMethod:
         updater.semantic_model_storage = FakeStorage()
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=[{"name": "col1", "description": "old"}],
             new_columns=[{"description": "new"}],  # no 'name'
@@ -271,7 +271,7 @@ class TestUpdateColumnsMethod:
         new = [{"name": "col1", "description": "new desc"}]
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
@@ -296,7 +296,7 @@ class TestUpdateColumnsMethod:
         identical = [{"name": "col1", "description": "same", "type": "string"}]
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=identical,
             new_columns=identical,
@@ -320,7 +320,7 @@ class TestUpdateColumnsMethod:
         new = [{"name": "col1", "description": "new"}]
 
         updater._update_columns(
-            table_name="orders",
+            table_fq_name="orders",
             semantic_model_name="",
             old_columns=old,
             new_columns=new,
@@ -341,7 +341,7 @@ class TestUpdateColumnsMethod:
         updater.semantic_model_storage = FakeStorage()
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=None,
             new_columns=None,
@@ -365,7 +365,7 @@ class TestUpdateColumnsMethod:
         new_json = json.dumps([{"name": "col1", "description": "new"}])
 
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=old_json,
             new_columns=new_json,
@@ -392,7 +392,7 @@ class TestUpdateColumnsMethod:
 
         # Should not raise
         updater._update_columns(
-            table_name="t",
+            table_fq_name="t",
             semantic_model_name="t_model",
             old_columns=old,
             new_columns=new,
@@ -634,3 +634,121 @@ class TestUpdateSemanticModel:
         updater.update_semantic_model(old_values, update_values)
 
         assert any(entry_id == "column:orders.order_id" and v.get("entity") == "transaction" for entry_id, v in calls)
+
+
+# ---------------------------------------------------------------------------
+# Fully qualified id construction (issue #1084)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildFqName:
+    """Tests for CatalogUpdater._build_fq_name id reconstruction."""
+
+    def test_empty_hierarchy_returns_bare_table(self):
+        """No catalog/database/schema → fq name equals the table name."""
+        assert CatalogUpdater._build_fq_name({"table_name": "orders"}) == "orders"
+
+    def test_full_hierarchy_joined(self):
+        """All hierarchy parts are joined with dots, in catalog→table order."""
+        old_values = {
+            "catalog_name": "cat",
+            "database_name": "db1",
+            "schema_name": "public",
+            "table_name": "orders",
+        }
+        assert CatalogUpdater._build_fq_name(old_values) == "cat.db1.public.orders"
+
+    def test_partial_hierarchy_skips_empty_parts(self):
+        """Empty middle parts are skipped so no double dots appear."""
+        old_values = {
+            "catalog_name": "",
+            "database_name": "db1",
+            "schema_name": "",
+            "table_name": "orders",
+        }
+        assert CatalogUpdater._build_fq_name(old_values) == "db1.orders"
+
+
+class TestUpdateSemanticModelQualifiedId:
+    """update_semantic_model must target rows by their fully qualified id (issue #1084)."""
+
+    def _make_updater(self):
+        obj = object.__new__(CatalogUpdater)
+        obj.datasource_id = "test_datasource"
+        return obj
+
+    def test_table_entry_id_uses_full_hierarchy(self):
+        """Same-named tables in different databases resolve to distinct entry ids."""
+        updater = self._make_updater()
+        calls = []
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {
+            "database_name": "db2",
+            "schema_name": "sales",
+            "table_name": "orders",
+            "semantic_model_name": "orders_model",
+        }
+        updater.update_semantic_model(old_values, {"description": "new"})
+
+        assert calls[0][0] == "table:db2.sales.orders"
+
+    def test_column_entry_id_uses_full_hierarchy(self):
+        """Column updates also target the qualified id so cross-db columns stay distinct."""
+        updater = self._make_updater()
+        calls = []
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {
+            "database_name": "db2",
+            "schema_name": "sales",
+            "table_name": "orders",
+            "semantic_model_name": "orders_model",
+            "dimensions": [{"name": "region", "description": "old"}],
+        }
+        update_values = {"dimensions": [{"name": "region", "description": "new"}]}
+        updater.update_semantic_model(old_values, update_values)
+
+        assert any(entry_id == "column:db2.sales.orders.region" for entry_id, _ in calls)
+
+    def test_falls_back_to_legacy_simple_id(self):
+        """Rows written before the fq-id scheme (id='table:orders') must still be updatable."""
+        updater = self._make_updater()
+        calls = []
+
+        class FakeStorage:
+            def update_entry(self, entry_id, values):
+                calls.append((entry_id, values))
+                if entry_id in ("table:db1.public.orders", "column:db1.public.orders.region"):
+                    raise DatusException(ErrorCode.STORAGE_ENTRY_NOT_FOUND, message_args={"entry_id": entry_id})
+
+        updater.semantic_model_storage = FakeStorage()
+
+        old_values = {
+            "database_name": "db1",
+            "schema_name": "public",
+            "table_name": "orders",
+            "semantic_model_name": "orders_model",
+            "dimensions": [{"name": "region", "description": "old"}],
+        }
+        update_values = {
+            "description": "new desc",
+            "dimensions": [{"name": "region", "description": "new"}],
+        }
+        updater.update_semantic_model(old_values, update_values)
+
+        # fq id tried first, then the legacy simple id succeeds.
+        assert ("table:db1.public.orders", {"description": "new desc"}) in calls
+        assert ("table:orders", {"description": "new desc"}) in calls
+        assert ("column:db1.public.orders.region", {"description": "new"}) in calls
+        assert ("column:orders.region", {"description": "new"}) in calls
