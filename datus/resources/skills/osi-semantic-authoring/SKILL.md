@@ -1,29 +1,33 @@
-You are a semantic modeling expert. Your task is to describe tables as strict **OSI (Open Semantic Interchange) core schema** documents plus Datus business hints.
+---
+name: osi-semantic-authoring
+description: OSI core schema semantic model authoring specification — dataset shape, Datus extension hints, relationships, and validation
+tags:
+  - semantic-model
+  - osi
+version: "1.0.0"
+user_invocable: false
+disable_model_invocation: false
+allowed_agents:
+  - gen_semantic_model
+  - gen_metrics
+---
+
+# OSI Semantic Authoring
+
+Describe tables as strict **OSI (Open Semantic Interchange) core schema** documents plus Datus business hints.
 
 CRITICAL BOUNDARY: You author **OSI core semantics only**. You do NOT write MetricFlow `data_source:`, `measures:`, `identifiers:`, `agg_time_dimension`, `create_metric`, or any execution-engine YAML. The Datus OSI compiler lowers OSI core documents to the configured backend.
-This is the OSI authoring path. Do NOT load or follow MetricFlow `metricflow-semantic-authoring` skills if they are visible; their file format is for the legacy MetricFlow authoring path.
 
-The MetricFlow-skill restriction above does not apply to `semantic-sql-history-profiler`.
-{% include "_semantic_sql_history_profiler_gate.j2" %}
-
-
-{% set target_model_name = default_osi_semantic_model_name | default('<model_name>', true) %}
-{% set target_model_file = default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) %}
-{% import "_osi_dialect_map.j2" as osi_dialect_map %}
-{% set datasource_type = current_datasource | default('', true) | lower %}
-{% set osi_expression_dialect = osi_dialect_map.expression_dialect(datasource_type) %}
-
-{% if native_tools %}- Native tools: {{ native_tools }}{% endif %}
-{% if mcp_tools %}- MCP servers: {{ mcp_tools }}{% endif %}
+The OSI expression dialect, target semantic model name, and target semantic model file for the current run are shown in the system prompt Workspace section — use those exact values.
 
 ## What you produce
 
-Produce one valid OSI core document for the current business domain / semantic model scope:
+One valid OSI core document for the current business domain / semantic model scope (`<osi_dialect>` stands for the OSI expression dialect from the system prompt):
 
 ```yaml
 version: 0.2.0.dev0
 semantic_model:
-  - name: {{ target_model_name }}
+  - name: <target_model_name>
     datasets:
       - name: <dataset_name>
         source: <physical_table_view_or_query_name>
@@ -37,7 +41,7 @@ semantic_model:
           - name: <date_or_timestamp_column>
             expression:
               dialects:
-                - dialect: {{ osi_expression_dialect }}
+                - dialect: <osi_dialect>
                   expression: <date_or_timestamp_column>
             dimension:
               is_time: true
@@ -47,7 +51,7 @@ semantic_model:
           - name: <categorical_business_column>
             expression:
               dialects:
-                - dialect: {{ osi_expression_dialect }}
+                - dialect: <osi_dialect>
                   expression: <categorical_business_column>
             dimension:
               is_time: false
@@ -58,7 +62,7 @@ semantic_model:
           - name: <numeric_business_column>
             expression:
               dialects:
-                - dialect: {{ osi_expression_dialect }}
+                - dialect: <osi_dialect>
                   expression: <numeric_business_column>
             dimension:
               is_time: false
@@ -77,7 +81,7 @@ semantic_model:
 ## Authoring rules
 
 1. **Root schema is fixed.** Root keys are only `version` and `semantic_model`. `semantic_model` is a list. Do NOT write top-level `datasets:`, `relationships:`, or `metrics:`.
-2. **Use OSI core dataset shape.** Dataset `source` is a string, not `{table: ...}`. Dataset columns are `fields`, not `dimensions`. Field expressions are `expression.dialects[]`, not `expr`. The OSI expression dialect for this run is `{{ osi_expression_dialect }}`. This is the OSI core schema dialect label, derived from the allowed enum, and may differ from the active datasource connector type. Use this exact value in every `expression.dialects[].dialect`.
+2. **Use OSI core dataset shape.** Dataset `source` is a string, not `{table: ...}`. Dataset columns are `fields`, not `dimensions`. Field expressions are `expression.dialects[]`, not `expr`. Use the exact OSI expression dialect from the system prompt in every `expression.dialects[].dialect`.
 3. **Datus-only hints go into `custom_extensions`.** OSI core does not have top-level dataset `time_dimension`, field `type`, field `granularity`, metric `dataset`, metric `window`, etc. Put those Datus execution hints in `custom_extensions: [{vendor_name: DATUS, data: '<JSON object string>'}]`.
 4. **Semantic model boundary.** One OSI `semantic_model` represents the current business domain / metric domain. Put all related logical datasets needed by the provided SQL history in this semantic model, with relationships declared once under the semantic model object.
 5. **Canonical logical datasets.** A dataset is a logical dataset backed by a table, view, or query. For the same source and row grain, create one canonical dataset that metrics can reference by name. Create a separate dataset only when the logical row grain or fixed business scope is genuinely different. Include the full logical dataset: primary key, primary time field, and all business-meaningful fields.
@@ -88,36 +92,20 @@ semantic_model:
 8. **Time dimension**: mark the primary date/time field with `dimension.is_time: true` and Datus extension `{"type":"time","time_granularity":"day|week|month|quarter|year"}`. Point it at a real date/time column, never a numeric surrogate key.
 9. **Fields**: include every business-meaningful column the user may group or slice by. Populate `description` for ALL non-obvious fields by combining the column comment, sample values, profiler evidence, and external knowledge. Useful profiler evidence may include null rate, numeric ranges/percentiles, date span/freshness/duration, distinct counts, representative stable values, common filter templates, and relationship coverage/fanout. Wrap descriptions in double quotes and keep each description concise.
 10. **Field type classification must follow actual data type and analytical usage.** The DATUS `custom_extensions.data.type` value is not a display hint; it is the semantic field type.
-   - Use `{"type":"numeric"}` for DECIMAL/NUMERIC/INTEGER/FLOAT/DOUBLE or equivalent fields that represent measured quantities, scores, rates, prices, amounts, durations, counts, percentages, or other arithmetic values.
-   - Keep a field `numeric` when historical SQL uses it in arithmetic, range predicates, numeric ordering, or numeric aggregates such as `AVG`, `SUM`, `MIN`, `MAX`, `STD`, `VARIANCE`, `CORR`, or `COVAR`. A numeric field does not become categorical just because it is selected, displayed, filtered, or grouped.
-   - Use `{"type":"categorical"}` for text/enums/labels/booleans and code fields whose values are categories, not quantities. Numeric-coded categories such as status codes, product type codes, or channel codes can be categorical when averaging or summing the code would have no business meaning; explain the code semantics in the description.
-   - Use `{"type":"identifier"}` for primary keys, foreign keys, unique entity IDs, or opaque IDs. Do not classify identifiers as numeric merely because their physical storage type is integer.
-   - Use `{"type":"time","time_granularity":"..."}` only for real date/time values as described above.
-   - If evidence conflicts, prefer the physical column type plus concrete SQL usage. For example, a DECIMAL field used by `AVG(<field>)` or numeric threshold filters must be `numeric`, while an integer status code used only as labels/groups should be `categorical`.
+    - Use `{"type":"numeric"}` for DECIMAL/NUMERIC/INTEGER/FLOAT/DOUBLE or equivalent fields that represent measured quantities, scores, rates, prices, amounts, durations, counts, percentages, or other arithmetic values.
+    - Keep a field `numeric` when historical SQL uses it in arithmetic, range predicates, numeric ordering, or numeric aggregates such as `AVG`, `SUM`, `MIN`, `MAX`, `STD`, `VARIANCE`, `CORR`, or `COVAR`. A numeric field does not become categorical just because it is selected, displayed, filtered, or grouped.
+    - Use `{"type":"categorical"}` for text/enums/labels/booleans and code fields whose values are categories, not quantities. Numeric-coded categories such as status codes, product type codes, or channel codes can be categorical when averaging or summing the code would have no business meaning; explain the code semantics in the description.
+    - Use `{"type":"identifier"}` for primary keys, foreign keys, unique entity IDs, or opaque IDs. Do not classify identifiers as numeric merely because their physical storage type is integer.
+    - Use `{"type":"time","time_granularity":"..."}` only for real date/time values as described above.
+    - If evidence conflicts, prefer the physical column type plus concrete SQL usage. A DECIMAL field used by `AVG(<field>)` or numeric threshold filters must be `numeric`; an integer status code used only as labels/groups should be `categorical`.
 11. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
 12. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
-13. Preserve literal values and column names exactly; do not invent columns.
+13. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
 
-## Workflow
+## Workflow notes
 
-{% if current_datasource %}
-- Active datasource: `{{ current_datasource }}`
-- OSI expression dialect: `{{ osi_expression_dialect }}`
-{% endif %}
-{% if semantic_model_dir %}
-- Write OSI core YAML under `{{ semantic_model_dir }}` only.
-{% endif %}
-- Target semantic model name: `{{ target_model_name }}`
-- Target semantic model file: `{{ target_model_file }}`
+- Write OSI core YAML under the semantic model directory shown in the system prompt only, at the target semantic model file path.
 - Inspect the table schema and comments; map columns to keys, the time field, business fields, and relationships.
 - When a critical modeling choice is ambiguous (which column is the grain, which is the primary time dimension), ASK before generating.
-- Produce valid OSI core YAML; the Datus OSI compiler validates it against OSI core schema, then lowers it to the configured execution backend.
-- Call `validate_semantic(scope="semantic_model")` after writing the OSI semantic model and fix errors until it passes.
-- After validation passes, call `end_semantic_model_generation(semantic_model_files=[...])`. In OSI mode this syncs OSI datasets to Knowledge Base without using MetricFlow YAML.
-- Finish with JSON:
-  ```json
-  {
-    "semantic_model_files": ["{{ target_model_file }}"],
-    "output": "<brief summary>"
-  }
-  ```
+- Call `validate_semantic(scope="semantic_model")` after writing the OSI semantic model and fix errors until it passes. The Datus OSI compiler validates against the OSI core schema, then lowers to the configured execution backend.
+- After validation passes, call `end_semantic_model_generation(semantic_model_files=[...])`. In OSI mode this syncs OSI datasets to the Knowledge Base without using MetricFlow YAML.

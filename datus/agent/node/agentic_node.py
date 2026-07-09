@@ -90,6 +90,14 @@ class AgenticNode(Node):
     # empty string in yml to opt out of the defaults.
     DEFAULT_SKILLS: Optional[str] = None
 
+    # Skills whose full content is injected into the system prompt by the host
+    # at render time instead of being advertised in ``<available_skills>`` for
+    # LLM-initiated ``load_skill`` calls. Use for specifications the node needs
+    # on every run (e.g. authoring format specs); optional, conditionally
+    # useful workflows belong in ``DEFAULT_SKILLS``. Subclasses may override
+    # ``_get_required_skills()`` to derive the list from configuration.
+    REQUIRED_SKILLS: Optional[str] = None
+
     # When True, this node's ``SkillFuncTool`` loads skills in *authoring* mode:
     # ``allowed_agents`` scoping on ``load_skill`` is bypassed so the agent can
     # read any skill by name (used by ``gen_skill`` for edit/optimize flows).
@@ -1146,6 +1154,11 @@ class AgenticNode(Node):
 
         # Mount the lazily injected skill/bash/memory tools.
         self._ensure_lazy_tools_mounted()
+
+        # Inject required-skill specifications deterministically. These are
+        # host-mandated (e.g. authoring format specs) and must not depend on
+        # the LLM choosing to call ``load_skill``.
+        base_prompt = self._inject_required_skills(base_prompt)
 
         # Inject available skills XML into system prompt when skill_func_tool is active.
         if self.skill_func_tool:
@@ -2229,6 +2242,68 @@ class AgenticNode(Node):
             )
         except Exception as e:
             logger.error(f"Failed to setup skill func tools: {e}")
+
+    def _get_required_skills(self) -> List[str]:
+        """Return skill names whose content is host-injected into the prompt.
+
+        Defaults to parsing the class-level ``REQUIRED_SKILLS`` string.
+        Subclasses may override to derive the list from configuration (e.g.
+        the active semantic authoring format).
+        """
+        patterns = type(self).REQUIRED_SKILLS
+        if not patterns:
+            return []
+        return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
+
+    def _inject_required_skills(self, base_prompt: str) -> str:
+        """Append required-skill content to the system prompt deterministically.
+
+        Required skills carry specifications the node needs on every run, so
+        the host injects them at prompt-build time instead of advertising them
+        in ``<available_skills>`` and hoping the LLM calls ``load_skill``.
+        Permission checks are skipped — the node itself mandates these skills —
+        but ``allowed_agents`` scoping still applies.
+
+        Raises:
+            DatusException: When a required skill cannot be loaded. A missing
+                authoring spec would silently degrade every generation, so this
+                fails fast instead.
+        """
+        required_skills = self._get_required_skills()
+        if not required_skills:
+            return base_prompt
+
+        if not self.skill_manager:
+            from datus.tools.skill_tools.skill_manager import SkillManager
+
+            self.skill_manager = SkillManager(permission_manager=self.permission_manager)
+
+        from xml.sax.saxutils import quoteattr as xml_quoteattr
+
+        sections = []
+        for skill_name in required_skills:
+            success, message, content = self.skill_manager.load_skill(
+                skill_name,
+                self.get_node_name(),
+                check_permission=False,
+                node_class=self.get_node_class_name(),
+            )
+            if not success or not content:
+                from datus.utils.exceptions import DatusException, ErrorCode
+
+                raise DatusException(
+                    code=ErrorCode.COMMON_CONFIG_ERROR,
+                    message_args={
+                        "config_error": (
+                            f"Required skill '{skill_name}' could not be loaded for node "
+                            f"'{self.get_node_name()}': {message}"
+                        )
+                    },
+                )
+            sections.append(f"<required_skill name={xml_quoteattr(skill_name)}>\n{content}\n</required_skill>")
+            logger.info(f"Injected required skill '{skill_name}' into system prompt for '{self.get_node_name()}'")
+
+        return base_prompt + "\n\n" + "\n\n".join(sections)
 
     @staticmethod
     def _merge_skill_patterns(existing_skills: Any, injected_skills: List[str]) -> str:

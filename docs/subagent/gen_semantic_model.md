@@ -60,40 +60,26 @@ agent:
       model: claude      # Optional: defaults to configured model
       max_turns: 30      # Optional: defaults to 30
       semantic_adapter: metricflow   # Optional when only one semantic layer is configured
-      # Optional: enable historical SQL profiling before YAML generation.
-      # Keep the default MetricFlow semantic-model skill when overriding skills.
-      skills: "metricflow-semantic-authoring, semantic-sql-history-profiler"
 ```
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for the full set of options.
 
 For OSI generation, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.md).
 
+### Skills (automatic)
+
+Skills are wired automatically from the active semantic adapter — no `skills:` entry is needed:
+
+- The authoring specification skill (`metricflow-semantic-authoring` for MetricFlow, `osi-semantic-authoring` for OSI) is injected into the system prompt on every run.
+- `semantic-sql-history-profiler` is registered by default as an optional skill for both formats.
+
+Set `skills: ""` on the node to opt out of the optional skill set, or list explicit skill names to replace it. Project-level skill overrides under `./.datus/skills/` take precedence over the built-in specifications.
+
 ### Optional Historical SQL Profiling
 
-`semantic-sql-history-profiler` is an internal skill for `gen_semantic_model`, not a chat command or user-invocable skill. Enable it on the `gen_semantic_model` node when you want semantic-model generation to use historical SQL or success-story SQL as modeling evidence.
+`semantic-sql-history-profiler` is an internal skill for `gen_semantic_model`, not a chat command or user-invocable skill. It is available by default and triggers **only when the user explicitly asks** for profiling, statistics, data-distribution analysis, or mining/analyzing historical SQL — providing SQL alone does not trigger it (the SQL is still used directly as modeling context).
 
-When the skill is available and the request includes historical SQL or success-story SQL, the subagent loads it before generating YAML and calls `profile_semantic_model_evidence`. The evidence is used to infer join relationships, commonly filtered or grouped dimensions, aggregate candidates, time fields, compact distribution notes, and relationship reliability hints.
-
-For MetricFlow generation, keep the default MetricFlow semantic-model skill when you override `skills`:
-
-```yaml
-agent:
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-      skills: "metricflow-semantic-authoring, semantic-sql-history-profiler"
-```
-
-For OSI generation, enable only the profiler unless you intentionally need another skill:
-
-```yaml
-agent:
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: osi
-      skills: "semantic-sql-history-profiler"
-```
+When triggered, the subagent loads the skill before generating YAML and calls `profile_semantic_model_evidence`. The evidence is used to infer join relationships, commonly filtered or grouped dimensions, aggregate candidates, time fields, compact distribution notes, and relationship reliability hints.
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Database tools, generation tools, and filesystem tools

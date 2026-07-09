@@ -717,23 +717,44 @@ class TestGetSystemPrompt:
             version = call_kwargs.kwargs.get("version")
             assert version == "1.2", f"Expected explicit version '1.2', got '{version}'"
 
-    def test_osi_authoring_uses_osi_prompt_template(self, real_agent_config, mock_llm_create):
+    def test_osi_authoring_uses_shared_template_with_osi_context(self, real_agent_config, mock_llm_create):
         _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="Generate OSI metrics", prompt_version="1.2")
 
-        with (
-            patch("datus.agent.node.semantic_authoring.osi_prompt_version", return_value="osi-latest") as version_mock,
-            patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm,
-        ):
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
             mock_pm.return_value.render_template.return_value = "osi prompt"
 
-            node._get_system_prompt(template_context={})
+            template_context = node._prepare_template_context(node.input)
+            node._get_system_prompt(template_context=template_context)
 
-        version_mock.assert_called_once_with(real_agent_config, "gen_metrics", "1.2")
         call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
-        assert call_kwargs["template_name"] == "gen_metrics_osi_system"
-        assert call_kwargs["version"] == "osi-latest"
+        # Both formats share one template; the format travels in the context and
+        # the pinned prompt_version applies to the shared template.
+        assert call_kwargs["template_name"] == "gen_metrics_system"
+        assert call_kwargs["version"] == "1.2"
+        assert call_kwargs["authoring_format"] == "osi"
+
+    def test_osi_authoring_injects_osi_required_skill(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate OSI metrics")
+
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+
+        assert '<required_skill name="osi-metrics-authoring">' in prompt
+        assert "OSI core semantics only" in prompt
+        assert '<required_skill name="gen-metrics">' not in prompt
+
+    def test_metricflow_authoring_injects_gen_metrics_required_skill(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate metrics")
+
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+
+        assert '<required_skill name="gen-metrics">' in prompt
+        assert "measure_proxy" in prompt
+        assert '<required_skill name="osi-metrics-authoring">' not in prompt
 
 
 # ---------------------------------------------------------------------------

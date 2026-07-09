@@ -4,7 +4,7 @@ description: Generate MetricFlow metrics from natural language business descript
 tags:
   - metrics
   - metricflow
-version: "1.2.0"
+version: "1.3.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -88,6 +88,10 @@ Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `e
 12. **Ignore passthrough references** — entries in `identity_metric_references` show existing metrics selected without new business formula; do not generate new metrics for them.
 13. **Do not promote support measures** — a SELECT projection that only supports another final KPI, such as a denominator, row count, or intermediate aggregation, may be added as a semantic-model measure. Do not also wrap it as a top-level business metric unless the user question or candidate plan identifies it as a final KPI.
 14. **Respect `support_measure_candidates`** — these are dependency or comparison measures, not direct metrics. You may add them to a semantic model only if a generated metric needs them, but do not publish a `metric:` block for them.
+15. **Review `llm_review_candidates` critically** — these are possible metric evidence, not confirmed metrics. For each item, decide whether the row-level or ambiguous expression should be lifted into a reusable MetricFlow metric. Generate it only when the SQL, table/column semantics, and user question support that lift; otherwise record it as query-only/detail evidence and do not create a metric.
+16. **Do not assume lifted equivalence** — for candidates with `equivalence: "lifted"` or `requires_validation: true`, do not assume exact equivalence to the historical SQL. Prefer a semantically correct aggregate metric such as `SUM(numerator) / SUM(denominator)` only when that lift is business-valid; otherwise skip the metric.
+17. **One metric per business meaning** — use the candidate's `name` exactly as the published metric name. When a candidate lists `equivalent_names`, those are acceptable aliases for the same metric — publish ONE metric (prefer the candidate `name`), never one per alias.
+18. **Names/questions are naming evidence only** — natural-language fields in the candidate plan (`question`, `name`, `summary`, or `source_context`) never override the SQL expression structure or turn a detail query into a metric by themselves.
 
 **Step 1-batch-c: Business metric principle**
 
@@ -248,6 +252,123 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 7. **Derived metrics are second-stage**: Generate non-derived metrics first, including fixed `period_over_period` direct candidates, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
 
 8. **Support measures are not always metrics**: Add support measures needed for ratios, expressions, filters, and validation, but do not publish each support measure as a separate metric unless it is itself a requested/final business KPI.
+
+## MetricFlow Metric Structure Reference
+
+**measure_proxy** (simple aggregation):
+```yaml
+metric:
+  name: {metric_name}
+  description: "{description}"
+  type: measure_proxy
+  type_params:
+    measure: {measure_name}
+  locked_metadata:
+    tags:
+      - "{category}"
+      - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+For a filtered metric, define a dedicated conditional measure in the semantic model and keep the metric's `type_params.measure` as a string:
+```yaml
+data_source:
+  name: orders
+  measures:
+    - name: completed_order_count
+      description: "Completed order count"
+      agg: SUM
+      expr: "CASE WHEN status = 'completed' THEN 1 ELSE 0 END"
+---
+metric:
+  name: completed_order_count
+  description: "Completed order count"
+  type: measure_proxy
+  type_params:
+    measure: completed_order_count
+```
+
+**ratio** (ratio of two measures):
+```yaml
+metric:
+  name: {metric_name}
+  description: "{description}"
+  type: ratio
+  type_params:
+    numerator: {measure_or_metric_name}
+    denominator: {measure_or_metric_name}
+  locked_metadata:
+    tags:
+      - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+**expr** (expression combining measures):
+```yaml
+metric:
+  name: {metric_name}
+  description: "{description}"
+  type: expr
+  type_params:
+    measures:
+      - measure_a
+      - measure_b
+    expr: "{expression}"  # e.g. "(measure_a - measure_b) / measure_a"
+  locked_metadata:
+    tags:
+      - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+**derived** (expression combining existing metrics):
+```yaml
+metric:
+  name: {metric_name}
+  description: "{description}"
+  type: derived
+  type_params:
+    metrics:
+      - name: metric_a
+        # Optional: period-over-period comparison
+        alias: metric_a_prev
+        offset_window: 1 week    # compare to 1 week ago (WoW)
+      - name: metric_b
+        offset_to_grain: month   # compare to start of current month (MTD)
+    expr: "{expression}"  # e.g. "metric_a / metric_a_prev"
+  locked_metadata:
+    tags:
+      - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+Period-over-period example — a MoM SQL whose final output is `metric_a_mom_delta` should publish a fixed MoM delta metric, not a query-time compare instruction and not a previous-value helper unless that helper is itself the final requested output:
+```yaml
+metric:
+  name: metric_a_mom_delta
+  description: "{metric_a month-over-month delta description}"
+  type: derived
+  type_params:
+    metrics:
+      - name: metric_a
+      - name: metric_a
+        alias: metric_a_prev
+        offset_window: 1 month
+    expr: "metric_a - metric_a_prev"
+```
+
+**cumulative** (running total over time):
+```yaml
+metric:
+  name: {metric_name}
+  description: "{description}"
+  type: cumulative
+  type_params:
+    measure: {measure_name}
+    # Use ONE of:
+    window: {time_window}        # rolling window, e.g. "7 days", "1 month"
+    grain_to_date: month|year    # MTD/YTD - resets at grain boundary
+  locked_metadata:
+    tags:
+      - "subject_tree: {domain}/{layer1}/{layer2}"
+```
+
+Ordinary period-over-period SQL (`LAG`, previous period, DoD/WoW/MoM/QoQ/YoY, delta, or rate) is fixed long-term metric evidence when it is a final business output: monthly YoY is distinct from weekly YoY, MoM rate is distinct from MoM delta, and previous-period value is distinct from a rate. Publish a previous-period metric only when it is itself the requested final output.
 
 ## Important Rules
 

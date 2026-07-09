@@ -884,15 +884,20 @@ class TestBuiltinNodeDefaultSkills:
 
         assert GenTableAgenticNode.DEFAULT_SKILLS == "gen-table"
 
-    def test_gen_metrics_defaults(self):
+    def test_gen_metrics_defaults_derive_from_authoring_format(self):
+        """gen_metrics derives skills dynamically: DEFAULT_SKILLS stays unset, the
+        optional set comes from the authoring format and the spec skill is
+        host-injected via REQUIRED_SKILLS (see test_semantic_authoring.py)."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
-        assert GenMetricsAgenticNode.DEFAULT_SKILLS == "gen-metrics, metricflow-semantic-authoring"
+        assert GenMetricsAgenticNode.DEFAULT_SKILLS is None
+        assert GenMetricsAgenticNode.REQUIRED_SKILLS is None
 
-    def test_gen_semantic_model_defaults(self):
+    def test_gen_semantic_model_defaults_derive_from_authoring_format(self):
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
-        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS == "metricflow-semantic-authoring"
+        assert GenSemanticModelAgenticNode.DEFAULT_SKILLS is None
+        assert GenSemanticModelAgenticNode.REQUIRED_SKILLS is None
 
     def test_gen_dashboard_leaves_defaults_unset(self):
         """gen_dashboard injects {platform}-dashboard dynamically in setup, not via DEFAULT_SKILLS."""
@@ -1097,3 +1102,59 @@ class TestBashToolToggle:
         node.tools = []
         node._ensure_bash_tool_in_tools()
         assert node.tools == []
+
+
+class TestRequiredSkillsInjection:
+    """``REQUIRED_SKILLS`` host-injection primitive (``_inject_required_skills``)."""
+
+    def _make_node(self, mock_agent_config, skill_manager, required):
+        node = MinimalAgenticNode(
+            node_id="required_skills_node",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+        node.skill_manager = skill_manager
+        node.__class__ = type(
+            "RequiredSkillsNode",
+            (MinimalAgenticNode,),
+            {"REQUIRED_SKILLS": required, "get_node_name": lambda self: "test_node"},
+        )
+        return node
+
+    def test_required_skill_content_is_injected(self, mock_agent_config, skill_manager, monkeypatch):
+        node = self._make_node(mock_agent_config, skill_manager, "sql-analysis")
+        monkeypatch.setattr(node, "_inject_memory_context", lambda p, override_node_name=None: p)
+        monkeypatch.setattr(node, "_inject_response_language", lambda p: p)
+
+        result = node._finalize_system_prompt("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert "SQL analysis techniques" in result
+        assert "</required_skill>" in result
+
+    def test_multiple_required_skills_all_injected(self, mock_agent_config, skill_manager):
+        node = self._make_node(mock_agent_config, skill_manager, "sql-analysis, data-profiler")
+
+        result = node._inject_required_skills("base prompt")
+
+        assert '<required_skill name="sql-analysis">' in result
+        assert '<required_skill name="data-profiler">' in result
+
+    def test_missing_required_skill_raises(self, mock_agent_config, skill_manager):
+        from datus.utils.exceptions import DatusException
+
+        node = self._make_node(mock_agent_config, skill_manager, "no-such-skill")
+
+        with pytest.raises(DatusException, match="no-such-skill"):
+            node._inject_required_skills("base prompt")
+
+    def test_no_required_skills_leaves_prompt_unchanged(self, mock_agent_config, skill_manager):
+        node = self._make_node(mock_agent_config, skill_manager, None)
+
+        assert node._inject_required_skills("base prompt") == "base prompt"
+
+    def test_get_required_skills_parses_comma_separated_string(self, mock_agent_config, skill_manager):
+        node = self._make_node(mock_agent_config, skill_manager, " sql-analysis ,, data-profiler ")
+
+        assert node._get_required_skills() == ["sql-analysis", "data-profiler"]

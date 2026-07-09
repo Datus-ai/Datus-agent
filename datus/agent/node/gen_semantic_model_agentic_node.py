@@ -43,7 +43,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
     NODE_NAME = "gen_semantic_model"
     result_class = SemanticNodeResult
-    DEFAULT_SKILLS = "metricflow-semantic-authoring"
 
     def __init__(
         self,
@@ -237,14 +236,19 @@ class GenSemanticModelAgenticNode(AgenticNode):
             logger.error(f"Failed to setup generation tools: {e}")
 
     def _setup_skill_func_tools(self) -> None:
-        """Avoid injecting MetricFlow authoring skills into OSI workflows."""
-        from datus.agent.node.semantic_authoring import is_osi_authoring
+        """Default the optional skill set from the active authoring format."""
+        from datus.agent.node.semantic_authoring import default_optional_skills
 
-        node_config = getattr(self, "node_config", None) or {}
-        if is_osi_authoring(self.agent_config) and "skills" not in node_config:
-            logger.info("Skipping default MetricFlow skills for OSI semantic-model authoring")
-            return
+        if self.node_config.get("skills") is None:
+            self.node_config["skills"] = default_optional_skills(self.agent_config, self.NODE_NAME)
         super()._setup_skill_func_tools()
+
+    def _get_required_skills(self) -> list:
+        """Host-inject the authoring format specification skill."""
+        from datus.agent.node.semantic_authoring import required_authoring_skills
+
+        patterns = required_authoring_skills(self.agent_config, self.NODE_NAME)
+        return [pattern.strip() for pattern in patterns.split(",") if pattern.strip()]
 
     def _setup_hooks(self):
         """Setup hooks for interactive mode."""
@@ -305,8 +309,10 @@ class GenSemanticModelAgenticNode(AgenticNode):
         from datus.agent.node.semantic_authoring import (
             default_osi_semantic_model_file,
             default_osi_semantic_model_name,
+            resolve_authoring_format,
         )
 
+        context["authoring_format"] = resolve_authoring_format(self.agent_config)
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
 
@@ -329,25 +335,12 @@ class GenSemanticModelAgenticNode(AgenticNode):
         Returns:
             System prompt string loaded from the template
         """
-        from datus.agent.node.semantic_authoring import (
-            AUTHORING_FORMAT_OSI,
-            osi_prompt_version,
-            osi_template_name,
-            resolve_authoring_format,
-        )
-
         # ``prompt_version`` kwarg wins over the config default; preserves the
-        # template's signature parity with the other nodes.
-        # OSI mode uses a separate template name so the default metricflow
-        # template and its latest-version scan are left untouched.
-        authoring_format = resolve_authoring_format(self.agent_config)
-        if authoring_format == AUTHORING_FORMAT_OSI:
-            template_name = osi_template_name(self.NODE_NAME)
-            requested = prompt_version or self.node_config.get("prompt_version")
-            version = osi_prompt_version(self.agent_config, self.NODE_NAME, requested)
-        else:
-            template_name = f"{self.NODE_NAME}_system"
-            version = prompt_version or self.node_config.get("prompt_version")
+        # template's signature parity with the other nodes. Both authoring
+        # formats share one template; the format-specific spec is injected as a
+        # required skill.
+        template_name = f"{self.NODE_NAME}_system"
+        version = prompt_version or self.node_config.get("prompt_version")
 
         try:
             # Prepare template variables

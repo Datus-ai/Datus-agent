@@ -1,5 +1,11 @@
-## Optional Historical SQL Profiling
-- If `<available_skills>` includes `semantic-sql-history-profiler` and the request includes historical SQL or success-story SQL, call `load_skill("semantic-sql-history-profiler")` before schema sampling, per-table column-usage analysis, ad hoc `execute_sql` sampling, YAML authoring, or any `write_file` call.
-- After loading the skill, call `profile_semantic_model_evidence` before deciding identifiers, relationships, dimensions, time fields, measures, or field descriptions.
-- When historical SQL is provided inline, pass every provided SQL statement via `sql_entries_json` or `sql_queries`; do not choose only representative examples. Use `query_text` only when direct SQL text is unavailable and existing reference SQL must be searched.
-- Use profiler evidence to choose the semantic model shape and to include compact distribution notes in descriptions when useful.
+## Optional SQL History & Distribution Profiling
+- Skip this section entirely when `semantic-sql-history-profiler` is not listed in `<available_skills>`.
+- Call `load_skill("semantic-sql-history-profiler")` ONLY when the user explicitly asks for profiling, statistics, data-distribution analysis, or mining/analyzing historical SQL. Providing SQL alone is NOT a trigger.
+- When triggered:
+  - Load the skill and call `profile_semantic_model_evidence` BEFORE schema sampling, column-usage analysis, ad hoc `execute_sql` sampling, or writing any YAML, and use its evidence when deciding identifiers, relationships, dimensions, time fields, measures, and descriptions.
+  - Inline historical SQL provided → pass EVERY statement via `sql_entries_json` or `sql_queries` (do not truncate to representative examples); default `profile_mode="sql_only"`.
+  - No SQL text but the user asks to mine stored history → search reference SQL via `query_text` and/or `tables`.
+  - The user asks for statistics or data distributions → `profile_mode="lightweight"` with the target `tables`.
+  - The user explicitly allows slow, thorough exploration → `profile_mode="deep"`.
+- When NOT triggered, do not call the profiler. If historical SQL is present in the request, still use it directly as modeling context (joins, filters, groupings) without the profiler tool.
+- Keep distribution notes in descriptions compact; never dump profiler JSON.

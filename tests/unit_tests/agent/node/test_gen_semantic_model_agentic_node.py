@@ -102,12 +102,32 @@ class TestGenSemanticModelAgenticNodeInit:
         assert "check_semantic_object_exists" in tool_names
         assert "end_semantic_model_generation" in tool_names
 
-        # SemanticDiscoveryTools should be present
+        # SemanticDiscoveryTools should be present; the profiler tool is
+        # registered by default (the optional skill is in the default set).
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
-        assert "profile_semantic_model_evidence" not in tool_names
+        assert "profile_semantic_model_evidence" in tool_names
 
-    def test_semantic_sql_history_profiler_tool_is_skill_gated(self, real_agent_config, mock_llm_create):
-        """Profiler tool is exposed only when the optional skill is configured."""
+    def test_semantic_sql_history_profiler_tool_opt_out(self, real_agent_config, mock_llm_create):
+        """An explicit empty skills entry removes the profiler tool."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        original = dict(real_agent_config.agentic_nodes.get("gen_semantic_model", {}))
+        try:
+            real_agent_config.agentic_nodes["gen_semantic_model"] = {
+                **original,
+                "skills": "",
+            }
+            node = GenSemanticModelAgenticNode(
+                agent_config=real_agent_config,
+                execution_mode="workflow",
+            )
+            tool_names = [tool.name for tool in node.tools]
+            assert "profile_semantic_model_evidence" not in tool_names
+        finally:
+            real_agent_config.agentic_nodes["gen_semantic_model"] = original
+
+    def test_semantic_sql_history_profiler_tool_with_explicit_skills(self, real_agent_config, mock_llm_create):
+        """An explicit skills entry naming the profiler keeps the tool exposed."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
 
         original = dict(real_agent_config.agentic_nodes.get("gen_semantic_model", {}))
@@ -492,22 +512,40 @@ class TestPrepareTemplateContext:
 
 
 class TestGetSystemPrompt:
-    def test_osi_authoring_uses_osi_prompt_template(self, real_agent_config, mock_llm_create):
+    def test_osi_authoring_uses_shared_template_with_osi_context(self, real_agent_config, mock_llm_create):
         _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create)
 
-        with (
-            patch("datus.agent.node.semantic_authoring.osi_prompt_version", return_value="osi-latest") as version_mock,
-            patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm,
-        ):
+        with patch("datus.prompts.prompt_manager.get_prompt_manager") as mock_pm:
             mock_pm.return_value.render_template.return_value = "osi prompt"
 
-            node._get_system_prompt(prompt_version="1.2", template_context={})
+            template_context = node._prepare_template_context(None)
+            node._get_system_prompt(prompt_version="1.2", template_context=template_context)
 
-        version_mock.assert_called_once_with(real_agent_config, "gen_semantic_model", "1.2")
         call_kwargs = mock_pm.return_value.render_template.call_args.kwargs
-        assert call_kwargs["template_name"] == "gen_semantic_model_osi_system"
-        assert call_kwargs["version"] == "osi-latest"
+        # Both formats share one template; the format travels in the context.
+        assert call_kwargs["template_name"] == "gen_semantic_model_system"
+        assert call_kwargs["version"] == "1.2"
+        assert call_kwargs["authoring_format"] == "osi"
+
+    def test_osi_authoring_injects_osi_required_skill(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = _make_node(real_agent_config, mock_llm_create)
+
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(None))
+
+        assert '<required_skill name="osi-semantic-authoring">' in prompt
+        assert "OSI core semantics only" in prompt
+        assert '<required_skill name="metricflow-semantic-authoring">' not in prompt
+
+    def test_metricflow_authoring_injects_metricflow_required_skill(self, real_agent_config, mock_llm_create):
+        node = _make_node(real_agent_config, mock_llm_create)
+
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(None))
+
+        assert '<required_skill name="metricflow-semantic-authoring">' in prompt
+        assert "MetricFlow semantic model structure specification" in prompt
+        assert '<required_skill name="osi-semantic-authoring">' not in prompt
 
 
 # ---------------------------------------------------------------------------

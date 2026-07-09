@@ -58,40 +58,26 @@ agent:
       model: claude      # 可选：默认使用已配置的模型
       max_turns: 30      # 可选：默认为 30
       semantic_adapter: metricflow   # 当仅配置了一个 semantic layer 时可省略
-      # 可选：在生成 YAML 前启用历史 SQL profiling。
-      # 覆盖 skills 时，需要同时保留默认的 MetricFlow 语义模型 skill。
-      skills: "metricflow-semantic-authoring, semantic-sql-history-profiler"
 ```
 
 完整配置项见 [语义层配置](../configuration/semantic_layer.zh.md)。
 
 OSI 生成见 [OSI 语义适配器](../adapters/osi_semantic_adapter.zh.md)。
 
+### Skills（自动装配）
+
+skills 会根据当前激活的 semantic adapter 自动装配，无需配置 `skills:`：
+
+- 建模规范 skill（MetricFlow 对应 `metricflow-semantic-authoring`，OSI 对应 `osi-semantic-authoring`）会在每次运行时注入系统提示词。
+- `semantic-sql-history-profiler` 在两种格式下都默认注册为可选 skill。
+
+如需关闭可选 skill，可在节点上设置 `skills: ""`；也可以列出显式的 skill 名称进行替换。`./.datus/skills/` 下的项目级 skill 会覆盖内置规范。
+
 ### 可选的历史 SQL Profiling
 
-`semantic-sql-history-profiler` 是 `gen_semantic_model` 使用的内部 skill，不是聊天命令，也不能由用户直接调用。需要让语义模型生成基于历史 SQL 或 success-story SQL 做建模证据分析时，可以在 `gen_semantic_model` 节点上启用它。
+`semantic-sql-history-profiler` 是 `gen_semantic_model` 使用的内部 skill，不是聊天命令，也不能由用户直接调用。它默认可用，但**只在用户明确要求**画像、统计、数据分布分析或挖掘/分析历史 SQL 时才会触发——仅提供 SQL 不会触发（这些 SQL 仍会被直接用作建模参考）。
 
-当该 skill 可用，并且请求中包含历史 SQL 或 success-story SQL 时，subagent 会在生成 YAML 前加载它，并调用 `profile_semantic_model_evidence`。这些证据会用于推断 JOIN 关系、常见过滤或分组维度、聚合候选、时间字段、简洁的数据分布说明，以及关系可靠性提示。
-
-MetricFlow 生成场景下，如果覆盖 `skills`，需要把默认语义模型 skill 一起列出：
-
-```yaml
-agent:
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: metricflow
-      skills: "metricflow-semantic-authoring, semantic-sql-history-profiler"
-```
-
-OSI 生成场景下，除非明确需要其他 skill，通常只启用 profiler：
-
-```yaml
-agent:
-  agentic_nodes:
-    gen_semantic_model:
-      semantic_adapter: osi
-      skills: "semantic-sql-history-profiler"
-```
+触发后，subagent 会在生成 YAML 前加载该 skill，并调用 `profile_semantic_model_evidence`。这些证据会用于推断 JOIN 关系、常见过滤或分组维度、聚合候选、时间字段、简洁的数据分布说明，以及关系可靠性提示。
 
 **内置配置**（自动启用）：
 - **工具**：数据库工具、生成工具和文件系统工具

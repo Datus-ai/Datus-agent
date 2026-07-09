@@ -14,15 +14,14 @@ allowed_agents:
 
 # Semantic SQL History Profiler
 
-Use this workflow when the skill is loaded because the user provided historical SQL, success-story SQL, or explicitly asked for profiling. Once loaded, run the profiler before semantic YAML authoring.
+Use this workflow when the skill is loaded because the user explicitly asked for profiling, statistics, data-distribution analysis, or mining/analyzing historical SQL. Providing SQL alone is not a trigger. Once loaded, run the profiler before semantic YAML authoring.
 
 ## Workflow
 
 1. Call `profile_semantic_model_evidence` before writing semantic model YAML.
-   - When historical SQL is provided inline, pass every provided SQL statement via `sql_entries_json` or `sql_queries`; do not choose only representative examples.
+   - When historical SQL is provided inline, pass every provided SQL statement via `sql_entries_json` or `sql_queries`; do not choose only representative examples. Default to `profile_mode="sql_only"`.
    - Use `query_text` only when direct SQL text is unavailable and existing reference SQL must be searched.
-   - Use `profile_mode="sql_only"` when the user wants quick generation.
-   - Use `profile_mode="lightweight"` when sampled field distributions are helpful.
+   - Use `profile_mode="lightweight"` with the target `tables` when the user asks for statistics or field distributions — this also works with no SQL at all (pure bounded distribution profiling).
    - Use `profile_mode="deep"` only when the user explicitly allows a slower exploration.
    - Set conservative bounds such as `max_tables`, `max_columns_per_table`, `top_n`, and `max_profile_seconds`.
 
