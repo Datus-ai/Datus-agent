@@ -66,18 +66,46 @@ OSI 生成见 [OSI 语义适配器](../adapters/osi_semantic_adapter.zh.md)。
 
 ### Skills（自动装配）
 
-skills 会根据当前激活的 semantic adapter 自动装配，无需配置 `skills:`：
+你无需配置 `skills:`——助手会根据当前激活的 semantic adapter 自动选择：
 
-- 建模规范 skill（MetricFlow 对应 `metricflow-semantic-authoring`，OSI 对应 `osi-semantic-authoring`）会在每次运行时注入系统提示词。
-- `semantic-sql-history-profiler` 在两种格式下都默认注册为可选 skill。
+- 对应格式的建模规范（`metricflow-semantic-authoring` 或 `osi-semantic-authoring`）始终生效。
+- 一个历史 SQL profiler 按需可用（见下文）。
 
-如需关闭可选 skill，可在节点上设置 `skills: ""`；也可以列出显式的 skill 名称进行替换。`./.datus/skills/` 下的项目级 skill 会覆盖内置规范。
+如需自定义：设置 `skills: ""` 关闭可选 profiler；或在 `./.datus/skills/` 下放一个同名目录，用你自己的规范替换内置的。
 
-### 可选的历史 SQL Profiling
+### 触发历史 SQL profiling
 
-`semantic-sql-history-profiler` 是 `gen_semantic_model` 使用的内部 skill，不是聊天命令，也不能由用户直接调用。它默认可用，但**只在用户明确要求**画像、统计、数据分布分析或挖掘/分析历史 SQL 时才会触发——仅提供 SQL 不会触发（这些 SQL 仍会被直接用作建模参考）。
+默认情况下，助手只根据表的 DDL 和列注释建模——快、无需额外步骤。当你希望它同时挖掘历史查询或采样真实数据分布时，**在请求里直接说出来即可**：
 
-触发后，subagent 会在生成 YAML 前加载该 skill，并调用 `profile_semantic_model_evidence`。这些证据会用于推断 JOIN 关系、常见过滤或分组维度、聚合候选、时间字段、简洁的数据分布说明，以及关系可靠性提示。
+| 你想要 | 请求示例 |
+|---|---|
+| 仅按 DDL 建模（默认） | `/gen_semantic_model 为 orders 生成语义模型` |
+| 用历史查询作为建模证据 | `/gen_semantic_model 为 orders 及其 join 建模；先分析这些查询：<粘贴 SQL>` |
+| 采样真实值分布 | `/gen_semantic_model 为 orders 建模，写模型前先 profile 一下列的统计信息` |
+
+仅粘贴 SQL **不会**触发 profiling——助手仍会把它当作上下文阅读，但只有你明确要求分析或 profile 时才会真正运行 profiler。这让日常生成保持快速。
+
+profiling 运行时，其发现（取值范围、空值率、去重基数、常见过滤、join 可靠性）会被融入字段 description。例如，助手原本会写成：
+
+```yaml
+- name: amount
+  expression:
+    dialects:
+      - dialect: ANSI_SQL
+        expression: amount
+  dimension:
+    is_time: false
+  description: "订单金额"
+  custom_extensions:
+    - vendor_name: DATUS
+      data: '{"type":"numeric"}'
+```
+
+profiling 后，会带上观测证据、自解释：
+
+```yaml
+  description: "订单金额；观测范围 0–9999，p50 ≈ 120；约 0.3% 为空"
+```
 
 **内置配置**（自动启用）：
 - **工具**：数据库工具、生成工具和文件系统工具

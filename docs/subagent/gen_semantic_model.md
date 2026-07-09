@@ -68,18 +68,46 @@ For OSI generation, see [OSI Semantic Adapter](../adapters/osi_semantic_adapter.
 
 ### Skills (automatic)
 
-Skills are wired automatically from the active semantic adapter — no `skills:` entry is needed:
+You never configure `skills:` — the assistant picks the right ones from the active semantic adapter:
 
-- The authoring specification skill (`metricflow-semantic-authoring` for MetricFlow, `osi-semantic-authoring` for OSI) is injected into the system prompt on every run.
-- `semantic-sql-history-profiler` is registered by default as an optional skill for both formats.
+- The matching authoring guide (`metricflow-semantic-authoring` or `osi-semantic-authoring`) is always applied.
+- A historical-SQL profiler is available on demand (see below).
 
-Set `skills: ""` on the node to opt out of the optional skill set, or list explicit skill names to replace it. Project-level skill overrides under `./.datus/skills/` take precedence over the built-in specifications.
+To customize: set `skills: ""` to disable the optional profiler, or drop a folder with the same name under `./.datus/skills/` to replace a built-in guide with your own.
 
-### Optional Historical SQL Profiling
+### Triggering historical-SQL profiling
 
-`semantic-sql-history-profiler` is an internal skill for `gen_semantic_model`, not a chat command or user-invocable skill. It is available by default and triggers **only when the user explicitly asks** for profiling, statistics, data-distribution analysis, or mining/analyzing historical SQL — providing SQL alone does not trigger it (the SQL is still used directly as modeling context).
+By default the assistant models a table from its DDL and column comments — fast, no extra steps. When you want it to also mine your historical queries or sample real data distributions, **just ask for it in your request**:
 
-When triggered, the subagent loads the skill before generating YAML and calls `profile_semantic_model_evidence`. The evidence is used to infer join relationships, commonly filtered or grouped dimensions, aggregate candidates, time fields, compact distribution notes, and relationship reliability hints.
+| What you want | Example request |
+|---|---|
+| Model from DDL only (default) | `/gen_semantic_model generate a semantic model for orders` |
+| Use past queries as modeling evidence | `/gen_semantic_model model orders and its joins; analyze these queries first: <paste SQL>` |
+| Sample real value distributions | `/gen_semantic_model model orders and profile its column statistics before writing the model` |
+
+Pasting SQL alone does **not** trigger profiling — the assistant still reads it as context, but only runs the profiler when you explicitly ask to analyze or profile. This keeps everyday generation quick.
+
+When profiling runs, its findings (value ranges, null rates, distinct counts, common filters, join reliability) are folded into the field descriptions. For example, a field the assistant would normally write as:
+
+```yaml
+- name: amount
+  expression:
+    dialects:
+      - dialect: ANSI_SQL
+        expression: amount
+  dimension:
+    is_time: false
+  description: "Order amount"
+  custom_extensions:
+    - vendor_name: DATUS
+      data: '{"type":"numeric"}'
+```
+
+becomes, after profiling, self-documenting with observed evidence:
+
+```yaml
+  description: "Order amount; observed range 0–9,999, p50 ≈ 120; ~0.3% null"
+```
 
 **Built-in configurations** (automatically enabled):
 - **Tools**: Database tools, generation tools, and filesystem tools
