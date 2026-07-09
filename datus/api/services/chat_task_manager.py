@@ -606,7 +606,13 @@ class ChatTaskManager:
                     # server-side. The empty set reaches the SSE converter so
                     # call-tool frames carry ``proxied: false`` and the client
                     # knows not to execute them itself.
-                    node.proxied_tool_names = set()
+                    # Mutate in place like ``apply_proxy_tools`` does —
+                    # PermissionHooks may hold a shared reference to the set.
+                    existing_proxied = getattr(node, "proxied_tool_names", None)
+                    if isinstance(existing_proxied, set):
+                        existing_proxied.clear()
+                    else:
+                        node.proxied_tool_names = set()
                     logger.info(
                         "Filesystem tools run server-side for session=%s (profile=%s)", session_id, active_profile
                     )

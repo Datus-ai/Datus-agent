@@ -440,6 +440,11 @@ class TestChatTaskManagerBehavior:
             session_id = f"s-web-{profile}"
             permission_manager = SimpleNamespace(active_profile=profile)
 
+            def __init__(self):
+                # Simulate a pre-populated shared set (PermissionHooks may
+                # hold a reference): the skip path must clear it in place.
+                self.proxied_tool_names = {"write_file"}
+
             def get_node_name(self):
                 return "chat"
 
@@ -450,8 +455,11 @@ class TestChatTaskManagerBehavior:
             async def get_last_turn_usage(self):
                 return None
 
+        node = FakeNode()
+        shared_ref = node.proxied_tool_names
+
         manager = ChatTaskManager()
-        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        manager._create_node = lambda *args, **kwargs: node  # type: ignore[method-assign]
         task = ChatTask(session_id=f"s-web-{profile}", asyncio_task=MagicMock())
 
         with patch("datus.api.services.chat_task_manager.apply_proxy_tools") as mock_apply:
@@ -462,7 +470,10 @@ class TestChatTaskManagerBehavior:
             )
 
         mock_apply.assert_not_called()
-        assert task.node.proxied_tool_names == set()
+        # In-place clear, not rebinding — hooks holding the old reference
+        # must observe the emptied set.
+        assert task.node.proxied_tool_names is shared_ref
+        assert shared_ref == set()
         assert task.status == "completed"
 
     @pytest.mark.asyncio
