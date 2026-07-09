@@ -26,7 +26,10 @@ The complete metric authoring specification for this run — YAML structure, met
 {% endfor %}
 {% else %}## Subject Classification (REQUIRED)
 
-Every metric MUST include a `subject_tree` classification in the format `{domain}/{layer1}/{layer2}`. Reuse existing classifications when possible; create a new one only when none fit.
+Every metric MUST include a `subject_tree` classification in the format `{domain}/{layer1}/{layer2}` that organizes metrics by **business meaning**, so a business user can browse the catalog by area:
+- Derive each level from the metric's business purpose (its `description` / `ai_context`), not from physical structure. Do NOT use the datasource, table, or raw column name as a level, and do NOT make the aggregation function (`count`, `sum`, `average`, `max`, `min`) a level.
+- Keep variants of one business concept together: the average, max, min, and total of the same measure share one branch (e.g. `operations/service_quality/response_score`), rather than splitting into `.../average`, `.../max` leaves.
+- Prefer stable, reusable business domains such as `marketing/campaign_performance`, `finance/budget`, or `operations/fulfillment`. Reuse an existing classification when one fits; create a new one only when none does.
 {% if existing_subject_trees %}
 **Existing Subject Categories** (reuse when possible):
 {% for subject in existing_subject_trees %}
