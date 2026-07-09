@@ -1393,10 +1393,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#optional-historical-sql-profiling" class="md-nav__link">
+  <a href="#skills-automatic" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Optional Historical SQL Profiling
+        Skills (automatic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#triggering-historical-sql-profiling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggering historical-SQL profiling
       
     </span>
   </a>
@@ -4244,10 +4255,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#optional-historical-sql-profiling" class="md-nav__link">
+  <a href="#skills-automatic" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Optional Historical SQL Profiling
+        Skills (automatic)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#triggering-historical-sql-profiling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Triggering historical-SQL profiling
       
     </span>
   </a>
@@ -4377,28 +4399,56 @@
 </span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude</span><span class="w">      </span><span class="c1"># Optional: defaults to configured model</span>
 </span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">      </span><span class="nt">max_turns</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">      </span><span class="c1"># Optional: defaults to 30</span>
 </span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span><span class="w">   </span><span class="c1"># Optional when only one semantic layer is configured</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">      </span><span class="c1"># Optional: enable historical SQL profiling before YAML generation.</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">      </span><span class="c1"># Keep the default MetricFlow semantic-model skill when overriding skills.</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">      </span><span class="nt">skills</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;metricflow-semantic-authoring,</span><span class="nv"> </span><span class="s">semantic-sql-history-profiler&quot;</span>
 </span></code></pre></div>
 <p>See <a href="../../configuration/semantic_layer/">Semantic Layer Configuration</a> for the full set of options.</p>
 <p>For OSI generation, see <a href="../../adapters/osi_semantic_adapter/">OSI Semantic Adapter</a>.</p>
-<h3 id="optional-historical-sql-profiling">Optional Historical SQL Profiling<a class="headerlink" href="#optional-historical-sql-profiling" title="Permanent link">&para;</a></h3>
-<p><code>semantic-sql-history-profiler</code> is an internal skill for <code>gen_semantic_model</code>, not a chat command or user-invocable skill. Enable it on the <code>gen_semantic_model</code> node when you want semantic-model generation to use historical SQL or success-story SQL as modeling evidence.</p>
-<p>When the skill is available and the request includes historical SQL or success-story SQL, the subagent loads it before generating YAML and calls <code>profile_semantic_model_evidence</code>. The evidence is used to infer join relationships, commonly filtered or grouped dimensions, aggregate candidates, time fields, compact distribution notes, and relationship reliability hints.</p>
-<p>For MetricFlow generation, keep the default MetricFlow semantic-model skill when you override <code>skills</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">gen_semantic_model</span><span class="p">:</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">skills</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;metricflow-semantic-authoring,</span><span class="nv"> </span><span class="s">semantic-sql-history-profiler&quot;</span>
+<h3 id="skills-automatic">Skills (automatic)<a class="headerlink" href="#skills-automatic" title="Permanent link">&para;</a></h3>
+<p>You never configure <code>skills:</code> — the assistant picks the right ones from the active semantic adapter:</p>
+<ul>
+<li>The matching authoring guide (<code>metricflow-semantic-authoring</code> or <code>osi-semantic-authoring</code>) is always applied.</li>
+<li>A historical-SQL profiler is available on demand (see below).</li>
+</ul>
+<p>To customize: set <code>skills: ""</code> to disable the optional profiler, or drop a folder with the same name under <code>./.datus/skills/</code> to replace a built-in guide with your own.</p>
+<h3 id="triggering-historical-sql-profiling">Triggering historical-SQL profiling<a class="headerlink" href="#triggering-historical-sql-profiling" title="Permanent link">&para;</a></h3>
+<p>By default the assistant models a table from its DDL and column comments — fast, no extra steps. When you want it to also mine your historical queries or sample real data distributions, <strong>just ask for it in your request</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>What you want</th>
+<th>Example request</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model from DDL only (default)</td>
+<td><code>/gen_semantic_model generate a semantic model for orders</code></td>
+</tr>
+<tr>
+<td>Use past queries as modeling evidence</td>
+<td><code>/gen_semantic_model model orders and its joins; analyze these queries first: &lt;paste SQL&gt;</code></td>
+</tr>
+<tr>
+<td>Sample real value distributions</td>
+<td><code>/gen_semantic_model model orders and profile its column statistics before writing the model</code></td>
+</tr>
+</tbody>
+</table>
+<p>Pasting SQL alone does <strong>not</strong> trigger profiling — the assistant still reads it as context, but only runs the profiler when you explicitly ask to analyze or profile. This keeps everyday generation quick.</p>
+<p>When profiling runs, its findings (value ranges, null rates, distinct counts, common filters, join reliability) are folded into the field descriptions. For example, a field the assistant would normally write as:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">amount</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">expression</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">dialects</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ANSI_SQL</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">amount</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">dimension</span><span class="p">:</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">is_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Order</span><span class="nv"> </span><span class="s">amount&quot;</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="nt">custom_extensions</span><span class="p">:</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">      </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{&quot;type&quot;:&quot;numeric&quot;}&#39;</span>
 </span></code></pre></div>
-<p>For OSI generation, enable only the profiler unless you intentionally need another skill:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">agentic_nodes</span><span class="p">:</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">gen_semantic_model</span><span class="p">:</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">semantic_adapter</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">osi</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">      </span><span class="nt">skills</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;semantic-sql-history-profiler&quot;</span>
+<p>becomes, after profiling, self-documenting with observed evidence:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="w">  </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Order</span><span class="nv"> </span><span class="s">amount;</span><span class="nv"> </span><span class="s">observed</span><span class="nv"> </span><span class="s">range</span><span class="nv"> </span><span class="s">0–9,999,</span><span class="nv"> </span><span class="s">p50</span><span class="nv"> </span><span class="s">≈</span><span class="nv"> </span><span class="s">120;</span><span class="nv"> </span><span class="s">~0.3%</span><span class="nv"> </span><span class="s">null&quot;</span>
 </span></code></pre></div>
 <p><strong>Built-in configurations</strong> (automatically enabled):
 - <strong>Tools</strong>: Database tools, generation tools, and filesystem tools
