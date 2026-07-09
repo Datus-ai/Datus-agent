@@ -178,6 +178,31 @@ def trans_to_function_tool(
                     )
                     args_dict = {k: v for k, v in args_dict.items() if k in valid_params}
 
+            # Reject missing required parameters symmetrically with the extra/
+            # excluded-parameter handling above. Without this, an LLM tool call
+            # that omits a required argument (e.g. ``edit_file`` without
+            # ``path``) reaches ``method_to_call(**args_dict)`` and raises a raw
+            # ``TypeError`` at bind time. That exception is uncaught here and
+            # aborts the whole agent interaction/batch, silently dropping work.
+            # Returning a recoverable error lets the model retry in-turn, the
+            # same as it does for malformed JSON or unsupported parameters.
+            missing_required = {
+                name
+                for name, param in sig.parameters.items()
+                if name != "self"
+                and name not in excluded_param_set
+                and param.default is inspect.Parameter.empty
+                and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+                and name not in args_dict
+            }
+            if missing_required:
+                params = ", ".join(sorted(missing_required))
+                return {
+                    "success": 0,
+                    "error": f"Missing required parameter(s) for '{method_to_call.__name__}': {params}",
+                    "result": None,
+                }
+
             if inspect.iscoroutinefunction(method_to_call):
                 result = await method_to_call(**args_dict)
             else:

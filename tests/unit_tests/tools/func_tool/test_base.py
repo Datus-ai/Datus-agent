@@ -124,6 +124,78 @@ class TestTransToFunctionTool:
         assert result["error"] == "Unsupported parameters for this tool: catalog"
 
     @pytest.mark.asyncio
+    async def test_missing_required_parameter_returns_recoverable_error(self):
+        """Omitting a required arg must yield a recoverable error, not a crash.
+
+        Regression: a tool call that drops a required argument (e.g. ``edit_file``
+        without ``path``) previously reached ``method_to_call(**args_dict)`` and
+        raised a raw ``TypeError`` at bind time, aborting the whole agent
+        interaction. The dispatcher now rejects it up front so the model can retry.
+        """
+
+        class FakeTool:
+            def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
+                return FuncToolResult(result="edited")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.edit_file)
+
+        args = json.dumps({"old_string": "a", "new_string": "b"})  # path omitted
+        result = await tool.on_invoke_tool(None, args)
+
+        assert result["success"] == 0
+        assert "Missing required parameter(s)" in result["error"]
+        assert "path" in result["error"]
+        assert "edit_file" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_missing_multiple_required_parameters_are_all_reported(self):
+        class FakeTool:
+            def combine(self, a: str, b: str, c: int = 0) -> FuncToolResult:
+                return FuncToolResult(result="ok")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.combine)
+
+        result = await tool.on_invoke_tool(None, json.dumps({"c": 5}))  # a, b omitted
+
+        assert result["success"] == 0
+        assert "a" in result["error"] and "b" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_all_required_present_still_runs(self):
+        """The guard must not block a well-formed call (no false positives)."""
+
+        class FakeTool:
+            def edit_file(self, path: str, old_string: str, new_string: str) -> FuncToolResult:
+                return FuncToolResult(result={"path": path})
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.edit_file)
+
+        args = json.dumps({"path": "orders.yml", "old_string": "a", "new_string": "b"})
+        result = await tool.on_invoke_tool(None, args)
+
+        assert result["success"] == 1
+        assert result["result"] == {"path": "orders.yml"}
+
+    @pytest.mark.asyncio
+    async def test_optional_parameters_may_be_omitted(self):
+        """Parameters with defaults are not required and may be omitted."""
+
+        class FakeTool:
+            def search_table(self, query_text: str, top_n: int = 5) -> FuncToolResult:
+                return FuncToolResult(result={"query_text": query_text, "top_n": top_n})
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.search_table)
+
+        result = await tool.on_invoke_tool(None, json.dumps({"query_text": "hello"}))
+
+        assert result["success"] == 1
+        assert result["result"] == {"query_text": "hello", "top_n": 5}
+
+    @pytest.mark.asyncio
     async def test_sync_tool_runs_off_the_event_loop_thread(self):
         """Synchronous tool methods must be offloaded to a worker thread.
 
