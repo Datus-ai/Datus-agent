@@ -4,6 +4,8 @@
 
 """Unit tests for ``datus.plugins`` dispatch + ``--profile``/``--config`` split."""
 
+from typing import Any, Optional
+
 from datus.cli import main as cli_main
 from datus.cli.main import _dispatch_plugin_command, _split_plugin_globals
 
@@ -42,28 +44,34 @@ def test_split_no_globals():
 class _StubPlugin:
     """Records how datus constructed and drove it."""
 
-    last = {}
+    last: dict = {}
 
-    def __init__(self, profile=None):
+    def __init__(self, profile: Optional[dict] = None) -> None:
         _StubPlugin.last["profile"] = profile
 
-    def run_cli(self, argv):
+    def run_cli(self, argv: list[str]) -> int:
         _StubPlugin.last["argv"] = argv
         return 7
 
 
 class _StubConfig:
-    def __init__(self, profile):
+    def __init__(self, profile: dict) -> None:
         self._profile = profile
-        self.requested = {}
+        self.requested: dict = {}
 
-    def get_plugin_profile(self, name, profile=None):
+    def get_plugin_profile(self, name: str, profile: Optional[str] = None) -> dict:
         self.requested["name"] = name
         self.requested["profile"] = profile
         return self._profile
 
 
-def _patch_dispatch(monkeypatch, *, plugin_cls, profile_dict, load_calls=None):
+def _patch_dispatch(
+    monkeypatch: Any,
+    *,
+    plugin_cls: type,
+    profile_dict: dict,
+    load_calls: Optional[list] = None,
+) -> "_StubConfig":
     monkeypatch.setattr("datus.plugins.registry.plugin_entry_point_exists", lambda name: True)
     monkeypatch.setattr("datus.plugins.registry.load_plugin_class", lambda name: plugin_cls)
 
@@ -195,12 +203,12 @@ def test_dispatch_run_cli_none_maps_to_zero(monkeypatch):
     assert _dispatch_plugin_command(["hello", "version"]) == 0
 
 
-def _rc_plugin(rc_value):
+def _rc_plugin(rc_value: Any) -> type:
     class _Rc:
-        def __init__(self, profile=None):
+        def __init__(self, profile: Optional[dict] = None) -> None:
             pass
 
-        def run_cli(self, argv):
+        def run_cli(self, argv: list[str]) -> Any:
             return rc_value
 
     return _Rc

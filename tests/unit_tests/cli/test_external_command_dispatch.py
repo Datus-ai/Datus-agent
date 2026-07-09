@@ -5,35 +5,37 @@
 """Unit tests for the ``datus.cli_commands`` entry-point dispatch in main()."""
 
 import importlib.metadata as importlib_metadata
+from collections.abc import Callable
+from typing import Any, Optional
 
 from datus.cli.main import _dispatch_external_command
 
 
 class _FakeEntryPoint:
-    def __init__(self, name, handler, *, raises=False):
+    def __init__(self, name: str, handler: Optional[Callable[[list[str]], object]], *, raises: bool = False) -> None:
         self.name = name
         self.group = "datus.cli_commands"
         self._handler = handler
         self._raises = raises
 
-    def load(self):
+    def load(self) -> Optional[Callable[[list[str]], object]]:
         if self._raises:
             raise ImportError("cannot import adapter cli")
         return self._handler
 
 
 class _FakeEntryPoints:
-    def __init__(self, eps):
+    def __init__(self, eps: list["_FakeEntryPoint"]) -> None:
         self._eps = eps
 
-    def select(self, *, group, name=None):
+    def select(self, *, group: str, name: Optional[str] = None) -> list["_FakeEntryPoint"]:
         out = [ep for ep in self._eps if ep.group == group]
         if name is not None:
             out = [ep for ep in out if ep.name == name]
         return out
 
 
-def _patch(monkeypatch, eps):
+def _patch(monkeypatch: Any, eps: list["_FakeEntryPoint"]) -> None:
     monkeypatch.setattr(importlib_metadata, "entry_points", lambda: _FakeEntryPoints(eps))
 
 

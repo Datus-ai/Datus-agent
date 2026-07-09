@@ -10,7 +10,7 @@ transformers, chaining order, malformed-argument passthrough, and the
 node-level ``apply_tool_transformers`` matching/skipping behavior.
 """
 
-import asyncio
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -19,6 +19,7 @@ from agents import FunctionTool
 
 from datus.tools.middleware.tool_middleware import (
     apply_tool_transformers,
+    tool_is_transformed,
     wrap_tool_with_transformers,
 )
 from datus.tools.registry.tool_registry import ToolRegistry
@@ -41,13 +42,9 @@ def _make_tool(name="execute_sql", record=None):
     )
 
 
-def _run(coro):
-    return asyncio.run(coro)
-
-
-@pytest.mark.ci
 class TestWrapToolWithTransformers:
-    def test_rewrite_reaches_original_tool(self):
+    @pytest.mark.asyncio
+    async def test_rewrite_reaches_original_tool(self):
         record = []
         tool = _make_tool(record=record)
 
@@ -57,7 +54,7 @@ class TestWrapToolWithTransformers:
             return args
 
         wrapped = wrap_tool_with_transformers(tool, [add_scope])
-        result = _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT * FROM orders"})))
+        result = await wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT * FROM orders"}))
 
         assert result["success"] == 1
         assert json.loads(record[0]) == {"sql": "SELECT * FROM orders WHERE tenant_id = 't1'"}
@@ -78,7 +75,21 @@ class TestWrapToolWithTransformers:
         wrapped = wrap_tool_with_transformers(tool, [lambda n, a, c: a])
         assert wrapped.is_enabled is False
 
-    def test_transformer_exception_denies_fail_closed(self):
+    def test_wrapped_tool_carries_all_declared_fields(self):
+        # The clone must forward every FunctionTool dataclass field except
+        # ``on_invoke_tool`` so approval/timeout/guardrail settings survive
+        # across openai-agents SDK versions that add new fields.
+        tool = _make_tool()
+        wrapped = wrap_tool_with_transformers(tool, [lambda n, a, c: a])
+        # ``on_invoke_tool`` is the single field the wrapper intentionally replaces.
+        assert wrapped.on_invoke_tool is not tool.on_invoke_tool
+        carried = [f.name for f in dataclasses.fields(FunctionTool) if f.name != "on_invoke_tool"]
+        assert {name: getattr(wrapped, name) for name in carried} == {name: getattr(tool, name) for name in carried}
+        assert tool_is_transformed(wrapped)
+        assert not tool_is_transformed(tool)
+
+    @pytest.mark.asyncio
+    async def test_transformer_exception_denies_fail_closed(self):
         record = []
         tool = _make_tool(record=record)
 
@@ -86,24 +97,26 @@ class TestWrapToolWithTransformers:
             raise ValueError("tenant scope missing")
 
         wrapped = wrap_tool_with_transformers(tool, [deny])
-        result = _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"})))
+        result = await wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"}))
 
         assert result["success"] == 0
         assert "tenant scope missing" in result["error"]
         assert result["result"] is None
         assert record == []  # original tool never executed
 
-    def test_non_dict_return_denies_fail_closed(self):
+    @pytest.mark.asyncio
+    async def test_non_dict_return_denies_fail_closed(self):
         record = []
         tool = _make_tool(record=record)
         wrapped = wrap_tool_with_transformers(tool, [lambda n, a, c: "not a dict"])
-        result = _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"})))
+        result = await wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"}))
 
         assert result["success"] == 0
         assert "str" in result["error"]
         assert record == []
 
-    def test_async_transformer_supported(self):
+    @pytest.mark.asyncio
+    async def test_async_transformer_supported(self):
         record = []
         tool = _make_tool(record=record)
 
@@ -112,12 +125,13 @@ class TestWrapToolWithTransformers:
             return args
 
         wrapped = wrap_tool_with_transformers(tool, [async_rewrite])
-        result = _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"})))
+        result = await wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"}))
 
         assert result["success"] == 1
         assert json.loads(record[0]) == {"sql": "SELECT 2"}
 
-    def test_transformers_chain_in_order(self):
+    @pytest.mark.asyncio
+    async def test_transformers_chain_in_order(self):
         record = []
         tool = _make_tool(record=record)
 
@@ -130,11 +144,12 @@ class TestWrapToolWithTransformers:
             return args
 
         wrapped = wrap_tool_with_transformers(tool, [first, second])
-        _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "base"})))
+        await wrapped.on_invoke_tool(None, json.dumps({"sql": "base"}))
 
         assert json.loads(record[0]) == {"sql": "base|first|second"}
 
-    def test_chain_stops_at_first_denial(self):
+    @pytest.mark.asyncio
+    async def test_chain_stops_at_first_denial(self):
         record = []
         calls = []
         tool = _make_tool(record=record)
@@ -148,13 +163,14 @@ class TestWrapToolWithTransformers:
             return args
 
         wrapped = wrap_tool_with_transformers(tool, [deny, never])
-        result = _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"})))
+        result = await wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT 1"}))
 
         assert result["success"] == 0
         assert calls == ["deny"]
         assert record == []
 
-    def test_malformed_json_passes_through_untouched(self):
+    @pytest.mark.asyncio
+    async def test_malformed_json_passes_through_untouched(self):
         record = []
         tool = _make_tool(record=record)
 
@@ -162,19 +178,21 @@ class TestWrapToolWithTransformers:
             raise AssertionError("transformer must not run on malformed args")
 
         wrapped = wrap_tool_with_transformers(tool, [never])
-        result = _run(wrapped.on_invoke_tool(None, "{not json"))
+        result = await wrapped.on_invoke_tool(None, "{not json")
 
         assert result["success"] == 1
         assert record == ["{not json"]
 
-    def test_non_object_json_passes_through_untouched(self):
+    @pytest.mark.asyncio
+    async def test_non_object_json_passes_through_untouched(self):
         record = []
         tool = _make_tool(record=record)
         wrapped = wrap_tool_with_transformers(tool, [lambda n, a, c: a])
-        _run(wrapped.on_invoke_tool(None, json.dumps([1, 2])))
+        await wrapped.on_invoke_tool(None, json.dumps([1, 2]))
         assert record == ["[1, 2]"]
 
-    def test_context_provider_called_per_invocation(self):
+    @pytest.mark.asyncio
+    async def test_context_provider_called_per_invocation(self):
         tool = _make_tool()
         principal_holder = {"tenant": "t1"}
         seen = []
@@ -184,13 +202,14 @@ class TestWrapToolWithTransformers:
             return args
 
         wrapped = wrap_tool_with_transformers(tool, [transformer], lambda: {"principal": dict(principal_holder)})
-        _run(wrapped.on_invoke_tool(None, "{}"))
+        await wrapped.on_invoke_tool(None, "{}")
         principal_holder["tenant"] = "t2"
-        _run(wrapped.on_invoke_tool(None, "{}"))
+        await wrapped.on_invoke_tool(None, "{}")
 
         assert seen == [{"tenant": "t1"}, {"tenant": "t2"}]
 
-    def test_context_provider_failure_yields_empty_context(self):
+    @pytest.mark.asyncio
+    async def test_context_provider_failure_yields_empty_context(self):
         tool = _make_tool()
         seen = []
 
@@ -202,16 +221,17 @@ class TestWrapToolWithTransformers:
             raise RuntimeError("no context")
 
         wrapped = wrap_tool_with_transformers(tool, [transformer], broken_provider)
-        result = _run(wrapped.on_invoke_tool(None, "{}"))
+        result = await wrapped.on_invoke_tool(None, "{}")
 
         assert result["success"] == 1
         assert seen == [{}]
 
-    def test_non_ascii_args_survive_roundtrip(self):
+    @pytest.mark.asyncio
+    async def test_non_ascii_args_survive_roundtrip(self):
         record = []
         tool = _make_tool(record=record)
         wrapped = wrap_tool_with_transformers(tool, [lambda n, a, c: a])
-        _run(wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT '租户'"}, ensure_ascii=False)))
+        await wrapped.on_invoke_tool(None, json.dumps({"sql": "SELECT '租户'"}, ensure_ascii=False))
         assert json.loads(record[0]) == {"sql": "SELECT '租户'"}
 
 
@@ -226,9 +246,9 @@ def _make_node(tools, registry_map=None, proxied=None):
     )
 
 
-@pytest.mark.ci
 class TestApplyToolTransformers:
-    def test_wraps_matching_tool_by_name(self):
+    @pytest.mark.asyncio
+    async def test_wraps_matching_tool_by_name(self):
         record = []
         node = _make_node([_make_tool("execute_sql", record), _make_tool("read_file")])
 
@@ -239,7 +259,7 @@ class TestApplyToolTransformers:
         wrapped_count = apply_tool_transformers(node, {"execute_sql": [rewrite]})
 
         assert wrapped_count == 1
-        _run(node.tools[0].on_invoke_tool(None, json.dumps({"sql": "x"})))
+        await node.tools[0].on_invoke_tool(None, json.dumps({"sql": "x"}))
         assert json.loads(record[0]) == {"sql": "REWRITTEN"}
 
     def test_category_wildcard_uses_registry(self):
@@ -268,7 +288,33 @@ class TestApplyToolTransformers:
         assert wrapped_count == 1
         assert node.tools[0] is sentinel
 
-    def test_context_carries_node_fields(self):
+    @pytest.mark.asyncio
+    async def test_reapply_skips_already_wrapped_tool(self):
+        # A second pass over the same node (e.g. after a tool-list rebuild reset
+        # the node's applied flag) must not re-wrap an already-wrapped tool, or
+        # the transformers would run twice per call.
+        record = []
+        calls = []
+        node = _make_node([_make_tool("execute_sql", record)])
+
+        def rewrite(tool_name, args, context):
+            calls.append(1)
+            args["sql"] = args.get("sql", "") + "|x"
+            return args
+
+        assert apply_tool_transformers(node, {"execute_sql": [rewrite]}) == 1
+        wrapped = node.tools[0]
+        # Re-run: the tool is already transformed, so nothing new is wrapped.
+        assert apply_tool_transformers(node, {"execute_sql": [rewrite]}) == 0
+        assert node.tools[0] is wrapped
+
+        await node.tools[0].on_invoke_tool(None, json.dumps({"sql": "base"}))
+        # Transformer ran exactly once — no double-wrapping.
+        assert calls == [1]
+        assert json.loads(record[0]) == {"sql": "base|x"}
+
+    @pytest.mark.asyncio
+    async def test_context_carries_node_fields(self):
         seen = {}
 
         def transformer(tool_name, args, context):
@@ -277,14 +323,15 @@ class TestApplyToolTransformers:
 
         node = _make_node([_make_tool("execute_sql")])
         apply_tool_transformers(node, {"execute_sql": [transformer]})
-        _run(node.tools[0].on_invoke_tool(None, "{}"))
+        await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen["node_name"] == "chat"
         assert seen["principal"] == {"tenant": {"id": "t1"}}
         assert seen["project_root"] == "/proj"
         assert seen["agent_config"] is node.agent_config
 
-    def test_principal_read_fresh_per_call(self):
+    @pytest.mark.asyncio
+    async def test_principal_read_fresh_per_call(self):
         seen = []
 
         def transformer(tool_name, args, context):
@@ -293,13 +340,14 @@ class TestApplyToolTransformers:
 
         node = _make_node([_make_tool("execute_sql")])
         apply_tool_transformers(node, {"execute_sql": [transformer]})
-        _run(node.tools[0].on_invoke_tool(None, "{}"))
+        await node.tools[0].on_invoke_tool(None, "{}")
         node.db_func_tool.principal = {"tenant": {"id": "t2"}}
-        _run(node.tools[0].on_invoke_tool(None, "{}"))
+        await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen == [{"tenant": {"id": "t1"}}, {"tenant": {"id": "t2"}}]
 
-    def test_multiple_patterns_accumulate_on_one_tool(self):
+    @pytest.mark.asyncio
+    async def test_multiple_patterns_accumulate_on_one_tool(self):
         record = []
         node = _make_node([_make_tool("execute_sql", record)], registry_map={"execute_sql": "db_tools"})
 
@@ -313,6 +361,6 @@ class TestApplyToolTransformers:
 
         wrapped_count = apply_tool_transformers(node, {"execute_sql": [first], "db_tools.*": [second]})
         assert wrapped_count == 1
-        _run(node.tools[0].on_invoke_tool(None, json.dumps({"sql": "base"})))
+        await node.tools[0].on_invoke_tool(None, json.dumps({"sql": "base"}))
         assert json.loads(record[0])["sql"].startswith("base|")
         assert set(json.loads(record[0])["sql"].split("|")[1:]) == {"byname", "bycat"}

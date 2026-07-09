@@ -462,6 +462,18 @@ class PermissionManager:
         # the same instance, so mutating ``global_config.rules`` below would
         # corrupt the singleton.
         base_copy = self._copy_config(base)
+        # Re-apply plugin-declared bash rules for the new profile BEFORE user
+        # overrides — a rebuild starts from the bare profile singleton, which
+        # never carries them. Order matters: ``build_effective_config`` (startup)
+        # layers plugin rules into the profile base and only then merges user
+        # rules, so merging in the same order here keeps runtime ``/profile``
+        # switches identical to startup — same-kind ask patterns then bucket and
+        # match project grants the same way. Same ``bash_commands is not None``
+        # guard: ``dangerous`` intentionally has no command-level ruleset and
+        # stays fully open.
+        plugin_rules = self._plugin_bash_rules.get(profile_name)
+        if plugin_rules is not None and base_copy.bash_commands is not None:
+            base_copy.bash_commands = base_copy.bash_commands.merge_with(plugin_rules)
         self.global_config = base_copy.merge_with(user_overrides) if user_overrides else base_copy
         # Re-inject persistent rules at the front so last-match-wins still
         # lets explicit YAML rules override them, while bare profile defaults
@@ -469,13 +481,6 @@ class PermissionManager:
         for rule in self._persistent_rules:
             if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
                 self.global_config.rules.insert(0, rule)
-        # Re-apply plugin-declared bash rules for the new profile — a rebuild
-        # starts from the bare profile singleton, which never carries them.
-        # Same ``bash_commands is not None`` guard as below: ``dangerous``
-        # intentionally has no command-level ruleset and stays fully open.
-        plugin_rules = self._plugin_bash_rules.get(profile_name)
-        if plugin_rules is not None and self.global_config.bash_commands is not None:
-            self.global_config.bash_commands = self.global_config.bash_commands.merge_with(plugin_rules)
         # Re-apply project-scope bash allows granted earlier this session —
         # but only when the rebuilt config already carries a command-level
         # ruleset. Installing one where the profile intentionally left

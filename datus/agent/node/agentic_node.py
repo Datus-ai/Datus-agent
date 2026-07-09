@@ -2581,6 +2581,14 @@ class AgenticNode(Node):
         existing = [t for t in (getattr(self, "tools", None) or []) if getattr(t, "name", None) not in web_names]
         existing.extend(desired)
         self.tools = existing
+        # The tool list was rebuilt: freshly mounted web tools are unwrapped, so
+        # clear the "transformers applied" flag to force a re-wrap on the next
+        # ``_ensure_tool_transformers`` pass. Without this, a runtime ``/model``
+        # switch that remounts web tools would leave them unwrapped and matching
+        # plugin transformers (policy enforcement) would silently fail open.
+        # ``apply_tool_transformers`` skips already-wrapped tools, so the re-wrap
+        # never double-transforms the tools carried over above.
+        self._tool_transformers_applied = False
         if desired:
             logger.info(
                 f"Web tools injected into node '{self.get_node_name()}': "

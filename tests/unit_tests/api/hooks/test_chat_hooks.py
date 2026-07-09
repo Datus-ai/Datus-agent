@@ -252,8 +252,12 @@ class TestStreamChatGeneratorError:
         assert len(error_chunks) == 1
         data_line = next(line for line in error_chunks[0].splitlines() if line.startswith("data: "))
         payload = json.loads(data_line[len("data: ") :])
-        assert payload["error_type"] == "RuntimeError"
-        assert "boom from tool runner" in payload["error"]
+        # An unmapped exception is humanized to the stable INTERNAL_ERROR code
+        # (see ``humanize_stream_error``); the raw exception text is scrubbed so
+        # the client never sees the internal message.
+        assert payload["error_type"] == "INTERNAL_ERROR"
+        assert payload["error"] == "Something went wrong while generating the response. Please try again."
+        assert "boom from tool runner" not in payload["error"]
         assert payload["session_id"] == "sess-err"
 
     @pytest.mark.asyncio

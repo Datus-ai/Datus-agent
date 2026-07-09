@@ -34,6 +34,7 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 from typing import Any, Callable, Dict, List, Optional
@@ -50,6 +51,18 @@ logger = get_logger(__name__)
 # Type alias for readability; transformers are duck-typed callables.
 ToolTransformer = Callable[[str, Dict[str, Any], Dict[str, Any]], Any]
 ContextProvider = Callable[[], Dict[str, Any]]
+
+# Marker set on a rebuilt tool's ``on_invoke_tool`` so :func:`apply_tool_transformers`
+# can recognise already-wrapped tools and skip them. Makes wrapping idempotent
+# per tool: callers may reset their "transformers applied" flag and re-run after
+# a tool-list rebuild (e.g. a runtime ``/model`` switch remounts web tools)
+# without double-wrapping tools that were already transformed on a prior turn.
+_TRANSFORMED_MARKER = "_datus_tool_transformed"
+
+
+def tool_is_transformed(tool: Any) -> bool:
+    """Return True if ``tool`` was already wrapped by :func:`wrap_tool_with_transformers`."""
+    return bool(getattr(getattr(tool, "on_invoke_tool", None), _TRANSFORMED_MARKER, False))
 
 
 def _denial_payload(tool_name: str, reason: str) -> dict:
@@ -130,20 +143,23 @@ def wrap_tool_with_transformers(
 
         return await original.on_invoke_tool(tool_ctx, json.dumps(args, ensure_ascii=False))
 
-    # Carry over every behavioural field except ``on_invoke_tool``: rebuilding
-    # the tool must not silently re-enable a tool that was disabled/gated, nor
-    # drop its input/output guardrails. Use getattr defaults so the wrapper
-    # keeps working across openai-agents SDK versions that add or rename fields.
-    return FunctionTool(
-        name=original.name,
-        description=original.description,
-        params_json_schema=original.params_json_schema,
-        on_invoke_tool=transforming_invoke,
-        strict_json_schema=original.strict_json_schema,
-        is_enabled=getattr(original, "is_enabled", True),
-        tool_input_guardrails=getattr(original, "tool_input_guardrails", None),
-        tool_output_guardrails=getattr(original, "tool_output_guardrails", None),
-    )
+    transforming_invoke._datus_tool_transformed = True  # type: ignore[attr-defined]
+
+    # Carry over every declared field except ``on_invoke_tool`` by forwarding
+    # the FunctionTool dataclass's own init fields. Rebuilding the tool must not
+    # silently re-enable a disabled/gated tool, drop its input/output guardrails,
+    # or weaken approval/timeout settings that newer openai-agents SDK versions
+    # add (e.g. ``needs_approval`` / ``timeout_behavior`` — absent in the pinned
+    # 0.7.0). Forwarding by field name keeps the wrapper faithful across SDK
+    # versions without this module tracking each new field by hand; ``getattr``
+    # defaults tolerate SDK-added fields that a test double may not carry.
+    carried = {
+        field.name: getattr(original, field.name, None)
+        for field in dataclasses.fields(FunctionTool)
+        if field.init and field.name != "on_invoke_tool"
+    }
+    carried["on_invoke_tool"] = transforming_invoke
+    return FunctionTool(**carried)
 
 
 def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]]) -> int:
@@ -199,6 +215,12 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
             continue
         if tool.name in proxied:
             logger.debug("Tool middleware: skipping proxied tool '%s'", tool.name)
+            new_tools.append(tool)
+            continue
+        if tool_is_transformed(tool):
+            # Already wrapped on a prior pass: re-wrapping would run the
+            # transformers twice. Callers reset their applied-flag and re-run
+            # after a tool-list rebuild, so skipping keeps that idempotent.
             new_tools.append(tool)
             continue
         matched: List[ToolTransformer] = []

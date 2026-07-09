@@ -628,6 +628,28 @@ class TestPermissionManagerPluginBashRules:
         mgr.switch_profile("auto")
         assert all("datus hello" not in p for p in mgr.global_config.bash_commands.allow)
 
+    def test_switch_profile_merge_order_matches_startup(self):
+        """``switch_profile`` must layer plugin rules BEFORE user overrides so a
+        runtime ``/profile`` switch produces the same bash_commands as startup's
+        ``build_effective_config`` (plugin-then-user), not user-then-plugin."""
+        from datus.tools.permission.profiles import build_effective_config
+
+        rules_map = self._plugin_rules_map()
+        user_raw = {"bash_commands": {"ask": ["datus hello config set:*"], "allow": ["git status:*"]}}
+        user_overrides = PermissionConfig.from_dict(user_raw)
+
+        mgr = PermissionManager(
+            global_config=build_effective_config("normal", None, plugin_bash_rules=rules_map["normal"]),
+            active_profile="normal",
+            plugin_bash_rules=rules_map,
+        )
+        mgr.switch_profile("auto", user_overrides=user_overrides)
+
+        # The startup path is the reference: plugin base merged first, then user.
+        expected = build_effective_config("auto", user_raw, plugin_bash_rules=rules_map["auto"])
+        assert mgr.global_config.bash_commands.allow == expected.bash_commands.allow
+        assert mgr.global_config.bash_commands.ask == expected.bash_commands.ask
+
 
 class TestProjectBashGrants:
     """Exact-match project grants that can bypass ask-rule hits."""

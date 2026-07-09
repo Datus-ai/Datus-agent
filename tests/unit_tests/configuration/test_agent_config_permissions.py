@@ -254,7 +254,9 @@ def test_plugin_collection_failure_does_not_block_config(monkeypatch, caplog):
         cfg = _make_config({}, plugins_enabled=True)
 
     assert cfg.plugin_bash_rules == {}
-    assert cfg.permissions_config is not None
+    # The failure is contained: config falls back to the clean base profile
+    # rather than being left partial/corrupted or carrying phantom plugin rules.
+    assert all("datus hello" not in p for p in cfg.permissions_config.bash_commands.allow)
     assert "Plugin CLI permission collection failed" in caplog.text
 
 

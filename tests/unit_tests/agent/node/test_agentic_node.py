@@ -11,7 +11,8 @@ Uses _ConcreteAgenticNode (minimal concrete subclass) and patches LLM + sessions
 
 import asyncio
 import os
-from typing import AsyncGenerator, Optional
+from types import SimpleNamespace
+from typing import Any, AsyncGenerator, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1822,14 +1823,12 @@ class TestEnsureToolTransformers:
     """
 
     @staticmethod
-    def _make_fake_node(plugins_enabled=True, tools=None):
-        from types import SimpleNamespace
-
+    def _make_fake_node(plugins_enabled: bool = True, tools: Optional[List[Any]] = None) -> SimpleNamespace:
         from agents import FunctionTool
 
         from datus.tools.registry.tool_registry import ToolRegistry
 
-        async def invoke(tool_ctx, args_str):
+        async def invoke(tool_ctx: Any, args_str: str) -> dict:
             return {"success": 1, "result": "ok", "error": None}
 
         default_tool = FunctionTool(

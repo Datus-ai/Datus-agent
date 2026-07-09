@@ -327,6 +327,26 @@ class TestApplyProjectOverride:
         assert agent_raw["target"] == "deepseek"
         assert agent_raw["project_name"] == "p"
 
+    def test_plugins_pin_forwarded_as_active_plugins(self):
+        """A ``plugins:`` pin rides into ``agent_raw["active_plugins"]`` so
+        ``get_plugin_profile`` can resolve the project-selected profile."""
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(plugins={"hello": "staging"}),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["active_plugins"] == {"hello": "staging"}
+
+    def test_no_plugins_pin_leaves_active_plugins_unset(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(project_name="p"),
+        ):
+            _apply_project_override(agent_raw)
+        assert "active_plugins" not in agent_raw
+
     def test_language_merged(self):
         agent_raw = self._base_raw()
         with patch(
