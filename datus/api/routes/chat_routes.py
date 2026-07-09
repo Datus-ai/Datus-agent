@@ -45,6 +45,7 @@ from datus.api.models.cli_models import (
     UserInteractionInput,
 )
 from datus.api.services.background_drain import track_background_task
+from datus.api.utils.stream_errors import humanize_stream_error
 from datus.tools.sql_policy import SqlPolicyConfig
 from datus.utils.feedback_prompt import build_reaction_feedback_prompt
 from datus.utils.loggings import get_logger
@@ -646,12 +647,13 @@ async def _stream_with_post_hook(
         # outer bare ``raise`` below still re-propagates the original
         # ``exc`` instead of being masked.
         try:
+            error_type, error_message = humanize_stream_error(exc)
             error_event = SSEEvent(
                 id=last_event_id + 1,
                 event="error",
                 data=SSEErrorData(
-                    error=str(exc) or type(exc).__name__,
-                    error_type=type(exc).__name__,
+                    error=error_message,
+                    error_type=error_type,
                     session_id=request.session_id,
                 ),
                 timestamp=now_utc_iso(),
