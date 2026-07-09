@@ -41,6 +41,22 @@ def test_decodes_litellm_blob_to_readable_chinese():
     assert "b'" not in message
 
 
+def test_strips_hex_id_touching_cjk_without_spaces():
+    # Some gateways emit "错误<id>，" with no separators. CJK chars are \w under
+    # Unicode, so a \b-anchored pattern would leave the id in place.
+    blob = (
+        "litellm.InternalServerError: AnthropicException - "
+        'b\'{"error":{"type":"api_error",'
+        '"message":"\\xe9\\x94\\x99\\xe8\\xaf\\xaf'  # "错误" directly followed by the id
+        "20260708110941e974e209bda24c95"
+        "\\xef\\xbc\\x8c\\xe8\\xaf\\xb7\\xe7\\xa8\\x8d\\xe5\\x90\\x8e\\xe9\\x87\\x8d\\xe8\\xaf\\x95\\xe3\\x80\\x82\"}}'"
+    )
+    _, message = humanize_stream_error(InternalServerError(blob))
+
+    assert message == "错误，请稍后重试。"
+    assert "20260708110941e974e209bda24c95" not in message
+
+
 def test_maps_known_class_to_stable_code():
     error_type, message = humanize_stream_error(RateLimitError("429 rate limited"))
 

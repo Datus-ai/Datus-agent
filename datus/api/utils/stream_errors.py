@@ -71,8 +71,10 @@ _DEFAULT_ERROR: tuple[str, str] = (
 )
 
 # Long opaque tokens (request ids, trace ids) embedded in a provider message —
-# stripped so the surfaced sentence stays readable.
-_ID_TOKEN = re.compile(r"\b[0-9a-fA-F]{16,}\b")
+# stripped so the surfaced sentence stays readable. Hex-specific lookarounds
+# (not ``\b``) so ids are stripped even when they touch CJK text: CJK chars are
+# ``\w`` under Unicode, so ``\b`` finds no boundary between "错误" and a hex id.
+_ID_TOKEN = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{16,}(?![0-9a-fA-F])")
 _CJK = re.compile(r"[一-鿿]")
 _BYTES_LITERAL = re.compile(r"b'(?:[^'\\]|\\.)*'|b\"(?:[^\"\\]|\\.)*\"")
 _MAX_LEN = 300
