@@ -407,6 +407,20 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/metricflow/introduction/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/plugin/development/</loc>
+        <lastmod>2026-07-09</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/plugin/development/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/plugin/development/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/plugin/introduction/</loc>
+        <lastmod>2026-07-09</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/plugin/introduction/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/plugin/introduction/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/skills/build_kb/</loc>
         <lastmod>2026-07-09</lastmod>
         <changefreq>daily</changefreq>
@@ -1000,6 +1014,20 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/metricflow/introduction/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devmetricflow/introduction/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/plugin/development/</loc>
+        <lastmod>2026-07-09</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/plugin/development/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devplugin/development/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/plugin/introduction/</loc>
+        <lastmod>2026-07-09</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/plugin/introduction/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devplugin/introduction/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/qa/metric-bootstrap-generation-qa/</loc>
