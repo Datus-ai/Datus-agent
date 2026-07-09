@@ -6,17 +6,16 @@
 
 from datus.api.utils.stream_errors import humanize_stream_error
 
-
 # The exact litellm/AnthropicException shape reported in the field: a Python
 # bytes-repr wrapping provider JSON whose message is byte-escaped Chinese
 # ("网络错误 <id>，请稍后重试。").
 LITELLM_BLOB = (
     "litellm.InternalServerError: AnthropicException - "
-    "b'{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"code\":\"1234\","
-    "\"message\":\"[1234][\\xe7\\xbd\\x91\\xe7\\xbb\\x9c\\xe9\\x94\\x99\\xe8\\xaf\\xaf "
+    'b\'{"type":"error","error":{"type":"api_error","code":"1234",'
+    '"message":"[1234][\\xe7\\xbd\\x91\\xe7\\xbb\\x9c\\xe9\\x94\\x99\\xe8\\xaf\\xaf '
     "20260708110941e974e209bda24c95 \\xef\\xbc\\x8c\\xe8\\xaf\\xb7\\xe7\\xa8\\x8d"
     "\\xe5\\x90\\x8e\\xe9\\x87\\x8d\\xe8\\xaf\\x95\\xe3\\x80\\x82]"
-    "[20260708110941e974e209bda24c95]\"},\"request_id\":\"20260708110941e974e209bda24c95\"}'"
+    '[20260708110941e974e209bda24c95]"},"request_id":"20260708110941e974e209bda24c95"}\''
 )
 
 
