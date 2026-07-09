@@ -588,9 +588,30 @@ class ChatTaskManager:
             # guard is needed here.
             effective_source = request.source or self._default_source
             if effective_source == "vscode":
+                # VSCode edits the user's *local* filesystem — the client is
+                # always the executor, whatever the permission profile.
                 apply_proxy_tools(node, ["filesystem_tools.*"])
             elif effective_source == "web":
-                apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"])
+                # The active profile (not request.permission_mode) is checked
+                # because a failed ``switch_profile`` silently keeps the
+                # node's original profile — proxying must follow what will
+                # actually gate execution.
+                active_profile = getattr(getattr(node, "permission_manager", None), "active_profile", None)
+                if active_profile in ("auto", "dangerous"):
+                    # These profiles ALLOW workspace writes without asking and
+                    # the web client skips its confirmation UI for them, so a
+                    # browser round-trip buys nothing and only adds failure
+                    # modes (hidden/closed tab, dropped SSE → the proxy-result
+                    # wait timing out after 600s). Run filesystem tools
+                    # server-side. The empty set reaches the SSE converter so
+                    # call-tool frames carry ``proxied: false`` and the client
+                    # knows not to execute them itself.
+                    node.proxied_tool_names = set()
+                    logger.info(
+                        "Filesystem tools run server-side for session=%s (profile=%s)", session_id, active_profile
+                    )
+                else:
+                    apply_proxy_tools(node, ["write_file", "edit_file", "delete_file"])
             elif effective_source:
                 logger.warning("Unsupported source '%s'; skipping proxy shortcut", effective_source)
 
@@ -639,6 +660,7 @@ class ChatTaskManager:
                     is_first_delta=is_first_delta,
                     is_update=bool(is_update),
                     include_final_response=_should_include_final_response(action, assistant_response_sent),
+                    proxied_tool_names=getattr(node, "proxied_tool_names", None),
                 )
                 if sse:
                     # Per-LLM-call usage event: the converter has no access

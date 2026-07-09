@@ -146,6 +146,25 @@ class TestBuildToolCallContent:
         contents = _build_tool_call_content(action)
         assert contents[0].payload["toolParams"] == {}
 
+    def test_omits_proxied_flag_without_tool_names(self):
+        """History conversion (no live node) must not stamp ``proxied`` at all,
+        so legacy clients keep their own execute-or-not heuristic."""
+        action = _make_action(input={"function_name": "write_file", "arguments": {}})
+        contents = _build_tool_call_content(action)
+        assert "proxied" not in contents[0].payload
+
+    def test_marks_proxied_true_for_client_executed_tool(self):
+        action = _make_action(input={"function_name": "write_file", "arguments": {}})
+        contents = _build_tool_call_content(action, proxied_tool_names={"write_file", "edit_file"})
+        assert contents[0].payload["proxied"] is True
+
+    def test_marks_proxied_false_for_server_executed_tool(self):
+        """An empty proxied set (auto/dangerous web session) stamps False so the
+        client neither shows a confirm bar nor re-executes the tool."""
+        action = _make_action(input={"function_name": "write_file", "arguments": {}})
+        contents = _build_tool_call_content(action, proxied_tool_names=set())
+        assert contents[0].payload["proxied"] is False
+
 
 class TestBuildToolResultContent:
     """Tests for _build_tool_result_content."""
@@ -900,6 +919,20 @@ class TestActionToSSEEvent:
         event = action_to_sse_event(action, event_id=2, message_id="msg-2")
         event = _assert_sse_event(event)
         assert event.data.payload.content[0].type == "call-tool"
+
+    def test_tool_processing_passes_proxied_tool_names_through(self):
+        """The streaming caller's proxied set reaches the call-tool payload."""
+        action = _make_action(
+            role=ActionRole.TOOL,
+            status=ActionStatus.PROCESSING,
+            input={"function_name": "write_file", "arguments": {"path": "a.sql"}},
+        )
+        event = action_to_sse_event(action, event_id=2, message_id="msg-2", proxied_tool_names=set())
+        event = _assert_sse_event(event)
+        assert event.data.payload.content[0].payload["proxied"] is False
+
+        event = action_to_sse_event(action, event_id=3, message_id="msg-3", proxied_tool_names={"write_file"})
+        assert _assert_sse_event(event).data.payload.content[0].payload["proxied"] is True
 
     def test_tool_success_produces_call_tool_result(self):
         """TOOL + SUCCESS maps to call-tool-result content."""
