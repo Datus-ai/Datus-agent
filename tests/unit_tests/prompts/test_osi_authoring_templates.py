@@ -60,12 +60,26 @@ def test_semantic_model_template_osi_mode():
 @pytest.mark.parametrize("template_name", ["gen_semantic_model_system", "gen_metrics_system"])
 @pytest.mark.parametrize(
     "datasource, expected_dialect",
-    [("starrocks", "ANSI_SQL"), ("mysql", "ANSI_SQL"), ("snowflake", "SNOWFLAKE"), ("databricks", "DATABRICKS")],
+    [
+        ("starrocks", "STARROCKS"),
+        ("mysql", "MYSQL"),
+        ("postgresql", "POSTGRESQL"),
+        ("snowflake", "SNOWFLAKE"),
+        ("databricks", "DATABRICKS"),
+    ],
 )
 def test_osi_mode_expression_dialect_derivation(template_name, datasource, expected_dialect):
+    # The OSI dialect label is the active datasource's own dialect (uppercased).
     text = _render(template_name, "osi", datasource=datasource)
     assert f"- Active datasource: `{datasource}`" in text
     assert f"OSI expression dialect for this run: `{expected_dialect}`" in text
+
+
+@pytest.mark.parametrize("template_name", ["gen_semantic_model_system", "gen_metrics_system"])
+def test_osi_mode_expression_dialect_falls_back_to_ansi_when_no_datasource(template_name):
+    # With no datasource set, the label falls back to ANSI_SQL.
+    text = _render(template_name, "osi", datasource="")
+    assert "OSI expression dialect for this run: `ANSI_SQL`" in text
 
 
 def test_metrics_template_metricflow_mode_contract():

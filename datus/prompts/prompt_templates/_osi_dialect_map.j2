@@ -1,9 +1,3 @@
 {% macro expression_dialect(datasource_type) -%}
-{{- {
-    'databricks': 'DATABRICKS',
-    'maql': 'MAQL',
-    'mdx': 'MDX',
-    'snowflake': 'SNOWFLAKE',
-    'tableau': 'TABLEAU',
-}.get(datasource_type | default('', true) | lower, 'ANSI_SQL') -}}
+{{- (datasource_type | default('', true) | trim | upper) or 'ANSI_SQL' -}}
 {%- endmacro %}

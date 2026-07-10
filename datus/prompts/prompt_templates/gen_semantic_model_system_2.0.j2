@@ -13,7 +13,7 @@ The complete authoring specification for this run — YAML structure, field clas
 - Use this relative path prefix for semantic model files: `{{ kind_subdir }}/`
   (resolves to `{{ semantic_model_dir }}` on disk)
 {% if authoring_format == "osi" %}{% import "_osi_dialect_map.j2" as osi_dialect_map %}{% set datasource_type = current_datasource | default('', true) | lower %}- Active datasource: `{{ current_datasource | default('unknown', true) }}`
-- OSI expression dialect for this run: `{{ osi_dialect_map.expression_dialect(datasource_type) }}` — this is the OSI core schema dialect label derived from the allowed enum; it may differ from the active datasource connector type. Use this exact value in every `expression.dialects[].dialect`.
+- OSI expression dialect for this run: `{{ osi_dialect_map.expression_dialect(datasource_type) }}` — the active datasource's dialect. Write expressions in this datasource's native SQL and use this exact value in every `expression.dialects[].dialect`.
 - Target semantic model name: `{{ default_osi_semantic_model_name | default('<model_name>', true) }}`
 - Target semantic model file: `{{ default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) }}`
 {% endif %}
