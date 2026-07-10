@@ -1794,7 +1794,7 @@ class AgentConfig:
         if db_name and db_name in datasources:
             return db_name, datasources[db_name].type
         if self._current_datasource and self._current_datasource in datasources:
-            return self._current_datasource, datasources[self._current_datasource].type
+            return db_name or self._current_datasource, datasources[self._current_datasource].type
         if len(datasources) == 1:
             cfg = list(datasources.values())[0]
             return next(iter(datasources)), cfg.type
