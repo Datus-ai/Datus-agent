@@ -29,6 +29,10 @@ jobs:
     env:
       DATUS_AGENT_REF: ${{ github.event.inputs.datus_agent_ref || github.ref_name }}
       NIGHTLY_GROUP_FILTER: ${{ github.event.inputs.nightly_group_filter || '' }}
+      # The job deliberately overlays packages from the adapter checkouts after
+      # the locked project sync. Do not let later `uv run` commands restore the
+      # registry builds from uv.lock over those checkout packages.
+      UV_NO_SYNC: "1"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -102,9 +106,17 @@ jobs:
                   sha256sum "$file"
                 done
               fi
+
+              for repo in \
+                external/datus-db-adapters \
+                external/datus-bi-adapters \
+                external/datus-scheduler-adapters \
+                external/datus-semantic-adapter; do
+                git -C "$repo" rev-parse HEAD
+              done
             } | sha256sum | awk '{print $1}'
           )"
-          echo "key=${RUNNER_OS}-kb-v4-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
+          echo "key=${RUNNER_OS}-kb-v5-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -147,7 +159,9 @@ jobs:
             ./external/datus-bi-adapters/datus-bi-grafana \
             ./external/datus-scheduler-adapters/datus-scheduler-core \
             ./external/datus-scheduler-adapters/datus-scheduler-airflow
-          uv run playwright install --with-deps chromium
+          uv run --no-sync python ci/verify_nightly_adapter_sources.py \
+            --external-repos-root "$GITHUB_WORKSPACE/external"
+          uv run --no-sync playwright install --with-deps chromium
 
       - name: Ensure Docker runtime
         env:
