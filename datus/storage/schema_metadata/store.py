@@ -14,6 +14,7 @@ from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import BaseEmbeddingStore, WhereExpr
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
 from datus.storage.embedding_models import EmbeddingModel
+from datus.storage.fts import FtsField, FtsSpec
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.json_utils import json2csv
@@ -101,7 +102,7 @@ class BaseMetadataStorage(BaseEmbeddingStore):
             query_type=query_type,
         )
 
-    def create_indices(self):
+    def create_indices(self, *, include_fts: bool = True):
         self._ensure_table_ready()
 
         self._create_scalar_index("database_name")
@@ -110,7 +111,17 @@ class BaseMetadataStorage(BaseEmbeddingStore):
         self._create_scalar_index("table_name")
         self._create_scalar_index("table_type")
 
-        self.create_fts_index(["database_name", "schema_name", "table_name", self.vector_source_name])
+        if include_fts:
+            self.create_fts_index(
+                FtsSpec(
+                    (
+                        FtsField("table_name", boost=3.0),
+                        FtsField("schema_name", boost=2.0),
+                        FtsField("database_name", boost=2.0),
+                        FtsField(self.vector_source_name),
+                    )
+                )
+            )
 
     def search_all(
         self,
@@ -300,10 +311,10 @@ class SchemaWithValueRAG:
 
         logger.debug(f"Batch stored {len(schemas)} schemas, {len(final_values)} values")
 
-    def after_init(self):
-        """After init the schema and value, create the indices for the tables."""
-        self.schema_store.create_indices()
-        self.value_store.create_indices()
+    def after_init(self, build_mode: str = "overwrite"):
+        """Create only the indices required by the legacy vector mode."""
+        self.schema_store.create_indices(include_fts=False)
+        self.value_store.create_indices(include_fts=False)
 
     def get_schema_size(self):
         return self.schema_store._count_rows(where=self._add_sub_agent_filter(None))

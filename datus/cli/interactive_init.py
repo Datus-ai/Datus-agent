@@ -723,10 +723,10 @@ def init_metadata_and_log_result(datasource_name: str, config_path: str, console
 
     with console.status(f"→ Initializing metadata for {datasource_name} with path `{storage_path}`..."):
         try:
-            from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled
+            from datus.storage.kb_retrieval import metadata_fts_enabled
             from datus.storage.schema_metadata import create_metadata_rag
 
-            if metadata_fts_enabled(agent_config) and agent_config.kb_search_mode != KbSearchMode.HYBRID.value:
+            if metadata_fts_enabled(agent_config):
                 metadata_store = create_metadata_rag(agent_config)
                 if kb_update_strategy == "overwrite":
                     metadata_store.truncate()

@@ -1402,43 +1402,43 @@ class TestAgentConfigKnowledgeBase:
     def test_kb_config_rejects_non_dict(self, tmp_path):
         cfg = self._make(tmp_path, kb="bad")
 
-        assert cfg.kb_search == KbSearchConfig(enabled=True, mode="fts")
-        assert cfg.kb_search_mode == "fts"
+        assert cfg.kb_search == KbSearchConfig(mode="vector")
+        assert cfg.kb_search_mode == "vector"
 
-    def test_kb_search_defaults_to_fts(self, tmp_path):
+    def test_kb_search_defaults_to_vector(self, tmp_path):
         cfg = self._make(tmp_path)
 
-        assert cfg.kb_search == KbSearchConfig(enabled=True, mode="fts")
-        assert cfg.kb_search_mode == "fts"
+        assert cfg.kb_search == KbSearchConfig(mode="vector")
+        assert cfg.kb_search_mode == "vector"
         assert not hasattr(cfg, "_metadata_fts_enabled")
 
-    def test_kb_search_can_disable_metadata_fts_path(self, tmp_path):
-        cfg = self._make(tmp_path, kb={"search": {"enabled": "false"}})
+    def test_kb_search_ignores_removed_enabled_flag(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"enabled": "false", "mode": "fts"}})
 
-        assert cfg.kb_search == KbSearchConfig(enabled=False, mode="fts")
+        assert cfg.kb_search == KbSearchConfig(mode="fts")
         assert cfg.kb_search_mode == "fts"
 
-    def test_kb_search_accepts_top_level_hybrid_mode(self, tmp_path):
-        cfg = self._make(tmp_path, kb={"search": {"mode": "hybrid"}})
+    def test_kb_search_accepts_explicit_fts_mode(self, tmp_path):
+        cfg = self._make(tmp_path, kb={"search": {"mode": "fts"}})
 
-        assert cfg.kb_search_mode == "hybrid"
+        assert cfg.kb_search_mode == "fts"
 
     def test_kb_search_keeps_legacy_knowledge_base_search_compatibility(self, tmp_path):
-        cfg = self._make(tmp_path, knowledge_base={"search": {"mode": "hybrid"}})
+        cfg = self._make(tmp_path, knowledge_base={"search": {"mode": "fts"}})
 
-        assert cfg.kb_search_mode == "hybrid"
+        assert cfg.kb_search_mode == "fts"
 
-    def test_kb_search_rejects_vector_only_mode(self, tmp_path):
+    def test_kb_search_rejects_hybrid_mode(self, tmp_path):
         with pytest.raises(DatusException):
-            self._make(tmp_path, kb={"search": {"mode": "vector"}})
+            self._make(tmp_path, kb={"search": {"mode": "hybrid"}})
 
-    def test_override_kb_search_mode_preserves_enabled_flag(self, tmp_path):
-        cfg = self._make(tmp_path, kb={"search": {"enabled": False}})
+    def test_override_kb_search_mode(self, tmp_path):
+        cfg = self._make(tmp_path)
 
-        cfg.override_by_args(kb_search_mode="hybrid")
+        cfg.override_by_args(kb_search_mode="fts")
 
-        assert cfg.kb_search == KbSearchConfig(enabled=False, mode="hybrid")
-        assert cfg.kb_search_mode == "hybrid"
+        assert cfg.kb_search == KbSearchConfig(mode="fts")
+        assert cfg.kb_search_mode == "fts"
 
 
 class TestAgentConfigChannels:

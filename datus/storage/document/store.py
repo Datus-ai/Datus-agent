@@ -26,6 +26,7 @@ from datus_storage_base.conditions import And, Condition, WhereExpr, eq, in_
 from datus.storage.base import BaseEmbeddingStore
 from datus.storage.document.schemas import PlatformDocChunk
 from datus.storage.embedding_models import EmbeddingModel, get_document_embedding_model
+from datus.storage.fts import FtsField, FtsSpec
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -388,7 +389,15 @@ class DocumentStore(BaseEmbeddingStore):
         self._ensure_table_ready()
 
         self.create_vector_index(metric="cosine")
-        self.create_fts_index(field_names=["chunk_text", "title", "hierarchy"])
+        self.create_fts_index(
+            FtsSpec(
+                (
+                    FtsField("title", boost=3.0),
+                    FtsField("hierarchy", boost=2.0),
+                    FtsField("chunk_text"),
+                )
+            )
+        )
 
         logger.info(f"Created indices for table '{self.TABLE_NAME}'")
 

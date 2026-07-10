@@ -9,6 +9,7 @@ import pyarrow as pa
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
 from datus.storage.datasource_scope import datasource_condition, resolve_datasource_id
+from datus.storage.fts import FtsField, FtsSpec
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -54,7 +55,17 @@ class ReferenceTemplateStorage(BaseSubjectEmbeddingStore):
         self._create_scalar_index("filepath")
 
         self.create_subject_index()
-        self.create_fts_index(["template", "name", "summary", "tags", "search_text"])
+        self.create_fts_index(
+            FtsSpec(
+                (
+                    FtsField("name", boost=3.0),
+                    FtsField("summary", boost=2.0),
+                    FtsField("search_text", boost=2.0),
+                    FtsField("tags", boost=1.5),
+                    FtsField("template"),
+                )
+            )
+        )
 
     def batch_store_templates(
         self, template_items: List[Dict[str, Any]], subject_path_field: str = "subject_path"

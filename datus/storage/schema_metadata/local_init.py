@@ -113,7 +113,7 @@ def init_local_schema(
         databases = [default_database] if default_database else []
     if not databases:
         logger.info(f"No databases resolved for datasource {ds} ({db_config.type}); skipping schema init.")
-        table_lineage_store.after_init()
+        table_lineage_store.after_init(build_mode=build_mode)
         event_helper.task_completed(total_items=0, completed_items=0)
         return
     logger.info(f"Processing datasource {ds} ({db_config.type}) databases: {databases}")
@@ -155,8 +155,8 @@ def init_local_schema(
                 build_mode=build_mode,
                 event_helper=event_helper,
             )
-    # Create indices after initialization
-    table_lineage_store.after_init()
+    # Build new indices for overwrite, or incrementally index changed fragments.
+    table_lineage_store.after_init(build_mode=build_mode)
     event_helper.task_completed(total_items=0, completed_items=0)
     logger.info("Local schema initialization completed")
 

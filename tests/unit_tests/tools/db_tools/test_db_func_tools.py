@@ -1382,7 +1382,7 @@ class TestDBFuncToolIntegration:
     def test_search_table_uses_metadata_fts_rag_entrypoint(self, db_func_tool):
         """FTS metadata configs should query the metadata search_table API directly."""
         db_func_tool.agent_config = SimpleNamespace(
-            kb_search=SimpleNamespace(enabled=True, mode="fts"),
+            kb_search=SimpleNamespace(mode="fts"),
             kb_search_mode="fts",
         )
         db_func_tool.has_schema = True
@@ -1390,10 +1390,9 @@ class TestDBFuncToolIntegration:
         db_func_tool.schema_rag.search_table.return_value = self._build_metadata_doc_batch()
         db_func_tool.schema_rag.sample_rows_for_search_results.return_value = self._build_sample_batch()
         db_func_tool.schema_rag.last_search_info = {
-            "requested_mode": "fts",
-            "actual_mode": "fts",
-            "index_ready": True,
-            "fallback": False,
+            "configured_mode": "fts",
+            "index_status": "ready",
+            "index_version": 1,
         }
         db_func_tool.schema_rag.search_similar.side_effect = AssertionError("legacy search should not be called")
 

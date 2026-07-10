@@ -47,28 +47,29 @@ datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [ch
     - `check`：检查当前构建的数据条目数
     - `overwrite`：完全覆盖现有数据
     - `incremental`：增量更新：如果现有数据已更改，则更新它并追加不存在的数据
-- `--kb_search_mode`：可选的元数据搜索模式。默认值是 `fts`。使用 `hybrid` 可以保留向量 + 全文检索路径。
+- `--kb_search_mode`：可选的元数据搜索模式。默认值是 `vector`；设置为 `fts` 时会从头构建全文检索 metadata。
 
 ### 元数据搜索模式
 
-默认情况下，metadata bootstrap 会存储物理表事实和用于全文检索的 retrieval document。这样在大规模表目录下不需要为每张表生成 embedding，同时 `search_table`、autocomplete、schema linking 和 `@Table` 引用仍然可以基于表名、DDL、样本数据以及附加的 semantic profile 找表。
+metadata 搜索默认继续使用现有 vector store，因此老用户升级后不需要重建数据，检索行为保持不变。
 
-如果需要使用原有的向量辅助检索路径，可以设置 `kb.search.mode` 为 `hybrid`：
+如果要使用不生成 embedding 的全文检索，显式设置 `kb.search.mode` 为 `fts`：
 
 ```yaml
 kb:
   search:
-    mode: hybrid
+    mode: fts
 ```
 
-`hybrid` 模式需要配置 database embedding storage，并且需要使用 `--kb_search_mode hybrid` 生成 context。如果 `search_table` 运行在 `hybrid` 模式，但向量检索投影不存在或为空，工具会返回明确的检索错误，不会静默降级到 FTS。默认的 `fts` 模式不需要 embedding。
+FTS store 会检索表名、DDL、样本数据以及附加的 semantic profile，并且不会回退到 vector。FTS 索引缺失、格式过旧或构建不完整时会直接报错，必须使用 `overwrite` 重新构建。
 
-如果需要临时使用旧的 schema metadata 路径，可以显式关闭新的 metadata search：
+首次构建 FTS 后，`incremental` 只会 upsert 新增或发生变化的 metadata，并通过 LanceDB `optimize()` 将变化的 fragment 增量加入现有索引，不会替换完整 FTS 索引。
 
-```yaml
-kb:
-  search:
-    enabled: false
+必须在构建 metadata 前选定模式。已有 vector 数据切换到 FTS 时需要完整重建：
+
+```bash
+datus-agent bootstrap-kb --datasource <your_datasource> --components metadata \
+  --kb_search_mode fts --kb_update_strategy overwrite
 ```
 
 ## 使用示例

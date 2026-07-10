@@ -420,7 +420,7 @@ class Agent:
             if component == "metadata":
                 use_fts_metadata = metadata_fts_enabled(self.global_config)
                 search_mode = resolve_kb_search_mode(self.global_config)
-                needs_database_storage = (not use_fts_metadata) or search_mode == KbSearchMode.HYBRID
+                needs_database_storage = not use_fts_metadata
                 if kb_update_strategy == "check":
                     if not os.path.exists(dir_path):
                         raise ValueError("metadata is not built, please run bootstrap_kb with overwrite strategy first")
@@ -433,6 +433,8 @@ class Agent:
                             if use_fts_metadata
                             else SchemaWithValueRAG(self.global_config)
                         )
+                        if use_fts_metadata:
+                            self.metadata_store.check_ready()
                         result = {
                             "status": "success",
                             "message": f"current metadata is already built, "
@@ -454,6 +456,8 @@ class Agent:
                     if use_fts_metadata
                     else SchemaWithValueRAG(self.global_config)
                 )
+                if use_fts_metadata and kb_update_strategy == "incremental":
+                    self.metadata_store.check_ready()
                 if kb_update_strategy == "overwrite":
                     self.metadata_store.truncate()
 
@@ -764,7 +768,7 @@ class Agent:
             self.global_config.check_init_storage_config("metric")
             result = self.benchmark_semantic_layer(benchmark_path, target_task_ids, run_id=run_id)
         else:
-            if resolve_kb_search_mode(self.global_config) == KbSearchMode.HYBRID:
+            if resolve_kb_search_mode(self.global_config) == KbSearchMode.VECTOR:
                 self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metric")
             result = self.do_benchmark(benchmark_platform, target_task_ids, run_id=run_id)

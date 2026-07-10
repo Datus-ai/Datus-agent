@@ -454,11 +454,10 @@ class TestDocumentStoreCreateIndices:
         doc_store.store_chunks(_make_chunks(3))
         with patch.object(doc_store.table, "create_fts_index", wraps=doc_store.table.create_fts_index) as mock_fts:
             doc_store.create_indices()
-            mock_fts.assert_called_once()
-            args, kwargs = mock_fts.call_args
-            # field_names is passed positionally from base.create_fts_index
-            field_names = kwargs.get("field_names") or args[0]
-            assert set(field_names) == {"chunk_text", "title", "hierarchy"}
+            assert mock_fts.call_count == 3
+            fields = [call.args[0] for call in mock_fts.call_args_list]
+            assert [field.name for field in fields] == ["title", "hierarchy", "chunk_text"]
+            assert [field.boost for field in fields] == [3.0, 2.0, 1.0]
 
 
 # ============================================================

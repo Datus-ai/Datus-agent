@@ -954,12 +954,12 @@ class TestBootstrapKbMetadata:
             result = agent.bootstrap_kb()
         assert result["status"] == "success"
 
-    def test_metadata_check_strategy_hybrid_validates_database_storage(self, tmp_path):
+    def test_metadata_check_strategy_fts_skips_database_embedding_storage(self, tmp_path):
         args = _make_args_ext(components=["metadata"], kb_update_strategy="check", benchmark=None)
         agent = _make_agent_ext(args=args)
         agent.global_config.rag_storage_path.return_value = str(tmp_path)
-        agent.global_config.kb_search = SimpleNamespace(enabled=True, mode="hybrid")
-        agent.global_config.kb_search_mode = "hybrid"
+        agent.global_config.kb_search = SimpleNamespace(mode="fts")
+        agent.global_config.kb_search_mode = "fts"
 
         mock_store = MagicMock()
         mock_store.get_schema_size.return_value = 5
@@ -968,7 +968,22 @@ class TestBootstrapKbMetadata:
             result = agent.bootstrap_kb()
 
         assert result["status"] == "success"
-        agent.global_config.check_init_storage_config.assert_called_with("database")
+        agent.global_config.check_init_storage_config.assert_not_called()
+        mock_store.check_ready.assert_called_once_with()
+
+    def test_metadata_incremental_fts_requires_existing_ready_index(self):
+        args = _make_args_ext(components=["metadata"], kb_update_strategy="incremental", benchmark=None)
+        agent = _make_agent_ext(args=args)
+        agent.global_config.kb_search = SimpleNamespace(mode="fts")
+        agent.global_config.kb_search_mode = "fts"
+
+        mock_store = MagicMock()
+        mock_store.check_ready.side_effect = RuntimeError("FTS index is missing")
+        with patch("datus.agent.agent.create_metadata_rag", return_value=mock_store):
+            with pytest.raises(RuntimeError, match="FTS index is missing"):
+                agent.bootstrap_kb()
+
+        mock_store.truncate.assert_not_called()
 
     def test_metadata_incremental_legacy_path_validates_database_storage(self):
         args = _make_args_ext(components=["metadata"], kb_update_strategy="incremental", benchmark=None)
@@ -1074,12 +1089,12 @@ class TestBootstrapKbMetadata:
 
 
 class TestBenchmarkStorageChecks:
-    def test_benchmark_hybrid_mode_validates_database_storage(self, tmp_path):
+    def test_benchmark_vector_mode_validates_database_storage(self, tmp_path):
         args = _make_args_ext(benchmark="baisheng")
         agent = _make_agent_ext(args=args)
         agent.global_config.benchmark_path.return_value = str(tmp_path)
-        agent.global_config.kb_search = SimpleNamespace(enabled=True, mode="hybrid")
-        agent.global_config.kb_search_mode = "fts"
+        agent.global_config.kb_search = SimpleNamespace(mode="vector")
+        agent.global_config.kb_search_mode = "vector"
 
         with patch.object(agent, "do_benchmark", return_value={"status": "success"}) as do_benchmark:
             result = agent.benchmark(run_id="run-1")

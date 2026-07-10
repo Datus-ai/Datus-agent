@@ -234,9 +234,9 @@ def create_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument(
         "--kb_search_mode",
         type=str,
-        choices=["fts", "hybrid"],
+        choices=["vector", "fts"],
         default="",
-        help="Knowledge-base search mode for metadata indexing and runtime retrieval (default: config or fts)",
+        help="Knowledge-base search mode for metadata indexing and runtime retrieval (default: config or vector)",
     )
     bootstrap_parser.add_argument(
         "--success_story",

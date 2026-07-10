@@ -63,7 +63,7 @@ def init_snowflake_schema(
                 all_value_tables,
             )
 
-    storage.after_init()
+    storage.after_init(build_mode=build_mode)
 
 
 def process_line(

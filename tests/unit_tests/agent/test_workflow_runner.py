@@ -325,10 +325,10 @@ class TestFinalizeWorkflow:
 
 
 class TestWorkflowRunnerRun:
-    def test_ensure_prerequisites_hybrid_checks_database_storage(self):
+    def test_ensure_prerequisites_vector_checks_database_storage(self):
         cfg = _make_config()
-        cfg.kb_search = SimpleNamespace(enabled=True, mode="hybrid")
-        cfg.kb_search_mode = "fts"
+        cfg.kb_search = SimpleNamespace(mode="vector")
+        cfg.kb_search_mode = "vector"
         runner = _make_runner(config=cfg)
         runner.init_or_load_workflow = MagicMock(return_value=True)
 

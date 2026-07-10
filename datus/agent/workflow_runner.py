@@ -146,7 +146,7 @@ class WorkflowRunner:
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:
         if check_storage:
-            if resolve_kb_search_mode(self.global_config) == KbSearchMode.HYBRID:
+            if resolve_kb_search_mode(self.global_config) == KbSearchMode.VECTOR:
                 self.global_config.check_init_storage_config("database")
             self.global_config.check_init_storage_config("metrics")
 

@@ -814,7 +814,19 @@ class TestInitLocalSchema:
             init_local_schema(mock_store, agent_config, db_manager)
 
         mock_init_other.assert_called_once()
-        mock_store.after_init.assert_called_once()
+        mock_store.after_init.assert_called_once_with(build_mode="overwrite")
+
+    def test_incremental_mode_is_forwarded_to_index_finalization(self):
+        from datus.storage.schema_metadata.local_init import init_local_schema
+
+        mock_store = MagicMock()
+        agent_config, _ = self._make_real_agent_config(db_type="mysql")
+        db_manager, _ = _make_db_manager()
+
+        with patch("datus.storage.schema_metadata.local_init.init_other_three_level_schema"):
+            init_local_schema(mock_store, agent_config, db_manager, build_mode="incremental")
+
+        mock_store.after_init.assert_called_once_with(build_mode="incremental")
 
     def test_sqlite_dispatches_each_database_from_list(self):
         """A datasource serving multiple databases dispatches one init per database."""

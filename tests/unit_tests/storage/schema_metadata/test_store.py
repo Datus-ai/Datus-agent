@@ -4,6 +4,8 @@
 
 """Tests for datus/storage/schema_metadata/store.py — SchemaStorage and _build_where_clause."""
 
+from unittest.mock import MagicMock, patch
+
 import pyarrow as pa
 import pytest
 from datus_db_core import ConnectorRegistry
@@ -796,6 +798,18 @@ class TestSchemaWithValueRAGTruncate:
         assert rag.get_schema_size() == 0
         assert rag.get_value_size() == 0
 
+    def test_after_init_vector_mode_does_not_create_fts_indices(self):
+        from datus.storage.schema_metadata.store import SchemaWithValueRAG
+
+        rag = SchemaWithValueRAG.__new__(SchemaWithValueRAG)
+        rag.schema_store = MagicMock()
+        rag.value_store = MagicMock()
+
+        rag.after_init()
+
+        rag.schema_store.create_indices.assert_called_once_with(include_fts=False)
+        rag.value_store.create_indices.assert_called_once_with(include_fts=False)
+
 
 # ---------------------------------------------------------------------------
 # MetadataFtsRAG
@@ -803,7 +817,12 @@ class TestSchemaWithValueRAGTruncate:
 
 
 class TestMetadataFtsRAG:
-    """Tests for the FTS-first metadata retrieval store."""
+    """Tests for the explicitly configured metadata FTS store."""
+
+    @staticmethod
+    def _enable_fts(agent_config) -> None:
+        agent_config.kb_search.mode = "fts"
+        agent_config.kb_search_mode = "fts"
 
     def _make_schema_row(
         self,
@@ -845,24 +864,34 @@ class TestMetadataFtsRAG:
             "sample_rows": sample_rows,
         }
 
-    def test_create_metadata_rag_defaults_real_config_to_fts_store(self, real_agent_config):
+    def test_create_metadata_rag_defaults_to_vector_and_allows_explicit_fts(self, real_agent_config):
         from datus.storage.kb_retrieval import MetadataFtsRAG
         from datus.storage.schema_metadata import SchemaWithValueRAG, create_metadata_rag
 
-        assert isinstance(create_metadata_rag(real_agent_config), MetadataFtsRAG)
-
-        real_agent_config.kb_search.enabled = False
         assert isinstance(create_metadata_rag(real_agent_config), SchemaWithValueRAG)
+
+        self._enable_fts(real_agent_config)
+        assert isinstance(create_metadata_rag(real_agent_config), MetadataFtsRAG)
 
     def test_metadata_fts_uses_public_kb_search_as_mode_source(self, real_agent_config):
         from datus.storage.kb_retrieval import KbSearchMode, metadata_fts_enabled, resolve_kb_search_mode
 
-        real_agent_config.kb_search.enabled = True
-        real_agent_config.kb_search.mode = "hybrid"
-        real_agent_config.kb_search_mode = "fts"
+        self._enable_fts(real_agent_config)
+        real_agent_config.kb_search_mode = "vector"
 
         assert metadata_fts_enabled(real_agent_config) is True
-        assert resolve_kb_search_mode(real_agent_config) == KbSearchMode.HYBRID
+        assert resolve_kb_search_mode(real_agent_config) == KbSearchMode.FTS
+
+    def test_metadata_fts_rejects_backend_without_fts_capability(self, real_agent_config):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+        from datus.utils.exceptions import DatusException
+
+        self._enable_fts(real_agent_config)
+        database = MagicMock()
+        database.supports_fts.return_value = False
+        with patch("datus.storage.backend_holder.create_vector_connection", return_value=database):
+            with pytest.raises(DatusException, match="FTS-capable vector backend"):
+                MetadataFtsRAG(real_agent_config)
 
     def test_kb_retrieval_text_and_where_helpers_handle_empty_and_structured_values(self):
         from datus.storage.kb_retrieval.store import _as_text, _build_where_clause
@@ -881,6 +910,7 @@ class TestMetadataFtsRAG:
         from datus.schemas.node_models import TableSchema
         from datus.storage.kb_retrieval import MetadataFtsRAG
 
+        self._enable_fts(real_agent_config)
         rag = MetadataFtsRAG(real_agent_config)
         schemas = [
             self._make_schema_row(
@@ -903,16 +933,80 @@ class TestMetadataFtsRAG:
         metadata, sample_values = rag.search_similar("gross revenue", top_n=5, table_type="full")
         assert "definition" in metadata.column_names
         assert any(row["table_name"] == "order_facts" for row in metadata.to_pylist())
-        assert rag.last_search_info["requested_mode"] == "fts"
-        assert rag.last_search_info["actual_mode"] == "fts"
-        assert rag.last_search_info["fallback"] is False
+        assert rag.last_search_info == {
+            "configured_mode": "fts",
+            "index_status": "ready",
+            "index_version": 1,
+        }
         table_schemas = TableSchema.from_arrow(metadata)
         assert table_schemas[0].definition == "CREATE TABLE order_facts (order_id INT, gross_revenue DECIMAL)"
         assert sample_values.num_rows == 1
 
+    def test_incremental_fts_optimizes_only_changed_fragments(self, real_agent_config):
+        from datus.storage.kb_retrieval import MetadataFtsRAG
+
+        self._enable_fts(real_agent_config)
+        rag = MetadataFtsRAG(real_agent_config)
+        rag.store_batch(
+            [
+                self._make_schema_row(
+                    "orders",
+                    definition="CREATE TABLE orders (qqqq INT)",
+                ),
+                self._make_schema_row(
+                    "customers",
+                    definition="CREATE TABLE customers (xxxx INT)",
+                ),
+            ],
+            [],
+        )
+        rag.after_init()
+
+        rag.remove_data(database_name="db", schema_name="public", table_name="orders")
+        rag.remove_data(database_name="db", schema_name="public", table_name="customers")
+        rag.store_batch(
+            [
+                self._make_schema_row(
+                    "orders",
+                    definition="CREATE TABLE orders (zzzz INT)",
+                ),
+                self._make_schema_row(
+                    "inventory",
+                    definition="CREATE TABLE inventory (yyyy INT)",
+                ),
+            ],
+            [],
+        )
+
+        with (
+            patch.object(rag.facts_store.table, "optimize", wraps=rag.facts_store.table.optimize) as facts_optimize,
+            patch.object(
+                rag.document_store.table,
+                "optimize",
+                wraps=rag.document_store.table.optimize,
+            ) as documents_optimize,
+            patch.object(rag.document_store.table, "create_fts_index") as create_fts_index,
+        ):
+            rag.after_init(build_mode="incremental")
+
+        facts_optimize.assert_called_once_with()
+        documents_optimize.assert_called_once_with()
+        create_fts_index.assert_not_called()
+
+        fresh_results = rag.search_table("zzzz", top_n=5, table_type="full").to_pylist()
+        inventory_results = rag.search_table("yyyy", top_n=5, table_type="full").to_pylist()
+        legacy_results = rag.search_table("qqqq", top_n=5, table_type="full").to_pylist()
+        obsolete_results = rag.search_table("xxxx", top_n=5, table_type="full").to_pylist()
+
+        assert any(row["table_name"] == "orders" for row in fresh_results)
+        assert any(row["table_name"] == "inventory" for row in inventory_results)
+        assert all(row["table_name"] != "orders" for row in legacy_results)
+        assert all(row["table_name"] != "customers" for row in obsolete_results)
+
     def test_metadata_enrichment_uses_batched_fact_lookup(self, real_agent_config, monkeypatch):
         from datus.storage.kb_retrieval import MetadataFtsRAG
 
+        self._enable_fts(real_agent_config)
         rag = MetadataFtsRAG(real_agent_config)
         rag.store_batch(
             [
@@ -948,26 +1042,24 @@ class TestMetadataFtsRAG:
         assert samples.num_rows == 2
         assert len(calls) == 2
 
-    def test_hybrid_search_fails_when_vector_projection_is_empty(self, real_agent_config):
+    def test_fts_search_fails_when_index_is_missing(self, real_agent_config):
         from datus.storage.kb_retrieval import MetadataFtsRAG
         from datus.utils.exceptions import DatusException
 
-        real_agent_config.kb_search.mode = "hybrid"
-        real_agent_config.kb_search_mode = "hybrid"
+        self._enable_fts(real_agent_config)
         rag = MetadataFtsRAG(real_agent_config)
 
-        with pytest.raises(DatusException, match="vector projection has no rows"):
+        with pytest.raises(DatusException, match="run bootstrap-kb"):
             rag.search_table("orders", top_n=5, table_type="full")
 
-        assert rag.last_search_info["requested_mode"] == "hybrid"
-        assert rag.last_search_info["actual_mode"] == ""
-        assert rag.last_search_info["index_ready"] is False
-        assert rag.last_search_info["fallback"] is False
-        assert rag.last_search_info["error_reason"] == "hybrid_vector_projection_empty"
+        assert rag.last_search_info["configured_mode"] == "fts"
+        assert rag.last_search_info["index_status"] == "missing"
+        assert "run bootstrap-kb" in rag.last_search_info["error_reason"]
 
     def test_refresh_profiles_adds_semantic_text_to_metadata_document(self, real_agent_config):
         from datus.storage.kb_retrieval import MetadataFtsRAG
 
+        self._enable_fts(real_agent_config)
         rag = MetadataFtsRAG(real_agent_config)
         rag.store_batch(
             [
@@ -980,37 +1072,48 @@ class TestMetadataFtsRAG:
         )
         rag.after_init()
 
-        updated = rag.refresh_profiles(
-            [
-                {
-                    "id": "orders_profile",
-                    "format": "metricflow",
-                    "physical_table_fq_name": "db.public.orders",
-                    "catalog_name": "",
-                    "database_name": "db",
-                    "schema_name": "public",
-                    "table_name": "orders",
-                    "semantic_model_name": "commerce",
-                    "dataset_name": "orders",
-                    "data_source_name": "orders",
-                    "description": "Customer lifetime value and retention order history",
-                    "ai_context_json": "",
-                    "columns_json": "",
-                    "relationships_json": "",
-                    "custom_extensions_json": "",
-                    "yaml_path": "semantic_models/orders.yml",
-                    "search_text": "Customer lifetime value and retention order history",
-                }
-            ]
-        )
+        with (
+            patch.object(
+                rag.document_store.table,
+                "optimize",
+                wraps=rag.document_store.table.optimize,
+            ) as optimize,
+            patch.object(rag.document_store.table, "create_fts_index") as create_fts_index,
+        ):
+            updated = rag.refresh_profiles(
+                [
+                    {
+                        "id": "orders_profile",
+                        "format": "metricflow",
+                        "physical_table_fq_name": "db.public.orders",
+                        "catalog_name": "",
+                        "database_name": "db",
+                        "schema_name": "public",
+                        "table_name": "orders",
+                        "semantic_model_name": "commerce",
+                        "dataset_name": "orders",
+                        "data_source_name": "orders",
+                        "description": "Customer lifetime value and retention order history",
+                        "ai_context_json": "",
+                        "columns_json": "",
+                        "relationships_json": "",
+                        "custom_extensions_json": "",
+                        "yaml_path": "semantic_models/orders.yml",
+                        "search_text": "Customer lifetime value and retention order history",
+                    }
+                ]
+            )
 
         assert updated == 1
+        optimize.assert_called_once_with()
+        create_fts_index.assert_not_called()
         results = rag.search_table("lifetime value retention", top_n=5, table_type="full").to_pylist()
         assert any(row["table_name"] == "orders" for row in results)
 
     def test_refresh_tables_removes_stale_semantic_text(self, real_agent_config):
         from datus.storage.kb_retrieval import MetadataFtsRAG
 
+        self._enable_fts(real_agent_config)
         rag = MetadataFtsRAG(real_agent_config)
         rag.store_batch(
             [

@@ -18,9 +18,9 @@ from datus_storage_base.conditions import And, Node, WhereExpr, and_, eq, in_, o
 
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.node_models import TableSchema, TableValue
-from datus.storage.base import BaseEmbeddingStore, StorageBase
+from datus.storage.base import StorageBase
 from datus.storage.datasource_scope import DATASOURCE_ID_COLUMN, datasource_condition, resolve_datasource_id
-from datus.storage.embedding_models import EmbeddingModel
+from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
 from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -34,8 +34,8 @@ logger = get_logger(__name__)
 
 
 class KbSearchMode(StrEnum):
+    VECTOR = "vector"
     FTS = "fts"
-    HYBRID = "hybrid"
 
 
 def resolve_kb_search_mode(agent_config: Any) -> KbSearchMode:
@@ -44,27 +44,15 @@ def resolve_kb_search_mode(agent_config: Any) -> KbSearchMode:
     kb_search = getattr(agent_config, "kb_search", None)
     mode = getattr(kb_search, "mode", None) if kb_search is not None else None
     if not isinstance(mode, str) or not mode.strip():
-        mode = getattr(agent_config, "kb_search_mode", KbSearchMode.FTS.value)
-    mode = str(mode or KbSearchMode.FTS.value).strip().lower()
-    return KbSearchMode.HYBRID if mode == KbSearchMode.HYBRID.value else KbSearchMode.FTS
+        mode = getattr(agent_config, "kb_search_mode", KbSearchMode.VECTOR.value)
+    mode = str(mode or KbSearchMode.VECTOR.value).strip().lower()
+    return KbSearchMode.FTS if mode == KbSearchMode.FTS.value else KbSearchMode.VECTOR
 
 
 def metadata_fts_enabled(agent_config: Any) -> bool:
-    """Return True when public KB search config enables the metadata retrieval path."""
+    """Return True when the public KB search mode selects the metadata FTS path."""
 
-    kb_search = getattr(agent_config, "kb_search", None)
-    if kb_search is None:
-        return False
-    enabled = getattr(kb_search, "enabled", None)
-    return (
-        isinstance(enabled, bool)
-        and enabled
-        and resolve_kb_search_mode(agent_config)
-        in {
-            KbSearchMode.FTS,
-            KbSearchMode.HYBRID,
-        }
-    )
+    return resolve_kb_search_mode(agent_config) == KbSearchMode.FTS
 
 
 def _search_mode(agent_config: Any) -> KbSearchMode:
@@ -239,31 +227,105 @@ class PlainLanceStore(StorageBase):
             return 0
         return table.count_rows(where)
 
-    def create_indices(self, scalar_columns: Sequence[str], fts_columns: Optional[Sequence[str]] = None) -> None:
+    def create_indices(self, scalar_columns: Sequence[str], fts_spec: Optional[FtsSpec] = None) -> None:
         self._ensure_table_ready()
         for column in scalar_columns:
             try:
                 self.table.create_scalar_index(column)
             except Exception as exc:
                 logger.warning("Failed to create scalar index on %s.%s: %s", self.table_name, column, exc)
-        if fts_columns:
+        if fts_spec is not None:
+            if not getattr(self.table, "supports_fts", lambda: False)():
+                raise DatusException(
+                    ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                    message_args={
+                        "operation": "create_fts_index",
+                        "table_name": self.table_name,
+                        "error_message": "configured vector backend does not support FTS",
+                    },
+                )
+            remove_legacy = getattr(self.table, "remove_legacy_fts_index", None)
+            if remove_legacy is not None and remove_legacy():
+                logger.info("Removed legacy Tantivy FTS index for %s before rebuilding", self.table_name)
             try:
-                self.table.create_fts_index(list(fts_columns))
+                for field in fts_spec.fields:
+                    self.table.create_fts_index(field)
+                self.require_fts_ready(fts_spec)
+            except DatusException:
+                raise
             except Exception as exc:
-                logger.warning("Failed to create FTS index on %s: %s", self.table_name, exc)
+                raise DatusException(
+                    ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                    message_args={
+                        "operation": "create_fts_index",
+                        "table_name": self.table_name,
+                        "error_message": str(exc),
+                    },
+                ) from exc
+
+    def optimize(self) -> None:
+        """Incrementally update existing indices after writes or deletes."""
+
+        self._ensure_table_ready()
+        optimize = getattr(self.table, "optimize", None)
+        if optimize is None:
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={
+                    "operation": "optimize_indices",
+                    "table_name": self.table_name,
+                    "error_message": "configured backend does not support incremental index updates",
+                },
+            )
+        try:
+            optimize()
+        except Exception as exc:
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={
+                    "operation": "optimize_indices",
+                    "table_name": self.table_name,
+                    "error_message": str(exc),
+                },
+            ) from exc
+
+    def fts_index_status(self, spec: FtsSpec) -> FtsIndexStatus:
+        table = self._open_existing_table_for_read()
+        if table is None:
+            return FtsIndexStatus.MISSING
+        status_fn = getattr(table, "fts_index_status", None)
+        if status_fn is None:
+            return FtsIndexStatus.UNSUPPORTED
+        return status_fn(spec)
+
+    def require_fts_ready(self, spec: FtsSpec) -> None:
+        status = self.fts_index_status(spec)
+        if status != FtsIndexStatus.READY:
+            raise DatusException(
+                ErrorCode.STORAGE_SEARCH_FAILED,
+                message_args={
+                    "error_message": (
+                        f"FTS index for '{self.table_name}' is {status.value}; "
+                        "run bootstrap-kb with --kb_update_strategy overwrite"
+                    ),
+                    "query": "",
+                    "where_clause": "(none)",
+                    "top_n": "0",
+                },
+            )
 
     def search_fts(
         self,
         query_text: str,
         *,
-        fts_columns: Sequence[str],
+        fts_spec: FtsSpec,
         top_n: int,
         where: WhereExpr = None,
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
+        self.require_fts_ready(fts_spec)
         table = self._open_existing_table_for_read()
-        if table is None:
-            return self._empty_result(select_fields)
+        assert table is not None
         if table.count_rows(where) == 0:
             return self._empty_result(select_fields)
         if not hasattr(table, "search_fts"):
@@ -276,7 +338,7 @@ class PlainLanceStore(StorageBase):
                     "top_n": str(top_n),
                 },
             )
-        return table.search_fts(query_text, list(fts_columns), top_n, where=where, select_fields=select_fields)
+        return table.search_fts(query_text, fts_spec, top_n, where=where, select_fields=select_fields)
 
 
 class MetadataFactsStore(PlainLanceStore):
@@ -303,7 +365,7 @@ class MetadataFactsStore(PlainLanceStore):
             ),
         )
 
-    def create_indices(self, scalar_columns: Sequence[str] = (), fts_columns: Optional[Sequence[str]] = None) -> None:
+    def create_indices(self, scalar_columns: Sequence[str] = (), fts_spec: Optional[FtsSpec] = None) -> None:
         super().create_indices(
             scalar_columns=scalar_columns
             or [
@@ -319,7 +381,7 @@ class MetadataFactsStore(PlainLanceStore):
 
 
 class KbRetrievalDocumentStore(PlainLanceStore):
-    FTS_COLUMNS = ["title", "search_text", "identifier", "table_name"]
+    FTS_SPEC = FtsSpec((FtsField("search_text", tokenizer="ngram"),), version=1)
 
     def __init__(self, *, project: str):
         super().__init__(
@@ -348,7 +410,7 @@ class KbRetrievalDocumentStore(PlainLanceStore):
             ),
         )
 
-    def create_indices(self, scalar_columns: Sequence[str] = (), fts_columns: Optional[Sequence[str]] = None) -> None:
+    def create_indices(self, scalar_columns: Sequence[str] = (), fts_spec: Optional[FtsSpec] = None) -> None:
         super().create_indices(
             scalar_columns=scalar_columns
             or [
@@ -363,61 +425,8 @@ class KbRetrievalDocumentStore(PlainLanceStore):
                 "table_name",
                 "table_type",
             ],
-            fts_columns=fts_columns or self.FTS_COLUMNS,
+            fts_spec=fts_spec or self.FTS_SPEC,
         )
-
-
-class MetadataRetrievalVectorStorage(BaseEmbeddingStore):
-    """Optional hybrid projection over the same table-level retrieval documents."""
-
-    def __init__(self, embedding_model: EmbeddingModel, **kwargs):
-        super().__init__(
-            table_name="kb_retrieval_vector",
-            embedding_model=embedding_model,
-            schema=pa.schema(
-                [
-                    pa.field("id", pa.string()),
-                    pa.field("doc_id", pa.string()),
-                    pa.field("component_type", pa.string()),
-                    pa.field("entity_type", pa.string()),
-                    pa.field("entity_key", pa.string()),
-                    pa.field("identifier", pa.string()),
-                    pa.field("catalog_name", pa.string()),
-                    pa.field("database_name", pa.string()),
-                    pa.field("schema_name", pa.string()),
-                    pa.field("table_name", pa.string()),
-                    pa.field("table_type", pa.string()),
-                    pa.field("title", pa.string()),
-                    pa.field("search_text", pa.string()),
-                    pa.field("payload_json", pa.string()),
-                    pa.field("content_hash", pa.string()),
-                    pa.field("updated_at", pa.timestamp("ms")),
-                    pa.field("vector", pa.list_(pa.float32(), list_size=embedding_model.dim_size)),
-                ]
-            ),
-            vector_source_name="search_text",
-            vector_column_name="vector",
-            unique_columns=["storage_key"],
-            datasource_scoped=True,
-            **kwargs,
-        )
-
-    def create_indices(self) -> None:
-        self._ensure_table_ready()
-        for column in (
-            "doc_id",
-            "component_type",
-            "entity_type",
-            "entity_key",
-            "identifier",
-            "catalog_name",
-            "database_name",
-            "schema_name",
-            "table_name",
-            "table_type",
-        ):
-            self._create_scalar_index(column)
-        self.create_fts_index(KbRetrievalDocumentStore.FTS_COLUMNS)
 
 
 class MetadataFtsRAG:
@@ -469,44 +478,38 @@ class MetadataFtsRAG:
         self.agent_config = agent_config
         self.datasource_id = resolve_datasource_id(agent_config, datasource_id)
         self.search_mode = _search_mode(agent_config)
+        if self.search_mode != KbSearchMode.FTS:
+            raise DatusException(
+                ErrorCode.STORAGE_INVALID_ARGUMENT,
+                message_args={"error_message": "MetadataFtsRAG requires kb.search.mode=fts"},
+            )
         self.facts_store = MetadataFactsStore(project=agent_config.project_name)
         self.document_store = KbRetrievalDocumentStore(project=agent_config.project_name)
-        self.vector_store: Optional[MetadataRetrievalVectorStorage] = None
-        if self.search_mode == KbSearchMode.HYBRID:
-            from datus.storage.registry import get_storage
-
-            self.vector_store = get_storage(
-                MetadataRetrievalVectorStorage,
-                "database",
-                project=agent_config.project_name,
-                datasource_id=self.datasource_id,
+        if not getattr(self.document_store.db, "supports_fts", lambda: False)():
+            raise DatusException(
+                ErrorCode.STORAGE_INVALID_ARGUMENT,
+                message_args={
+                    "error_message": (
+                        "kb.search.mode=fts requires an FTS-capable vector backend; "
+                        "use kb.search.mode=vector with the configured backend"
+                    )
+                },
             )
         self._sub_agent_filter = _build_sub_agent_filter(agent_config, sub_agent_name, self.document_store, "tables")
         self._table_semantic_profiles = None
-        self.last_search_info: Dict[str, Any] = self._search_info(
-            requested_mode=self.search_mode.value,
-            actual_mode="",
-            index_ready=False,
-        )
+        self.last_search_info: Dict[str, Any] = self._search_info(index_status=FtsIndexStatus.MISSING)
 
     @staticmethod
     def _search_info(
         *,
-        requested_mode: str,
-        actual_mode: str,
-        index_ready: bool,
-        fallback: bool = False,
-        vector_row_count: Optional[int] = None,
+        index_status: FtsIndexStatus,
         error_reason: str = "",
     ) -> Dict[str, Any]:
         info: Dict[str, Any] = {
-            "requested_mode": requested_mode,
-            "actual_mode": actual_mode,
-            "index_ready": index_ready,
-            "fallback": fallback,
+            "configured_mode": KbSearchMode.FTS.value,
+            "index_status": index_status.value,
+            "index_version": KbRetrievalDocumentStore.FTS_SPEC.version,
         }
-        if vector_row_count is not None:
-            info["vector_row_count"] = vector_row_count
         if error_reason:
             info["error_reason"] = error_reason
         return info
@@ -544,8 +547,6 @@ class MetadataFtsRAG:
     def truncate(self) -> None:
         self.facts_store.delete_datasource_rows(self.datasource_id)
         self.document_store.delete_datasource_rows(self.datasource_id)
-        if self.vector_store is not None:
-            self.vector_store.delete_datasource_rows(self.datasource_id)
 
     def store_batch(self, schemas: List[Dict[str, Any]], values: List[Dict[str, Any]]) -> None:
         sample_by_identifier = self._sample_rows_by_identifier(values)
@@ -558,19 +559,29 @@ class MetadataFtsRAG:
         self.facts_store.upsert_batch(fact_rows)
         docs = [self._document_row(row) for row in fact_rows]
         self.document_store.upsert_batch(docs)
-        if self.vector_store is not None:
-            vector_rows = [dict(row, id=row["doc_id"]) for row in docs]
-            from datus.storage.datasource_scope import add_datasource_scope_to_rows
 
-            self.vector_store.upsert_batch(
-                add_datasource_scope_to_rows(vector_rows, self.datasource_id), on_column="storage_key"
-            )
+    def after_init(self, build_mode: str = "overwrite") -> None:
+        if build_mode == "incremental":
+            self.check_ready()
+            self.facts_store.optimize()
+            self.document_store.optimize()
+            self.check_ready()
+            return
 
-    def after_init(self) -> None:
         self.facts_store.create_indices()
         self.document_store.create_indices()
-        if self.vector_store is not None:
-            self.vector_store.create_indices()
+        self._record_search_info(index_status=FtsIndexStatus.READY)
+
+    def check_ready(self) -> None:
+        """Fail when FTS data has not been built with the current index spec."""
+
+        try:
+            self.document_store.require_fts_ready(KbRetrievalDocumentStore.FTS_SPEC)
+        except Exception as exc:
+            status = self.document_store.fts_index_status(KbRetrievalDocumentStore.FTS_SPEC)
+            self._record_search_info(index_status=status, error_reason=str(exc))
+            raise
+        self._record_search_info(index_status=FtsIndexStatus.READY)
 
     def get_schema_size(self) -> int:
         return self.facts_store._count_rows(where=self._where(table_type="full"))
@@ -590,143 +601,29 @@ class MetadataFtsRAG:
         schema_name: str = "",
         table_type: TABLE_TYPE = "table",
         top_n: int = 5,
-        query_type: str = "",
     ) -> pa.Table:
-        mode = KbSearchMode.HYBRID if query_type == KbSearchMode.HYBRID.value else self.search_mode
         where = self._where(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
             table_type=table_type,
         )
-        if mode == KbSearchMode.HYBRID:
-            if self.vector_store is None:
-                reason = "hybrid_vector_store_unavailable"
-                self._record_search_info(
-                    requested_mode=mode.value,
-                    actual_mode="",
-                    index_ready=False,
-                    fallback=False,
-                    error_reason=reason,
-                )
-                raise DatusException(
-                    ErrorCode.STORAGE_SEARCH_FAILED,
-                    message_args={
-                        "error_message": "Hybrid metadata retrieval requested but vector projection is unavailable",
-                        "query": query_text,
-                        "where_clause": str(where) if where else "(none)",
-                        "top_n": str(top_n),
-                    },
-                )
-
-            try:
-                vector_row_count = self.vector_store._count_rows(where)
-            except Exception as exc:
-                self._record_search_info(
-                    requested_mode=mode.value,
-                    actual_mode="",
-                    index_ready=False,
-                    fallback=False,
-                    error_reason=str(exc),
-                )
-                raise DatusException(
-                    ErrorCode.STORAGE_SEARCH_FAILED,
-                    message_args={
-                        "error_message": str(exc),
-                        "query": query_text,
-                        "where_clause": str(where) if where else "(none)",
-                        "top_n": str(top_n),
-                    },
-                ) from exc
-            if vector_row_count == 0:
-                reason = "hybrid_vector_projection_empty"
-                self._record_search_info(
-                    requested_mode=mode.value,
-                    actual_mode="",
-                    index_ready=False,
-                    fallback=False,
-                    vector_row_count=0,
-                    error_reason=reason,
-                )
-                raise DatusException(
-                    ErrorCode.STORAGE_SEARCH_FAILED,
-                    message_args={
-                        "error_message": "Hybrid metadata retrieval requested but vector projection has no rows",
-                        "query": query_text,
-                        "where_clause": str(where) if where else "(none)",
-                        "top_n": str(top_n),
-                    },
-                )
-
-            try:
-                result = self.vector_store.search(
-                    query_text,
-                    top_n=top_n,
-                    where=where,
-                    query_type=KbSearchMode.HYBRID.value,
-                    select_fields=None,
-                    allow_hybrid_fallback=False,
-                )
-            except DatusException as exc:
-                self._record_search_info(
-                    requested_mode=mode.value,
-                    actual_mode="",
-                    index_ready=True,
-                    fallback=False,
-                    vector_row_count=vector_row_count,
-                    error_reason=str(exc),
-                )
-                raise
-            except Exception as exc:
-                self._record_search_info(
-                    requested_mode=mode.value,
-                    actual_mode="",
-                    index_ready=True,
-                    fallback=False,
-                    vector_row_count=vector_row_count,
-                    error_reason=str(exc),
-                )
-                raise DatusException(
-                    ErrorCode.STORAGE_SEARCH_FAILED,
-                    message_args={
-                        "error_message": str(exc),
-                        "query": query_text,
-                        "where_clause": str(where) if where else "(none)",
-                        "top_n": str(top_n),
-                    },
-                ) from exc
-            self._record_search_info(
-                requested_mode=mode.value,
-                actual_mode=KbSearchMode.HYBRID.value,
-                index_ready=True,
-                fallback=False,
-                vector_row_count=vector_row_count,
-            )
-            return result
-
         try:
             result = self.document_store.search_fts(
                 query_text,
-                fts_columns=KbRetrievalDocumentStore.FTS_COLUMNS,
+                fts_spec=KbRetrievalDocumentStore.FTS_SPEC,
                 top_n=top_n,
                 where=where,
                 select_fields=None,
             )
         except Exception as exc:
+            status = self.document_store.fts_index_status(KbRetrievalDocumentStore.FTS_SPEC)
             self._record_search_info(
-                requested_mode=mode.value,
-                actual_mode="",
-                index_ready=False,
-                fallback=False,
+                index_status=status,
                 error_reason=str(exc),
             )
             raise
-        self._record_search_info(
-            requested_mode=mode.value,
-            actual_mode=KbSearchMode.FTS.value,
-            index_ready=True,
-            fallback=False,
-        )
+        self._record_search_info(index_status=FtsIndexStatus.READY)
         return result
 
     def sample_rows_for_search_results(self, metadata: pa.Table) -> pa.Table:
@@ -738,7 +635,6 @@ class MetadataFtsRAG:
         catalog_name: str = "",
         database_name: str = "",
         schema_name: str = "",
-        query_type: str = "fts",
         table_type: TABLE_TYPE = "table",
         top_n: int = 5,
     ) -> tuple[pa.Table, pa.Table]:
@@ -749,7 +645,6 @@ class MetadataFtsRAG:
             schema_name=schema_name,
             table_type=table_type,
             top_n=top_n,
-            query_type=query_type,
         )
         schemas = self._schema_rows_for_metadata(metadata)
         sample_values = self._sample_rows_for_metadata(schemas)
@@ -918,8 +813,6 @@ class MetadataFtsRAG:
         if where is not None:
             self.facts_store._delete_rows(where)
             self.document_store._delete_rows(where)
-            if self.vector_store is not None:
-                self.vector_store._delete_rows(where)
 
     def refresh_profiles(self, profiles: List[Dict[str, Any]]) -> int:
         updated_docs: List[Dict[str, Any]] = []
@@ -977,16 +870,10 @@ class MetadataFtsRAG:
     def _upsert_documents(self, updated_docs: List[Dict[str, Any]]) -> int:
         if not updated_docs:
             return 0
+        self.document_store.require_fts_ready(KbRetrievalDocumentStore.FTS_SPEC)
         self.document_store.upsert_batch(updated_docs)
-        if self.vector_store is not None:
-            from datus.storage.datasource_scope import add_datasource_scope_to_rows
-
-            vector_rows = [dict(row, id=row["doc_id"]) for row in updated_docs]
-            self.vector_store.upsert_batch(
-                add_datasource_scope_to_rows(vector_rows, self.datasource_id), on_column="storage_key"
-            )
-            self.vector_store.create_indices()
-        self.document_store.create_indices()
+        self.document_store.optimize()
+        self.document_store.require_fts_ready(KbRetrievalDocumentStore.FTS_SPEC)
         return len(updated_docs)
 
     def _schema_rows_for_metadata(self, metadata: pa.Table) -> pa.Table:

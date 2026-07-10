@@ -26,7 +26,7 @@ dependencies = [
     "datus-db-core>=0.1.4",
     "datus-storage-base>=0.1.5,<0.2.0",
     "python-dotenv==1.0.0",
-    "pandas==2.1.4",
+    "pandas==2.3.3",
     "sqlalchemy==2.0.23",
     "sqlglot>=26.12.0,<31",
     "pyyaml==6.0.1",
@@ -44,9 +44,8 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.20.0",
     "litellm>=1.67.4.post1,<2",
     "pydantic>=2.11.7,<3.0",
-    "lancedb==0.18.0",
+    "lancedb==0.34.0",
     # This library is required by lancedb
-    # this version is required by pandas 2.1.4
     "pyarrow<19.0.0",
     "rich==14.0.0",
     "prompt_toolkit>=3.0.51",

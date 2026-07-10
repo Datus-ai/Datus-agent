@@ -143,7 +143,7 @@ def init_dev_schema(
         ]
         for future in as_completed(futures):
             future.result()
-    rag.after_init()
+    rag.after_init(build_mode=build_mode)
 
 
 def init_dev_schema_by_db(

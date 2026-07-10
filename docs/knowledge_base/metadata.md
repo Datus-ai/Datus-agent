@@ -47,28 +47,29 @@ datus-agent bootstrap-kb --datasource <your_datasource> --kb_update_strategy [ch
     - `check`: Check the number of data entries currently constructed
     - `overwrite`: Fully overwrite existing data
     - `incremental`: Incremental update: if existing data has changed, update it and append non-existent data
-- `--kb_search_mode`: Optional metadata search mode. The default is `fts`. Use `hybrid` to keep the vector + full-text retrieval path.
+- `--kb_search_mode`: Optional metadata search mode. The default is `vector`; set it to `fts` to build full-text metadata from scratch.
 
 ### Metadata Search Mode
 
-By default, metadata bootstrap stores physical table facts and retrieval documents for full-text search. This avoids generating table embeddings for large catalogs while still allowing `search_table`, autocomplete, schema linking, and `@Table` references to find tables from table names, DDL, sample rows, and attached semantic profiles.
+Metadata search remains on the existing vector store by default, so existing installations do not need to rebuild their data after upgrading.
 
-Set `kb.search.mode` to `hybrid` when you want the previous vector-assisted retrieval path:
+Set `kb.search.mode` to `fts` to use full-text metadata retrieval without generating embeddings:
 
 ```yaml
 kb:
   search:
-    mode: hybrid
+    mode: fts
 ```
 
-The `hybrid` mode requires the database embedding storage configuration and a context generated with `--kb_search_mode hybrid`. If `search_table` is run in `hybrid` mode but the vector projection is missing or empty, the tool returns an explicit retrieval error instead of silently falling back to FTS. The default `fts` mode does not require embeddings.
+The FTS store searches table names, DDL, sample rows, and attached semantic profiles. It does not fall back to vector search. A missing, legacy, or incomplete FTS index produces an explicit error and must be rebuilt with `overwrite`.
 
-To temporarily use the legacy schema metadata path, disable the new metadata search path explicitly:
+After the initial FTS build, `incremental` upserts only new or changed metadata and uses LanceDB `optimize()` to add the changed fragments to the existing index. It does not replace the complete FTS index.
 
-```yaml
-kb:
-  search:
-    enabled: false
+Choose the mode before building metadata. Switching an existing vector installation to FTS requires a full rebuild:
+
+```bash
+datus-agent bootstrap-kb --datasource <your_datasource> --components metadata \
+  --kb_search_mode fts --kb_update_strategy overwrite
 ```
 
 ## Usage Examples

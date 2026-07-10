@@ -11,6 +11,7 @@ from datus_storage_base.conditions import And, WhereExpr, eq, in_, not_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
+from datus.storage.fts import FtsField, FtsSpec
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -120,7 +121,9 @@ class SemanticModelStorage(BaseEmbeddingStore):
         self._create_scalar_index("table_name")
         self._create_scalar_index("id")
 
-        self.create_fts_index(["description", "name", "fq_name"])
+        self.create_fts_index(
+            FtsSpec((FtsField("name", boost=3.0), FtsField("fq_name", boost=3.0), FtsField("description")))
+        )
 
     def search_objects(
         self,

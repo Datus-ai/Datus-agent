@@ -69,7 +69,7 @@ def test_get_profile_lowercase_fallback_runs_after_ambiguous_broad_lookup():
 
 def _artifact_rag():
     rag = TableSemanticProfileRAG.__new__(TableSemanticProfileRAG)
-    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(enabled=False, mode="fts"), kb_search_mode="fts")
+    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="vector"), kb_search_mode="vector")
     rag.datasource_id = "test_datasource"
     rag.storage = Mock()
     rag.storage._search_all.return_value = _Rows([])
@@ -117,7 +117,7 @@ def test_delete_artifact_rows_except_keeps_current_ids():
 
 def test_delete_artifact_rows_refreshes_metadata_documents_for_deleted_tables():
     rag = _artifact_rag()
-    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(enabled=True, mode="fts"), kb_search_mode="fts")
+    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="fts"), kb_search_mode="fts")
     deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "table_name": "orders"}]
     rag.storage._search_all.return_value = _Rows(deleted_rows)
 
@@ -130,7 +130,7 @@ def test_delete_artifact_rows_refreshes_metadata_documents_for_deleted_tables():
 
 def test_truncate_refreshes_metadata_documents_for_deleted_tables():
     rag = _artifact_rag()
-    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(enabled=True, mode="fts"), kb_search_mode="fts")
+    rag.agent_config = SimpleNamespace(kb_search=SimpleNamespace(mode="fts"), kb_search_mode="fts")
     deleted_rows = [{"catalog_name": "", "database_name": "db", "schema_name": "public", "table_name": "orders"}]
     rag.storage._search_all.return_value = _Rows(deleted_rows)
 

@@ -21,6 +21,7 @@ from datus.storage.datasource_scope import (
     datasource_condition,
 )
 from datus.storage.embedding_models import EmbeddingModel
+from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -400,15 +401,39 @@ class BaseEmbeddingStore(StorageBase):
         except Exception as e:
             logger.warning(f"Failed to create vector index for {self.table_name}: {str(e)}")
 
-    def create_fts_index(self, field_names: Union[str, List[str]]):
-        """Create a full-text search index (LanceDB only)."""
+    def create_fts_index(self, fields: Union[str, List[str], FtsSpec]):
+        """Create and verify one native FTS index per configured field."""
         self._ensure_table_ready()
         if not self._supports_runtime_indexing():
             return
+        if isinstance(fields, FtsSpec):
+            spec = fields
+        elif isinstance(fields, str):
+            spec = FtsSpec((FtsField(fields),))
+        else:
+            spec = FtsSpec.from_names(fields)
+
+        remove_legacy = getattr(self.table, "remove_legacy_fts_index", None)
+        if remove_legacy is not None and remove_legacy():
+            logger.info("Removed legacy Tantivy FTS index for %s before rebuilding", self.table_name)
+
         try:
-            self.table.create_fts_index(field_names)
-        except Exception as e:
-            logger.warning(f"Failed to create fts index for {self.table_name} table: {str(e)}")
+            for field in spec.fields:
+                self.table.create_fts_index(field)
+            status_fn = getattr(self.table, "fts_index_status", None)
+            if status_fn is not None:
+                status = status_fn(spec)
+                if status != FtsIndexStatus.READY:
+                    raise RuntimeError(f"FTS index verification returned {status}")
+        except Exception as exc:
+            raise DatusException(
+                ErrorCode.STORAGE_TABLE_OPERATION_FAILED,
+                message_args={
+                    "operation": "create_fts_index",
+                    "table_name": self.table_name,
+                    "error_message": str(exc),
+                },
+            ) from exc
 
     def store_batch(self, data: List[Dict[str, Any]]):
         """

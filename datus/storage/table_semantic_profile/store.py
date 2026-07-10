@@ -11,6 +11,7 @@ from datus_storage_base.conditions import And, eq, in_, not_
 
 from datus.storage.base import BaseEmbeddingStore, EmbeddingModel
 from datus.storage.datasource_scope import add_datasource_scope_to_rows, datasource_condition, resolve_datasource_id
+from datus.storage.fts import FtsField, FtsSpec
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ class TableSemanticProfileStorage(BaseEmbeddingStore):
         self._create_scalar_index("format")
         self._create_scalar_index("table_name")
         self._create_scalar_index("physical_table_fq_name")
-        self.create_fts_index(["search_text", "description", "table_name", "physical_table_fq_name"])
+        self.create_fts_index(FtsSpec((FtsField("search_text"),)))
 
 
 class TableSemanticProfileRAG:

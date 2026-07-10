@@ -14,6 +14,7 @@ from datus_storage_base.conditions import WhereExpr, and_, eq, in_, not_
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.base import EmbeddingModel
 from datus.storage.datasource_scope import datasource_condition, resolve_datasource_id
+from datus.storage.fts import FtsField, FtsSpec
 from datus.storage.knowledge_provenance import enrich_metric_results, is_knowledge_provenance_enabled
 from datus.storage.subject_tree.store import BaseSubjectEmbeddingStore, base_schema_columns
 from datus.utils.loggings import get_logger
@@ -162,7 +163,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
         self._create_scalar_index("schema_name")
 
         self.create_subject_index()
-        self.create_fts_index(["description", "name"])
+        self.create_fts_index(FtsSpec((FtsField("name", boost=3.0), FtsField("description"))))
 
     def _scope_column_migration_exprs(self) -> Dict[str, str]:
         # Also backfill the Hub uid column on pre-existing metric tables (empty

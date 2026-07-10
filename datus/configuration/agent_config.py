@@ -218,25 +218,23 @@ class CompactConfig:
 class KbSearchConfig:
     """Knowledge-base retrieval mode shared by bootstrap and runtime search."""
 
-    enabled: bool = True
-    mode: str = "fts"
+    mode: str = "vector"
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "KbSearchConfig":
         if not isinstance(raw, dict):
             raw = {}
-        enabled = _coerce_bool(raw.get("enabled"), True)
-        mode = str(raw.get("mode") or "fts").strip().lower()
-        if mode not in {"fts", "hybrid"}:
+        mode = str(raw.get("mode") or "vector").strip().lower()
+        if mode not in {"vector", "fts"}:
             raise DatusException(
                 code=ErrorCode.COMMON_FIELD_INVALID,
                 message_args={
                     "field_name": "kb.search.mode",
-                    "except_values": {"fts", "hybrid"},
+                    "except_values": {"vector", "fts"},
                     "your_value": mode,
                 },
             )
-        return cls(enabled=enabled, mode=mode)
+        return cls(mode=mode)
 
 
 @dataclass
@@ -1838,12 +1836,7 @@ class AgentConfig:
         if kwargs.get("search_metrics_rate", ""):
             self.search_metrics_rate = kwargs["search_metrics_rate"]
         if kwargs.get("kb_search_mode", ""):
-            self.kb_search = KbSearchConfig.from_dict(
-                {
-                    "enabled": getattr(getattr(self, "kb_search", None), "enabled", True),
-                    "mode": kwargs["kb_search_mode"],
-                }
-            )
+            self.kb_search = KbSearchConfig.from_dict({"mode": kwargs["kb_search_mode"]})
             self.kb_search_mode = self.kb_search.mode
         if kwargs.get("plan", ""):
             self.workflow_plan = kwargs["plan"]

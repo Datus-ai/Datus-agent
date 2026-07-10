@@ -6,7 +6,7 @@
 
 import re
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pyarrow as pa
 import pytest
@@ -865,7 +865,7 @@ class TestCreateFtsIndex:
     """Tests for create_fts_index."""
 
     def test_create_fts_index_no_error(self, tmp_path):
-        """create_fts_index should not raise even if index creation fails."""
+        """create_fts_index creates a verified native index."""
         store = SchemaStorage(get_db_embedding_model())
         store.store_batch(
             [
@@ -884,7 +884,7 @@ class TestCreateFtsIndex:
         assert store.table_size() == 1
 
     def test_create_fts_index_with_multiple_fields(self, tmp_path):
-        """create_fts_index with multiple fields should not raise."""
+        """create_fts_index creates one native index per field."""
         store = SchemaStorage(get_db_embedding_model())
         store.store_batch(
             [
@@ -901,6 +901,28 @@ class TestCreateFtsIndex:
         )
         store.create_fts_index(["database_name", "schema_name", "table_name", "definition"])
         assert store.table_size() == 1
+        indices = store.table._table.list_indices()
+        indexed_fields = {column for index in indices if index.index_type == "FTS" for column in index.columns}
+        assert indexed_fields == {"database_name", "schema_name", "table_name", "definition"}
+
+    def test_create_fts_index_failure_is_not_swallowed(self, tmp_path):
+        store = SchemaStorage(get_db_embedding_model())
+        store.store_batch(
+            [
+                {
+                    "identifier": "id_1",
+                    "catalog_name": "cat",
+                    "database_name": "db",
+                    "schema_name": "sch",
+                    "table_name": "t",
+                    "table_type": "table",
+                    "definition": "CREATE TABLE t (id INT)",
+                }
+            ]
+        )
+        with patch.object(store.table, "create_fts_index", side_effect=RuntimeError("index build failed")):
+            with pytest.raises(DatusException, match="index build failed"):
+                store.create_fts_index(["definition"])
 
 
 # ---------------------------------------------------------------------------

@@ -299,10 +299,10 @@ class TestInit:
         db_manager.assert_called_once_with(config.datasource_configs)
         init_schema.assert_called_once()
 
-    def test_init_metadata_overwrite_cleans_legacy_vector_tables(self):
+    def test_init_metadata_vector_overwrite_cleans_legacy_vector_tables(self):
         config = MagicMock()
         config.rag_storage_path.return_value = "/tmp/rag"
-        config.kb_search_mode = "hybrid"
+        config.kb_search_mode = "vector"
         config.project_name = "demo"
         config.datasource_configs = {"test_ns": {"type": "sqlite"}}
         metadata_store = MagicMock()
@@ -310,7 +310,7 @@ class TestInit:
 
         with (
             patch("datus.configuration.agent_config_loader.load_agent_config", return_value=config),
-            patch("datus.storage.kb_retrieval.metadata_fts_enabled", return_value=True),
+            patch("datus.storage.kb_retrieval.metadata_fts_enabled", return_value=False),
             patch("datus.storage.schema_metadata.create_metadata_rag", return_value=metadata_store) as create_rag,
             patch("datus.storage.schema_metadata.local_init.init_local_schema") as init_schema,
             patch("datus.tools.db_tools.db_manager.db_manager_instance", return_value=MagicMock()),

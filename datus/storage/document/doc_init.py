@@ -458,12 +458,14 @@ def init_platform_docs(
         )
 
     # Create indices once after all processing is complete
+    indices_ready = True
     if stats.total_chunks > 0:
         try:
             store.create_indices()
         except Exception as e:
             logger.error(f"Failed to create indices: {e}")
             stats.add_error(f"Index error: {str(e)}")
+            indices_ready = False
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
@@ -489,7 +491,7 @@ def init_platform_docs(
         source=source,
         total_docs=stats.total_docs,
         total_chunks=stats.total_chunks,
-        success=len(stats.errors) == 0 or stats.total_chunks > 0,
+        success=indices_ready and (len(stats.errors) == 0 or stats.total_chunks > 0),
         errors=stats.errors,
         duration_seconds=duration,
     )
