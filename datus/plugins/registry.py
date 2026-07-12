@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from datus.utils.loggings import get_logger
 
@@ -132,6 +132,62 @@ def invalidate_plugin_cache() -> None:
     _PLUGIN_CACHE = None
 
 
+def _is_active(name: Optional[str], active_names: Optional[Set[str]]) -> bool:
+    """Whether plugin ``name`` passes the project activation filter.
+
+    ``active_names is None`` means "no filter" (every plugin active — the
+    ``plugins:`` section was absent). Otherwise only names in the set pass, so
+    a project's ``plugins:`` whitelist gates which installed plugins may
+    contribute skills / prompt sections / tool transformers / bash rules.
+    """
+    if active_names is None:
+        return True
+    return isinstance(name, str) and name in active_names
+
+
+def _active_names_from_config(agent_config) -> Optional[Set[str]]:
+    """Read the activation whitelist off an ``AgentConfig``, defensively.
+
+    Returns ``None`` (no filter) when the config predates the accessor or the
+    lookup raises, so prompt/skill collection degrades to "all active" rather
+    than crashing.
+    """
+    getter = getattr(agent_config, "active_plugin_names", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter()
+    except Exception as exc:  # noqa: BLE001 - never break collection on a bad config
+        logger.debug("active_plugin_names() failed: %s", exc)
+        return None
+
+
+def _active_profiles_subset(agent_config, name: str, profiles: dict) -> dict:
+    """Narrow ``profiles`` to the ones the project activated for ``name``.
+
+    ``agent_config.active_plugin_profiles(name)`` returns ``None`` (no pin — pass
+    every profile) or the pinned profile names. A pin is applied as an
+    intersection; a pin that matches nothing configured (stale) falls back to
+    the full mapping so a typo never blanks the plugin out of the prompt.
+    Defensive: any error or a config without the accessor passes ``profiles``
+    unchanged.
+    """
+    if not isinstance(profiles, dict) or not profiles:
+        return profiles
+    getter = getattr(agent_config, "active_plugin_profiles", None)
+    if not callable(getter):
+        return profiles
+    try:
+        pinned = getter(name)
+    except Exception as exc:  # noqa: BLE001 - never break prompt build on a bad config
+        logger.debug("active_plugin_profiles(%r) failed: %s", name, exc)
+        return profiles
+    if not pinned:  # None (no pin) or [] (defensive) → surface everything
+        return profiles
+    narrowed = {p: cfg for p, cfg in profiles.items() if p in pinned}
+    return narrowed or profiles
+
+
 def _resolve_class_hook(plugin_cls: type, attr_name: str, expected_desc: str, expected_types: tuple) -> Optional[Any]:
     """Resolve an optional class-level plugin hook to a validated value.
 
@@ -181,16 +237,20 @@ def _skill_dir_of(plugin_cls: type) -> Optional[str]:
     return None
 
 
-def plugin_skill_directories() -> List[str]:
+def plugin_skill_directories(active_names: Optional[Set[str]] = None) -> List[str]:
     """Discover skill directories contributed by installed plugins.
 
     Iterates ``datus.plugins`` entry points, loads each plugin class, and
     collects its ``skills_dir()`` when it points at an existing directory.
-    Every failure is swallowed so skill discovery never blocks startup.
+    ``active_names`` gates which plugins contribute (``None`` = every plugin;
+    otherwise only names in the project's activation whitelist). Every failure
+    is swallowed so skill discovery never blocks startup.
     """
     found: List[str] = []
     for _name, plugin_cls in _loaded_plugins():
         if plugin_cls is None:
+            continue
+        if not _is_active(_name, active_names):
             continue
         skill_dir = _skill_dir_of(plugin_cls)
         if skill_dir and skill_dir not in found:
@@ -243,26 +303,34 @@ def plugin_system_prompt_sections(agent_config) -> List[str]:
     resolved at prompt-build time, i.e. **without an active profile instance**,
     so it must be reachable at the class level — mirroring ``skills_dir()``.
 
-    datus passes the plugin's *full* profile mapping (all environments, not
-    just the active one) taken from ``agent_config.plugin_services[<ep.name>]``;
-    an installed-but-unconfigured plugin receives ``{}`` and may return setup
-    guidance. The plugin decides which non-secret fields to surface. datus
-    never splices profile values itself. Every failure is swallowed so one bad
-    plugin never blocks prompt construction.
+    datus passes the plugin's profile mapping taken from
+    ``agent_config.plugin_services[<ep.name>]``, **narrowed to the profiles the
+    project activated** (``plugins.<name>.active_profile`` in
+    ``./.datus/config.yml``): when the project pins a subset, only those
+    profiles are surfaced to the agent — the rest never enter the LLM context.
+    With no ``active_profile`` pin the full mapping is passed. An
+    installed-but-unconfigured plugin (or one whose pin matches nothing) still
+    receives ``{}`` and may return setup guidance. The plugin decides which
+    non-secret fields to surface; datus never splices profile values itself.
+    Every failure is swallowed so one bad plugin never blocks prompt
+    construction.
 
     When at least one plugin contributes a section, a datus-owned ``## Plugins``
     preamble naming the loaded config file location is prepended so the agent
     knows where profiles are added or edited.
     """
     plugin_services = getattr(agent_config, "plugin_services", None) or {}
+    active_names = _active_names_from_config(agent_config)
     sections: List[str] = []
     for name, plugin_cls in _loaded_plugins():
         if plugin_cls is None:
             continue
+        if not _is_active(name, active_names):
+            continue
         attr = getattr(plugin_cls, "system_prompt", None)
         if not callable(attr):
             continue
-        profiles = plugin_services.get(name, {})
+        profiles = _active_profiles_subset(agent_config, name, plugin_services.get(name, {}))
         try:
             section = attr(profiles)
         except Exception as exc:  # noqa: BLE001 - one bad plugin must not break prompt build
@@ -285,7 +353,7 @@ def _tool_transformers_of(plugin_cls: type) -> Optional[dict]:
     return _resolve_class_hook(plugin_cls, "tool_transformers", "a dict", (dict,))
 
 
-def collect_plugin_tool_transformers() -> Dict[str, List]:
+def collect_plugin_tool_transformers(active_names: Optional[Set[str]] = None) -> Dict[str, List]:
     """Collect tool argument transformers declared by installed plugins.
 
     Iterates ``datus.plugins`` entry points, resolves each class's optional
@@ -293,6 +361,7 @@ def collect_plugin_tool_transformers() -> Dict[str, List]:
     (proxy syntax: ``"execute_sql"``, ``"db_tools.*"``) to a flat transformer
     list. A declaration value may be a single callable or a list of callables;
     non-callable entries and non-string patterns are warned about and skipped.
+    ``active_names`` gates which plugins contribute (``None`` = every plugin).
     Every failure is logged and skipped; collection never raises.
 
     Transformer semantics (rewrite/deny, fail-closed) are documented in
@@ -302,6 +371,8 @@ def collect_plugin_tool_transformers() -> Dict[str, List]:
     accumulated: Dict[str, List] = {}
     for name, plugin_cls in _loaded_plugins():
         if plugin_cls is None:
+            continue
+        if not _is_active(name, active_names):
             continue
         declared = _tool_transformers_of(plugin_cls)
         if declared is None:
@@ -360,7 +431,7 @@ def _cli_permissions_of(plugin_cls: type) -> Optional[dict]:
     return _resolve_class_hook(plugin_cls, "cli_permissions", "a dict", (dict,))
 
 
-def collect_plugin_cli_permissions() -> Dict[str, "BashCommandRules"]:
+def collect_plugin_cli_permissions(active_names: Optional[Set[str]] = None) -> Dict[str, "BashCommandRules"]:
     """Collect per-profile bash rules declared by installed plugins.
 
     Iterates ``datus.plugins`` entry points, resolves each class's optional
@@ -369,6 +440,7 @@ def collect_plugin_cli_permissions() -> Dict[str, "BashCommandRules"]:
     ``datus <entry-point-name> `` so a plugin can only shape permissions for
     its own CLI namespace.
 
+    ``active_names`` gates which plugins contribute (``None`` = every plugin).
     Only ``normal`` and ``auto`` profile keys are accepted; ``dangerous``
     ignores all bash rules by design and is warned about explicitly. The
     returned rulesets carry **only** allow/ask/deny lists — never ``default``
@@ -386,6 +458,8 @@ def collect_plugin_cli_permissions() -> Dict[str, "BashCommandRules"]:
                 logger.warning("Duplicate datus.plugins entry point %r; using the first for cli_permissions.", name)
             continue
         seen_names.add(name)
+        if not _is_active(name, active_names):
+            continue
         if not _SAFE_PLUGIN_NAME_RE.match(name):
             logger.warning("Plugin entry-point name %r is not a safe CLI token; skipping its cli_permissions.", name)
             continue
@@ -448,3 +522,78 @@ def collect_plugin_cli_permissions() -> Dict[str, "BashCommandRules"]:
         )
         for profile, actions in accumulated.items()
     }
+
+
+def _config_schema_of(plugin_cls: type) -> Optional[list]:
+    """Resolve a plugin class's optional ``config_schema`` declaration.
+
+    Accepts a classmethod/staticmethod/function or a plain list attribute,
+    mirroring ``_skill_dir_of``. Returns the list, or ``None`` when absent,
+    malformed, or raising.
+    """
+    return _resolve_class_hook(plugin_cls, "config_schema", "a list", (list,))
+
+
+def plugin_config_schema(name: str) -> List[Dict[str, Any]]:
+    """Return the normalized config-field schema declared by plugin ``name``.
+
+    Each returned entry has ``name`` (str), ``description`` (str), ``required``
+    (bool), ``secret`` (bool) and an optional ``default``. Entries missing a
+    string ``name`` are dropped. A plugin without the hook (or a broken one)
+    yields an empty list — the ``/plugins`` TUI then falls back to free-form
+    key/value editing. Never raises.
+    """
+    plugin_cls = load_plugin_class(name)
+    if plugin_cls is None:
+        return []
+    declared = _config_schema_of(plugin_cls)
+    if not declared:
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for entry in declared:
+        if not isinstance(entry, dict):
+            logger.warning("Plugin %r config_schema entry is not a mapping: %r; skipping.", name, entry)
+            continue
+        field_name = entry.get("name")
+        if not isinstance(field_name, str) or not field_name.strip():
+            logger.warning("Plugin %r config_schema entry lacks a string 'name'; skipping.", name)
+            continue
+        spec: Dict[str, Any] = {
+            "name": field_name.strip(),
+            "description": str(entry.get("description") or ""),
+            "required": bool(entry.get("required", False)),
+            "secret": bool(entry.get("secret", False)),
+        }
+        if "default" in entry:
+            spec["default"] = entry["default"]
+        normalized.append(spec)
+    return normalized
+
+
+def plugin_validate_profile(name: str, profile: Dict[str, Any]) -> List[str]:
+    """Run plugin ``name``'s optional ``validate_profile`` on a candidate dict.
+
+    Returns the list of error messages the plugin reported (empty = valid, or
+    no validator). A missing hook, a non-list return, or an exception all
+    resolve to "no errors" so a broken validator never blocks the TUI save —
+    the plugin constructor is the final runtime guard.
+    """
+    plugin_cls = load_plugin_class(name)
+    if plugin_cls is None:
+        return []
+    attr = getattr(plugin_cls, "validate_profile", None)
+    if not callable(attr):
+        return []
+    try:
+        result = attr(profile)
+    except Exception as exc:  # noqa: BLE001 - a broken validator must not block the TUI
+        logger.warning("Plugin %r validate_profile() raised: %s", name, exc)
+        return []
+    if result is None:
+        return []
+    if not isinstance(result, list):
+        logger.warning(
+            "Plugin %r validate_profile() must return a list of strings, got %s.", name, type(result).__name__
+        )
+        return []
+    return [str(msg) for msg in result if msg]

@@ -557,9 +557,10 @@ class Application:
 
 
 # Subcommand tokens owned by built-in handlers in ``main()``. An installed
-# adapter must never shadow these via the ``datus.cli_commands`` entry-point
-# group. Kept in one place so the reserved set is easy to extend.
-_RESERVED_SUBCOMMANDS = frozenset({"upgrade", "skill"})
+# adapter/plugin must never shadow these via the ``datus.cli_commands`` /
+# ``datus.plugins`` entry-point groups. Kept in one place so the reserved set
+# is easy to extend.
+_RESERVED_SUBCOMMANDS = frozenset({"upgrade", "skill", "plugin"})
 
 
 def _coerce_exit_code(rc: object, name: str) -> int:
@@ -703,6 +704,17 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
                 file=sys.stderr,
             )
             return 3
+        # Respect per-project activation: a plugin the project's ``plugins:``
+        # whitelist does not enable is inactive, so its own CLI is refused (the
+        # ``datus plugin ...`` management commands remain available to re-enable
+        # it).
+        if hasattr(agent_config, "plugin_active") and not agent_config.plugin_active(name):
+            print(
+                f"datus {name}: plugin `{name}` is not active for this project. "
+                f"Enable it with `datus plugin enable {name}` or via `/plugins`.",
+                file=sys.stderr,
+            )
+            return 3
         profile = agent_config.get_plugin_profile(name, profile_name)
     except Exception as exc:  # noqa: BLE001 - surface a clean error, do not crash
         logger.error("Failed to resolve config for plugin '%s': %s", name, exc)
@@ -738,6 +750,15 @@ def main():
 
         configure_logging(False, console_output=False)
         sys.exit(run_upgrade_command(sys.argv[2:]))
+
+    # Intercept 'plugin' management subcommand (install/uninstall/list/info/
+    # enable/disable). Handled before the REPL and never gated by a plugin's
+    # own ``enabled`` flag, so a disabled plugin can still be re-enabled.
+    if len(sys.argv) > 1 and sys.argv[1] == "plugin":
+        from datus.cli.plugin_cli import run_plugin_command
+
+        configure_logging(False, console_output=False)
+        sys.exit(run_plugin_command(sys.argv[2:]))
 
     # Intercept 'skill' subcommand and delegate to datus.main's skill handler
     if len(sys.argv) > 1 and sys.argv[1] == "skill":

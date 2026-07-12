@@ -3734,7 +3734,9 @@ class AgenticNode(Node):
             return
         from datus.plugins.registry import collect_plugin_tool_transformers
 
-        transformers_by_pattern = collect_plugin_tool_transformers()
+        agent_config = getattr(self, "agent_config", None)
+        active_names = agent_config.active_plugin_names() if hasattr(agent_config, "active_plugin_names") else None
+        transformers_by_pattern = collect_plugin_tool_transformers(active_names)
         if not transformers_by_pattern:
             self._tool_transformers_applied = True
             return

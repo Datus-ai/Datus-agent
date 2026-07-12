@@ -27,9 +27,12 @@ plugins):
 * ``PluginClass.system_prompt(profiles: dict[str, dict]) -> str | None`` —
   *optional* classmethod/staticmethod returning a self-describing markdown
   block injected into the agent's system prompt (e.g. "Manage scheduled jobs;
-  N environments: ..."). datus passes the plugin's *full* profile mapping
-  (all environments, not just the active one; already ``${VAR}``-expanded) and
-  appends the returned text verbatim. Like ``skills_dir()`` it is resolved at
+  N environments: ..."). datus passes the plugin's profile mapping (already
+  ``${VAR}``-expanded), **narrowed to the profiles the project activated** via
+  ``plugins.<name>.active_profile`` in ``./.datus/config.yml`` — so a project
+  that pins one profile surfaces only that one to the LLM; with no pin the full
+  mapping is passed. datus appends the returned text verbatim. Like
+  ``skills_dir()`` it is resolved at
   prompt-build time **without a profile instance**, so it must be reachable at
   the class level. The text enters the LLM context, so the plugin must surface
   **only non-secret fields** (never ``password`` / secret / access-key values).
@@ -86,6 +89,29 @@ plugins):
   invocations of tool methods bypass them. Like the other class-level hooks it
   is resolved **without a profile instance**, and a malformed declaration is
   warned about and skipped, never fatal.
+
+* ``PluginClass.config_schema() -> list[dict] | None`` — *optional*
+  classmethod/staticmethod/attribute describing the profile configuration
+  fields, used to render the ``/plugins`` TUI form and to document the plugin.
+  Returns a list of field specs::
+
+      [{"name": "api_key", "description": "Console API key", "required": True,
+        "secret": True},
+       {"name": "base_url", "description": "API base URL", "required": False,
+        "default": "https://api.example.com"}]
+
+  Each entry needs ``name`` and ``description``; ``required`` (default
+  ``False``), ``secret`` (default ``False``; the TUI shows a ``${ENV_VAR}``
+  hint and never echoes the literal value) and ``default`` are optional.
+  Resolved at class level **without a profile instance**, like the other hooks.
+* ``PluginClass.validate_profile(profile: dict) -> list[str] | None`` —
+  *optional* classmethod/staticmethod validating a candidate profile dict (the
+  values a user just entered, before they are saved). Returns a list of
+  human-readable error messages; an empty list / ``None`` means "valid". datus
+  calls it before persisting a profile from the ``/plugins`` TUI and refuses to
+  save when it returns errors. It receives the raw (unexpanded) values, so it
+  should treat ``${ENV_VAR}`` placeholders as opaque and only shape-check — the
+  plugin constructor remains the source of truth for runtime validation.
 
 Plugins that need configuration should also bundle a ``<name>-setup`` skill
 (next to their main skill under ``skills_dir()``) describing the profile YAML

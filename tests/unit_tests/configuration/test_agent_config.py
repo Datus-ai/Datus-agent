@@ -2615,6 +2615,120 @@ class TestPluginProfiles:
         assert cfg.get_plugin_profile("hello")["api_base_url"] == "p"
 
 
+class TestPluginActivation:
+    """Project-level activation accessors + ``set_plugin_activation``."""
+
+    def _make(self, tmp_path, active_plugins=None, plugins=None):
+        from datus.configuration.project_config import PluginActivation  # noqa: F401 (import kept local)
+
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            plugins=plugins or {},
+            active_plugins=active_plugins,
+            skip_init_dirs=True,
+        )
+
+    def test_section_absent_activates_everything(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins=None)
+        assert cfg.plugins_section_present() is False
+        assert cfg.active_plugin_names() is None  # no filter
+        assert cfg.plugin_active("anything") is True
+        assert cfg.active_plugin_profiles("anything") is None
+
+    def test_whitelist_gates_unlisted_plugins(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            active_plugins={"alpha": {"enabled": True}, "beta": {"enabled": False}},
+        )
+        assert cfg.plugins_section_present() is True
+        assert cfg.active_plugin_names() == {"alpha"}
+        assert cfg.plugin_active("alpha") is True
+        assert cfg.plugin_active("beta") is False
+        assert cfg.plugin_active("gamma") is False  # unlisted
+
+    def test_active_profiles_narrowing(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True, "active_profile": ["prod"]}})
+        assert cfg.active_plugin_profiles("alpha") == ["prod"]
+        # Disabled / unlisted → empty list (inactive).
+        assert cfg.active_plugin_profiles("missing") == []
+
+    def test_master_switch_off_disables_all(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True}})
+        cfg.plugins_enabled = False
+        assert cfg.active_plugin_names() == set()
+        assert cfg.plugin_active("alpha") is False
+
+    def test_get_plugin_profile_single_active_becomes_default(self, tmp_path):
+        cfg = AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            plugins={"hello": {"prod": {"api_base_url": "p"}, "staging": {"api_base_url": "s"}}},
+            active_plugins={"hello": {"enabled": True, "active_profile": ["staging"]}},
+            skip_init_dirs=True,
+        )
+        # A single active profile is the CLI default.
+        assert cfg.get_plugin_profile("hello")["api_base_url"] == "s"
+
+    def test_set_plugin_activation_seeds_and_persists(self, tmp_path, monkeypatch):
+        # Section absent → seeding pulls in all installed plugins so toggling
+        # one does not silently deactivate the rest.
+        class _EP:
+            def __init__(self, name):
+                self.name = name
+
+        monkeypatch.setattr(
+            "datus.plugins.registry.iter_plugin_entry_points",
+            lambda: [_EP("alpha"), _EP("beta")],
+        )
+        cfg = self._make(tmp_path, active_plugins=None)
+        cfg.set_plugin_activation("alpha", enabled=False)
+
+        from datus.configuration.project_config import load_project_override
+
+        override = load_project_override(cwd=str(tmp_path))
+        assert set(override.plugins) == {"alpha", "beta"}
+        assert override.plugins["alpha"].enabled is False
+        assert override.plugins["beta"].enabled is True
+        # In-memory state flipped to whitelist mode.
+        assert cfg.plugins_section_present() is True
+        assert cfg.plugin_active("beta") is True
+        assert cfg.plugin_active("alpha") is False
+
+    def test_set_plugin_activation_profiles(self, tmp_path):
+        cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True}})
+        cfg.set_plugin_activation("alpha", enabled=True, active_profiles=["prod", "dev"])
+        assert cfg.active_plugin_profiles("alpha") == ["prod", "dev"]
+        cfg.set_plugin_activation("alpha", enabled=True, clear_profiles=True)
+        assert cfg.active_plugin_profiles("alpha") is None
+
+    def test_save_and_delete_plugin_profile(self, tmp_path, monkeypatch):
+        # Route the global config writes through a ConfigurationManager backed
+        # by a temp agent.yml so the CRUD round-trips without touching ~/.datus.
+        import datus.configuration.agent_config_loader as loader
+
+        agent_yml = tmp_path / "agent.yml"
+        agent_yml.write_text("agent:\n  plugins: {}\n")
+        mgr = loader.ConfigurationManager(str(agent_yml))
+        monkeypatch.setattr(loader, "configuration_manager", lambda *a, **k: mgr)
+
+        cfg = self._make(tmp_path)
+        cfg.save_plugin_profile("hello", "prod", {"api_base_url": "http://h"})
+        assert cfg.plugin_services["hello"]["prod"]["api_base_url"] == "http://h"
+        assert mgr.get("plugins")["hello"]["prod"]["api_base_url"] == "http://h"
+
+        assert cfg.delete_plugin_profile("hello", "prod") is True
+        assert "hello" not in cfg.plugin_services
+        # Deleting a missing profile returns False.
+        assert cfg.delete_plugin_profile("hello", "prod") is False
+
+
 class TestPluginsEnabledSwitch:
     """``agent.plugins_enabled`` master switch for the plugin system."""
 

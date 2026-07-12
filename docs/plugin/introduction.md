@@ -20,15 +20,26 @@ Want to build one? See the [development guide](development.md).
 
 ## Installing a plugin
 
-Install the plugin package into the same environment as `datus`:
+Use `datus plugin install`, which wraps `uv pip install` (falling back to
+`pip`) so the package lands in the same environment `datus` runs from. The
+source can be a PyPI requirement, a wheel, or a local directory:
 
 ```bash
-pip install datus-plugin-hello
+datus plugin install datus-plugin-hello        # from PyPI
+datus plugin install ./dist/hello-1.0-py3-none-any.whl   # a wheel
+datus plugin install ./datus-plugin-hello      # a local project directory
+datus plugin install -e ./datus-plugin-hello   # editable (local source tree)
+
 datus hello Ada          # the subcommand is available immediately
 ```
 
+After a successful install Datus reports the plugin name(s) the package
+registered. Plain `pip install datus-plugin-hello` works too — discovery is
+automatic on the next invocation, no registration step.
+
 If `datus <name>` falls through to the REPL instead of running the plugin, the
-package is not installed in the environment `datus` runs from.
+package is not installed in the environment `datus` runs from, or the plugin is
+not active for this project (see [Activating plugins](#activating-plugins)).
 
 ## Configuration
 
@@ -76,12 +87,75 @@ When you run `datus <name> ...`, the active profile is resolved in this order:
 ### Pinning a profile per project
 
 To make one project always use a specific profile without typing `--profile`,
-pin it in the project's `./.datus/config.yml`:
+pin it in the project's `./.datus/config.yml` under `plugins.<name>
+.active_profile`. When exactly one profile is active it becomes the
+`datus <plugin>` default:
 
 ```yaml
 plugins:
-  hello: staging
+  hello:
+    enabled: true
+    active_profile:
+      - staging
 ```
+
+## Activating plugins
+
+The `plugins:` section of `./.datus/config.yml` also decides **which installed
+plugins are active for the project**. It is optional but authoritative:
+
+- **Omit it entirely** and every installed plugin — and all of its profiles —
+  is active. This is the default.
+- **Write it** and it becomes a whitelist. Each entry is
+  `{enabled: bool, active_profile: [<profile>, ...]}`. A plugin the section
+  does not list (or lists with `enabled: false`) is **not loaded** for the
+  project: its `datus <plugin>` subcommand is refused, and its bundled skills,
+  system-prompt section, tool transformers, and bash rules are all skipped.
+  `active_profile` narrows which configured profiles are active (omit it for
+  "all profiles").
+
+```yaml
+plugins:
+  hello:
+    enabled: true
+    active_profile: [staging]   # only 'staging' is active
+  noisy-plugin:
+    enabled: false              # installed but off for this project
+```
+
+Toggle activation without hand-editing the file:
+
+```bash
+datus plugin enable hello                    # activate (all profiles)
+datus plugin enable hello --profile staging  # activate, pinned to 'staging'
+datus plugin disable noisy-plugin            # deactivate for this project
+```
+
+The first `enable`/`disable` in a project seeds the whitelist with every
+installed plugin (all enabled) before applying your change, so turning one
+plugin off never silently deactivates the others.
+
+This is per-project activation, distinct from the global master switch
+[`agent.plugins_enabled`](#disabling-the-plugin-system) which turns the whole
+system off everywhere.
+
+## Managing plugins
+
+`datus plugin` is the management entry point (it always works, even for a
+deactivated plugin):
+
+| Command | What it does |
+|---|---|
+| `datus plugin install <source>` | Install from PyPI / wheel / local dir (`-e` for editable). |
+| `datus plugin uninstall <name>` | Uninstall the package that registers `<name>`. |
+| `datus plugin list` | List installed plugins: package, version, configured profiles, project activation. |
+| `datus plugin info <name>` | Show one plugin's profiles, config schema, and activation. |
+| `datus plugin enable/disable <name>` | Toggle per-project activation. |
+
+Inside the REPL, `/plugins` opens an interactive manager for the same tasks:
+browse installed plugins, create / edit / delete global profiles (the form is
+driven by the plugin's config schema, with secrets entered as `${ENV_VAR}`
+references), and toggle which plugins and profiles are active for the project.
 
 ## Using a plugin with the agent
 

@@ -565,3 +565,210 @@ def test_tool_transformers_entry_points_failure_returns_empty(monkeypatch):
 
     monkeypatch.setattr(importlib_metadata, "entry_points", boom)
     assert registry.collect_plugin_tool_transformers() == {}
+
+
+# ---------------------------------------------------------------------------
+# active_names filtering (per-project activation whitelist)
+# ---------------------------------------------------------------------------
+
+
+class _WithSkillsAndTransformers(_Plugin):
+    _skills = None
+
+    @classmethod
+    def skills_dir(cls):
+        return cls._skills
+
+    @classmethod
+    def tool_transformers(cls):
+        return {"execute_sql": _sql_transformer}
+
+    @classmethod
+    def cli_permissions(cls):
+        return {"normal": {"allow": ["greet:*"]}}
+
+
+def _two_plugins(monkeypatch, tmp_path):
+    """Register two skill+transformer+perm plugins; return their skill dirs."""
+    a_dir = tmp_path / "a"
+    b_dir = tmp_path / "b"
+    a_dir.mkdir()
+    b_dir.mkdir()
+
+    class _A(_WithSkillsAndTransformers):
+        _skills = str(a_dir)
+
+    class _B(_WithSkillsAndTransformers):
+        _skills = str(b_dir)
+
+    _patch(monkeypatch, [_FakeEntryPoint("a", _A), _FakeEntryPoint("b", _B)])
+    return str(a_dir), str(b_dir)
+
+
+def test_skill_directories_active_names_none_includes_all(monkeypatch, tmp_path):
+    a_dir, b_dir = _two_plugins(monkeypatch, tmp_path)
+    assert registry.plugin_skill_directories(active_names=None) == [a_dir, b_dir]
+
+
+def test_skill_directories_active_names_filters(monkeypatch, tmp_path):
+    a_dir, _b_dir = _two_plugins(monkeypatch, tmp_path)
+    assert registry.plugin_skill_directories(active_names={"a"}) == [a_dir]
+
+
+def test_skill_directories_empty_active_names_excludes_all(monkeypatch, tmp_path):
+    _two_plugins(monkeypatch, tmp_path)
+    assert registry.plugin_skill_directories(active_names=set()) == []
+
+
+def test_tool_transformers_active_names_filters(monkeypatch, tmp_path):
+    _two_plugins(monkeypatch, tmp_path)
+    # Both declare the same pattern; only the active plugin contributes.
+    assert registry.collect_plugin_tool_transformers(active_names={"a"}) == {"execute_sql": [_sql_transformer]}
+    assert registry.collect_plugin_tool_transformers(active_names=set()) == {}
+
+
+def test_cli_permissions_active_names_filters(monkeypatch, tmp_path):
+    _two_plugins(monkeypatch, tmp_path)
+    rules = registry.collect_plugin_cli_permissions(active_names={"b"})
+    assert rules["normal"].allow == ["datus b greet:*"]
+    assert registry.collect_plugin_cli_permissions(active_names=set()) == {}
+
+
+def test_system_prompt_sections_respect_active_names(monkeypatch):
+    class _WithPrompt(_Plugin):
+        @classmethod
+        def system_prompt(cls, profiles):
+            return "## Active plugin"
+
+    _patch(monkeypatch, [_FakeEntryPoint("a", _WithPrompt), _FakeEntryPoint("b", _WithPrompt)])
+
+    class _Cfg:
+        plugin_services = {}
+
+        def active_plugin_names(self):
+            return {"a"}
+
+    sections = registry.plugin_system_prompt_sections(_Cfg())
+    # Preamble + exactly one plugin section (b is filtered out).
+    assert sum(1 for s in sections if s == "## Active plugin") == 1
+
+
+class _EchoProfiles(_Plugin):
+    @classmethod
+    def system_prompt(cls, profiles):
+        return "PROFILES=" + ",".join(sorted(profiles))
+
+
+def _profiles_cfg(active_profiles):
+    class _Cfg:
+        plugin_services = {"hello": {"prod": {"name": "prod"}, "staging": {"name": "staging"}}}
+
+        def active_plugin_names(self):
+            return {"hello"}
+
+        def active_plugin_profiles(self, name):
+            return active_profiles
+
+    return _Cfg()
+
+
+def test_system_prompt_narrows_to_active_profiles(monkeypatch):
+    """Only the project-pinned profiles reach the LLM, not every environment."""
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _EchoProfiles)])
+    sections = registry.plugin_system_prompt_sections(_profiles_cfg(["staging"]))
+    assert "PROFILES=staging" in sections
+    assert "PROFILES=prod,staging" not in sections
+
+
+def test_system_prompt_no_pin_passes_all_profiles(monkeypatch):
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _EchoProfiles)])
+    sections = registry.plugin_system_prompt_sections(_profiles_cfg(None))
+    assert "PROFILES=prod,staging" in sections
+
+
+def test_system_prompt_stale_pin_falls_back_to_all(monkeypatch):
+    """A pin that matches no configured profile surfaces everything rather than
+    blanking the plugin out of the prompt."""
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _EchoProfiles)])
+    sections = registry.plugin_system_prompt_sections(_profiles_cfg(["deleted"]))
+    assert "PROFILES=prod,staging" in sections
+
+
+# ---------------------------------------------------------------------------
+# plugin_config_schema
+# ---------------------------------------------------------------------------
+
+
+class _WithSchema(_Plugin):
+    @classmethod
+    def config_schema(cls):
+        return [
+            {"name": "api_key", "description": "key", "required": True, "secret": True},
+            {"name": "base_url", "description": "url", "default": "https://x"},
+            {"description": "no name — dropped"},
+            "not-a-dict",
+        ]
+
+
+def test_config_schema_normalized(monkeypatch):
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithSchema)])
+    schema = registry.plugin_config_schema("hello")
+    assert schema == [
+        {"name": "api_key", "description": "key", "required": True, "secret": True},
+        {"name": "base_url", "description": "url", "required": False, "secret": False, "default": "https://x"},
+    ]
+
+
+def test_config_schema_absent_returns_empty(monkeypatch):
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin)])
+    assert registry.plugin_config_schema("hello") == []
+
+
+def test_config_schema_unknown_plugin_returns_empty(monkeypatch):
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin)])
+    assert registry.plugin_config_schema("mystery") == []
+
+
+# ---------------------------------------------------------------------------
+# plugin_validate_profile
+# ---------------------------------------------------------------------------
+
+
+class _WithValidator(_Plugin):
+    @classmethod
+    def validate_profile(cls, profile):
+        errors = []
+        if not profile.get("api_key"):
+            errors.append("api_key required")
+        return errors
+
+
+def test_validate_profile_reports_errors(monkeypatch):
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithValidator)])
+    assert registry.plugin_validate_profile("hello", {}) == ["api_key required"]
+    assert registry.plugin_validate_profile("hello", {"api_key": "k"}) == []
+
+
+def test_validate_profile_missing_hook_returns_empty(monkeypatch):
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin)])
+    assert registry.plugin_validate_profile("hello", {}) == []
+
+
+def test_validate_profile_raising_hook_returns_empty(monkeypatch):
+    class _Boom(_Plugin):
+        @classmethod
+        def validate_profile(cls, profile):
+            raise RuntimeError("nope")
+
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _Boom)])
+    assert registry.plugin_validate_profile("hello", {}) == []
+
+
+def test_validate_profile_non_list_return_ignored(monkeypatch):
+    class _Bad(_Plugin):
+        @classmethod
+        def validate_profile(cls, profile):
+            return "not a list"
+
+    _patch(monkeypatch, [_FakeEntryPoint("hello", _Bad)])
+    assert registry.plugin_validate_profile("hello", {}) == []

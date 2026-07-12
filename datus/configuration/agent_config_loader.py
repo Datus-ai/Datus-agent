@@ -361,10 +361,13 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["active_scheduler"] = override.scheduler
     if override.semantic is not None:
         agent_raw["active_semantic"] = override.semantic
-    # ``plugins`` pins the active profile per plugin for ``datus <plugin>``
-    # invocations; forwarded to AgentConfig and consulted by
-    # ``get_plugin_profile`` between the explicit ``--profile`` argument and
-    # the profile ``default: true`` flag.
+    # ``plugins`` declares per-plugin activation for this project (enabled +
+    # active_profile list). Forwarded to AgentConfig as ``active_plugins``,
+    # which gates which plugins are loaded (CLI/skills/prompt/transformers) and
+    # is consulted by ``get_plugin_profile`` for the CLI default profile. The
+    # key is only written when the ``plugins:`` section is present (a present
+    # empty mapping ``{}`` deactivates every plugin), so AgentConfig can tell
+    # "section absent — activate everything" from "section present".
     if override.plugins is not None:
         agent_raw["active_plugins"] = override.plugins
 

@@ -18,15 +18,23 @@ Datus 通过 `datus.plugins` Python entry-point 组在每次调用时发现插�
 
 ## 安装插件
 
-把插件包安装到与 `datus` 相同的环境:
+用 `datus plugin install`,它包装了 `uv pip install`(不可用时回退 `pip`),
+把包装进 `datus` 实际运行的那个环境。安装源可以是 PyPI 包名、wheel 或本地目录:
 
 ```bash
-pip install datus-plugin-hello
+datus plugin install datus-plugin-hello        # 来自 PyPI
+datus plugin install ./dist/hello-1.0-py3-none-any.whl   # wheel 包
+datus plugin install ./datus-plugin-hello      # 本地项目目录
+datus plugin install -e ./datus-plugin-hello   # editable(本地源码树)
+
 datus hello Ada          # 子命令立即可用
 ```
 
+安装成功后 Datus 会报告该包注册的插件名。直接 `pip install datus-plugin-hello`
+也可以——下次调用时自动发现,无需注册步骤。
+
 如果 `datus <name>` 落进了 REPL 而不是运行插件,说明该包没有安装在 `datus`
-所运行的环境里。
+所运行的环境里,或该插件未在本项目激活(见[激活插件](#activating-plugins))。
 
 ## 配置
 
@@ -69,12 +77,68 @@ Datus 按以下顺序解析 config 文件:显式 `--config` → `./conf/agent.ym
 ### 按项目固定 profile
 
 想让某个项目始终使用特定 profile 而不必每次敲 `--profile`,在项目的
-`./.datus/config.yml` 里 pin 住它:
+`./.datus/config.yml` 里用 `plugins.<name>.active_profile` pin 住它。当只有
+一个 profile 激活时,它就成为 `datus <plugin>` 的默认:
 
 ```yaml
 plugins:
-  hello: staging
+  hello:
+    enabled: true
+    active_profile:
+      - staging
 ```
+
+## 激活插件 {#activating-plugins}
+
+`./.datus/config.yml` 的 `plugins:` 段还决定**本项目激活哪些已安装插件**。
+它可选,但一旦写了即为权威:
+
+- **整段省略** —— 全部已安装插件及其所有 profile 都激活。这是默认。
+- **写了它** —— 即成为白名单。每项为
+  `{enabled: bool, active_profile: [<profile>, ...]}`。段里未列出(或列出但
+  `enabled: false`)的插件在本项目**不加载**:其 `datus <plugin>` 子命令被拒绝,
+  自带 skill、system-prompt 段、工具 transformer、bash 规则一律跳过。
+  `active_profile` 用于收窄激活的 profile(省略即"全部 profile")。
+
+```yaml
+plugins:
+  hello:
+    enabled: true
+    active_profile: [staging]   # 只激活 'staging'
+  noisy-plugin:
+    enabled: false              # 已安装但本项目关闭
+```
+
+不必手改文件也能切换激活:
+
+```bash
+datus plugin enable hello                    # 激活(全部 profile)
+datus plugin enable hello --profile staging  # 激活并固定到 'staging'
+datus plugin disable noisy-plugin            # 本项目停用
+```
+
+项目里第一次 `enable`/`disable` 会先用全部已安装插件(均 enabled)播种白名单,
+再应用你的改动,这样关掉一个插件绝不会悄悄停用其余插件。
+
+这是**按项目**激活,与全局总开关
+[`agent.plugins_enabled`](#disabling-the-plugin-system)(在任何地方关掉整个系统)
+是两回事。
+
+## 管理插件
+
+`datus plugin` 是管理入口(即使插件已停用它也始终可用):
+
+| 命令 | 作用 |
+|---|---|
+| `datus plugin install <source>` | 从 PyPI / wheel / 本地目录安装(`-e` 为 editable)。 |
+| `datus plugin uninstall <name>` | 卸载注册 `<name>` 的发行包。 |
+| `datus plugin list` | 列出已安装插件:包、版本、已配置 profile、本项目激活状态。 |
+| `datus plugin info <name>` | 查看单个插件的 profile、配置 schema 与激活状态。 |
+| `datus plugin enable/disable <name>` | 切换本项目激活状态。 |
+
+在 REPL 内,`/plugins` 打开交互式管理器完成同样的事:浏览已安装插件,增删改
+全局 profile(表单由插件的配置 schema 驱动,密钥以 `${ENV_VAR}` 引用形式输入),
+并切换本项目激活哪些插件与 profile。
 
 ## 与 agent 配合使用 {#agent}
 

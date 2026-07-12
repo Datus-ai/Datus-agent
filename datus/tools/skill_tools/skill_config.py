@@ -112,15 +112,20 @@ def _plugin_skill_directories() -> List[str]:
 
     Delegates to :func:`datus.plugins.registry.plugin_skill_directories` (lazy
     import to avoid an import cycle). Returns an empty list when the plugin
-    system is disabled (``agent.plugins_enabled: false``). Any failure resolves
-    to an empty list so skill discovery never blocks startup.
+    system is disabled (``agent.plugins_enabled: false``). Only *active*
+    plugins for the current project contribute — the project's ``plugins:``
+    whitelist in ``./.datus/config.yml`` (resolved via
+    :func:`datus.plugins.activation.active_names_for_cwd`) gates discovery so a
+    deactivated plugin's skills are not surfaced. Any failure resolves to an
+    empty list so skill discovery never blocks startup.
     """
     if not _plugins_system_enabled():
         return []
     try:
+        from datus.plugins.activation import active_names_for_cwd
         from datus.plugins.registry import plugin_skill_directories
 
-        return plugin_skill_directories()
+        return plugin_skill_directories(active_names=active_names_for_cwd())
     except Exception as exc:  # noqa: BLE001 - defensive: never break discovery
         logger.debug("plugin skill-directory discovery failed: %s", exc)
         return []

@@ -89,6 +89,8 @@ Datus 在 entry-point 解析出的类上**按方法名**调用下列成员。你
 | `system_prompt(profiles: dict[str, dict]) -> str \| None` | **可选**,类级 | 返回注入 system prompt 的 markdown 段。见[注入 system prompt](#system-prompt)。 |
 | `cli_permissions() -> dict \| None` | **可选**,类级 | 按权限 profile 声明本 plugin CLI 命名空间内的 bash 权限规则。见 [CLI bash 权限](#cli-permissions)。 |
 | `tool_transformers() -> dict \| None` | **可选**,类级 | 声明工具参数 transformer,在 agent 的工具调用执行前改写参数或拒绝调用。见 [工具参数 transformer](#tool-transformers)。 |
+| `config_schema() -> list[dict] \| None` | **可选**,类级 | 描述 profile 配置字段,供 `/plugins` TUI 渲染表单。见[配置 schema 与校验](#config-schema-and-validation)。 |
+| `validate_profile(profile: dict) -> list[str] \| None` | **可选**,类级 | 在 Datus 保存前校验候选 profile。见[配置 schema 与校验](#config-schema-and-validation)。 |
 
 !!! warning "`skills_dir` 与 `system_prompt` 必须类级可取"
     Datus 在**启动期、无激活 profile** 时就解析这两者(skill 发现和 prompt 构建都发生在
@@ -120,6 +122,42 @@ Datus 把它解析成 `agent.plugins.<name>.<profile> -> dict`,**逐 profile 展
 
 本地测试时,把 profile 写进你的 datus 会话实际加载的那个 config 文件
 (显式 `--config` → `./conf/agent.yml` → `~/.datus/conf/agent.yml`)。
+
+## 配置 schema 与校验 {#config-schema-and-validation}
+
+两个可选的类级钩子让 `/plugins` TUI 为你的 profile 渲染正规表单(而非自由
+键值编辑),并让你在保存前拒绝非法 profile。
+
+`config_schema()` 返回字段规格列表。每项需要 `name` 与 `description`;
+`required`(默认 `False`)、`secret`(默认 `False`)、`default` 可选。
+`secret` 字段在表单中掩码显示,并提示用户输入 `${ENV_VAR}` 引用:
+
+```python
+class HelloPlugin:
+    @classmethod
+    def config_schema(cls):
+        return [
+            {"name": "token", "description": "API token", "required": True, "secret": True},
+            {"name": "greeting", "description": "问候语", "required": False, "default": "Hi"},
+        ]
+```
+
+`validate_profile(profile)` 收到候选字典(用户刚输入的原始值,**在 `${VAR}`
+展开之前**),返回错误消息列表;空列表 / `None` 表示合法。返回错误时 Datus
+拒绝保存。把 `${ENV_VAR}` 占位符当作不透明——只做形态检查,真正的运行期校验
+仍放在构造函数里:
+
+```python
+    @classmethod
+    def validate_profile(cls, profile):
+        errors = []
+        if not profile.get("token"):
+            errors.append("token 必填(请用 ${ENV_VAR} 引用)")
+        return errors
+```
+
+两个钩子都在类级、无 profile 实例时解析,与其他可选钩子一致。省略它们时,
+TUI 回退到编辑 profile 上已有的键。
 
 ## 实现 `run_cli`
 
@@ -398,9 +436,11 @@ class HelloPlugin:
         )
 ```
 
-Datus 传入该 plugin 的**全部** profile 映射(所有环境,不只激活的那个),并把返回的 markdown
-追加到每个 agentic 节点的 system prompt。**已安装但未配置**的 plugin 会收到 `{}`——此时应返回
-一段简短的"已安装,未配置"提示,指向自带的 setup skill(见下一节),让 agent 能引导用户完成配置。
+Datus 传入该 plugin 的 profile 映射,并**收窄到本项目激活的 profile**
+(`./.datus/config.yml` 里的 `plugins.<name>.active_profile`),再把返回的 markdown
+追加到每个 agentic 节点的 system prompt。项目若只 pin 了一个 profile,就只有它被送进 LLM;
+没有 pin 时传入全部。**已安装但未配置**(或 pin 未命中任何 profile)的 plugin 会收到 `{}`——
+此时应返回一段简短的"已安装,未配置"提示,指向自带的 setup skill(见下一节),让 agent 能引导用户完成配置。
 只有确实无话可说时才返回 `None`。
 
 只要有任一 plugin 贡献了内容,Datus 会在这些片段前面加上自己的 `## Plugins` 前导块,写明实际

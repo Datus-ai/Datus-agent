@@ -178,6 +178,33 @@ def test_dispatch_refused_when_plugins_disabled(monkeypatch, capsys):
     assert _StubPlugin.last == {}
 
 
+def test_dispatch_refused_when_plugin_inactive(monkeypatch, capsys):
+    """A plugin the project's ``plugins:`` whitelist does not enable is refused
+    (its own CLI), even though the master switch is on."""
+    _StubPlugin.last = {}
+    stub_cfg = _patch_dispatch(monkeypatch, plugin_cls=_StubPlugin, profile_dict={"name": "prod"})
+    stub_cfg.plugin_active = lambda name: False
+
+    rc = _dispatch_plugin_command(["hello", "dags", "list"])
+
+    assert rc == 3
+    assert "not active for this project" in capsys.readouterr().err
+    # Neither profile resolution nor the plugin itself ran.
+    assert stub_cfg.requested == {}
+    assert _StubPlugin.last == {}
+
+
+def test_dispatch_allowed_when_plugin_active(monkeypatch):
+    _StubPlugin.last = {}
+    stub_cfg = _patch_dispatch(monkeypatch, plugin_cls=_StubPlugin, profile_dict={"name": "prod"})
+    stub_cfg.plugin_active = lambda name: True
+
+    rc = _dispatch_plugin_command(["hello", "dags", "list"])
+
+    assert rc == 7
+    assert _StubPlugin.last["argv"] == ["dags", "list"]
+
+
 def test_dispatch_disabled_never_imports_plugin(monkeypatch):
     """With plugins disabled the plugin package must not even be loaded —
     ``ep.load()`` runs arbitrary module-level code."""

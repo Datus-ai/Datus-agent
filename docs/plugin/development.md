@@ -97,6 +97,8 @@ Your class does not import or subclass anything from Datus.
 | `system_prompt(profiles: dict[str, dict]) -> str \| None` | **optional**, class-level | Returns a markdown block injected into the agent's system prompt. See [System-prompt injection](#system-prompt-injection). |
 | `cli_permissions() -> dict \| None` | **optional**, class-level | Declares bash-permission rules for the plugin's own CLI namespace, per permission profile. See [CLI bash permissions](#cli-bash-permissions). |
 | `tool_transformers() -> dict \| None` | **optional**, class-level | Declares tool argument transformers that rewrite or deny the agent's tool calls before execution. See [Tool argument transformers](#tool-argument-transformers). |
+| `config_schema() -> list[dict] \| None` | **optional**, class-level | Describes the profile configuration fields for the `/plugins` TUI form. See [Config schema and validation](#config-schema-and-validation). |
+| `validate_profile(profile: dict) -> list[str] \| None` | **optional**, class-level | Validates a candidate profile before Datus saves it. See [Config schema and validation](#config-schema-and-validation). |
 
 !!! warning "`skills_dir` and `system_prompt` must be class-reachable"
     Datus resolves both **at startup, without an active profile** (skill
@@ -132,6 +134,46 @@ that logic. Your constructor simply receives the resolved `dict`.
 When testing locally, put your profile in whichever config file your datus
 session actually loads (explicit `--config` → `./conf/agent.yml` →
 `~/.datus/conf/agent.yml`).
+
+## Config schema and validation
+
+Two optional class-level hooks let the `/plugins` TUI render a proper form for
+your profiles instead of free-form key/value editing, and let you reject a
+bad profile before it is saved.
+
+`config_schema()` returns a list of field specs. Each needs `name` and
+`description`; `required` (default `False`), `secret` (default `False`), and
+`default` are optional. `secret` fields are masked in the form and the user is
+prompted to enter a `${ENV_VAR}` reference:
+
+```python
+class HelloPlugin:
+    @classmethod
+    def config_schema(cls):
+        return [
+            {"name": "token", "description": "API token", "required": True, "secret": True},
+            {"name": "greeting", "description": "Greeting word", "required": False, "default": "Hi"},
+        ]
+```
+
+`validate_profile(profile)` receives the candidate dict (the raw values the
+user just entered, **before** `${VAR}` expansion) and returns a list of
+error messages; an empty list / `None` means valid. Datus refuses to save when
+it returns errors. Treat `${ENV_VAR}` placeholders as opaque — shape-check
+only, and keep the real runtime validation in your constructor:
+
+```python
+    @classmethod
+    def validate_profile(cls, profile):
+        errors = []
+        if not profile.get("token"):
+            errors.append("token is required (use a ${ENV_VAR} reference)")
+        return errors
+```
+
+Both hooks resolve at the class level, without a profile instance, like the
+other optional hooks. Omit them and the TUI falls back to editing whatever keys
+already exist on the profile.
 
 ## Implementing `run_cli`
 
@@ -424,12 +466,15 @@ class HelloPlugin:
         )
 ```
 
-Datus passes the plugin's **full** profile mapping (all environments, not just
-the active one) and appends the returned markdown to the system prompt of every
-agentic node. An installed-but-unconfigured plugin receives `{}` — return a
-short "installed, not configured" note pointing at your bundled setup skill
-(see below) so the agent can walk the user through configuration. Return
-`None` only when there is truly nothing to say.
+Datus passes the plugin's profile mapping **narrowed to the profiles the
+project activated** (`plugins.<name>.active_profile` in `./.datus/config.yml`),
+and appends the returned markdown to the system prompt of every agentic node.
+A project that pins one profile surfaces only that one to the LLM; with no pin
+the full mapping is passed. An installed-but-unconfigured plugin (or one whose
+pin matches nothing) receives `{}` — return a short "installed, not configured"
+note pointing at your bundled setup skill (see below) so the agent can walk the
+user through configuration. Return `None` only when there is truly nothing to
+say.
 
 When at least one plugin contributes a section, Datus prepends its own
 `## Plugins` preamble naming the loaded config file and the
