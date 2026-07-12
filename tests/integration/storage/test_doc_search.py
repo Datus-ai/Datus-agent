@@ -59,7 +59,7 @@ def deterministic_document_embedding(monkeypatch):
     """Keep document-search acceptance off real fastembed/model cache state."""
     document_store.cache_clear()
     model = EmbeddingModel(model_name="datus-test-deterministic", dim_size=8)
-    model._model = _DeterministicDocEmbedding()
+    model._model = _DeterministicDocEmbedding.create()
     model.model_initialization_attempted = True
     monkeypatch.setitem(EMBEDDING_MODELS, "document", model)
     yield
