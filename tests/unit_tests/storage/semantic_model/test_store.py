@@ -1081,6 +1081,24 @@ class TestSemanticModelRAGTableExists:
         sem_rag.store_batch([_make_table_object("Orders", database_name="db1", schema_name="public")])
         assert sem_rag.table_exists("orders", database_name="db1", schema_name="public") is True
 
+    def test_other_scope_fast_hit_does_not_mask_mixed_case_row(self, sem_rag):
+        """A same-named fast-path hit in another database must not skip the fallback scan."""
+        sem_rag.store_batch(
+            [
+                _make_table_object("orders", database_name="db1", schema_name="public"),
+                _make_table_object("Orders", database_name="db2", schema_name="sales"),
+            ]
+        )
+        # Fast path returns db1's row (hierarchy mismatch); db2's MixedCase row
+        # must still be found via the fallback.
+        assert sem_rag.table_exists("orders", database_name="db2", schema_name="sales") is True
+        assert sem_rag.table_exists("orders", database_name="db1", schema_name="public") is True
+
+    def test_quoted_stored_name_matches(self, sem_rag):
+        """A stored name kept with identifier quotes still matches the bare reference."""
+        sem_rag.store_batch([_make_table_object('"Orders"', database_name="db1", schema_name="public")])
+        assert sem_rag.table_exists("orders", database_name="db1", schema_name="public") is True
+
 
 class TestSemanticModelRAGDeleteShadowedTableRows:
     """Tests for delete_shadowed_table_rows cleanup (legacy / cross-yaml duplicates)."""

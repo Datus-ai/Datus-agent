@@ -452,26 +452,33 @@ class SemanticModelRAG:
         if not table_name:
             return False
         select_fields = ["table_name", "catalog_name", "database_name", "schema_name"]
+        want_name = _normalized_identifier(table_name)
+
+        def _matches(rows: List[Dict[str, Any]]) -> bool:
+            for row in rows:
+                if (
+                    _normalized_identifier(row.get("table_name", "")) == want_name
+                    and _hierarchy_compatible(catalog_name, row.get("catalog_name", ""))
+                    and _hierarchy_compatible(database_name, row.get("database_name", ""))
+                    and _hierarchy_compatible(schema_name, row.get("schema_name", ""))
+                ):
+                    return True
+            return False
+
         # eq() is case-sensitive; query realistic case variants, compare client-side.
         name_variants = list({table_name, table_name.lower(), table_name.upper()})
         conditions = [eq("kind", "table"), in_("table_name", name_variants)] + self._sub_agent_conditions()
-        candidates = self.storage._search_all(where=And(conditions), select_fields=select_fields).to_pylist()
-        if not candidates:
-            # MixedCase stored names (e.g. "Orders") escape the variants filter;
-            # fall back to a narrow-field scan of table rows and compare client-side.
-            candidates = self.storage._search_all(
-                where=And([eq("kind", "table")] + self._sub_agent_conditions()),
-                select_fields=select_fields,
-            ).to_pylist()
-        for row in candidates:
-            if (
-                row.get("table_name", "").lower() == table_name.lower()
-                and _hierarchy_compatible(catalog_name, row.get("catalog_name", ""))
-                and _hierarchy_compatible(database_name, row.get("database_name", ""))
-                and _hierarchy_compatible(schema_name, row.get("schema_name", ""))
-            ):
-                return True
-        return False
+        fast_candidates = self.storage._search_all(where=And(conditions), select_fields=select_fields).to_pylist()
+        if _matches(fast_candidates):
+            return True
+        # No full match yet: MixedCase/quoted stored names (e.g. "Orders") escape
+        # the variants filter, and same-named hits in other scopes must not mask
+        # them. Fall back to a narrow-field scan of all table rows.
+        broad_candidates = self.storage._search_all(
+            where=And([eq("kind", "table")] + self._sub_agent_conditions()),
+            select_fields=select_fields,
+        ).to_pylist()
+        return _matches(broad_candidates)
 
     def get_semantic_model(
         self,
