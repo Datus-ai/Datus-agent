@@ -1297,6 +1297,62 @@ class TestOsiSync:
         assert '"to_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
         assert result["table_semantic_profiles"] == 1
 
+    def test_sync_osi_semantic_to_db_distinguishes_same_named_tables_across_databases(self, generation_tools, tmp_path):
+        """Issue #1084 (OSI path): qualified source tables in different databases keep distinct ids."""
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="", database="shop", schema=""
+        )
+        generation_tools.agent_config.db_type = "snowflake"
+        generation_tools.table_semantic_profile_rag = Mock()
+        semantic_file = tmp_path / "orders.yml"
+        semantic_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders_db1\n"
+            "        source: db1.public.orders\n"
+            "      - name: orders_db2\n"
+            "        source: db2.sales.orders\n"
+        )
+        doc = SimpleNamespace(
+            datasets=[
+                SimpleNamespace(
+                    name="orders_db1",
+                    description="",
+                    source=SimpleNamespace(table="db1.public.orders"),
+                    primary_key="order_id",
+                    time_dimension=None,
+                    dimensions=[],
+                ),
+                SimpleNamespace(
+                    name="orders_db2",
+                    description="",
+                    source=SimpleNamespace(table="db2.sales.orders"),
+                    primary_key="order_id",
+                    time_dimension=None,
+                    dimensions=[],
+                ),
+            ],
+            relationships=[],
+            metrics=[],
+        )
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
+
+        assert result["success"] is True
+        objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
+        table_ids = [obj["id"] for obj in objects if obj["kind"] == "table"]
+        assert table_ids == ["table:db1.public.orders", "table:db2.sales.orders"]
+        column_ids = [obj["id"] for obj in objects if obj["kind"] == "column"]
+        assert column_ids == ["column:db1.public.orders.order_id", "column:db2.sales.orders.order_id"]
+        tables_by_id = {obj["id"]: obj for obj in objects if obj["kind"] == "table"}
+        assert tables_by_id["table:db1.public.orders"]["database_name"] == "db1"
+        assert tables_by_id["table:db1.public.orders"]["schema_name"] == "public"
+        assert tables_by_id["table:db2.sales.orders"]["database_name"] == "db2"
+        assert tables_by_id["table:db2.sales.orders"]["schema_name"] == "sales"
+
     def test_sync_osi_semantic_to_db_fails_when_table_profile_sync_fails(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""

@@ -451,13 +451,18 @@ class SemanticModelRAG:
         """
         if not table_name:
             return False
+        select_fields = ["table_name", "catalog_name", "database_name", "schema_name"]
         # eq() is case-sensitive; query realistic case variants, compare client-side.
         name_variants = list({table_name, table_name.lower(), table_name.upper()})
         conditions = [eq("kind", "table"), in_("table_name", name_variants)] + self._sub_agent_conditions()
-        candidates = self.storage._search_all(
-            where=And(conditions),
-            select_fields=["table_name", "catalog_name", "database_name", "schema_name"],
-        ).to_pylist()
+        candidates = self.storage._search_all(where=And(conditions), select_fields=select_fields).to_pylist()
+        if not candidates:
+            # MixedCase stored names (e.g. "Orders") escape the variants filter;
+            # fall back to a narrow-field scan of table rows and compare client-side.
+            candidates = self.storage._search_all(
+                where=And([eq("kind", "table")] + self._sub_agent_conditions()),
+                select_fields=select_fields,
+            ).to_pylist()
         for row in candidates:
             if (
                 row.get("table_name", "").lower() == table_name.lower()

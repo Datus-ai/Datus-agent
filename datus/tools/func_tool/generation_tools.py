@@ -1232,6 +1232,23 @@ class GenerationTools:
         table = getattr(source, "table", None) or getattr(dataset, "name", "")
         return str(table).split(".")[-1]
 
+    def _dataset_db_parts(self, dataset: Any, default_db_parts: dict[str, str]) -> dict[str, str]:
+        """Hierarchy for one dataset: a qualified source table overrides the
+        connection defaults, so same-named tables in different databases keep
+        distinct storage ids (issue #1084)."""
+        from datus.utils.sql_utils import parse_table_name_parts
+
+        source = getattr(dataset, "source", None)
+        table_ref = str(getattr(source, "table", "") or "")
+        if "." not in table_ref:
+            return default_db_parts
+        parsed = parse_table_name_parts(table_ref, dialect=self.agent_config.db_type or "snowflake")
+        return {
+            "catalog_name": parsed.get("catalog_name") or default_db_parts["catalog_name"],
+            "database_name": parsed.get("database_name") or default_db_parts["database_name"],
+            "schema_name": parsed.get("schema_name") or default_db_parts["schema_name"],
+        }
+
     @staticmethod
     def _dataset_lookup(doc: Any) -> dict[str, Any]:
         return {getattr(dataset, "name", ""): dataset for dataset in getattr(doc, "datasets", [])}
@@ -1447,7 +1464,7 @@ class GenerationTools:
                 }
 
             doc = self._load_osi_document(semantic_model_file=semantic_model_path)
-            db_parts = self._current_db_parts(self.agent_config)
+            default_db_parts = self._current_db_parts(self.agent_config)
             semantic_objects: List[dict] = []
             table_profiles: List[dict] = []
             synced_items: List[str] = []
@@ -1457,6 +1474,7 @@ class GenerationTools:
                 if dataset_name not in target_dataset_names:
                     continue
                 table_name = self._dataset_table_name(dataset)
+                db_parts = self._dataset_db_parts(dataset, default_db_parts)
                 fq_parts = [db_parts["catalog_name"], db_parts["database_name"], db_parts["schema_name"], table_name]
                 table_fq_name = ".".join(part for part in fq_parts if part)
                 yaml_path = semantic_model_path

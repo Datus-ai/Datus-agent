@@ -1076,6 +1076,11 @@ class TestSemanticModelRAGTableExists:
         sem_rag.store_batch([_make_table_object("ORDERS", database_name="db1", schema_name="public")])
         assert sem_rag.table_exists("orders", database_name="db1", schema_name="public") is True
 
+    def test_mixed_case_stored_name_matches(self, sem_rag):
+        """A MixedCase stored name that escapes the case-variant filter still matches."""
+        sem_rag.store_batch([_make_table_object("Orders", database_name="db1", schema_name="public")])
+        assert sem_rag.table_exists("orders", database_name="db1", schema_name="public") is True
+
 
 class TestSemanticModelRAGDeleteShadowedTableRows:
     """Tests for delete_shadowed_table_rows cleanup (legacy / cross-yaml duplicates)."""
