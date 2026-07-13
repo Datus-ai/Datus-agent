@@ -87,8 +87,10 @@ def test_verify_semantic_adapter_imports_requires_shared_contract(monkeypatch):
 
 
 def test_verify_storage_adapter_imports_requires_shared_contract(monkeypatch):
+    shared_fts = SimpleNamespace(FtsSpec=object())
     modules = {
-        "datus_storage_base.vector.fts": SimpleNamespace(FtsSpec=object()),
+        "datus_storage_base.vector.fts": shared_fts,
+        "datus.storage.fts": SimpleNamespace(FtsSpec=shared_fts.FtsSpec),
         "datus_storage_postgresql.vector": SimpleNamespace(),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
@@ -97,3 +99,45 @@ def test_verify_storage_adapter_imports_requires_shared_contract(monkeypatch):
         "datus-storage-base FTS contract is missing: FtsField, FtsIndexStatus, normalize_fts_spec",
         "datus-storage-postgresql vector adapter is missing PgvectorBackend",
     ]
+
+
+def test_verify_storage_adapter_imports_requires_agent_to_reexport_shared_contract(monkeypatch):
+    shared_fts = SimpleNamespace(
+        FtsField=object(),
+        FtsIndexStatus=object(),
+        FtsSpec=object(),
+        normalize_fts_spec=object(),
+    )
+    agent_fts = SimpleNamespace(
+        FtsField=shared_fts.FtsField,
+        FtsIndexStatus=object(),
+        FtsSpec=shared_fts.FtsSpec,
+        normalize_fts_spec=shared_fts.normalize_fts_spec,
+    )
+    modules = {
+        "datus_storage_base.vector.fts": shared_fts,
+        "datus.storage.fts": agent_fts,
+        "datus_storage_postgresql.vector": SimpleNamespace(PgvectorBackend=object()),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_storage_adapter_imports() == [
+        "Datus Agent FTS contract does not re-export datus-storage-base: FtsIndexStatus"
+    ]
+
+
+def test_verify_storage_adapter_imports_accepts_agent_shared_contract(monkeypatch):
+    shared_fts = SimpleNamespace(
+        FtsField=object(),
+        FtsIndexStatus=object(),
+        FtsSpec=object(),
+        normalize_fts_spec=object(),
+    )
+    modules = {
+        "datus_storage_base.vector.fts": shared_fts,
+        "datus.storage.fts": shared_fts,
+        "datus_storage_postgresql.vector": SimpleNamespace(PgvectorBackend=object()),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_storage_adapter_imports() == []

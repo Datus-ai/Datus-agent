@@ -96,15 +96,33 @@ def verify_semantic_adapter_imports() -> list[str]:
 
 def verify_storage_adapter_imports() -> list[str]:
     errors: list[str] = []
+    required_names = ("FtsField", "FtsIndexStatus", "FtsSpec", "normalize_fts_spec")
+    fts_contract = None
     try:
         fts_contract = importlib.import_module("datus_storage_base.vector.fts")
     except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
         errors.append(f"datus-storage-base FTS import failed: {exc}")
     else:
-        required_names = ("FtsField", "FtsIndexStatus", "FtsSpec", "normalize_fts_spec")
         missing_names = [name for name in required_names if not hasattr(fts_contract, name)]
         if missing_names:
             errors.append(f"datus-storage-base FTS contract is missing: {', '.join(missing_names)}")
+
+    try:
+        agent_fts = importlib.import_module("datus.storage.fts")
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        errors.append(f"Datus Agent FTS import failed: {exc}")
+    else:
+        mismatched_names = [
+            name
+            for name in required_names
+            if fts_contract is not None
+            and hasattr(fts_contract, name)
+            and getattr(agent_fts, name, None) is not getattr(fts_contract, name)
+        ]
+        if mismatched_names:
+            errors.append(
+                f"Datus Agent FTS contract does not re-export datus-storage-base: {', '.join(mismatched_names)}"
+            )
 
     try:
         vector_adapter = importlib.import_module("datus_storage_postgresql.vector")
