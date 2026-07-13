@@ -51,8 +51,20 @@ class SlackAdapter(ChannelAdapter):
         self._web_client: Optional[object] = None
         self._listen_task: Optional[asyncio.Task] = None
 
+    def is_configured(self) -> bool:
+        """Slack needs both an app-level token (xapp-) and a bot token (xoxb-)."""
+        return bool(self._app_token and self._bot_token)
+
     async def start(self) -> None:
         """Connect via Slack Socket Mode."""
+        # Belt-and-braces: the gateway skips unconfigured channels before start(),
+        # but guard here too so a direct start() can't crash-loop on invalid_auth.
+        if not self.is_configured():
+            logger.warning(
+                "Slack adapter '%s' is missing app_token/bot_token; skipping start.",
+                self.channel_id,
+            )
+            return
         try:
             from slack_sdk.socket_mode.aiohttp import SocketModeClient
             from slack_sdk.web.async_client import AsyncWebClient

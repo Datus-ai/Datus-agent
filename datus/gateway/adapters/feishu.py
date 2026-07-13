@@ -102,6 +102,10 @@ class FeishuAdapter(ChannelAdapter):
         # Streaming card state — keyed by stream_id for concurrency safety
         self._streams: dict[str, _StreamState] = {}
 
+    def is_configured(self) -> bool:
+        """Feishu needs both an app id and app secret to open its long connection."""
+        return bool(self._app_id and self._app_secret)
+
     def _dispatch_to_loop(self, coro) -> None:
         """Schedule *coro* on the main event loop from a sync SDK callback thread.
 

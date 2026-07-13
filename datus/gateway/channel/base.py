@@ -43,6 +43,15 @@ class ChannelAdapter(ABC):
         """
         return False
 
+    def is_configured(self) -> bool:
+        """Whether this adapter has the credentials it needs to start.
+
+        Base default assumes configured; credential-backed adapters override so
+        the gateway can skip an enabled-but-unconfigured channel with a warning
+        instead of crash-looping against the platform (e.g. Slack ``invalid_auth``).
+        """
+        return True
+
     async def dispatch_message(self, msg: InboundMessage) -> None:
         """Forward an inbound message to the bridge for processing."""
         await self._bridge.handle_message(msg, self, self._channel_config)

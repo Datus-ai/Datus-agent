@@ -69,6 +69,19 @@ def _make_socket_request(payload: dict, envelope_id: str = "env-1") -> SimpleNam
     )
 
 
+class TestSlackIsConfigured:
+    """Slack needs both app_token and bot_token to be considered configured."""
+
+    def test_configured_with_both_tokens(self):
+        assert _make_slack_adapter().is_configured() is True
+
+    def test_not_configured_when_a_token_is_missing(self):
+        bridge = MagicMock()
+        for cfg in ({"app_token": "x"}, {"bot_token": "x"}, {}):
+            adapter = SlackAdapter(channel_id="c", config=cfg, bridge=bridge)
+            assert adapter.is_configured() is False
+
+
 # ---------------------------------------------------------------------------
 # Tests: Bot mention detection
 # ---------------------------------------------------------------------------

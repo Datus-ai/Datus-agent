@@ -65,6 +65,15 @@ class DatusGateway:
                 bridge=self._bridge,
                 channel_config=channel_cfg,
             )
+            # Enabled but missing credentials → skip rather than crash-loop against
+            # the platform (e.g. Slack retrying apps.connections.open on invalid_auth).
+            if not adapter.is_configured():
+                logger.warning(
+                    "Channel '%s' (%s) is enabled but not configured (missing credentials); skipping.",
+                    channel_id,
+                    channel_cfg.adapter,
+                )
+                continue
             self._adapters[channel_id] = adapter
 
         if not self._adapters:
