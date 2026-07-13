@@ -2311,6 +2311,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#metadata-search-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata Search Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4365,6 +4376,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#metadata-search-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata Search Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4537,7 +4559,7 @@
 <h1 id="schema-metadata-intelligence">Schema Metadata Intelligence<a class="headerlink" href="#schema-metadata-intelligence" title="Permanent link">&para;</a></h1>
 <h2 id="introduction">Introduction<a class="headerlink" href="#introduction" title="Permanent link">&para;</a></h2>
 <p>The metadata module is primarily used to enable LLMs to quickly match possible related table definition information and sample data based on user questions.</p>
-<p>When you use the <code>bootstrap-kb</code> command, we initialize the SQL statements and sample data for creating tables/views/materialized views in the data source you specify into a vector database.</p>
+<p>When you use the <code>bootstrap-kb</code> command, we initialize the SQL statements and sample data for creating tables/views/materialized views in the data source you specify into local knowledge-base storage.</p>
 <p>This module contains two types of information: <strong>table definition</strong> and <strong>sample data</strong>.</p>
 <h2 id="data-structure-of-table-definition">Data Structure of Table Definition<a class="headerlink" href="#data-structure-of-table-definition" title="Permanent link">&para;</a></h2>
 <table>
@@ -4638,16 +4660,30 @@
 <li><code>incremental</code>: Incremental update: if existing data has changed, update it and append non-existent data</li>
 </ul>
 </li>
+<li><code>--kb_search_mode</code>: Optional metadata search mode. The default is <code>vector</code>; set it to <code>fts</code> to build full-text metadata from scratch.</li>
 </ul>
+<h3 id="metadata-search-mode">Metadata Search Mode<a class="headerlink" href="#metadata-search-mode" title="Permanent link">&para;</a></h3>
+<p>Metadata search remains on the existing vector store by default, so existing installations do not need to rebuild their data after upgrading.</p>
+<p>Set <code>kb.search.mode</code> to <code>fts</code> to use full-text metadata retrieval without generating embeddings:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">kb</span><span class="p">:</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">search</span><span class="p">:</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fts</span>
+</span></code></pre></div>
+<p>The FTS store searches table names, DDL, sample rows, and attached semantic profiles. It does not fall back to vector search. A missing, legacy, or incomplete FTS index produces an explicit error and must be rebuilt with <code>overwrite</code>.</p>
+<p>After the initial FTS build, <code>incremental</code> upserts only new or changed metadata and uses LanceDB <code>optimize()</code> to add the changed fragments to the existing index. It does not replace the complete FTS index.</p>
+<p>Choose the mode before building metadata. Switching an existing vector installation to FTS requires a full rebuild:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--components<span class="w"> </span>metadata<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--kb_search_mode<span class="w"> </span>fts<span class="w"> </span>--kb_update_strategy<span class="w"> </span>overwrite
+</span></code></pre></div>
 <h2 id="usage-examples">Usage Examples<a class="headerlink" href="#usage-examples" title="Permanent link">&para;</a></h2>
 <h3 id="check-current-status">Check Current Status<a class="headerlink" href="#check-current-status" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--kb_update_strategy<span class="w"> </span>check
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--kb_update_strategy<span class="w"> </span>check
 </span></code></pre></div>
 <h3 id="full-rebuild">Full Rebuild<a class="headerlink" href="#full-rebuild" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--kb_update_strategy<span class="w"> </span>overwrite
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--kb_update_strategy<span class="w"> </span>overwrite
 </span></code></pre></div>
 <h3 id="incremental-update">Incremental Update<a class="headerlink" href="#incremental-update" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--kb_update_strategy<span class="w"> </span>incremental
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span>--kb_update_strategy<span class="w"> </span>incremental
 </span></code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="database-configuration">Database Configuration<a class="headerlink" href="#database-configuration" title="Permanent link">&para;</a></h3>
