@@ -26,8 +26,8 @@ DEFAULT_REPORT = OUT_DIR / "merge-queue-results.json"
 DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("MERGE_QUEUE_TEST_TIMEOUT", "600"))
 PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
 
-ACCEPTANCE_MARK_EXPR = "acceptance"
-DEFAULT_PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
+ACCEPTANCE_MARK_EXPR = "acceptance and not quarantine"
+DEFAULT_PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
 
 
 def log(message: str) -> None:
@@ -137,15 +137,13 @@ def acceptance_integration_targets(targets: Sequence[str]) -> list[str]:
     return [target for target in targets if target.startswith("tests/integration/")]
 
 
-def existing_paths(paths: Sequence[str]) -> list[str]:
-    existing: list[str] = []
-    for item in paths:
-        path = REPO_ROOT / item
-        if path.exists():
-            existing.append(item)
-        else:
-            log(f"Skipping missing path: {item}")
-    return existing
+def missing_paths(paths: Sequence[str]) -> list[str]:
+    """Return targets that do not exist in the checkout.
+
+    A stale entry must fail loudly: silently skipping it would drop merge-queue
+    coverage without any signal in the results.
+    """
+    return [item for item in paths if not (REPO_ROOT / item).exists()]
 
 
 def build_pytest_command(
@@ -213,7 +211,13 @@ def suite_definitions() -> dict[str, dict[str, Any]]:
 
 
 def run_suite(name: str, suite: dict[str, Any], *, timeout: int) -> dict[str, Any]:
-    targets = existing_paths(suite["targets"])
+    targets = list(suite["targets"])
+    stale = missing_paths(targets)
+    if stale:
+        for item in stale:
+            log(f"{name} target missing from checkout: {item}")
+        log("Update PR_ACCEPTANCE_TARGETS in ci/run-pr-tests.py to match the tree")
+        return {"suite": name, "exit_code": 1, "targets": [], "missing": stale}
     if not targets:
         log(f"{name} has no existing targets")
         return {"suite": name, "exit_code": 1, "targets": []}

@@ -96,12 +96,17 @@ def class_or_function_exists(repo_root: Path, nodeid: str) -> bool:
         return False
     if not suffix:
         return True
-    first = suffix.split("::", 1)[0]
-    if not first:
-        return True
     text = full_path.read_text(encoding="utf-8", errors="replace")
-    escaped = re.escape(first)
-    return bool(re.search(rf"^\s*(class|(?:async\s+)?def)\s+{escaped}\b", text, flags=re.MULTILINE))
+    for component in suffix.split("::"):
+        # A renamed method inside a surviving class must be caught too, so every
+        # component is checked, with parametrize ids stripped.
+        name = component.split("[", 1)[0]
+        if not name:
+            continue
+        escaped = re.escape(name)
+        if not re.search(rf"^\s*(class|(?:async\s+)?def)\s+{escaped}\b", text, flags=re.MULTILINE):
+            return False
+    return True
 
 
 def iter_flows(coverage_map: dict[str, Any], errors: list[str]) -> list[FlowRef]:

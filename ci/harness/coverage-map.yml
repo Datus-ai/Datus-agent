@@ -6,7 +6,11 @@ source:
     adapter contract, or release-confidence operation exposed from docs/.
 layers:
   pr_acceptance:
-    description: Fast deterministic PR signal for documented core flows.
+    description: >
+      Fast deterministic PR signal for documented core flows. Only nodeids whose
+      file is listed in PR_ACCEPTANCE_TARGETS (ci/run-pr-tests.py) run on every
+      PR; other nodeids run through the diff-driven impacted unit suite and only
+      execute when the PR touches their mapped source tree.
   merge_queue:
     description: Deterministic pre-merge signal on the merge-group commit.
   nightly:
@@ -888,7 +892,7 @@ flow_groups:
             nodeids:
               - tests/integration/tools/test_skill.py
               - tests/integration/tools/test_skill_execution.py
-              - tests/integration/tools/test_skill_execution.py::TestLocalSkillDiscoveryAndExecutionGate::test_skill_func_tool_exposes_execution_tools
+              - tests/integration/tools/test_skill_execution.py::TestLocalSkillDiscoveryAndExecutionGate::test_skill_func_tool_exposes_load_skill
               - tests/integration/tools/test_skill_execution.py::TestRealLLMSkillExecution::test_agent_invokes_local_skill
             notes: >
               Local skill discovery, permission filtering, and real-LLM skill execution are covered.

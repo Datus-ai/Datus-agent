@@ -246,7 +246,7 @@ def test_run_tests_treats_empty_impacted_collection_as_success(tmp_path, monkeyp
 
 
 def test_pr_harness_marker_expressions_route_component_tests():
-    assert run_pr_tests.PR_HARNESS_MARK_EXPR == "acceptance or component or llm_harness"
+    assert run_pr_tests.PR_HARNESS_MARK_EXPR == "(acceptance or component or llm_harness) and not quarantine"
     assert run_pr_tests.IMPACTED_UNIT_MARK_EXPR == (
         "not acceptance and not component and not llm_harness and not nightly and not quarantine"
     )

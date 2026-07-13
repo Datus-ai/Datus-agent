@@ -48,7 +48,8 @@ before_reflection_*.yaml
 coverage.xml
 ci/htmlcov/
 ci/coverage.xml
-ci/test-results.xml
+ci/test-results*.xml
+ci/merge-queue-results.json
 ci/diff-cover.json
 ci/diff-cover-report.*
 ci/pytest-coverage.txt

@@ -61,6 +61,22 @@ def test_build_pytest_command_includes_marker_junit_and_extra_args(tmp_path, run
     assert ["--timeout=120", "-n", "auto"] == command[-3:]
 
 
+def test_run_suite_fails_loudly_on_missing_target(tmp_path, monkeypatch, run_merge_queue_tests):
+    monkeypatch.setattr(run_merge_queue_tests, "REPO_ROOT", tmp_path)
+    suite = {
+        "targets": ["tests/unit_tests/gone.py"],
+        "mark_expr": "acceptance",
+        "junit_xml": tmp_path / "results.xml",
+        "extra_args": [],
+    }
+
+    result = run_merge_queue_tests.run_suite("acceptance-unit", suite, timeout=10)
+
+    assert result["exit_code"] == 1
+    assert result["missing"] == ["tests/unit_tests/gone.py"]
+    assert result["targets"] == []
+
+
 def test_main_runs_selected_suite_and_writes_report(tmp_path, monkeypatch, run_merge_queue_tests):
     repo_root = tmp_path
     out_dir = repo_root / "ci"

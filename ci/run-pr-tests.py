@@ -43,13 +43,14 @@ from typing import Any, TextIO
 import defusedxml.ElementTree as ET
 
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT_DIR = os.path.dirname(OUT_DIR)
 DEFAULT_JUNIT_XML = os.path.join(OUT_DIR, "test-results.xml")
 DEFAULT_COVERAGE_XML = os.path.join(OUT_DIR, "coverage.xml")
 DEFAULT_COVERAGE_HTML = os.path.join(OUT_DIR, "htmlcov")
 DEFAULT_COVERAGE_DB = os.path.join(OUT_DIR, ".coverage")
 DEFAULT_PYTEST_LOG = os.path.join(OUT_DIR, "pytest-coverage.txt")
 PYTEST_BASETEMP_ENV = "DATUS_CI_PYTEST_BASETEMP"
-PR_HARNESS_MARK_EXPR = "acceptance or component or llm_harness"
+PR_HARNESS_MARK_EXPR = "(acceptance or component or llm_harness) and not quarantine"
 IMPACTED_UNIT_MARK_EXPR = "not acceptance and not component and not llm_harness and not nightly and not quarantine"
 PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/agent/node/test_chat_agentic_node.py",
@@ -64,12 +65,15 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/unit_tests/agent/node/test_sql_summary_agentic_node.py",
     "tests/unit_tests/agent/node/test_skill_creator_agentic_node.py",
     "tests/unit_tests/agent/node/test_gen_job_agentic_node.py",
+    "tests/unit_tests/agent/node/test_gen_dashboard_agentic_node.py",
+    "tests/unit_tests/agent/node/test_scheduler_agentic_node.py",
     "tests/unit_tests/api/routes/test_chat_routes.py",
     "tests/unit_tests/api/services/test_kb_service.py",
     "tests/unit_tests/api/test_service.py",
     "tests/unit_tests/cli/test_core_entrypoint_acceptance.py",
     "tests/unit_tests/cli/test_interactive_init.py",
     "tests/unit_tests/cli/web/test_chatbot.py",
+    "tests/unit_tests/ci/test_harness_alignment.py",
     "tests/integration/api/test_api.py",
     "tests/integration/cli/test_cli_commands.py",
     "tests/integration/cli/test_cli_textual.py",
@@ -79,7 +83,6 @@ PR_ACCEPTANCE_TARGETS = [
     "tests/integration/storage/test_platform_doc.py",
     "tests/integration/tools/test_func_tools_db.py",
     "tests/integration/tools/test_mcp_acceptance.py",
-    "tests/integration/tools/test_mcp_server.py",
     "tests/integration/tools/db_tools/test_connector_duckdb.py",
     "tests/unit_tests/storage/test_feedback_store.py",
     "tests/unit_tests/tools/func_tool/test_bi_tools.py",
@@ -685,8 +688,20 @@ def resolve_impacted_unit_tests(base_ref: str) -> list[str]:
     return impacted
 
 
+def missing_acceptance_targets() -> list[str]:
+    """Return PR acceptance targets that do not exist in the checkout."""
+    return [target for target in PR_ACCEPTANCE_TARGETS if not os.path.exists(os.path.join(REPO_ROOT_DIR, target))]
+
+
 def run_tests(base_ref: str = "") -> tuple[int, list[str]]:
     """Run PR acceptance plus impacted unit tests and return the exit code and JUnit XML paths."""
+    stale_targets = missing_acceptance_targets()
+    if stale_targets:
+        for target in stale_targets:
+            log(f"PR acceptance target missing from checkout: {target}")
+        log("Update PR_ACCEPTANCE_TARGETS in ci/run-pr-tests.py to match the tree")
+        return 1, []
+
     _reset_report_outputs()
 
     try:
