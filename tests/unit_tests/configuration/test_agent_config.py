@@ -1410,7 +1410,6 @@ class TestAgentConfigKnowledgeBase:
 
         assert cfg.kb_search == KbSearchConfig(mode="vector")
         assert cfg.kb_search_mode == "vector"
-        assert not hasattr(cfg, "_metadata_fts_enabled")
 
     def test_kb_search_ignores_removed_enabled_flag(self, tmp_path):
         cfg = self._make(tmp_path, kb={"search": {"enabled": "false", "mode": "fts"}})

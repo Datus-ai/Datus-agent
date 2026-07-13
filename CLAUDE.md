@@ -146,7 +146,7 @@ Unit tests follow the mapping rule above. The table lists **additional** integra
 | `datus/agent/node/` | `unit_tests/agent/node/test_node.py`, `test_schema_linking.py`, `test_date_parser_*.py` |
 | `datus/cli/repl.py` | `integration/cli/test_cli_commands.py`, `regression/test_regression_web_e2e.py` |
 | `datus/tools/func_tool/` | `integration/tools/test_func_tools_db.py`, `integration/tools/test_mcp_server.py` |
-| `datus/tools/skill_tools/` | `unit_tests/tools/skill_tools/test_skill_*.py` (config, registry_unit, manager_unit, bash_tool, func_tool) |
+| `datus/tools/skill_tools/` | `unit_tests/tools/skill_tools/test_skill_*.py` |
 | `datus/tools/permission/` | `unit_tests/tools/permission/test_permission_*.py` |
 | `datus/mcp_server.py` | `unit_tests/test_mcp_server.py`, `integration/tools/test_mcp_server.py` |
 | `datus/storage/reference_template/` | `unit_tests/storage/reference_template/test_*.py`, `integration/tools/test_reference_template.py` |
@@ -155,3 +155,9 @@ Unit tests follow the mapping rule above. The table lists **additional** integra
 ### Test quality (beyond coverage)
 
 Beyond happy paths, exercise: **input format variants** (all valid shapes, not just the common one); **return-type contracts** (every branch returns the same structure); **cross-component contracts** (consume the producer's real output); **adversarial inputs** for regex/SQL/path sandboxes; **recursive/nested structures** at depth ≥ 3; **spec compliance** for standards (`.gitignore`, SQL dialects).
+
+### No tombstone tests when removing code
+
+When removing code, update or delete the existing tests that covered it. Do **not** add tests asserting that code/functions/strings no longer exist (`not hasattr(...)`, `"xxx" not in source`, import-failure checks) — these pin implementation details, never catch real bugs, and break legitimate future refactors. The proof that a removal is safe is the existing behavioral tests passing, not a new negative assertion.
+
+Exception: when the removal itself is an external contract, add a regression test that asserts the **behavior** does not occur, and note in the test which contract it protects. Qualifying cases: deprecated public APIs/config fields (e.g. a removed YAML key must be silently ignored), security fixes (e.g. secrets must not appear in logs), and removed side effects with real regression risk (`assert_not_called` on a mock).

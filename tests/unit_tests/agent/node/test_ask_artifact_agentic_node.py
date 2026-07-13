@@ -554,13 +554,6 @@ class TestAnchorFilePreload:
         node = _make_ask_dashboard_node(real_agent_config)
         assert "Q3 anomalies" in node._artifact_intent_md
 
-    def test_interpretation_not_attribute(self, real_agent_config):
-        """``_artifact_interpretation`` was removed along with the
-        interpretation.json file; the attribute should no longer exist
-        on the node so accidental readers fail loud."""
-        node = _make_ask_report_node(real_agent_config)
-        assert not hasattr(node, "_artifact_interpretation")
-
     def test_missing_intent_degrades_silently_blob_mode(self, real_agent_config):
         """When intent.md is absent from the blob, init still succeeds
         and the cached value stays empty (prompt template branches on
