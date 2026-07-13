@@ -1373,6 +1373,15 @@ class TestOsiSync:
         assert result["success"] is True
         assert result["synced"] == 3
 
+    def test_sync_osi_to_db_returns_error_dict_on_unexpected_failure(self, generation_tools, tmp_path):
+        # Consistent with the delegated syncs: an unexpected raise degrades to an
+        # error dict rather than propagating out of the public entry.
+        osi_file = tmp_path / "shop.yml"
+        osi_file.write_text("version: 0.2.0.dev0\n")
+        with patch.object(generation_tools, "extract_osi_metric_names", side_effect=RuntimeError("bad yaml")):
+            result = generation_tools.sync_osi_to_db(str(osi_file))
+        assert result == {"success": False, "error": "bad yaml"}
+
 
 class TestGenerateSqlSummaryId:
     def test_success(self, generation_tools):

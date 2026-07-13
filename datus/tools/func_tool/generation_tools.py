@@ -1768,13 +1768,17 @@ class GenerationTools:
         dataset-only document syncs just its datasets. The result always carries a
         ``synced`` count for uniform accounting across both shapes.
         """
-        if self.extract_osi_metric_names(osi_file_path):
-            result = self._sync_osi_metric_to_db(metric_file=osi_file_path, semantic_model_file=osi_file_path)
-            synced = len(result.get("metric_artifact_ids") or [])
-        else:
-            result = self.sync_osi_semantic_to_db(osi_file_path)
-            synced = int(result.get("semantic_objects") or 0)
-        return {**result, "synced": synced}
+        try:
+            if self.extract_osi_metric_names(osi_file_path):
+                result = self._sync_osi_metric_to_db(metric_file=osi_file_path, semantic_model_file=osi_file_path)
+                synced = len(result.get("metric_artifact_ids") or [])
+            else:
+                result = self.sync_osi_semantic_to_db(osi_file_path)
+                synced = int(result.get("semantic_objects") or 0)
+            return {**result, "synced": synced}
+        except Exception as e:
+            logger.error(f"Error syncing OSI document to DB: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
 
     def _sync_metric_to_db(
         self,
