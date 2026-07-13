@@ -211,7 +211,14 @@ def _copy_california_schools_db(dest_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> AgentConfig:
+def _create_real_agent_config(
+    tmp_path,
+    db_path: str,
+    *,
+    read_only_db: bool,
+    project_name: str | None = None,
+    storage_config: dict | None = None,
+) -> AgentConfig:
     """Create a fully real AgentConfig backed by a real SQLite database.
 
     Includes:
@@ -254,7 +261,7 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
             "schedulers": {},
         },
         "project_root": str(tmp_path / "workspace"),
-        "storage": {},
+        "storage": storage_config or {},
         "agentic_nodes": {
             "chat": {
                 "system_prompt": "chat",
@@ -313,6 +320,8 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
             },
         },
     }
+    if project_name is not None:
+        config_kwargs["project_name"] = project_name
 
     nodes: dict[str, NodeConfig] = {}
     agent_config = AgentConfig(nodes=nodes, **config_kwargs)
@@ -323,12 +332,26 @@ def _create_real_agent_config(tmp_path, db_path: str, *, read_only_db: bool) -> 
 
 
 @pytest.fixture
-def real_agent_config(tmp_path, reset_global_singletons):
+def agent_storage_config():
+    """Use the production default storage configuration unless a suite overrides it."""
+    return {}
+
+
+@pytest.fixture
+def agent_project_name():
+    """Let AgentConfig derive its normal project name unless a suite overrides it."""
+    return None
+
+
+@pytest.fixture
+def real_agent_config(tmp_path, reset_global_singletons, agent_project_name, agent_storage_config):
     """Create a fully real AgentConfig backed by a shared read-only SQLite database."""
     agent_config = _create_real_agent_config(
         tmp_path,
         CALIFORNIA_SCHOOLS_DB,
         read_only_db=True,
+        project_name=agent_project_name,
+        storage_config=agent_storage_config,
     )
 
     yield agent_config
@@ -338,7 +361,7 @@ def real_agent_config(tmp_path, reset_global_singletons):
 
 
 @pytest.fixture
-def mutable_real_agent_config(tmp_path, reset_global_singletons):
+def mutable_real_agent_config(tmp_path, reset_global_singletons, agent_project_name, agent_storage_config):
     """Create a real AgentConfig with a per-test mutable SQLite database copy."""
     db_path = os.path.join(str(tmp_path), "california_schools.sqlite")
     _copy_california_schools_db(db_path)
@@ -347,6 +370,8 @@ def mutable_real_agent_config(tmp_path, reset_global_singletons):
         tmp_path,
         db_path,
         read_only_db=False,
+        project_name=agent_project_name,
+        storage_config=agent_storage_config,
     )
 
 

@@ -60,6 +60,22 @@ def _init_storage_backends(request, tmp_path, storage_test_project):
                 pass
 
 
+@pytest.fixture
+def agent_storage_config(_init_storage_backends):
+    """Keep real AgentConfig fixtures on the backend selected by parameterization."""
+    backend = _init_storage_backends
+    return {
+        "rdb": {"type": backend.rdb_type, **backend.rdb_params},
+        "vector": {"type": backend.vector_type, **backend.vector_params},
+    }
+
+
+@pytest.fixture
+def agent_project_name(storage_test_project):
+    """Use the same safe project identifier for AgentConfig and backend cleanup."""
+    return storage_test_project
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Clean up backend test environments at session end."""
     from tests.unit_tests.storage._backend_discovery import cleanup_test_environments

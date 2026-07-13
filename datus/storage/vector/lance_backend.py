@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 import lancedb
@@ -26,7 +26,7 @@ from lancedb.query import LanceQueryBuilder, MatchQuery, MultiMatchQuery
 from lancedb.rerankers import LinearCombinationReranker
 from lancedb.table import Table as LanceTable
 
-from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
+from datus.storage.fts import FtsIndexStatus, FtsSpec, FtsSpecInput, normalize_fts_spec
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -183,16 +183,13 @@ class LanceVectorTable(VectorTable):
     def search_fts(
         self,
         query_text: str,
-        fts_spec: Union[FtsSpec, str, List[str]],
+        fts_spec: FtsSpecInput,
         top_n: int,
         where: WhereExpr = None,
         select_fields: Optional[List[str]] = None,
     ) -> pa.Table:
         compiled = build_where(where)
-        if isinstance(fts_spec, str):
-            fts_spec = FtsSpec.from_names([fts_spec])
-        elif isinstance(fts_spec, list):
-            fts_spec = FtsSpec.from_names(fts_spec)
+        fts_spec = normalize_fts_spec(fts_spec)
         if len(fts_spec.fields) == 1:
             field = fts_spec.fields[0]
             query = MatchQuery(query_text, field.name, boost=field.boost)
@@ -229,18 +226,17 @@ class LanceVectorTable(VectorTable):
     def create_vector_index(self, column: str, metric: str = "cosine", **kwargs) -> None:
         self._table.create_index(metric=metric, vector_column_name=column, **kwargs)
 
-    def create_fts_index(self, field: Union[FtsField, str]) -> None:
-        if isinstance(field, str):
-            field = FtsField(field)
-        config = FTS(
-            base_tokenizer=field.tokenizer,
-            ngram_min_length=field.ngram_min_length,
-            ngram_max_length=field.ngram_max_length,
-            stem=False,
-            remove_stop_words=False,
-            ascii_folding=False,
-        )
-        self._table.create_index(field.name, config=config, replace=True)
+    def create_fts_index(self, spec: FtsSpecInput) -> None:
+        for field in normalize_fts_spec(spec).fields:
+            config = FTS(
+                base_tokenizer=field.tokenizer,
+                ngram_min_length=field.ngram_min_length,
+                ngram_max_length=field.ngram_max_length,
+                stem=False,
+                remove_stop_words=False,
+                ascii_folding=False,
+            )
+            self._table.create_index(field.name, config=config, replace=True)
 
     def supports_fts(self) -> bool:
         return True

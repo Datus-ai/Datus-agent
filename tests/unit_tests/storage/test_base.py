@@ -14,6 +14,7 @@ from datus_storage_base.conditions import eq
 
 from datus.storage.base import BaseEmbeddingStore, StorageBase
 from datus.storage.embedding_models import EmbeddingModel, get_db_embedding_model
+from datus.storage.fts import FtsIndexStatus, FtsSpec
 from datus.storage.schema_metadata import SchemaStorage
 from datus.utils.exceptions import DatusException
 
@@ -899,11 +900,12 @@ class TestCreateFtsIndex:
                 }
             ]
         )
-        store.create_fts_index(["database_name", "schema_name", "table_name", "definition"])
+        if not getattr(store.table, "supports_fts", lambda: False)():
+            pytest.skip("Backend does not implement the shared FTS capability")
+        spec = FtsSpec.from_names(["database_name", "schema_name", "table_name", "definition"])
+        store.create_fts_index(spec)
         assert store.table_size() == 1
-        indices = store.table._table.list_indices()
-        indexed_fields = {column for index in indices if index.index_type == "FTS" for column in index.columns}
-        assert indexed_fields == {"database_name", "schema_name", "table_name", "definition"}
+        assert store.table.fts_index_status(spec) == FtsIndexStatus.READY
 
     def test_create_fts_index_failure_is_not_swallowed(self, tmp_path):
         store = SchemaStorage(get_db_embedding_model())
@@ -920,6 +922,8 @@ class TestCreateFtsIndex:
                 }
             ]
         )
+        if not getattr(store.table, "supports_fts", lambda: False)():
+            pytest.skip("Backend does not implement the shared FTS capability")
         with patch.object(store.table, "create_fts_index", side_effect=RuntimeError("index build failed")):
             with pytest.raises(DatusException, match="index build failed"):
                 store.create_fts_index(["definition"])

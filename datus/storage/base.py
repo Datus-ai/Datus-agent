@@ -404,7 +404,7 @@ class BaseEmbeddingStore(StorageBase):
     def create_fts_index(self, fields: Union[str, List[str], FtsSpec]):
         """Create and verify one native FTS index per configured field."""
         self._ensure_table_ready()
-        if not self._supports_runtime_indexing():
+        if not self._supports_fts_indexing():
             return
         if isinstance(fields, FtsSpec):
             spec = fields
@@ -418,8 +418,7 @@ class BaseEmbeddingStore(StorageBase):
             logger.info("Removed legacy Tantivy FTS index for %s before rebuilding", self.table_name)
 
         try:
-            for field in spec.fields:
-                self.table.create_fts_index(field)
+            self.table.create_fts_index(spec)
             status_fn = getattr(self.table, "fts_index_status", None)
             if status_fn is not None:
                 status = status_fn(spec)
@@ -715,16 +714,16 @@ class BaseEmbeddingStore(StorageBase):
     # -- Convenience methods for subclasses --
 
     def _supports_runtime_indexing(self) -> bool:
-        """Check if the backend supports runtime index creation.
-
-        LanceDB requires explicit index creation after data insertion.
-        Other backends (e.g. pgvector) handle indexing at DDL level
-        and should skip runtime index calls.
-        """
+        """Return whether vector and scalar indexes are managed at runtime."""
         return hasattr(self.table, "create_scalar_index") and type(self.table).__name__.startswith("Lance")
 
+    def _supports_fts_indexing(self) -> bool:
+        """Return whether the backend implements the shared FTS capability."""
+        supports_fts = getattr(self.table, "supports_fts", None)
+        return bool(supports_fts and supports_fts())
+
     def _create_scalar_index(self, column: str) -> None:
-        """Create a scalar index on the given column (LanceDB only)."""
+        """Create a scalar index on the given column."""
         self._ensure_table_ready()
         if not self._supports_runtime_indexing():
             return
