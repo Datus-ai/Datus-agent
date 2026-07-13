@@ -73,6 +73,13 @@ jobs:
           ref: main
           path: external/datus-semantic-adapter
 
+      - name: Checkout datus-storage-adapters main
+        uses: actions/checkout@v4
+        with:
+          repository: Datus-ai/datus-storage-adapters
+          ref: main
+          path: external/datus-storage-adapters
+
       - name: Clean up stale temp files
         run: |
           echo "Cleaning stale pytest temp directories..."
@@ -111,12 +118,13 @@ jobs:
                 external/datus-db-adapters \
                 external/datus-bi-adapters \
                 external/datus-scheduler-adapters \
-                external/datus-semantic-adapter; do
+                external/datus-semantic-adapter \
+                external/datus-storage-adapters; do
                 git -C "$repo" rev-parse HEAD
               done
             } | sha256sum | awk '{print $1}'
           )"
-          echo "key=${RUNNER_OS}-kb-v5-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
+          echo "key=${RUNNER_OS}-kb-v6-datus_agent_nightly-${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -140,7 +148,11 @@ jobs:
             --reinstall-package datus-semantic-core \
             --reinstall-package datus-semantic-metricflow \
             --reinstall-package datus-snowflake \
+            --reinstall-package datus-storage-base \
+            --reinstall-package datus-storage-postgresql \
             pytest-playwright \
+            ./external/datus-storage-adapters/datus-storage-base \
+            "./external/datus-storage-adapters/datus-storage-postgresql[dev]" \
             ./external/datus-semantic-adapter/datus-semantic-core \
             ./external/datus-semantic-adapter/datus-semantic-metricflow \
             ./external/datus-db-adapters/datus-db-core \

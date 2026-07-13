@@ -37,6 +37,13 @@ def test_verify_local_sources_accepts_every_expected_checkout(monkeypatch, tmp_p
     assert verify_sources.verify_local_sources(external_root) == []
 
 
+def test_expected_sources_include_storage_packages():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-base"] == ("datus-storage-adapters/datus-storage-base")
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-storage-postgresql"] == (
+        "datus-storage-adapters/datus-storage-postgresql"
+    )
+
+
 def test_verify_local_sources_rejects_registry_package(monkeypatch, tmp_path):
     external_root = tmp_path / "external"
     distributions = {
@@ -76,4 +83,17 @@ def test_verify_semantic_adapter_imports_requires_shared_contract(monkeypatch):
 
     assert verify_sources.verify_semantic_adapter_imports() == [
         "datus-semantic-core is missing SemanticValidationError"
+    ]
+
+
+def test_verify_storage_adapter_imports_requires_shared_contract(monkeypatch):
+    modules = {
+        "datus_storage_base.vector.fts": SimpleNamespace(FtsSpec=object()),
+        "datus_storage_postgresql.vector": SimpleNamespace(),
+    }
+    monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
+
+    assert verify_sources.verify_storage_adapter_imports() == [
+        "datus-storage-base FTS contract is missing: FtsField, FtsIndexStatus, normalize_fts_spec",
+        "datus-storage-postgresql vector adapter is missing PgvectorBackend",
     ]

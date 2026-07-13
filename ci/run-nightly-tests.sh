@@ -62,6 +62,7 @@ default_repo_root() {
 DB_ADAPTERS_ROOT="$(default_repo_root "${DB_ADAPTERS_ROOT:-}" datus-db-adapters)"
 BI_ADAPTERS_ROOT="$(default_repo_root "${BI_ADAPTERS_ROOT:-}" datus-bi-adapters)"
 SCHEDULER_ADAPTERS_ROOT="$(default_repo_root "${SCHEDULER_ADAPTERS_ROOT:-}" datus-scheduler-adapters)"
+STORAGE_ADAPTERS_ROOT="$(default_repo_root "${STORAGE_ADAPTERS_ROOT:-}" datus-storage-adapters)"
 
 POSTGRES_COMPOSE="${POSTGRES_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-postgresql/docker-compose.yml}"
 MYSQL_COMPOSE="${MYSQL_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-mysql/docker-compose.yml}"
@@ -101,6 +102,11 @@ COMPOSE_GROUPS=(
   "Greenplum Adapter Tests"
   "Hive Adapter Tests"
   "Spark Adapter Tests"
+)
+
+DOCKER_GROUPS=(
+  "PostgreSQL Storage Adapter Tests"
+  "${COMPOSE_GROUPS[@]}"
 )
 
 log() {
@@ -419,24 +425,34 @@ will_run_any_compose_suite() {
   return 1
 }
 
+will_run_any_docker_suite() {
+  local group_name
+  for group_name in "${DOCKER_GROUPS[@]}"; do
+    if should_run_group "$group_name"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 require_docker_runtime() {
-  if ! will_run_any_compose_suite; then
+  if ! will_run_any_docker_suite; then
     return 0
   fi
 
   if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker is required for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    echo "Docker is required for Docker-backed nightly suites" | tee -a "$LOG_FILE" >&2
     test_exit_code=127
     return 1
   fi
 
   if ! docker info >/dev/null 2>&1; then
-    echo "Docker daemon is not available for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
+    echo "Docker daemon is not available for Docker-backed nightly suites" | tee -a "$LOG_FILE" >&2
     test_exit_code=127
     return 1
   fi
 
-  if ! has_docker_compose; then
+  if will_run_any_compose_suite && ! has_docker_compose; then
     echo "Docker Compose is required for nightly compose-backed suites" | tee -a "$LOG_FILE" >&2
     test_exit_code=127
     return 1
@@ -1518,6 +1534,7 @@ log "Nightly process diagnostics: $NIGHTLY_PROCESS_DIAGNOSTICS_FILE"
 log "DB_ADAPTERS_ROOT=$DB_ADAPTERS_ROOT"
 log "BI_ADAPTERS_ROOT=$BI_ADAPTERS_ROOT"
 log "SCHEDULER_ADAPTERS_ROOT=$SCHEDULER_ADAPTERS_ROOT"
+log "STORAGE_ADAPTERS_ROOT=$STORAGE_ADAPTERS_ROOT"
 log "NIGHTLY_HOME=$NIGHTLY_HOME"
 log "DATUS_TEST_PROJECT_NAME=$DATUS_TEST_PROJECT_NAME"
 log "UNIT_TEST_HOME=$UNIT_TEST_HOME"
@@ -1606,6 +1623,7 @@ run_compose_suite "Grafana Nightly Tests" "$GRAFANA_COMPOSE" "postgres:300" "gra
 
 run_compose_suite "Airflow Nightly Tests" "$AIRFLOW_COMPOSE" "airflow:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/agent/test_scheduler_agentic.py --tb=short --verbose --timeout=600 --timeout-method=thread --reruns 1 --reruns-delay 5
 
+run_logged "PostgreSQL Storage Adapter Tests" env DATUS_TEST_LAYER=nightly uv run --no-sync pytest "$STORAGE_ADAPTERS_ROOT/datus-storage-postgresql/tests" --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_postgresql.py tests/integration/adapters/test_semantic_metricflow_postgresql.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_mysql.py tests/integration/adapters/test_semantic_metricflow_mysql.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300 --timeout-method=thread
