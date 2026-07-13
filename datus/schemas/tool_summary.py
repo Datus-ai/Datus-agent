@@ -282,20 +282,28 @@ def _fmt_list_schemas(result: Any) -> str:
     return ""
 
 
+def search_table_result_counts(result: Any) -> tuple[int, int]:
+    """Return table and sample-row counts from the current search_table result shape."""
+    if not isinstance(result, dict):
+        return 0, 0
+
+    metadata = result.get("metadata")
+    if not isinstance(metadata, list):
+        return 0, 0
+
+    sample_count = sum(
+        len(sample_rows)
+        for item in metadata
+        if isinstance(item, dict) and isinstance((sample_rows := item.get("sample_rows")), list)
+    )
+
+    return len(metadata), sample_count
+
+
 def _fmt_search_table(result: Any) -> str:
     if not isinstance(result, dict):
         return ""
-    metadata = result.get("metadata") or []
-    if not isinstance(metadata, list):
-        return ""
-    n = len(metadata)
-    sample = result.get("sample_data")
-    if isinstance(sample, dict):
-        sample_rows = sample.get("original_rows", 0) or 0
-    elif isinstance(sample, list):
-        sample_rows = len(sample)
-    else:
-        sample_rows = 0
+    n, sample_rows = search_table_result_counts(result)
     if n == 0 and sample_rows == 0:
         return "no matches"
     tbl_label = "tbl" if n == 1 else "tbls"

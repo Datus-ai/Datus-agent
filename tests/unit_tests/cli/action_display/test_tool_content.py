@@ -381,30 +381,35 @@ class TestBuildSearchTable:
     def test_compact(self):
         a = _make(
             input_data={"function_name": "search_table"},
-            output_data={"metadata": [1, 2], "sample_data": [3]},
-        )
-        tc = _build_search_table(a, verbose=False)
-        assert "2 tables" in tc.compact_result
-        assert "1 sample row" in tc.compact_result
-
-    def test_compact_with_compressed_sample_data(self):
-        a = _make(
-            input_data={"function_name": "search_table"},
             output_data={
-                "metadata": [1, 2],
-                "sample_data": {
-                    "original_rows": 1,
-                    "original_columns": ["sample_rows"],
-                    "is_compressed": False,
-                    "compressed_data": "index,sample_rows\n0,[{'id': 1}]",
-                    "removed_columns": [],
-                    "compression_type": "none",
-                },
+                "metadata": [
+                    {"table_name": "orders", "sample_rows": [{"id": 1}]},
+                    {"table_name": "customers"},
+                ]
             },
         )
         tc = _build_search_table(a, verbose=False)
         assert "2 tables" in tc.compact_result
         assert "1 sample row" in tc.compact_result
+
+    def test_compact_with_func_tool_envelope_and_inline_sample_rows(self):
+        a = _make(
+            input_data={"function_name": "search_table"},
+            output_data={
+                "raw_output": {
+                    "success": 1,
+                    "error": None,
+                    "result": {
+                        "metadata": [
+                            {"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]},
+                            {"table_name": "customers", "sample_rows": [{"id": 3}]},
+                        ]
+                    },
+                }
+            },
+        )
+        tc = _build_search_table(a, verbose=False)
+        assert tc.compact_result == "2 tables and 3 sample rows"
 
     def test_compact_no_data(self):
         a = _make(input_data={"function_name": "search_table"})

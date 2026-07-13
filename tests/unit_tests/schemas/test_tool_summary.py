@@ -323,8 +323,10 @@ class TestDatabaseFormatters:
             {
                 "success": 1,
                 "result": {
-                    "metadata": [{"table_name": "orders"}, {"table_name": "customers"}],
-                    "sample_data": {"original_rows": 5},
+                    "metadata": [
+                        {"table_name": "orders", "sample_rows": [{"id": i} for i in range(3)]},
+                        {"table_name": "customers", "sample_rows": [{"id": i} for i in range(2)]},
+                    ],
                 },
             },
         )
@@ -333,12 +335,27 @@ class TestDatabaseFormatters:
     def test_search_table_no_samples(self):
         out = _summarize(
             "search_table",
-            {"success": 1, "result": {"metadata": [{"name": "t"}], "sample_data": []}},
+            {"success": 1, "result": {"metadata": [{"table_name": "t"}]}},
         )
         assert out == "1 tbl"
 
+    def test_search_table_with_inline_sample_rows(self):
+        out = _summarize(
+            "search_table",
+            {
+                "success": 1,
+                "result": {
+                    "metadata": [
+                        {"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]},
+                        {"table_name": "customers", "sample_rows": [{"id": 3}]},
+                    ]
+                },
+            },
+        )
+        assert out == "2 tbls, 3 rows"
+
     def test_search_table_empty(self):
-        out = _summarize("search_table", {"success": 1, "result": {"metadata": [], "sample_data": []}})
+        out = _summarize("search_table", {"success": 1, "result": {"metadata": []}})
         assert out == "no matches"
 
 
@@ -1010,7 +1027,10 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("table_overview", [{"name": str(i)} for i in range(50)]),
     ("list_databases", [str(i) for i in range(99)]),
     ("list_schemas", [str(i) for i in range(99)]),
-    ("search_table", {"metadata": [{"name": str(i)} for i in range(20)], "sample_data": {"original_rows": 999}}),
+    (
+        "search_table",
+        {"metadata": [{"name": str(i), "sample_rows": [{} for _ in range(50)]} for i in range(20)]},
+    ),
     ("transfer_query_result", {"row_count": 99999, "target_table": "very_long_target_table_name"}),
     # bi
     ("list_dashboards", {"items": [{"title": "x"} for _ in range(99)], "total": 999, "has_more": True}),

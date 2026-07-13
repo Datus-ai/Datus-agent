@@ -7,6 +7,7 @@
 from typing import Callable, Dict, Optional
 
 from datus.gateway.models import Verbose
+from datus.schemas.tool_summary import search_table_result_counts
 
 # Maximum length for any single value in full-mode output
 _MAX_VALUE_LEN = 2000
@@ -112,10 +113,7 @@ class ToolOutputFormatter:
     def _format_search_table_result(result) -> str:
         if not isinstance(result, dict):
             return _format_result_default(result)
-        metadata = result.get("metadata", [])
-        sample_data = result.get("sample_data", result.get("samples", []))
-        meta_count = len(metadata) if isinstance(metadata, list) else 0
-        sample_count = len(sample_data) if isinstance(sample_data, list) else 0
+        meta_count, sample_count = search_table_result_counts(result)
         return f"> metadata: {meta_count}, sample rows: {sample_count}"
 
 

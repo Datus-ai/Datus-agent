@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionStatus
-from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY
+from datus.schemas.tool_summary import TOOL_SUMMARY_REGISTRY, search_table_result_counts
 from datus.utils.loggings import get_logger
 from datus.utils.tool_archive import is_archived_output, parse_archived_marker
 
@@ -1030,7 +1030,7 @@ def _build_read_query(action: ActionHistory, verbose: bool) -> ToolCallContent:
 
 
 def _build_search_table(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """search_table: show metadata + sample_data counts."""
+    """search_table: show table and inline sample-row counts."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
@@ -1039,14 +1039,8 @@ def _build_search_table(action: ActionHistory, verbose: bool) -> ToolCallContent
     else:
         data = parse_output_data(action.output)
         if data:
-            metadata_count = len(data.get("metadata") or [])
-            sample_data = data.get("sample_data")
-            if isinstance(sample_data, dict):
-                sample_count = sample_data.get("original_rows", 0) or 0
-            elif isinstance(sample_data, list):
-                sample_count = len(sample_data)
-            else:
-                sample_count = 0
+            result = data.get("result", data)
+            metadata_count, sample_count = search_table_result_counts(result)
             tc.compact_result = (
                 f"{metadata_count} {_plural_unit(metadata_count, 'table', 'tables')} "
                 f"and {sample_count} {_plural_unit(sample_count, 'sample row', 'sample rows')}"

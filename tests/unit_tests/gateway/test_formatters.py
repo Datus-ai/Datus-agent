@@ -23,7 +23,7 @@ RESULT_PAYLOAD = {
     "toolName": "search_table",
     "duration": 1.2,
     "shortDesc": "Found tables",
-    "result": {"metadata": [{"name": "orders"}], "sample_data": [{"id": 1}, {"id": 2}]},
+    "result": {"metadata": [{"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]}]},
 }
 
 
@@ -143,7 +143,13 @@ class TestSearchTableFormatter:
             "callToolId": "t1",
             "toolName": "search_table",
             "duration": 1.0,
-            "result": {"metadata": [1, 2, 3], "sample_data": [1, 2]},
+            "result": {
+                "metadata": [
+                    {"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]},
+                    {"table_name": "customers"},
+                    {"table_name": "products"},
+                ]
+            },
         }
         result = formatter.format_tool_complete(call, res, Verbose.FULL)
         assert "metadata: 3" in result

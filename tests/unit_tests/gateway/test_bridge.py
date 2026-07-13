@@ -1211,7 +1211,9 @@ class TestVerboseLevels:
                                 "toolName": "search_table",
                                 "duration": 1.5,
                                 "shortDesc": "",
-                                "result": {"metadata": [1], "sample_data": [1, 2]},
+                                "result": {
+                                    "metadata": [{"table_name": "orders", "sample_rows": [{"id": 1}, {"id": 2}]}]
+                                },
                             },
                         )
                     ],
