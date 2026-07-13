@@ -1755,6 +1755,27 @@ class GenerationTools:
             logger.error(f"Error syncing OSI metrics to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
+    def sync_osi_to_db(self, osi_file_path: str) -> dict:
+        """Sync a complete OSI document (datasets + metrics) into the Knowledge Base.
+
+        Public composition entry for callers that materialize a self-contained OSI
+        file and need it vectorized (e.g. the SaaS Semantic Hub pull) without
+        reaching into the per-kind sync internals.
+
+        A metrics-bearing document is synced in one pass: ``_sync_osi_metric_to_db``
+        already vectorizes the referenced datasets before the metrics when a
+        ``semantic_model_file`` is given, so no separate dataset sync is needed. A
+        dataset-only document syncs just its datasets. The result always carries a
+        ``synced`` count for uniform accounting across both shapes.
+        """
+        if self.extract_osi_metric_names(osi_file_path):
+            result = self._sync_osi_metric_to_db(metric_file=osi_file_path, semantic_model_file=osi_file_path)
+            synced = len(result.get("metric_artifact_ids") or [])
+        else:
+            result = self.sync_osi_semantic_to_db(osi_file_path)
+            synced = int(result.get("semantic_objects") or 0)
+        return {**result, "synced": synced}
+
     def _sync_metric_to_db(
         self,
         metric_file: str,

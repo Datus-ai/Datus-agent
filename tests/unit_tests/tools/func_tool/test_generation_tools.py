@@ -1332,6 +1332,47 @@ class TestOsiSync:
         generation_tools.semantic_rag.restore_artifact_rows.assert_called_once()
         generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once()
 
+    def test_sync_osi_to_db_routes_metric_file_through_metric_sync(self, generation_tools, tmp_path):
+        # A metrics-bearing OSI doc: one pass through _sync_osi_metric_to_db (which
+        # also syncs the referenced datasets); no separate semantic sync call.
+        osi_file = tmp_path / "shop.yml"
+        osi_file.write_text("version: 0.2.0.dev0\n")
+        with (
+            patch.object(generation_tools, "extract_osi_metric_names", return_value=["order_count"]),
+            patch.object(
+                generation_tools,
+                "_sync_osi_metric_to_db",
+                return_value={"success": True, "metric_artifact_ids": ["metric:a", "metric:b"]},
+            ) as metric_sync,
+            patch.object(generation_tools, "sync_osi_semantic_to_db") as semantic_sync,
+        ):
+            result = generation_tools.sync_osi_to_db(str(osi_file))
+
+        metric_sync.assert_called_once_with(metric_file=str(osi_file), semantic_model_file=str(osi_file))
+        semantic_sync.assert_not_called()
+        assert result["success"] is True
+        assert result["synced"] == 2
+
+    def test_sync_osi_to_db_routes_dataset_only_file_through_semantic_sync(self, generation_tools, tmp_path):
+        # A dataset-only OSI doc (no metrics): syncs just the datasets.
+        osi_file = tmp_path / "model.yml"
+        osi_file.write_text("version: 0.2.0.dev0\n")
+        with (
+            patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
+            patch.object(
+                generation_tools,
+                "sync_osi_semantic_to_db",
+                return_value={"success": True, "semantic_objects": 3},
+            ) as semantic_sync,
+            patch.object(generation_tools, "_sync_osi_metric_to_db") as metric_sync,
+        ):
+            result = generation_tools.sync_osi_to_db(str(osi_file))
+
+        semantic_sync.assert_called_once_with(str(osi_file))
+        metric_sync.assert_not_called()
+        assert result["success"] is True
+        assert result["synced"] == 3
+
 
 class TestGenerateSqlSummaryId:
     def test_success(self, generation_tools):
