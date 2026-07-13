@@ -7,7 +7,7 @@ import os
 import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
 
 from datus.configuration.node_type import NodeType
 from datus.observability.config import ObservabilityConfig
@@ -19,6 +19,10 @@ from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_utils import get_files_from_glob_pattern
+
+if TYPE_CHECKING:
+    from datus.prompts.prompt_manager import PromptManager
+    from datus.utils.path_manager import DatusPathManager
 
 # Regex for validating platform/identifier names (no special chars that break paths)
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
@@ -754,6 +758,24 @@ class AgentConfig:
             self._project_name = _normalize_project_name(str(resolved_project_root))
         self._project_root = resolved_project_root
         self._set_path_manager(self.home)
+
+        # Runtime override for prompt-template resolution, honored by
+        # ``get_prompt_manager()`` ahead of ``path_manager``. ``None`` means "derive
+        # the template dir from ``home``", which is what every CLI run does.
+        #
+        # Hosts whose templates do not live under ``home`` assign one here. The SaaS
+        # backend is the motivating case: its ``home`` is the per-project dir, but
+        # prompt templates are a workspace-level asset shared across the projects in
+        # that workspace, so it attaches a PromptManager anchored one level up.
+        #
+        # Deliberately an instance attribute and NOT a dataclass field — same as
+        # ``path_manager``. Declared fields land in ``dataclasses.asdict()``, which is
+        # what ``DatusService.compute_fingerprint`` hashes; a PromptManager stringifies
+        # to a memory address, so making this a field would churn the fingerprint on
+        # every rebuild and evict the cached service. See the ``model_extras``
+        # normalization below for the same constraint.
+        self.prompt_manager: Optional["PromptManager"] = None
+
         models_raw = kwargs.get("models", {}) or {}
         self.target = kwargs.get("target", "") or ""
         self.models = {name: load_model_config(cfg) for name, cfg in models_raw.items()}
@@ -1911,7 +1933,9 @@ class AgentConfig:
     def _set_path_manager(self, home: str) -> None:
         from datus.utils.path_manager import DatusPathManager, set_current_path_manager
 
-        self.path_manager = DatusPathManager(
+        # Like ``prompt_manager``, an instance attribute rather than a dataclass
+        # field, so it stays out of ``dataclasses.asdict()`` / the fingerprint.
+        self.path_manager: "DatusPathManager" = DatusPathManager(
             home,
             project_name=self._project_name,
             project_root=self._project_root,
