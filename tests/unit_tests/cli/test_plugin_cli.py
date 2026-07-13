@@ -44,7 +44,9 @@ def test_no_subcommand_prints_help(capsys):
 
 def test_install_success(monkeypatch):
     monkeypatch.setattr(
-        plugin_cli.svc, "install", lambda source, editable=False: InstallResult(ok=True, new_plugins=["statsig"])
+        plugin_cli.svc,
+        "install",
+        lambda source, editable=False, force=False: InstallResult(ok=True, new_plugins=["statsig"]),
     )
     assert plugin_cli.run_plugin_command(["install", "datus-statsig-plugin"]) == 0
 
@@ -52,19 +54,82 @@ def test_install_success(monkeypatch):
 def test_install_editable_flag_forwarded(monkeypatch):
     captured = {}
 
-    def fake_install(source, editable=False):
+    def fake_install(source, editable=False, force=False):
         captured["source"] = source
         captured["editable"] = editable
+        captured["force"] = force
         return InstallResult(ok=True, new_plugins=["x"])
 
     monkeypatch.setattr(plugin_cli.svc, "install", fake_install)
     plugin_cli.run_plugin_command(["install", "./local", "--editable"])
-    assert captured == {"source": "./local", "editable": True}
+    assert captured == {"source": "./local", "editable": True, "force": False}
+
+
+def test_install_force_flag_forwarded(monkeypatch):
+    captured = {}
+
+    def fake_install(source, editable=False, force=False):
+        captured["force"] = force
+        return InstallResult(ok=True, new_plugins=["x"])
+
+    monkeypatch.setattr(plugin_cli.svc, "install", fake_install)
+    plugin_cli.run_plugin_command(["install", "./bundle.dplug", "--force"])
+    assert captured["force"] is True
 
 
 def test_install_failure_returns_1(monkeypatch):
-    monkeypatch.setattr(plugin_cli.svc, "install", lambda source, editable=False: InstallResult(ok=False, error="boom"))
+    monkeypatch.setattr(
+        plugin_cli.svc, "install", lambda source, editable=False, force=False: InstallResult(ok=False, error="boom")
+    )
     assert plugin_cli.run_plugin_command(["install", "bad"]) == 1
+
+
+def test_pack_success(monkeypatch, capsys):
+    from datus.cli import plugin_pack
+
+    captured = {}
+
+    def fake_pack(source, out_dir=".", python_version=None, platform_tag=None):
+        captured.update(
+            {"source": source, "out_dir": out_dir, "python_version": python_version, "platform_tag": platform_tag}
+        )
+        return plugin_pack.PackResult(
+            ok=True, bundle_path="dist/datus-plugin-hello-1.0.0-any.dplug", plugin_name="hello", wheel_count=3
+        )
+
+    monkeypatch.setattr(plugin_pack, "pack", fake_pack)
+    assert (
+        plugin_cli.run_plugin_command(
+            [
+                "pack",
+                "./datus-plugin-hello",
+                "-o",
+                "dist",
+                "--python-version",
+                "3.12",
+                "--platform",
+                "manylinux2014_x86_64",
+            ]
+        )
+        == 0
+    )
+    assert captured == {
+        "source": "./datus-plugin-hello",
+        "out_dir": "dist",
+        "python_version": "3.12",
+        "platform_tag": "manylinux2014_x86_64",
+    }
+    out = capsys.readouterr().out
+    assert "datus-plugin-hello-1.0.0-any.dplug" in out
+
+
+def test_pack_failure_returns_1(monkeypatch):
+    from datus.cli import plugin_pack
+
+    monkeypatch.setattr(
+        plugin_pack, "pack", lambda *a, **k: plugin_pack.PackResult(ok=False, error="build wheel failed")
+    )
+    assert plugin_cli.run_plugin_command(["pack", "./broken"]) == 1
 
 
 def test_uninstall_success(monkeypatch):

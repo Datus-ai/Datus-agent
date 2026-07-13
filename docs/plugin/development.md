@@ -723,6 +723,30 @@ def test_system_prompt_unconfigured_points_to_setup_skill():
     assert "hello-setup" in text
 ```
 
+## Distributing for offline install
+
+For air-gapped users, bundle your plugin **and all its dependencies** into a
+single `.dplug` file with `datus plugin pack` — run it where you have network:
+
+```bash
+datus plugin pack ./datus-plugin-hello -o ./dist
+# → ./dist/datus-plugin-hello-1.0.0-any.dplug   (plugin wheel + every dep wheel)
+```
+
+The bundle is a zip of a `datus-plugin.json` manifest plus a `wheels/`
+wheelhouse. Users install it with no PyPI access via `datus plugin install
+./….dplug` (see [Offline install](introduction.md#offline-install-air-gapped)).
+Two things make a plugin bundle cleanly:
+
+- **Wheel-only dependencies.** `pack` uses `pip download --only-binary=:all:`, so
+  every dependency must publish a wheel (no sdist-only packages). Pure-Python
+  wheels (`py3-none-any`) yield one portable, cross-platform bundle; a dependency
+  with a native extension makes the bundle platform-specific — build one per
+  target with `--python-version` / `--platform`.
+- **A declared `Requires-Python`.** Set it in `pyproject.toml`; `pack` copies it
+  into the manifest so install can reject a mismatched interpreter early (with a
+  clear message, overridable via `--force`).
+
 ## Constraints checklist
 
 Before publishing, verify:

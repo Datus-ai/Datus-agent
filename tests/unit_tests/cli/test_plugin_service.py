@@ -8,8 +8,11 @@ CI-level: subprocess / shutil / entry-point enumeration are all mocked; no
 network, no real package operations.
 """
 
+import hashlib
+import json
 import sys
 import types
+import zipfile
 
 import pytest
 
@@ -118,6 +121,258 @@ def test_install_empty_source():
     result = svc.install("   ")
     assert not result.ok
     assert "no install source" in (result.error or "")
+
+
+def test_install_dispatches_bundle_on_extension(monkeypatch):
+    """A ``.dplug`` source routes to install_bundle with ``force`` forwarded."""
+    captured = {}
+
+    def fake_install_bundle(path, force=False):
+        captured["path"] = path
+        captured["force"] = force
+        return svc.InstallResult(ok=True, source=path, new_plugins=["hello"])
+
+    monkeypatch.setattr(svc, "install_bundle", fake_install_bundle)
+    result = svc.install("./hello-1.0-any.dplug", force=True)
+    assert result.ok is True
+    assert captured == {"path": "./hello-1.0-any.dplug", "force": True}
+
+
+# ── install_bundle (.dplug offline) ────────────────────────────────────────
+
+_MAIN_WHEEL = "datus_plugin_hello-1.0.0-py3-none-any.whl"
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _make_bundle(path, *, wheels=None, manifest=None):
+    """Write a ``.dplug`` zip at ``path``.
+
+    ``wheels`` maps ``filename -> bytes`` (defaults to a main wheel + one dep).
+    ``manifest`` overrides the auto-generated (valid) manifest so tests can
+    corrupt individual fields. Returns ``str(path)``.
+    """
+    if wheels is None:
+        wheels = {_MAIN_WHEEL: b"MAIN-WHEEL-BYTES", "dep-2.0-py3-none-any.whl": b"DEP-BYTES"}
+    if manifest is None:
+        manifest = {
+            "format": svc.BUNDLE_FORMAT,
+            "format_version": svc.BUNDLE_FORMAT_VERSION,
+            "plugin": {
+                "name": "hello",
+                "distribution": "datus-plugin-hello",
+                "version": "1.0.0",
+                "wheel": _MAIN_WHEEL,
+                "entry_point": "datus_plugin_hello.plugin:HelloPlugin",
+            },
+            "compat": {"requires_python": "", "platform": "any"},
+            "wheels": [
+                {
+                    "file": fn,
+                    "sha256": _sha256(data),
+                    "role": "plugin" if fn == _MAIN_WHEEL else "dependency",
+                }
+                for fn, data in wheels.items()
+            ],
+        }
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(svc.BUNDLE_MANIFEST_NAME, json.dumps(manifest))
+        for fn, data in wheels.items():
+            zf.writestr(f"{svc.BUNDLE_WHEELS_DIR}/{fn}", data)
+    return str(path)
+
+
+def _mock_offline_install(monkeypatch, *, uv=True, proc=None, capture=None):
+    """Wire shutil.which, subprocess.run, and the post-install re-scan.
+
+    The entry-point enumeration is stateful: empty before the install
+    subprocess runs, ``[hello]`` after — so ``_rescan_plugins`` reports it as
+    newly registered (mirroring ``test_install_reports_new_plugins``).
+    """
+    monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/uv" if uv else None)
+    state = {"installed": False}
+
+    def fake_run(cmd, **kwargs):
+        if capture is not None:
+            capture["cmd"] = cmd
+        state["installed"] = True
+        return proc if proc is not None else _fake_proc()
+
+    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "datus.plugins.registry.iter_plugin_entry_points",
+        lambda: [_FakeEntryPoint("hello")] if state["installed"] else [],
+    )
+    monkeypatch.setattr("datus.plugins.registry.invalidate_plugin_cache", lambda: None)
+
+
+def test_install_bundle_success(tmp_path, monkeypatch):
+    bundle = _make_bundle(tmp_path / "hello.dplug")
+    capture = {}
+    _mock_offline_install(monkeypatch, uv=True, capture=capture)
+    result = svc.install_bundle(bundle)
+    assert result.ok is True
+    assert result.new_plugins == ["hello"]
+    cmd = capture["cmd"]
+    assert "--no-index" in cmd and "--find-links" in cmd
+    assert cmd[-1].endswith(_MAIN_WHEEL)  # installs the main wheel by path
+
+
+def test_install_bundle_offline_command_pip_fallback(monkeypatch):
+    """Without uv, the offline command uses ``pip install --no-index``."""
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    from pathlib import Path
+
+    cmd, label = svc._bundle_install_command(Path("/tmp/w/main.whl"), Path("/tmp/w"))
+    assert cmd[:5] == [sys.executable, "-m", "pip", "install", "--no-index"]
+    assert "--find-links" in cmd and cmd[-1].endswith("main.whl")
+    assert label == "pip install (offline)"
+
+
+def test_install_bundle_not_found():
+    result = svc.install_bundle("/nonexistent/path/foo.dplug")
+    assert not result.ok
+    assert "bundle not found" in (result.error or "")
+
+
+def test_install_bundle_empty_path():
+    result = svc.install_bundle("  ")
+    assert not result.ok
+    assert "no bundle path" in (result.error or "")
+
+
+def test_install_bundle_missing_manifest(tmp_path):
+    path = tmp_path / "nomani.dplug"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("wheels/x.whl", b"x")
+    result = svc.install_bundle(str(path))
+    assert not result.ok
+    assert "no datus-plugin.json" in (result.error or "")
+
+
+def test_install_bundle_wrong_format(tmp_path):
+    bundle = _make_bundle(tmp_path / "bad.dplug", manifest={"format": "something-else", "format_version": 1})
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "not a datus plugin bundle" in (result.error or "")
+
+
+def test_install_bundle_unsupported_format_version(tmp_path):
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": 999,
+        "plugin": {"wheel": _MAIN_WHEEL},
+        "wheels": [{"file": _MAIN_WHEEL, "sha256": "x"}],
+    }
+    bundle = _make_bundle(tmp_path / "future.dplug", manifest=manifest)
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "unsupported bundle format_version" in (result.error or "")
+
+
+def test_install_bundle_checksum_mismatch(tmp_path, monkeypatch):
+    """A wrong sha256 fails before any install subprocess runs."""
+    wheels = {_MAIN_WHEEL: b"REAL-BYTES"}
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
+        "compat": {"platform": "any"},
+        "wheels": [{"file": _MAIN_WHEEL, "sha256": "deadbeef", "role": "plugin"}],
+    }
+    bundle = _make_bundle(tmp_path / "tampered.dplug", wheels=wheels, manifest=manifest)
+
+    def boom(cmd, **k):
+        raise AssertionError("subprocess must not run on a checksum mismatch")
+
+    monkeypatch.setattr(svc.subprocess, "run", boom)
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "checksum mismatch" in (result.error or "")
+
+
+def test_install_bundle_unsafe_wheel_name(tmp_path, monkeypatch):
+    """A traversal filename in the manifest is rejected (zip-slip guard)."""
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
+        "compat": {"platform": "any"},
+        "wheels": [{"file": "../evil.whl", "sha256": "x", "role": "plugin"}],
+    }
+    bundle = _make_bundle(tmp_path / "evil.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
+    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: _fake_proc())
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "unsafe wheel filename" in (result.error or "")
+
+
+def test_install_bundle_missing_wheel_in_zip(tmp_path):
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
+        "compat": {"platform": "any"},
+        "wheels": [{"file": "ghost-1.0-py3-none-any.whl", "sha256": "x", "role": "dependency"}],
+    }
+    bundle = _make_bundle(tmp_path / "ghost.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "missing a wheel listed in the manifest" in (result.error or "")
+
+
+def test_install_bundle_subprocess_failure(tmp_path, monkeypatch):
+    bundle = _make_bundle(tmp_path / "hello.dplug")
+    _mock_offline_install(monkeypatch, uv=False, proc=_fake_proc(returncode=1, stderr="offline boom"))
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "code 1" in (result.error or "")
+    assert result.stderr == "offline boom"
+
+
+def test_install_bundle_python_gate_blocks_without_force(tmp_path, monkeypatch):
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
+        "compat": {"requires_python": ">=99", "platform": "any"},
+        "wheels": [{"file": _MAIN_WHEEL, "sha256": _sha256(b"x"), "role": "plugin"}],
+    }
+    bundle = _make_bundle(tmp_path / "pygate.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
+    monkeypatch.setattr(svc, "_python_satisfies", lambda spec: False)
+
+    def boom(cmd, **k):
+        raise AssertionError("subprocess must not run when the compat gate blocks")
+
+    monkeypatch.setattr(svc.subprocess, "run", boom)
+    result = svc.install_bundle(bundle)
+    assert not result.ok
+    assert "requires Python" in (result.error or "")
+
+
+def test_install_bundle_force_skips_compat_gate(tmp_path, monkeypatch):
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
+        "compat": {"requires_python": ">=99", "platform": "any"},
+        "wheels": [{"file": _MAIN_WHEEL, "sha256": _sha256(b"x"), "role": "plugin"}],
+    }
+    bundle = _make_bundle(tmp_path / "forced.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
+    monkeypatch.setattr(svc, "_python_satisfies", lambda spec: False)
+    _mock_offline_install(monkeypatch, uv=True)
+    result = svc.install_bundle(bundle, force=True)
+    assert result.ok is True
+
+
+def test_install_bundle_bad_zip(tmp_path):
+    path = tmp_path / "corrupt.dplug"
+    path.write_bytes(b"not a zip at all")
+    result = svc.install_bundle(str(path))
+    assert not result.ok
+    assert "invalid bundle" in (result.error or "")
 
 
 # ── uninstall ─────────────────────────────────────────────────────────────

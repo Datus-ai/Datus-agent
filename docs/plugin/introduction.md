@@ -41,6 +41,32 @@ If `datus <name>` falls through to the REPL instead of running the plugin, the
 package is not installed in the environment `datus` runs from, or the plugin is
 not active for this project (see [Activating plugins](#activating-plugins)).
 
+### Offline install (air-gapped)
+
+A **`.dplug` bundle** is a single self-contained file holding the plugin wheel
+plus every dependency wheel — for machines with no PyPI access. Build one where
+you *do* have network with `datus plugin pack`, copy the file across, and
+install it with no network at all:
+
+```bash
+# on a networked machine — bundle the plugin and all its dependencies
+datus plugin pack datus-plugin-hello -o ./dist        # from PyPI
+datus plugin pack ./datus-plugin-hello                # from a project directory
+datus plugin pack ./dist/hello-1.0-py3-none-any.whl   # from a built wheel
+
+# on the air-gapped machine — install from the bundle, no index access
+datus plugin install ./dist/datus-plugin-hello-1.0.0-any.dplug
+```
+
+`pack` requires network (it resolves dependencies from an index); installing the
+resulting bundle does **not** — dependencies resolve solely from the wheelhouse
+inside it (`pip install --no-index --find-links`). Every wheel's checksum is
+verified against the bundle manifest before anything is installed. If the bundle
+was built for a different Python version or platform, install refuses with a
+clear message; pass `--force` to override the compatibility check (checksums are
+still enforced). To cross-target another environment at pack time, use
+`--python-version` / `--platform` (forwarded to `pip download`).
+
 ## Configuration
 
 Plugins are configured under `agent.plugins.<name>` in `agent.yml`, where each
@@ -146,7 +172,8 @@ deactivated plugin):
 
 | Command | What it does |
 |---|---|
-| `datus plugin install <source>` | Install from PyPI / wheel / local dir (`-e` for editable). |
+| `datus plugin install <source>` | Install from PyPI / wheel / local dir / `.dplug` bundle (`-e` for editable; `--force` skips a bundle's compat check). |
+| `datus plugin pack <source>` | Build an offline `.dplug` bundle (plugin wheel + all deps) from a dir / wheel / PyPI name (`-o`, `--python-version`, `--platform`). |
 | `datus plugin uninstall <name>` | Uninstall the package that registers `<name>`. |
 | `datus plugin list` | List installed plugins: package, version, configured profiles, project activation. |
 | `datus plugin info <name>` | Show one plugin's profiles, config schema, and activation. |

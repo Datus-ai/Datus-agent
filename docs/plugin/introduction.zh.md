@@ -36,6 +36,29 @@ datus hello Ada          # 子命令立即可用
 如果 `datus <name>` 落进了 REPL 而不是运行插件,说明该包没有安装在 `datus`
 所运行的环境里,或该插件未在本项目激活(见[激活插件](#activating-plugins))。
 
+### 离线安装(内网/气隙环境) {#offline-install}
+
+**`.dplug` bundle** 是单个自包含文件,里面装着插件 wheel 以及每一个依赖 wheel——
+面向没有 PyPI 访问的机器。在**有网**的机器上用 `datus plugin pack` 打好包,把这个
+文件拷过去,然后在**完全离线**的环境安装:
+
+```bash
+# 有网机器——把插件及其全部依赖打成 bundle
+datus plugin pack datus-plugin-hello -o ./dist        # 来自 PyPI
+datus plugin pack ./datus-plugin-hello                # 来自项目目录
+datus plugin pack ./dist/hello-1.0-py3-none-any.whl   # 来自已构建的 wheel
+
+# 气隙机器——从 bundle 安装,不访问任何 index
+datus plugin install ./dist/datus-plugin-hello-1.0.0-any.dplug
+```
+
+`pack` 需要网络(它要从 index 解析依赖);安装生成的 bundle **不需要**——依赖只从
+bundle 内部的 wheelhouse 解析(`pip install --no-index --find-links`)。安装前会对
+照 bundle manifest 逐一校验每个 wheel 的 checksum。若 bundle 是为不同的 Python 版本
+或平台构建的,安装会带明确提示拒绝;传 `--force` 可越过兼容性检查(checksum 仍强制
+校验)。打包时用 `--python-version` / `--platform`(转发给 `pip download`)可交叉打
+包到另一套环境。
+
 ## 配置
 
 插件在 `agent.yml` 的 `agent.plugins.<name>` 下配置,`<name>` 之下的每个键是一个
@@ -130,7 +153,8 @@ datus plugin disable noisy-plugin            # 本项目停用
 
 | 命令 | 作用 |
 |---|---|
-| `datus plugin install <source>` | 从 PyPI / wheel / 本地目录安装(`-e` 为 editable)。 |
+| `datus plugin install <source>` | 从 PyPI / wheel / 本地目录 / `.dplug` bundle 安装(`-e` 为 editable;`--force` 跳过 bundle 的兼容性检查)。 |
+| `datus plugin pack <source>` | 从目录 / wheel / PyPI 名构建离线 `.dplug` bundle(插件 wheel + 全部依赖)(`-o`、`--python-version`、`--platform`)。 |
 | `datus plugin uninstall <name>` | 卸载注册 `<name>` 的发行包。 |
 | `datus plugin list` | 列出已安装插件:包、版本、已配置 profile、本项目激活状态。 |
 | `datus plugin info <name>` | 查看单个插件的 profile、配置 schema 与激活状态。 |

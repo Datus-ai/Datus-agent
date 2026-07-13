@@ -657,6 +657,27 @@ def test_system_prompt_unconfigured_points_to_setup_skill():
     assert "hello-setup" in text
 ```
 
+## 分发以支持离线安装
+
+面向气隙用户,用 `datus plugin pack` 把你的插件**及其全部依赖**打进单个 `.dplug`
+文件——在**有网**的机器上执行:
+
+```bash
+datus plugin pack ./datus-plugin-hello -o ./dist
+# → ./dist/datus-plugin-hello-1.0.0-any.dplug   (插件 wheel + 每个依赖 wheel)
+```
+
+bundle 是一个 zip,内含 `datus-plugin.json` manifest 与 `wheels/` wheelhouse。用户
+无需 PyPI 访问即可用 `datus plugin install ./….dplug` 安装(见
+[离线安装](introduction.zh.md#offline-install))。要让插件干净地打包,注意两点:
+
+- **依赖必须有 wheel。** `pack` 使用 `pip download --only-binary=:all:`,因此每个
+  依赖都必须发布 wheel(不能是仅有 sdist 的包)。纯 Python wheel(`py3-none-any`)
+  产出单个可跨平台的 bundle;带原生扩展的依赖会让 bundle 变成平台特定的——用
+  `--python-version` / `--platform` 为每个目标各打一个。
+- **声明 `Requires-Python`。** 在 `pyproject.toml` 里设好;`pack` 会把它写进
+  manifest,安装时便可尽早拒绝不匹配的解释器(带明确提示,可用 `--force` 越过)。
+
 ## 约束自检清单
 
 发布前逐项确认:

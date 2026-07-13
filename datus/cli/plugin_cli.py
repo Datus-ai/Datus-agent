@@ -4,14 +4,17 @@
 
 """Non-REPL handler for the ``datus plugin`` management subcommand.
 
-``datus plugin install|uninstall|list|info|enable|disable`` manages the
+``datus plugin install|uninstall|list|info|enable|disable|pack`` manages the
 installed ``datus.plugins`` packages and this project's activation. Handled
 outside the REPL (like ``datus upgrade``) so it works even when a plugin is
 misconfigured, and so it is never gated by a plugin's own ``enabled`` flag —
 you must be able to run ``datus plugin enable`` on a disabled plugin.
 
 Install sources: a PyPI requirement (``datus-foo-plugin``), a wheel
-(``./dist/foo-1.0-py3-none-any.whl``), or a local directory (``./foo``).
+(``./dist/foo-1.0-py3-none-any.whl``), a local directory (``./foo``), or a
+self-contained offline bundle (``./foo-1.0-any.dplug``). ``datus plugin pack``
+builds such a bundle (plugin wheel + all dependency wheels) for air-gapped
+installation.
 """
 
 from __future__ import annotations
@@ -44,10 +47,29 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_install = sub.add_parser("install", help="Install a plugin from PyPI, a wheel, or a local directory.")
-    p_install.add_argument("source", help="PyPI requirement, path to a .whl, or a local project directory.")
+    p_install = sub.add_parser("install", help="Install a plugin from PyPI, a wheel, a directory, or a .dplug bundle.")
+    p_install.add_argument("source", help="PyPI requirement, path to a .whl, a local directory, or a .dplug bundle.")
     p_install.add_argument(
         "-e", "--editable", action="store_true", help="Editable install (only for a local source tree)."
+    )
+    p_install.add_argument(
+        "--force",
+        action="store_true",
+        help="For a .dplug bundle, skip the python/platform compatibility check (checksums still enforced).",
+    )
+
+    p_pack = sub.add_parser("pack", help="Build an offline .dplug bundle (plugin wheel + all deps). Requires network.")
+    p_pack.add_argument("source", help="Plugin project directory, a .whl, or a PyPI requirement.")
+    p_pack.add_argument("-o", "--output", default=".", help="Output directory for the .dplug (default: current dir).")
+    p_pack.add_argument(
+        "--python-version",
+        dest="python_version",
+        help="Target Python version for dependency wheels, e.g. 3.12 (defaults to this interpreter).",
+    )
+    p_pack.add_argument(
+        "--platform",
+        dest="platform_tag",
+        help="Target platform tag for dependency wheels, e.g. manylinux2014_x86_64 (defaults to this platform).",
     )
 
     p_uninstall = sub.add_parser("uninstall", help="Uninstall the package registering a plugin.")
@@ -95,6 +117,8 @@ def run_plugin_command(argv: List[str]) -> int:
         return 0
     if args.command == "install":
         return _cmd_install(console, args)
+    if args.command == "pack":
+        return _cmd_pack(console, args)
     if args.command == "uninstall":
         return _cmd_uninstall(console, args)
     if args.command == "list":
@@ -109,7 +133,7 @@ def run_plugin_command(argv: List[str]) -> int:
 
 def _cmd_install(console: Console, args: argparse.Namespace) -> int:
     print_info(console, f"Installing plugin from {args.source} ...")
-    result = svc.install(args.source, editable=args.editable)
+    result = svc.install(args.source, editable=args.editable, force=args.force)
     if not result.ok:
         print_status(console, "Install failed.", ok=False)
         tail = (result.stderr or result.stdout or "").strip().splitlines()[-10:]
@@ -126,6 +150,32 @@ def _cmd_install(console: Console, args: argparse.Namespace) -> int:
             "Install succeeded but the package registered no `datus.plugins` entry point "
             "— it may not be a datus plugin.",
         )
+    return 0
+
+
+def _cmd_pack(console: Console, args: argparse.Namespace) -> int:
+    from datus.cli import plugin_pack
+
+    print_info(console, f"Packing plugin bundle from {args.source} ... (requires network)")
+    result = plugin_pack.pack(
+        args.source,
+        out_dir=args.output,
+        python_version=args.python_version,
+        platform_tag=args.platform_tag,
+    )
+    if not result.ok:
+        print_status(console, "Pack failed.", ok=False)
+        tail = (result.stderr or result.stdout or "").strip().splitlines()[-10:]
+        for line in tail:
+            console.print(f"  [dim]{line}[/]")
+        print_error(console, result.error or "unknown error")
+        return 1
+    print_status(
+        console,
+        f"Built {result.bundle_path} ({result.wheel_count} wheel(s), plugin `{result.plugin_name}`).",
+        ok=True,
+    )
+    print_info(console, "Install it offline with `datus plugin install <bundle>.dplug`.")
     return 0
 
 
