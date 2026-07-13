@@ -77,13 +77,28 @@ class SlackAdapter(ChannelAdapter):
 
         self._web_client = AsyncWebClient(token=self._bot_token)
 
+        # Pre-flight both credentials before opening Socket Mode. slack_sdk's
+        # SocketModeClient.connect() retries invalid_auth indefinitely, so an
+        # invalid/expired token would otherwise spin forever in a reconnect loop
+        # (apps.connections.open → invalid_auth). Fail fast and skip this channel
+        # instead: auth_test validates the bot token, apps_connections_open the
+        # app token.
         try:
             auth_resp = await self._web_client.auth_test()
             data = auth_resp.data if hasattr(auth_resp, "data") else auth_resp
             self._bot_user_id = data.get("user_id", "") if isinstance(data, dict) else ""
-            logger.info("Slack bot user ID: %s", self._bot_user_id)
+            await self._web_client.apps_connections_open(app_token=self._app_token)
         except Exception as e:
-            logger.warning("Failed to get Slack bot user ID: %s", e)
+            logger.error(
+                "Slack adapter '%s' credential check failed (%s); skipping start. "
+                "Verify its bot_token (xoxb-) and app_token (xapp-).",
+                self.channel_id,
+                e,
+            )
+            self._web_client = None
+            return
+
+        logger.info("Slack adapter '%s' authenticated (bot user %s).", self.channel_id, self._bot_user_id)
 
         self._socket_client = SocketModeClient(
             app_token=self._app_token,

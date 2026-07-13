@@ -89,6 +89,24 @@ class TestSlackIsConfigured:
         await adapter.start()
         assert adapter._socket_client is None
 
+    @pytest.mark.asyncio
+    async def test_start_aborts_when_credentials_invalid(self):
+        # Non-empty but invalid tokens: the credential pre-flight raises → start()
+        # aborts instead of entering slack_sdk's invalid_auth reconnect loop.
+        adapter = SlackAdapter(
+            channel_id="c",
+            config={"app_token": "xapp-bad", "bot_token": "xoxb-bad"},
+            bridge=MagicMock(),
+        )
+        fake_web = MagicMock()
+        fake_web.auth_test = AsyncMock(side_effect=Exception("invalid_auth"))
+        fake_web.apps_connections_open = AsyncMock()
+        with patch("slack_sdk.web.async_client.AsyncWebClient", return_value=fake_web):
+            await adapter.start()
+        assert adapter._socket_client is None
+        assert adapter._web_client is None
+        fake_web.apps_connections_open.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Tests: Bot mention detection
