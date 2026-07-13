@@ -56,6 +56,7 @@ nav:
       - Introduction: knowledge_base/introduction.md
       - Platform Documentation: knowledge_base/platform_doc.md
       - Metadata: knowledge_base/metadata.md
+      - Metadata Full-text Search: knowledge_base/metadata_fts.md
       - Semantic Models: knowledge_base/semantic_model.md
       - Metrics: knowledge_base/metrics.md
       - Reference SQL: knowledge_base/reference_sql.md
@@ -155,6 +156,7 @@ plugins:
             Knowledge Base: 知识库
             Platform Documentation: 平台文档
             Metadata: 元数据
+            Metadata Full-text Search: 元数据全文检索
             Semantic Models: 语义模型
             Metrics: 指标
             Reference SQL: Reference SQL

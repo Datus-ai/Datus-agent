@@ -61,16 +61,14 @@ kb:
     mode: fts
 ```
 
-FTS store 会检索表名、DDL、样本数据以及附加的 semantic profile，并且不会回退到 vector。FTS 索引缺失、格式过旧或构建不完整时会直接报错，必须使用 `overwrite` 重新构建。
-
-首次构建 FTS 后，`incremental` 只会 upsert 新增或发生变化的 metadata，并通过 LanceDB `optimize()` 将变化的 fragment 增量加入现有索引，不会替换完整 FTS 索引。
-
 必须在构建 metadata 前选定模式。已有 vector 数据切换到 FTS 时需要完整重建：
 
 ```bash
 datus-agent bootstrap-kb --datasource <your_datasource> --components metadata \
   --kb_search_mode fts --kb_update_strategy overwrite
 ```
+
+关于存储后端要求、持久配置与单次覆盖的区别、索引验证、增量更新、模式切换和故障排查，请参阅[元数据全文检索](metadata_fts.md)。
 
 ## 使用示例
 

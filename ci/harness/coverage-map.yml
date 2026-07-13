@@ -499,6 +499,7 @@ flow_groups:
         quality_sensitive: true
         docs:
           - docs/knowledge_base/metadata.md
+          - docs/knowledge_base/metadata_fts.md
           - docs/configuration/storage.md
         entrypoints:
           - CLI bootstrap
@@ -506,6 +507,8 @@ flow_groups:
           - Metadata storage backend
         contracts:
           - Table and column metadata can be initialized, stored, searched, and scoped by datasource.
+          - Metadata bootstrap and runtime retrieval use the configured vector or FTS mode consistently.
+          - FTS reports unsupported, missing, legacy, or incompatible indexes instead of silently falling back.
           - Storage layout remains isolated between projects.
         coverage:
           pr_acceptance:

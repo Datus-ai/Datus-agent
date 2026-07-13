@@ -61,16 +61,14 @@ kb:
     mode: fts
 ```
 
-The FTS store searches table names, DDL, sample rows, and attached semantic profiles. It does not fall back to vector search. A missing, legacy, or incomplete FTS index produces an explicit error and must be rebuilt with `overwrite`.
-
-After the initial FTS build, `incremental` upserts only new or changed metadata and uses LanceDB `optimize()` to add the changed fragments to the existing index. It does not replace the complete FTS index.
-
 Choose the mode before building metadata. Switching an existing vector installation to FTS requires a full rebuild:
 
 ```bash
 datus-agent bootstrap-kb --datasource <your_datasource> --components metadata \
   --kb_search_mode fts --kb_update_strategy overwrite
 ```
+
+For backend requirements, persistent versus one-time configuration, index verification, incremental updates, mode switching, and troubleshooting, see [Metadata Full-text Search](metadata_fts.md).
 
 ## Usage Examples
 
