@@ -81,6 +81,14 @@ class TestSlackIsConfigured:
             adapter = SlackAdapter(channel_id="c", config=cfg, bridge=bridge)
             assert adapter.is_configured() is False
 
+    @pytest.mark.asyncio
+    async def test_start_skips_when_unconfigured(self):
+        # Missing tokens → start() returns early without opening a socket (no
+        # invalid_auth loop), even when called directly.
+        adapter = SlackAdapter(channel_id="c", config={}, bridge=MagicMock())
+        await adapter.start()
+        assert adapter._socket_client is None
+
 
 # ---------------------------------------------------------------------------
 # Tests: Bot mention detection

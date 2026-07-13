@@ -99,6 +99,11 @@ class TestGatewayStart:
             await gw.start()
         assert "my-slack" not in gw._adapters
 
+    def test_base_adapter_is_configured_by_default(self):
+        # Adapters that don't override is_configured() (no credentials to check)
+        # are treated as configured, so they are never skipped.
+        assert _FakeAdapter("c", {}, bridge=MagicMock()).is_configured() is True
+
     @pytest.mark.asyncio
     async def test_enabled_but_unconfigured_channel_skipped(self):
         """An enabled channel whose adapter isn't configured (missing credentials)
