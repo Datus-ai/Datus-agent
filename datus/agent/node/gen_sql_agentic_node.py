@@ -683,9 +683,13 @@ class GenSQLAgenticNode(AgenticNode):
             return self._finalize_system_prompt(base_prompt)
 
         except FileNotFoundError:
-            # Template not found - throw DatusException
-            logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
-            base_prompt = pm.render_template(template_name="gen_sql_system", version=prompt_version, **context)
+            # Alias template missing: fall back to the built-in gen_sql_system
+            # at its latest version.
+            logger.warning(
+                f"Failed to render system prompt '{system_prompt_name}' (version={prompt_version}), "
+                "falling back to built-in gen_sql_system"
+            )
+            base_prompt = pm.render_template(template_name="gen_sql_system", version=None, **context)
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             # Other template errors - wrap in DatusException
