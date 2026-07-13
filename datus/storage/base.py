@@ -7,7 +7,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import pyarrow as pa
@@ -21,7 +21,7 @@ from datus.storage.datasource_scope import (
     datasource_condition,
 )
 from datus.storage.embedding_models import EmbeddingModel
-from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
+from datus.storage.fts import FtsIndexStatus, FtsSpecInput, normalize_fts_spec
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -401,17 +401,12 @@ class BaseEmbeddingStore(StorageBase):
         except Exception as e:
             logger.warning(f"Failed to create vector index for {self.table_name}: {str(e)}")
 
-    def create_fts_index(self, fields: Union[str, List[str], FtsSpec]):
+    def create_fts_index(self, fields: FtsSpecInput):
         """Create and verify one native FTS index per configured field."""
         self._ensure_table_ready()
         if not self._supports_fts_indexing():
             return
-        if isinstance(fields, FtsSpec):
-            spec = fields
-        elif isinstance(fields, str):
-            spec = FtsSpec((FtsField(fields),))
-        else:
-            spec = FtsSpec.from_names(fields)
+        spec = normalize_fts_spec(fields)
 
         remove_legacy = getattr(self.table, "remove_legacy_fts_index", None)
         if remove_legacy is not None and remove_legacy():

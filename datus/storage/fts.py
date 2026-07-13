@@ -15,7 +15,9 @@ try:
         normalize_fts_spec,
     )
 except ModuleNotFoundError as exc:
-    if exc.name != "datus_storage_base.vector.fts":
+    target_module = "datus_storage_base.vector.fts"
+    missing_module = exc.name or ""
+    if missing_module != target_module and not target_module.startswith(f"{missing_module}."):
         raise
 
     # Remove after datus-storage-base>=0.1.6 is published and required.

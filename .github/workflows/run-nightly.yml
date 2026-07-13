@@ -38,6 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ env.DATUS_AGENT_REF }}
+          persist-credentials: false
 
       - name: Record Datus-agent checkout
         run: |
@@ -51,6 +52,7 @@ jobs:
           repository: Datus-ai/datus-db-adapters
           ref: main
           path: external/datus-db-adapters
+          persist-credentials: false
 
       - name: Checkout datus-bi-adapters main
         uses: actions/checkout@v4
@@ -58,6 +60,7 @@ jobs:
           repository: Datus-ai/datus-bi-adapters
           ref: main
           path: external/datus-bi-adapters
+          persist-credentials: false
 
       - name: Checkout datus-scheduler-adapters main
         uses: actions/checkout@v4
@@ -65,6 +68,7 @@ jobs:
           repository: Datus-ai/datus-scheduler-adapters
           ref: main
           path: external/datus-scheduler-adapters
+          persist-credentials: false
 
       - name: Checkout datus-semantic-adapter main
         uses: actions/checkout@v4
@@ -72,6 +76,7 @@ jobs:
           repository: Datus-ai/datus-semantic-adapter
           ref: main
           path: external/datus-semantic-adapter
+          persist-credentials: false
 
       - name: Checkout datus-storage-adapters main
         uses: actions/checkout@v4
@@ -79,6 +84,7 @@ jobs:
           repository: Datus-ai/datus-storage-adapters
           ref: main
           path: external/datus-storage-adapters
+          persist-credentials: false
 
       - name: Clean up stale temp files
         run: |
