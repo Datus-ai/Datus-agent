@@ -2651,3 +2651,90 @@ class TestPluginsEnabledSwitch:
         # The whole ``agent.plugins`` section is ignored when disabled.
         assert cfg.plugin_services == {}
         assert cfg.get_plugin_profile("hello") == {}
+
+
+class TestPromptManagerAttribute:
+    """``AgentConfig.prompt_manager`` — the runtime prompt-template override.
+
+    It is an instance attribute rather than a dataclass field on purpose; these
+    tests pin the two properties that choice buys, so a future refactor that
+    promotes it to a field fails loudly instead of silently degrading the SaaS
+    service cache.
+    """
+
+    @staticmethod
+    def _make(tmp_path):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+        )
+
+    def test_defaults_to_none(self, tmp_path):
+        """Unset means "derive the template dir from home" — the CLI path."""
+        assert self._make(tmp_path).prompt_manager is None
+
+    def test_get_prompt_manager_falls_back_to_path_manager_when_unset(self, tmp_path):
+        from datus.prompts.prompt_manager import get_prompt_manager
+
+        cfg = self._make(tmp_path)
+        pm = get_prompt_manager(agent_config=cfg)
+
+        assert pm.user_templates_dir == cfg.path_manager.template_dir
+
+    def test_attached_manager_overrides_the_home_derived_one(self, tmp_path):
+        """A host whose templates live outside ``home`` attaches its own manager."""
+        from datus.prompts.prompt_manager import PromptManager, get_prompt_manager
+        from datus.utils.path_manager import DatusPathManager
+
+        cfg = self._make(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        cfg.prompt_manager = PromptManager(path_manager=DatusPathManager(str(elsewhere)))
+
+        pm = get_prompt_manager(agent_config=cfg)
+
+        assert pm is cfg.prompt_manager
+        assert pm.user_templates_dir == elsewhere.resolve() / "template"
+        assert pm.user_templates_dir != cfg.path_manager.template_dir
+
+    def test_excluded_from_asdict_so_the_fingerprint_stays_stable(self, tmp_path):
+        """``DatusService.compute_fingerprint`` hashes ``dataclasses.asdict``.
+
+        A PromptManager stringifies to a memory address, so if it ever entered the
+        payload the fingerprint would differ on every rebuild and the cached service
+        would be evicted mid-session.
+        """
+        import dataclasses
+
+        from datus.prompts.prompt_manager import PromptManager
+        from datus.utils.path_manager import DatusPathManager
+
+        cfg = self._make(tmp_path)
+        before = dataclasses.asdict(cfg)
+
+        cfg.prompt_manager = PromptManager(path_manager=DatusPathManager(str(tmp_path / "elsewhere")))
+        after = dataclasses.asdict(cfg)
+
+        assert "prompt_manager" not in after
+        assert "prompt_manager" not in AgentConfig.__dataclass_fields__
+        assert after == before
+
+    def test_survives_deepcopy(self, tmp_path):
+        """Hosts clone the config per request (e.g. chat_task_manager)."""
+        import copy
+
+        from datus.prompts.prompt_manager import PromptManager, get_prompt_manager
+        from datus.utils.path_manager import DatusPathManager
+
+        cfg = self._make(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        cfg.prompt_manager = PromptManager(path_manager=DatusPathManager(str(elsewhere)))
+
+        cloned = copy.deepcopy(cfg)
+
+        assert isinstance(cloned.prompt_manager, PromptManager)
+        # A real clone, not a shared reference back into the original config.
+        assert cloned.prompt_manager is not cfg.prompt_manager
+        assert get_prompt_manager(agent_config=cloned).user_templates_dir == elsewhere.resolve() / "template"
