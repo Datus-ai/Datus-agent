@@ -317,7 +317,7 @@ class TestEndMetricGeneration:
         preflight_mock.assert_not_called()
         sync_mock.assert_called_once_with(str(metric_file), [], {}, replace_metric_artifact=False)
 
-    def test_osi_forwards_all_semantic_model_files_to_sync(self, generation_tools, tmp_path):
+    def test_osi_ignores_semantic_model_files_to_avoid_duplicate_sync(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.authoring_format = "osi"
         semantic_root = tmp_path / "semantic_models" / "starrocks"
@@ -338,12 +338,7 @@ class TestEndMetricGeneration:
             patch.object(
                 generation_tools,
                 "_sync_osi_metric_to_db",
-                return_value={
-                    "success": True,
-                    "message": "synced",
-                    "semantic_synced": True,
-                    "semantic_model_files_synced": [str(orders_file), str(customers_file)],
-                },
+                return_value={"success": True, "message": "synced"},
             ) as sync_mock,
         ):
             result = generation_tools.end_metric_generation(
@@ -355,11 +350,12 @@ class TestEndMetricGeneration:
         preflight_mock.assert_not_called()
         sync_mock.assert_called_once_with(
             str(metric_file),
-            [str(orders_file), str(customers_file)],
+            [],
             {},
             replace_metric_artifact=False,
         )
-        assert generation_tools.generation_evidence.semantic_kb_sync_passed is True
+        assert result.result["semantic_model_files"] == []
+        assert generation_tools.generation_evidence.semantic_kb_sync_passed is False
 
 
 class TestEndMetricGenerationPreflight:

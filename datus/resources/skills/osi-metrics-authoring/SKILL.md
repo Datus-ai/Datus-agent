@@ -17,9 +17,10 @@ ADD metrics to an existing strict OSI (Open Semantic Interchange) core semantic 
 
 CRITICAL BOUNDARY: You author **OSI core semantics only**. You do NOT write MetricFlow YAML, `measure_proxy`, `type_params`, `measures:`, `ratio`, `cumulative`, or any execution-engine syntax. The Datus OSI compiler infers backing measures, picks the backend metric kind, and lowers to the execution engine. Do NOT write legacy MetricFlow `metric:` blocks.
 
-CRITICAL MODEL RULE — **build the model once, then only add metrics**:
+CRITICAL MODEL RULE — **build the model once, then only upsert metrics**:
 - The datasets and relationships are owned by the semantic-model step and are ALREADY built.
-- The semantic model file is the durable OSI domain document. Load it, preserve existing datasets and relationships, and append metrics under `semantic_model[0].metrics`.
+- The semantic model file is the durable OSI domain document. Load it and use `upsert_osi_metrics` to create or update metrics under `semantic_model[0].metrics`.
+- Never use general filesystem writes to create or modify datasets, fields, or relationships. If the target model is missing, stop and report that `gen_semantic_model` must run first.
 - A given logical dataset has one canonical definition shared by all metrics. Reuse that dataset by name in each metric's DATUS `dataset` hint.
 
 The OSI expression dialect and target semantic model file for the current run are shown in the system prompt Workspace section — use those exact values (`<osi_dialect>` below stands for that dialect).
@@ -56,7 +57,7 @@ Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `input
 
 ## Authoring rules
 
-1. **Reference, don't rebuild.** Every metric's DATUS `dataset` hint must reference an existing dataset of the semantic model. If a needed dataset, field, time field, or relationship is missing, do not invent a conflicting one; note it and minimally update the semantic model only if truly absent.
+1. **Reference, don't rebuild.** Every metric's DATUS `dataset` hint must reference an existing dataset of the semantic model. If a needed dataset, field, time field, or relationship is missing, stop and report the prerequisite; do not modify semantic objects in this workflow.
 2. **Aggregates**: write the natural business expression in OSI core `expression.dialects[0].expression`, e.g. `COUNT(DISTINCT order_id)`, `SUM(amount)`, `AVG(score)`.
 3. **Conditional aggregates**: keep the CASE inside the expression, e.g. `COUNT(DISTINCT CASE WHEN <condition> THEN id END)`. Preserve literal values exactly.
 4. **Conditional semantics**: encode metric-specific business conditions inside the OSI core metric expression, e.g. `COUNT(DISTINCT CASE WHEN status = 'paid' THEN id END)`. Do NOT create a separate dataset for a metric-only condition. Fixed logical dataset scope belongs in the dataset `source` query plus `description`/`ai_context`. Do NOT bury query-time date ranges into the metric; time ranges are query parameters.
@@ -91,16 +92,7 @@ Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `input
            - vendor_name: DATUS
              data: '{"dataset":"orders","time_dimension":"order_date","period_over_period":{"time_grain":"month","offset_window":"1 year","calculation":"percent_change"},"subject_path":["sales","revenue","growth"],"format":"0.00%","unit":"%"}'
      ```
-7. **Joins**: to group or slice by another table, use the existing semantic-model relationships. If the link is truly absent, add one OSI core relationship under the semantic model object:
-   ```yaml
-   relationships:
-     - name: <fact_dataset>_to_<dimension_dataset>
-       from: <fact_or_many_side_dataset>
-       to: <dimension_or_one_side_dataset>
-       from_columns: [<foreign_key_column>]
-       to_columns: [<primary_or_unique_key_column>]
-   ```
-   Never put `relationships` inside a dataset. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
+7. **Joins**: to group or slice by another table, use the existing semantic-model relationships. If the link is absent, report that the semantic model must be updated by `gen_semantic_model`; do not add relationships here.
 8. **Not metrics**: detail/list queries (`SELECT DISTINCT ...`) and window/ranking (`ROW_NUMBER()`, `RANK() OVER`, TopN per group) are NOT metrics. SKIP them. Do NOT create a dataset/view here and never force them into a metric. If the discovery tool returns `metric_generation_skips` or rank-like `derived_datasource_recommendations`, treat that SQL as skipped.
 9. Use clear English `snake_case` metric names; metric names must be globally unique. Every metric MUST include `description` and `ai_context`. Put the business definition in `description`; put LLM-facing usage guidance in `ai_context.instructions`, including grain, metric-specific conditions, time field, and join caveats.
 10. **Subject classification (required).** Every metric MUST carry a `subject_path` in its DATUS extension, encoded as an ordered `[domain, layer1, layer2]` list (e.g. `["sales","revenue","growth"]`). Choose the classification exactly as instructed by the **Subject Classification** section of the system prompt — same required categories, same reuse-or-create rule, same `{domain}/{layer1}/{layer2}` hierarchy the MetricFlow path uses; the only difference is the carrier (a DATUS `subject_path` list here, a `locked_metadata.tags` entry there).
@@ -111,17 +103,18 @@ Before writing any YAML, classify the source SQL:
 
 - If the SQL has no aggregate output (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, ratio, rolling/cumulative aggregate, etc.) and primarily returns row-level fields (`SELECT DISTINCT ac_name, ac_code, ...`, list/detail/ranking), then it is not a metric request.
 - For non-metric SQL, do not invent convenience metrics such as `*_count`, `*_avg_duration`, `*_max_sr`, or `*_min_sr` just because the table contains those columns.
-- For non-metric SQL, do not call `write_file`, `validate_semantic`, `query_metrics`, or `end_metric_generation`. Report `status: "skipped"` with `metric_file: null` in the final JSON.
+- For non-metric SQL, do not call `upsert_osi_metrics`, `validate_semantic`, `query_metrics`, or `end_metric_generation`. Report `status: "skipped"` with `metric_file: null` in the final JSON.
 - For TopN per group / ranking-window SQL (`ROW_NUMBER`, `RANK`, `DENSE_RANK`) do the same: skip metric generation. A derived dataset/view may be a future modeling task, but it is outside this `gen_metrics` run.
 
 ## Workflow notes
 
-- FIRST, load the existing model from the target semantic model file to learn dataset names, fields, time fields, and relationships. Call `list_metrics()` to see metrics that already exist.
+- FIRST, load the existing model from the target semantic model file to learn dataset names, fields, time fields, and relationships. If the file is missing, stop and report the prerequisite. Call `list_metrics()` to see metrics that already exist.
 - For provided SQL/history, call `analyze_metric_candidates_from_history` before writing files. Use `direct_metric_candidates` for base metrics and fixed `period_over_period` final metrics; use `derived_metric_candidates` only for second-stage OSI metrics that explicitly depend on published input metrics. If it returns `metric_generation_skips`, skip those SQLs instead of writing metric YAML.
 - Candidate-plan compliance: every candidate in `direct_metric_candidates` and `derived_metric_candidates` (including cumulative, rolling-window, and period_over_period candidates) MUST end this run either published via `end_metric_generation` or listed in your final `output` with a concrete blocker such as a validation failure. "Covered by an existing base metric" is never a valid blocker for a cumulative/window/period_over_period candidate.
-- Reference, reconcile, reuse: point each metric's DATUS `dataset` hint at an existing dataset. If a metric with the same meaning already exists (`check_semantic_object_exists(name, kind='metric')`), reuse/skip it. "Same meaning" requires the same aggregation AND the same window/offset semantics: a base aggregate never covers its cumulative/rolling/period-over-period variants, so `running_x`/`moving_x`/`previous_x` candidates must still be published when only `x` exists. For a derived metric, make sure its input metrics already exist.
+- Reference, reconcile, reuse: point each metric's DATUS `dataset` hint at an existing dataset. If a metric with the same meaning and correct definition already exists (`check_semantic_object_exists(name, kind='metric')`), reuse/skip it. If the user requests an update or the stored definition is incorrect, replace it by name with `upsert_osi_metrics`. "Same meaning" requires the same aggregation AND the same window/offset semantics: a base aggregate never covers its cumulative/rolling/period-over-period variants, so `running_x`/`moving_x`/`previous_x` candidates must still be published when only `x` exists. For a derived metric, make sure its input metrics already exist.
 - From SQL: find the table (FROM), aggregate expression(s), and business conditions vs query-time ranges. Anchor the metric on the aggregated table's existing dataset; encode metric-specific conditions with CASE inside the metric expression.
 - When a required business input is missing or ambiguous, ASK for the business semantics; do not guess.
-- Call `validate_semantic(scope="all")` after writing OSI metrics and fix errors until it passes.
+- Call `upsert_osi_metrics(path="<target model file>", metrics_json="<JSON array of complete OSI metric objects>")` once per coherent metric batch. This tool preserves datasets and relationships, appends new metrics, and replaces existing metrics by name.
+- Call `validate_semantic(scope="all")` after upserting OSI metrics and fix metric errors with another `upsert_osi_metrics` call until validation passes.
 - Call `query_metrics(metrics=[...], dry_run=True)` for every generated metric name before publishing.
-- After validation and dry-run pass, call `end_metric_generation(metric_file="<target model file>", semantic_model_file="<target model file>", metric_sqls_json="<dry-run SQL JSON>")`.
+- After validation and dry-run pass, call `end_metric_generation(metric_file="<target model file>", semantic_model_files=[], metric_sqls_json="<dry-run SQL JSON>")`.

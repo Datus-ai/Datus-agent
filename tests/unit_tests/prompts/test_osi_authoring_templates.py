@@ -109,8 +109,8 @@ def test_metrics_template_metricflow_mode_contract():
 def test_metrics_template_osi_mode_contract():
     text = _render("gen_metrics_system", "osi")
     assert "OSI (Open Semantic Interchange) core semantic model" in text
-    # OSI metrics report a singular semantic_model_file in the final JSON.
-    assert '"semantic_model_file"' in text
+    assert '"semantic_model_files": []' in text
+    assert "upsert_osi_metrics" in text
     assert "subject_path" in text
     assert "locked_metadata.tags" not in text.split("Record the classification")[1].split("\n")[0]
     assert "Covered by an existing base metric" in text

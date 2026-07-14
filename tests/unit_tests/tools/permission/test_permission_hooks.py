@@ -1032,27 +1032,35 @@ class TestFilesystemZoneProfileMatrix:
     @pytest.mark.asyncio
     async def test_is_write_set_matches_filesystem_tool_surface(self):
         """Guard against drift: the hook's write-set must cover every write
-        method ``FilesystemFuncTool`` actually exposes.
+        method the general or OSI metric filesystem surface actually exposes.
 
         If a new write tool (e.g. ``append_file``) is added without updating
         ``_FILESYSTEM_WRITE_TOOLS``, the normal-profile INTERNAL gate would
         silently regress to bypass for that tool.
         """
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
         fs_tool = FilesystemFuncTool(root_path="/tmp")
         tool_names = {t.name for t in fs_tool.available_tools()}
+        osi_metric_tool = MetricFilesystemFuncTool(
+            root_path="/tmp",
+            current_node="gen_metrics",
+            authoring_format="osi",
+        )
+        osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
         # Every tool the filesystem surface advertises as a mutation must be
         # declared as a write, so the normal-profile INTERNAL gate doesn't
         # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
         # ``grep``) stay out — they have their own gate path.
-        write_names = {"write_file", "edit_file", "delete_file"}
-        # The hook's declared write-set must equal the writes the tool exposes,
+        write_names = {"write_file", "edit_file", "delete_file", "upsert_osi_metrics"}
+        # The hook's declared write-set must equal the writes these tools expose,
         # not a strict subset. Both directions matter:
         #   - subset breaks the matrix (writes get silently bypassed)
         #   - superset means we ASK on a tool name that doesn't exist
         assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert write_names.issubset(tool_names)
+        assert write_names - {"upsert_osi_metrics"} <= tool_names
+        assert "upsert_osi_metrics" in osi_metric_tool_names
 
 
 class TestNonInteractiveMode:

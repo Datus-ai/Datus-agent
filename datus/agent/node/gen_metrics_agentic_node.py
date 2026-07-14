@@ -11,7 +11,6 @@ hooks, and metricflow MCP server integration.
 """
 
 import json
-from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -109,7 +108,6 @@ class GenMetricsAgenticNode(AgenticNode):
         self.ask_user_tool = None
         self.hooks = None
         self.generation_evidence = GenerationEvidence()
-        self._osi_metrics_baseline_artifact_json: Optional[str] = None
         self.setup_tools()
 
     def get_node_name(self) -> str:
@@ -138,6 +136,14 @@ class GenMetricsAgenticNode(AgenticNode):
             self._setup_ask_user_tool()
 
         logger.info(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
+
+    def _ensure_bash_tool_in_tools(self) -> None:
+        """Keep OSI metric authoring on its metrics-only filesystem surface."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        if is_osi_authoring(self.agent_config):
+            return
+        super()._ensure_bash_tool_in_tools()
 
     def _make_filesystem_tool(self, **kwargs):
         from datus.agent.node.semantic_authoring import resolve_authoring_format
@@ -177,8 +183,9 @@ class GenMetricsAgenticNode(AgenticNode):
         try:
             self.filesystem_func_tool = self._make_filesystem_tool()
 
-            self.tools.extend(self.filesystem_func_tool.available_tools())
-            logger.debug("Added filesystem tools: read_file, write_file, edit_file, glob, grep")
+            filesystem_tools = self.filesystem_func_tool.available_tools()
+            self.tools.extend(filesystem_tools)
+            logger.debug("Added filesystem tools: %s", [tool.name for tool in filesystem_tools])
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
@@ -188,18 +195,18 @@ class GenMetricsAgenticNode(AgenticNode):
             from datus.agent.node.semantic_authoring import resolve_authoring_format
             from datus.tools.func_tool import trans_to_function_tool
 
+            authoring_format = resolve_authoring_format(self.agent_config)
             self.generation_tools = GenerationTools(
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
-                authoring_format=resolve_authoring_format(self.agent_config),
+                authoring_format=authoring_format,
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_metric_generation))
-            self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
-            logger.debug(
-                "Added tools: check_semantic_object_exists, end_metric_generation, end_semantic_model_generation"
-            )
+            if authoring_format != "osi":
+                self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
+            logger.debug("Added metric generation tools for authoring_format=%s", authoring_format)
 
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")
@@ -408,32 +415,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
     def _build_template_context(self, ctx: StreamRunContext) -> Optional[dict]:
         self._set_metric_queryability_contracts_from_input(ctx.user_input)
-        self._capture_osi_metrics_baseline_artifact()
         return self._prepare_template_context(ctx.user_input)
-
-    def _capture_osi_metrics_baseline_artifact(self) -> None:
-        from datus.agent.node.semantic_authoring import is_osi_authoring
-
-        self._osi_metrics_baseline_artifact_json = None
-        if not is_osi_authoring(self.agent_config):
-            return
-        try:
-            from datus_semantic_osi.profile import load_osi_path, to_core_schema_document
-
-            semantic_model_dir = Path(
-                self.agent_config.path_manager.semantic_model_path(self.agent_config.current_datasource)
-            )
-            if not semantic_model_dir.exists():
-                return
-            doc = load_osi_path(str(semantic_model_dir))
-            baseline = to_core_schema_document(doc)
-            self._osi_metrics_baseline_artifact_json = json.dumps(
-                baseline,
-                ensure_ascii=False,
-                sort_keys=True,
-            )
-        except Exception as exc:
-            logger.info("Skipping OSI metric mutation guard baseline capture: %s", exc)
 
     def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
         response_content = ctx.response_content
@@ -743,12 +725,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         if not getattr(self, "semantic_tools", None):
             raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
-        validation_checks = ["authoring_quality"]
-        validation_kwargs: Dict[str, Any] = {"checks": validation_checks}
-        if self._osi_metrics_baseline_artifact_json:
-            validation_checks.append("mutation_guard")
-            validation_kwargs["baseline_artifact_json"] = self._osi_metrics_baseline_artifact_json
-        validation_result = self.semantic_tools.validate_semantic(**validation_kwargs)
+        validation_result = self.semantic_tools.validate_semantic(checks=["authoring_quality"])
         self.generation_evidence.record_validation_result(validation_result)
         if not self._tool_succeeded(validation_result):
             raise RuntimeError(
@@ -756,15 +733,6 @@ class GenMetricsAgenticNode(AgenticNode):
             )
 
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
-        if isinstance(semantic_model_files, str):
-            semantic_model_file_candidates = [semantic_model_files]
-        else:
-            semantic_model_file_candidates = semantic_model_files or []
-        abs_semantic_model_files = [
-            self._resolve_metric_artifact_path(semantic_model_file, "semantic")
-            for semantic_model_file in semantic_model_file_candidates
-            if semantic_model_file
-        ]
         metric_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
         if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
             query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)
@@ -789,7 +757,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         publish_result = self.generation_tools.end_metric_generation(
             metric_file=abs_metric_file,
-            semantic_model_files=abs_semantic_model_files,
+            semantic_model_files=[],
         )
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"OSI metric KB sync failed: {self._tool_error(publish_result)}")

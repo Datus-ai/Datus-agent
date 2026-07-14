@@ -4,6 +4,8 @@
 
 """CI-level tests for SubAgentTaskTool (AgenticNode-based execution)."""
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -12,6 +14,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
 from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.schemas.agent_models import ScopedContext
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.sub_agent_task_tool import (
     BUILTIN_SUBAGENT_DESCRIPTIONS,
     NODE_CLASS_MAP,
@@ -779,6 +782,49 @@ class TestSubAgentTaskAcceptance:
 
 @pytest.mark.ci
 class TestTaskExecution:
+    @pytest.mark.asyncio
+    async def test_osi_gen_metrics_requires_existing_semantic_model(self, task_tool, tmp_path):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
+        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
+
+        with patch(
+            "datus.agent.node.semantic_authoring.default_osi_semantic_model_file",
+            return_value="subject/semantic_models/test_db/sales.yml",
+        ):
+            with patch.object(task_tool, "_execute_node") as execute_node:
+                result = await task_tool.task(type="gen_metrics", prompt="Generate revenue")
+
+        assert result.success == 0
+        assert result.result["code"] == "semantic_model_required"
+        assert result.result["required_subagent"] == "gen_semantic_model"
+        assert result.result["retry_subagent"] == "gen_metrics"
+        execute_node.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_semantic_authoring_tasks_are_serialized(self, task_tool, monkeypatch):
+        active = 0
+        max_active = 0
+
+        async def fake_execute(subagent_type, prompt, **kwargs):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return FuncToolResult(result={"subagent_type": subagent_type})
+
+        monkeypatch.setattr(task_tool, "_execute_node", fake_execute)
+        monkeypatch.setattr(task_tool, "_osi_metric_precondition", lambda: None)
+
+        semantic_result, metrics_result = await asyncio.gather(
+            task_tool.task(type="gen_semantic_model", prompt="Generate the sales model"),
+            task_tool.task(type="gen_metrics", prompt="Generate revenue"),
+        )
+
+        assert semantic_result.success == 1
+        assert metrics_result.success == 1
+        assert max_active == 1
+
     @pytest.mark.asyncio
     async def test_execute_gen_sql_success(self, task_tool):
         """Successful gen_sql execution through node."""

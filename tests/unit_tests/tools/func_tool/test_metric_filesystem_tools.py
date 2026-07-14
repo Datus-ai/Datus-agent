@@ -2,6 +2,8 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import json
+
 import pytest
 import yaml
 
@@ -9,6 +11,99 @@ from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTo
 
 
 class TestMetricFilesystemFuncTool:
+    def test_osi_available_tools_are_metrics_only(self, tmp_path):
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+        )
+
+        tool_names = {tool.name for tool in tool.available_tools()}
+
+        assert tool_names == {"read_file", "upsert_osi_metrics", "glob", "grep"}
+
+    def test_upsert_osi_metrics_preserves_semantic_objects(self, tmp_path):
+        project = tmp_path / "project"
+        target = project / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            """
+version: 0.2.0
+semantic_model:
+  - name: sales
+    description: Sales domain
+    datasets:
+      - name: orders
+        source:
+          table: orders
+        fields:
+          - name: amount
+            expression:
+              sql: amount
+    relationships:
+      - name: orders_to_customers
+        from: orders
+        to: customers
+    metrics:
+      - name: revenue
+        description: Old definition
+        expression:
+          sql: SUM(amount)
+""".lstrip(),
+            encoding="utf-8",
+        )
+        before = yaml.safe_load(target.read_text(encoding="utf-8"))
+        tool = MetricFilesystemFuncTool(
+            root_path=str(project),
+            current_node="gen_metrics",
+            authoring_format="osi",
+        )
+
+        result = tool.upsert_osi_metrics(
+            "subject/semantic_models/warehouse/sales.yml",
+            json.dumps(
+                [
+                    {
+                        "name": "revenue",
+                        "description": "Corrected definition",
+                        "expression": {"sql": "SUM(net_amount)"},
+                    },
+                    {
+                        "name": "order_count",
+                        "description": "Number of orders",
+                        "expression": {"sql": "COUNT(*)"},
+                    },
+                ]
+            ),
+        )
+
+        assert result.success == 1
+        assert result.result["created"] == ["order_count"]
+        assert result.result["updated"] == ["revenue"]
+        after = yaml.safe_load(target.read_text(encoding="utf-8"))
+        before_model = before["semantic_model"][0]
+        after_model = after["semantic_model"][0]
+        assert {key: value for key, value in after_model.items() if key != "metrics"} == {
+            key: value for key, value in before_model.items() if key != "metrics"
+        }
+        assert [metric["name"] for metric in after_model["metrics"]] == ["revenue", "order_count"]
+        assert after_model["metrics"][0]["description"] == "Corrected definition"
+
+    def test_upsert_osi_metrics_requires_existing_model(self, tmp_path):
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+        )
+
+        result = tool.upsert_osi_metrics(
+            "subject/semantic_models/warehouse/sales.yml",
+            json.dumps([{"name": "revenue", "expression": {"sql": "SUM(amount)"}}]),
+        )
+
+        assert result.success == 0
+        assert result.result["code"] == "semantic_model_required"
+
     def test_write_file_merges_existing_semantic_model(self, tmp_path):
         project = tmp_path / "project"
         target = project / "subject" / "semantic_models" / "ac_manage" / "orders.yml"
