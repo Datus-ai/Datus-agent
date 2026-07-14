@@ -5,6 +5,7 @@
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -20,6 +21,13 @@ def _osi_metric(name, expression):
     }
 
 
+@pytest.fixture
+def osi_schema_validator(monkeypatch):
+    validator = Mock(return_value=None)
+    monkeypatch.setattr(MetricFilesystemFuncTool, "_validate_osi_document", staticmethod(validator))
+    return validator
+
+
 class TestMetricFilesystemFuncTool:
     def test_osi_available_tools_are_metrics_only(self, tmp_path):
         tool = MetricFilesystemFuncTool(
@@ -32,7 +40,7 @@ class TestMetricFilesystemFuncTool:
 
         assert tool_names == {"read_file", "upsert_osi_metrics", "glob", "grep"}
 
-    def test_upsert_osi_metrics_preserves_semantic_objects(self, tmp_path):
+    def test_upsert_osi_metrics_preserves_semantic_objects(self, tmp_path, osi_schema_validator):
         project = tmp_path / "project"
         target = project / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
@@ -101,6 +109,7 @@ semantic_model:
         }
         assert [metric["name"] for metric in after_model["metrics"]] == ["revenue", "order_count"]
         assert after_model["metrics"][0]["description"] == "Corrected definition"
+        osi_schema_validator.assert_called_once()
 
     @pytest.mark.parametrize("invalid_metrics", [{}, ""])
     def test_upsert_osi_metrics_rejects_present_invalid_metrics_collection(self, tmp_path, invalid_metrics):
@@ -123,7 +132,7 @@ semantic_model:
         assert "metrics must be a list" in result.error
         assert target.read_text(encoding="utf-8") == original
 
-    def test_upsert_osi_metrics_validates_metric_schema_before_writing(self, tmp_path):
+    def test_upsert_osi_metrics_validates_metric_schema_before_writing(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         original = """version: 0.2.0.dev0
@@ -135,6 +144,7 @@ semantic_model:
 """
         target.write_text(original, encoding="utf-8")
         tool = MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi")
+        osi_schema_validator.return_value = "metric expression is required"
 
         result = tool.upsert_osi_metrics(
             str(target.relative_to(tmp_path)),
@@ -145,7 +155,7 @@ semantic_model:
         assert "Invalid OSI metric update" in result.error
         assert target.read_text(encoding="utf-8") == original
 
-    def test_upsert_osi_metrics_serializes_concurrent_tool_instances(self, tmp_path):
+    def test_upsert_osi_metrics_serializes_concurrent_tool_instances(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(

@@ -149,13 +149,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     created.append(name)
 
             model["metrics"] = existing_metrics
-            try:
-                from datus_semantic_osi.errors import OSIValidationError
-                from datus_semantic_osi.profile import validate_osi_core_schema
-
-                validate_osi_core_schema(document)
-            except (ImportError, OSIValidationError) as exc:
-                return FuncToolResult(success=0, error=f"Invalid OSI metric update: {exc}")
+            validation_error = self._validate_osi_document(document)
+            if validation_error:
+                return FuncToolResult(success=0, error=f"Invalid OSI metric update: {validation_error}")
 
             serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
             try:
@@ -177,6 +173,20 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         key = str(target_path.resolve(strict=False))
         with _OSI_METRIC_PATH_LOCKS_GUARD:
             return _OSI_METRIC_PATH_LOCKS.setdefault(key, threading.RLock())
+
+    @staticmethod
+    def _validate_osi_document(document: Dict[str, Any]) -> Optional[str]:
+        try:
+            from datus_semantic_osi.errors import OSIValidationError
+            from datus_semantic_osi.profile import validate_osi_core_schema
+        except ImportError as exc:
+            return f"OSI schema validator is unavailable: {exc}"
+
+        try:
+            validate_osi_core_schema(document)
+        except OSIValidationError as exc:
+            return str(exc)
+        return None
 
     @staticmethod
     def _atomic_write_text(target_path: Path, content: str) -> None:
