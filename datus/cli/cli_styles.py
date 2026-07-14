@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from rich.box import ROUNDED
+from rich.box import HORIZONTALS, ROUNDED
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -111,6 +111,12 @@ def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK
 
     The border and background give USER messages a strong visual identity
     that separates them from neighbouring ASSISTANT markdown blocks.
+
+    ``HORIZONTALS`` (top/bottom rules only, space side edges) instead of a
+    fully-boxed style: the TUI's drag-copy extracts rendered characters, so
+    vertical ``│`` edges would land on the clipboard glued to every copied
+    message line. Space edges are stripped by the extraction's rstrip and
+    never pollute a paste.
     """
     text = Text()
     text.append(prompt_text, style=USER_SCROLLBACK_PROMPT_STYLE)
@@ -119,7 +125,7 @@ def render_user_scrollback_text(message: str, prompt_text: str = USER_SCROLLBACK
         text,
         border_style=USER_SCROLLBACK_BORDER_STYLE,
         style=USER_SCROLLBACK_TEXT_STYLE,
-        box=ROUNDED,
+        box=HORIZONTALS,
         padding=(0, 1),
         expand=True,
     )

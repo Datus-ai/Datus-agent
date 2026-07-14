@@ -46,8 +46,7 @@ from datus.cli.tui.live_display_state import LiveDisplayLine
 from datus.cli.tui.search import SearchState
 from datus.cli.tui.selection import (
     TranscriptSelection,
-    extract_plain_text_between,
-    line_char_count,
+    extract_text_from_lines,
     split_line_for_selection,
 )
 
@@ -602,23 +601,5 @@ def extract_selection_text(
     padding spaces would land on the clipboard and force the user to
     clean them up manually after pasting.
     """
-    rng = selection.range()
-    if rng is None:
-        return ""
     snap = buffer.snapshot()
-    out_lines: List[str] = []
-    start, end = rng
-    for line_idx in range(start.line, end.line + 1):
-        if line_idx < 0 or line_idx >= snap.total:
-            continue
-        fragments = snap.get_line(line_idx)
-        if start.line == end.line:
-            from_col, to_col = start.column, end.column
-        elif line_idx == start.line:
-            from_col, to_col = start.column, line_char_count(fragments)
-        elif line_idx == end.line:
-            from_col, to_col = 0, end.column
-        else:
-            from_col, to_col = 0, line_char_count(fragments)
-        out_lines.append(extract_plain_text_between(fragments, from_col, to_col).rstrip())
-    return "\n".join(out_lines)
+    return extract_text_from_lines(snap.get_line, snap.total, selection)
