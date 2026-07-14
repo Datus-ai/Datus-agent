@@ -164,17 +164,22 @@ def test_init_embedding_models_returns_current_storage_models():
 
 
 def test_get_db_name_type(agent_config: AgentConfig):
+    agent_config.current_datasource = "bird_school"
     db_name, db_type = agent_config.current_db_name_type(db_name="bird_school")
     assert db_name == "bird_school"
     assert db_type == DBType.SQLITE
 
+    agent_config.current_datasource = "local_duckdb"
     db_name, db_type = agent_config.current_db_name_type(db_name="local_duckdb")
     assert db_name == "local_duckdb"
     assert db_type == DBType.DUCKDB
 
+    # Regression: db_name="starrocks" collides with a different datasource key
+    # but must derive the type from current_datasource, not from starrocks
+    agent_config.current_datasource = "bird_school"
     db_name, db_type = agent_config.current_db_name_type(db_name="starrocks")
     assert db_name == "starrocks"
-    assert db_type == "starrocks"
+    assert db_type == DBType.SQLITE
 
 
 def test_get_db_name_type_with_custom_db_name(agent_config: AgentConfig):
