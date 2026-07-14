@@ -4,7 +4,6 @@
 
 import json
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -146,7 +145,7 @@ semantic_model:
         assert "Invalid OSI metric update" in result.error
         assert target.read_text(encoding="utf-8") == original
 
-    def test_upsert_osi_metrics_serializes_concurrent_tool_instances(self, tmp_path, monkeypatch):
+    def test_upsert_osi_metrics_serializes_concurrent_tool_instances(self, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
         target.write_text(
@@ -163,41 +162,26 @@ semantic_model:
             MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi"),
             MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi"),
         ]
-        original_atomic_write = MetricFilesystemFuncTool._atomic_write_text
-        active_writes = 0
-        max_active_writes = 0
-        counter_lock = threading.Lock()
+        relative_path = str(target.relative_to(tmp_path))
+        shared_lock = tools[0]._osi_metric_path_lock(target)
+        assert shared_lock is tools[1]._osi_metric_path_lock(target)
+        second_started = threading.Event()
 
-        def slow_atomic_write(path, content):
-            nonlocal active_writes, max_active_writes
-            with counter_lock:
-                active_writes += 1
-                max_active_writes = max(max_active_writes, active_writes)
-            time.sleep(0.02)
-            try:
-                original_atomic_write(path, content)
-            finally:
-                with counter_lock:
-                    active_writes -= 1
-
-        monkeypatch.setattr(MetricFilesystemFuncTool, "_atomic_write_text", staticmethod(slow_atomic_write))
-        barrier = threading.Barrier(2)
-
-        def upsert(tool, metric):
-            barrier.wait()
-            return tool.upsert_osi_metrics(str(target.relative_to(tmp_path)), json.dumps([metric]))
+        def upsert_from_second_tool():
+            second_started.set()
+            return tools[1].upsert_osi_metrics(relative_path, json.dumps([_osi_metric("order_count", "COUNT(*)")]))
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(
-                executor.map(
-                    upsert,
-                    tools,
-                    [_osi_metric("revenue", "SUM(amount)"), _osi_metric("order_count", "COUNT(*)")],
-                )
-            )
+            with shared_lock:
+                second_result = executor.submit(upsert_from_second_tool)
+                assert second_started.wait(timeout=1)
+                assert not second_result.done()
+            results = [
+                second_result.result(),
+                tools[0].upsert_osi_metrics(relative_path, json.dumps([_osi_metric("revenue", "SUM(amount)")])),
+            ]
 
         assert all(result.success == 1 for result in results)
-        assert max_active_writes == 1
         metrics = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["metrics"]
         assert {metric["name"] for metric in metrics} == {"revenue", "order_count"}
 
