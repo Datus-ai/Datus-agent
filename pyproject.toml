@@ -179,6 +179,7 @@ testpaths = ["tests"]
 dev = [
     "pytest==8.0.2",
     "pytest-asyncio>=0.23.8",
+    "jsonschema>=4.25.1,<5",
     # Keep consistent with the workflow version of github
     "ruff==0.15.6",
     "mypy==1.8.0",

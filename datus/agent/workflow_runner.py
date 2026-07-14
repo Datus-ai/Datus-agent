@@ -37,6 +37,7 @@ class WorkflowRunner:
         self._pre_run = pre_run_callable
         # Generate run_id if not provided (format: YYYYMMDD_HHMMSS)
         self.run_id = run_id
+        self.last_run_metadata: Dict = {}
 
     def initialize_workflow(self, sql_task: SqlTask):
         """Generate a new workflow plan."""
@@ -112,10 +113,15 @@ class WorkflowRunner:
 
         self.workflow.display()
         file_name = self.workflow.task.id
-        timestamp = int(time.time())
+        timestamp = time.time_ns()
+        artifact_profile = getattr(self.workflow.task, "artifact_profile", "interactive")
 
         # Use new hierarchical directory structure: {trajectory_dir}/{datasource}/{run_id}/
-        trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
+        if artifact_profile == "benchmark_v1":
+            datasource = self.workflow.task.datasource or self.global_config.current_datasource
+            trajectory_dir = self.global_config.trajectory_run_dir(datasource, self.run_id)
+        else:
+            trajectory_dir = self.global_config.get_trajectory_run_dir(self.run_id)
         os.makedirs(trajectory_dir, exist_ok=True)
 
         trace_reference = get_trace_reference()
@@ -129,7 +135,10 @@ class WorkflowRunner:
             )
 
         save_path = f"{trajectory_dir}/{file_name}_{timestamp}.yaml"
-        self.workflow.save(save_path)
+        if artifact_profile == "benchmark_v1":
+            self.workflow.save(save_path, schema_version=1)
+        else:
+            self.workflow.save(save_path)
         logger.info(f"Workflow saved to {save_path}")
         final_result = self.workflow.get_final_result()
         logger.info(f"Workflow execution completed. Steps:{step_count}")
@@ -142,6 +151,7 @@ class WorkflowRunner:
         }
         if trace_metadata:
             result["trace_reference"] = trace_metadata
+        self.last_run_metadata = result
         return result
 
     def _ensure_prerequisites(self, sql_task: Optional[SqlTask], check_storage: bool) -> bool:

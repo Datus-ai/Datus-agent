@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datus.ai/schemas/benchmark-artifacts/v1/task-output.schema.json",
+  "title": "Datus benchmark task output manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifact_type",
+    "schema_version",
+    "run_id",
+    "task_id",
+    "task_type",
+    "attempt_id",
+    "status",
+    "created_at",
+    "completed_at",
+    "duration_seconds",
+    "model",
+    "usage",
+    "outputs",
+    "trajectory",
+    "error",
+    "metadata"
+  ],
+  "properties": {
+    "artifact_type": {"const": "task_output"},
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "task_id": {"type": "string", "minLength": 1},
+    "task_type": {"type": "string", "minLength": 1},
+    "attempt_id": {"type": "string", "minLength": 1},
+    "status": {
+      "enum": ["pending", "running", "completed", "failed", "interrupted", "task_timeout"]
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "completed_at": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "duration_seconds": {
+      "oneOf": [
+        {"type": "number", "minimum": 0},
+        {"type": "null"}
+      ]
+    },
+    "model": {"$ref": "#/$defs/nullableModel"},
+    "usage": {"$ref": "#/$defs/tokenUsage"},
+    "outputs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/output"}
+    },
+    "trajectory": {
+      "oneOf": [
+        {"$ref": "#/$defs/trajectoryReference"},
+        {"type": "null"}
+      ]
+    },
+    "error": {"$ref": "#/$defs/nullableError"},
+    "metadata": {"type": "object", "additionalProperties": true}
+  },
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)[^\\\\]+$",
+      "not": {"pattern": "(^|/)\\.\\.(/|$)"}
+    },
+    "nullableModel": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "provider": {"type": ["string", "null"]},
+            "name": {"type": "string", "minLength": 1},
+            "configuration": {"type": "object", "additionalProperties": true}
+          }
+        },
+        {"type": "null"}
+      ]
+    },
+    "tokenUsage": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0},
+      "properties": {
+        "input_tokens": {"type": "integer", "minimum": 0},
+        "output_tokens": {"type": "integer", "minimum": 0},
+        "cached_input_tokens": {"type": "integer", "minimum": 0},
+        "total_tokens": {"type": "integer", "minimum": 0}
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "format", "root", "path", "metadata"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"const": "file"},
+        "format": {"type": "string", "minLength": 1},
+        "root": {"const": "save"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "metadata": {"type": "object", "additionalProperties": true}
+      }
+    },
+    "trajectoryReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "path", "format", "schema_version", "contract_profile", "attempt_id"],
+      "properties": {
+        "root": {"const": "trajectory"},
+        "path": {"$ref": "#/$defs/relativePath"},
+        "format": {"enum": ["yaml", "json", "jsonl"]},
+        "schema_version": {"const": 1},
+        "contract_profile": {"enum": ["native_v1", "compatibility_v1"]},
+        "attempt_id": {"type": "string", "minLength": 1}
+      }
+    },
+    "nullableError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "message"],
+          "properties": {
+            "type": {"type": "string", "minLength": 1},
+            "message": {"type": "string", "minLength": 1},
+            "code": {"type": ["string", "null"]},
+            "retryable": {"type": ["boolean", "null"]},
+            "details": {"type": "object", "additionalProperties": true}
+          }
+        },
+        {"type": "null"}
+      ]
+    }
+  }
+}
