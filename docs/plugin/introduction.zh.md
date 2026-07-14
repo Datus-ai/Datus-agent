@@ -21,10 +21,11 @@ vendored 进目录内),根据插件打包的内容,你可以获得:
 ## 安装插件
 
 `datus plugin install` 接收 `{type}:{src}` 形式的安装源,把插件装到
-`~/.datus/plugins/{name}/`。类型前缀**必填**:
+`~/.datus/plugins/{name}/`。类型前缀**可选,默认为 `pip`**——不写前缀时整段当作 `pip:` 处理:
 
 ```bash
-datus plugin install pip:datus-plugin-hello                       # PyPI 包名
+datus plugin install datus-plugin-hello                           # 默认走 pip:(PyPI 包名)
+datus plugin install pip:datus-plugin-hello                       # 同上,显式写出
 datus plugin install src:./datus-plugin-hello                     # 本地项目目录
 datus plugin install whl:./dist/hello-1.0-py3-none-any.whl        # 本地 wheel 文件
 datus plugin install git:https://github.com/acme/datus-plugin-hello   # git 仓库
@@ -163,7 +164,7 @@ datus plugin disable noisy-plugin            # 本项目停用
 
 | 命令 | 作用 |
 |---|---|
-| `datus plugin install '{type}:{src}'` | 从 `pip:` / `src:` / `whl:` / `git:` / `zip:` 安装到 `~/.datus/plugins/`(`--force` 替换已有安装)。 |
+| `datus plugin install '[{type}:]{src}'` | 从 `pip:`(默认)/ `src:` / `whl:` / `git:` / `zip:` 安装到 `~/.datus/plugins/`(`--force` 替换已有安装)。 |
 | `datus plugin pack [dir]` | 从插件项目目录(默认 `./`)构建可分发的 wheelhouse `.zip`;`--with-deps` 打入依赖,`-o` 指定输出目录。 |
 | `datus plugin export <name>` | 把已安装插件导出成 `.zip`(`-o` 指定输出目录)。 |
 | `datus plugin upgrade <name>` | 按记录的安装源重装(pip/git/src)。 |

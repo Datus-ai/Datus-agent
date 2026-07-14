@@ -11,11 +11,12 @@ when a plugin is misconfigured, and so it is never gated by a plugin's own
 ``enabled`` flag — you must be able to run ``datus plugin enable`` on a disabled
 plugin.
 
-Install sources use an explicit ``{type}:{src}`` prefix: ``pip:`` (PyPI
-requirement), ``src:`` (local project directory), ``whl:`` (local wheel),
-``git:`` (git repository), or ``zip:`` (offline wheelhouse bundle built by
-``datus plugin pack``). ``export`` reproduces a distributable ``.zip`` from an
-installed plugin, and ``upgrade`` re-fetches it via its original method.
+Install sources use a ``{type}:{src}`` prefix; the type is optional and defaults
+to ``pip``: ``pip:`` (PyPI requirement, the default when no prefix is given),
+``src:`` (local project directory), ``whl:`` (local wheel), ``git:`` (git
+repository), or ``zip:`` (offline wheelhouse bundle built by ``datus plugin
+pack``). ``export`` reproduces a distributable ``.zip`` from an installed
+plugin, and ``upgrade`` re-fetches it via its original method.
 """
 
 from __future__ import annotations
@@ -48,10 +49,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_install = sub.add_parser("install", help="Install a plugin from a '{type}:{src}' source.")
+    p_install = sub.add_parser("install", help="Install a plugin from a '[{type}:]{src}' source.")
     p_install.add_argument(
         "source",
-        help="'{type}:{src}' — pip:<req> / src:<dir> / whl:<file.whl> / git:<url> / zip:<bundle.zip>.",
+        help="'[{type}:]{src}' — <req> or pip:<req> (default) / src:<dir> / whl:<file.whl> / "
+        "git:<url> / zip:<bundle.zip>.",
     )
     p_install.add_argument(
         "--force",

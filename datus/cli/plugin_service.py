@@ -13,9 +13,10 @@ Each plugin is installed into its own ``~/.datus/plugins/{name}/`` directory via
 directories are appended to ``sys.path`` at startup so the ``datus.plugins``
 entry point is discovered.
 
-Install sources use an explicit ``{type}:{src}`` prefix:
+Install sources use a ``{type}:{src}`` prefix; the type is optional and
+defaults to ``pip`` (so a bare ``datus-foo`` == ``pip:datus-foo``):
 
-- ``pip:<requirement>``    — a PyPI requirement (deps resolved from an index)
+- ``pip:<requirement>``    — a PyPI requirement (deps resolved from an index); default
 - ``src:<directory>``      — a local plugin project directory
 - ``whl:<file.whl>``       — a local wheel file
 - ``git:<url>``            — a git repository (``git+`` auto-prepended)
@@ -297,19 +298,26 @@ def _bundle_install_command(
 def parse_spec(spec: str) -> Tuple[str, str]:
     """Split a ``{type}:{src}`` install source. Raises ``ValueError`` if invalid.
 
+    The type prefix is optional and defaults to ``pip``: a spec with no ``:`` —
+    or whose token before the first ``:`` is not a recognised install type — is
+    treated as a bare ``pip`` requirement (so ``datus-foo`` == ``pip:datus-foo``,
+    and a PEP 508 direct reference like ``foo @ https://…`` passes through intact).
+
     Splits on the first ``:`` only, so git URLs (``git:https://…``) and Windows
     drive letters in ``src`` survive intact.
     """
-    if ":" not in spec:
-        raise ValueError(f"install source must be '{{type}}:{{src}}' with type one of {', '.join(INSTALL_TYPES)}")
-    head, rest = spec.split(":", 1)
+    head, sep, rest = spec.partition(":")
     itype = head.strip().lower()
-    src = rest.strip()
-    if itype not in INSTALL_TYPES:
-        raise ValueError(f"unknown install type {itype!r}; use one of {', '.join(INSTALL_TYPES)}")
+    if sep and itype in INSTALL_TYPES:
+        src = rest.strip()
+        if not src:
+            raise ValueError(f"empty source after '{itype}:'")
+        return itype, src
+    # No recognised ``type:`` prefix → default to pip, whole spec is the requirement.
+    src = spec.strip()
     if not src:
-        raise ValueError(f"empty source after '{itype}:'")
-    return itype, src
+        raise ValueError("empty install source")
+    return "pip", src
 
 
 def _normalize_git(src: str) -> str:

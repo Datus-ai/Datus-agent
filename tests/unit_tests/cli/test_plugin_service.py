@@ -125,26 +125,41 @@ def _make_bundle(path: Path, *, name="demo", dist="datus-demo-plugin", version="
         ("git:git+ssh://git@h/x.git", ("git", "git+ssh://git@h/x.git")),
         ("zip:/abs/bundle.zip", ("zip", "/abs/bundle.zip")),
         ("zip:C:/win/bundle.zip", ("zip", "C:/win/bundle.zip")),  # only first colon split
+        ("  git:https://github.com/x/y  ", ("git", "https://github.com/x/y")),  # trimmed
     ],
 )
 def test_parse_spec_valid(spec, expected):
     assert svc.parse_spec(spec) == expected
 
 
-@pytest.mark.parametrize("spec", ["datus-foo", "no-prefix-here"])
-def test_parse_spec_missing_prefix(spec):
-    with pytest.raises(ValueError, match="type.*src"):
-        svc.parse_spec(spec)
+@pytest.mark.parametrize(
+    "spec,expected_src",
+    [
+        ("datus-foo", "datus-foo"),  # bare requirement
+        ("no-prefix-here", "no-prefix-here"),
+        ("datus-foo==1.2.3", "datus-foo==1.2.3"),  # version specifier
+        ("datus-foo[extra]", "datus-foo[extra]"),  # extras
+        ("foo @ https://example.com/foo-1.0-py3-none-any.whl", "foo @ https://example.com/foo-1.0-py3-none-any.whl"),
+    ],
+)
+def test_parse_spec_defaults_to_pip_without_prefix(spec, expected_src):
+    # Missing (or unrecognised) type prefix is treated as a bare pip requirement.
+    assert svc.parse_spec(spec) == ("pip", expected_src)
 
 
-def test_parse_spec_unknown_type():
-    with pytest.raises(ValueError, match="unknown install type"):
-        svc.parse_spec("wheel:foo")
+def test_parse_spec_unknown_prefix_falls_back_to_pip():
+    # An unrecognised prefix is not a typo error; the whole spec becomes a pip requirement.
+    assert svc.parse_spec("wheel:foo") == ("pip", "wheel:foo")
 
 
 def test_parse_spec_empty_source():
     with pytest.raises(ValueError, match="empty source"):
         svc.parse_spec("pip:")
+
+
+def test_parse_spec_empty_spec_errors():
+    with pytest.raises(ValueError, match="empty install source"):
+        svc.parse_spec("   ")
 
 
 def test_normalize_git_prepends_prefix():
@@ -200,6 +215,15 @@ def test_install_pip_lands_in_plugins_dir(home, monkeypatch):
     meta = store.read_meta(dest)
     assert meta["install"] == {"type": "pip", "source": "datus-demo-plugin", "ref": None, "origin_artifact": None}
     assert meta["version"] == "0.1.0"
+
+
+def test_install_bare_requirement_defaults_to_pip(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    result = svc.install("datus-demo-plugin")  # no type prefix
+    assert result.ok is True, result.error
+    meta = store.read_meta(store.plugin_dir("demo"))
+    assert meta["install"] == {"type": "pip", "source": "datus-demo-plugin", "ref": None, "origin_artifact": None}
 
 
 def test_install_src_records_absolute_path(home, tmp_path, monkeypatch):

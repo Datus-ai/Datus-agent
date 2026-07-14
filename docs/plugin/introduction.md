@@ -23,10 +23,12 @@ Want to build one? See the [development guide](development.md).
 ## Installing a plugin
 
 `datus plugin install` takes a `{type}:{src}` source and installs the plugin
-into `~/.datus/plugins/{name}/`. The type prefix is required:
+into `~/.datus/plugins/{name}/`. The type prefix is optional and defaults to
+`pip`, so a bare requirement is treated as `pip:`:
 
 ```bash
-datus plugin install pip:datus-plugin-hello                       # a PyPI requirement
+datus plugin install datus-plugin-hello                           # defaults to pip: (a PyPI requirement)
+datus plugin install pip:datus-plugin-hello                       # the same, spelled out
 datus plugin install src:./datus-plugin-hello                     # a local project directory
 datus plugin install whl:./dist/hello-1.0-py3-none-any.whl        # a local wheel file
 datus plugin install git:https://github.com/acme/datus-plugin-hello   # a git repository
@@ -184,7 +186,7 @@ deactivated plugin):
 
 | Command | What it does |
 |---|---|
-| `datus plugin install '{type}:{src}'` | Install from `pip:` / `src:` / `whl:` / `git:` / `zip:` into `~/.datus/plugins/` (`--force` replaces an existing install). |
+| `datus plugin install '[{type}:]{src}'` | Install from `pip:` (default) / `src:` / `whl:` / `git:` / `zip:` into `~/.datus/plugins/` (`--force` replaces an existing install). |
 | `datus plugin pack [dir]` | Build a distributable wheelhouse `.zip` from a plugin project directory (default `./`); `--with-deps` bundles dependencies, `-o` sets the output dir. |
 | `datus plugin export <name>` | Export an installed plugin as a `.zip` (`-o` sets the output dir). |
 | `datus plugin upgrade <name>` | Re-install from the recorded source (pip/git/src). |
