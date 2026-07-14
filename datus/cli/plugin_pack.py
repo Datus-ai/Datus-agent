@@ -2,28 +2,26 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Build a self-contained ``.dplug`` plugin bundle (plugin wheel + all deps).
+"""Build a self-contained wheelhouse ``.zip`` plugin bundle.
 
-A ``.dplug`` is a zip of a ``datus-plugin.json`` manifest plus a ``wheels/``
-wheelhouse — the plugin's own wheel and every transitive dependency wheel — so
-it can be installed on an air-gapped machine with no PyPI access (see
-:func:`datus.cli.plugin_service.install_bundle`).
+A bundle is a zip of a ``datus-bundle.json`` manifest plus a ``wheels/``
+wheelhouse. Two flavors:
 
-Packing is the *build-time* half and it **needs network** (to resolve and
-download dependencies from an index). Installing the resulting bundle does not.
-This module is kept separate from :mod:`datus.cli.plugin_service` so the
-offline install path stays import-light and the network-touching build path is
-independently testable (mock ``subprocess.run``).
+* **without dependencies** (default) — only the plugin's own wheel. At install
+  time pip resolves the dependencies from a package index (needs network).
+* **with dependencies** (``--with-deps``) — the plugin wheel *and* every
+  transitive dependency wheel, so it installs fully offline.
 
-The build has three steps:
+Packing is the *build-time* half and it **needs network** (to build/download the
+plugin wheel, and its dependencies when ``--with-deps`` is set). Installing a
+with-deps bundle does not. This module is kept separate from
+:mod:`datus.cli.plugin_service` so the install path stays import-light and the
+network-touching build path is independently testable (mock ``subprocess.run``).
 
-1. **Resolve the main wheel** from the source — build it from a project
-   directory (``uv build`` / ``python -m build``), copy an existing ``.whl``,
-   or download it from PyPI (``pip download --no-deps``).
-2. **Introspect + gather** — read the wheel's ``datus.plugins`` entry point and
-   ``Requires-Python`` (failing early if it is not a datus plugin), then
-   ``pip download`` its dependencies into the wheelhouse.
-3. **Write the bundle** — checksum every wheel, emit the manifest, and zip.
+The plugin wheel is resolved with ``pip wheel --no-deps`` which uniformly builds
+from a source directory, downloads a PyPI requirement, or builds from a git URL
+— so the same ``pack`` powers both ``datus plugin pack`` (source directory) and
+``datus plugin export`` re-materialising a pip/git/src install.
 """
 
 from __future__ import annotations
@@ -42,7 +40,6 @@ from tempfile import TemporaryDirectory
 from typing import List, Optional, Tuple
 
 from datus.cli.plugin_service import (
-    BUNDLE_EXT,
     BUNDLE_FORMAT,
     BUNDLE_FORMAT_VERSION,
     BUNDLE_MANIFEST_NAME,
@@ -54,6 +51,9 @@ from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
+# Bundle files are always plain ``.zip`` (the offline wheelhouse format).
+BUNDLE_ZIP_EXT = ".zip"
+
 
 @dataclass
 class PackResult:
@@ -61,6 +61,7 @@ class PackResult:
     bundle_path: str = ""
     plugin_name: str = ""
     wheel_count: int = 0
+    with_deps: bool = False
     stdout: str = ""
     stderr: str = ""
     error: Optional[str] = None
@@ -110,60 +111,42 @@ def _parse_wheel_filename(filename: str) -> Tuple[str, str, str]:
         return name, version, plat
 
 
-def _build_wheel_from_dir(src: Path, out_dir: Path) -> Path:
-    """Build a wheel from a project directory, preferring ``uv build``."""
-    uv_path = shutil.which("uv")
-    if uv_path:
-        cmd = [uv_path, "build", "--wheel", "--out-dir", str(out_dir), str(src)]
-    else:
-        cmd = [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir), str(src)]
-    _run(cmd, "build wheel")
+def _pip_wheel_no_deps(source: str, out_dir: Path) -> Path:
+    """Build/download just the plugin's own wheel (no deps) from any source.
+
+    ``pip wheel --no-deps`` accepts the same specifiers as ``pip install`` — a
+    local project directory, a PyPI requirement, or a ``git+`` URL — so one call
+    covers ``src`` / ``pip`` / ``git`` sources uniformly.
+    """
+    cmd = [sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(out_dir), source]
+    _run(cmd, "build plugin wheel")
     wheels = sorted(out_dir.glob("*.whl"))
     if not wheels:
-        raise PackError(f"no wheel produced from {src}")
-    return wheels[-1]
-
-
-def _download_named_wheel(requirement: str, out_dir: Path) -> Path:
-    """Download just the plugin's own wheel (no deps) for a PyPI requirement."""
-    cmd = [sys.executable, "-m", "pip", "download", "--no-deps", "--only-binary=:all:", "-d", str(out_dir), requirement]
-    _run(cmd, "download plugin wheel")
-    wheels = sorted(out_dir.glob("*.whl"))
-    if not wheels:
-        raise PackError(f"no wheel downloaded for requirement {requirement!r}")
+        raise PackError(f"no wheel produced from source {source!r}")
     return wheels[-1]
 
 
 def _resolve_main_wheel(source: str, work_dir: Path) -> Path:
-    """Produce the plugin's own wheel in ``work_dir`` from any supported source."""
+    """Produce the plugin's own wheel in ``work_dir`` from any supported source.
+
+    An existing ``.whl`` is copied verbatim; everything else (project directory,
+    PyPI requirement, git URL) is resolved via ``pip wheel --no-deps``.
+    """
     candidate = Path(source).expanduser()
     if source.lower().endswith(".whl") and candidate.is_file():
         dest = work_dir / candidate.name
         shutil.copy2(candidate, dest)
         return dest
-    if candidate.is_dir():
-        return _build_wheel_from_dir(candidate, work_dir)
-    return _download_named_wheel(source, work_dir)
+    return _pip_wheel_no_deps(source, work_dir)
 
 
-def _download_dependencies(
-    main_wheel: Path,
-    wheels_dir: Path,
-    python_version: Optional[str] = None,
-    platform_tag: Optional[str] = None,
-) -> None:
+def _download_dependencies(main_wheel: Path, wheels_dir: Path) -> None:
     """Download the plugin wheel's transitive dependencies into ``wheels_dir``.
 
-    ``--only-binary=:all:`` keeps the wheelhouse wheel-only (no sdists that
-    would need building at install time). ``python_version`` / ``platform_tag``
-    cross-target another interpreter/OS when packing on a different machine.
+    ``--only-binary=:all:`` keeps the wheelhouse wheel-only (no sdists that would
+    need building at install time), so a with-deps bundle installs fully offline.
     """
-    cmd = [sys.executable, "-m", "pip", "download", "--only-binary=:all:", "-d", str(wheels_dir)]
-    if python_version:
-        cmd += ["--python-version", python_version]
-    if platform_tag:
-        cmd += ["--platform", platform_tag]
-    cmd.append(str(main_wheel))
+    cmd = [sys.executable, "-m", "pip", "download", "--only-binary=:all:", "-d", str(wheels_dir), str(main_wheel)]
     _run(cmd, "download dependencies")
 
 
@@ -220,14 +203,14 @@ def _build_manifest(
     entry_target: str,
     requires_python: Optional[str],
     wheels_dir: Path,
-    platform_tag: Optional[str],
+    with_deps: bool,
 ) -> dict:
-    """Assemble the ``datus-plugin.json`` manifest from the gathered wheelhouse."""
+    """Assemble the ``datus-bundle.json`` manifest from the gathered wheelhouse."""
     distribution, version, _ = _parse_wheel_filename(main_wheel.name)
     wheel_files = sorted(p for p in wheels_dir.iterdir() if p.suffix == ".whl")
     platforms = {_parse_wheel_filename(p.name)[2] for p in wheel_files}
     non_any = sorted(p for p in platforms if p != "any")
-    bundle_platform = platform_tag or (non_any[0] if non_any else "any")
+    bundle_platform = non_any[0] if non_any else "any"
     wheels = [
         {
             "file": wheel.name,
@@ -241,6 +224,7 @@ def _build_manifest(
         "format_version": BUNDLE_FORMAT_VERSION,
         "created": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "builder": _builder_tag(),
+        "bundle_deps": bool(with_deps),
         "plugin": {
             "name": entry_name,
             "distribution": distribution,
@@ -257,11 +241,10 @@ def _build_manifest(
 
 
 def _write_bundle(manifest: dict, wheels_dir: Path, out_dir: Path) -> Path:
-    """Zip the manifest + wheelhouse into ``<dist>-<version>-<platform>.dplug``."""
+    """Zip the manifest + wheelhouse into ``<dist>-<version>.zip``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     plugin = manifest["plugin"]
-    platform_tag = manifest["compat"]["platform"] or "any"
-    out_path = out_dir / f"{plugin['distribution']}-{plugin['version']}-{platform_tag}{BUNDLE_EXT}"
+    out_path = out_dir / f"{plugin['distribution']}-{plugin['version']}{BUNDLE_ZIP_EXT}"
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(BUNDLE_MANIFEST_NAME, json.dumps(manifest, indent=2) + "\n")
         for entry in manifest["wheels"]:
@@ -269,22 +252,18 @@ def _write_bundle(manifest: dict, wheels_dir: Path, out_dir: Path) -> Path:
     return out_path
 
 
-def pack(
-    source: str,
-    out_dir: str = ".",
-    python_version: Optional[str] = None,
-    platform_tag: Optional[str] = None,
-) -> PackResult:
-    """Build a ``.dplug`` bundle from a plugin source. Requires network access.
+def pack(source: str = ".", out_dir: str = ".", with_deps: bool = False) -> PackResult:
+    """Build a wheelhouse ``.zip`` bundle from a plugin source. Requires network.
 
-    ``source`` may be a project directory, an existing ``.whl``, or a PyPI
-    requirement. ``python_version`` / ``platform_tag`` are forwarded to ``pip
-    download`` to cross-target another environment. Returns a :class:`PackResult`;
-    never raises — build failures are captured with their subprocess output.
+    ``source`` defaults to the current directory (a plugin project); it may also
+    be an existing ``.whl``, a PyPI requirement, or a ``git+`` URL. With
+    ``with_deps`` the bundle includes every transitive dependency wheel (offline
+    install); without it only the plugin wheel is packed and dependencies are
+    resolved from an index at install time. ``out_dir`` defaults to the current
+    directory. Returns a :class:`PackResult`; never raises — build failures are
+    captured with their subprocess output.
     """
-    source = (source or "").strip()
-    if not source:
-        return PackResult(ok=False, error="no pack source given")
+    source = (source or ".").strip() or "."
     try:
         with TemporaryDirectory(prefix="datus-pack-") as tmp:
             work = Path(tmp)
@@ -298,10 +277,11 @@ def pack(
 
             main_wheel = wheels_dir / main_wheel_src.name
             shutil.copy2(main_wheel_src, main_wheel)
-            _download_dependencies(main_wheel, wheels_dir, python_version, platform_tag)
+            if with_deps:
+                _download_dependencies(main_wheel, wheels_dir)
 
             requires_python = _read_requires_python(main_wheel)
-            manifest = _build_manifest(main_wheel, entry_name, entry_target, requires_python, wheels_dir, platform_tag)
+            manifest = _build_manifest(main_wheel, entry_name, entry_target, requires_python, wheels_dir, with_deps)
             out_path = _write_bundle(manifest, wheels_dir, Path(out_dir).expanduser())
     except PackError as exc:
         return PackResult(ok=False, error=str(exc), stdout=exc.stdout, stderr=exc.stderr)
@@ -313,6 +293,7 @@ def pack(
         bundle_path=str(out_path),
         plugin_name=entry_name,
         wheel_count=len(manifest["wheels"]),
+        with_deps=with_deps,
     )
 
 

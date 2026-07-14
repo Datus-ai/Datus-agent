@@ -219,6 +219,18 @@ class DatusPathManager:
         """Trajectory directory: ~/.datus/trajectory"""
         return self._datus_home / "trajectory"
 
+    @property
+    def plugins_dir(self) -> Path:
+        """Installed-plugins root: ``~/.datus/plugins``.
+
+        Each installed plugin gets a ``{plugins_dir}/{name}/`` subdirectory
+        (a ``pip install --target`` tree with its dependencies vendored in) plus
+        a ``datus-plugin.json`` metadata file. Enabled plugin directories are
+        appended to ``sys.path`` at startup so their ``datus.plugins`` entry
+        points are discovered.
+        """
+        return self._datus_home / "plugins"
+
     @staticmethod
     def resolve_run_dir(base: Path, datasource: str, run_id: Optional[str] = None) -> Path:
         """Resolve a datasource-scoped run directory, creating it if needed.
@@ -270,6 +282,7 @@ class DatusPathManager:
         "save": "save_dir",
         "workspace": "workspace_dir",
         "trajectory": "trajectory_dir",
+        "plugins": "plugins_dir",
         "subject": "subject_dir",
         "semantic_models": "semantic_models_dir",
         "sql_summaries": "sql_summaries_dir",

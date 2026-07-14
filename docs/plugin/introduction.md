@@ -1,8 +1,9 @@
 # Plugin Introduction
 
 A **plugin** is an installable Python package that extends Datus without
-modifying it. Install one into the same Python environment as `datus` and,
-depending on what the plugin ships, you get:
+modifying it. `datus plugin install` puts each plugin in its own directory under
+`~/.datus/plugins/{name}/` (with its dependencies vendored in), and — depending
+on what the plugin ships — you get:
 
 | Surface | What it adds |
 |---|---|
@@ -12,60 +13,71 @@ depending on what the plugin ships, you get:
 | Bash permissions | the plugin pre-declares which of its subcommands the agent may auto-run and which need confirmation |
 | Tool transformers | the plugin can rewrite or deny the agent's tool calls before execution (e.g. enforce SQL scoping policies) |
 
-Plugins are discovered through the `datus.plugins` Python entry-point group on
-every invocation — installing or upgrading a plugin requires no restart and no
-registration step.
+Each enabled plugin's directory is appended to `sys.path` at startup, so its
+`datus.plugins` entry point is discovered on every invocation — no restart and
+no registration step. (A plugin installed the old way, straight into the same
+Python environment with plain `pip install`, is still discovered as a fallback.)
 
 Want to build one? See the [development guide](development.md).
 
 ## Installing a plugin
 
-Use `datus plugin install`, which wraps `uv pip install` (falling back to
-`pip`) so the package lands in the same environment `datus` runs from. The
-source can be a PyPI requirement, a wheel, or a local directory:
+`datus plugin install` takes a `{type}:{src}` source and installs the plugin
+into `~/.datus/plugins/{name}/`. The type prefix is required:
 
 ```bash
-datus plugin install datus-plugin-hello        # from PyPI
-datus plugin install ./dist/hello-1.0-py3-none-any.whl   # a wheel
-datus plugin install ./datus-plugin-hello      # a local project directory
-datus plugin install -e ./datus-plugin-hello   # editable (local source tree)
+datus plugin install pip:datus-plugin-hello                       # a PyPI requirement
+datus plugin install src:./datus-plugin-hello                     # a local project directory
+datus plugin install whl:./dist/hello-1.0-py3-none-any.whl        # a local wheel file
+datus plugin install git:https://github.com/acme/datus-plugin-hello   # a git repository
+datus plugin install zip:./dist/datus-plugin-hello-1.0.0.zip      # an offline bundle (see below)
 
 datus hello Ada          # the subcommand is available immediately
 ```
 
-After a successful install Datus reports the plugin name(s) the package
-registered. Plain `pip install datus-plugin-hello` works too — discovery is
-automatic on the next invocation, no registration step.
+`pip`, `src`, `whl`, and `git` resolve dependencies from a package index (they
+need network); the plugin and its dependencies are vendored into the plugin's
+directory via `pip install --target`. `datus plugin install` records how the
+plugin was installed in `~/.datus/plugins/{name}/datus-plugin.json`, so
+`datus plugin upgrade <name>` can later re-fetch it the same way. If the plugin
+is already installed, pass `--force` to replace it.
 
-If `datus <name>` falls through to the REPL instead of running the plugin, the
-package is not installed in the environment `datus` runs from, or the plugin is
-not active for this project (see [Activating plugins](#activating-plugins)).
+If `datus <name>` falls through to the REPL instead of running the plugin, it is
+not installed, or it is not active for this project (see
+[Activating plugins](#activating-plugins)).
 
 ### Offline install (air-gapped)
 
-A **`.dplug` bundle** is a single self-contained file holding the plugin wheel
-plus every dependency wheel — for machines with no PyPI access. Build one where
-you *do* have network with `datus plugin pack`, copy the file across, and
-install it with no network at all:
+An offline **bundle** is an ordinary `.zip` holding a wheelhouse (the plugin
+wheel and, optionally, every dependency wheel). Build one where you *do* have
+network with `datus plugin pack`, copy the file across, and install it with
+`zip:`:
 
 ```bash
-# on a networked machine — bundle the plugin and all its dependencies
-datus plugin pack datus-plugin-hello -o ./dist        # from PyPI
-datus plugin pack ./datus-plugin-hello                # from a project directory
-datus plugin pack ./dist/hello-1.0-py3-none-any.whl   # from a built wheel
+# on a networked machine, from the plugin's project directory
+datus plugin pack --with-deps -o ./dist     # plugin wheel + all dependency wheels
+datus plugin pack -o ./dist                 # plugin wheel only (default)
 
-# on the air-gapped machine — install from the bundle, no index access
-datus plugin install ./dist/datus-plugin-hello-1.0.0-any.dplug
+# on the target machine
+datus plugin install zip:./dist/datus-plugin-hello-1.0.0.zip
 ```
 
-`pack` requires network (it resolves dependencies from an index); installing the
-resulting bundle does **not** — dependencies resolve solely from the wheelhouse
-inside it (`pip install --no-index --find-links`). Every wheel's checksum is
-verified against the bundle manifest before anything is installed. If the bundle
+`pack` defaults to **plugin wheel only** — small, but the target machine
+resolves dependencies from an index at install time (needs network). Add
+`--with-deps` to bundle every dependency wheel so the install is **fully
+offline** (`pip install --no-index --find-links`). Every wheel's checksum is
+verified against the bundle manifest before anything is installed; if the bundle
 was built for a different Python version or platform, install refuses with a
-clear message; pass `--force` to override the compatibility check (checksums are
-still enforced). To cross-target another environment at pack time, use
-`--python-version` / `--platform` (forwarded to `pip download`).
+clear message unless you pass `--force` (checksums are still enforced). Because a
+with-deps bundle is a same-platform snapshot, build it on a machine matching the
+target's OS/Python.
+
+### Exporting an installed plugin
+
+`datus plugin export <name>` reproduces a distributable `.zip` from an already
+installed plugin — a `zip:` install returns its retained original bundle
+verbatim, while a `pip`/`src`/`whl`/`git` install is re-packed from its recorded
+source (needs network).
 
 ## Configuration
 
@@ -172,10 +184,12 @@ deactivated plugin):
 
 | Command | What it does |
 |---|---|
-| `datus plugin install <source>` | Install from PyPI / wheel / local dir / `.dplug` bundle (`-e` for editable; `--force` skips a bundle's compat check). |
-| `datus plugin pack <source>` | Build an offline `.dplug` bundle (plugin wheel + all deps) from a dir / wheel / PyPI name (`-o`, `--python-version`, `--platform`). |
-| `datus plugin uninstall <name>` | Uninstall the package that registers `<name>`. |
-| `datus plugin list` | List installed plugins: package, version, configured profiles, project activation. |
+| `datus plugin install '{type}:{src}'` | Install from `pip:` / `src:` / `whl:` / `git:` / `zip:` into `~/.datus/plugins/` (`--force` replaces an existing install). |
+| `datus plugin pack [dir]` | Build a distributable wheelhouse `.zip` from a plugin project directory (default `./`); `--with-deps` bundles dependencies, `-o` sets the output dir. |
+| `datus plugin export <name>` | Export an installed plugin as a `.zip` (`-o` sets the output dir). |
+| `datus plugin upgrade <name>` | Re-install from the recorded source (pip/git/src). |
+| `datus plugin uninstall <name>` | Remove the plugin's `~/.datus/plugins/{name}/` directory. |
+| `datus plugin list` | List installed plugins: package, version, source, configured profiles, project activation. |
 | `datus plugin info <name>` | Show one plugin's profiles, config schema, and activation. |
 | `datus plugin enable/disable <name>` | Toggle per-project activation. |
 

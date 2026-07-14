@@ -683,7 +683,16 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
         return None
 
     name = argv[0]
+    from datus.plugins import store
     from datus.plugins.registry import load_plugin_class, plugin_entry_point_exists
+
+    # A managed plugin lives in its own ``~/.datus/plugins/{name}/`` directory;
+    # append it to ``sys.path`` so the entry-point probe can see it. This is
+    # path-only — it does NOT import the plugin package (that happens lazily in
+    # ``load_plugin_class`` below), so the ``plugins_enabled`` master switch is
+    # still honoured before any third-party module-level code runs.
+    if store.plugin_dir(name).is_dir():
+        store.activate_name(name)
 
     # Metadata-only probe: with ``plugins_enabled: false`` the plugin package
     # must not even be imported, so the master switch is checked before

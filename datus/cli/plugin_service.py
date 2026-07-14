@@ -2,31 +2,34 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Install / uninstall / enumerate datus plugins.
+"""Install / uninstall / enumerate datus plugins into ``~/.datus/plugins/``.
 
 Pure Python (no prompt_toolkit / Rich import) so it can be unit-tested by
-monkey-patching ``subprocess.run`` / ``shutil.which`` and the registry
-enumeration. Mirrors :mod:`datus.cli.upgrade_service`:
+monkey-patching ``subprocess.run`` / ``shutil.which`` and the store.
 
-- **install** wraps ``uv pip install`` (falling back to ``pip``) over a source
-  that may be a PyPI requirement, a ``.whl`` file, or a local directory — uv
-  handles all three natively, so no per-source branching is needed. After the
-  install it invalidates caches and re-scans the ``datus.plugins`` entry-point
-  group to report which plugin(s) the package registered.
-- **uninstall** maps a plugin *entry-point name* (the ``datus <name>``
-  subcommand) back to its distribution and runs ``uv pip uninstall``.
-- **list** joins the installed entry points with the configured profiles and
-  the project's activation state.
+Each plugin is installed into its own ``~/.datus/plugins/{name}/`` directory via
+``pip install --target`` (dependencies vendored in), described by a
+``datus-plugin.json`` metadata file (see :mod:`datus.plugins.store`). Enabled
+directories are appended to ``sys.path`` at startup so the ``datus.plugins``
+entry point is discovered.
 
-Installation is otherwise registration-free: a freshly installed plugin is
-discovered automatically on the next ``datus`` invocation.
+Install sources use an explicit ``{type}:{src}`` prefix:
+
+- ``pip:<requirement>``    — a PyPI requirement (deps resolved from an index)
+- ``src:<directory>``      — a local plugin project directory
+- ``whl:<file.whl>``       — a local wheel file
+- ``git:<url>``            — a git repository (``git+`` auto-prepended)
+- ``zip:<bundle.zip>``     — an offline wheelhouse bundle built by ``plugin pack``
+
+For every install the provenance is recorded in the metadata so ``upgrade`` can
+re-fetch with the original method and ``export`` can reproduce a distributable
+``.zip`` (a ``zip:`` install additionally retains the original bundle verbatim).
 """
 
 from __future__ import annotations
 
 import hashlib
 import importlib
-import json
 import platform
 import shutil
 import subprocess
@@ -34,32 +37,41 @@ import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
+from datus.plugins import store
+from datus.plugins.store import StoreError
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
-# ── Plugin bundle (.dplug) format ──────────────────────────────────────────
-# A ``.dplug`` is a zip of a ``datus-plugin.json`` manifest plus a ``wheels/``
-# wheelhouse (the plugin wheel and every transitive dependency), built by
-# ``datus plugin pack`` and installed fully offline by :func:`install_bundle`.
-BUNDLE_EXT = ".dplug"
+# ── Offline wheelhouse bundle (.zip) format ────────────────────────────────
+# A bundle ``.zip`` holds a ``datus-bundle.json`` manifest plus a ``wheels/``
+# wheelhouse (the plugin wheel and — when ``bundle_deps`` — every transitive
+# dependency), built by ``datus plugin pack`` and installed by ``install`` when
+# the source is ``zip:``.
+BUNDLE_EXT = ".zip"
 BUNDLE_FORMAT = "datus-plugin-bundle"
 BUNDLE_FORMAT_VERSION = 1
-BUNDLE_MANIFEST_NAME = "datus-plugin.json"
+BUNDLE_MANIFEST_NAME = "datus-bundle.json"
 BUNDLE_WHEELS_DIR = "wheels"
+
+# Recognised ``{type}:{src}`` install-source prefixes.
+INSTALL_TYPES = ("pip", "src", "whl", "git", "zip")
 
 
 @dataclass
 class PluginInfo:
-    """One installed ``datus.plugins`` entry point plus its config/activation."""
+    """One installed plugin plus its config/activation state."""
 
     name: str  # entry-point name == the ``datus <name>`` subcommand token
-    package: str = ""  # distribution (pip) name, e.g. "datus-statsig-plugin"
+    package: str = ""  # distribution (pip) name, e.g. "datus-airflow-plugin"
     version: str = ""
     entry: str = ""  # "module:attr" target
+    install_type: str = ""  # pip|src|whl|git|zip (managed) or "" (external)
+    source: str = ""  # "managed" (~/.datus/plugins) or "external" (site-packages)
     profiles: List[str] = field(default_factory=list)  # configured profile names
     active: Optional[bool] = None  # project activation state (None: unknown)
     active_profiles: Optional[List[str]] = None  # None: all profiles active
@@ -70,7 +82,10 @@ class InstallResult:
     ok: bool
     source: str = ""
     label: str = ""
-    new_plugins: List[str] = field(default_factory=list)  # entry names newly registered
+    name: str = ""  # installed plugin (entry-point) name
+    version: str = ""
+    plugin_dir: str = ""
+    new_plugins: List[str] = field(default_factory=list)  # names newly available
     stdout: str = ""
     stderr: str = ""
     error: Optional[str] = None
@@ -81,119 +96,53 @@ class UninstallResult:
     ok: bool
     plugin: str = ""
     package: str = ""
+    error: Optional[str] = None
+
+
+@dataclass
+class ExportResult:
+    ok: bool
+    name: str = ""
+    out_path: str = ""
+    error: Optional[str] = None
+
+
+@dataclass
+class UpgradeResult:
+    ok: bool
+    name: str = ""
     label: str = ""
+    old_version: str = ""
+    new_version: str = ""
     stdout: str = ""
     stderr: str = ""
     error: Optional[str] = None
 
 
-def _plugin_entry_names() -> Set[str]:
-    """Return the set of currently-registered ``datus.plugins`` entry names."""
-    from datus.plugins.registry import iter_plugin_entry_points
-
-    return {getattr(ep, "name", None) for ep in iter_plugin_entry_points() if getattr(ep, "name", None)}
-
-
-def _rescan_plugins(before: Set[str]) -> List[str]:
-    """Invalidate caches and return ``datus.plugins`` names newly registered.
-
-    Shared by :func:`install` and :func:`install_bundle`: after the installer
-    subprocess writes a new dist-info, the import machinery and the plugin
-    registry cache must be dropped so an in-process re-scan sees it. Returns the
-    sorted set difference against ``before`` (the names present pre-install).
-    """
-    importlib.invalidate_caches()
-    try:
-        from datus.plugins.registry import invalidate_plugin_cache
-
-        invalidate_plugin_cache()
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("plugin cache invalidation failed after install: %s", exc)
-    return sorted(_plugin_entry_names() - before)
-
-
-def _install_command(source: str, editable: bool = False) -> Tuple[List[str], str]:
-    """Build the install command, preferring ``uv pip`` when available.
-
-    Mirrors ``upgrade_service._upgrade_command``: ``uv pip install --python
-    <sys.executable>`` reuses the active interpreter without requiring ``pip``
-    to be seeded. ``editable`` adds ``-e`` (only meaningful for a local source
-    tree). Returns ``(argv, label)``.
-    """
-    editable_flag = ["-e"] if editable else []
-    uv_path = shutil.which("uv")
-    if uv_path:
-        return (
-            [uv_path, "pip", "install", "--python", sys.executable, *editable_flag, source],
-            "uv pip install",
-        )
-    return [sys.executable, "-m", "pip", "install", *editable_flag, source], "pip install"
-
-
-def install(source: str, editable: bool = False, force: bool = False) -> InstallResult:
-    """Install a plugin from PyPI / a wheel / a local directory / a ``.dplug`` bundle.
-
-    A ``.dplug`` source is a self-contained offline bundle and is dispatched to
-    :func:`install_bundle` (``editable`` is ignored there; ``force`` skips its
-    python/platform compatibility gate). Every other source wraps ``uv pip
-    install`` (falling back to ``pip``) and resolves dependencies from the
-    default index.
-
-    After a successful install, invalidates the import + plugin caches and
-    diffs the ``datus.plugins`` entry points so callers can report the plugin
-    name(s) the package registered (empty when the package exposes none — a
-    likely sign the user installed the wrong package).
-    """
-    source = (source or "").strip()
-    if not source:
-        return InstallResult(ok=False, source=source, error="no install source given")
-
-    if source.lower().endswith(BUNDLE_EXT):
-        return install_bundle(source, force=force)
-
-    before = _plugin_entry_names()
-    cmd, label = _install_command(source, editable)
-    logger.info("Installing plugin: %s", " ".join(cmd))
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except Exception as exc:  # uv / pip missing, OSError, etc.
-        return InstallResult(ok=False, source=source, label=label, error=str(exc))
-
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
-    if proc.returncode != 0:
-        return InstallResult(
-            ok=False,
-            source=source,
-            label=label,
-            stdout=stdout,
-            stderr=stderr,
-            error=f"{label} exited with code {proc.returncode}",
-        )
-
-    # Make the freshly-installed dist-info visible to a re-scan in this process.
-    new_plugins = _rescan_plugins(before)
-    return InstallResult(ok=True, source=source, label=label, new_plugins=new_plugins, stdout=stdout, stderr=stderr)
-
-
-# ── Plugin bundle (.dplug) install ─────────────────────────────────────────
+# ── Bundle manifest / wheelhouse helpers (shared with plugin_pack) ──────────
 
 
 class BundleError(Exception):
-    """A malformed, incompatible, or tampered ``.dplug`` plugin bundle."""
+    """A malformed, incompatible, or tampered wheelhouse ``.zip`` bundle."""
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the hex sha256 of a file, read in chunks."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _read_bundle_manifest(zf: zipfile.ZipFile) -> dict:
-    """Read and shape-validate the ``datus-plugin.json`` manifest from a bundle.
-
-    Raises :class:`BundleError` when the manifest is absent, unparseable, of an
-    unknown ``format`` / ``format_version``, or missing the ``plugin.wheel`` /
-    ``wheels`` fields the installer relies on.
-    """
+    """Read and shape-validate the ``datus-bundle.json`` manifest from a bundle."""
     try:
         raw = zf.read(BUNDLE_MANIFEST_NAME)
     except KeyError:
         raise BundleError(f"bundle has no {BUNDLE_MANIFEST_NAME} manifest")
+    import json
+
     try:
         manifest = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
@@ -216,13 +165,20 @@ def _read_bundle_manifest(zf: zipfile.ZipFile) -> dict:
     return manifest
 
 
-def _python_satisfies(requires_python: str) -> Optional[bool]:
-    """Whether the running interpreter satisfies a PEP 440 specifier.
+def _bundle_deps_flag(manifest: dict) -> bool:
+    """Whether a bundle carries all its dependencies (offline-installable).
 
-    Returns ``None`` (unknown — do not block) when ``packaging`` is unavailable
-    or the specifier is unparseable; pip re-checks ``Requires-Python`` at
-    install time regardless, so this gate is only an early, friendlier error.
+    Prefers the explicit ``bundle_deps`` field; when absent (older bundles),
+    infers from the wheel count (more than the plugin wheel → deps bundled).
     """
+    flag = manifest.get("bundle_deps")
+    if isinstance(flag, bool):
+        return flag
+    return len(manifest.get("wheels", [])) > 1
+
+
+def _python_satisfies(requires_python: str) -> Optional[bool]:
+    """Whether the running interpreter satisfies a PEP 440 specifier (or None)."""
     try:
         from packaging.specifiers import SpecifierSet
         from packaging.version import Version
@@ -233,11 +189,7 @@ def _python_satisfies(requires_python: str) -> Optional[bool]:
 
 
 def _platform_matches(plat: str) -> bool:
-    """Best-effort check that platform tag ``plat`` runs on this system.
-
-    Uses ``packaging.tags`` when available; returns ``True`` (don't block) when
-    it cannot be determined, deferring to pip's own tag check at install time.
-    """
+    """Best-effort check that platform tag ``plat`` runs on this system."""
     try:
         from packaging.tags import sys_tags
 
@@ -247,12 +199,7 @@ def _platform_matches(plat: str) -> bool:
 
 
 def _verify_bundle_compat(manifest: dict, force: bool = False) -> List[str]:
-    """Return compatibility errors for a bundle against this interpreter.
-
-    Checks ``compat.requires_python`` (best-effort) and a non-``any``
-    ``compat.platform`` tag. ``force`` skips every check (checksums are still
-    enforced separately). An empty list means "compatible / unknown".
-    """
+    """Return compatibility errors for a bundle against this interpreter."""
     if force:
         return []
     errors: List[str] = []
@@ -268,23 +215,9 @@ def _verify_bundle_compat(manifest: dict, force: bool = False) -> List[str]:
 
 
 def _guard_wheel_name(name: str) -> None:
-    """Reject a manifest wheel ``file`` that is not a bare, safe filename.
-
-    Wheel entries must be plain basenames; anything with a path separator,
-    ``.``/``..`` components, or an absolute path is refused so a crafted
-    manifest can never write outside the extraction directory.
-    """
+    """Reject a manifest wheel ``file`` that is not a bare, safe filename."""
     if name in ("", ".", "..") or name != Path(name).name:
         raise BundleError(f"unsafe wheel filename in bundle: {name!r}")
-
-
-def _sha256_file(path: Path) -> str:
-    """Return the hex sha256 of a file, read in chunks."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _extract_and_verify_wheels(zf: zipfile.ZipFile, manifest: dict, dest: Path) -> Path:
@@ -293,8 +226,7 @@ def _extract_and_verify_wheels(zf: zipfile.ZipFile, manifest: dict, dest: Path) 
     Only files named in the manifest are extracted, each by a path this code
     constructs (``wheels/<basename>``) rather than a name taken from the archive
     listing — so a crafted member name cannot escape ``dest`` (zip-slip safe).
-    Each wheel's sha256 must match the manifest or :class:`BundleError` is
-    raised before anything is installed.
+    Each wheel's sha256 must match the manifest before anything is installed.
     """
     wheels_dir = dest / BUNDLE_WHEELS_DIR
     wheels_dir.mkdir(parents=True, exist_ok=True)
@@ -320,163 +252,451 @@ def _extract_and_verify_wheels(zf: zipfile.ZipFile, manifest: dict, dest: Path) 
     return wheels_dir
 
 
-def _bundle_install_command(main_wheel: Path, wheels_dir: Path) -> Tuple[List[str], str]:
-    """Build the fully-offline install command for a bundle's main wheel.
+# ── Install-command builders ───────────────────────────────────────────────
 
-    ``--no-index`` forbids any network access and ``--find-links <wheels_dir>``
-    restricts dependency resolution to the extracted wheelhouse, so the bundle
-    installs deterministically from its own contents.
-    """
+
+def _target_install_command(spec: str, target: Path, upgrade: bool = False) -> Tuple[List[str], str]:
+    """Build a ``pip install --target`` command, preferring ``uv`` when present."""
+    upgrade_flag = ["--upgrade"] if upgrade else []
     uv_path = shutil.which("uv")
     if uv_path:
         return (
-            [
-                uv_path,
-                "pip",
-                "install",
-                "--python",
-                sys.executable,
-                "--no-index",
-                "--find-links",
-                str(wheels_dir),
-                str(main_wheel),
-            ],
-            "uv pip install (offline)",
+            [uv_path, "pip", "install", "--python", sys.executable, "--target", str(target), *upgrade_flag, spec],
+            "uv pip install",
+        )
+    return [sys.executable, "-m", "pip", "install", "--target", str(target), *upgrade_flag, spec], "pip install"
+
+
+def _bundle_install_command(
+    main_wheel: Path, wheels_dir: Path, target: Path, bundle_deps: bool
+) -> Tuple[List[str], str]:
+    """Build the ``pip install --target`` command for a wheelhouse bundle.
+
+    ``--find-links <wheels_dir>`` prefers the extracted wheelhouse. A with-deps
+    bundle adds ``--no-index`` (fully offline); a no-deps bundle omits it so pip
+    resolves the missing dependencies from an index.
+    """
+    flags: List[str] = ["--target", str(target), "--find-links", str(wheels_dir)]
+    if bundle_deps:
+        flags = ["--no-index", *flags]
+    uv_path = shutil.which("uv")
+    if uv_path:
+        return (
+            [uv_path, "pip", "install", "--python", sys.executable, *flags, str(main_wheel)],
+            "uv pip install (offline)" if bundle_deps else "uv pip install",
         )
     return (
-        [
-            sys.executable,
-            "-m",
-            "pip",
-            "install",
-            "--no-index",
-            "--find-links",
-            str(wheels_dir),
-            str(main_wheel),
-        ],
-        "pip install (offline)",
+        [sys.executable, "-m", "pip", "install", *flags, str(main_wheel)],
+        "pip install (offline)" if bundle_deps else "pip install",
     )
 
 
-def install_bundle(path: str, force: bool = False) -> InstallResult:
-    """Install a plugin from a self-contained ``.dplug`` bundle, fully offline.
+# ── Spec parsing ───────────────────────────────────────────────────────────
 
-    A bundle is a zip of a ``datus-plugin.json`` manifest and a ``wheels/``
-    wheelhouse (the plugin wheel plus every transitive dependency). Nothing is
-    fetched from the network: uv/pip resolve solely from the extracted
-    wheelhouse. Every wheel's sha256 is verified against the manifest before
-    install; ``force`` skips only the python/platform compatibility gate. On
-    success the caches are invalidated and the newly registered plugin name(s)
-    reported, mirroring :func:`install`.
+
+def parse_spec(spec: str) -> Tuple[str, str]:
+    """Split a ``{type}:{src}`` install source. Raises ``ValueError`` if invalid.
+
+    Splits on the first ``:`` only, so git URLs (``git:https://…``) and Windows
+    drive letters in ``src`` survive intact.
     """
-    path = (path or "").strip()
-    if not path:
-        return InstallResult(ok=False, source=path, error="no bundle path given")
-    bundle = Path(path).expanduser()
-    if not bundle.is_file():
-        return InstallResult(ok=False, source=path, error=f"bundle not found: {path}")
+    if ":" not in spec:
+        raise ValueError(f"install source must be '{{type}}:{{src}}' with type one of {', '.join(INSTALL_TYPES)}")
+    head, rest = spec.split(":", 1)
+    itype = head.strip().lower()
+    src = rest.strip()
+    if itype not in INSTALL_TYPES:
+        raise ValueError(f"unknown install type {itype!r}; use one of {', '.join(INSTALL_TYPES)}")
+    if not src:
+        raise ValueError(f"empty source after '{itype}:'")
+    return itype, src
 
-    label = "uv pip install (offline)"
+
+def _normalize_git(src: str) -> str:
+    """Prepend ``git+`` to a bare git URL so pip treats it as a VCS source."""
+    return src if src.startswith("git+") else f"git+{src}"
+
+
+def _pip_spec_and_ref(itype: str, src: str) -> Tuple[str, str]:
+    """Return ``(pip_spec, recorded_ref)`` for a non-zip install source.
+
+    Raises :class:`StoreError` when a local path source does not exist.
+    """
+    if itype == "src":
+        path = Path(src).expanduser()
+        if not path.is_dir():
+            raise StoreError(f"source directory not found: {src}")
+        resolved = str(path.resolve())
+        return resolved, resolved
+    if itype == "whl":
+        path = Path(src).expanduser()
+        if not path.is_file() or not src.lower().endswith(".whl"):
+            raise StoreError(f"wheel file not found: {src}")
+        resolved = str(path.resolve())
+        return resolved, resolved
+    if itype == "git":
+        normalized = _normalize_git(src)
+        return normalized, normalized
+    # pip
+    return src, src
+
+
+# ── Directory metadata + finalization ──────────────────────────────────────
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _build_dir_meta(info: dict, itype: str, source: str, origin_artifact: Optional[str]) -> dict:
+    """Assemble the ``datus-plugin.json`` metadata written into a plugin dir."""
+    return {
+        "format": store.MANIFEST_FORMAT,
+        "format_version": store.MANIFEST_FORMAT_VERSION,
+        "name": info["name"],
+        "distribution": info.get("distribution", ""),
+        "version": info.get("version", ""),
+        "entry_point": info.get("entry_point", ""),
+        "requires_python": info.get("requires_python", ""),
+        "install": {
+            "type": itype,
+            "source": source,
+            "ref": info.get("ref"),
+            "origin_artifact": origin_artifact,
+        },
+        "installed_at": _now_iso(),
+    }
+
+
+def _replace_dir(dest: Path, src_dir: Path) -> None:
+    """Atomically-ish replace ``dest`` with ``src_dir`` (move, cross-fs safe)."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.move(str(src_dir), str(dest))
+
+
+def _refresh(name: str) -> None:
+    """Make a freshly-installed plugin discoverable in this process."""
+    importlib.invalidate_caches()
+    try:
+        store.activate_name(name)
+    except Exception as exc:  # noqa: BLE001 - defensive: never crash the install on refresh
+        logger.debug("plugin path activation after install failed: %s", exc)
+
+
+# ── install ────────────────────────────────────────────────────────────────
+
+
+def install(spec: str, force: bool = False) -> InstallResult:
+    """Install a plugin from a ``{type}:{src}`` source into ``~/.datus/plugins/``.
+
+    Every non-zip source installs via ``pip install --target`` into the plugin's
+    directory; ``zip:`` installs a self-contained wheelhouse bundle. Provenance
+    is recorded in ``datus-plugin.json`` for later ``upgrade`` / ``export``. When
+    the plugin is already installed, ``force`` replaces it.
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return InstallResult(ok=False, source=spec, error="no install source given")
+    try:
+        itype, src = parse_spec(spec)
+    except ValueError as exc:
+        return InstallResult(ok=False, source=spec, error=str(exc))
+
+    if itype == "zip":
+        return _install_zip(src, force=force)
+    return _install_via_target(itype, src, force=force)
+
+
+def _install_via_target(itype: str, src: str, force: bool, upgrade: bool = False) -> InstallResult:
+    """Install a ``pip``/``src``/``whl``/``git`` source via ``pip install --target``."""
+    try:
+        pip_spec, ref = _pip_spec_and_ref(itype, src)
+    except StoreError as exc:
+        return InstallResult(ok=False, source=src, error=str(exc))
+
+    with tempfile.TemporaryDirectory(prefix="datus-install-") as tmp:
+        target = Path(tmp) / "target"
+        target.mkdir()
+        cmd, label = _target_install_command(pip_spec, target, upgrade=upgrade)
+        logger.info("Installing plugin: %s", " ".join(cmd))
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        except Exception as exc:  # uv / pip missing, OSError, etc.
+            return InstallResult(ok=False, source=src, label=label, error=str(exc))
+        stdout, stderr = proc.stdout or "", proc.stderr or ""
+        if proc.returncode != 0:
+            return InstallResult(
+                ok=False,
+                source=src,
+                label=label,
+                stdout=stdout,
+                stderr=stderr,
+                error=f"{label} exited with code {proc.returncode}",
+            )
+        try:
+            info = store.introspect_target(target)
+            store.ensure_valid_name(info["name"])
+        except StoreError as exc:
+            return InstallResult(ok=False, source=src, label=label, stdout=stdout, stderr=stderr, error=str(exc))
+
+        info["ref"] = ref if itype == "git" else None
+        name = info["name"]
+        dest = store.plugin_dir(name)
+        if dest.exists() and not force:
+            return InstallResult(
+                ok=False,
+                source=src,
+                name=name,
+                error=f"plugin '{name}' is already installed (use --force to replace, or `datus plugin upgrade {name}`)",
+            )
+        _replace_dir(dest, target)
+        store.write_meta(dest, _build_dir_meta(info, itype, ref, origin_artifact=None))
+        _refresh(name)
+        return InstallResult(
+            ok=True,
+            source=src,
+            label=label,
+            name=name,
+            version=info.get("version", ""),
+            plugin_dir=str(dest),
+            new_plugins=[name],
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+
+def _install_zip(src: str, force: bool) -> InstallResult:
+    """Install a plugin from a self-contained wheelhouse ``.zip`` bundle."""
+    bundle = Path(src).expanduser()
+    if not bundle.is_file():
+        return InstallResult(ok=False, source=src, error=f"bundle not found: {src}")
+
+    label = "pip install"
     try:
         with zipfile.ZipFile(bundle) as zf:
             manifest = _read_bundle_manifest(zf)
             compat_errors = _verify_bundle_compat(manifest, force=force)
             if compat_errors:
-                return InstallResult(ok=False, source=path, error="; ".join(compat_errors))
-            with tempfile.TemporaryDirectory(prefix="datus-dplug-") as tmp:
+                return InstallResult(ok=False, source=src, error="; ".join(compat_errors))
+            bundle_deps = _bundle_deps_flag(manifest)
+            # Fast pre-check on the manifest's declared name (avoids a wasted
+            # install when the plugin is already present and --force is absent).
+            declared = manifest["plugin"].get("name")
+            if isinstance(declared, str) and declared and store.plugin_dir(declared).exists() and not force:
+                return InstallResult(
+                    ok=False,
+                    source=src,
+                    name=declared,
+                    error=f"plugin '{declared}' is already installed (use --force to replace)",
+                )
+            with tempfile.TemporaryDirectory(prefix="datus-zip-") as tmp:
                 wheels_dir = _extract_and_verify_wheels(zf, manifest, Path(tmp))
                 main_wheel = wheels_dir / manifest["plugin"]["wheel"]
                 if not main_wheel.is_file():
                     return InstallResult(
                         ok=False,
-                        source=path,
+                        source=src,
                         error=f"manifest 'plugin.wheel' {manifest['plugin']['wheel']!r} not present in bundle",
                     )
-                cmd, label = _bundle_install_command(main_wheel, wheels_dir)
-                before = _plugin_entry_names()
+                target = Path(tmp) / "target"
+                target.mkdir()
+                cmd, label = _bundle_install_command(main_wheel, wheels_dir, target, bundle_deps)
                 logger.info("Installing plugin bundle: %s", " ".join(cmd))
                 proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                stdout = proc.stdout or ""
-                stderr = proc.stderr or ""
-                returncode = proc.returncode
+                stdout, stderr = proc.stdout or "", proc.stderr or ""
+                if proc.returncode != 0:
+                    return InstallResult(
+                        ok=False,
+                        source=src,
+                        label=label,
+                        stdout=stdout,
+                        stderr=stderr,
+                        error=f"{label} exited with code {proc.returncode}",
+                    )
+                try:
+                    info = store.introspect_target(target)
+                    store.ensure_valid_name(info["name"])
+                except StoreError as exc:
+                    return InstallResult(ok=False, source=src, label=label, error=str(exc))
+                name = info["name"]
+                dest = store.plugin_dir(name)
+                if dest.exists() and not force:
+                    return InstallResult(
+                        ok=False,
+                        source=src,
+                        name=name,
+                        error=f"plugin '{name}' is already installed (use --force to replace)",
+                    )
+                _replace_dir(dest, target)
+                shutil.copy2(bundle, dest / store.ORIGIN_ZIP)
+                store.write_meta(
+                    dest,
+                    _build_dir_meta(info, "zip", str(bundle.resolve()), origin_artifact=store.ORIGIN_ZIP),
+                )
+                _refresh(name)
+                return InstallResult(
+                    ok=True,
+                    source=src,
+                    label=label,
+                    name=name,
+                    version=info.get("version", ""),
+                    plugin_dir=str(dest),
+                    new_plugins=[name],
+                    stdout=stdout,
+                    stderr=stderr,
+                )
     except BundleError as exc:
-        return InstallResult(ok=False, source=path, error=str(exc))
+        return InstallResult(ok=False, source=src, error=str(exc))
     except (zipfile.BadZipFile, OSError) as exc:
-        return InstallResult(ok=False, source=path, error=f"invalid bundle: {exc}")
+        return InstallResult(ok=False, source=src, error=f"invalid bundle: {exc}")
     except Exception as exc:  # noqa: BLE001 - subprocess/other; never crash the CLI
-        return InstallResult(ok=False, source=path, label=label, error=str(exc))
-
-    if returncode != 0:
-        return InstallResult(
-            ok=False,
-            source=path,
-            label=label,
-            stdout=stdout,
-            stderr=stderr,
-            error=f"{label} exited with code {returncode}",
-        )
-    new_plugins = _rescan_plugins(before)
-    return InstallResult(ok=True, source=path, label=label, new_plugins=new_plugins, stdout=stdout, stderr=stderr)
+        return InstallResult(ok=False, source=src, label=label, error=str(exc))
 
 
-def _distribution_for_plugin(name: str) -> Optional[str]:
-    """Return the distribution (pip) name registering plugin ``name``, or None.
+# ── pack / export ──────────────────────────────────────────────────────────
 
-    Uses the entry point's ``.dist`` back-reference (Python 3.10+). Falls back
-    to ``None`` when the metadata does not expose it so the caller can surface
-    a clear error rather than uninstalling the wrong package.
+
+def pack(source: str = ".", out_dir: str = ".", with_deps: bool = False):
+    """Build a distributable wheelhouse ``.zip`` from a plugin source directory.
+
+    Thin delegate to :func:`datus.cli.plugin_pack.pack` (imported lazily to keep
+    the install path import-light). Returns a ``PackResult``.
     """
-    from datus.plugins.registry import entry_points_for_group
+    from datus.cli import plugin_pack
 
-    for ep in entry_points_for_group("datus.plugins", name=name):
-        dist = getattr(ep, "dist", None)
-        dist_name = getattr(dist, "name", None) if dist is not None else None
-        if isinstance(dist_name, str) and dist_name:
-            return dist_name
-    return None
+    return plugin_pack.pack(source, out_dir=out_dir, with_deps=with_deps)
 
 
-def _uninstall_command(package: str) -> Tuple[List[str], str]:
-    """Build the uninstall command, preferring ``uv pip`` when available."""
-    uv_path = shutil.which("uv")
-    if uv_path:
-        return [uv_path, "pip", "uninstall", "--python", sys.executable, package], "uv pip uninstall"
-    return [sys.executable, "-m", "pip", "uninstall", "-y", package], "pip uninstall"
+def export(name: str, out_dir: str = ".") -> ExportResult:
+    """Export an installed plugin as a distributable wheelhouse ``.zip``.
+
+    A ``zip:`` install returns its retained original bundle verbatim (offline). A
+    ``pip``/``src``/``whl``/``git`` install is re-materialised from its recorded
+    source into a with-deps bundle (needs network).
+    """
+    name = (name or "").strip()
+    if not name:
+        return ExportResult(ok=False, error="no plugin name given")
+    dest = store.plugin_dir(name)
+    meta = store.read_meta(dest)
+    if meta is None:
+        return ExportResult(ok=False, name=name, error=f"no installed plugin named '{name}'")
+
+    install_meta = meta.get("install") or {}
+    itype = install_meta.get("type")
+    source = install_meta.get("source") or ""
+    out = Path(out_dir).expanduser()
+    out.mkdir(parents=True, exist_ok=True)
+
+    if itype == "zip":
+        origin_name = install_meta.get("origin_artifact") or store.ORIGIN_ZIP
+        origin_path = dest / origin_name
+        if not origin_path.is_file():
+            return ExportResult(ok=False, name=name, error="original bundle was not retained; cannot export")
+        distribution = meta.get("distribution") or name
+        version = meta.get("version") or "0"
+        target = out / f"{distribution}-{version}{BUNDLE_EXT}"
+        shutil.copy2(origin_path, target)
+        return ExportResult(ok=True, name=name, out_path=str(target))
+
+    if not source:
+        return ExportResult(ok=False, name=name, error=f"plugin '{name}' has no recorded source to re-pack")
+    result = pack(source, out_dir=str(out), with_deps=True)
+    if not result.ok:
+        return ExportResult(ok=False, name=name, error=result.error or "pack failed")
+    return ExportResult(ok=True, name=name, out_path=result.bundle_path)
+
+
+# ── upgrade ────────────────────────────────────────────────────────────────
+
+
+def upgrade(name: str) -> UpgradeResult:
+    """Re-install a plugin from its recorded source (the original method).
+
+    ``pip`` adds ``--upgrade``; ``git`` re-fetches; ``src`` rebuilds from the
+    recorded path. ``whl`` and ``zip`` are pinned artifacts and report that they
+    cannot be upgraded in place.
+    """
+    name = (name or "").strip()
+    if not name:
+        return UpgradeResult(ok=False, error="no plugin name given")
+    dest = store.plugin_dir(name)
+    meta = store.read_meta(dest)
+    if meta is None:
+        return UpgradeResult(ok=False, name=name, error=f"no installed plugin named '{name}'")
+
+    install_meta = meta.get("install") or {}
+    itype = install_meta.get("type")
+    source = install_meta.get("source") or ""
+    old_version = meta.get("version", "")
+
+    if itype in ("zip", "whl"):
+        return UpgradeResult(
+            ok=False,
+            name=name,
+            old_version=old_version,
+            error=f"`{itype}` installs are pinned artifacts and cannot be upgraded in place; reinstall a newer one",
+        )
+    if not source:
+        return UpgradeResult(ok=False, name=name, error=f"plugin '{name}' has no recorded source to upgrade from")
+
+    result = _install_via_target(itype, source, force=True, upgrade=(itype == "pip"))
+    if not result.ok:
+        return UpgradeResult(
+            ok=False,
+            name=name,
+            label=result.label,
+            old_version=old_version,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error=result.error,
+        )
+    return UpgradeResult(
+        ok=True,
+        name=result.name or name,
+        label=result.label,
+        old_version=old_version,
+        new_version=result.version,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+# ── uninstall ──────────────────────────────────────────────────────────────
+
+
+def _drop_from_syspath(directory: Path) -> None:
+    """Remove a plugin directory from ``sys.path`` (best-effort)."""
+    entry = str(directory)
+    while entry in sys.path:
+        sys.path.remove(entry)
 
 
 def uninstall(plugin_name: str) -> UninstallResult:
-    """Uninstall the distribution that registers plugin ``plugin_name``."""
+    """Remove a managed plugin's ``~/.datus/plugins/{name}/`` directory."""
     plugin_name = (plugin_name or "").strip()
     if not plugin_name:
         return UninstallResult(ok=False, plugin=plugin_name, error="no plugin name given")
 
-    package = _distribution_for_plugin(plugin_name)
-    if not package:
+    dest = store.plugin_dir(plugin_name)
+    meta = store.read_meta(dest)
+    if meta is None or not dest.is_dir():
         return UninstallResult(
             ok=False,
             plugin=plugin_name,
-            error=f"no installed plugin named '{plugin_name}' (nothing to uninstall)",
+            error=(
+                f"no managed plugin named '{plugin_name}' under {store.plugins_root()} "
+                "(externally pip-installed plugins are removed with pip)"
+            ),
         )
-
-    cmd, label = _uninstall_command(package)
-    logger.info("Uninstalling plugin '%s' (package %s): %s", plugin_name, package, " ".join(cmd))
+    package = str(meta.get("distribution") or "")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    except Exception as exc:
-        return UninstallResult(ok=False, plugin=plugin_name, package=package, label=label, error=str(exc))
-
-    stdout = proc.stdout or ""
-    stderr = proc.stderr or ""
-    if proc.returncode != 0:
-        return UninstallResult(
-            ok=False,
-            plugin=plugin_name,
-            package=package,
-            label=label,
-            stdout=stdout,
-            stderr=stderr,
-            error=f"{label} exited with code {proc.returncode}",
-        )
+        shutil.rmtree(dest)
+    except OSError as exc:
+        return UninstallResult(ok=False, plugin=plugin_name, package=package, error=str(exc))
+    _drop_from_syspath(dest)
     importlib.invalidate_caches()
     try:
         from datus.plugins.registry import invalidate_plugin_cache
@@ -484,16 +704,20 @@ def uninstall(plugin_name: str) -> UninstallResult:
         invalidate_plugin_cache()
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("plugin cache invalidation failed after uninstall: %s", exc)
-    return UninstallResult(ok=True, plugin=plugin_name, package=package, label=label, stdout=stdout, stderr=stderr)
+    return UninstallResult(ok=True, plugin=plugin_name, package=package)
+
+
+# ── list ───────────────────────────────────────────────────────────────────
 
 
 def list_plugins(agent_config=None) -> List[PluginInfo]:
-    """Enumerate installed plugins with configured profiles and activation.
+    """Enumerate installed plugins (managed + externally pip-installed).
 
-    ``agent_config`` (optional) supplies configured profiles
-    (``plugin_services``) and the project's activation state
-    (``active_plugin_names`` / ``active_plugin_profiles``). Without it, the
-    ``profiles`` / ``active`` fields are left empty / ``None``.
+    Managed plugins are read from ``~/.datus/plugins/*/datus-plugin.json``;
+    externally installed ones are discovered via the ``datus.plugins``
+    entry-point group as a fallback (a name present in both prefers the managed
+    entry). ``agent_config`` (optional) supplies configured profiles and the
+    project's activation state.
     """
     from datus.plugins.registry import iter_plugin_entry_points
 
@@ -506,37 +730,65 @@ def list_plugins(agent_config=None) -> List[PluginInfo]:
             logger.debug("active_plugin_names() failed during list: %s", exc)
         plugin_services = getattr(agent_config, "plugin_services", {}) or {}
 
-    infos: List[PluginInfo] = []
+    by_name: dict[str, PluginInfo] = {}
+    for meta in store.iter_installed():
+        name = meta.get("name")
+        if not store.is_valid_name(name):
+            continue
+        install_meta = meta.get("install") or {}
+        by_name[name] = PluginInfo(
+            name=name,
+            package=str(meta.get("distribution") or ""),
+            version=str(meta.get("version") or ""),
+            entry=str(meta.get("entry_point") or ""),
+            install_type=str(install_meta.get("type") or ""),
+            source="managed",
+        )
+
     for ep in iter_plugin_entry_points():
         name = getattr(ep, "name", None)
-        if not isinstance(name, str) or not name:
+        if not isinstance(name, str) or not name or name in by_name:
             continue
         dist = getattr(ep, "dist", None)
-        info = PluginInfo(
+        by_name[name] = PluginInfo(
             name=name,
             package=str(getattr(dist, "name", "") or ""),
             version=str(getattr(dist, "version", "") or ""),
             entry=str(getattr(ep, "value", "") or ""),
-            profiles=sorted((plugin_services.get(name) or {}).keys()),
+            install_type="",
+            source="external",
         )
+
+    for name, info in by_name.items():
+        info.profiles = sorted((plugin_services.get(name) or {}).keys())
         if agent_config is not None:
             info.active = active_names is None or name in active_names
             try:
                 info.active_profiles = agent_config.active_plugin_profiles(name)
             except Exception:  # noqa: BLE001 - best-effort activation detail
                 info.active_profiles = None
-        infos.append(info)
-    return sorted(infos, key=lambda p: p.name)
+
+    return sorted(by_name.values(), key=lambda p: p.name)
 
 
 __all__ = [
     "PluginInfo",
     "InstallResult",
     "UninstallResult",
+    "ExportResult",
+    "UpgradeResult",
     "BundleError",
     "BUNDLE_EXT",
+    "BUNDLE_FORMAT",
+    "BUNDLE_FORMAT_VERSION",
+    "BUNDLE_MANIFEST_NAME",
+    "BUNDLE_WHEELS_DIR",
+    "INSTALL_TYPES",
+    "parse_spec",
     "install",
-    "install_bundle",
+    "pack",
+    "export",
+    "upgrade",
     "uninstall",
     "list_plugins",
 ]

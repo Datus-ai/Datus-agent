@@ -64,16 +64,19 @@ hello = "datus_plugin_hello.plugin:HelloPlugin"
 ```
 
 CLI 命令名(`datus hello`)和配置键(`agent.plugins.hello`)**只由 entry-point
-名(`hello`)决定**——类名和模块结构随意。有两个名字是**保留字**,永远不会分发给
-plugin:`upgrade` 和 `skill`,注册成这两个名字的 plugin 会静默失效;以 `-` 开头的
-名字也无法被分发。
+名(`hello`)决定**——类名和模块结构随意。有三个名字是**保留字**,永远不会分发给
+plugin:`upgrade`、`skill` 和 `plugin`,注册成它们的 plugin 无法被访问(`datus plugin
+install` 也会拒绝);以 `-` 开头的名字也无法被分发。
 
 **4. 安装并运行**
 
 ```bash
-pip install -e datus-plugin-hello
+datus plugin install src:./datus-plugin-hello   # 装进 ~/.datus/plugins/hello/
 datus hello Ada          # -> Hello, Ada!
 ```
+
+开发时若想快速改-跑循环,把它 `pip install -e datus-plugin-hello` 进 datus 自身环境
+也可以——这类插件仍会作为兜底被发现,不会产生 `~/.datus/plugins/` 目录。
 
 这就是一个完整的 plugin。下面的内容都是可选的扩展面。
 
@@ -659,22 +662,27 @@ def test_system_prompt_unconfigured_points_to_setup_skill():
 
 ## 分发以支持离线安装
 
-面向气隙用户,用 `datus plugin pack` 把你的插件**及其全部依赖**打进单个 `.dplug`
-文件——在**有网**的机器上执行:
+用 `datus plugin pack` 把插件打成一个 wheelhouse `.zip`,在插件项目目录下、**有网**
+的机器上执行:
 
 ```bash
-datus plugin pack ./datus-plugin-hello -o ./dist
-# → ./dist/datus-plugin-hello-1.0.0-any.dplug   (插件 wheel + 每个依赖 wheel)
+datus plugin pack -o ./dist               # 仅插件 wheel(默认)
+# → ./dist/datus-plugin-hello-1.0.0.zip
+
+datus plugin pack --with-deps -o ./dist   # 插件 wheel + 每个依赖 wheel
 ```
 
-bundle 是一个 zip,内含 `datus-plugin.json` manifest 与 `wheels/` wheelhouse。用户
-无需 PyPI 访问即可用 `datus plugin install ./….dplug` 安装(见
-[离线安装](introduction.zh.md#offline-install))。要让插件干净地打包,注意两点:
+bundle 是一个 zip,内含 `datus-bundle.json` manifest 与 `wheels/` wheelhouse。用户用
+`datus plugin install zip:./….zip` 安装(见
+[离线安装](introduction.zh.md#offline-install))。按需选择:
 
-- **依赖必须有 wheel。** `pack` 使用 `pip download --only-binary=:all:`,因此每个
-  依赖都必须发布 wheel(不能是仅有 sdist 的包)。纯 Python wheel(`py3-none-any`)
-  产出单个可跨平台的 bundle;带原生扩展的依赖会让 bundle 变成平台特定的——用
-  `--python-version` / `--platform` 为每个目标各打一个。
+- **默认(仅插件 wheel)** —— 包体小;目标机器在安装时从 package index 解析依赖
+  (需要网络)。
+- **`--with-deps`** —— 把每个传递依赖 wheel 都打进去,从而完全离线安装
+  (`pip install --no-index --find-links`)。`pack` 使用 `pip download
+  --only-binary=:all:`,因此每个依赖都必须发布 wheel(不能是仅有 sdist 的包)。纯
+  Python 依赖集可移植;带原生扩展的依赖会让 bundle 成为**同平台快照**——请在与目标机
+  OS/Python 匹配的机器上构建。
 - **声明 `Requires-Python`。** 在 `pyproject.toml` 里设好;`pack` 会把它写进
   manifest,安装时便可尽早拒绝不匹配的解释器(带明确提示,可用 `--force` 越过)。
 
@@ -685,7 +693,7 @@ bundle 是一个 zip,内含 `datus-plugin.json` manifest 与 `wheels/` wheelhous
 - [ ] 包内任何地方都**不** `import datus`(`grep -rn "import datus" your_pkg/`)。
 - [ ] `pyproject.toml` **不**依赖 `datus` 或任何共享 plugin SDK。
 - [ ] `__init__` 以名为 `profile` 的关键字参数接收 profile(Datus 调用 `PluginClass(profile=...)`)。
-- [ ] entry-point 名不是保留字(`upgrade`、`skill`),且不以 `-` 开头。
+- [ ] entry-point 名不是保留字(`upgrade`、`skill`、`plugin`),且不以 `-` 开头。
 - [ ] `skills_dir`、`system_prompt` 与 `cli_permissions` 类级可取(`@classmethod` / `@staticmethod` / 类属性)。
 - [ ] `system_prompt` 只输出非敏感字段。
 - [ ] `cli_permissions` 的 pattern 相对命名空间书写(不要自带 `datus <name>` 前缀——Datus 会加),且改状态的子命令在 `normal` 下是 `ask`。

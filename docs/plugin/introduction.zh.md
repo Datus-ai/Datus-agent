@@ -1,7 +1,8 @@
 # Plugin 介绍
 
 **plugin**(插件)是一个可安装的 Python 包,在不修改 Datus 本身的前提下对其进行扩展。
-把插件安装到与 `datus` 相同的 Python 环境中,根据插件打包的内容,你可以获得:
+`datus plugin install` 会把每个插件装到独立目录 `~/.datus/plugins/{name}/`(依赖一并
+vendored 进目录内),根据插件打包的内容,你可以获得:
 
 | 功能面 | 提供什么 |
 |---|---|
@@ -11,53 +12,62 @@
 | Bash 权限 | 插件预先声明哪些子命令 agent 可以直接执行、哪些需要确认 |
 | 工具 transformer | 插件可以在 agent 的工具调用执行前改写参数或拒绝调用(如强制 SQL 作用域策略) |
 
-Datus 通过 `datus.plugins` Python entry-point 组在每次调用时发现插件——安装或升级插件
-无需重启,也没有任何注册步骤。
+每个已启用插件的目录会在启动时追加到 `sys.path`,其 `datus.plugins` entry-point 因此
+在每次调用时被发现——无需重启,也没有任何注册步骤。(用旧方式直接 `pip install` 装进
+同一 Python 环境的插件仍会作为兜底被发现。)
 
 想开发自己的插件?见[开发指南](development.zh.md)。
 
 ## 安装插件
 
-用 `datus plugin install`,它包装了 `uv pip install`(不可用时回退 `pip`),
-把包装进 `datus` 实际运行的那个环境。安装源可以是 PyPI 包名、wheel 或本地目录:
+`datus plugin install` 接收 `{type}:{src}` 形式的安装源,把插件装到
+`~/.datus/plugins/{name}/`。类型前缀**必填**:
 
 ```bash
-datus plugin install datus-plugin-hello        # 来自 PyPI
-datus plugin install ./dist/hello-1.0-py3-none-any.whl   # wheel 包
-datus plugin install ./datus-plugin-hello      # 本地项目目录
-datus plugin install -e ./datus-plugin-hello   # editable(本地源码树)
+datus plugin install pip:datus-plugin-hello                       # PyPI 包名
+datus plugin install src:./datus-plugin-hello                     # 本地项目目录
+datus plugin install whl:./dist/hello-1.0-py3-none-any.whl        # 本地 wheel 文件
+datus plugin install git:https://github.com/acme/datus-plugin-hello   # git 仓库
+datus plugin install zip:./dist/datus-plugin-hello-1.0.0.zip      # 离线 bundle(见下)
 
 datus hello Ada          # 子命令立即可用
 ```
 
-安装成功后 Datus 会报告该包注册的插件名。直接 `pip install datus-plugin-hello`
-也可以——下次调用时自动发现,无需注册步骤。
+`pip`、`src`、`whl`、`git` 会从 package index 解析依赖(需要网络);插件及其依赖通过
+`pip install --target` 一并 vendored 进插件目录。`datus plugin install` 会把安装方式
+记录到 `~/.datus/plugins/{name}/datus-plugin.json`,以便之后
+`datus plugin upgrade <name>` 用同样的方式重新拉取。若插件已安装,传 `--force` 可替换。
 
-如果 `datus <name>` 落进了 REPL 而不是运行插件,说明该包没有安装在 `datus`
-所运行的环境里,或该插件未在本项目激活(见[激活插件](#activating-plugins))。
+如果 `datus <name>` 落进了 REPL 而不是运行插件,说明它未安装,或未在本项目激活
+(见[激活插件](#activating-plugins))。
 
 ### 离线安装(内网/气隙环境) {#offline-install}
 
-**`.dplug` bundle** 是单个自包含文件,里面装着插件 wheel 以及每一个依赖 wheel——
-面向没有 PyPI 访问的机器。在**有网**的机器上用 `datus plugin pack` 打好包,把这个
-文件拷过去,然后在**完全离线**的环境安装:
+离线 **bundle** 就是一个普通 `.zip`,内含一个 wheelhouse(插件 wheel,以及可选的每个
+依赖 wheel)。在**有网**的机器上用 `datus plugin pack` 打好包,把文件拷过去,再用
+`zip:` 安装:
 
 ```bash
-# 有网机器——把插件及其全部依赖打成 bundle
-datus plugin pack datus-plugin-hello -o ./dist        # 来自 PyPI
-datus plugin pack ./datus-plugin-hello                # 来自项目目录
-datus plugin pack ./dist/hello-1.0-py3-none-any.whl   # 来自已构建的 wheel
+# 有网机器,在插件的项目目录下
+datus plugin pack --with-deps -o ./dist     # 插件 wheel + 全部依赖 wheel
+datus plugin pack -o ./dist                 # 仅插件 wheel(默认)
 
-# 气隙机器——从 bundle 安装,不访问任何 index
-datus plugin install ./dist/datus-plugin-hello-1.0.0-any.dplug
+# 目标机器
+datus plugin install zip:./dist/datus-plugin-hello-1.0.0.zip
 ```
 
-`pack` 需要网络(它要从 index 解析依赖);安装生成的 bundle **不需要**——依赖只从
-bundle 内部的 wheelhouse 解析(`pip install --no-index --find-links`)。安装前会对
-照 bundle manifest 逐一校验每个 wheel 的 checksum。若 bundle 是为不同的 Python 版本
-或平台构建的,安装会带明确提示拒绝;传 `--force` 可越过兼容性检查(checksum 仍强制
-校验)。打包时用 `--python-version` / `--platform`(转发给 `pip download`)可交叉打
-包到另一套环境。
+`pack` 默认**仅打插件 wheel**——包体小,但目标机器在安装时要从 index 解析依赖(需要
+网络)。加 `--with-deps` 会把每个依赖 wheel 都打进去,从而**完全离线**安装
+(`pip install --no-index --find-links`)。安装前会对照 bundle manifest 逐一校验每个
+wheel 的 checksum;若 bundle 是为不同的 Python 版本或平台构建的,安装会带明确提示拒绝,
+除非传 `--force`(checksum 仍强制校验)。含依赖 bundle 是同平台快照,请在与目标机
+OS/Python 匹配的机器上构建。
+
+### 导出已安装插件
+
+`datus plugin export <name>` 能把一个已安装插件重新导出成可分发的 `.zip`——`zip:`
+来源的安装会字节级返回其保留的原始 bundle,而 `pip`/`src`/`whl`/`git` 来源则按记录的
+安装源重新打包(需要网络)。
 
 ## 配置
 
@@ -153,10 +163,12 @@ datus plugin disable noisy-plugin            # 本项目停用
 
 | 命令 | 作用 |
 |---|---|
-| `datus plugin install <source>` | 从 PyPI / wheel / 本地目录 / `.dplug` bundle 安装(`-e` 为 editable;`--force` 跳过 bundle 的兼容性检查)。 |
-| `datus plugin pack <source>` | 从目录 / wheel / PyPI 名构建离线 `.dplug` bundle(插件 wheel + 全部依赖)(`-o`、`--python-version`、`--platform`)。 |
-| `datus plugin uninstall <name>` | 卸载注册 `<name>` 的发行包。 |
-| `datus plugin list` | 列出已安装插件:包、版本、已配置 profile、本项目激活状态。 |
+| `datus plugin install '{type}:{src}'` | 从 `pip:` / `src:` / `whl:` / `git:` / `zip:` 安装到 `~/.datus/plugins/`(`--force` 替换已有安装)。 |
+| `datus plugin pack [dir]` | 从插件项目目录(默认 `./`)构建可分发的 wheelhouse `.zip`;`--with-deps` 打入依赖,`-o` 指定输出目录。 |
+| `datus plugin export <name>` | 把已安装插件导出成 `.zip`(`-o` 指定输出目录)。 |
+| `datus plugin upgrade <name>` | 按记录的安装源重装(pip/git/src)。 |
+| `datus plugin uninstall <name>` | 删除插件目录 `~/.datus/plugins/{name}/`。 |
+| `datus plugin list` | 列出已安装插件:包、版本、来源、已配置 profile、本项目激活状态。 |
 | `datus plugin info <name>` | 查看单个插件的 profile、配置 schema 与激活状态。 |
 | `datus plugin enable/disable <name>` | 切换本项目激活状态。 |
 

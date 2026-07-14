@@ -1,0 +1,288 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""Directory-backed plugin store under ``~/.datus/plugins/``.
+
+Each installed plugin lives in ``~/.datus/plugins/{name}/`` — a ``pip install
+--target`` tree with the plugin package and its dependencies vendored in, plus a
+``datus-plugin.json`` metadata file describing how it was installed. This module
+owns:
+
+- **location** — :func:`plugins_root` / :func:`plugin_dir`
+- **metadata** — :func:`read_meta` / :func:`write_meta` / :func:`iter_installed`
+- **introspection** — :func:`introspect_target` reads a freshly-installed target
+  tree's ``[datus.plugins]`` entry point without importing the package
+- **activation** — :func:`activate` appends enabled plugin directories to
+  ``sys.path`` so :mod:`datus.plugins.registry` (which relies on
+  ``importlib.metadata.entry_points()`` scanning ``sys.path``) discovers them,
+  then invalidates the import + registry caches
+
+Adding a directory to ``sys.path`` makes its ``.dist-info`` discoverable but does
+**not** import the plugin package — the import happens lazily on ``ep.load()`` —
+so callers may inject a directory before the ``plugins_enabled`` master switch is
+checked without executing third-party module-level code.
+"""
+
+from __future__ import annotations
+
+import configparser
+import json
+import sys
+from email.parser import Parser
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+
+from datus.plugins.registry import _SAFE_PLUGIN_NAME_RE, PLUGIN_ENTRY_POINT_GROUP, invalidate_plugin_cache
+from datus.utils.loggings import get_logger
+from datus.utils.path_manager import get_path_manager
+
+logger = get_logger(__name__)
+
+# datus-owned per-directory metadata file (records install provenance).
+MANIFEST_NAME = "datus-plugin.json"
+# Retained original zip for ``zip:`` installs so ``export`` can return it verbatim.
+ORIGIN_ZIP = ".datus-origin.zip"
+MANIFEST_FORMAT = "datus-plugin"
+MANIFEST_FORMAT_VERSION = 1
+
+# Subcommand tokens owned by built-in handlers; a plugin must never claim one.
+# Keep in sync with ``datus.cli.main._RESERVED_SUBCOMMANDS``.
+RESERVED_PLUGIN_NAMES = frozenset({"upgrade", "skill", "plugin"})
+
+
+class StoreError(Exception):
+    """A recoverable problem inspecting or writing the plugin store."""
+
+
+def plugins_root() -> Path:
+    """Return ``~/.datus/plugins`` (the installed-plugins root)."""
+    return get_path_manager().plugins_dir
+
+
+def plugin_dir(name: str) -> Path:
+    """Return the directory a plugin named ``name`` is installed into."""
+    return plugins_root() / name
+
+
+def is_valid_name(name: str) -> bool:
+    """True when ``name`` is a safe, non-reserved plugin/directory token."""
+    return isinstance(name, str) and bool(_SAFE_PLUGIN_NAME_RE.match(name)) and name not in RESERVED_PLUGIN_NAMES
+
+
+def ensure_valid_name(name: str) -> None:
+    """Raise :class:`StoreError` when ``name`` is unsafe or reserved."""
+    if not isinstance(name, str) or not name:
+        raise StoreError("plugin name is empty")
+    if name in RESERVED_PLUGIN_NAMES:
+        raise StoreError(f"plugin name {name!r} is reserved (conflicts with a built-in `datus {name}` command)")
+    if not _SAFE_PLUGIN_NAME_RE.match(name):
+        raise StoreError(f"plugin name {name!r} is not a safe CLI token")
+
+
+# ── Metadata (datus-plugin.json) ───────────────────────────────────────────
+
+
+def meta_path(directory: Path) -> Path:
+    """Return the ``datus-plugin.json`` path inside ``directory``."""
+    return directory / MANIFEST_NAME
+
+
+def read_meta(directory: Path) -> Optional[Dict[str, Any]]:
+    """Read ``datus-plugin.json`` from ``directory``, or ``None`` if absent/bad.
+
+    Never raises — a plugin directory without readable metadata is simply
+    skipped by enumeration so one corrupt entry cannot break ``list``.
+    """
+    path = meta_path(directory)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        meta = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        logger.debug("unreadable %s: %s", path, exc)
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def write_meta(directory: Path, meta: Dict[str, Any]) -> None:
+    """Write ``meta`` as ``datus-plugin.json`` into ``directory``."""
+    directory.mkdir(parents=True, exist_ok=True)
+    meta_path(directory).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+
+def iter_installed() -> List[Dict[str, Any]]:
+    """Enumerate installed plugins by scanning ``~/.datus/plugins/*/`` metadata.
+
+    Returns each directory's metadata dict augmented with a ``_dir`` key (the
+    absolute path). Directories without a readable ``datus-plugin.json`` are
+    skipped. Filesystem errors resolve to an empty list — enumeration must never
+    crash ``list``.
+    """
+    root = plugins_root()
+    if not root.is_dir():
+        return []
+    installed: List[Dict[str, Any]] = []
+    try:
+        entries = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError as exc:
+        logger.debug("plugins root not enumerable: %s", exc)
+        return []
+    for directory in entries:
+        meta = read_meta(directory)
+        if meta is None:
+            continue
+        meta = dict(meta)
+        meta["_dir"] = str(directory)
+        installed.append(meta)
+    return installed
+
+
+# ── Introspection of a freshly-installed target tree ───────────────────────
+
+
+def _find_plugin_dist_info(target_dir: Path) -> Optional[Path]:
+    """Return the ``.dist-info`` dir declaring a ``[datus.plugins]`` entry point.
+
+    Scans every ``*.dist-info/entry_points.txt`` in a ``pip install --target``
+    tree and returns the first whose ``entry_points.txt`` contains the
+    ``datus.plugins`` group.
+    """
+    for entry_points in sorted(target_dir.glob("*.dist-info/entry_points.txt")):
+        parser = configparser.ConfigParser()
+        parser.optionxform = str  # entry-point names are case-sensitive
+        try:
+            parser.read_string(entry_points.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, configparser.Error):
+            continue
+        if PLUGIN_ENTRY_POINT_GROUP in parser and len(parser[PLUGIN_ENTRY_POINT_GROUP]) > 0:
+            return entry_points.parent
+    return None
+
+
+def introspect_target(target_dir: Path) -> Dict[str, Any]:
+    """Read plugin identity from a ``pip install --target`` tree, without import.
+
+    Locates the ``.dist-info`` that declares a ``datus.plugins`` entry point and
+    returns ``{name, distribution, version, entry_point, requires_python}``.
+    Raises :class:`StoreError` when the tree contains no datus plugin.
+    """
+    dist_info = _find_plugin_dist_info(target_dir)
+    if dist_info is None:
+        raise StoreError("installed package registers no `datus.plugins` entry point (not a datus plugin)")
+
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    parser.read_string((dist_info / "entry_points.txt").read_text(encoding="utf-8", errors="replace"))
+    section = parser[PLUGIN_ENTRY_POINT_GROUP]
+    name = next(iter(section))
+    entry_point = section[name].strip()
+
+    distribution = ""
+    version = ""
+    requires_python = ""
+    metadata_file = dist_info / "METADATA"
+    if metadata_file.is_file():
+        headers = Parser().parsestr(metadata_file.read_text(encoding="utf-8", errors="replace"), headersonly=True)
+        distribution = (headers.get("Name") or "").strip()
+        version = (headers.get("Version") or "").strip()
+        requires_python = (headers.get("Requires-Python") or "").strip()
+
+    return {
+        "name": name,
+        "distribution": distribution,
+        "version": version,
+        "entry_point": entry_point,
+        "requires_python": requires_python,
+    }
+
+
+# ── sys.path activation ────────────────────────────────────────────────────
+
+
+def _append_to_syspath(directory: Path) -> bool:
+    """Append ``directory`` to ``sys.path`` if not already present. Returns added?"""
+    if not directory.is_dir():
+        return False
+    entry = str(directory)
+    if entry in sys.path:
+        return False
+    sys.path.append(entry)
+    return True
+
+
+def activate(active_names: Optional[Set[str]], plugins_enabled: bool = True) -> List[str]:
+    """Append enabled plugin directories to ``sys.path`` and refresh caches.
+
+    ``active_names`` mirrors ``AgentConfig.active_plugin_names()``: ``None`` means
+    "no filter" (activate every installed plugin) while a set is the project's
+    activation whitelist. Directories are **appended** (not prepended) so datus'
+    own dependencies keep priority over a plugin's vendored copies. When
+    ``plugins_enabled`` is false this is a no-op.
+
+    Returns the plugin names newly added to ``sys.path`` this call (empty when
+    nothing changed). Invalidates the import + plugin registry caches whenever a
+    directory is added so an in-process re-scan discovers the entry points.
+    """
+    if not plugins_enabled:
+        return []
+    root = plugins_root()
+    if not root.is_dir():
+        return []
+
+    added: List[str] = []
+    for meta in iter_installed():
+        name = meta.get("name")
+        if not is_valid_name(name):
+            continue
+        if active_names is not None and name not in active_names:
+            continue
+        if _append_to_syspath(Path(meta["_dir"])):
+            added.append(name)
+
+    if added:
+        import importlib
+
+        importlib.invalidate_caches()
+        invalidate_plugin_cache()
+    return added
+
+
+def activate_name(name: str) -> bool:
+    """Append a single installed plugin's directory to ``sys.path``.
+
+    Used by the ``datus <plugin>`` dispatch path to make a managed plugin
+    discoverable before the activation gate runs (path-only; no import). Returns
+    whether the directory was newly added; refreshes caches when it was.
+    """
+    directory = plugin_dir(name)
+    if not _append_to_syspath(directory):
+        return False
+    import importlib
+
+    importlib.invalidate_caches()
+    invalidate_plugin_cache()
+    return True
+
+
+__all__ = [
+    "MANIFEST_NAME",
+    "ORIGIN_ZIP",
+    "MANIFEST_FORMAT",
+    "MANIFEST_FORMAT_VERSION",
+    "RESERVED_PLUGIN_NAMES",
+    "StoreError",
+    "plugins_root",
+    "plugin_dir",
+    "is_valid_name",
+    "ensure_valid_name",
+    "meta_path",
+    "read_meta",
+    "write_meta",
+    "iter_installed",
+    "introspect_target",
+    "activate",
+    "activate_name",
+]

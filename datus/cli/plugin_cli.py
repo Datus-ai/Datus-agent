@@ -4,17 +4,18 @@
 
 """Non-REPL handler for the ``datus plugin`` management subcommand.
 
-``datus plugin install|uninstall|list|info|enable|disable|pack`` manages the
-installed ``datus.plugins`` packages and this project's activation. Handled
-outside the REPL (like ``datus upgrade``) so it works even when a plugin is
-misconfigured, and so it is never gated by a plugin's own ``enabled`` flag —
-you must be able to run ``datus plugin enable`` on a disabled plugin.
+``datus plugin install|uninstall|list|info|enable|disable|pack|export|upgrade``
+manages plugins installed under ``~/.datus/plugins/`` and this project's
+activation. Handled outside the REPL (like ``datus upgrade``) so it works even
+when a plugin is misconfigured, and so it is never gated by a plugin's own
+``enabled`` flag — you must be able to run ``datus plugin enable`` on a disabled
+plugin.
 
-Install sources: a PyPI requirement (``datus-foo-plugin``), a wheel
-(``./dist/foo-1.0-py3-none-any.whl``), a local directory (``./foo``), or a
-self-contained offline bundle (``./foo-1.0-any.dplug``). ``datus plugin pack``
-builds such a bundle (plugin wheel + all dependency wheels) for air-gapped
-installation.
+Install sources use an explicit ``{type}:{src}`` prefix: ``pip:`` (PyPI
+requirement), ``src:`` (local project directory), ``whl:`` (local wheel),
+``git:`` (git repository), or ``zip:`` (offline wheelhouse bundle built by
+``datus plugin pack``). ``export`` reproduces a distributable ``.zip`` from an
+installed plugin, and ``upgrade`` re-fetches it via its original method.
 """
 
 from __future__ import annotations
@@ -47,32 +48,35 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_install = sub.add_parser("install", help="Install a plugin from PyPI, a wheel, a directory, or a .dplug bundle.")
-    p_install.add_argument("source", help="PyPI requirement, path to a .whl, a local directory, or a .dplug bundle.")
+    p_install = sub.add_parser("install", help="Install a plugin from a '{type}:{src}' source.")
     p_install.add_argument(
-        "-e", "--editable", action="store_true", help="Editable install (only for a local source tree)."
+        "source",
+        help="'{type}:{src}' — pip:<req> / src:<dir> / whl:<file.whl> / git:<url> / zip:<bundle.zip>.",
     )
     p_install.add_argument(
         "--force",
         action="store_true",
-        help="For a .dplug bundle, skip the python/platform compatibility check (checksums still enforced).",
+        help="Replace an already-installed plugin (and skip a bundle's python/platform check).",
     )
 
-    p_pack = sub.add_parser("pack", help="Build an offline .dplug bundle (plugin wheel + all deps). Requires network.")
-    p_pack.add_argument("source", help="Plugin project directory, a .whl, or a PyPI requirement.")
-    p_pack.add_argument("-o", "--output", default=".", help="Output directory for the .dplug (default: current dir).")
+    p_pack = sub.add_parser("pack", help="Build a distributable wheelhouse .zip from a plugin source. Needs network.")
+    p_pack.add_argument("source", nargs="?", default=".", help="Plugin project directory (default: current dir).")
     p_pack.add_argument(
-        "--python-version",
-        dest="python_version",
-        help="Target Python version for dependency wheels, e.g. 3.12 (defaults to this interpreter).",
+        "--with-deps",
+        action="store_true",
+        dest="with_deps",
+        help="Bundle every dependency wheel for a fully offline install (default: plugin wheel only).",
     )
-    p_pack.add_argument(
-        "--platform",
-        dest="platform_tag",
-        help="Target platform tag for dependency wheels, e.g. manylinux2014_x86_64 (defaults to this platform).",
-    )
+    p_pack.add_argument("-o", "--output", default=".", help="Output directory for the .zip (default: current dir).")
 
-    p_uninstall = sub.add_parser("uninstall", help="Uninstall the package registering a plugin.")
+    p_export = sub.add_parser("export", help="Export an installed plugin as a distributable .zip.")
+    p_export.add_argument("name", help="Plugin name (the `datus <name>` subcommand).")
+    p_export.add_argument("-o", "--output", default=".", help="Output directory for the .zip (default: current dir).")
+
+    p_upgrade = sub.add_parser("upgrade", help="Re-install a plugin from its recorded source.")
+    p_upgrade.add_argument("name", help="Plugin name.")
+
+    p_uninstall = sub.add_parser("uninstall", help="Remove an installed plugin's directory.")
     p_uninstall.add_argument("name", help="Plugin name (the `datus <name>` subcommand).")
 
     sub.add_parser("list", help="List installed plugins with their configured profiles and activation.")
@@ -119,6 +123,10 @@ def run_plugin_command(argv: List[str]) -> int:
         return _cmd_install(console, args)
     if args.command == "pack":
         return _cmd_pack(console, args)
+    if args.command == "export":
+        return _cmd_export(console, args)
+    if args.command == "upgrade":
+        return _cmd_upgrade(console, args)
     if args.command == "uninstall":
         return _cmd_uninstall(console, args)
     if args.command == "list":
@@ -131,43 +139,35 @@ def run_plugin_command(argv: List[str]) -> int:
     return 2
 
 
+def _print_tail(console: Console, result) -> None:
+    """Print the last few lines of a failed subprocess for context."""
+    tail = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip().splitlines()[-10:]
+    for line in tail:
+        console.print(f"  [dim]{line}[/]")
+
+
 def _cmd_install(console: Console, args: argparse.Namespace) -> int:
     print_info(console, f"Installing plugin from {args.source} ...")
-    result = svc.install(args.source, editable=args.editable, force=args.force)
+    result = svc.install(args.source, force=args.force)
     if not result.ok:
         print_status(console, "Install failed.", ok=False)
-        tail = (result.stderr or result.stdout or "").strip().splitlines()[-10:]
-        for line in tail:
-            console.print(f"  [dim]{line}[/]")
+        _print_tail(console, result)
         print_error(console, result.error or "unknown error")
         return 1
-    if result.new_plugins:
-        print_status(console, f"Installed. New plugin(s): {', '.join(result.new_plugins)}", ok=True)
-        print_info(console, "Configure a profile with `/plugins` or activate with `datus plugin enable <name>`.")
-    else:
-        print_warning(
-            console,
-            "Install succeeded but the package registered no `datus.plugins` entry point "
-            "— it may not be a datus plugin.",
-        )
+    print_status(console, f"Installed `{result.name}` {result.version} into {result.plugin_dir}.", ok=True)
+    print_info(console, f"Configure a profile with `/plugins` or activate with `datus plugin enable {result.name}`.")
     return 0
 
 
 def _cmd_pack(console: Console, args: argparse.Namespace) -> int:
     from datus.cli import plugin_pack
 
-    print_info(console, f"Packing plugin bundle from {args.source} ... (requires network)")
-    result = plugin_pack.pack(
-        args.source,
-        out_dir=args.output,
-        python_version=args.python_version,
-        platform_tag=args.platform_tag,
-    )
+    scope = "with dependencies" if args.with_deps else "plugin wheel only"
+    print_info(console, f"Packing plugin bundle from {args.source} ({scope}) ... (requires network)")
+    result = plugin_pack.pack(args.source, out_dir=args.output, with_deps=args.with_deps)
     if not result.ok:
         print_status(console, "Pack failed.", ok=False)
-        tail = (result.stderr or result.stdout or "").strip().splitlines()[-10:]
-        for line in tail:
-            console.print(f"  [dim]{line}[/]")
+        _print_tail(console, result)
         print_error(console, result.error or "unknown error")
         return 1
     print_status(
@@ -175,7 +175,33 @@ def _cmd_pack(console: Console, args: argparse.Namespace) -> int:
         f"Built {result.bundle_path} ({result.wheel_count} wheel(s), plugin `{result.plugin_name}`).",
         ok=True,
     )
-    print_info(console, "Install it offline with `datus plugin install <bundle>.dplug`.")
+    print_info(console, "Install it with `datus plugin install zip:<bundle>.zip`.")
+    return 0
+
+
+def _cmd_export(console: Console, args: argparse.Namespace) -> int:
+    print_info(console, f"Exporting plugin `{args.name}` ...")
+    result = svc.export(args.name, out_dir=args.output)
+    if not result.ok:
+        print_error(console, result.error or "export failed")
+        return 1
+    print_status(console, f"Exported `{result.name}` to {result.out_path}.", ok=True)
+    print_info(console, "Install it elsewhere with `datus plugin install zip:<bundle>.zip`.")
+    return 0
+
+
+def _cmd_upgrade(console: Console, args: argparse.Namespace) -> int:
+    print_info(console, f"Upgrading plugin `{args.name}` ...")
+    result = svc.upgrade(args.name)
+    if not result.ok:
+        print_status(console, "Upgrade failed.", ok=False)
+        _print_tail(console, result)
+        print_error(console, result.error or "unknown error")
+        return 1
+    if result.old_version and result.new_version and result.old_version != result.new_version:
+        print_status(console, f"Upgraded `{result.name}` {result.old_version} → {result.new_version}.", ok=True)
+    else:
+        print_status(console, f"Re-installed `{result.name}` ({result.new_version or 'unchanged'}).", ok=True)
     return 0
 
 
@@ -184,7 +210,8 @@ def _cmd_uninstall(console: Console, args: argparse.Namespace) -> int:
     if not result.ok:
         print_error(console, result.error or "uninstall failed")
         return 1
-    print_status(console, f"Uninstalled plugin `{result.plugin}` (package {result.package}).", ok=True)
+    suffix = f" (package {result.package})" if result.package else ""
+    print_status(console, f"Uninstalled plugin `{result.plugin}`{suffix}.", ok=True)
     return 0
 
 
@@ -192,7 +219,7 @@ def _cmd_list(console: Console) -> int:
     agent_config = _load_agent_config(console)
     plugins = svc.list_plugins(agent_config)
     if not plugins:
-        print_info(console, "No plugins installed. Install one with `datus plugin install <source>`.")
+        print_info(console, "No plugins installed. Install one with `datus plugin install '{type}:{src}'`.")
         return 0
     rows = []
     for p in plugins:
@@ -207,6 +234,7 @@ def _cmd_list(console: Console) -> int:
                 "name": p.name,
                 "package": p.package or "-",
                 "version": p.version or "-",
+                "source": p.install_type or p.source or "-",
                 "profiles": ", ".join(p.profiles) if p.profiles else "-",
                 "active": active,
             }
@@ -230,6 +258,8 @@ def _cmd_info(console: Console, args: argparse.Namespace) -> int:
     console.print(f"[bold]{info.name}[/]")
     console.print(f"  package: {info.package or '-'} {info.version}")
     console.print(f"  entry:   {info.entry or '-'}")
+    source_label = info.install_type or info.source or "-"
+    console.print(f"  installed via: {source_label}")
     if info.active is not None:
         state = "active" if info.active else "inactive"
         scope = "all profiles" if info.active_profiles is None else ", ".join(info.active_profiles) or "none"
@@ -256,7 +286,13 @@ def _cmd_activation(console: Console, args: argparse.Namespace) -> int:
         print_error(console, "Cannot change activation without an agent config.")
         return 3
 
+    from datus.plugins import store
     from datus.plugins.registry import plugin_entry_point_exists
+
+    # A managed plugin's directory must be on sys.path before the entry-point
+    # probe can see it (metadata-only; no plugin code is imported).
+    if store.plugin_dir(args.name).is_dir():
+        store.activate_name(args.name)
 
     if not plugin_entry_point_exists(args.name):
         print_error(console, f"No installed plugin named `{args.name}`. Run `datus plugin list`.")

@@ -71,16 +71,21 @@ hello = "datus_plugin_hello.plugin:HelloPlugin"
 
 The entry-point name (`hello`) alone determines the CLI command
 (`datus hello`) and the config key (`agent.plugins.hello`) — the class and
-module names are free. Two names are **reserved** and never dispatched to
-plugins: `upgrade` and `skill`. A plugin registered under either is silently
-unreachable, and names starting with `-` cannot be dispatched at all.
+module names are free. Three names are **reserved** and never dispatched to
+plugins: `upgrade`, `skill`, and `plugin`. A plugin registered under any of them
+is unreachable (and `datus plugin install` refuses it), and names starting with
+`-` cannot be dispatched at all.
 
 **4. Install and run**
 
 ```bash
-pip install -e datus-plugin-hello
+datus plugin install src:./datus-plugin-hello   # installs into ~/.datus/plugins/hello/
 datus hello Ada          # -> Hello, Ada!
 ```
+
+For a tight edit-run loop while developing, `pip install -e datus-plugin-hello`
+into datus' own environment also works — such plugins are still discovered as a
+fallback, without a `~/.datus/plugins/` directory.
 
 That is a complete plugin. Everything below is optional surface area.
 
@@ -725,24 +730,29 @@ def test_system_prompt_unconfigured_points_to_setup_skill():
 
 ## Distributing for offline install
 
-For air-gapped users, bundle your plugin **and all its dependencies** into a
-single `.dplug` file with `datus plugin pack` — run it where you have network:
+Bundle your plugin into a wheelhouse `.zip` with `datus plugin pack`, run from
+the plugin's project directory where you have network:
 
 ```bash
-datus plugin pack ./datus-plugin-hello -o ./dist
-# → ./dist/datus-plugin-hello-1.0.0-any.dplug   (plugin wheel + every dep wheel)
+datus plugin pack -o ./dist               # plugin wheel only (default)
+# → ./dist/datus-plugin-hello-1.0.0.zip
+
+datus plugin pack --with-deps -o ./dist   # plugin wheel + every dependency wheel
 ```
 
-The bundle is a zip of a `datus-plugin.json` manifest plus a `wheels/`
-wheelhouse. Users install it with no PyPI access via `datus plugin install
-./….dplug` (see [Offline install](introduction.md#offline-install-air-gapped)).
-Two things make a plugin bundle cleanly:
+The bundle is a zip of a `datus-bundle.json` manifest plus a `wheels/`
+wheelhouse. Users install it via `datus plugin install
+zip:./….zip` (see [Offline install](introduction.md#offline-install-air-gapped)).
+Choose the flavor:
 
-- **Wheel-only dependencies.** `pack` uses `pip download --only-binary=:all:`, so
-  every dependency must publish a wheel (no sdist-only packages). Pure-Python
-  wheels (`py3-none-any`) yield one portable, cross-platform bundle; a dependency
-  with a native extension makes the bundle platform-specific — build one per
-  target with `--python-version` / `--platform`.
+- **Default (plugin wheel only)** — a small bundle; the target machine resolves
+  dependencies from a package index at install time (needs network).
+- **`--with-deps`** — every transitive dependency wheel is bundled so the install
+  is fully offline (`pip install --no-index --find-links`). `pack` uses
+  `pip download --only-binary=:all:`, so every dependency must publish a wheel
+  (no sdist-only packages). A pure-Python dependency set is portable; a
+  dependency with a native extension makes the bundle a **same-platform
+  snapshot** — build it on a machine matching the target's OS/Python.
 - **A declared `Requires-Python`.** Set it in `pyproject.toml`; `pack` copies it
   into the manifest so install can reject a mismatched interpreter early (with a
   clear message, overridable via `--force`).
@@ -754,7 +764,7 @@ Before publishing, verify:
 - [ ] The package does **not** `import datus` anywhere (`grep -rn "import datus" your_pkg/`).
 - [ ] The package does **not** depend on `datus` or a shared plugin SDK in `pyproject.toml`.
 - [ ] `__init__` accepts the profile as a keyword argument named `profile` (Datus calls `PluginClass(profile=...)`).
-- [ ] The entry-point name is not a reserved name (`upgrade`, `skill`) and does not start with `-`.
+- [ ] The entry-point name is not a reserved name (`upgrade`, `skill`, `plugin`) and does not start with `-`.
 - [ ] `skills_dir`, `system_prompt`, and `cli_permissions` are class-reachable (`@classmethod` / `@staticmethod` / class attribute).
 - [ ] `system_prompt` emits only non-secret fields.
 - [ ] `cli_permissions` patterns are namespace-relative (no `datus <name>` prefix — Datus adds it), and state-changing subcommands are `ask` under `normal`.

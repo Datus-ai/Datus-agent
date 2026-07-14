@@ -2,485 +2,563 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Unit tests for ``datus.cli.plugin_service`` (install / uninstall / list).
+"""Unit tests for :mod:`datus.cli.plugin_service`.
 
-CI-level: subprocess / shutil / entry-point enumeration are all mocked; no
-network, no real package operations.
+CI-level: a throwaway ``~/.datus`` home, ``subprocess.run`` / ``shutil.which``
+and the entry-point registry are mocked. No real pip, no network. The mocked
+installer populates the ``--target`` directory with a hand-built dist-info so
+introspection is exercised against a realistic tree.
 """
 
-import hashlib
 import json
+import subprocess
 import sys
-import types
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from datus.cli import plugin_service as svc
+from datus.plugins import registry, store
+from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
 
 
-class _FakeDist:
-    def __init__(self, name, version="1.0.0"):
-        self.name = name
-        self.version = version
+@pytest.fixture
+def home(tmp_path):
+    token = set_current_path_manager(DatusPathManager(datus_home=tmp_path))
+    before = list(sys.path)
+    try:
+        yield tmp_path
+    finally:
+        sys.path[:] = [p for p in sys.path if p in before or str(tmp_path) not in p]
+        registry.invalidate_plugin_cache()
+        reset_path_manager(token)
 
 
-class _FakeEntryPoint:
-    def __init__(self, name, package="", version="1.0.0", value="mod:Cls"):
-        self.name = name
-        self.value = value
-        self.dist = _FakeDist(package, version) if package else None
+def _fake_proc(returncode=0, stdout="", stderr=""):
+    return subprocess.CompletedProcess(args=["x"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-def _fake_proc(returncode=0, stdout="ok", stderr=""):
-    return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+def _write_dist_info(target: Path, *, name, dist, version, entry, requires_python=">=3.12", group="datus.plugins"):
+    target.mkdir(parents=True, exist_ok=True)
+    pkg = target / "datus_demo_plugin"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    dinfo = target / f"{dist.replace('-', '_')}-{version}.dist-info"
+    dinfo.mkdir(parents=True, exist_ok=True)
+    (dinfo / "entry_points.txt").write_text(f"[{group}]\n{name} = {entry}\n", encoding="utf-8")
+    (dinfo / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {dist}\nVersion: {version}\nRequires-Python: {requires_python}\n",
+        encoding="utf-8",
+    )
 
 
-# ── _install_command ──────────────────────────────────────────────────────
-
-
-def test_install_command_prefers_uv(monkeypatch):
-    monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/uv")
-    cmd, label = svc._install_command("datus-foo")
-    assert cmd == ["/usr/bin/uv", "pip", "install", "--python", sys.executable, "datus-foo"]
-    assert label == "uv pip install"
-
-
-def test_install_command_editable_flag(monkeypatch):
-    monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/uv")
-    cmd, _ = svc._install_command("./local", editable=True)
-    assert "-e" in cmd and cmd[-1] == "./local"
-
-
-def test_install_command_pip_fallback(monkeypatch):
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
-    cmd, label = svc._install_command("datus-foo")
-    assert cmd == [sys.executable, "-m", "pip", "install", "datus-foo"]
-    assert label == "pip install"
-
-
-# ── install ─────────────────────────────────────────────────────────────
-
-
-def test_install_reports_new_plugins(monkeypatch):
-    monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/uv")
-    state = {"installed": False}
+def _installer(name="demo", dist="datus-demo-plugin", version="0.1.0", entry="datus_demo_plugin.plugin:DemoPlugin"):
+    """Return a fake ``subprocess.run`` that populates the ``--target`` tree."""
+    calls = []
 
     def fake_run(cmd, **kwargs):
-        state["installed"] = True
-        return _fake_proc()
+        calls.append(cmd)
+        if "--target" in cmd:
+            target = Path(cmd[cmd.index("--target") + 1])
+            _write_dist_info(target, name=name, dist=dist, version=version, entry=entry)
+        return _fake_proc(0)
 
-    monkeypatch.setattr(svc.subprocess, "run", fake_run)
-
-    def fake_iter():
-        return [_FakeEntryPoint("statsig")] if state["installed"] else []
-
-    monkeypatch.setattr("datus.plugins.registry.iter_plugin_entry_points", fake_iter)
-    monkeypatch.setattr("datus.plugins.registry.invalidate_plugin_cache", lambda: None)
-
-    result = svc.install("datus-statsig-plugin")
-    assert result.ok is True
-    assert result.new_plugins == ["statsig"]
+    fake_run.calls = calls
+    return fake_run
 
 
-def test_install_no_new_plugins(monkeypatch):
-    """A package that registers no datus.plugins entry point → empty list."""
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
-    monkeypatch.setattr(svc.subprocess, "run", lambda cmd, **k: _fake_proc())
-    monkeypatch.setattr("datus.plugins.registry.iter_plugin_entry_points", lambda: [])
-    monkeypatch.setattr("datus.plugins.registry.invalidate_plugin_cache", lambda: None)
-    result = svc.install("some-package")
-    assert result.ok is True
-    assert result.new_plugins == []
+def _zip_installer():
+    """Fake ``run`` that installs a bundle by populating the ``--target`` dir."""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        target = Path(cmd[cmd.index("--target") + 1])
+        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.1.0", entry="m:C")
+        return _fake_proc(0)
+
+    fake_run.calls = calls
+    return fake_run
 
 
-def test_install_failure_returncode(monkeypatch):
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
-    monkeypatch.setattr(svc.subprocess, "run", lambda cmd, **k: _fake_proc(returncode=1, stderr="boom"))
-    monkeypatch.setattr("datus.plugins.registry.iter_plugin_entry_points", lambda: [])
-    result = svc.install("bad-package")
-    assert not result.ok
-    assert "code 1" in (result.error or "")
-    assert result.stderr == "boom"
+def _make_bundle(path: Path, *, name="demo", dist="datus-demo-plugin", version="0.1.0", bundle_deps=False, wheels=None):
+    """Write a minimal wheelhouse ``.zip`` bundle with a valid manifest."""
+    import hashlib
 
-
-def test_install_subprocess_raises(monkeypatch):
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
-
-    def boom(cmd, **k):
-        raise OSError("uv missing")
-
-    monkeypatch.setattr(svc.subprocess, "run", boom)
-    monkeypatch.setattr("datus.plugins.registry.iter_plugin_entry_points", lambda: [])
-    result = svc.install("x")
-    assert not result.ok
-    assert "uv missing" in (result.error or "")
-
-
-def test_install_empty_source():
-    result = svc.install("   ")
-    assert not result.ok
-    assert "no install source" in (result.error or "")
-
-
-def test_install_dispatches_bundle_on_extension(monkeypatch):
-    """A ``.dplug`` source routes to install_bundle with ``force`` forwarded."""
-    captured = {}
-
-    def fake_install_bundle(path, force=False):
-        captured["path"] = path
-        captured["force"] = force
-        return svc.InstallResult(ok=True, source=path, new_plugins=["hello"])
-
-    monkeypatch.setattr(svc, "install_bundle", fake_install_bundle)
-    result = svc.install("./hello-1.0-any.dplug", force=True)
-    assert result.ok is True
-    assert captured == {"path": "./hello-1.0-any.dplug", "force": True}
-
-
-# ── install_bundle (.dplug offline) ────────────────────────────────────────
-
-_MAIN_WHEEL = "datus_plugin_hello-1.0.0-py3-none-any.whl"
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _make_bundle(path, *, wheels=None, manifest=None):
-    """Write a ``.dplug`` zip at ``path``.
-
-    ``wheels`` maps ``filename -> bytes`` (defaults to a main wheel + one dep).
-    ``manifest`` overrides the auto-generated (valid) manifest so tests can
-    corrupt individual fields. Returns ``str(path)``.
-    """
-    if wheels is None:
-        wheels = {_MAIN_WHEEL: b"MAIN-WHEEL-BYTES", "dep-2.0-py3-none-any.whl": b"DEP-BYTES"}
-    if manifest is None:
-        manifest = {
-            "format": svc.BUNDLE_FORMAT,
-            "format_version": svc.BUNDLE_FORMAT_VERSION,
-            "plugin": {
-                "name": "hello",
-                "distribution": "datus-plugin-hello",
-                "version": "1.0.0",
-                "wheel": _MAIN_WHEEL,
-                "entry_point": "datus_plugin_hello.plugin:HelloPlugin",
-            },
-            "compat": {"requires_python": "", "platform": "any"},
-            "wheels": [
-                {
-                    "file": fn,
-                    "sha256": _sha256(data),
-                    "role": "plugin" if fn == _MAIN_WHEEL else "dependency",
-                }
-                for fn, data in wheels.items()
-            ],
-        }
+    wheel_name = f"{dist.replace('-', '_')}-{version}-py3-none-any.whl"
+    wheels = wheels if wheels is not None else {wheel_name: b"PLUGIN-WHEEL"}
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "bundle_deps": bundle_deps,
+        "plugin": {
+            "name": name,
+            "distribution": dist,
+            "version": version,
+            "wheel": wheel_name,
+            "entry_point": "datus_demo_plugin.plugin:DemoPlugin",
+        },
+        "compat": {"requires_python": "", "platform": "any"},
+        "wheels": [
+            {"file": fn, "sha256": hashlib.sha256(data).hexdigest(), "role": "plugin" if fn == wheel_name else "dep"}
+            for fn, data in wheels.items()
+        ],
+    }
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr(svc.BUNDLE_MANIFEST_NAME, json.dumps(manifest))
         for fn, data in wheels.items():
             zf.writestr(f"{svc.BUNDLE_WHEELS_DIR}/{fn}", data)
-    return str(path)
+    return path
 
 
-def _mock_offline_install(monkeypatch, *, uv=True, proc=None, capture=None):
-    """Wire shutil.which, subprocess.run, and the post-install re-scan.
-
-    The entry-point enumeration is stateful: empty before the install
-    subprocess runs, ``[hello]`` after — so ``_rescan_plugins`` reports it as
-    newly registered (mirroring ``test_install_reports_new_plugins``).
-    """
-    monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/uv" if uv else None)
-    state = {"installed": False}
-
-    def fake_run(cmd, **kwargs):
-        if capture is not None:
-            capture["cmd"] = cmd
-        state["installed"] = True
-        return proc if proc is not None else _fake_proc()
-
-    monkeypatch.setattr(svc.subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        "datus.plugins.registry.iter_plugin_entry_points",
-        lambda: [_FakeEntryPoint("hello")] if state["installed"] else [],
-    )
-    monkeypatch.setattr("datus.plugins.registry.invalidate_plugin_cache", lambda: None)
+# ── parse_spec ──────────────────────────────────────────────────────────────
 
 
-def test_install_bundle_success(tmp_path, monkeypatch):
-    bundle = _make_bundle(tmp_path / "hello.dplug")
-    capture = {}
-    _mock_offline_install(monkeypatch, uv=True, capture=capture)
-    result = svc.install_bundle(bundle)
-    assert result.ok is True
-    assert result.new_plugins == ["hello"]
-    cmd = capture["cmd"]
-    assert "--no-index" in cmd and "--find-links" in cmd
-    assert cmd[-1].endswith(_MAIN_WHEEL)  # installs the main wheel by path
+@pytest.mark.parametrize(
+    "spec,expected",
+    [
+        ("pip:datus-foo", ("pip", "datus-foo")),
+        ("src:./local", ("src", "./local")),
+        ("whl:dist/foo-1.0-py3-none-any.whl", ("whl", "dist/foo-1.0-py3-none-any.whl")),
+        ("git:https://github.com/x/y", ("git", "https://github.com/x/y")),
+        ("git:git+ssh://git@h/x.git", ("git", "git+ssh://git@h/x.git")),
+        ("zip:/abs/bundle.zip", ("zip", "/abs/bundle.zip")),
+        ("zip:C:/win/bundle.zip", ("zip", "C:/win/bundle.zip")),  # only first colon split
+    ],
+)
+def test_parse_spec_valid(spec, expected):
+    assert svc.parse_spec(spec) == expected
 
 
-def test_install_bundle_offline_command_pip_fallback(monkeypatch):
-    """Without uv, the offline command uses ``pip install --no-index``."""
-    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
-    from pathlib import Path
-
-    cmd, label = svc._bundle_install_command(Path("/tmp/w/main.whl"), Path("/tmp/w"))
-    assert cmd[:5] == [sys.executable, "-m", "pip", "install", "--no-index"]
-    assert "--find-links" in cmd and cmd[-1].endswith("main.whl")
-    assert label == "pip install (offline)"
+@pytest.mark.parametrize("spec", ["datus-foo", "no-prefix-here"])
+def test_parse_spec_missing_prefix(spec):
+    with pytest.raises(ValueError, match="type.*src"):
+        svc.parse_spec(spec)
 
 
-def test_install_bundle_not_found():
-    result = svc.install_bundle("/nonexistent/path/foo.dplug")
-    assert not result.ok
-    assert "bundle not found" in (result.error or "")
+def test_parse_spec_unknown_type():
+    with pytest.raises(ValueError, match="unknown install type"):
+        svc.parse_spec("wheel:foo")
 
 
-def test_install_bundle_empty_path():
-    result = svc.install_bundle("  ")
-    assert not result.ok
-    assert "no bundle path" in (result.error or "")
+def test_parse_spec_empty_source():
+    with pytest.raises(ValueError, match="empty source"):
+        svc.parse_spec("pip:")
 
 
-def test_install_bundle_missing_manifest(tmp_path):
-    path = tmp_path / "nomani.dplug"
-    with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("wheels/x.whl", b"x")
-    result = svc.install_bundle(str(path))
-    assert not result.ok
-    assert "no datus-plugin.json" in (result.error or "")
+def test_normalize_git_prepends_prefix():
+    assert svc._normalize_git("https://h/x") == "git+https://h/x"
+    assert svc._normalize_git("git+ssh://h/x") == "git+ssh://h/x"
 
 
-def test_install_bundle_wrong_format(tmp_path):
-    bundle = _make_bundle(tmp_path / "bad.dplug", manifest={"format": "something-else", "format_version": 1})
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "not a datus plugin bundle" in (result.error or "")
+# ── command builders ────────────────────────────────────────────────────────
 
 
-def test_install_bundle_unsupported_format_version(tmp_path):
-    manifest = {
-        "format": svc.BUNDLE_FORMAT,
-        "format_version": 999,
-        "plugin": {"wheel": _MAIN_WHEEL},
-        "wheels": [{"file": _MAIN_WHEEL, "sha256": "x"}],
-    }
-    bundle = _make_bundle(tmp_path / "future.dplug", manifest=manifest)
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "unsupported bundle format_version" in (result.error or "")
-
-
-def test_install_bundle_checksum_mismatch(tmp_path, monkeypatch):
-    """A wrong sha256 fails before any install subprocess runs."""
-    wheels = {_MAIN_WHEEL: b"REAL-BYTES"}
-    manifest = {
-        "format": svc.BUNDLE_FORMAT,
-        "format_version": svc.BUNDLE_FORMAT_VERSION,
-        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
-        "compat": {"platform": "any"},
-        "wheels": [{"file": _MAIN_WHEEL, "sha256": "deadbeef", "role": "plugin"}],
-    }
-    bundle = _make_bundle(tmp_path / "tampered.dplug", wheels=wheels, manifest=manifest)
-
-    def boom(cmd, **k):
-        raise AssertionError("subprocess must not run on a checksum mismatch")
-
-    monkeypatch.setattr(svc.subprocess, "run", boom)
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "checksum mismatch" in (result.error or "")
-
-
-def test_install_bundle_unsafe_wheel_name(tmp_path, monkeypatch):
-    """A traversal filename in the manifest is rejected (zip-slip guard)."""
-    manifest = {
-        "format": svc.BUNDLE_FORMAT,
-        "format_version": svc.BUNDLE_FORMAT_VERSION,
-        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
-        "compat": {"platform": "any"},
-        "wheels": [{"file": "../evil.whl", "sha256": "x", "role": "plugin"}],
-    }
-    bundle = _make_bundle(tmp_path / "evil.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
-    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: _fake_proc())
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "unsafe wheel filename" in (result.error or "")
-
-
-def test_install_bundle_missing_wheel_in_zip(tmp_path):
-    manifest = {
-        "format": svc.BUNDLE_FORMAT,
-        "format_version": svc.BUNDLE_FORMAT_VERSION,
-        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
-        "compat": {"platform": "any"},
-        "wheels": [{"file": "ghost-1.0-py3-none-any.whl", "sha256": "x", "role": "dependency"}],
-    }
-    bundle = _make_bundle(tmp_path / "ghost.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "missing a wheel listed in the manifest" in (result.error or "")
-
-
-def test_install_bundle_subprocess_failure(tmp_path, monkeypatch):
-    bundle = _make_bundle(tmp_path / "hello.dplug")
-    _mock_offline_install(monkeypatch, uv=False, proc=_fake_proc(returncode=1, stderr="offline boom"))
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "code 1" in (result.error or "")
-    assert result.stderr == "offline boom"
-
-
-def test_install_bundle_python_gate_blocks_without_force(tmp_path, monkeypatch):
-    manifest = {
-        "format": svc.BUNDLE_FORMAT,
-        "format_version": svc.BUNDLE_FORMAT_VERSION,
-        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
-        "compat": {"requires_python": ">=99", "platform": "any"},
-        "wheels": [{"file": _MAIN_WHEEL, "sha256": _sha256(b"x"), "role": "plugin"}],
-    }
-    bundle = _make_bundle(tmp_path / "pygate.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
-    monkeypatch.setattr(svc, "_python_satisfies", lambda spec: False)
-
-    def boom(cmd, **k):
-        raise AssertionError("subprocess must not run when the compat gate blocks")
-
-    monkeypatch.setattr(svc.subprocess, "run", boom)
-    result = svc.install_bundle(bundle)
-    assert not result.ok
-    assert "requires Python" in (result.error or "")
-
-
-def test_install_bundle_force_skips_compat_gate(tmp_path, monkeypatch):
-    manifest = {
-        "format": svc.BUNDLE_FORMAT,
-        "format_version": svc.BUNDLE_FORMAT_VERSION,
-        "plugin": {"name": "hello", "wheel": _MAIN_WHEEL},
-        "compat": {"requires_python": ">=99", "platform": "any"},
-        "wheels": [{"file": _MAIN_WHEEL, "sha256": _sha256(b"x"), "role": "plugin"}],
-    }
-    bundle = _make_bundle(tmp_path / "forced.dplug", wheels={_MAIN_WHEEL: b"x"}, manifest=manifest)
-    monkeypatch.setattr(svc, "_python_satisfies", lambda spec: False)
-    _mock_offline_install(monkeypatch, uv=True)
-    result = svc.install_bundle(bundle, force=True)
-    assert result.ok is True
-
-
-def test_install_bundle_bad_zip(tmp_path):
-    path = tmp_path / "corrupt.dplug"
-    path.write_bytes(b"not a zip at all")
-    result = svc.install_bundle(str(path))
-    assert not result.ok
-    assert "invalid bundle" in (result.error or "")
-
-
-# ── uninstall ─────────────────────────────────────────────────────────────
-
-
-def test_uninstall_maps_plugin_to_distribution(monkeypatch):
+def test_target_install_command_prefers_uv(monkeypatch):
     monkeypatch.setattr(svc.shutil, "which", lambda name: "/usr/bin/uv")
-    monkeypatch.setattr(
-        "datus.plugins.registry.entry_points_for_group",
-        lambda group, name=None: [_FakeEntryPoint("statsig", package="datus-statsig-plugin")],
-    )
-    monkeypatch.setattr("datus.plugins.registry.invalidate_plugin_cache", lambda: None)
+    cmd, label = svc._target_install_command("datus-foo", Path("/t"))
+    assert cmd[:3] == ["/usr/bin/uv", "pip", "install"]
+    assert "--target" in cmd and cmd[cmd.index("--target") + 1] == "/t"
+    assert label == "uv pip install"
+
+
+def test_target_install_command_falls_back_to_pip(monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    cmd, label = svc._target_install_command("datus-foo", Path("/t"), upgrade=True)
+    assert cmd[:3] == [sys.executable, "-m", "pip"]
+    assert "--upgrade" in cmd
+    assert label == "pip install"
+
+
+def test_bundle_install_command_offline_with_deps(monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    cmd, label = svc._bundle_install_command(Path("/w/p.whl"), Path("/w"), Path("/t"), bundle_deps=True)
+    assert "--no-index" in cmd and "--find-links" in cmd and "--target" in cmd
+    assert "offline" in label
+
+
+def test_bundle_install_command_online_without_deps(monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    cmd, label = svc._bundle_install_command(Path("/w/p.whl"), Path("/w"), Path("/t"), bundle_deps=False)
+    assert "--no-index" not in cmd
+    assert "--find-links" in cmd and "--target" in cmd
+
+
+# ── install: pip / src / whl / git via --target ─────────────────────────────
+
+
+def test_install_pip_lands_in_plugins_dir(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    result = svc.install("pip:datus-demo-plugin")
+    assert result.ok is True, result.error
+    assert result.name == "demo"
+    assert result.new_plugins == ["demo"]
+    dest = store.plugin_dir("demo")
+    assert dest.is_dir()
+    meta = store.read_meta(dest)
+    assert meta["install"] == {"type": "pip", "source": "datus-demo-plugin", "ref": None, "origin_artifact": None}
+    assert meta["version"] == "0.1.0"
+
+
+def test_install_src_records_absolute_path(home, tmp_path, monkeypatch):
+    src = tmp_path / "proj"
+    src.mkdir()
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    result = svc.install(f"src:{src}")
+    assert result.ok is True, result.error
+    meta = store.read_meta(store.plugin_dir("demo"))
+    assert meta["install"]["type"] == "src"
+    assert meta["install"]["source"] == str(src.resolve())
+
+
+def test_install_src_missing_dir_errors_before_subprocess(home, monkeypatch):
+    called = []
+    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: called.append(1) or _fake_proc(0))
+    result = svc.install("src:/no/such/dir")
+    assert not result.ok and "not found" in result.error
+    assert called == []
+
+
+def test_install_whl_missing_file_errors(home):
+    result = svc.install("whl:/no/such.whl")
+    assert not result.ok and "not found" in result.error
+
+
+def test_install_git_normalizes_and_records_ref(home, monkeypatch):
     captured = {}
 
-    def fake_run(cmd, **k):
+    def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
-        return _fake_proc()
+        target = Path(cmd[cmd.index("--target") + 1])
+        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.1.0", entry="m:C")
+        return _fake_proc(0)
+
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    result = svc.install("git:https://github.com/x/y")
+    assert result.ok is True, result.error
+    assert "git+https://github.com/x/y" in captured["cmd"]
+    meta = store.read_meta(store.plugin_dir("demo"))
+    assert meta["install"]["type"] == "git"
+    assert meta["install"]["ref"] == "git+https://github.com/x/y"
+
+
+def test_install_already_present_requires_force(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    assert svc.install("pip:datus-demo-plugin").ok is True
+    again = svc.install("pip:datus-demo-plugin")
+    assert not again.ok and "already installed" in again.error
+    assert svc.install("pip:datus-demo-plugin", force=True).ok is True
+
+
+def test_install_non_plugin_target_rejected(home, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        target = Path(cmd[cmd.index("--target") + 1])
+        _write_dist_info(target, name="x", dist="x", version="1", entry="m:C", group="console_scripts")
+        return _fake_proc(0)
+
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    result = svc.install("pip:not-a-plugin")
+    assert not result.ok and "datus plugin" in result.error
+    assert not store.plugins_root().joinpath("x").exists()
+
+
+def test_install_reserved_name_rejected(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer(name="plugin"))
+    result = svc.install("pip:datus-demo-plugin")
+    assert not result.ok and "reserved" in result.error
+
+
+def test_install_subprocess_failure(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: _fake_proc(1, stderr="boom"))
+    result = svc.install("pip:datus-demo-plugin")
+    assert not result.ok and "exited with code 1" in result.error
+    assert result.stderr == "boom"
+
+
+def test_install_empty_source():
+    assert not svc.install("").ok
+
+
+# ── install: zip bundle ──────────────────────────────────────────────────────
+
+
+def test_install_zip_without_deps_is_online(home, tmp_path, monkeypatch):
+    bundle = _make_bundle(tmp_path / "b.zip", bundle_deps=False)
+    runner = _zip_installer()
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", runner)
+    result = svc.install(f"zip:{bundle}")
+    assert result.ok is True, result.error
+    assert "--no-index" not in runner.calls[0]
+    dest = store.plugin_dir("demo")
+    assert (dest / store.ORIGIN_ZIP).is_file()  # original bundle retained
+    meta = store.read_meta(dest)
+    assert meta["install"]["type"] == "zip"
+    assert meta["install"]["origin_artifact"] == store.ORIGIN_ZIP
+
+
+def test_install_zip_with_deps_is_offline(home, tmp_path, monkeypatch):
+    bundle = _make_bundle(
+        tmp_path / "b.zip",
+        bundle_deps=True,
+        wheels={
+            "datus_demo_plugin-0.1.0-py3-none-any.whl": b"PLUGIN",
+            "requests-2.0-py3-none-any.whl": b"DEP",
+        },
+    )
+    runner = _zip_installer()
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", runner)
+    result = svc.install(f"zip:{bundle}")
+    assert result.ok is True, result.error
+    assert "--no-index" in runner.calls[0]
+
+
+def test_install_zip_missing_manifest(home, tmp_path):
+    path = tmp_path / "bad.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("random.txt", "x")
+    result = svc.install(f"zip:{path}")
+    assert not result.ok and "manifest" in result.error
+
+
+def test_install_zip_checksum_mismatch_never_installs(home, tmp_path, monkeypatch):
+    path = tmp_path / "b.zip"
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "bundle_deps": True,
+        "plugin": {
+            "name": "demo",
+            "distribution": "d",
+            "version": "1",
+            "wheel": "d-1-py3-none-any.whl",
+            "entry_point": "m:C",
+        },
+        "compat": {"requires_python": "", "platform": "any"},
+        "wheels": [{"file": "d-1-py3-none-any.whl", "sha256": "deadbeef", "role": "plugin"}],
+    }
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(svc.BUNDLE_MANIFEST_NAME, json.dumps(manifest))
+        zf.writestr(f"{svc.BUNDLE_WHEELS_DIR}/d-1-py3-none-any.whl", b"REAL")
+    ran = []
+    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: ran.append(1) or _fake_proc(0))
+    result = svc.install(f"zip:{path}")
+    assert not result.ok and "checksum" in result.error
+    assert ran == []
+
+
+def test_install_zip_slip_rejected(home, tmp_path, monkeypatch):
+    path = tmp_path / "b.zip"
+    manifest = {
+        "format": svc.BUNDLE_FORMAT,
+        "format_version": svc.BUNDLE_FORMAT_VERSION,
+        "plugin": {"name": "demo", "distribution": "d", "version": "1", "wheel": "../evil.whl", "entry_point": "m:C"},
+        "compat": {},
+        "wheels": [{"file": "../evil.whl", "sha256": "x", "role": "plugin"}],
+    }
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(svc.BUNDLE_MANIFEST_NAME, json.dumps(manifest))
+    ran = []
+    monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: ran.append(1) or _fake_proc(0))
+    result = svc.install(f"zip:{path}")
+    assert not result.ok and "unsafe wheel filename" in result.error
+    assert ran == []
+
+
+def test_install_zip_not_found(home):
+    assert not svc.install("zip:/no/such.zip").ok
+
+
+def test_install_zip_bad_archive(home, tmp_path):
+    path = tmp_path / "bad.zip"
+    path.write_bytes(b"not a zip")
+    result = svc.install(f"zip:{path}")
+    assert not result.ok and "invalid bundle" in result.error
+
+
+# ── uninstall ────────────────────────────────────────────────────────────────
+
+
+def test_uninstall_removes_dir(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    svc.install("pip:datus-demo-plugin")
+    dest = store.plugin_dir("demo")
+    assert dest.is_dir()
+    result = svc.uninstall("demo")
+    assert result.ok and result.package == "datus-demo-plugin"
+    assert not dest.exists()
+    assert str(dest) not in sys.path
+
+
+def test_uninstall_unknown(home):
+    result = svc.uninstall("mystery")
+    assert not result.ok and "no managed plugin" in result.error
+
+
+def test_uninstall_empty_name(home):
+    assert not svc.uninstall("").ok
+
+
+# ── upgrade ──────────────────────────────────────────────────────────────────
+
+
+def test_upgrade_pip_adds_upgrade_flag(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer(version="0.1.0"))
+    svc.install("pip:datus-demo-plugin")
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        target = Path(cmd[cmd.index("--target") + 1])
+        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.2.0", entry="m:C")
+        return _fake_proc(0)
 
     monkeypatch.setattr(svc.subprocess, "run", fake_run)
-    result = svc.uninstall("statsig")
-    assert result.ok is True
-    assert result.package == "datus-statsig-plugin"
-    assert "datus-statsig-plugin" in captured["cmd"]
+    result = svc.upgrade("demo")
+    assert result.ok is True, result.error
+    assert "--upgrade" in calls[0]
+    assert result.old_version == "0.1.0" and result.new_version == "0.2.0"
 
 
-def test_uninstall_unknown_plugin(monkeypatch):
-    monkeypatch.setattr("datus.plugins.registry.entry_points_for_group", lambda group, name=None: [])
-    result = svc.uninstall("mystery")
-    assert not result.ok
-    assert "no installed plugin" in (result.error or "")
-
-
-def test_uninstall_failure_returncode(monkeypatch):
+def test_upgrade_zip_is_pinned(home, tmp_path, monkeypatch):
+    bundle = _make_bundle(tmp_path / "b.zip", bundle_deps=False)
     monkeypatch.setattr(svc.shutil, "which", lambda name: None)
-    monkeypatch.setattr(
-        "datus.plugins.registry.entry_points_for_group",
-        lambda group, name=None: [_FakeEntryPoint("statsig", package="datus-statsig-plugin")],
+    monkeypatch.setattr(svc.subprocess, "run", _zip_installer())
+    svc.install(f"zip:{bundle}")
+    result = svc.upgrade("demo")
+    assert not result.ok and "cannot be upgraded" in result.error
+
+
+def test_upgrade_unknown(home):
+    assert not svc.upgrade("mystery").ok
+
+
+# ── export ───────────────────────────────────────────────────────────────────
+
+
+def test_export_zip_origin_returns_saved_bundle(home, tmp_path, monkeypatch):
+    bundle = _make_bundle(tmp_path / "orig.zip", bundle_deps=True)
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _zip_installer())
+    svc.install(f"zip:{bundle}")
+
+    out = tmp_path / "out"
+    result = svc.export("demo", out_dir=str(out))
+    assert result.ok is True, result.error
+    exported = Path(result.out_path)
+    assert exported.is_file()
+    # Exported bytes equal the retained original bundle.
+    assert exported.read_bytes() == (store.plugin_dir("demo") / store.ORIGIN_ZIP).read_bytes()
+
+
+def test_export_src_origin_repacks(home, tmp_path, monkeypatch):
+    src = tmp_path / "proj"
+    src.mkdir()
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    svc.install(f"src:{src}")
+
+    packed = {}
+
+    def fake_pack(source, out_dir=".", with_deps=False):
+        packed.update({"source": source, "out_dir": out_dir, "with_deps": with_deps})
+        from datus.cli.plugin_pack import PackResult
+
+        return PackResult(ok=True, bundle_path=f"{out_dir}/repacked.zip", plugin_name="demo", wheel_count=1)
+
+    monkeypatch.setattr(svc, "pack", fake_pack)
+    result = svc.export("demo", out_dir=str(tmp_path / "out"))
+    assert result.ok is True
+    assert packed["source"] == str(src.resolve())
+    assert packed["with_deps"] is True
+
+
+def test_export_unknown(home):
+    assert not svc.export("mystery").ok
+
+
+# ── list_plugins ─────────────────────────────────────────────────────────────
+
+
+class _FakeEntryPoint:
+    def __init__(self, name, dist_name, version, value):
+        self.name = name
+        self.value = value
+        self.dist = type("D", (), {"name": dist_name, "version": version})()
+
+
+class _FakeConfig:
+    def __init__(self, active=None, profiles=None, pins=None):
+        self._active = active
+        self._profiles = profiles or {}
+        self._pins = pins or {}
+        self.plugin_services = self._profiles
+
+    def active_plugin_names(self):
+        return self._active
+
+    def active_plugin_profiles(self, name):
+        return self._pins.get(name)
+
+
+def test_list_merges_managed_and_external(home, monkeypatch):
+    store.write_meta(
+        store.plugin_dir("demo"),
+        {
+            "name": "demo",
+            "distribution": "datus-demo-plugin",
+            "version": "0.1.0",
+            "entry_point": "m:C",
+            "install": {"type": "src"},
+        },
     )
-    monkeypatch.setattr(svc.subprocess, "run", lambda cmd, **k: _fake_proc(returncode=1, stderr="nope"))
-    result = svc.uninstall("statsig")
-    assert not result.ok
-    assert "code 1" in (result.error or "")
-
-
-# ── list_plugins ────────────────────────────────────────────────────────
-
-
-def test_list_plugins_without_config(monkeypatch):
     monkeypatch.setattr(
-        "datus.plugins.registry.iter_plugin_entry_points",
-        lambda: [_FakeEntryPoint("statsig", package="datus-statsig-plugin", version="0.1.0")],
+        registry,
+        "iter_plugin_entry_points",
+        lambda: [_FakeEntryPoint("statsig", "datus-statsig-plugin", "2.0", "s:S")],
     )
-    plugins = svc.list_plugins(agent_config=None)
-    assert len(plugins) == 1
-    info = plugins[0]
-    assert info.name == "statsig"
-    assert info.package == "datus-statsig-plugin"
-    assert info.version == "0.1.0"
-    assert info.active is None  # unknown without a config
-    assert info.profiles == []
+    infos = svc.list_plugins(None)
+    by_name = {i.name: i for i in infos}
+    assert by_name["demo"].source == "managed" and by_name["demo"].install_type == "src"
+    assert by_name["statsig"].source == "external" and by_name["statsig"].version == "2.0"
+    assert [i.name for i in infos] == ["demo", "statsig"]  # sorted
 
 
-def test_list_plugins_with_config(monkeypatch):
+def test_list_managed_wins_over_external_duplicate(home, monkeypatch):
+    store.write_meta(
+        store.plugin_dir("demo"),
+        {"name": "demo", "distribution": "managed-dist", "version": "9.9", "install": {"type": "pip"}},
+    )
     monkeypatch.setattr(
-        "datus.plugins.registry.iter_plugin_entry_points",
-        lambda: [_FakeEntryPoint("statsig", package="datus-statsig-plugin")],
+        registry,
+        "iter_plugin_entry_points",
+        lambda: [_FakeEntryPoint("demo", "external-dist", "0.0", "e:E")],
     )
-
-    class _Cfg:
-        plugin_services = {"statsig": {"dev": {}, "prod": {}}}
-
-        def active_plugin_names(self):
-            return {"statsig"}
-
-        def active_plugin_profiles(self, name):
-            return ["prod"]
-
-    plugins = svc.list_plugins(_Cfg())
-    info = plugins[0]
-    assert info.profiles == ["dev", "prod"]
-    assert info.active is True
-    assert info.active_profiles == ["prod"]
+    infos = svc.list_plugins(None)
+    assert len(infos) == 1
+    assert infos[0].source == "managed" and infos[0].version == "9.9"
 
 
-def test_list_plugins_inactive_when_not_in_whitelist(monkeypatch):
-    monkeypatch.setattr(
-        "datus.plugins.registry.iter_plugin_entry_points",
-        lambda: [_FakeEntryPoint("statsig", package="p")],
-    )
-
-    class _Cfg:
-        plugin_services = {}
-
-        def active_plugin_names(self):
-            return {"other"}  # statsig not listed
-
-        def active_plugin_profiles(self, name):
-            return []
-
-    assert svc.list_plugins(_Cfg())[0].active is False
-
-
-def test_list_plugins_sorted(monkeypatch):
-    monkeypatch.setattr(
-        "datus.plugins.registry.iter_plugin_entry_points",
-        lambda: [_FakeEntryPoint("zeta", package="z"), _FakeEntryPoint("alpha", package="a")],
-    )
-    assert [p.name for p in svc.list_plugins(None)] == ["alpha", "zeta"]
+def test_list_applies_activation_and_profiles(home, monkeypatch):
+    store.write_meta(store.plugin_dir("demo"), {"name": "demo", "distribution": "d", "version": "1", "install": {}})
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active={"demo"}, profiles={"demo": {"prod": {}, "dev": {}}}, pins={"demo": ["prod"]})
+    infos = svc.list_plugins(cfg)
+    assert infos[0].active is True
+    assert infos[0].profiles == ["dev", "prod"]
+    assert infos[0].active_profiles == ["prod"]
 
 
 if __name__ == "__main__":  # pragma: no cover
