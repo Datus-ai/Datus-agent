@@ -3,6 +3,10 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import json
+import os
+import stat
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,6 +17,9 @@ from datus.storage.metric.subject_path import normalize_metric_subject_tree_tag
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
+
+_OSI_METRIC_PATH_LOCKS: Dict[str, threading.RLock] = {}
+_OSI_METRIC_PATH_LOCKS_GUARD = threading.Lock()
 
 
 class MetricFilesystemFuncTool(FilesystemFuncTool):
@@ -76,17 +83,6 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         if policy_error is not None:
             return policy_error
 
-        target_path = resolved.resolved
-        if not target_path.exists() or not target_path.is_file():
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "OSI semantic model is required before metric generation. "
-                    "Run gen_semantic_model first, then retry gen_metrics."
-                ),
-                result={"code": "semantic_model_required", "semantic_model_file": resolved.display},
-            )
-
         try:
             incoming_metrics = json.loads(metrics_json)
         except (TypeError, json.JSONDecodeError) as exc:
@@ -105,44 +101,68 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 return FuncToolResult(success=0, error=f"metrics_json contains duplicate metric name: {name}")
             incoming_by_name[name] = metric
 
-        try:
-            document = yaml.safe_load(target_path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
+        target_path = resolved.resolved
+        with self._osi_metric_path_lock(target_path):
+            if not target_path.exists() or not target_path.is_file():
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "OSI semantic model is required before metric generation. "
+                        "Run gen_semantic_model first, then retry gen_metrics."
+                    ),
+                    result={"code": "semantic_model_required", "semantic_model_file": resolved.display},
+                )
 
-        if not isinstance(document, dict):
-            return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
-        models = document.get("semantic_model")
-        if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
-            return FuncToolResult(success=0, error="OSI document must contain exactly one semantic_model object")
+            try:
+                document = yaml.safe_load(target_path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError) as exc:
+                return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
 
-        model = models[0]
-        existing_metrics = model.get("metrics") or []
-        if not isinstance(existing_metrics, list) or any(not isinstance(metric, dict) for metric in existing_metrics):
-            return FuncToolResult(success=0, error="semantic_model[0].metrics must be a list of metric objects")
+            if not isinstance(document, dict):
+                return FuncToolResult(success=0, error="OSI semantic model root must be a YAML object")
+            models = document.get("semantic_model")
+            if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+                return FuncToolResult(success=0, error="OSI document must contain exactly one semantic_model object")
 
-        metric_indexes: Dict[str, int] = {}
-        for index, metric in enumerate(existing_metrics):
-            name = str(metric.get("name") or "").strip()
-            if name:
-                metric_indexes[name] = index
+            model = models[0]
+            existing_metrics = model["metrics"] if "metrics" in model else []
+            if not isinstance(existing_metrics, list) or any(
+                not isinstance(metric, dict) for metric in existing_metrics
+            ):
+                return FuncToolResult(success=0, error="semantic_model[0].metrics must be a list of metric objects")
 
-        created: List[str] = []
-        updated: List[str] = []
-        for name, metric in incoming_by_name.items():
-            if name in metric_indexes:
-                existing_metrics[metric_indexes[name]] = metric
-                updated.append(name)
-            else:
-                metric_indexes[name] = len(existing_metrics)
-                existing_metrics.append(metric)
-                created.append(name)
+            metric_indexes: Dict[str, int] = {}
+            for index, metric in enumerate(existing_metrics):
+                name = str(metric.get("name") or "").strip()
+                if name:
+                    metric_indexes[name] = index
 
-        model["metrics"] = existing_metrics
-        serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
-        write_result = super().write_file(path, serialized)
-        if not write_result.success:
-            return write_result
+            created: List[str] = []
+            updated: List[str] = []
+            for name, metric in incoming_by_name.items():
+                if name in metric_indexes:
+                    existing_metrics[metric_indexes[name]] = metric
+                    updated.append(name)
+                else:
+                    metric_indexes[name] = len(existing_metrics)
+                    existing_metrics.append(metric)
+                    created.append(name)
+
+            model["metrics"] = existing_metrics
+            try:
+                from datus_semantic_osi.errors import OSIValidationError
+                from datus_semantic_osi.profile import validate_osi_core_schema
+
+                validate_osi_core_schema(document)
+            except (ImportError, OSIValidationError) as exc:
+                return FuncToolResult(success=0, error=f"Invalid OSI metric update: {exc}")
+
+            serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+            try:
+                self._atomic_write_text(target_path, serialized)
+            except OSError as exc:
+                return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
+
         return FuncToolResult(
             result={
                 "message": f"Upserted {len(incoming_by_name)} OSI metric(s)",
@@ -151,6 +171,31 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 "updated": updated,
             }
         )
+
+    @staticmethod
+    def _osi_metric_path_lock(target_path: Path) -> threading.RLock:
+        key = str(target_path.resolve(strict=False))
+        with _OSI_METRIC_PATH_LOCKS_GUARD:
+            return _OSI_METRIC_PATH_LOCKS.setdefault(key, threading.RLock())
+
+    @staticmethod
+    def _atomic_write_text(target_path: Path, content: str) -> None:
+        """Replace an existing file atomically while preserving its mode."""
+        fd, temp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=target_path.parent)
+        temp_path = Path(temp_name)
+        try:
+            os.fchmod(fd, stat.S_IMODE(target_path.stat().st_mode))
+            stream = os.fdopen(fd, "w", encoding="utf-8")
+            fd = -1
+            with stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, target_path)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            temp_path.unlink(missing_ok=True)
 
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
         resolved = self._classify(path)

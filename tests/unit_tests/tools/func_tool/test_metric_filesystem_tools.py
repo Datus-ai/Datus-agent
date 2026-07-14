@@ -3,11 +3,22 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import yaml
 
 from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+
+
+def _osi_metric(name, expression):
+    return {
+        "name": name,
+        "description": f"Definition for {name}",
+        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": expression}]},
+    }
 
 
 class TestMetricFilesystemFuncTool:
@@ -28,27 +39,34 @@ class TestMetricFilesystemFuncTool:
         target.parent.mkdir(parents=True)
         target.write_text(
             """
-version: 0.2.0
+version: 0.2.0.dev0
 semantic_model:
   - name: sales
     description: Sales domain
     datasets:
       - name: orders
-        source:
-          table: orders
+        source: orders
         fields:
           - name: amount
             expression:
-              sql: amount
+              dialects:
+                - dialect: ANSI_SQL
+                  expression: amount
+            dimension:
+              is_time: false
     relationships:
       - name: orders_to_customers
         from: orders
         to: customers
+        from_columns: [customer_id]
+        to_columns: [customer_id]
     metrics:
       - name: revenue
         description: Old definition
         expression:
-          sql: SUM(amount)
+          dialects:
+            - dialect: ANSI_SQL
+              expression: SUM(amount)
 """.lstrip(),
             encoding="utf-8",
         )
@@ -66,13 +84,9 @@ semantic_model:
                     {
                         "name": "revenue",
                         "description": "Corrected definition",
-                        "expression": {"sql": "SUM(net_amount)"},
+                        "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "SUM(net_amount)"}]},
                     },
-                    {
-                        "name": "order_count",
-                        "description": "Number of orders",
-                        "expression": {"sql": "COUNT(*)"},
-                    },
+                    _osi_metric("order_count", "COUNT(*)"),
                 ]
             ),
         )
@@ -89,6 +103,104 @@ semantic_model:
         assert [metric["name"] for metric in after_model["metrics"]] == ["revenue", "order_count"]
         assert after_model["metrics"][0]["description"] == "Corrected definition"
 
+    @pytest.mark.parametrize("invalid_metrics", [{}, ""])
+    def test_upsert_osi_metrics_rejects_present_invalid_metrics_collection(self, tmp_path, invalid_metrics):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        document = {
+            "version": "0.2.0.dev0",
+            "semantic_model": [{"name": "sales", "datasets": [{"name": "orders", "source": "orders"}]}],
+        }
+        document["semantic_model"][0]["metrics"] = invalid_metrics
+        original = yaml.safe_dump(document, sort_keys=False)
+        target.write_text(original, encoding="utf-8")
+        tool = MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi")
+
+        result = tool.upsert_osi_metrics(
+            str(target.relative_to(tmp_path)), json.dumps([_osi_metric("revenue", "SUM(amount)")])
+        )
+
+        assert result.success == 0
+        assert "metrics must be a list" in result.error
+        assert target.read_text(encoding="utf-8") == original
+
+    def test_upsert_osi_metrics_validates_metric_schema_before_writing(self, tmp_path):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        original = """version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets:
+      - name: orders
+        source: orders
+"""
+        target.write_text(original, encoding="utf-8")
+        tool = MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi")
+
+        result = tool.upsert_osi_metrics(
+            str(target.relative_to(tmp_path)),
+            json.dumps([{"name": "revenue"}]),
+        )
+
+        assert result.success == 0
+        assert "Invalid OSI metric update" in result.error
+        assert target.read_text(encoding="utf-8") == original
+
+    def test_upsert_osi_metrics_serializes_concurrent_tool_instances(self, tmp_path, monkeypatch):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            """version: 0.2.0.dev0
+semantic_model:
+  - name: sales
+    datasets:
+      - name: orders
+        source: orders
+""",
+            encoding="utf-8",
+        )
+        tools = [
+            MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi"),
+            MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi"),
+        ]
+        original_atomic_write = MetricFilesystemFuncTool._atomic_write_text
+        active_writes = 0
+        max_active_writes = 0
+        counter_lock = threading.Lock()
+
+        def slow_atomic_write(path, content):
+            nonlocal active_writes, max_active_writes
+            with counter_lock:
+                active_writes += 1
+                max_active_writes = max(max_active_writes, active_writes)
+            time.sleep(0.02)
+            try:
+                original_atomic_write(path, content)
+            finally:
+                with counter_lock:
+                    active_writes -= 1
+
+        monkeypatch.setattr(MetricFilesystemFuncTool, "_atomic_write_text", staticmethod(slow_atomic_write))
+        barrier = threading.Barrier(2)
+
+        def upsert(tool, metric):
+            barrier.wait()
+            return tool.upsert_osi_metrics(str(target.relative_to(tmp_path)), json.dumps([metric]))
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(
+                    upsert,
+                    tools,
+                    [_osi_metric("revenue", "SUM(amount)"), _osi_metric("order_count", "COUNT(*)")],
+                )
+            )
+
+        assert all(result.success == 1 for result in results)
+        assert max_active_writes == 1
+        metrics = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["metrics"]
+        assert {metric["name"] for metric in metrics} == {"revenue", "order_count"}
+
     def test_upsert_osi_metrics_requires_existing_model(self, tmp_path):
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
@@ -98,7 +210,7 @@ semantic_model:
 
         result = tool.upsert_osi_metrics(
             "subject/semantic_models/warehouse/sales.yml",
-            json.dumps([{"name": "revenue", "expression": {"sql": "SUM(amount)"}}]),
+            json.dumps([_osi_metric("revenue", "SUM(amount)")]),
         )
 
         assert result.success == 0

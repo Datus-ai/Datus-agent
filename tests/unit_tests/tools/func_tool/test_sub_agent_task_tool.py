@@ -801,9 +801,13 @@ class TestTaskExecution:
         execute_node.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_semantic_authoring_tasks_are_serialized(self, task_tool, monkeypatch):
+    async def test_semantic_authoring_tasks_are_serialized_across_tool_instances(
+        self, task_tool, monkeypatch, tmp_path
+    ):
         active = 0
         max_active = 0
+        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
+        metrics_tool = SubAgentTaskTool(agent_config=task_tool.agent_config)
 
         async def fake_execute(subagent_type, prompt, **kwargs):
             nonlocal active, max_active
@@ -815,10 +819,12 @@ class TestTaskExecution:
 
         monkeypatch.setattr(task_tool, "_execute_node", fake_execute)
         monkeypatch.setattr(task_tool, "_osi_metric_precondition", lambda: None)
+        monkeypatch.setattr(metrics_tool, "_execute_node", fake_execute)
+        monkeypatch.setattr(metrics_tool, "_osi_metric_precondition", lambda: None)
 
         semantic_result, metrics_result = await asyncio.gather(
             task_tool.task(type="gen_semantic_model", prompt="Generate the sales model"),
-            task_tool.task(type="gen_metrics", prompt="Generate revenue"),
+            metrics_tool.task(type="gen_metrics", prompt="Generate revenue"),
         )
 
         assert semantic_result.success == 1

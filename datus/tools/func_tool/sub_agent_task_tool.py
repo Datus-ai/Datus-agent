@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+import weakref
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
     from datus.schemas.base import BaseInput
 
 logger = get_logger(__name__)
+
+_SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 # Mapping from subagent type string to NodeType constants
 NODE_CLASS_MAP = {
@@ -243,7 +246,6 @@ class SubAgentTaskTool:
         self._action_bus: Optional["ActionBus"] = None
         self._interaction_broker: Optional["InteractionBroker"] = None
         self._parent_node: Optional["AgenticNode"] = None
-        self._semantic_authoring_locks: Dict[str, asyncio.Lock] = {}
 
     def set_action_bus(self, bus: "ActionBus") -> None:
         """Inject the :class:`ActionBus` for forwarding sub-agent actions."""
@@ -343,8 +345,7 @@ class SubAgentTaskTool:
             normalized_type = type.strip().strip("\"'") if isinstance(type, str) else type
             semantic_types = {"gen_semantic_model", "gen_metrics"}
             if normalized_type in semantic_types and normalized_type in self._get_available_types():
-                lock_key = self._semantic_authoring_lock_key()
-                lock = self._semantic_authoring_locks.setdefault(lock_key, asyncio.Lock())
+                lock = self._semantic_authoring_lock()
                 async with lock:
                     if normalized_type == "gen_metrics":
                         precondition = self._osi_metric_precondition()
@@ -370,7 +371,17 @@ class SubAgentTaskTool:
         path_manager = getattr(self.agent_config, "path_manager", None)
         project_root = getattr(path_manager, "project_root", "")
         datasource = str(getattr(self.agent_config, "current_datasource", "") or "default")
-        return f"{project_root}:{datasource}"
+        try:
+            project_key = str(Path(project_root).expanduser().resolve(strict=False))
+        except TypeError:
+            project_key = str(project_root)
+        return f"{project_key}:{datasource}"
+
+    def _semantic_authoring_lock(self) -> asyncio.Lock:
+        """Return the event-loop shared lock for one project datasource."""
+        loop = asyncio.get_running_loop()
+        loop_locks = _SEMANTIC_AUTHORING_LOCKS.setdefault(loop, {})
+        return loop_locks.setdefault(self._semantic_authoring_lock_key(), asyncio.Lock())
 
     def _osi_metric_precondition(self) -> Optional[FuncToolResult]:
         """Require the OSI domain model before starting the metric subagent."""
