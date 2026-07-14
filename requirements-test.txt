@@ -386,13 +386,13 @@ datus-metricflow==0.2.7 \
     --hash=sha256:79326bc901b1a4e2ce9a92347536c302eb0ea80891bffccd67077f3eb2490787 \
     --hash=sha256:a85727556c2f1fb667b9e2059de095f1422ecc0eac4f05c8ced25d29acf80a95
     # via datus-semantic-metricflow
-datus-semantic-core==0.2.0 \
-    --hash=sha256:2e29c6df77489c4a7444ef8afa9fb0d5a37fe1512dbaaa2d81b610c2f1b65cc7 \
-    --hash=sha256:4679d031629b73788e86882e56cef2e4d6f3bd00c970930d1aac2798152d995f
+datus-semantic-core==0.2.1 \
+    --hash=sha256:1ca8c1b0671f63a09175659ceac199f65664efb0d592a5495e7223c2c87de5e2 \
+    --hash=sha256:f1f8f43f2dab0944372f0028af3424c1dd18e5a37de23068e4e80d38d7583b5a
     # via datus-semantic-metricflow
-datus-semantic-metricflow==0.2.8 \
-    --hash=sha256:a4aa647916e9b9a96f2841ceef5d2e88a0c05bef638dbf853bc36317c37bfd8a \
-    --hash=sha256:f3467bc6e5f2a50993651f5dbb5c9e0df756e9156352dd19e29a6200e8747a0a
+datus-semantic-metricflow==0.2.9 \
+    --hash=sha256:543d4249f4c029a30c36c9c018565495b187d95b70a5ba2b4861815c8750468e \
+    --hash=sha256:c00778827c1771156cd4eda76c38551e08a585597b028e88598124fe7a478a76
 datus-storage-base==0.1.5 \
     --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
     --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3

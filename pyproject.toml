@@ -1,7 +1,7 @@
 # Project basic information configuration, required.
 [project]
 name = "datus-agent"
-version = "0.3.7"
+version = "0.3.8rc1"
 description = "AI-powered SQL Agent for data engineering (Compiled Version)"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -76,7 +76,7 @@ dependencies = [
     "lxml>=5.0.0",
     "markdown-it-py>=3.0.0",
     "tabulate>=0.9.0",
-    "datus-semantic-core>=0.2.0",
+    "datus-semantic-core>=0.2.1",
     # BI platform adapters (core models & interfaces)
     "datus-bi-core>=0.1.2",
     # Workflow scheduler adapters (core framework)
@@ -198,7 +198,7 @@ dev = [
 ci = [
     "datus-storage-postgresql>=0.1.5",
     "datus-metricflow>=0.2.7",
-    "datus-semantic-metricflow>=0.2.8",
+    "datus-semantic-metricflow>=0.2.9",
 ]
 
 [tool.coverage.run]
