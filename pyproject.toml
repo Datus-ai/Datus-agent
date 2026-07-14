@@ -216,6 +216,7 @@ exclude_lines = [
     "if __name__ == .__main__.",
     "raise NotImplementedError",
     "except ImportError",
+    "if TYPE_CHECKING:",
 ]
 show_missing = true
 precision = 2
