@@ -8,17 +8,17 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/zh/training/llm_trace_usage/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/zh/knowledge_base/metadata_fts/">
       
       
-        <link rel="prev" href="../../integration/memory/">
+        <link rel="prev" href="../metadata/">
       
       
-        <link rel="next" href="../../develop/">
+        <link rel="next" href="../semantic_model/">
       
       
         
-          <link rel="alternate" href="../../../training/llm_trace_usage/" hreflang="en">
+          <link rel="alternate" href="../../../knowledge_base/metadata_fts/" hreflang="en">
         
           <link rel="alternate" href="./" hreflang="zh">
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>LLM Trace Usage - Datus Docs</title>
+        <title>元数据全文检索 - Datus Docs</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#llm-trace" class="md-skip">
+        <a href="#_1" class="md-skip">
           跳转至
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              LLM Trace Usage
+              元数据全文检索
             
           </span>
         </div>
@@ -170,7 +170,7 @@
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="../../../training/llm_trace_usage/" hreflang="en" class="md-select__link">
+            <a href="../../../knowledge_base/metadata_fts/" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
@@ -2069,8 +2069,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -2097,11 +2099,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_9" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_9" checked>
         
           
           <label class="md-nav__link" for="__nav_1_9" id="__nav_1_9_label" tabindex="0">
@@ -2122,7 +2124,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_9_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_9_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_1_9">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2140,7 +2142,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/introduction/" class="md-nav__link">
+      <a href="../introduction/" class="md-nav__link">
         
   
   
@@ -2168,7 +2170,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/platform_doc/" class="md-nav__link">
+      <a href="../platform_doc/" class="md-nav__link">
         
   
   
@@ -2196,7 +2198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/metadata/" class="md-nav__link">
+      <a href="../metadata/" class="md-nav__link">
         
   
   
@@ -2221,10 +2223,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../knowledge_base/metadata_fts/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    元数据全文检索
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2240,6 +2269,175 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="目录">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      目录
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#fts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FTS 与向量检索的区别
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        前置条件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fts_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        启用 FTS
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        首次构建索引
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        验证索引
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        日常更新
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        切回向量检索
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        故障排查
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="故障排查">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fts_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        存储后端不支持 FTS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        索引缺失或版本不兼容
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#incremental" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        新环境执行 incremental 失败
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootstrap-fts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bootstrap 使用了 FTS，但日常运行仍在使用向量检索
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        无法找到语义相关但没有相同关键词的表
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2252,7 +2450,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/semantic_model/" class="md-nav__link">
+      <a href="../semantic_model/" class="md-nav__link">
         
   
   
@@ -2280,7 +2478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/metrics/" class="md-nav__link">
+      <a href="../metrics/" class="md-nav__link">
         
   
   
@@ -2308,7 +2506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/reference_sql/" class="md-nav__link">
+      <a href="../reference_sql/" class="md-nav__link">
         
   
   
@@ -2336,7 +2534,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../knowledge_base/reference_template/" class="md-nav__link">
+      <a href="../reference_template/" class="md-nav__link">
         
   
   
@@ -3813,8 +4011,6 @@
                 
   
   
-    
-  
   
   
     
@@ -3829,11 +4025,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_16" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_1_16" >
         
           
           <label class="md-nav__link" for="__nav_1_16" id="__nav_1_16_label" tabindex="0">
@@ -3854,7 +4050,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_1_16_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_1_16">
             <span class="md-nav__icon md-icon"></span>
             
@@ -3869,37 +4065,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    LLM Trace Usage
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../training/llm_trace_usage/" class="md-nav__link">
         
   
   
@@ -3915,259 +4084,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="目录">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      目录
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        概览
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        如何启用
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="如何启用">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 命令行参数
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 配置文件
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        输出格式
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="输出格式">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#yaml" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        YAML 文件结构
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#_4" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        字段说明
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_5" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        支持的模型
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_6" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        文件组织
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_7" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        使用场景
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="使用场景">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 调试和开发
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 性能分析
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 审计和合规
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-mcp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. MCP 调用跟踪
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_8" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        重要说明
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#_9" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        输出示例
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="输出示例">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        简单提示
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deepseek-reasoner" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        带推理的输出（DeepSeek Reasoner）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mcp-deepseek" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MCP 调用跟踪（DeepSeek 模型）
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -4373,10 +4289,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
+  <a href="#fts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        概览
+        FTS 与向量检索的区别
       
     </span>
   </a>
@@ -4387,38 +4303,21 @@
   <a href="#_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        如何启用
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="如何启用">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        1. 命令行参数
+        前置条件
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#2" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#fts_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. 配置文件
+        启用 FTS
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4426,38 +4325,21 @@
   <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
-        输出格式
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="输出格式">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#yaml" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        YAML 文件结构
+        首次构建索引
       
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
+      
+        <li class="md-nav__item">
   <a href="#_4" class="md-nav__link">
     <span class="md-ellipsis">
       
-        字段说明
+        验证索引
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4465,7 +4347,7 @@
   <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
-        支持的模型
+        日常更新
       
     </span>
   </a>
@@ -4476,7 +4358,7 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
-        文件组织
+        切回向量检索
       
     </span>
   </a>
@@ -4487,19 +4369,19 @@
   <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
-        使用场景
+        故障排查
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="使用场景">
+    <nav class="md-nav" aria-label="故障排查">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1_1" class="md-nav__link">
+  <a href="#fts_2" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. 调试和开发
+        存储后端不支持 FTS
       
     </span>
   </a>
@@ -4507,93 +4389,43 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        2. 性能分析
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        3. 审计和合规
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#4-mcp" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        4. MCP 调用跟踪
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#_8" class="md-nav__link">
     <span class="md-ellipsis">
       
-        重要说明
+        索引缺失或版本不兼容
       
     </span>
   </a>
   
 </li>
+        
+          <li class="md-nav__item">
+  <a href="#incremental" class="md-nav__link">
+    <span class="md-ellipsis">
       
-        <li class="md-nav__item">
+        新环境执行 incremental 失败
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bootstrap-fts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bootstrap 使用了 FTS，但日常运行仍在使用向量检索
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#_9" class="md-nav__link">
     <span class="md-ellipsis">
       
-        输出示例
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="输出示例">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#_10" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        简单提示
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deepseek-reasoner" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        带推理的输出（DeepSeek Reasoner）
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mcp-deepseek" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        MCP 调用跟踪（DeepSeek 模型）
+        无法找到语义相关但没有相同关键词的表
       
     </span>
   </a>
@@ -4622,7 +4454,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/training/llm_trace_usage.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/main/docs/knowledge_base/metadata_fts.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4630,143 +4462,131 @@
   
 
 
-<h1 id="llm-trace">LLM Trace 使用指南<a class="headerlink" href="#llm-trace" title="Permanent link">&para;</a></h1>
-<h2 id="_1">概览<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p><code>--save_llm_trace</code> 参数允许你将 LLM 输入和输出保存到 YAML 文件，用于调试、分析和审计目的。</p>
-<h2 id="_2">如何启用<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
-<h3 id="1">1. 命令行参数<a class="headerlink" href="#1" title="Permanent link">&para;</a></h3>
-<p>在任何 Datus 命令中添加 <code>--save_llm_trace</code> 参数：</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># CLI 模式</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>spidersnow<span class="w"> </span>--save_llm_trace
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># 主程序模式</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.main<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span>--task_db_name<span class="w"> </span>test.db<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;Query all users&quot;</span><span class="w"> </span>--save_llm_trace
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="c1"># Benchmark 模式</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.main<span class="w"> </span>benchmark<span class="w"> </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span>--save_llm_trace
-</span></code></pre></div>
-<h3 id="2">2. 配置文件<a class="headerlink" href="#2" title="Permanent link">&para;</a></h3>
-<p>你也可以在 <code>agent.yml</code> 配置文件中为特定模型启用跟踪：</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">models</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">deepseek-v3</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">      </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.deepseek.com</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DEEPSEEK_API_KEY}</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deepseek-chat</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">save_llm_trace</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">  </span><span class="c1"># 为此模型启用跟踪</span>
-</span></code></pre></div>
-<h2 id="_3">输出格式<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
-<p>跟踪文件保存在 <code>trajectory_dir/{task_id}/</code> 目录中（<code>trajectory_dir</code> 是已配置的 trace 输出基础目录，通常为 <code>{agent.home}/trajectory/{datasource}/{timestamp}/</code>，其中 <code>--datasource</code> 控制 <code>{datasource}</code> 这一段），每个节点生成一个 <code>{node_id}.yml</code> 文件。</p>
-<h3 id="yaml">YAML 文件结构<a class="headerlink" href="#yaml" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">helpful</span><span class="nv"> </span><span class="s">SQL</span><span class="nv"> </span><span class="s">assistant.&quot;</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">user_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Generate</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">SQL</span><span class="nv"> </span><span class="s">query</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">select</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">users&quot;</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">reason_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;This</span><span class="nv"> </span><span class="s">query</span><span class="nv"> </span><span class="s">selects</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">columns</span><span class="nv"> </span><span class="s">from</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">users</span><span class="nv"> </span><span class="s">table...&quot;</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">output_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;SELECT</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">FROM</span><span class="nv"> </span><span class="s">users;&quot;</span>
-</span></code></pre></div>
-<h3 id="_4">字段说明<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h3>
+<h1 id="_1">元数据全文检索<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
+<p>元数据全文检索（FTS）是查找相关数据表时可选的一种检索方式。它直接检索表元数据中的文本，不需要为这些元数据生成 embedding。</p>
+<p>当用户问题中包含明确的业务词、表名、列名、SQL 片段或其它原文关键词时，FTS 更合适。如果用户经常使用元数据中没有出现的说法来描述业务概念，建议继续使用默认的向量检索。</p>
+<div class="admonition note">
+<p class="admonition-title">生效范围</p>
+<p>此配置只改变表发现和 schema linking 使用的<strong>元数据检索</strong>。指标、Reference SQL、Reference Template、平台文档等其它知识库组件仍使用各自的检索方式。FTS 只会检索 bootstrap 时采集的样本数据，不会扫描数据源中每一行数据。</p>
+</div>
+<h2 id="fts">FTS 与向量检索的区别<a class="headerlink" href="#fts" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>fts</code></th>
+<th><code>vector</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>适合场景</td>
+<td>关键词、标识符、SQL 文本和明确的业务词</td>
+<td>语义相似和改写后的自然语言问题</td>
+</tr>
+<tr>
+<td>元数据 embedding</td>
+<td>不生成</td>
+<td>需要生成</td>
+</tr>
+<tr>
+<td>是否为默认值</td>
+<td>否</td>
+<td>是</td>
+</tr>
+<tr>
+<td>检索失败时回退</td>
+<td>不会自动回退到向量检索</td>
+<td>不适用</td>
+</tr>
+</tbody>
+</table>
+<p>FTS 会索引以下元数据文本：</p>
 <ul>
-<li><strong>system_prompt</strong>：系统提示词（如果使用消息格式）</li>
-<li><strong>user_prompt</strong>：用户输入提示词</li>
-<li><strong>reason_content</strong>：推理内容（仅适用于推理模型，如 deepseek-reasoner）</li>
-<li><strong>output_content</strong>：模型输出内容</li>
+<li>表名、完整限定名、唯一标识和表类型</li>
+<li>表或视图定义（DDL）</li>
+<li><code>bootstrap-kb</code> 采集的样本数据</li>
+<li>已关联的表语义描述，包括 description、列、关系和 AI context 等信息</li>
 </ul>
-<h2 id="_5">支持的模型<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
-<p>目前，LLM trace 功能主要在 DeepSeek 模型中实现：</p>
+<p>检索结果仍受当前 datasource，以及 Datus Agent 应用的 catalog、database、schema、表类型和 subagent 范围限制。</p>
+<h2 id="_2">前置条件<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <ul>
-<li>✅ DeepSeek Chat (deepseek-chat)</li>
-<li>✅ DeepSeek Reasoner (deepseek-reasoner) - 包含推理内容</li>
-<li>🔄 其他模型（OpenAI、Claude、Qwen）有基本接口，可以扩展</li>
+<li>已配置 datasource，且数据库账号有读取元数据和样本数据的权限。</li>
+<li>使用支持 FTS 的向量存储后端。内置 LanceDB 无需额外配置即可使用。</li>
+<li>如果 <code>storage.vector</code> 使用外部适配器，请确认所安装的适配器版本实现了 Datus FTS 接口。不支持 FTS 的后端会直接报错，不会静默切换为向量检索。</li>
 </ul>
-<h2 id="_6">文件组织<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>trajectory_dir/
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>└── task_123_20240101/
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    ├── node_1.yml          # Schema Linking 节点
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    ├── node_2.yml          # Generate SQL 节点
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    ├── node_3.yml          # Execute SQL 节点
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    └── node_4.yml          # Output 节点
+<h2 id="fts_1">启用 FTS<a class="headerlink" href="#fts_1" title="Permanent link">&para;</a></h2>
+<p>在 bootstrap 和日常运行共同使用的 <code>agent.yml</code> 中添加：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">kb</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">search</span><span class="p">:</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fts</span>
 </span></code></pre></div>
-<h2 id="_7">使用场景<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
-<h3 id="1_1">1. 调试和开发<a class="headerlink" href="#1_1" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># 在开发期间启用跟踪以调试提示词</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>datus-cli<span class="w"> </span>--datasource<span class="w"> </span>local_duckdb<span class="w"> </span>--save_llm_trace
+<p>没有此配置时，默认值是 <code>vector</code>。</p>
+<p><code>bootstrap-kb</code> 也支持 <code>--kb_search_mode fts</code>，但该参数只覆盖当前命令，不会保存配置。要让 chat、API、后台同步和后续 agent 运行都使用 FTS，必须把配置写入 <code>agent.yml</code>。</p>
+<h2 id="_3">首次构建索引<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<p>首次启用 FTS，或者从向量检索切换到 FTS 时，需要完整重建元数据：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--components<span class="w"> </span>metadata<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>overwrite
 </span></code></pre></div>
-<h3 id="2_1">2. 性能分析<a class="headerlink" href="#2_1" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># 分析不同节点的 LLM 输入/输出</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.main<span class="w"> </span>benchmark<span class="w"> </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span>--benchmark<span class="w"> </span>bird_dev<span class="w"> </span>--save_llm_trace
+<p><code>overwrite</code> 只替换当前 datasource 的元数据，并使用当前索引格式创建 FTS 索引，不会重建其它知识库组件。</p>
+<p>临时测试时，可以在命令末尾添加 <code>--kb_search_mode fts</code>。请注意，后续运行仍会从 <code>agent.yml</code> 读取检索模式。</p>
+<h2 id="_4">验证索引<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p>使用同一份配置执行只读检查：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--components<span class="w"> </span>metadata<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>check
 </span></code></pre></div>
-<h3 id="3">3. 审计和合规<a class="headerlink" href="#3" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># 记录所有 LLM 交互以进行审计</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.main<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>prod<span class="w"> </span>--task_db_name<span class="w"> </span>analytics<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;sensitive query&quot;</span><span class="w"> </span>--save_llm_trace
+<p>检查成功时，结果会包含 <code>search_mode=fts</code>、<code>schema_size</code> 和 <code>value_size</code>，同时确认 FTS 索引存在且符合当前索引规范。</p>
+<p>之后可以正常使用 Datus。例如启动 CLI、选择 datasource，然后询问数据表：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>datus
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>/datasource &lt;your_datasource&gt;
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>哪个表包含客户订单状态？
 </span></code></pre></div>
-<h3 id="4-mcp">4. MCP 调用跟踪<a class="headerlink" href="#4-mcp" title="Permanent link">&para;</a></h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># 启用 MCP 调用的详细跟踪，包括整个函数调用过程</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>python<span class="w"> </span>-m<span class="w"> </span>datus.main<span class="w"> </span>run<span class="w"> </span>--datasource<span class="w"> </span>bird_sqlite<span class="w"> </span>--task_db_name<span class="w"> </span>test.db<span class="w"> </span>--task<span class="w"> </span><span class="s2">&quot;Complex query&quot;</span><span class="w"> </span>--save_llm_trace
+<p>元数据工具和 schema linking 会自动使用已配置的 FTS 检索路径。</p>
+<h2 id="_5">日常更新<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
+<p>完成首次完整构建后，日常 schema 变化可以使用增量更新：</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>--components<span class="w"> </span>metadata<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>incremental
 </span></code></pre></div>
-<h2 id="_8">重要说明<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>存储空间</strong>：启用跟踪会增加存储使用量，特别是对于长对话</li>
-<li><strong>敏感信息</strong>：跟踪文件可能包含敏感数据，请谨慎处理</li>
-<li><strong>性能影响</strong>：文件写入操作可能会略微影响性能</li>
-<li><strong>目录权限</strong>：确保 <code>trajectory_dir</code> 目录具有写入权限</li>
-</ol>
-<h2 id="_9">输出示例<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h2>
-<h3 id="_10">简单提示<a class="headerlink" href="#_10" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nt">user_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Create</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">query</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">find</span><span class="nv"> </span><span class="s">all</span><span class="nv"> </span><span class="s">active</span><span class="nv"> </span><span class="s">users&quot;</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nt">reason_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;&quot;</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nt">output_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;SELECT</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">FROM</span><span class="nv"> </span><span class="s">users</span><span class="nv"> </span><span class="s">WHERE</span><span class="nv"> </span><span class="s">status</span><span class="nv"> </span><span class="s">=</span><span class="nv"> </span><span class="s">&#39;active&#39;;&quot;</span>
+<p>增量模式会更新或新增发生变化的元数据，并维护现有索引。它要求 FTS 索引已经处于可用状态，不会创建或修复缺失的索引。</p>
+<p>以下情况需要重新执行 <code>overwrite</code>：</p>
+<ul>
+<li>首次启用 FTS，或者切换存储后端</li>
+<li>Datus 报告索引状态为 <code>missing</code>、<code>legacy</code> 或 <code>version_mismatch</code></li>
+<li>上一次构建被中断，索引不完整</li>
+<li>升级说明明确要求重建 FTS 索引</li>
+</ul>
+<h2 id="_6">切回向量检索<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h2>
+<p>修改配置并重建元数据，确保向量存储和 embedding 都是最新的：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">kb</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">search</span><span class="p">:</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vector</span>
 </span></code></pre></div>
-<h3 id="deepseek-reasoner">带推理的输出（DeepSeek Reasoner）<a class="headerlink" href="#deepseek-reasoner" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">an</span><span class="nv"> </span><span class="s">expert</span><span class="nv"> </span><span class="s">SQL</span><span class="nv"> </span><span class="s">developer.&quot;</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nt">user_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Find</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">top</span><span class="nv"> </span><span class="s">5</span><span class="nv"> </span><span class="s">customers</span><span class="nv"> </span><span class="s">by</span><span class="nv"> </span><span class="s">revenue&quot;</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nt">reason_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;I</span><span class="nv"> </span><span class="s">need</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">join</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">customers</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">orders</span><span class="nv"> </span><span class="s">tables,</span><span class="nv"> </span><span class="s">sum</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">order</span><span class="nv"> </span><span class="s">amounts,</span><span class="nv"> </span><span class="s">group</span><span class="nv"> </span><span class="s">by</span><span class="nv"> </span><span class="s">customer,</span><span class="nv"> </span><span class="s">and</span><span class="nv"> </span><span class="s">limit</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">top</span><span class="nv"> </span><span class="s">5...&quot;</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nt">output_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;SELECT</span><span class="nv"> </span><span class="s">c.name,</span><span class="nv"> </span><span class="s">SUM(o.amount)</span><span class="nv"> </span><span class="s">as</span><span class="nv"> </span><span class="s">total_revenue</span><span class="nv"> </span><span class="s">FROM</span><span class="nv"> </span><span class="s">customers</span><span class="nv"> </span><span class="s">c</span><span class="nv"> </span><span class="s">JOIN</span><span class="nv"> </span><span class="s">orders</span><span class="nv"> </span><span class="s">o</span><span class="nv"> </span><span class="s">ON</span><span class="nv"> </span><span class="s">c.id</span><span class="nv"> </span><span class="s">=</span><span class="nv"> </span><span class="s">o.customer_id</span><span class="nv"> </span><span class="s">GROUP</span><span class="nv"> </span><span class="s">BY</span><span class="nv"> </span><span class="s">c.id</span><span class="nv"> </span><span class="s">ORDER</span><span class="nv"> </span><span class="s">BY</span><span class="nv"> </span><span class="s">total_revenue</span><span class="nv"> </span><span class="s">DESC</span><span class="nv"> </span><span class="s">LIMIT</span><span class="nv"> </span><span class="s">5;&quot;</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>datus-agent<span class="w"> </span>bootstrap-kb<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>--datasource<span class="w"> </span>&lt;your_datasource&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>--components<span class="w"> </span>metadata<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>--kb_update_strategy<span class="w"> </span>overwrite
 </span></code></pre></div>
-<h3 id="mcp-deepseek">MCP 调用跟踪（DeepSeek 模型）<a class="headerlink" href="#mcp-deepseek" title="Permanent link">&para;</a></h3>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;You</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">a</span><span class="nv"> </span><span class="s">snowflake</span><span class="nv"> </span><span class="s">expert.&quot;</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nt">user_prompt</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Instruction:</span><span class="nv"> </span><span class="s">Generate</span><span class="nv"> </span><span class="s">SQL</span><span class="nv"> </span><span class="s">for</span><span class="nv"> </span><span class="s">data</span><span class="nv"> </span><span class="s">analysis\n\nUser</span><span class="nv"> </span><span class="s">Prompt:</span><span class="nv"> </span><span class="s">Find</span><span class="nv"> </span><span class="s">recent</span><span class="nv"> </span><span class="s">transactions&quot;</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nt">reason_content</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">  </span><span class="no">=== MCP Conversation Started ===</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">  </span><span class="no">Instruction: You are a snowflake expert. Generate SQL queries and execute them.</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">  </span><span class="no">User Prompt: Find recent transactions</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">  </span><span class="no">Max Turns: 10</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="w">  </span><span class="no">=== MCP Server Started ===</span>
-</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="w">  </span><span class="no">Agent created: MCP_Agent</span>
-</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="w">  </span><span class="no">Output type: &lt;class &#39;str&#39;&gt;</span>
-</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>
-</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="w">  </span><span class="no">=== Agent Execution Started ===</span>
-</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>
-</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">  </span><span class="no">=== Result Analysis ===</span>
-</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">  </span><span class="no">Result type: &lt;class &#39;agents.runner.Result&#39;&gt;</span>
-</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="w">  </span><span class="no">Result attributes: [&#39;final_output&#39;, &#39;messages&#39;, &#39;run_id&#39;, &#39;iteration_count&#39;, &#39;total_cost&#39;]</span>
-</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>
-</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="w">  </span><span class="no">=== Conversation Messages ===</span>
-</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a><span class="w">  </span><span class="no">Message 1 (user):</span>
-</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a><span class="w">    </span><span class="no">Content: Find recent transactions from the database</span>
-</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>
-</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a><span class="w">  </span><span class="no">Message 2 (assistant):</span>
-</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a><span class="w">    </span><span class="no">Content: I&#39;ll help you find recent transactions. Let me query the database.</span>
-</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a><span class="w">    </span><span class="no">Tool Calls:</span>
-</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a><span class="w">      </span><span class="no">1. read_query({&quot;query&quot;: &quot;SELECT * FROM transactions WHERE created_at &gt;= CURRENT_DATE - INTERVAL &#39;7 days&#39; ORDER BY created_at DESC LIMIT 100&quot;})</span>
-</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>
-</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a><span class="w">  </span><span class="no">Message 3 (user):</span>
-</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a><span class="w">    </span><span class="no">Content: Tool result: [transaction data...]</span>
-</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>
-</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a><span class="w">  </span><span class="no">=== Tool Execution Results ===</span>
-</span><span id="__span-10-32"><a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a><span class="w">  </span><span class="no">Tool Output 1:</span>
-</span><span id="__span-10-33"><a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a><span class="w">    </span><span class="no">Content: SELECT * FROM transactions WHERE created_at &gt;= CURRENT_DATE - INTERVAL &#39;7 days&#39; ORDER BY created_at DESC LIMIT 100</span>
-</span><span id="__span-10-34"><a id="__codelineno-10-34" name="__codelineno-10-34" href="#__codelineno-10-34"></a><span class="w">    </span><span class="no">Results: [{&quot;id&quot;: 1, &quot;amount&quot;: 100.00, &quot;created_at&quot;: &quot;2024-01-15&quot;}...]</span>
-</span><span id="__span-10-35"><a id="__codelineno-10-35" name="__codelineno-10-35" href="#__codelineno-10-35"></a>
-</span><span id="__span-10-36"><a id="__codelineno-10-36" name="__codelineno-10-36" href="#__codelineno-10-36"></a><span class="w">  </span><span class="no">=== Agent Execution Completed ===</span>
-</span><span id="__span-10-37"><a id="__codelineno-10-37" name="__codelineno-10-37" href="#__codelineno-10-37"></a><span class="w">  </span><span class="no">Final Output: Here are the recent transactions from the last 7 days: [results summary]</span>
-</span><span id="__span-10-38"><a id="__codelineno-10-38" name="__codelineno-10-38" href="#__codelineno-10-38"></a>
-</span><span id="__span-10-39"><a id="__codelineno-10-39" name="__codelineno-10-39" href="#__codelineno-10-39"></a><span class="w">  </span><span class="no">Run ID: run_123456</span>
-</span><span id="__span-10-40"><a id="__codelineno-10-40" name="__codelineno-10-40" href="#__codelineno-10-40"></a><span class="w">  </span><span class="no">Iteration count: 3</span>
-</span><span id="__span-10-41"><a id="__codelineno-10-41" name="__codelineno-10-41" href="#__codelineno-10-41"></a><span class="w">  </span><span class="no">Total cost: 0.025</span>
-</span><span id="__span-10-42"><a id="__codelineno-10-42" name="__codelineno-10-42" href="#__codelineno-10-42"></a><span class="nt">output_content</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Here</span><span class="nv"> </span><span class="s">are</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">recent</span><span class="nv"> </span><span class="s">transactions</span><span class="nv"> </span><span class="s">from</span><span class="nv"> </span><span class="s">the</span><span class="nv"> </span><span class="s">last</span><span class="nv"> </span><span class="s">7</span><span class="nv"> </span><span class="s">days:</span><span class="nv"> </span><span class="s">[results</span><span class="nv"> </span><span class="s">summary]&quot;</span>
-</span></code></pre></div>
+<h2 id="_7">故障排查<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
+<h3 id="fts_2">存储后端不支持 FTS<a class="headerlink" href="#fts_2" title="Permanent link">&para;</a></h3>
+<p>如果错误信息中出现 <code>FTS-capable vector backend</code>，说明 <code>storage.vector</code> 选择的后端没有提供所需的 FTS 能力。可以使用内置 LanceDB、安装支持 FTS 的适配器版本，或者继续使用 <code>kb.search.mode: vector</code>。</p>
+<h3 id="_8">索引缺失或版本不兼容<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h3>
+<p>如果错误信息中出现 <code>missing</code>、<code>legacy</code> 或 <code>version_mismatch</code>，Datus 不会用向量检索隐藏问题。请使用 <code>--kb_update_strategy overwrite</code> 重建元数据。</p>
+<h3 id="incremental">新环境执行 incremental 失败<a class="headerlink" href="#incremental" title="Permanent link">&para;</a></h3>
+<p>增量模式只能维护已经存在且状态正常的索引。请先执行一次 <code>overwrite</code>，后续更新再使用 <code>incremental</code>。</p>
+<h3 id="bootstrap-fts">Bootstrap 使用了 FTS，但日常运行仍在使用向量检索<a class="headerlink" href="#bootstrap-fts" title="Permanent link">&para;</a></h3>
+<p>如果只在构建命令中使用了 <code>--kb_search_mode fts</code>，那么只有该命令临时使用 FTS。请将 <code>kb.search.mode: fts</code> 写入 <code>agent.yml</code>，然后重新执行只读检查。</p>
+<h3 id="_9">无法找到语义相关但没有相同关键词的表<a class="headerlink" href="#_9" title="Permanent link">&para;</a></h3>
+<p>FTS 按文本匹配排序，不会推断语义相似性。可以为元数据补充更明确的业务描述或表语义信息，使用 schema 中实际出现的词进行检索，或者对大量改写表达的场景切回向量检索。</p>
+<div class="admonition tip">
+<p class="admonition-title">其它组件仍可能需要 embedding</p>
+<p>FTS 只避免为元数据生成 embedding。如果还会构建指标、Reference SQL、文档或其它依赖向量检索的组件，请继续保留这些组件所需的 embedding 配置和凭据。</p>
+</div>
 
 
 
@@ -4796,7 +4616,7 @@
       <nav class="md-footer__inner md-grid" aria-label="页脚" >
         
           
-          <a href="../../integration/memory/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 自动记忆">
+          <a href="../metadata/" class="md-footer__link md-footer__link--prev" aria-label="上一页: 元数据">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -4806,20 +4626,20 @@
                 上一页
               </span>
               <div class="md-ellipsis">
-                自动记忆
+                元数据
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../develop/" class="md-footer__link md-footer__link--next" aria-label="下一页: 概览">
+          <a href="../semantic_model/" class="md-footer__link md-footer__link--next" aria-label="下一页: 语义模型">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 下一页
               </span>
               <div class="md-ellipsis">
-                概览
+                语义模型
               </div>
             </div>
             <div class="md-footer__button md-icon">

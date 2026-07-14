@@ -365,6 +365,13 @@
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/knowledge_base/metadata/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/knowledge_base/metadata_fts/</loc>
+        <lastmod>2026-07-14</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/knowledge_base/metadata_fts/"/>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/devzh/knowledge_base/metadata_fts/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/knowledge_base/metrics/</loc>
         <lastmod>2026-07-14</lastmod>
         <changefreq>daily</changefreq>
@@ -972,6 +979,13 @@
         <changefreq>daily</changefreq>
         <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/knowledge_base/metadata/"/>
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devknowledge_base/metadata/"/>
+    </url>
+    <url>
+        <loc>https://docs.datus.ai/dev/zh/knowledge_base/metadata_fts/</loc>
+        <lastmod>2026-07-14</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="zh" href="https://docs.datus.ai/dev/zh/knowledge_base/metadata_fts/"/>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/devknowledge_base/metadata_fts/"/>
     </url>
     <url>
         <loc>https://docs.datus.ai/dev/zh/knowledge_base/metrics/</loc>
