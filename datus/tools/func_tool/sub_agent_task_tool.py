@@ -13,10 +13,13 @@ tools, template rendering, and action history.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
+import weakref
 from contextlib import nullcontext
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from agents import FunctionTool, Tool
@@ -45,6 +48,8 @@ if TYPE_CHECKING:
     from datus.schemas.base import BaseInput
 
 logger = get_logger(__name__)
+
+_SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 # Mapping from subagent type string to NodeType constants
 NODE_CLASS_MAP = {
@@ -140,6 +145,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
     "gen_semantic_model": (
         "Generate semantic model YAML files from database table structures. "
         "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
+        "For OSI metric generation, run this task first when the target domain semantic model does not exist, "
+        "wait for it to finish, and only then run gen_metrics; never run both tasks concurrently. "
         "Prompt MUST contain table name(s), e.g. 'orders' or 'orders, customers, products'. "
         "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
     ),
@@ -150,6 +157,10 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "(2) Natural language: describe the business metric or calculation rules, "
         "the agent will guide through interactive Q&A to define the metric. "
         "(3) Batch: provide multiple SQL queries for AST-backed metric candidate extraction. "
+        "In OSI mode this task only creates or updates metrics in an existing domain semantic model. "
+        "If it returns code=semantic_model_required, run gen_semantic_model first and retry this task with "
+        "the original prompt. In MetricFlow mode it may create or extend semantic-model prerequisites itself. "
+        "Never run gen_metrics and gen_semantic_model concurrently. "
         "For batch input, if the user provides a CSV file path, YOU (the parent agent) must read the file content first "
         "and include the full content in the prompt — the metrics agent cannot access files outside its workspace. "
         "The metrics agent will preserve final business output expressions and treat base measures as dependencies. "
@@ -331,12 +342,79 @@ class SubAgentTaskTool:
             return FuncToolResult(success=0, error="Missing required parameter: prompt")
 
         try:
+            normalized_type = type.strip().strip("\"'") if isinstance(type, str) else type
+            semantic_types = {"gen_semantic_model", "gen_metrics"}
+            if normalized_type in semantic_types and normalized_type in self._get_available_types():
+                lock = self._semantic_authoring_lock()
+                async with lock:
+                    if normalized_type == "gen_metrics":
+                        precondition = self._osi_metric_precondition()
+                        if precondition is not None:
+                            return precondition
+                    return await self._execute_node(
+                        normalized_type,
+                        prompt,
+                        description=description,
+                        call_id=call_id,
+                        session_id=session_id,
+                    )
+
             return await self._execute_node(
                 type, prompt, description=description, call_id=call_id, session_id=session_id
             )
         except Exception as e:
             logger.error(f"Task tool execution error (type={type}): {e}")
             return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
+
+    def _semantic_authoring_lock_key(self) -> str:
+        """Serialize semantic authoring tasks for one project datasource."""
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        project_root = getattr(path_manager, "project_root", "")
+        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default")
+        try:
+            project_key = str(Path(project_root).expanduser().resolve(strict=False))
+        except TypeError:
+            project_key = str(project_root)
+        return f"{project_key}:{datasource}"
+
+    def _semantic_authoring_lock(self) -> asyncio.Lock:
+        """Return the event-loop shared lock for one project datasource."""
+        loop = asyncio.get_running_loop()
+        loop_locks = _SEMANTIC_AUTHORING_LOCKS.setdefault(loop, {})
+        return loop_locks.setdefault(self._semantic_authoring_lock_key(), asyncio.Lock())
+
+    def _osi_metric_precondition(self) -> Optional[FuncToolResult]:
+        """Require the OSI domain model before starting the metric subagent."""
+        from datus.agent.node.semantic_authoring import (
+            default_osi_semantic_model_file,
+            is_osi_authoring,
+        )
+
+        if not is_osi_authoring(self.agent_config):
+            return None
+
+        path_manager = getattr(self.agent_config, "path_manager", None)
+        project_root = getattr(path_manager, "project_root", None)
+        if project_root is None:
+            return None
+
+        target = Path(project_root) / default_osi_semantic_model_file(self.agent_config)
+        if target.is_file():
+            return None
+
+        return FuncToolResult(
+            success=0,
+            error=(
+                "OSI semantic model is required before metric generation. "
+                "Run gen_semantic_model first, wait for it to finish, then retry gen_metrics."
+            ),
+            result={
+                "code": "semantic_model_required",
+                "required_subagent": "gen_semantic_model",
+                "semantic_model_file": str(target),
+                "retry_subagent": "gen_metrics",
+            },
+        )
 
     # ── node creation ─────────────────────────────────────────────────
 

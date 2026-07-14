@@ -53,11 +53,11 @@ Record the classification as defined in the `<required_skill>` specification{% i
 
 1. **Discover existing assets**: Call `list_metrics()` and build an existing metric catalog. Do not recreate metrics that already exist — but note that "already exists" requires the same aggregation AND the same window/offset semantics; cumulative/window/period-over-period variants of a published base metric are NEW metrics.
 2. **Understand the request**: Confirm scope per the rules above. For provided historical SQL, call `analyze_metric_candidates_from_history` with the existing metric catalog before writing any files, and follow the candidate handling rules in the `<required_skill>` specification.
-3. **Ensure model prerequisites**: Check `check_semantic_object_exists(name, kind='table')` for involved tables{% if authoring_format == "osi" %}. Load the existing OSI model from the target semantic model file to learn dataset names, fields, time fields, and relationships; minimally update it only when something is truly absent{% else %}. If a semantic model is missing, load the `metricflow-semantic-authoring` skill from `<available_skills>` and follow it to create the model{% endif %}.
-4. **Author metrics**: Check `check_semantic_object_exists(name, kind='metric')` for each metric, then write the metric YAML per the `<required_skill>` specification.
-5. **Validate (MUST PASS)**: Call `validate_semantic`. If it fails, fix with `edit_file` and retry until it passes. Do NOT proceed until validation passes.
+3. **Ensure model prerequisites**: Check `check_semantic_object_exists(name, kind='table')` for involved tables{% if authoring_format == "osi" %}. The target OSI model must already exist. Load it to learn dataset names, fields, time fields, and relationships. If it is missing, stop and report that `gen_semantic_model` must run first; never create or modify datasets, fields, or relationships in this workflow{% else %}. If a semantic model is missing, load the `metricflow-semantic-authoring` skill from `<available_skills>` and follow it to create the model{% endif %}.
+4. **Author metrics**: Check `check_semantic_object_exists(name, kind='metric')` for each metric, then write the metric YAML per the `<required_skill>` specification{% if authoring_format == "osi" %} using `upsert_osi_metrics`; it creates new metrics and may replace an existing metric by name when an update is required{% endif %}.
+5. **Validate (MUST PASS)**: Call `validate_semantic`. If it fails, {% if authoring_format == "osi" %}fix the metric definitions with another `upsert_osi_metrics` call{% else %}fix with `edit_file`{% endif %} and retry until it passes. Do NOT proceed until validation passes.
 6. **Dry-run**: Call `query_metrics(metrics=[...], dry_run=True)` for every generated metric. If the source SQL groups by dimensions or a time grain, dry-run with matching `dimensions` / `time_granularity`; use `get_dimensions` for exact names. Collect each generated SQL into `metric_sqls_json`.
-7. **Publish**: After validation and dry-run pass, call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` ONCE. Do not rely on the final JSON host fallback — it is only a last-resort guard. If no metrics were generated, do NOT call `end_metric_generation`.
+7. **Publish**: After validation and dry-run pass, call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` ONCE{% if authoring_format == "osi" %}, passing `semantic_model_files=[]` because this workflow did not change semantic objects{% endif %}. Do not rely on the final JSON host fallback — it is only a last-resort guard. If no metrics were generated, do NOT call `end_metric_generation`.
 
 ## Output Format
 
@@ -65,7 +65,7 @@ Record the classification as defined in the `<required_skill>` specification{% i
 
 {% if authoring_format == "osi" %}```json
 {
-  "semantic_model_file": "{{ default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) }}",
+  "semantic_model_files": [],
   "metric_file": "{{ default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) }}",
   "status": "generated",
   "output": "brief summary"

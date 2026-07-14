@@ -56,7 +56,7 @@ _OPTIONAL_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
     },
     "gen_metrics": {
         AUTHORING_FORMAT_METRICFLOW: "metricflow-semantic-authoring",
-        AUTHORING_FORMAT_OSI: "osi-semantic-authoring",
+        AUTHORING_FORMAT_OSI: "",
     },
 }
 

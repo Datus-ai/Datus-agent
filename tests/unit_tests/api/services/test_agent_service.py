@@ -255,19 +255,18 @@ class TestConstants:
         assert "platform_doc_tools" not in _USER_FACING_TOOL_CATEGORIES
 
     def test_filesystem_tools_valid_methods_match_runtime_surface(self):
-        """``VALID_TOOL_METHODS["filesystem_tools"]`` is derived from
-        ``FilesystemFuncTool.all_tools_name()`` so it auto-tracks the
-        runtime instead of drifting (``delete_file`` was previously
-        missing from the hand-curated set).
+        """``VALID_TOOL_METHODS["filesystem_tools"]`` tracks the complete
+        general plus OSI metric filesystem surface.
 
         Pin both directions: every name the runtime advertises ends up
         in the saas catalog, and every name in the catalog is a real
         public method on the class.
         """
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
+        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
 
         catalog = VALID_TOOL_METHODS["filesystem_tools"]
-        introspected = set(FilesystemFuncTool.all_tools_name())
+        introspected = set(MetricFilesystemFuncTool.all_tools_name())
         assert catalog == introspected
 
         # The runtime advertises its tool surface in ``available_tools``;
@@ -279,12 +278,14 @@ class TestConstants:
             "write_file",
             "edit_file",
             "delete_file",
+            "upsert_osi_metrics",
             "glob",
             "grep",
         }
         assert introspected == expected_runtime_methods
-        for name in expected_runtime_methods:
+        for name in expected_runtime_methods - {"upsert_osi_metrics"}:
             assert hasattr(FilesystemFuncTool, name), f"FilesystemFuncTool dropped method {name!r}"
+        assert hasattr(MetricFilesystemFuncTool, "upsert_osi_metrics")
         # BaseTool framework methods must NOT show up in the catalog.
         for framework_method in ("set_tool_context", "get_actions", "call_action"):
             assert framework_method not in catalog

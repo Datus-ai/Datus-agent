@@ -379,7 +379,11 @@ class GenerationTools:
         import json
 
         try:
-            if semantic_model_files is None and semantic_model_file:
+            if self._is_osi_authoring():
+                # OSI gen_metrics owns only the metrics collection. Semantic
+                # objects are authored and synced by gen_semantic_model.
+                semantic_model_files = []
+            elif semantic_model_files is None and semantic_model_file:
                 semantic_model_files = [semantic_model_file]
             semantic_model_files = semantic_model_files or []
 

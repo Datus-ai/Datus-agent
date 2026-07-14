@@ -480,7 +480,7 @@ class PermissionHooks(AgentHooks):
     # this set so the profile-aware gate treats it as a write. ``delete_file``
     # belongs here too — it mutates the filesystem just as much as a write
     # and should hit the same INTERNAL × write × normal ASK gate.
-    _FILESYSTEM_WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
+    _FILESYSTEM_WRITE_TOOLS = frozenset({"write_file", "edit_file", "delete_file", "upsert_osi_metrics"})
 
     # Subagents that author their own artifact tree (manifest.json,
     # queries/*, render/*.jsx, analysis/*) in one turn — usually 5-10 files

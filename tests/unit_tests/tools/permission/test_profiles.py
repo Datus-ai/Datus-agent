@@ -156,13 +156,12 @@ class TestAutoProfile:
 
     def test_workspace_writes_allowed(self):
         config = AUTO
-        # ``write_file`` / ``edit_file`` / ``delete_file`` are the full set of
-        # write tools ``FilesystemFuncTool`` exposes today (``create_directory``
-        # / ``move_file`` were removed in the #561 refactor and used to live
-        # here as dead rules — see ``test_dead_filesystem_rules_absent``).
+        # General filesystem writes plus the OSI metrics-only upsert are all
+        # non-interactive under the auto profile.
         assert _resolve(config, "filesystem_tools", "write_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "edit_file") == PermissionLevel.ALLOW
         assert _resolve(config, "filesystem_tools", "delete_file") == PermissionLevel.ALLOW
+        assert _resolve(config, "filesystem_tools", "upsert_osi_metrics") == PermissionLevel.ALLOW
 
     def test_bi_write_allowed_delete_asks(self):
         """Auto downgrades NORMAL's DENY on destructives to ASK — user is
@@ -207,17 +206,24 @@ class TestDangerousProfile:
 
 
 class TestFilesystemRuleSurface:
-    """Filesystem rules must match the tool surface exposed by
-    ``FilesystemFuncTool.available_tools``.
+    """Filesystem rules must match the general and OSI metric tool surfaces.
 
     ``#561`` reduced the toolset to five methods (``read_file``,
     ``write_file``, ``edit_file``, ``glob``, ``grep``) but the rule tables
-    kept five stale patterns until this PR. The asserts below lock in that
-    cleanup so a future refactor doesn't silently grow another dead rule.
+    kept five stale patterns until this PR. OSI metric generation additionally
+    exposes ``upsert_osi_metrics``. The asserts below lock in both surfaces.
     """
 
     _DEAD_PATTERNS = ("list_*", "directory_tree", "search_files", "create_directory", "move_file")
-    _LIVE_PATTERNS = ("read_*", "glob", "grep", "write_file", "edit_file", "delete_file")
+    _LIVE_PATTERNS = (
+        "read_*",
+        "glob",
+        "grep",
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "upsert_osi_metrics",
+    )
 
     def test_dead_filesystem_rules_absent(self):
         for cfg in (NORMAL, AUTO):

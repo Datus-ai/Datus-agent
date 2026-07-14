@@ -161,7 +161,7 @@ def test_required_authoring_skills_derive_from_format(node_name, adapter, expect
         ("gen_semantic_model", "metricflow", "semantic-sql-history-profiler"),
         ("gen_semantic_model", "osi", "semantic-sql-history-profiler"),
         ("gen_metrics", "metricflow", "metricflow-semantic-authoring"),
-        ("gen_metrics", "osi", "osi-semantic-authoring"),
+        ("gen_metrics", "osi", ""),
         ("unknown_node", "osi", ""),
     ],
 )
@@ -191,7 +191,7 @@ def test_node_skill_defaults_follow_authoring_format(monkeypatch, adapter):
 
     assert parent_calls == ["GenMetricsAgenticNode", "GenSemanticModelAgenticNode"]
     assert semantic_node.node_config["skills"] == "semantic-sql-history-profiler"
-    expected_metrics_optional = "metricflow-semantic-authoring" if adapter == "metricflow" else "osi-semantic-authoring"
+    expected_metrics_optional = "metricflow-semantic-authoring" if adapter == "metricflow" else ""
     assert metrics_node.node_config["skills"] == expected_metrics_optional
 
 
