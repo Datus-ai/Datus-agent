@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 _StyledToken = Tuple[str, str]
 
@@ -364,8 +364,108 @@ def extract_plain_text_between(
     return "".join(out)
 
 
-def _fragment_text(fragments: List[_StyledToken]) -> str:
+def extract_text_from_lines(
+    get_line: Callable[[int], List[_StyledToken]],
+    total: int,
+    selection: TranscriptSelection,
+) -> str:
+    """Plain text covered by ``selection`` over a per-line fragment source.
+
+    Shared by the output pane (``TUIOutputBuffer`` snapshots) and the
+    auxiliary :class:`~datus.cli.tui.region_selection.SelectableRegion`
+    panes. Lines are joined with ``\\n``; style information is stripped and
+    trailing whitespace is removed from each extracted line so background-
+    filled renderables (panels, status segments padded to pane width) don't
+    leak padding spaces onto the clipboard.
+    """
+    rng = selection.range()
+    if rng is None:
+        return ""
+    out_lines: List[str] = []
+    start, end = rng
+    for line_idx in range(start.line, end.line + 1):
+        if line_idx < 0 or line_idx >= total:
+            continue
+        fragments = get_line(line_idx)
+        if start.line == end.line:
+            from_col, to_col = start.column, end.column
+        elif line_idx == start.line:
+            from_col, to_col = start.column, line_char_count(fragments)
+        elif line_idx == end.line:
+            from_col, to_col = 0, end.column
+        else:
+            from_col, to_col = 0, line_char_count(fragments)
+        out_lines.append(extract_plain_text_between(fragments, from_col, to_col).rstrip())
+    return "\n".join(out_lines)
+
+
+def fragment_plain_text(fragments: List[_StyledToken]) -> str:
+    """Concatenated text of a fragment list with styles stripped."""
     return "".join((f[1] if len(f) > 1 else "") for f in fragments)
+
+
+def word_bounds_at(text: str, index: int) -> Optional[Tuple[int, int]]:
+    """Half-open ``[start, end)`` char bounds of the run at ``index``.
+
+    Character classes follow the usual terminal double-click rules:
+    word characters (alphanumeric — including CJK, which Python's
+    ``str.isalnum`` covers — plus underscore), whitespace runs, and
+    punctuation runs each expand over their own class. ``index`` past the
+    end of ``text`` clamps to the last character. ``None`` for empty text.
+    """
+    if not text:
+        return None
+    index = max(0, min(index, len(text) - 1))
+
+    def _cls(ch: str) -> str:
+        if ch.isspace():
+            return "space"
+        if ch.isalnum() or ch == "_":
+            return "word"
+        return "punct"
+
+    cls = _cls(text[index])
+    start = index
+    while start > 0 and _cls(text[start - 1]) == cls:
+        start -= 1
+    end = index + 1
+    while end < len(text) and _cls(text[end]) == cls:
+        end += 1
+    return (start, end)
+
+
+@dataclass
+class MultiClickTracker:
+    """Counts rapid same-spot left clicks: 1 = single, 2 = double, 3 = triple.
+
+    A click chains onto the previous one when it lands on the same line
+    (within ``column_tolerance`` cells) inside ``interval_seconds``. After
+    a triple the next click starts a fresh chain, matching the common
+    single → word → line → single cycle. ``now`` is injectable for tests.
+    """
+
+    interval_seconds: float = 0.4
+    column_tolerance: int = 1
+    _last_time: float = 0.0
+    _last_line: Optional[int] = None
+    _last_column: Optional[int] = None
+    _count: int = 0
+
+    def register(self, line: int, column: int, now: Optional[float] = None) -> int:
+        ts = time.monotonic() if now is None else now
+        same_spot = (
+            self._last_line == line
+            and self._last_column is not None
+            and abs(self._last_column - column) <= self.column_tolerance
+        )
+        if same_spot and (ts - self._last_time) <= self.interval_seconds and self._count < 3:
+            self._count += 1
+        else:
+            self._count = 1
+        self._last_time = ts
+        self._last_line = line
+        self._last_column = column
+        return self._count
 
 
 def _make_fragment(style: str, text: str, trailing: Tuple) -> _StyledToken:
@@ -389,10 +489,14 @@ def _merge_style(existing: str, addition: str) -> str:
 
 __all__ = [
     "COLUMN_TO_LINE_END",
+    "MultiClickTracker",
     "SelectionAutoscroll",
     "SelectionPoint",
     "TranscriptSelection",
     "extract_plain_text_between",
+    "extract_text_from_lines",
+    "fragment_plain_text",
     "line_char_count",
     "split_line_for_selection",
+    "word_bounds_at",
 ]

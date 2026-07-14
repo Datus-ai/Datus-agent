@@ -22,12 +22,14 @@ import pytest
 
 from datus.cli.tui.selection import (
     COLUMN_TO_LINE_END,
+    MultiClickTracker,
     SelectionAutoscroll,
     SelectionPoint,
     TranscriptSelection,
     extract_plain_text_between,
     line_char_count,
     split_line_for_selection,
+    word_bounds_at,
 )
 
 # ── TranscriptSelection state machine ────────────────────────────────
@@ -93,7 +95,7 @@ def test_finish_clears_dragging_but_keeps_selection():
     sel.update_head(SelectionPoint(line=0, column=4))
     sel.finish()
     assert sel.dragging is False
-    assert sel.range() is not None
+    assert sel.range() == (SelectionPoint(line=0, column=0), SelectionPoint(line=0, column=4))
 
 
 def test_clear_removes_anchor_and_head_and_bumps_version():
@@ -266,3 +268,74 @@ def test_autoscroll_direction_flip_resets_clock():
     auto.arm(-1)
     # Flip: next_tick reset to 0, so any now value fires.
     assert auto.due(now=101.0) is True
+
+
+# ── word_bounds_at ─────────────────────────────────────────────
+
+
+def test_word_bounds_middle_of_word():
+    assert word_bounds_at("alpha beta", 2) == (0, 5)
+
+
+def test_word_bounds_second_word():
+    assert word_bounds_at("alpha beta", 7) == (6, 10)
+
+
+def test_word_bounds_underscore_is_word_char():
+    assert word_bounds_at("foo_bar baz", 3) == (0, 7)
+
+
+def test_word_bounds_on_whitespace_selects_space_run():
+    assert word_bounds_at("a   b", 2) == (1, 4)
+
+
+def test_word_bounds_on_punctuation_selects_punct_run():
+    assert word_bounds_at("a --> b", 3) == (2, 5)
+
+
+def test_word_bounds_cjk_run():
+    assert word_bounds_at("你好世界 ok", 1) == (0, 4)
+
+
+def test_word_bounds_index_past_end_clamps_to_last_char():
+    assert word_bounds_at("alpha beta", 99) == (6, 10)
+
+
+def test_word_bounds_empty_text_returns_none():
+    assert word_bounds_at("", 0) is None
+
+
+# ── MultiClickTracker ──────────────────────────────────────────
+
+
+def test_multi_click_counts_single_double_triple():
+    tracker = MultiClickTracker()
+    assert tracker.register(0, 4, now=1.0) == 1
+    assert tracker.register(0, 4, now=1.2) == 2
+    assert tracker.register(0, 4, now=1.4) == 3
+
+
+def test_multi_click_cycles_back_to_single_after_triple():
+    tracker = MultiClickTracker()
+    for expected, now in ((1, 1.0), (2, 1.1), (3, 1.2)):
+        assert tracker.register(0, 4, now=now) == expected
+    assert tracker.register(0, 4, now=1.3) == 1
+
+
+def test_multi_click_timeout_resets_chain():
+    tracker = MultiClickTracker(interval_seconds=0.4)
+    assert tracker.register(0, 4, now=1.0) == 1
+    assert tracker.register(0, 4, now=2.0) == 1
+
+
+def test_multi_click_different_line_resets_chain():
+    tracker = MultiClickTracker()
+    assert tracker.register(0, 4, now=1.0) == 1
+    assert tracker.register(1, 4, now=1.1) == 1
+
+
+def test_multi_click_column_tolerance():
+    tracker = MultiClickTracker(column_tolerance=1)
+    assert tracker.register(0, 4, now=1.0) == 1
+    assert tracker.register(0, 5, now=1.1) == 2  # 1 cell of jitter chains
+    assert tracker.register(0, 8, now=1.2) == 1  # 3 cells away resets

@@ -157,6 +157,42 @@ def _render_renderable(renderable) -> str:
     return re.sub(r"\x1b\[[^m]*m", "", buf.getvalue())
 
 
+class TestRenderUserScrollbackText:
+    def test_copied_message_line_has_no_border_glyphs(self):
+        """Contract: drag-copying a USER message must yield clean text.
+
+        The TUI's selection copy extracts rendered characters, so the panel
+        must not paint vertical border glyphs on the message rows — a fully
+        boxed style would glue ``│`` to both ends of every copied line.
+        Extraction rstrips each line, so space side-edges are fine.
+        """
+        from datus.cli.cli_styles import render_user_scrollback_text
+        from datus.cli.tui.output_buffer import TUIOutputBuffer, extract_selection_text
+        from datus.cli.tui.selection import SelectionPoint, TranscriptSelection
+
+        buf = TUIOutputBuffer()
+        console = Console(file=buf, force_terminal=True, color_system="256", width=30)
+        console.print(render_user_scrollback_text("hello world"))
+
+        selection = TranscriptSelection()
+        selection.begin(SelectionPoint(line=1, column=0))
+        selection.update_head(SelectionPoint(line=1, column=30))
+        selection.finish()
+        assert extract_selection_text(buf, selection) == "  > hello world"
+
+    def test_top_and_bottom_rules_remain(self):
+        from datus.cli.cli_styles import render_user_scrollback_text
+
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, force_terminal=True, width=30)
+        console.print(render_user_scrollback_text("hello"))
+        import re
+
+        lines = re.sub(r"\x1b\[[^m]*m", "", buf.getvalue()).splitlines()
+        assert "─" in lines[0]
+        assert "─" in lines[2]
+
+
 class TestRenderCompactSummaryPanel:
     def test_contains_summary_token_check_history(self):
         from datus.cli.cli_styles import render_compact_summary_panel

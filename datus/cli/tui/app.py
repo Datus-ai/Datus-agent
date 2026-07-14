@@ -43,7 +43,7 @@ from prompt_toolkit.completion import Completer
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, has_completions, is_done, to_filter
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import FormattedText, to_formatted_text
 from prompt_toolkit.history import History
 from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.keys import Keys
@@ -56,8 +56,9 @@ from prompt_toolkit.layout.containers import (
     ScrollOffsets,
     VSplit,
     Window,
+    to_container,
 )
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.controls import BufferControl, DummyControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
 from prompt_toolkit.lexers import Lexer
@@ -70,12 +71,16 @@ from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
 from datus.cli.tui.clipboard import copy_to_clipboard
 from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
 from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer, extract_selection_text
+from datus.cli.tui.region_selection import SelectableRegion
 from datus.cli.tui.scrollbar import ScrollbarController, build_scrollbar_window
 from datus.cli.tui.search import SearchState, find_matches
 from datus.cli.tui.selection import (
+    MultiClickTracker,
     SelectionAutoscroll,
     SelectionPoint,
     TranscriptSelection,
+    fragment_plain_text,
+    word_bounds_at,
 )
 from datus.cli.tui.wizard_host import EmbeddedWizard
 from datus.utils.loggings import get_logger
@@ -137,6 +142,36 @@ def _resolve_mouse_support(env: Optional[dict] = None) -> bool:
     if override in {"0", "false", "no", "off"}:
         return False
     return not _is_jediterm(src)
+
+
+def _select_buffer_line(buffer: Buffer) -> None:
+    """Select the whole line under the cursor via the buffer's native selection.
+
+    Triple-click path for buffer-backed inputs: prompt_toolkit's
+    ``BufferControl`` only implements double-click word selection natively,
+    so the third click widens it to the current line here. Uses the same
+    ``selection_state`` machinery, so the highlight paints identically.
+    """
+    document = buffer.document
+    line_start = document.cursor_position - document.cursor_position_col
+    line_length = len(document.current_line)
+    buffer.cursor_position = line_start
+    buffer.start_selection()
+    buffer.cursor_position = line_start + line_length
+
+
+def _buffer_selection_text(buffer: Buffer) -> str:
+    """Plain text covered by a buffer's native selection.
+
+    Mirrors :meth:`prompt_toolkit.document.Document.cut_selection`'s
+    slicing (per-range ``text[from:to]`` joined with ``\\n``) without
+    mutating the buffer or clearing ``selection_state`` — the highlight
+    should stay visible after the copy, like the output pane's.
+    """
+    if buffer.selection_state is None:
+        return ""
+    document = buffer.document
+    return "\n".join(document.text[start:end] for start, end in document.selection_ranges())
 
 
 class DatusApp:
@@ -221,6 +256,24 @@ class DatusApp:
         # extending the selection while auto-scrolling". The actual
         # ticking loop lives in :meth:`_selection_autoscroll_loop`.
         self._selection_autoscroll = SelectionAutoscroll()
+        # Every other text pane gets its own independent software
+        # selection (status bar, todo sidebar, queue preview) so any
+        # visible text can be drag-copied, not just the scrollback.
+        # A drag is confined to the region it started in; beginning a
+        # selection anywhere clears the others (see
+        # :meth:`_clear_other_selections`). Buffer-backed inputs (the
+        # composer, the search field) use prompt_toolkit's native
+        # selection instead and only need copy-on-release, tracked in
+        # ``_selection_buffers``.
+        self._selection_regions: dict[str, SelectableRegion] = {}
+        self._selection_buffers: dict[str, Buffer] = {}
+        # Double-click → word, triple-click → line in the scrollback pane.
+        # Regions carry their own tracker; buffer-backed inputs get one in
+        # :meth:`_install_buffer_copy_handler`.
+        self._output_click_tracker = MultiClickTracker()
+        # Registry keys created by :meth:`_wire_wizard_selection` for the
+        # currently mounted embedded wizard; popped on unmount.
+        self._wizard_selection_names: List[str] = []
 
         # Ctrl+F find-in-scrollback. ``_search_state`` is the shared
         # data structure the renderer (via ``search_provider``) and the
@@ -262,10 +315,14 @@ class DatusApp:
         )
         self._input_area.window.dont_extend_height = to_filter(True)
         self._input_area.buffer.on_text_changed += self._on_buffer_text_changed
+        # The composer already gets native drag-selection from prompt_toolkit's
+        # BufferControl; this wrapper adds copy-on-release + cross-region rules.
+        self._install_buffer_copy_handler("input", self._input_area.control, self._input_area.buffer)
 
+        self._status_region = self._make_selection_region("status", self._safe_status_tokens)
         self._status_window = Window(
             content=FormattedTextControl(
-                text=self._safe_status_tokens,
+                text=self._status_region.render_tokens,
                 focusable=False,
                 show_cursor=False,
             ),
@@ -301,12 +358,15 @@ class DatusApp:
             filter=has_completions & ~is_done,
         )
 
+        hint_body = Window(
+            content=FormattedTextControl(lambda: [("class:hint", self._hint_text)]),
+            height=1,
+            wrap_lines=False,
+        )
+        # Bottom-most row of the layout: off-window releases clamp here.
+        hint_body.content.mouse_handler = self._decoration_mouse_handler
         self._hint_window = ConditionalContainer(
-            content=Window(
-                content=FormattedTextControl(lambda: [("class:hint", self._hint_text)]),
-                height=1,
-                wrap_lines=False,
-            ),
+            content=hint_body,
             filter=Condition(lambda: bool(self._hint_text)),
         )
 
@@ -403,6 +463,22 @@ class DatusApp:
             # no-overflow case by filling the column.
             visible_filter=lambda: True,
         )
+        # The gutter's per-fragment handlers only know the scrollbar. Wrap
+        # the control so an in-flight text-selection drag that ends over
+        # the gutter (terminals clamp off-window releases onto edge
+        # columns like this one) still finalises + copies. The scrollbar's
+        # own drag keeps absolute priority.
+        scrollbar_control = self._scrollbar_window.content.content
+        original_scrollbar_handler = scrollbar_control.mouse_handler
+
+        def _scrollbar_mouse_handler(event: MouseEvent):  # noqa: ANN202
+            if not self._scrollbar_controller.dragging:
+                intercepted = self._inflight_drag_intercept(event)
+                if intercepted is not NotImplemented:
+                    return intercepted
+            return original_scrollbar_handler(event)
+
+        scrollbar_control.mouse_handler = _scrollbar_mouse_handler
 
         # Right-side todo-list sidebar for the pinned output row. Wired via
         # callbacks so non-TUI callers (and tests that pass no todo hooks)
@@ -488,10 +564,16 @@ class DatusApp:
             self._live_state.set_invalidate(self.invalidate)
             self._live_state.set_max_rows_provider(self._pinned_max_rows)
 
-    @staticmethod
-    def _make_separator() -> Window:
-        """Full-width horizontal rule rendered with box-drawing character."""
-        return Window(height=1, char="\u2500", style="class:separator")
+    def _make_separator(self) -> Window:
+        """Full-width horizontal rule rendered with box-drawing character.
+
+        Wired to :meth:`_decoration_mouse_handler` because off-window
+        releases get clamped onto edge rows like these \u2014 the handler
+        closes out any in-flight selection drag so it still copies.
+        """
+        window = Window(height=1, char="\u2500", style="class:separator")
+        window.content.mouse_handler = self._decoration_mouse_handler
+        return window
 
     # Minimum terminal width before the sidebar becomes too narrow to
     # be readable (20% of 60 columns ≈ 12, with a 1-col rule on its
@@ -513,12 +595,14 @@ class DatusApp:
         wired (non-chat dispatch), the filter never reports visible.
         """
 
+        queue_region = self._make_selection_region("queue", self._queue_preview_tokens)
         window = Window(
-            content=FormattedTextControl(self._queue_preview_tokens),
+            content=FormattedTextControl(queue_region.render_tokens),
             height=Dimension(min=1, max=self._QUEUE_PREVIEW_MAX_LINES + 2),
             style="class:queue-preview.box",
             always_hide_cursor=True,
         )
+        window.content.mouse_handler = lambda event: self._region_mouse_dispatch(queue_region, event)
         return ConditionalContainer(content=window, filter=Condition(self._queue_preview_visible))
 
     def _enqueue_pending_input(self, buffer, app) -> bool:
@@ -636,9 +720,10 @@ class DatusApp:
         # visual rows as the column needs — the provider intentionally
         # does NOT truncate content so wrapping is the only way the user
         # sees the full task text on a narrow sidebar.
+        todo_region = self._make_selection_region("todo", tokens_fn)
         sidebar_body = Window(
             content=FormattedTextControl(
-                text=tokens_fn,
+                text=todo_region.render_tokens,
                 focusable=False,
                 show_cursor=False,
             ),
@@ -646,10 +731,13 @@ class DatusApp:
             dont_extend_width=False,
             style="class:todo-sidebar",
         )
+        sidebar_body.content.mouse_handler = lambda event: self._region_mouse_dispatch(todo_region, event)
+        sidebar_rule = Window(width=Dimension.exact(1), char="│", style="class:separator")
+        sidebar_rule.content.mouse_handler = self._decoration_mouse_handler
         return ConditionalContainer(
             content=VSplit(
                 [
-                    Window(width=Dimension.exact(1), char="\u2502", style="class:separator"),
+                    sidebar_rule,
                     sidebar_body,
                 ],
                 width=_sidebar_width,
@@ -922,16 +1010,29 @@ class DatusApp:
                 self._scrollbar_controller._dragging = False  # noqa: SLF001
             return NotImplemented
 
+        # In-flight drag bookkeeping — both the pane's own drag and drags
+        # owned by other regions. Any event proving the button was
+        # released (including releases that happened outside the terminal
+        # window) finalises + copies; foreign drag-moves are confined.
+        intercepted = self._inflight_drag_intercept(event, own_surface="output")
+        if intercepted is not NotImplemented:
+            return intercepted
+
         if et == MouseEventType.MOUSE_DOWN and event.button == MouseButton.LEFT:
             point = self._selection_point_from_event(event)
             if point is not None:
-                self._selection.begin(point)
+                clicks = self._output_click_tracker.register(point.line, point.column)
+                self._clear_other_selections(keep="output")
                 self._selection_autoscroll.disarm()
                 # Disengage sticky-bottom so output growth doesn't yank
                 # the rows out from under the dragging pointer.
                 if self._output_at_bottom:
                     self._output_scroll_offset = self._output_max_scroll()
                     self._output_at_bottom = False
+                if clicks >= 2:
+                    self._select_output_span(point, whole_line=clicks >= 3)
+                else:
+                    self._selection.begin(point)
                 self._app.invalidate()
             return None
 
@@ -954,18 +1055,36 @@ class DatusApp:
             return None
 
         if et == MouseEventType.MOUSE_UP:
-            if self._selection.dragging:
-                self._selection.finish()
-                self._selection_autoscroll.disarm()
-                if not self._selection.is_empty() and self._output_buffer is not None:
-                    text = extract_selection_text(self._output_buffer, self._selection)
-                    if text and copy_to_clipboard(text):
-                        self.show_hint("✓ Copied to clipboard")
-                self._app.invalidate()
-                return None
+            # An in-flight drag never reaches here — the intercept above
+            # finalises it. A bare release with nothing in flight is not
+            # ours to handle.
             return NotImplemented
 
         return NotImplemented
+
+    def _select_output_span(self, point: SelectionPoint, *, whole_line: bool) -> None:
+        """Select (and copy) the word or whole line at ``point`` in the scrollback.
+
+        Multi-click path: the selection is created already-finished so a
+        MOUSE_MOVE with the button still held does not warp it;
+        :meth:`_finalize_output_selection` handles copy + repaint exactly
+        like a drag release would.
+        """
+        if self._output_buffer is None:
+            return
+        snap = self._output_buffer.snapshot()
+        fragments = snap.get_line(point.line) if 0 <= point.line < snap.total else []
+        text = fragment_plain_text(fragments)
+        if whole_line:
+            bounds = (0, len(text)) if text else None
+        else:
+            bounds = word_bounds_at(text, point.column)
+        if bounds is None or bounds[0] >= bounds[1]:
+            self._selection.clear()
+            return
+        self._selection.begin(SelectionPoint(line=point.line, column=bounds[0]))
+        self._selection.update_head(SelectionPoint(line=point.line, column=bounds[1]))
+        self._finalize_output_selection()
 
     def _selection_point_from_event(self, event: MouseEvent) -> Optional[SelectionPoint]:
         """Translate a control-relative MouseEvent into a buffer coordinate.
@@ -1029,19 +1148,19 @@ class DatusApp:
     def _status_mouse_handler(self, event: MouseEvent):  # noqa: ANN201
         """Mouse handler attached to the status bar window.
 
-        Two responsibilities, both gated on whether the user is in the
-        middle of *something* (selection drag or scrollbar drag) —
-        otherwise the status bar is decorative and clicks fall through
-        (``NotImplemented``):
+        Three responsibilities, checked in precedence order:
 
         * **Scrollbar drag forwarding** — when the user is dragging the
           scrollbar and their pointer crosses below the output pane onto
           the status bar, forward the event so scroll keeps following
           the cursor. Releasing on the status bar must also clear the
           scrollbar drag flag.
-        * **Selection autoscroll** — during a selection drag, motion/
-          press on the status bar arms scroll-down. Release here finalises
-          the selection (and copies to clipboard).
+        * **Output-selection autoscroll** — during a scrollback selection
+          drag, motion/press on the status bar arms scroll-down. Release
+          here finalises the selection (and copies to clipboard).
+        * **Status-bar-local selection** — with no drag in flight, the
+          status bar is a selectable region of its own: drag across it to
+          copy the status text.
         """
         et = event.event_type
         if self._scrollbar_controller.dragging:
@@ -1053,22 +1172,200 @@ class DatusApp:
                 self._forward_to_scrollbar(event, row_override="bottom")
                 return None
             return NotImplemented
-        if not self._selection.dragging:
-            return NotImplemented
-        if et in (MouseEventType.MOUSE_DOWN, MouseEventType.MOUSE_MOVE):
-            self._selection_autoscroll.arm(+1)
-            self._app.invalidate()
-            return None
-        if et == MouseEventType.MOUSE_UP:
-            self._selection.finish()
+        if self._selection.dragging:
+            if et == MouseEventType.MOUSE_MOVE and event.button == MouseButton.LEFT:
+                self._selection_autoscroll.arm(+1)
+                self._app.invalidate()
+                return None
+            if self._drag_release_event(event):
+                # MOUSE_UP here, or proof the release happened elsewhere
+                # (fresh press / buttonless move) — close out the drag.
+                self._finalize_output_selection()
+                if et != MouseEventType.MOUSE_DOWN:
+                    return None
+                # A fresh press falls through so it can start a
+                # status-bar selection of its own.
+            else:
+                return NotImplemented
+        return self._region_mouse_dispatch(self._status_region, event)
+
+    # ── Per-region selection plumbing ──────────────────────────────
+
+    def _make_selection_region(self, name: str, tokens_fn: Callable[[], List[Tuple[str, str]]]) -> SelectableRegion:
+        """Create + register an independent selection region for one pane."""
+        region = SelectableRegion(
+            name,
+            tokens_fn,
+            on_begin=lambda: self._clear_other_selections(keep=name),
+            on_copy=self._copy_selection_text,
+            invalidate=lambda: self._app.invalidate(),
+        )
+        self._selection_regions[name] = region
+        return region
+
+    def _copy_selection_text(self, text: str) -> None:
+        """Clipboard + hint plumbing shared by every selection surface."""
+        if text and copy_to_clipboard(text):
+            self.show_hint("✓ Copied to clipboard")
+
+    def _dragging_selection_region(self) -> Optional[SelectableRegion]:
+        """The auxiliary region currently mid-drag, or ``None``."""
+        for region in self._selection_regions.values():
+            if region.selection.dragging:
+                return region
+        return None
+
+    def _clear_other_selections(self, keep: Optional[str] = None) -> None:
+        """Drop every selection except ``keep``'s.
+
+        Selections are independent per region, and exactly one highlight
+        should be visible at a time — beginning a drag anywhere clears
+        the rest. ``keep`` is ``"output"`` for the scrollback pane, a
+        region name for the auxiliary panes, a buffer name for the
+        native-selection inputs, or ``None`` to clear everything
+        (Escape).
+        """
+        if keep != "output":
+            self._selection.clear()
             self._selection_autoscroll.disarm()
-            if not self._selection.is_empty() and self._output_buffer is not None:
-                text = extract_selection_text(self._output_buffer, self._selection)
-                if text and copy_to_clipboard(text):
-                    self.show_hint("✓ Copied to clipboard")
-            self._app.invalidate()
+        for name, region in self._selection_regions.items():
+            if name != keep:
+                region.selection.clear()
+        for name, buffer in self._selection_buffers.items():
+            if name != keep and buffer.selection_state is not None:
+                buffer.exit_selection()
+
+    def _finalize_output_selection(self) -> None:
+        """Close out the scrollback drag; copy the covered text if any."""
+        self._selection.finish()
+        self._selection_autoscroll.disarm()
+        if not self._selection.is_empty() and self._output_buffer is not None:
+            self._copy_selection_text(extract_selection_text(self._output_buffer, self._selection))
+        self._app.invalidate()
+
+    def _region_mouse_dispatch(self, region: SelectableRegion, event: MouseEvent):  # noqa: ANN201
+        """Route a pane's mouse event through the cross-region drag rules.
+
+        The intercept below closes out any in-flight drag (this pane's or
+        a foreign one) and confines foreign drag-moves; everything else
+        falls through to the pane's own selection state machine.
+        """
+        intercepted = self._inflight_drag_intercept(event, own_surface=region)
+        if intercepted is not NotImplemented:
+            return intercepted
+        return region.handle_mouse(event)
+
+    def _inflight_drag_intercept(self, event: MouseEvent, *, own_surface: object = None):  # noqa: ANN201
+        """Shared pre-dispatch for every mouse surface while a drag is in flight.
+
+        prompt_toolkit has no mouse capture: each event goes to whatever
+        window the pointer is over, and a release outside the terminal is
+        either clamped onto an edge cell by the emulator or never
+        delivered at all. Every wired surface runs this first so an
+        in-flight drag can always be closed out (and its text copied):
+
+        * ``MOUSE_UP`` — normal release, wherever it lands. Consumed.
+        * ``MOUSE_MOVE`` without LEFT held — hover after an off-terminal
+          release (terminals in any-event tracking mode report these as
+          soon as the pointer re-enters). Finalise; consumed.
+        * ``MOUSE_DOWN`` — a fresh press proves the previous release was
+          never delivered. Finalise, then return ``NotImplemented`` so
+          the caller can start the interaction the press represents.
+        * ``MOUSE_MOVE`` with LEFT over a **foreign** surface — swallowed:
+          selections stay confined to the surface they started on. The
+          owner (``own_surface`` is ``"output"`` for the scrollback pane,
+          the :class:`SelectableRegion` for region dispatch) gets
+          ``NotImplemented`` so it keeps extending its own selection.
+
+        Returns ``None`` when the event was consumed, ``NotImplemented``
+        when the caller should continue with its own handling.
+        """
+        output_dragging = self._selection.dragging
+        region = self._dragging_selection_region()
+        if not output_dragging and region is None:
+            return NotImplemented
+        if self._drag_release_event(event):
+            if output_dragging:
+                self._finalize_output_selection()
+            elif region is not None:
+                region.finish_drag()
+            return NotImplemented if event.event_type == MouseEventType.MOUSE_DOWN else None
+        owns_drag = (output_dragging and own_surface == "output") or (region is not None and region is own_surface)
+        if owns_drag:
+            return NotImplemented
+        if event.event_type == MouseEventType.MOUSE_MOVE:
             return None
         return NotImplemented
+
+    @staticmethod
+    def _drag_release_event(event: MouseEvent) -> bool:
+        """Whether ``event`` proves the drag button is no longer held.
+
+        A ``MOUSE_UP`` is the obvious case. A ``MOUSE_DOWN`` means a fresh
+        press, so the previous release must have been missed. A
+        ``MOUSE_MOVE`` whose button is not LEFT is a hover — the button
+        was released somewhere we couldn't see (off-terminal, or over a
+        cell without a handler).
+        """
+        et = event.event_type
+        if et in (MouseEventType.MOUSE_UP, MouseEventType.MOUSE_DOWN):
+            return True
+        return et == MouseEventType.MOUSE_MOVE and event.button != MouseButton.LEFT
+
+    def _decoration_mouse_handler(self, event: MouseEvent):  # noqa: ANN201
+        """Mouse handler for decorative surfaces (separators, hint row).
+
+        Terminal emulators clamp off-window mouse coordinates onto the
+        nearest edge cell, which is exactly where these rows sit — a drag
+        released below the app lands its ``MOUSE_UP`` here. Their only
+        mouse duty is to keep such a drag from dangling uncopied.
+        """
+        return self._inflight_drag_intercept(event)
+
+    def _install_buffer_copy_handler(self, name: str, control, buffer: Buffer) -> None:  # noqa: ANN001
+        """Add copy-on-release + cross-region rules to a ``BufferControl``.
+
+        prompt_toolkit's ``BufferControl`` already implements native
+        drag-selection (MOUSE_DOWN moves the cursor, MOUSE_MOVE extends
+        ``buffer.selection_state``, double-click selects a word) and the
+        highlight paints via ``class:selected``. This wrapper adds the
+        write to the system clipboard on release and a triple-click →
+        select-line gesture, without disturbing the native behaviour.
+        """
+        self._selection_buffers[name] = buffer
+        original_handler = control.mouse_handler
+        # prompt_toolkit counts double-clicks on MOUSE_UP, so the tracker
+        # does too — its third rapid UP widens the native word selection
+        # to the whole line.
+        click_tracker = MultiClickTracker()
+
+        def handler(event: MouseEvent):  # noqa: ANN202
+            et = event.event_type
+            intercepted = self._inflight_drag_intercept(event)
+            if intercepted is not NotImplemented:
+                return intercepted
+            if et == MouseEventType.MOUSE_DOWN and event.button == MouseButton.LEFT:
+                self._clear_other_selections(keep=name)
+            result = original_handler(event)
+            if et == MouseEventType.MOUSE_UP:
+                clicks = click_tracker.register(int(event.position.y), int(event.position.x))
+                if clicks >= 3:
+                    _select_buffer_line(buffer)
+                text = _buffer_selection_text(buffer)
+                if text:
+                    self._copy_selection_text(text)
+                    return None
+            return result
+
+        control.mouse_handler = handler
+
+    def _any_selection_active(self) -> bool:
+        """Whether any pane (scrollback, region, or input buffer) has a selection."""
+        if not self._selection.is_empty():
+            return True
+        if any(not region.selection.is_empty() for region in self._selection_regions.values()):
+            return True
+        return any(buffer.selection_state is not None for buffer in self._selection_buffers.values())
 
     def _forward_to_scrollbar(self, event: MouseEvent, *, row_override: Optional[str] = None) -> None:
         """Send ``event`` to :class:`ScrollbarController` from a non-gutter window.
@@ -1122,12 +1419,14 @@ class DatusApp:
             dont_extend_width=True,
             wrap_lines=False,
         )
+        search_control = BufferControl(
+            buffer=self._search_buffer,
+            focusable=True,
+            key_bindings=self._build_search_kb(),
+        )
+        self._install_buffer_copy_handler("search", search_control, self._search_buffer)
         input_window = Window(
-            content=BufferControl(
-                buffer=self._search_buffer,
-                focusable=True,
-                key_bindings=self._build_search_kb(),
-            ),
+            content=search_control,
             height=1,
             wrap_lines=False,
             style="class:search-input",
@@ -1480,6 +1779,10 @@ class DatusApp:
         if panel.key_bindings is not None:
             self._wizard_kb_layer.bindings.extend(panel.key_bindings.bindings)
             self._wizard_kb_layer._clear_cache()
+        # Give the wizard's text panes the same drag/multi-click copy the
+        # rest of the TUI has — the main Application's mouse capture stays
+        # on while a wizard is mounted, so this is the only copy path.
+        self._wire_wizard_selection(panel.container)
         if panel.first_focus is not None:
             try:
                 self._app.layout.focus(panel.first_focus)
@@ -1493,6 +1796,7 @@ class DatusApp:
         # Clear all wizard bindings from the layer.
         self._wizard_kb_layer.bindings.clear()
         self._wizard_kb_layer._clear_cache()
+        self._unwire_wizard_selection()
         target: Optional[Any] = self._stashed_focus
         if target is None:
             target = self._input_area
@@ -1505,6 +1809,92 @@ class DatusApp:
                 logger.debug("unmount_wizard: focus restore failed: %s", exc)
         self._stashed_focus = None
         self._app.invalidate()
+
+    def _wire_wizard_selection(self, container: AnyContainer) -> None:
+        """Give every text control inside an embedded wizard drag-copy support.
+
+        Embedded wizards (ask_user / permission prompts, slash-command
+        pickers) render inside the main Application, so terminal-native
+        selection is unavailable there exactly like everywhere else under
+        mouse capture. Walk the wizard's container tree and wire each
+        display control to its own :class:`SelectableRegion` (drag /
+        double-click word / triple-click line, copy on release), each
+        input control to the copy-on-release wrapper, and each decorative
+        window to the dangling-drag finaliser. Undone by
+        :meth:`_unwire_wizard_selection` when the wizard unmounts.
+        """
+        for window in self._walk_windows(container):
+            control = window.content
+            # An instance-level handler means the wizard wired its own
+            # mouse behaviour — don't fight it.
+            if "mouse_handler" in control.__dict__:
+                continue
+            if isinstance(control, FormattedTextControl):
+                source_text = control.text
+                if self._fragments_carry_mouse_handlers(source_text):
+                    # Click-driven widgets (CheckboxList / RadioList /
+                    # Button rows) embed per-fragment handlers; wiring
+                    # selection over them would steal their clicks.
+                    continue
+                name = f"wizard:{len(self._wizard_selection_names)}"
+                region = self._make_selection_region(name, lambda text=source_text: list(to_formatted_text(text)))
+                original_handler = control.mouse_handler
+
+                def handler(event: MouseEvent, *, _region=region, _orig=original_handler):  # noqa: ANN202
+                    result = self._region_mouse_dispatch(_region, event)
+                    if result is NotImplemented:
+                        # Preserve fragment-embedded handlers / Window
+                        # fallback for events selection doesn't consume.
+                        return _orig(event)
+                    return result
+
+                control.text = region.render_tokens
+                control.mouse_handler = handler
+                self._wizard_selection_names.append(name)
+            elif isinstance(control, BufferControl):
+                name = f"wizard:{len(self._wizard_selection_names)}"
+                self._install_buffer_copy_handler(name, control, control.buffer)
+                self._wizard_selection_names.append(name)
+            elif isinstance(control, DummyControl):
+                # Separator rules etc.: close out in-flight drags whose
+                # release lands on them (same duty as the main layout's
+                # decorative rows).
+                control.mouse_handler = self._decoration_mouse_handler
+
+    @staticmethod
+    def _fragments_carry_mouse_handlers(text: Any) -> bool:
+        """Whether a control's current fragments embed per-fragment handlers.
+
+        Evaluated once at wire time. Returns ``True`` (→ leave the
+        control alone) when inspection fails, so an exotic text callable
+        can never be broken by selection wiring.
+        """
+        try:
+            fragments = to_formatted_text(text)
+        except Exception:
+            return True
+        return any(len(fragment) >= 3 for fragment in fragments)
+
+    @staticmethod
+    def _walk_windows(container: AnyContainer) -> Iterator[Window]:
+        """Yield every :class:`Window` in ``container``'s tree."""
+        stack = [to_container(container)]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, Window):
+                yield node
+                continue
+            try:
+                stack.extend(node.get_children())
+            except Exception:  # pragma: no cover - defensive
+                continue
+
+    def _unwire_wizard_selection(self) -> None:
+        """Drop the selection registrations of the unmounted wizard."""
+        for name in self._wizard_selection_names:
+            self._selection_regions.pop(name, None)
+            self._selection_buffers.pop(name, None)
+        self._wizard_selection_names.clear()
 
     def run_wizard(
         self,
@@ -1940,19 +2330,19 @@ class DatusApp:
             self._scroll_output_down(self._OUTPUT_WHEEL_STEP)
             event.app.invalidate()
 
-        # Escape clears an active selection. The filter gates this so
-        # we never compete with ``DatusCLI``'s Esc → agent-interrupt
-        # binding (registered later on the same KeyBindings instance);
-        # ``eager=True`` lets prompt_toolkit pick this handler over the
-        # interrupt one when both filters are true, which is the
-        # intuitive precedence — clearing the visible highlight is a
-        # local UI concern that the user explicitly asked for.
-        has_selection = Condition(lambda: not self._selection.is_empty())
+        # Escape clears an active selection (in whichever pane holds
+        # one). The filter gates this so we never compete with
+        # ``DatusCLI``'s Esc → agent-interrupt binding (registered later
+        # on the same KeyBindings instance); ``eager=True`` lets
+        # prompt_toolkit pick this handler over the interrupt one when
+        # both filters are true, which is the intuitive precedence —
+        # clearing the visible highlight is a local UI concern that the
+        # user explicitly asked for.
+        has_selection = Condition(self._any_selection_active)
 
         @kb.add("escape", filter=has_selection, eager=True)
         def _clear_selection(event) -> None:  # noqa: ANN001
-            self._selection.clear()
-            self._selection_autoscroll.disarm()
+            self._clear_other_selections(keep=None)
             event.app.invalidate()
 
         # Ctrl+F opens the find-in-scrollback bar. ``eager=True`` jumps
