@@ -24,9 +24,10 @@ def _make_wheel(
     *,
     dist="datus-demo-plugin",
     version="0.1.0",
-    entry="datus_demo_plugin.plugin:DemoPlugin",
+    entry="datus_demo_plugin",
     requires_python=">=3.10",
     group="datus.plugins",
+    manifest="manifest_version: 1\n",
 ):
     """Write a minimal wheel zip with just the dist-info the packer reads."""
     dist_info = f"{dist.replace('-', '_')}-{version}.dist-info"
@@ -38,6 +39,8 @@ def _make_wheel(
         zf.writestr(f"{dist_info}/METADATA", meta)
         if group is not None:
             zf.writestr(f"{dist_info}/entry_points.txt", f"[{group}]\ndemo = {entry}\n")
+        if group is not None and manifest is not None:
+            zf.writestr("datus_demo_plugin/datus-plugin.yml", manifest)
     return path
 
 
@@ -78,12 +81,24 @@ def test_parse_wheel_filename():
 def test_read_plugin_entry(tmp_path):
     wheel = _make_wheel(tmp_path / "w.whl")
     name, target = pack._read_plugin_entry(wheel)
-    assert name == "demo" and target == "datus_demo_plugin.plugin:DemoPlugin"
+    assert name == "demo" and target == "datus_demo_plugin"
 
 
 def test_read_plugin_entry_rejects_non_plugin(tmp_path):
     wheel = _make_wheel(tmp_path / "w.whl", group=None)
     with pytest.raises(pack.PackError, match="not a datus plugin"):
+        pack._read_plugin_entry(wheel)
+
+
+def test_read_plugin_entry_rejects_legacy_class_entry(tmp_path):
+    wheel = _make_wheel(tmp_path / "w.whl", entry="datus_demo_plugin.plugin:DemoPlugin")
+    with pytest.raises(pack.PackError, match="legacy class-based contract"):
+        pack._read_plugin_entry(wheel)
+
+
+def test_read_plugin_entry_rejects_missing_manifest(tmp_path):
+    wheel = _make_wheel(tmp_path / "w.whl", manifest=None)
+    with pytest.raises(pack.PackError, match="datus-plugin.yml"):
         pack._read_plugin_entry(wheel)
 
 
@@ -113,7 +128,7 @@ def test_pack_without_deps(tmp_path, monkeypatch):
         "distribution": "datus-demo-plugin",
         "version": "0.1.0",
         "wheel": "datus_demo_plugin-0.1.0-py3-none-any.whl",
-        "entry_point": "datus_demo_plugin.plugin:DemoPlugin",
+        "entry_point": "datus_demo_plugin",
     }
     assert manifest["compat"]["requires_python"] == ">=3.10"
     assert [w["role"] for w in manifest["wheels"]] == ["plugin"]

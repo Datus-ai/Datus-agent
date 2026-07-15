@@ -255,9 +255,12 @@ def _cmd_info(console: Console, args: argparse.Namespace) -> int:
         print_error(console, f"No installed plugin named `{args.name}`.")
         return 1
 
-    from datus.plugins.registry import plugin_config_schema
+    from datus.plugins.registry import load_plugin_manifest, plugin_config_schema
 
     console.print(f"[bold]{info.name}[/]")
+    manifest = load_plugin_manifest(info.name)
+    if manifest is not None and manifest.description:
+        console.print(f"  {manifest.description}", markup=False)
     console.print(f"  package: {info.package or '-'} {info.version}")
     console.print(f"  entry:   {info.entry or '-'}")
     source_label = info.install_type or info.source or "-"

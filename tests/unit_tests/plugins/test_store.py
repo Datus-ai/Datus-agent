@@ -36,15 +36,18 @@ def _write_target(
     name="demo",
     dist="datus-demo-plugin",
     version="0.1.0",
-    entry="datus_demo_plugin.plugin:DemoPlugin",
+    entry="datus_demo_plugin",
     requires_python=">=3.12",
     group="datus.plugins",
+    manifest="manifest_version: 1\n",
 ):
     """Write a minimal ``pip install --target`` tree with a plugin dist-info."""
     directory.mkdir(parents=True, exist_ok=True)
     pkg = directory / "datus_demo_plugin"
     pkg.mkdir(parents=True, exist_ok=True)
     (pkg / "__init__.py").write_text("__version__ = '0.1.0'\n", encoding="utf-8")
+    if manifest is not None:
+        (pkg / store.MANIFEST_FILENAME).write_text(manifest, encoding="utf-8")
     dist_info = directory / f"{dist.replace('-', '_')}-{version}.dist-info"
     dist_info.mkdir(parents=True, exist_ok=True)
     if group is not None:
@@ -125,7 +128,7 @@ def test_introspect_target_reads_identity(home, tmp_path):
         "name": "demo",
         "distribution": "datus-demo-plugin",
         "version": "0.1.0",
-        "entry_point": "datus_demo_plugin.plugin:DemoPlugin",
+        "entry_point": "datus_demo_plugin",
         "requires_python": ">=3.12",
     }
 
@@ -133,6 +136,26 @@ def test_introspect_target_reads_identity(home, tmp_path):
 def test_introspect_target_rejects_non_plugin(home, tmp_path):
     target = _write_target(tmp_path / "target", group="console_scripts")
     with pytest.raises(store.StoreError):
+        store.introspect_target(target)
+
+
+def test_introspect_target_rejects_legacy_class_entry(home, tmp_path):
+    """An old-style ``pkg.module:Class`` entry point must fail at install time
+    with a migration hint, not at first use."""
+    target = _write_target(tmp_path / "target", entry="datus_demo_plugin.plugin:DemoPlugin")
+    with pytest.raises(store.StoreError, match="legacy class-based contract"):
+        store.introspect_target(target)
+
+
+def test_introspect_target_rejects_missing_manifest(home, tmp_path):
+    target = _write_target(tmp_path / "target", manifest=None)
+    with pytest.raises(store.StoreError, match="datus-plugin.yml"):
+        store.introspect_target(target)
+
+
+def test_introspect_target_rejects_invalid_manifest(home, tmp_path):
+    target = _write_target(tmp_path / "target", manifest="manifest_version: 99\n")
+    with pytest.raises(store.StoreError, match="datus-plugin.yml"):
         store.introspect_target(target)
 
 

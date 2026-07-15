@@ -11,8 +11,9 @@ whole flow (plugin list → profile list → profile form) so the outer
 :meth:`run_wizard`. Two concerns are managed here:
 
 1. **Global profile CRUD** — create / edit / delete ``agent.plugins.<plugin>
-   .<profile>`` entries in agent.yml, with the form fields driven by the
-   plugin's ``config_schema()`` and validated by its ``validate_profile()``.
+   .<profile>`` entries in agent.yml, with the form fields derived from the
+   plugin manifest's ``config_schema`` (a JSON Schema) and candidate profiles
+   validated against it before saving.
 2. **Project activation** — toggle a plugin's ``enabled`` flag and pick which
    profiles are active, persisted to ``./.datus/config.yml``.
 

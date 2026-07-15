@@ -665,13 +665,14 @@ def _split_plugin_globals(args: "list[str]") -> "tuple[str | None, str | None, l
 
 
 def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
-    """Dispatch ``datus <plugin> ...`` to a ``datus.plugins`` entry point.
+    """Dispatch ``datus <plugin> ...`` to a ``datus.plugins`` manifest plugin.
 
-    A plugin package registers a plugin class under the ``datus.plugins`` group
-    (``hello = datus_hello.plugin:HelloPlugin``). datus strips
-    its own leading ``--profile`` / ``--config`` globals, resolves the active
-    profile from ``agent.plugins.<name>.<profile>`` (env-expanded), constructs
-    the plugin with that profile, and calls ``run_cli`` with the rest.
+    A plugin package registers its package name under the ``datus.plugins``
+    group (``hello = datus_plugin_hello``) and declares a ``cli`` code ref in
+    its bundled ``datus-plugin.yml``. datus strips its own leading
+    ``--profile`` / ``--config`` globals, resolves the active profile from
+    ``agent.plugins.<name>.<profile>`` (env-expanded), and calls the declared
+    entry as ``main(rest, profile)``.
 
     Runs before :func:`_dispatch_external_command` (the legacy
     ``datus.cli_commands`` path). Returns the plugin's exit code, or ``None``
@@ -684,19 +685,20 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
 
     name = argv[0]
     from datus.plugins import store
-    from datus.plugins.registry import load_plugin_class, plugin_entry_point_exists
+    from datus.plugins.registry import load_plugin_manifest, plugin_entry_point_exists, resolve_code_ref
 
     # A managed plugin lives in its own ``~/.datus/plugins/{name}/`` directory;
     # append it to ``sys.path`` so the entry-point probe can see it. This is
-    # path-only — it does NOT import the plugin package (that happens lazily in
-    # ``load_plugin_class`` below), so the ``plugins_enabled`` master switch is
-    # still honoured before any third-party module-level code runs.
+    # path-only — it does NOT import the plugin package (reading the manifest
+    # never executes plugin code, and the ``cli`` ref is imported only after
+    # every gate below has passed), so the ``plugins_enabled`` master switch
+    # is still honoured before any third-party module-level code runs.
     if store.plugin_dir(name).is_dir():
         store.activate_name(name)
 
     # Metadata-only probe: with ``plugins_enabled: false`` the plugin package
     # must not even be imported, so the master switch is checked before
-    # ``load_plugin_class`` (whose ``ep.load()`` runs module-level code).
+    # ``resolve_code_ref`` runs the plugin's module-level code.
     if not plugin_entry_point_exists(name):
         return None
 
@@ -730,15 +732,24 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
         print(f"datus {name}: {exc}", file=sys.stderr)
         return 3
 
-    plugin_cls = load_plugin_class(name)
-    if plugin_cls is None:
-        # Entry point exists but the package is broken; fall through so a
-        # same-named ``datus.cli_commands`` handler still gets its chance.
+    manifest = load_plugin_manifest(name)
+    if manifest is None:
+        # Entry point exists but the manifest is missing/rejected (already
+        # warned about); fall through so a same-named ``datus.cli_commands``
+        # handler still gets its chance.
         return None
 
+    if not manifest.cli:
+        print(f"datus {name}: plugin declares no CLI command in its manifest", file=sys.stderr)
+        return 2
+
+    func = resolve_code_ref(manifest.cli, name)
+    if not callable(func):
+        print(f"datus {name}: plugin CLI entry `{manifest.cli}` could not be loaded", file=sys.stderr)
+        return 1
+
     try:
-        plugin = plugin_cls(profile=profile)
-        rc = plugin.run_cli(rest)
+        rc = func(rest, profile)
     except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash the CLI
         logger.error("Plugin '%s' failed: %s", name, exc)
         print(f"datus {name}: {exc}", file=sys.stderr)

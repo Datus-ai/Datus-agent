@@ -5,9 +5,17 @@
 [介绍](introduction.zh.md)。
 
 plugin 是一个可安装的 Python 包,通过 `datus.plugins` entry-point 组被发现。
-最关键的约束:**plugin 绝不 `import datus.*`,也不依赖任何共享 SDK**。契约只是一小组
-Datus 按结构调用的方法名(鸭子类型)。Datus 是 *配置 broker*——它负责读 `agent.yml`、
-展开 `${VAR}`、解析激活 profile,用一个普通 `dict` 构造你的 plugin 并调用它。你只需实现方法。
+最关键的约束:
+
+- **plugin 绝不 `import datus.*`**,也不依赖任何共享 SDK。
+- **整个契约就是一个声明式文件**——随包分发的 `datus-plugin.yml`。它声明你的 CLI
+  入口函数、tool transformer、skills 目录、系统提示词模板、bash 权限规则和配置
+  schema。你唯一要写的 Python 只是普通函数。
+
+Datus 是 *配置 broker*——它负责读 `agent.yml`、展开 `${VAR}`、解析激活 profile,
+然后用一个普通 `dict` 调用你声明的 `cli` 函数。读取 manifest 不会执行你的任何
+代码:skills、权限、提示词、配置 schema 的收集全程不 import 你的包;只有 `cli`
+函数(在 `datus <name> ...` 分发时)和声明的 tool transformer 才会被惰性导入。
 
 ## 前置条件
 
@@ -18,8 +26,6 @@ Datus 按结构调用的方法名(鸭子类型)。Datus 是 *配置 broker*—�
 
 ## 快速开始:最小 plugin
 
-一个 plugin 就是注册在 `datus.plugins` 下的一个类。下面是最小可用示例——一个 `hello` 命令。
-
 **1. 包结构**
 
 ```
@@ -27,31 +33,34 @@ datus-plugin-hello/
 ├── pyproject.toml
 └── datus_plugin_hello/
     ├── __init__.py
-    └── plugin.py
+    ├── datus-plugin.yml      # manifest——整个 plugin 契约
+    └── cli.py
 ```
 
-**2. plugin 类**(`datus_plugin_hello/plugin.py`)
+**2. manifest**(`datus_plugin_hello/datus-plugin.yml`)
+
+```yaml
+manifest_version: 1
+description: "Say hello to someone."
+cli: datus_plugin_hello.cli:main
+```
+
+**3. CLI 函数**(`datus_plugin_hello/cli.py`)
 
 ```python
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 
-
-class HelloPlugin:
-    def __init__(self, profile: Optional[Dict[str, Any]] = None) -> None:
-        # `profile` 是解析好的 agent.plugins.hello.<profile> 字典
-        # (已由 datus 完成 ${VAR} 展开)。空字典也没问题。
-        self.profile: Dict[str, Any] = profile or {}
-
-    def run_cli(self, argv: List[str]) -> int:
-        greeting = self.profile.get("greeting", "Hello")
-        name = argv[0] if argv else "world"
-        print(f"{greeting}, {name}!")
-        return 0
+def main(argv: list[str], profile: dict) -> int:
+    # `profile` 是解析好的 agent.plugins.hello.<profile> 字典
+    # (已由 datus 完成 ${VAR} 展开)。空字典也没问题。
+    greeting = profile.get("greeting", "Hello")
+    name = argv[0] if argv else "world"
+    print(f"{greeting}, {name}!")
+    return 0
 ```
 
-**3. 注册 entry-point**(`pyproject.toml`)
+**4. 注册 entry-point**(`pyproject.toml`)
 
 ```toml
 [project]
@@ -60,50 +69,61 @@ version = "0.1.0"
 dependencies = []                      # 注意:不要依赖 datus
 
 [project.entry-points."datus.plugins"]
-hello = "datus_plugin_hello.plugin:HelloPlugin"
+hello = "datus_plugin_hello"           # 包名——不是类
+
+[tool.setuptools.package-data]
+datus_plugin_hello = ["datus-plugin.yml"]
 ```
 
-CLI 命令名(`datus hello`)和配置键(`agent.plugins.hello`)**只由 entry-point
-名(`hello`)决定**——类名和模块结构随意。有三个名字是**保留字**,永远不会分发给
-plugin:`upgrade`、`skill` 和 `plugin`,注册成它们的 plugin 无法被访问(`datus plugin
-install` 也会拒绝);以 `-` 开头的名字也无法被分发。
+entry-point 的值是你的**包名**——一条纯粹的"名字 → 包"映射,不是代码引用。
+entry-point 的名字(`hello`)唯一决定 CLI 命令(`datus hello`)和配置键
+(`agent.plugins.hello`)——包名可以随意取。三个名字是**保留字**,永远不会分发给
+plugin:`upgrade`、`skill`、`plugin`。注册在这些名字下的 plugin 不可达
+(`datus plugin install` 也会拒绝),以 `-` 开头的名字则完全无法分发。
 
-**4. 安装并运行**
+manifest 是包数据而非 Python 代码——务必确保它进入 wheel。Hatchling 默认打包包
+目录下所有文件;setuptools 需要上面的 `[tool.setuptools.package-data]` 配置。
+用 `unzip -l dist/*.whl | grep datus-plugin.yml` 验证(`datus plugin install`
+和 `datus plugin pack` 都会拒绝缺失 manifest 的包)。
+
+**5. 安装并运行**
 
 ```bash
-datus plugin install src:./datus-plugin-hello   # 装进 ~/.datus/plugins/hello/
+datus plugin install src:./datus-plugin-hello   # 安装到 ~/.datus/plugins/hello/
 datus hello Ada          # -> Hello, Ada!
 ```
 
-开发时若想快速改-跑循环,把它 `pip install -e datus-plugin-hello` 进 datus 自身环境
-也可以——这类插件仍会作为兜底被发现,不会产生 `~/.datus/plugins/` 目录。
+开发期想要快速的改-跑循环,也可以直接 `pip install -e datus-plugin-hello` 到
+datus 自己的环境——这类 plugin 作为回退同样会被发现,只是没有
+`~/.datus/plugins/` 目录。
 
-这就是一个完整的 plugin。下面的内容都是可选的扩展面。
+以上就是一个完整的 plugin。下面的内容全部是可选扩展面。
 
-## 契约
+## manifest 参考
 
-Datus 在 entry-point 解析出的类上**按方法名**调用下列成员。你的类不导入、不继承 Datus 的任何东西。
+`datus-plugin.yml` 位于包根。只有 `manifest_version` 必填,其余键全部可选:
 
-| 成员 | 形态 | 用途 |
+| 键 | 类型 | 用途 |
 |---|---|---|
-| `PluginClass(profile: dict)` | 构造函数 | Datus 以**关键字参数**方式传入解析好的 `agent.plugins.<name>.<profile>` 字典(已展开环境变量)——即 `PluginClass(profile=...)`,因此参数必须命名为 `profile`。config-free plugin 可忽略其值。 |
-| `run_cli(self, argv: list[str]) -> int \| None` | 实例方法 | 执行子命令。`argv` 是 `datus <plugin>` 之后的全部参数(Datus 自己的 `--profile`/`--config` 已剥离)。返回退出码,`None` 视为 `0`。 |
-| `skills_dir() -> str \| None` | **可选**,类级 | 返回打包的 skill 目录。见[打包 skill](#skill)。 |
-| `system_prompt(profiles: dict[str, dict]) -> str \| None` | **可选**,类级 | 返回注入 system prompt 的 markdown 段。见[注入 system prompt](#system-prompt)。 |
-| `cli_permissions() -> dict \| None` | **可选**,类级 | 按权限 profile 声明本 plugin CLI 命名空间内的 bash 权限规则。见 [CLI bash 权限](#cli-permissions)。 |
-| `tool_transformers() -> dict \| None` | **可选**,类级 | 声明工具参数 transformer,在 agent 的工具调用执行前改写参数或拒绝调用。见 [工具参数 transformer](#tool-transformers)。 |
-| `config_schema() -> list[dict] \| None` | **可选**,类级 | 描述 profile 配置字段,供 `/plugins` TUI 渲染表单。见[配置 schema 与校验](#config-schema-and-validation)。 |
-| `validate_profile(profile: dict) -> list[str] \| None` | **可选**,类级 | 在 Datus 保存前校验候选 profile。见[配置 schema 与校验](#config-schema-and-validation)。 |
+| `manifest_version` | int,**必填** | 必须是 `1`。比 datus 能理解的更新的版本会被拒绝并警告"requires newer datus"。 |
+| `description` | 字符串 | 一行摘要,`datus plugin info` 展示。 |
+| `cli` | 代码引用 | `module.path:function`,在 `datus <name> ...` 时以 `main(argv, profile)` 调用。见[实现 CLI 入口](#实现-cli-入口)。没有它时 `datus <name>` 以退出码 2 结束。 |
+| `tool_transformers` | 映射 | 工具 pattern → 代码引用(或引用列表),改写或拒绝 agent 的工具调用。见[工具参数 transformer](#工具参数-transformer)。 |
+| `permissions` | 映射 | 你自己 CLI 命名空间的 bash 权限规则,按权限 profile 分组——纯 YAML,零代码。见[CLI bash 权限](#cli-bash-权限)。 |
+| `system_prompt` | 路径 | 包内相对路径,指向渲染进 agent 系统提示词的 Jinja2 模板。见[系统提示词模板](#系统提示词模板)。 |
+| `skills` | 路径 | 包内相对路径,指向捆绑的 skill 目录。见[捆绑 skills](#捆绑-skills)。 |
+| `config_schema` | JSON Schema | 内联 object schema,描述一个 profile——驱动 `/plugins` TUI 表单并在保存前校验。见[配置 schema 与校验](#配置-schema-与校验)。 |
 
-!!! warning "`skills_dir` 与 `system_prompt` 必须类级可取"
-    Datus 在**启动期、无激活 profile** 时就解析这两者(skill 发现和 prompt 构建都发生在
-    任何命令执行之前)。请声明为 `@classmethod` / `@staticmethod`(`skills_dir` 也可以是普通类属性)——
-    它们不能依赖 `__init__`。
+**代码引用**是形如 `module.path:function` 的点分字符串。路径均相对包目录,且不
+允许逃逸出去。manifest 解析是防御式的:某一段格式错误只会被警告并丢弃,其余部分
+照常可用;只有 `manifest_version` 缺失/不支持(或 YAML 不可读)才会整体拒绝。
+
+机器可读的契约在 `datus/plugins/base.py`;本表与该 docstring 保持同步。
 
 ## 配置:Datus 交给你什么
 
-用户在 `agent.plugins.<name>` 下配置你的 plugin,`<name>` 之下的每个键是一个
-**profile**(一套环境):
+用户在 `agent.plugins.<name>` 下配置你的 plugin,`<name>` 下的每个键都是一个
+**profile**(一个环境):
 
 ```yaml
 agent:
@@ -112,71 +132,73 @@ agent:
       prod:
         default: true
         greeting: Hi
-        token: ${HELLO_TOKEN}      # 密钥优先用 ${ENV_VAR}
+        token: ${HELLO_TOKEN}      # secret 建议用 ${ENV_VAR}
       staging:
         greeting: Yo
 ```
 
-Datus 把它解析成 `agent.plugins.<name>.<profile> -> dict`,**逐 profile 展开 `${VAR}`**,
-并注入一个等于 profile 名的 `name` 键。哪个 profile 字典进入你的构造函数由 Datus
-决定——显式 `--profile`、项目 pin、`default: true`、唯一 profile,或在完全未配置时
-的空字典。完整解析顺序见[介绍](introduction.zh.md#which-profile-runs);这些逻辑你一行
-都不用写,构造函数只管接收解析好的 `dict`。
+Datus 把它解析成 `agent.plugins.<name>.<profile> -> dict`,**按 profile 展开
+`${VAR}`**,并注入一个等于 profile 名的 `name` 键。哪个 profile 字典进入你的
+`cli` 函数由 Datus 决定——显式 `--profile`、项目 pin、`default: true`、唯一
+profile,或在完全未配置时给一个空字典。完整解析顺序见
+[介绍](introduction.zh.md#which-profile-runs);这些逻辑你一行都不用写,你的函数
+只管接收解析好的 `dict`。
 
-本地测试时,把 profile 写进你的 datus 会话实际加载的那个 config 文件
-(显式 `--config` → `./conf/agent.yml` → `~/.datus/conf/agent.yml`)。
+本地测试时,把 profile 写进你的 datus 会话实际加载的那个配置文件(显式
+`--config` → `./conf/agent.yml` → `~/.datus/conf/agent.yml`)。
 
-## 配置 schema 与校验 {#config-schema-and-validation}
+## 配置 schema 与校验
 
-两个可选的类级钩子让 `/plugins` TUI 为你的 profile 渲染正规表单(而非自由
-键值编辑),并让你在保存前拒绝非法 profile。
+声明一个 `config_schema`——描述**单个 profile** 的内联 JSON Schema——之后
+`/plugins` TUI 会渲染出真正的表单(而非自由键值编辑),Datus 也会在保存前用它
+校验候选 profile:
 
-`config_schema()` 返回字段规格列表。每项需要 `name` 与 `description`;
-`required`(默认 `False`)、`secret`(默认 `False`)、`default` 可选。
-`secret` 字段在表单中掩码显示,并提示用户输入 `${ENV_VAR}` 引用:
-
-```python
-class HelloPlugin:
-    @classmethod
-    def config_schema(cls):
-        return [
-            {"name": "token", "description": "API token", "required": True, "secret": True},
-            {"name": "greeting", "description": "问候语", "required": False, "default": "Hi"},
-        ]
+```yaml
+config_schema:
+  type: object
+  required: [token]
+  properties:                    # 属性顺序 == TUI 字段顺序
+    token:
+      type: string
+      description: "API token"
+      x-secret: true             # TUI 中掩码显示,提示词渲染时被剥离
+    greeting:
+      type: string
+      description: "Greeting word"
+      default: "Hi"
 ```
 
-`validate_profile(profile)` 收到候选字典(用户刚输入的原始值,**在 `${VAR}`
-展开之前**),返回错误消息列表;空列表 / `None` 表示合法。返回错误时 Datus
-拒绝保存。把 `${ENV_VAR}` 占位符当作不透明——只做形态检查,真正的运行期校验
-仍放在构造函数里:
+语义:
 
-```python
-    @classmethod
-    def validate_profile(cls, profile):
-        errors = []
-        if not profile.get("token"):
-            errors.append("token 必填(请用 ${ENV_VAR} 引用)")
-        return errors
-```
+- **`x-secret: true`** 标记 secret 字段:TUI 掩码显示并提示用户输入
+  `${ENV_VAR}` 引用,系统提示词渲染器会剥离它(见
+  [系统提示词模板](#系统提示词模板))。它是属性级扩展关键字——JSON Schema
+  校验器会忽略它。
+- **`required`** 成员标记表单必填字段;**`default`** 作为初始值提供。
+- **校验**在原始候选字典上运行 `jsonschema`(用户刚输入、**尚未** `${VAR}` 展开
+  的值)。含 `${ENV_VAR}` 占位符的值被视为不透明——针对它们的
+  pattern/enum/format 违规会被抑制,但缺失 `required` 字段仍会报错。真正的运行
+  时校验放在你的 `cli` 函数里。
+- **TUI 输入的值都是字符串**,所以优先用 `type: string` 配合 `pattern` /
+  `enum` 约束;其他类型留给手写 `agent.yml` 的场景。
+- schema 本身非法(被 JSON Schema 元 schema 拒绝)时只会警告并视为不存在——TUI
+  回退到自由编辑。
 
-两个钩子都在类级、无 profile 实例时解析,与其他可选钩子一致。省略它们时,
-TUI 回退到编辑 profile 上已有的键。
+## 实现 CLI 入口
 
-## 实现 `run_cli`
-
-`argv` 是剥离了 Datus 全局参数后的命令尾部:
+manifest 的 `cli` 指向一个以 `main(argv, profile)` 调用的函数:
 
 ```
 datus hello --profile staging greet Ada
-                └── 已剥离 ──┘ └── argv = ["greet", "Ada"] ──┘
+                └── 被剥离 ──┘ └── argv = ["greet", "Ada"] ──┘
 ```
 
-只有出现在**第一个非选项 token 之前**的 `--profile` / `--config` 会被当作 Datus
-全局参数消费;从第一个命令 token 起,后面的一切都属于 plugin。因此
-`datus hello greet --profile staging` 会把 `["greet", "--profile", "staging"]`
-原样传给你——你的子命令完全可以定义自己的 `--profile` 选项。
+只有出现在**第一个非选项 token 之前**的 `--profile` / `--config` 会被当作
+Datus 全局参数消费;从第一个命令 token 起的一切都属于 plugin。因此
+`datus hello greet --profile staging` 会原样传入
+`["greet", "--profile", "staging"]`——你的子命令可以自由定义自己的 `--profile`。
 
-返回整数退出码。建议采用的约定:
+返回整数退出码(`None` 视为 `0`)。建议的约定:
 
 | 退出码 | 含义 |
 |---|---|
@@ -186,126 +208,119 @@ datus hello --profile staging greet Ada
 | `3` | 配置错误 |
 | `8` | 缺少可选依赖 |
 
-抛异常也可以——Datus 会捕获 `run_cli` 抛出的异常并映射为退出码 `1`,不会让 CLI 崩溃——
-但返回明确的退出码能给用户更清晰的信号。
+直接抛异常也可以——Datus 会捕获 `cli` 函数的异常并映射为退出码 `1`,不会让 CLI
+崩溃——但显式返回退出码能给用户更清晰的信号。
 
-## 食谱:把函数/API 快速封装成 CLI
+## 配方:把函数和 API 包装成 CLI
 
-`run_cli` 收到的是原始 `argv` 列表,所以你可以任意路由。下面是四种常见模式,从最快到最完善。
+`cli` 函数收到的是原始 `argv` 列表,路由方式完全自由。以下是四种常见模式,从最
+快到最丰富。
 
-### A. 字典分发 —— 几个函数,零依赖
-
-暴露少量函数最快的方式:用第一个 token 映射到 handler,每个 handler 拿到 `argv` 剩余部分。
+### A. 字典分发——几个函数,零依赖
 
 ```python
-class ToolboxPlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
+def main(argv, profile):
+    if not argv:
+        print("usage: datus toolbox <add|upper> ...")
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    handlers = {"add": _add, "upper": _upper}
+    handler = handlers.get(cmd)
+    if handler is None:
+        print(f"unknown command: {cmd}")
+        return 2
+    return handler(rest)
 
-    def run_cli(self, argv):
-        if not argv:
-            print("usage: datus toolbox <add|upper> ...")
-            return 2
-        cmd, rest = argv[0], argv[1:]
-        handlers = {"add": self._add, "upper": self._upper}
-        handler = handlers.get(cmd)
-        if handler is None:
-            print(f"unknown command: {cmd}")
-            return 2
-        return handler(rest)
 
-    def _add(self, args):          # datus toolbox add 1 2 3
-        print(sum(float(a) for a in args))
-        return 0
+def _add(args):          # datus toolbox add 1 2 3
+    print(sum(float(a) for a in args))
+    return 0
 
-    def _upper(self, args):        # datus toolbox upper hello
-        print(" ".join(args).upper())
-        return 0
+
+def _upper(args):        # datus toolbox upper hello
+    print(" ".join(args).upper())
+    return 0
 ```
 
-### B. argparse —— 带类型的参数、开关、自动 usage/`-h`
+### B. argparse——带类型的参数、flag、自动 usage/`-h`
 
-标准库,无额外依赖。`argparse` 在 `-h` 或用法错误时会打印用法并抛 `SystemExit`;
-Datus 会把它作为退出码透出(`-h` 为 0,用法错误为 2),这正是 CLI 的惯例行为。
+标准库,零额外依赖。`argparse` 在 `-h` 或错误用法时打印 usage 并抛
+`SystemExit`;Datus 将其转成对应退出码(`-h` 为 0,用法错误为 2),这正是常规
+CLI 行为。
 
 ```python
 import argparse
 
-class ToolboxPlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
 
-    def run_cli(self, argv):
-        parser = argparse.ArgumentParser(prog="datus toolbox")
-        sub = parser.add_subparsers(dest="cmd", required=True)
+def main(argv, profile):
+    parser = argparse.ArgumentParser(prog="datus toolbox")
+    sub = parser.add_subparsers(dest="cmd", required=True)
 
-        p_add = sub.add_parser("add", help="sum numbers")
-        p_add.add_argument("nums", nargs="+", type=float)
+    p_add = sub.add_parser("add", help="sum numbers")
+    p_add.add_argument("nums", nargs="+", type=float)
 
-        p_grep = sub.add_parser("grep", help="filter lines in a file")
-        p_grep.add_argument("pattern")
-        p_grep.add_argument("path")
-        p_grep.add_argument("-i", "--ignore-case", action="store_true")
+    p_grep = sub.add_parser("grep", help="filter lines in a file")
+    p_grep.add_argument("pattern")
+    p_grep.add_argument("path")
+    p_grep.add_argument("-i", "--ignore-case", action="store_true")
 
-        ns = parser.parse_args(argv)      # -h / 用法错误时抛 SystemExit
-        if ns.cmd == "add":
-            print(sum(ns.nums))
-            return 0
-        if ns.cmd == "grep":
-            return self._grep(ns.pattern, ns.path, ns.ignore_case)
-
-    def _grep(self, pattern, path, ignore_case):
-        needle = pattern.lower() if ignore_case else pattern
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                hay = line.lower() if ignore_case else line
-                if needle in hay:
-                    print(line.rstrip())
+    ns = parser.parse_args(argv)      # -h / 错误用法时抛 SystemExit
+    if ns.cmd == "add":
+        print(sum(ns.nums))
         return 0
+    if ns.cmd == "grep":
+        return _grep(ns.pattern, ns.path, ns.ignore_case)
+
+
+def _grep(pattern, path, ignore_case):
+    needle = pattern.lower() if ignore_case else pattern
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            hay = line.lower() if ignore_case else line
+            if needle in hay:
+                print(line.rstrip())
+    return 0
 ```
 
-### C. 封装 REST API
+### C. 包装 REST API
 
-从 profile 里读端点和凭据(Datus 已展开 `${VAR}`),再把子命令映射到请求。
-凭据保留在 profile 中——绝不硬编码,也绝不回显。
+从 profile 读取端点和凭证(Datus 已展开 `${VAR}`),把子命令映射为请求。凭证
+只放在 profile 里——绝不硬编码,也绝不回显。
 
 ```python
 import argparse
 import json
 
-class PetstorePlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
 
-    def run_cli(self, argv):
-        import requests  # plugin 可以依赖自己的库
+def main(argv, profile):
+    import requests  # plugin 可以有自己的依赖
 
-        base = self.profile.get("api_base_url")
-        if not base:
-            print("no api_base_url configured for the profile")
-            return 3
-        headers = {}
-        if self.profile.get("token"):
-            headers["Authorization"] = f"Bearer {self.profile['token']}"
+    base = profile.get("api_base_url")
+    if not base:
+        print("no api_base_url configured for the profile")
+        return 3
+    headers = {}
+    if profile.get("token"):
+        headers["Authorization"] = f"Bearer {profile['token']}"
 
-        parser = argparse.ArgumentParser(prog="datus petstore")
-        sub = parser.add_subparsers(dest="cmd", required=True)
-        sub.add_parser("list-pets")
-        p_get = sub.add_parser("get-pet")
-        p_get.add_argument("id")
-        ns = parser.parse_args(argv)
+    parser = argparse.ArgumentParser(prog="datus petstore")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list-pets")
+    p_get = sub.add_parser("get-pet")
+    p_get.add_argument("id")
+    ns = parser.parse_args(argv)
 
-        base = base.rstrip("/")
-        if ns.cmd == "list-pets":
-            resp = requests.get(f"{base}/pets", headers=headers, timeout=30)
-        else:
-            resp = requests.get(f"{base}/pets/{ns.id}", headers=headers, timeout=30)
+    base = base.rstrip("/")
+    if ns.cmd == "list-pets":
+        resp = requests.get(f"{base}/pets", headers=headers, timeout=30)
+    else:
+        resp = requests.get(f"{base}/pets/{ns.id}", headers=headers, timeout=30)
 
-        if resp.status_code >= 400:
-            print(f"error {resp.status_code}: {resp.text}")
-            return 1
-        print(json.dumps(resp.json(), indent=2))
-        return 0
+    if resp.status_code >= 400:
+        print(f"error {resp.status_code}: {resp.text}")
+        return 1
+    print(json.dumps(resp.json(), indent=2))
+    return 0
 ```
 
 对应配置:
@@ -320,11 +335,11 @@ agent:
         token: ${PETSTORE_TOKEN}
 ```
 
-### D. Typer / Click —— 最完善的体验,一个额外依赖
+### D. Typer / Click——最丰富的体验,一个额外依赖
 
-命令面较大时,[Typer](https://typer.tiangolo.com/) 这类框架能自动给你帮助文本、
-类型转换和补全。由于 Datus 每次调用都会重新构造你的 plugin,而 Typer app 是模块级对象,
-需要通过一个模块全局变量把激活 profile 暴露给各命令读取。
+命令面很大时,[Typer](https://typer.tiangolo.com/) 这类框架能提供帮助文本、类型
+转换和补全。由于 Datus 每次调用你的入口函数,而 Typer app 是模块级对象,可通过
+模块全局变量把当前 profile 暴露给命令读取。
 
 ```python
 import typer
@@ -340,52 +355,46 @@ def greet(name: str, loud: bool = False):
     print(msg.upper() if loud else msg)
 
 
-class GreeterPlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
-
-    def run_cli(self, argv):
-        global _ACTIVE_PROFILE
-        _ACTIVE_PROFILE = self.profile
-        try:
-            # standalone_mode=False 阻止 Click 自行 sys.exit,
-            # 这样我们能返回退出码,并始终清理 profile。
-            app(args=argv, standalone_mode=False)
-            return 0
-        except SystemExit as exc:      # -h / 用法
-            return int(exc.code or 0)
-        except typer.Exit as exc:
-            return exc.exit_code
-        finally:
-            _ACTIVE_PROFILE = {}
+def main(argv, profile):
+    global _ACTIVE_PROFILE
+    _ACTIVE_PROFILE = profile
+    try:
+        # standalone_mode=False 阻止 Click 自己调用 sys.exit,
+        # 这样我们能返回退出码并保证清理 profile。
+        app(args=argv, standalone_mode=False)
+        return 0
+    except SystemExit as exc:      # -h / 用法错误
+        return int(exc.code or 0)
+    except typer.Exit as exc:
+        return exc.exit_code
+    finally:
+        _ACTIVE_PROFILE = {}
 ```
 
-把 `typer` 加进你的包 `dependencies`(plugin 的依赖是它自己的——只是别依赖 `datus`)。
+把 `typer` 加进你自己包的 `dependencies`(plugin 的依赖归它自己——只是不能有
+`datus`)。
 
-## 打包 skill {#skill}
+## 捆绑 skills
 
-如果你的包附带 skill 目录,通过类级 `skills_dir()` 暴露它,Datus 会在启动期发现这些 skill
-(它们会出现在 `/skill list`,与项目、用户 skill 并列)。
+在 manifest 里声明一个包内相对路径的 skills 目录,Datus 启动时即发现这些 skill
+(出现在 `/skill list`,与项目和用户 skill 并列)——零代码:
 
-```python
-class HelloPlugin:
-    @classmethod
-    def skills_dir(cls) -> str:
-        from pathlib import Path
-        return str(Path(__file__).parent / "skills")
+```yaml
+skills: skills
 ```
 
-目录结构与打包:
+目录与打包:
 
 ```
 datus_plugin_hello/
+├── datus-plugin.yml
 └── skills/
     └── hello/
         └── SKILL.md
 ```
 
-最小的 `SKILL.md` 由 YAML frontmatter 加 markdown 指令组成(frontmatter 遵循
-Skills 系统采用的 [agentskills.io](https://agentskills.io) 规范):
+最小的 `SKILL.md` 是 YAML frontmatter 加 markdown 说明(frontmatter 遵循
+Skills 系统使用的 [agentskills.io](https://agentskills.io) 规范):
 
 ```markdown
 ---
@@ -398,124 +407,132 @@ description: Say hello to someone via the `datus hello` CLI
 Run `datus hello <name>` to greet someone. ...
 ```
 
-完整的 frontmatter 字段参考见 [Skills](../skills/introduction.zh.md) 文档。
+完整 frontmatter 字段参考见 [Skills](../skills/introduction.zh.md) 文档。
 
-确保 skill 文件被打进 wheel(它们是数据文件,不是 Python 模块)。Hatchling 默认
-会打包包目录下的所有文件,除非文件被 VCS ignore(此时需列进
-`[tool.hatch.build.targets.wheel] artifacts`),否则无需额外配置。setuptools
-则必须显式声明:
+确保 skill 文件被打进 wheel(它们是数据,不是 Python 代码)。Hatchling 默认打包
+包目录下所有文件,除非文件被 VCS 忽略(那样需要在
+`[tool.hatch.build.targets.wheel] artifacts` 列出);setuptools 必须显式声明:
 
 ```toml
 [tool.setuptools.package-data]
-datus_plugin_hello = ["skills/**/*"]
+datus_plugin_hello = ["datus-plugin.yml", "skills/**/*", "prompts/*"]
 ```
 
 构建后用 `unzip -l dist/*.whl | grep SKILL.md` 验证。
 
-## 注入 system prompt {#system-prompt}
+## 系统提示词模板
 
-plugin 可以在对话一开始就告诉 agent:自己是什么、配了哪些环境——让模型主动选用,而不是盲猜。
-通过类级 `system_prompt(profiles)` 暴露:
+plugin 可以预先告诉 agent 它是什么、配置了哪些环境——让模型主动选择它而不是靠
+猜。在 manifest 里声明一个 Jinja2 模板:
 
-```python
-class HelloPlugin:
-    @classmethod
-    def system_prompt(cls, profiles):
-        if not profiles:
-            # 已安装但未配置:指向 setup skill,而不是从 prompt 里消失。
-            return (
-                "## Hello (installed, not configured)\n"
-                "The `datus hello` CLI is installed but has no environment "
-                "configured.\nRun the `hello-setup` skill to configure one."
-            )
-        envs = "\n".join(
-            f"- {name}: {cfg.get('greeting', '?')}"
-            for name, cfg in profiles.items()
-        )
-        return (
-            "## Hello\n"
-            "Say hello via `datus hello <name>`.\n"
-            f"Environments ({len(profiles)}):\n{envs}"
-        )
+```yaml
+system_prompt: prompts/system.md.j2
 ```
 
-Datus 传入该 plugin 的 profile 映射,并**收窄到本项目激活的 profile**
-(`./.datus/config.yml` 里的 `plugins.<name>.active_profile`),再把返回的 markdown
-追加到每个 agentic 节点的 system prompt。项目若只 pin 了一个 profile,就只有它被送进 LLM;
-没有 pin 时传入全部。**已安装但未配置**(或 pin 未命中任何 profile)的 plugin 会收到 `{}`——
-此时应返回一段简短的"已安装,未配置"提示,指向自带的 setup skill(见下一节),让 agent 能引导用户完成配置。
-只有确实无话可说时才返回 `None`。
+```jinja
+## Hello
+Say hello via `datus hello <name>`.
 
-只要有任一 plugin 贡献了内容,Datus 会在这些片段前面加上自己的 `## Plugins` 前导块,写明实际
-加载的 config 文件位置与 `agent.plugins.<plugin>.<profile>` 结构——你的文本无需硬编码任何路径。
+{% if profiles %}
+Environments ({{ profiles | length }}):
+{% for name, cfg in profiles.items() %}
+- {{ name }}: {{ cfg.get("greeting", "?") }}
+{% endfor %}
+{% else %}
+Installed but not configured — run the `hello-setup` skill to configure an
+environment.
+{% endif %}
+```
 
-!!! danger "绝不暴露密钥"
-    返回文本会进入 LLM 上下文。Datus 交给你的是完整 profile 字典——其中含 `password`、
-    secret、access key——但你只能输出**非敏感字段**(endpoint、region、环境名)。
-    Datus 从不自行拼接 profile 值;把凭据挡在 prompt 之外是 plugin 的责任。请用字段白名单。
+渲染上下文:
 
-## CLI bash 权限 {#cli-permissions}
+| 变量 | 值 |
+|---|---|
+| `plugin_name` | 你的 entry-point 名 |
+| `profiles` | `dict[str, dict]`——plugin 的 profile 映射,**已收窄到项目激活的 profile**(`./.datus/config.yml` 的 `plugins.<name>.active_profile`)且**已剥离 secret**(见下) |
+| `config_path` | 已加载的 agent 配置文件路径,或 `None` |
 
-当 **agent**(而非人类用户)通过它的 bash 工具执行你的 CLI——例如模型自主决定运行
-`datus hello greet Ada`——命令会经过 Datus 的权限层。若无任何声明,这类命令每次都会
-弹出确认。类级 `cli_permissions()` 让 plugin 按权限 profile 声明:哪些子命令可以直接
-放行(`allow`)、哪些必须确认(`ask`)、哪些直接拦截(`deny`):
+已安装但未配置的 plugin(或 pin 无匹配)渲染时 `profiles == {}`——用
+`{% if profiles %}` 输出一段"已安装未配置"提示并指向捆绑的 setup skill,而不是
+从提示词中消失。
 
-```python
-class HelloPlugin:
-    @classmethod
-    def cli_permissions(cls):
-        return {
-            "normal": {"allow": ["greet:*"], "ask": ["config set:*"]},
-            "auto":   {"allow": ["greet:*", "config set:*"]},
-        }
+只要有任一 plugin 贡献了 section,Datus 会前置自己的 `## Plugins` 导语,写明已
+加载的配置文件和 `agent.plugins.<plugin>.<profile>` 结构——你的模板永远不需要
+硬编码配置路径。
+
+!!! note "secret 是结构性剥离的"
+    渲染出的文本会进入 LLM 上下文,而 profile 的值在提示词构建时已完成
+    `${VAR}` 展开(是真实明文 secret)——所以 Datus 在模板看到 profiles
+    **之前**就做了过滤:只有在你的 `config_schema` 中声明且**未**标记
+    `x-secret: true` 的字段才会通过;未声明的字段同样被丢弃。没有
+    `config_schema` 时,模板只能拿到 profile 名和空字典。模板若引用被剥离的
+    字段会渲染失败(严格模式)并跳过该 section——永远不可能泄漏。
+
+模板错误(文件缺失、语法错误、未定义变量)只会记录日志并跳过该 section——绝不
+影响提示词构建。模板以严格模式(`StrictUndefined`)渲染,笔误会出现在日志里,
+而不是变成悄悄错误的提示词文本。
+
+## CLI bash 权限
+
+当 **agent**(而非人)通过它的 bash 工具运行你的 CLI——例如模型决定执行
+`datus hello greet Ada`——命令会经过 Datus 的权限层。没有声明时,agent 发出的
+每条 plugin 命令都会请求用户确认。manifest 的 `permissions` 键按权限 profile 声
+明你的哪些子命令可以自动运行(`allow`)、哪些必须确认(`ask`)、哪些被阻止
+(`deny`)——纯 YAML,零代码:
+
+```yaml
+permissions:
+  normal:
+    allow: ["greet:*"]
+    ask: ["config set:*"]
+  auto:
+    allow: ["greet:*", "config set:*"]
 ```
 
 语义:
 
-- **pattern 相对于你的命名空间。** Datus 会给每条 pattern 加上 `datus <name> ` 前缀,
-  `greet:*` 实际生效为 `datus hello greet:*`。plugin 永远无法影响 `datus <name>`
-  之外的命令——碰不到 `rm`,也碰不到其他 plugin。
-- **pattern 语法**与 `agent.yml` 的 `permissions.bash_commands` 一致:`cmd` 精确匹配,
-  `cmd:*` 前缀匹配,`cmd:glob` 前缀匹配且第一个参数需满足 glob(如 `greet:A*`)。
-  单写 `:*` 表示覆盖整个命名空间。
-- **profile 键**:只接受 `normal` 与 `auto`。`dangerous` profile 设计上忽略一切
-  命令级 bash 规则,声明 `dangerous` 键会被告警并丢弃。
-- **用户永远优先。** `agent.yml` 里用户的 `deny` 规则压过 plugin 的 `allow`
-  (无论声明顺序,判定固定为 deny > ask > allow),且 plugin 声明永远改不了
-  profile 的默认姿态。
-- **`ask` 规则可按项目放宽。** agent 命中你声明的 `ask` 子命令时,确认框会提供
-  "allow (project)" 选项——选择后把命中的 pattern 原样(如
+- **模式相对于你的命名空间。**Datus 给每个模式加 `datus <name> ` 前缀,
+  `greet:*` 变成 `datus hello greet:*`。plugin 永远影响不到 `datus <name>` 之外
+  的命令——不能碰 `rm`,也不能碰别的 plugin。
+- **模式语法**与 `agent.yml` 的 `permissions.bash_commands` 一致:`cmd` 精确
+  匹配,`cmd:*` 前缀匹配,`cmd:glob` 前缀匹配且第一个参数需满足 glob(如
+  `greet:A*`)。裸 `:*` 覆盖整个命名空间。
+- **profile 键**:只接受 `normal` 和 `auto`。`dangerous` profile 按设计忽略所有
+  命令级 bash 规则;`dangerous` 键会被警告并丢弃。
+- **用户永远优先。**用户在 `agent.yml` 写的 `deny` 覆盖 plugin 的 `allow`
+  (deny > ask > allow,与声明顺序无关),plugin 声明也永远改不了 profile 的默认
+  姿态。
+- **`ask` 规则可以按项目放宽。**agent 撞上你声明的 `ask` 子命令时,确认提示会
+  提供"allow (project)"选项——选择后把精确匹配到的模式(如
   `datus hello config set:*`)持久化到项目 `.datus/config.yml` 的 `bash_allow`
-  列表,此后该子命令直接放行。授权是精确匹配:不会扩大到命名空间的其他部分,
-  你的 `deny` 规则也不受影响。(用户自己写在 `agent.yml` 里的 `ask` 规则没有
-  这个选项——放宽自己的姿态应该改自己的配置。)
-- **作用范围**:只管 agent 的 bash 工具。人类在终端直接敲 `datus hello ...` 不受
-  任何影响。`plugins_enabled: false` 会连同 plugin 系统一起停用规则收集
-  (见[介绍](introduction.zh.md#disabling-the-plugin-system))。
-- **`--profile` 对匹配透明。** `datus hello --profile prod config set x` 与
-  不带该旗标的形式命中同样的规则(和同样的项目授权)——前导的 datus 全局旗标
-  会在判定前被归一化掉。`--config <path>` 有意*不*归一化:指向另一个配置文件
-  等于换绑凭据,这类调用一律回落到确认。
-- 声明格式有误(类型不对、未知键、空 pattern)只会记日志并跳过,绝不会影响
-  Datus 启动。
+  列表,此后该子命令自动运行。授权只精确匹配:永远不会扩大到命名空间的其余部
+  分,你的 `deny` 规则也不受影响。(用户自己在 `agent.yml` 写的 `ask` 规则没有
+  这个选项——放宽它们应该改用户自己的配置。)
+- **范围**:只有 agent 的 bash 工具被管控。人在终端里敲 `datus hello ...` 永远
+  不受影响。`plugins_enabled: false` 会连同插件系统的其余部分一起禁用收集(见
+  [介绍](introduction.zh.md#disabling-the-plugin-system))。
+- **`--profile` 对匹配透明。**`datus hello --profile prod config set x` 匹配的
+  规则(和项目授权)与不带该参数的形式相同——前导的 datus 全局 flag 在求值前被
+  归一化掉。`--config <path>` 刻意**不**归一化:把 datus 指向另一个配置文件会重
+  绑凭证,这类调用总是回退到确认。
+- 畸形声明(类型错误、未知键、空模式)只会记录日志并跳过——绝不影响 Datus 启动。
 
-建议:只读子命令在 `normal` 下声明为 `allow`,会改状态的声明为 `ask`;仅当重复执行
-无害时,才在 `auto` 下把常规状态变更提升为 `allow`。
+只读子命令声明为 `normal` 下的 `allow`,变更状态的声明为 `ask`;只有重复执行无
+害的常规变更才在 `auto` 下提升为 `allow`。
 
-## 工具参数 transformer {#tool-transformers}
+## 工具参数 transformer
 
-类级 `tool_transformers()` 让 plugin 拦截 **agent 的工具调用**——在工具执行前检查并
-改写参数,或者直接拒绝这次调用。典型用例是 SQL 策略:给每条 `execute_sql` 查询
-追加租户作用域谓词,值来自部署侧注入的请求 principal。
+manifest 的 `tool_transformers` 键让 plugin 拦截 **agent 的工具调用**——在工具
+执行前检查并改写参数,或直接拒绝调用。典型用例是 SQL 策略强制:给每条
+`execute_sql` 查询追加租户范围谓词,使用部署注入的请求 principal。
+
+```yaml
+tool_transformers:
+  "db_tools.execute_sql": datus_plugin_scoped_sql.transformers:enforce_tenant_scope
+```
 
 ```python
-class ScopedSqlPlugin:
-    @classmethod
-    def tool_transformers(cls):
-        return {"db_tools.execute_sql": enforce_tenant_scope}
-
-
+# datus_plugin_scoped_sql/transformers.py
 def enforce_tenant_scope(tool_name, args, context):
     tenant_id = (context.get("principal") or {}).get("tenant", {}).get("id")
     if not tenant_id:
@@ -526,34 +543,34 @@ def enforce_tenant_scope(tool_name, args, context):
 
 语义:
 
-- **声明形状**:dict,键为工具 pattern,值为单个 transformer 或 transformer 列表。
-  pattern 使用 proxy 语法——裸工具名(`execute_sql`),或带 fnmatch glob 的
-  `category.method`(`db_tools.*`)。
+- **声明形状**:工具 pattern 到代码引用(或引用列表)的映射。pattern 使用 proxy
+  语法——裸工具名(`execute_sql`),或带 fnmatch glob 的 `category.method`
+  (`db_tools.*`)。
 - **transformer 签名**:`transformer(tool_name, args, context) -> dict`,同步或
-  异步均可。返回(可能已修改的)参数 dict 则继续执行。**抛异常即拒绝**:工具
-  不会执行,模型收到你的异常消息(以普通工具失败的形式)。返回非 dict 同样
-  按拒绝处理,fail-closed。
-- **`context`** 是普通 dict,含 `node_name`、`principal`(请求级调用方属性,
-  部署未注入时为空)、`project_root` 与 `agent_config`(运行中的 agent 配置
-  对象——通过 `context["agent_config"].get_plugin_profile("<name>")` 读取
-  自己的 profile;只做鸭子类型访问,不要为此 import `datus.*`)。每次调用
-  都会重建,请求级数据永远是新鲜的。
-- **覆盖范围**:transformer 包装的是 agent 的 `FunctionTool` 层,两条执行路径
-  (SDK Runner 与 native loop)都经过它。但它**不覆盖**对工具方法的 Python
-  直接调用(如 reference-template 执行),也不覆盖代理给外部客户端执行的工具——
-  必须在这些路径上也生效的服务端强制,应放在工具层本身(见 `agent.sql_policy`)。
-- **信任模型**:transformer 在进程内运行,能看到所有命中工具调用的完整参数,
-  属于受信代码;与 plugin 系统其余表面一样受 `plugins_enabled` 总开关门控。
-- 改写 SQL 时请使用 SQL parser 或数据库安全的查询构造器——策略谓词绝不要用
-  字符串拼接。
-- 声明格式有误(非 dict、非 callable 条目、空 pattern)只会记日志并跳过,绝不
-  影响 Datus 启动。但收集成功后应用失败会直接中止 agent 节点,而不是在丢失
-  强制的情况下静默运行。
+  异步均可。返回(可能已修改的)参数字典则继续执行。**抛异常即拒绝**:工具不会
+  运行,模型把你的异常消息当作普通工具失败收到。返回非 dict 同样拒绝,fail
+  closed。
+- **`context`** 是普通字典,含 `node_name`、`principal`(请求级调用方属性,部署
+  未设置时为空)、`project_root` 和 `agent_config`(存活的 agent 配置对象——用
+  `context["agent_config"].get_plugin_profile("<name>")` 读取你自己的 profile;
+  鸭子类型访问,绝不为此 `import datus.*`)。它在每次调用时重建,请求级的值总是
+  新鲜的。
+- **加载是惰性的**:被引用的模块在为 agent 节点首次收集 transformer 时才导入,
+  而不是在 manifest 加载时。导入失败(或不可调用)的引用会被警告并跳过——plugin
+  其余的 transformer 仍然生效。
+- **覆盖范围**:transformer 包装 agent 的 `FunctionTool` 层,两条执行路径
+  (SDK Runner 与原生 loop)都经过它。它**不**覆盖对工具方法的直接 Python 调用
+  (如 reference-template 执行)或代理给外部 client 的工具——必须在这些路径上
+  存活的服务端强制应放进工具层本身(见 `agent.sql_policy`)。
+- **信任模型**:transformer 在进程内运行,能完整访问每个被匹配工具调用的参数。
+  它们是受信代码,与插件面的其余部分一样受 `plugins_enabled` 总开关管控。
+- 改写 SQL 时用 SQL parser 或数据库安全的查询构造器——策略谓词绝不用字符串拼接。
+- 收集成功但应用失败的声明会中止 agent 节点,而不是在没有强制的情况下静默运行。
 
-## 自带 setup skill {#setup-skill}
+## 捆绑 setup skill
 
-`pip install` 之后手工改 YAML 是最大的使用摩擦。在主 skill 旁边再带一个 `<name>-setup`
-skill,让 agent 替用户收集配置并写入 profile:
+`pip install` 之后手工编辑 YAML 是最大的摩擦。把 `<name>-setup` skill 与主
+skill 一起分发,让 agent 自己收集值并写好 profile:
 
 ```
 datus_plugin_hello/
@@ -564,20 +581,21 @@ datus_plugin_hello/
         └── SKILL.md
 ```
 
-setup 的 `SKILL.md` 按顺序覆盖:
+setup `SKILL.md` 应按顺序覆盖:
 
-1. **何时使用**——plugin 未配置,或用户要新增环境。
-2. **配置结构**——`agent.plugins.<name>.<profile>` 的完整 YAML 模板,用注释标注
-   必填 / 可选 / 敏感字段。
-3. **询问用户**——列出必须由用户提供的字段(endpoint、认证方式等)。密钥类字段要指示
-   agent 让用户自己导出环境变量,YAML 里写 `${VAR}` 占位——绝不把明文密钥写入文件。
-4. **写入配置**——写到 prompt 的 `## Plugins` 前导块中给出的 config 文件,第一个
-   profile 标 `default: true`。
-5. **验证**——用一条低成本只读命令(如 `datus hello version`)。`datus <plugin>`
-   每次调用都会重新加载配置,新 profile 立即可用;prompt 里的环境列表下次会话刷新。
+1. **何时使用**——plugin 未配置,或用户想加一个环境。
+2. **配置结构**——`agent.plugins.<name>.<profile>` 的完整 YAML 模板,用注释标出
+   必填/可选/secret 字段。
+3. **询问用户**——列出必须来自用户的字段(端点、认证方式……)。secret 字段要求
+   agent 让用户导出环境变量,YAML 里写 `${VAR}` 引用——绝不写字面 secret。
+4. **写入配置**——写进 `## Plugins` 提示词导语指出的文件,第一个 profile 标
+   `default: true`。
+5. **验证**——一条便宜的只读命令(如 `datus hello version`)。
+   `datus <plugin>` 每次调用都重新加载配置,profile 立即生效;提示词里的环境列
+   表下个会话刷新。
 
-加一条守护说明:若当前环境不可编辑 config 文件(API / VSCode / web 部署),
-agent 应改为告知用户在服务端手工编辑 `agent.yml`。
+加一条保护性说明:若当前环境无法编辑配置文件(API / VSCode / web 部署),agent
+应告知用户去服务器上改 `agent.yml`。
 
 一个完整的最小 `hello-setup/SKILL.md`:
 
@@ -622,87 +640,107 @@ the user to edit `agent.yml` on the server instead.
 
 ## 端到端验证你的 plugin
 
-`pip install -e` 之后,每个功能面都可以直接检查,无需重启任何东西
-(plugin 在每次调用时被发现):
+`pip install -e` 之后,每个扩展面都可以在不重启任何东西的情况下验证(plugin 每
+次调用都会被发现):
 
-- **CLI 分发**——在任意目录执行 `datus <name> ...`。如果它落进了 REPL 而不是你的
-  plugin,说明 entry point 缺失或名字不对;用 `pip show -f your-package` 检查
-  `entry_points.txt`。
-- **Skills**——启动 `datus` 并执行 `/skill list`;plugin 自带的 skill 会与项目、
+- **CLI 分发**——在任意目录运行 `datus <name> ...`。如果落进了 REPL,说明
+  entry point 缺失/拼错,或 manifest 被拒绝(看日志);`datus <name>` 打印
+  "declares no CLI command" 说明 manifest 加载了但没有 `cli` 键。用
+  `pip show -f your-package` 检查 `entry_points.txt` 和随包的
+  `datus-plugin.yml`。
+- **Skills**——启动 `datus` 执行 `/skill list`;plugin 捆绑的 skill 与项目、
   用户 skill 并列出现。
-- **Prompt 注入**——最简单的检查是单测直接调用 `system_prompt()`(见下一节)。
-  要确认它进入了真实会话,启动 `datus` 后问 agent"配置了哪些 plugin?"——答案
-  就来自注入的段落。注意:配置修改对下一次 `datus <plugin>` 调用立即生效,但
-  prompt 段落要到下一个会话才刷新。
+- **提示词注入**——在单测里直接渲染模板(见下节)。要确认真实会话里生效,启动
+  `datus` 问 agent"配置了哪些 plugin?"——答案来自注入的 section。注意配置修改
+  对下一次 `datus <plugin>` 调用立即生效,但提示词 section 只在下个会话刷新。
 
 ## 测试你的 plugin
 
-因为 Datus 是 broker,单测只需用普通 dict 构造你的 plugin——不需要 `agent.yml`,不导入 Datus:
+因为 Datus 是 broker,单测直接用普通 dict 调用你的函数——不需要 `agent.yml`,
+不需要 import Datus。manifest 和模板用普通的 YAML/Jinja2 工具验证:
 
 ```python
-from datus_plugin_hello.plugin import HelloPlugin
+from pathlib import Path
 
-def test_run_cli_uses_profile_greeting(capsys):
-    rc = HelloPlugin(profile={"name": "prod", "greeting": "Hi"}).run_cli(["Ada"])
+import yaml
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+from datus_plugin_hello.cli import main
+
+PKG = Path(__file__).parent.parent / "datus_plugin_hello"
+
+
+def test_cli_uses_profile_greeting(capsys):
+    rc = main(["Ada"], {"name": "prod", "greeting": "Hi"})
     assert rc == 0
     assert "Hi, Ada!" in capsys.readouterr().out
 
-def test_system_prompt_lists_envs_without_secrets():
-    text = HelloPlugin.system_prompt({
-        "prod": {"name": "prod", "greeting": "Hi", "token": "s3cr3t"},
-    })
-    assert "## Hello" in text
-    assert "s3cr3t" not in text          # 密钥绝不能泄漏
 
-def test_system_prompt_unconfigured_points_to_setup_skill():
-    text = HelloPlugin.system_prompt({})
-    assert "not configured" in text
+def test_manifest_is_valid():
+    manifest = yaml.safe_load((PKG / "datus-plugin.yml").read_text())
+    assert manifest["manifest_version"] == 1
+    assert manifest["cli"] == "datus_plugin_hello.cli:main"
+    # 所有声明的路径都存在于包内
+    assert (PKG / manifest["skills"]).is_dir()
+    assert (PKG / manifest["system_prompt"]).is_file()
+
+
+def test_prompt_template_renders_without_secrets():
+    env = Environment(loader=FileSystemLoader(PKG), undefined=StrictUndefined)
+    template = env.get_template("prompts/system.md.j2")
+    # datus 渲染前会剥离未声明 / x-secret 字段;此处模拟同样的输入。
+    text = template.render(plugin_name="hello", profiles={"prod": {"greeting": "Hi"}}, config_path=None)
+    assert "## Hello" in text
+    text = template.render(plugin_name="hello", profiles={}, config_path=None)
     assert "hello-setup" in text
 ```
 
-## 分发以支持离线安装
+## 分发离线安装包
 
-用 `datus plugin pack` 把插件打成一个 wheelhouse `.zip`,在插件项目目录下、**有网**
-的机器上执行:
+在有网络的机器上、从 plugin 项目目录用 `datus plugin pack` 打出 wheelhouse
+`.zip`:
 
 ```bash
-datus plugin pack -o ./dist               # 仅插件 wheel(默认)
+datus plugin pack -o ./dist               # 只含 plugin wheel(默认)
 # → ./dist/datus-plugin-hello-1.0.0.zip
 
-datus plugin pack --with-deps -o ./dist   # 插件 wheel + 每个依赖 wheel
+datus plugin pack --with-deps -o ./dist   # plugin wheel + 全部依赖 wheel
 ```
 
-bundle 是一个 zip,内含 `datus-bundle.json` manifest 与 `wheels/` wheelhouse。用户用
-`datus plugin install zip:./….zip` 安装(见
-[离线安装](introduction.zh.md#offline-install))。按需选择:
+bundle 是一个 zip,内含 `datus-bundle.json` 清单和 `wheels/` wheelhouse。
+`pack` 会验证 wheel 声明了模块引用式的 `datus.plugins` entry point **并且**捆绑
+了它的 `datus-plugin.yml`——缺少任一项的 wheel 在任何依赖下载之前就被拒绝。用户
+通过 `datus plugin install zip:./….zip` 安装(见
+[离线安装](introduction.zh.md#offline-install))。选择哪种口味:
 
-- **默认(仅插件 wheel)** —— 包体小;目标机器在安装时从 package index 解析依赖
-  (需要网络)。
-- **`--with-deps`** —— 把每个传递依赖 wheel 都打进去,从而完全离线安装
-  (`pip install --no-index --find-links`)。`pack` 使用 `pip download
-  --only-binary=:all:`,因此每个依赖都必须发布 wheel(不能是仅有 sdist 的包)。纯
-  Python 依赖集可移植;带原生扩展的依赖会让 bundle 成为**同平台快照**——请在与目标机
-  OS/Python 匹配的机器上构建。
-- **声明 `Requires-Python`。** 在 `pyproject.toml` 里设好;`pack` 会把它写进
-  manifest,安装时便可尽早拒绝不匹配的解释器(带明确提示,可用 `--force` 越过)。
+- **默认(只含 plugin wheel)**——bundle 很小;目标机器在安装时从 package index
+  解析依赖(需要网络)。
+- **`--with-deps`**——捆绑所有传递依赖 wheel,安装完全离线
+  (`pip install --no-index --find-links`)。`pack` 使用
+  `pip download --only-binary=:all:`,因此每个依赖都必须发布 wheel(不接受只有
+  sdist 的包)。纯 Python 依赖集可跨平台;含原生扩展的依赖会让 bundle 变成
+  **同平台快照**——在与目标 OS/Python 匹配的机器上构建。
+- **声明 `Requires-Python`。**在 `pyproject.toml` 里设置;`pack` 会把它拷进清
+  单,安装时可以尽早拒绝不匹配的解释器(报错清晰,可用 `--force` 覆盖)。
 
-## 约束自检清单
+## 约束检查清单
 
 发布前逐项确认:
 
-- [ ] 包内任何地方都**不** `import datus`(`grep -rn "import datus" your_pkg/`)。
-- [ ] `pyproject.toml` **不**依赖 `datus` 或任何共享 plugin SDK。
-- [ ] `__init__` 以名为 `profile` 的关键字参数接收 profile(Datus 调用 `PluginClass(profile=...)`)。
-- [ ] entry-point 名不是保留字(`upgrade`、`skill`、`plugin`),且不以 `-` 开头。
-- [ ] `skills_dir`、`system_prompt` 与 `cli_permissions` 类级可取(`@classmethod` / `@staticmethod` / 类属性)。
-- [ ] `system_prompt` 只输出非敏感字段。
-- [ ] `cli_permissions` 的 pattern 相对命名空间书写(不要自带 `datus <name>` 前缀——Datus 会加),且改状态的子命令在 `normal` 下是 `ask`。
-- [ ] `run_cli` 返回 int(或 `None`),成功路径上不调用 `sys.exit()`。
-- [ ] skill 文件已打进 wheel。
-- [ ] `datus.plugins` 的 entry-point 名与目标 `datus <name>` 命令、`agent.plugins.<name>` 配置键一致。
+- [ ] 包内任何地方都**没有** `import datus`(`grep -rn "import datus" your_pkg/`)。
+- [ ] `pyproject.toml` **不**依赖 `datus` 或共享 plugin SDK。
+- [ ] `datus.plugins` entry-point 的值是**包名**(没有 `:Class` 部分)。
+- [ ] entry-point 名不是保留名(`upgrade`、`skill`、`plugin`)且不以 `-` 开头。
+- [ ] `datus-plugin.yml` 位于包根,声明 `manifest_version: 1`,并进入 wheel(`unzip -l dist/*.whl`)。
+- [ ] `cli` 函数签名为 `main(argv: list[str], profile: dict) -> int | None`,成功路径不调用 `sys.exit()`。
+- [ ] secret 配置字段在 `config_schema` 中标记了 `x-secret: true`。
+- [ ] 系统提示词模板用 `{% if profiles %}` 处理 `profiles == {}` 的情况。
+- [ ] `permissions` 模式是命名空间相对的(不带 `datus <name>` 前缀——Datus 会加),`normal` 下变更状态的子命令是 `ask`。
+- [ ] skill 文件和提示词模板都打进了 wheel。
+- [ ] entry-point 名与期望的 `datus <name>` 命令和 `agent.plugins.<name>` 配置键一致。
 
 ## 参考
 
-- **Entry-point 组**:`datus.plugins`——一个 plugin 一条,解析到一个 plugin **类**。
-- **契约权威来源**:`datus/plugins/base.py`(文档化的 `DatusPlugin` 协议)。
+- **entry-point 组**:`datus.plugins`——每个 plugin 一条,值为 plugin 的**包名**。
+- **契约的唯一权威**:`datus/plugins/base.py`(`datus-plugin.yml` manifest 规格)。
 - **相关**:[Plugin 介绍](introduction.zh.md)、[Skills](../skills/introduction.zh.md)。

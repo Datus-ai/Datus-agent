@@ -2,13 +2,17 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Discovery of ``datus.plugins`` entry points.
+"""Discovery of ``datus.plugins`` entry points and their manifests.
 
-A plugin package declares one entry point under the ``datus.plugins`` group,
-e.g. ``hello = datus_hello.plugin:HelloPlugin``. This module loads those
-classes and exposes their bundled skill directories, system-prompt sections,
-and CLI bash-permission declarations. See :mod:`datus.plugins.base` for the
-plugin contract.
+A plugin package declares one entry point under the ``datus.plugins`` group
+whose value is the package name, e.g. ``hello = datus_plugin_hello``. This
+module locates each package directory via ``importlib.util.find_spec``
+(WITHOUT executing the package), reads its ``datus-plugin.yml`` manifest, and
+exposes the declared skill directories, system-prompt templates, CLI
+bash-permission rules, tool transformers and config schemas. Plugin code is
+imported only lazily, through :func:`resolve_code_ref`, when a declared ``cli``
+or ``tool_transformers`` entry actually runs. See :mod:`datus.plugins.base`
+for the manifest contract.
 
 Every lookup is defensive: a broken or missing plugin must never crash the CLI
 or block skill discovery.
@@ -16,11 +20,14 @@ or block skill discovery.
 
 from __future__ import annotations
 
-import os
+import importlib
+import importlib.util
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
+from datus.plugins.base import MANIFEST_FILENAME, PluginManifest, parse_code_ref, read_manifest_file
+from datus.plugins.prompt import render_plugin_prompt
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -81,55 +88,136 @@ def plugin_entry_point_exists(name: str) -> bool:
     return bool(entry_points_for_group(PLUGIN_ENTRY_POINT_GROUP, name=name))
 
 
-def load_plugin_class(name: str) -> Optional[type]:
-    """Load the plugin class registered as ``name``, or ``None``.
+def _package_dir_for_entry_point(ep) -> Optional[Path]:
+    """Locate the package directory an entry point names, WITHOUT importing it.
 
-    Returns ``None`` when no plugin claims ``name`` so callers fall through to
-    other dispatch paths. A load failure (broken adapter) is logged and also
-    yields ``None`` rather than propagating.
+    The entry-point value must be a bare package name (``datus_plugin_foo``).
+    A legacy ``pkg.module:Class`` value (non-empty attribute part) is rejected
+    with a migration warning. ``find_spec`` only consults path finders for a
+    top-level package, so no plugin code runs here. Returns ``None`` — never
+    raises — when the package cannot be located or is not a directory-backed
+    package (single ``.py`` module, zipimport archive, namespace package
+    without a manifest).
     """
-    candidates = entry_points_for_group(PLUGIN_ENTRY_POINT_GROUP, name=name)
-    if not candidates:
+    name = getattr(ep, "name", None)
+    value = getattr(ep, "value", None) or ""
+    module_name, _, attr = value.partition(":")
+    module_name = module_name.strip()
+    if attr.strip():
+        logger.warning(
+            "Plugin %r entry point %r targets an object (legacy class-based contract); "
+            "rebuild it against the datus-plugin.yml manifest contract. Skipping.",
+            name,
+            value,
+        )
         return None
-    if len(candidates) > 1:
-        logger.warning("Multiple datus.plugins entry points named %r; using the first.", name)
+    if not module_name:
+        return None
     try:
-        return candidates[0].load()
-    except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash the CLI
-        logger.error("Failed to load plugin '%s': %s", name, exc)
+        spec = importlib.util.find_spec(module_name)
+    except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash discovery
+        logger.warning("Plugin %r package %r could not be located: %s; skipping.", name, module_name, exc)
         return None
+    if spec is None:
+        logger.warning("Plugin %r package %r is not importable; skipping.", name, module_name)
+        return None
+    if spec.origin:
+        origin = Path(spec.origin)
+        if origin.name == "__init__.py":
+            return origin.parent
+        logger.warning(
+            "Plugin %r entry point must reference a package containing %s, not module %r; skipping.",
+            name,
+            MANIFEST_FILENAME,
+            module_name,
+        )
+        return None
+    # Namespace package: no origin, possibly several search locations.
+    for location in getattr(spec, "submodule_search_locations", None) or []:
+        candidate = Path(location)
+        if (candidate / MANIFEST_FILENAME).is_file():
+            return candidate
+    logger.warning(
+        "Plugin %r package %r has no %s in any of its locations; skipping.", name, module_name, MANIFEST_FILENAME
+    )
+    return None
 
 
-# Process-level cache of ``(entry_point_name, plugin_class_or_None)`` pairs.
-# Installed plugins cannot change mid-process, and the four collection
-# functions below all run on hot paths (skill discovery, prompt build,
-# per-node transformer wrapping, permission collection) — without the cache
-# each of them re-enumerates distribution metadata and re-imports every
-# plugin package on every call. ``None`` marks a failed load so consumers
-# skip it without retrying the import.
-_PLUGIN_CACHE: Optional[List[Tuple[Optional[str], Optional[type]]]] = None
+# Process-level cache of ``(entry_point_name, manifest_or_None)`` pairs.
+# Installed plugins cannot change mid-process, and the collection functions
+# below all run on hot paths (skill discovery, prompt build, per-node
+# transformer wrapping, permission collection) — without the cache each of
+# them re-enumerates distribution metadata and re-reads every manifest on
+# every call. ``None`` marks a missing/rejected manifest so consumers skip it
+# without retrying.
+_PLUGIN_CACHE: Optional[List[Tuple[Optional[str], Optional[PluginManifest]]]] = None
+
+# Memoizes resolved ``tool_transformers`` callables per ``(plugin, ref)`` so
+# the underlying import happens once, not on every per-node collection.
+# ``None`` marks a failed resolution (import error / non-callable).
+_RESOLVED_TRANSFORMER_CACHE: Dict[Tuple[str, str], Optional[Any]] = {}
 
 
-def _loaded_plugins() -> List[Tuple[Optional[str], Optional[type]]]:
-    """Return cached ``(name, plugin_cls)`` pairs for all installed plugins."""
+def _loaded_manifests() -> List[Tuple[Optional[str], Optional[PluginManifest]]]:
+    """Return cached ``(name, manifest)`` pairs for all installed plugins."""
     global _PLUGIN_CACHE
     if _PLUGIN_CACHE is None:
-        pairs: List[Tuple[Optional[str], Optional[type]]] = []
+        pairs: List[Tuple[Optional[str], Optional[PluginManifest]]] = []
         for ep in iter_plugin_entry_points():
             name = getattr(ep, "name", None)
-            try:
-                pairs.append((name, ep.load()))
-            except Exception as exc:  # noqa: BLE001 - broken plugin skipped
-                logger.debug("datus.plugins entry point %r failed to load: %s", name, exc)
-                pairs.append((name, None))
+            manifest: Optional[PluginManifest] = None
+            if isinstance(name, str) and name:
+                package_dir = _package_dir_for_entry_point(ep)
+                if package_dir is not None:
+                    manifest = read_manifest_file(package_dir, name)
+            pairs.append((name, manifest))
         _PLUGIN_CACHE = pairs
     return _PLUGIN_CACHE
 
 
+def load_plugin_manifest(name: str) -> Optional[PluginManifest]:
+    """Return the parsed manifest of the plugin registered as ``name``.
+
+    Returns ``None`` when no plugin claims ``name`` (callers fall through to
+    other dispatch paths) or when its manifest is missing/rejected (already
+    warned about during loading). Never raises.
+    """
+    matches = [manifest for ep_name, manifest in _loaded_manifests() if ep_name == name]
+    if not matches:
+        return None
+    if len(matches) > 1:
+        logger.warning("Multiple datus.plugins entry points named %r; using the first.", name)
+    return matches[0]
+
+
 def invalidate_plugin_cache() -> None:
-    """Drop the cached plugin classes (tests / in-process plugin installs)."""
+    """Drop the cached manifests and resolved transformers (tests / installs)."""
     global _PLUGIN_CACHE
     _PLUGIN_CACHE = None
+    _RESOLVED_TRANSFORMER_CACHE.clear()
+
+
+def resolve_code_ref(ref: str, plugin_name: str) -> Optional[Any]:
+    """Import and return the object named by a dotted ref ``"module:attr"``.
+
+    This is the ONLY place plugin code is imported — everything else in the
+    registry works off manifest data. Returns ``None`` — never raises — on an
+    invalid ref, import failure, or missing attribute.
+    """
+    parsed = parse_code_ref(ref)
+    if parsed is None:
+        logger.warning("Plugin %r code ref %r is invalid; skipping.", plugin_name, ref)
+        return None
+    module_name, attr_path = parsed
+    try:
+        module = importlib.import_module(module_name)
+        target: Any = module
+        for part in attr_path.split("."):
+            target = getattr(target, part)
+    except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash the caller
+        logger.warning("Plugin %r failed to load code ref %r: %s", plugin_name, ref, exc)
+        return None
+    return target
 
 
 def _is_active(name: Optional[str], active_names: Optional[Set[str]]) -> bool:
@@ -188,73 +276,38 @@ def _active_profiles_subset(agent_config, name: str, profiles: dict) -> dict:
     return narrowed or profiles
 
 
-def _resolve_class_hook(plugin_cls: type, attr_name: str, expected_desc: str, expected_types: tuple) -> Optional[Any]:
-    """Resolve an optional class-level plugin hook to a validated value.
-
-    The attribute may be a classmethod/staticmethod/function or a plain value
-    (``skills_dir``, ``tool_transformers`` and ``cli_permissions`` all share
-    this contract). Returns ``None`` — never raises — when the hook is absent,
-    resolves to ``None``, raises, or yields an unexpected type: one bad plugin
-    must never break collection.
-    """
-    attr = getattr(plugin_cls, attr_name, None)
-    if attr is None:
+def _confined_package_path(manifest: PluginManifest, relative: str, key: str) -> Optional[Path]:
+    """Resolve ``relative`` against the manifest's package dir, refusing escapes."""
+    package_dir = Path(manifest.package_dir).resolve()
+    candidate = (package_dir / relative).resolve()
+    if not candidate.is_relative_to(package_dir):
+        logger.warning("Plugin %r %s %r escapes the package directory; skipping.", manifest.name, key, relative)
         return None
-    plugin_repr = getattr(plugin_cls, "__name__", plugin_cls)
-    try:
-        value = attr() if callable(attr) else attr
-    except Exception as exc:  # noqa: BLE001 - one bad plugin must not break collection
-        logger.warning("plugin %r %s() failed: %s", plugin_repr, attr_name, exc)
-        return None
-    if value is None:
-        # A hook explicitly returning None means "nothing to contribute".
-        return None
-    if not isinstance(value, expected_types):
-        logger.warning(
-            "plugin %r %s must return %s, got %s; ignoring",
-            plugin_repr,
-            attr_name,
-            expected_desc,
-            type(value).__name__,
-        )
-        return None
-    return value
-
-
-def _skill_dir_of(plugin_cls: type) -> Optional[str]:
-    """Return a plugin class's bundled skill directory if it exposes one.
-
-    ``skills_dir`` may be a callable (classmethod/staticmethod/function) or a
-    plain string/``Path`` attribute. Returns the path only when it resolves to
-    an existing directory.
-    """
-    value = _resolve_class_hook(plugin_cls, "skills_dir", "a str or PathLike", (str, os.PathLike))
-    if value is None:
-        return None
-    candidate = str(value)
-    if candidate and Path(candidate).expanduser().is_dir():
-        return candidate
-    return None
+    return candidate
 
 
 def plugin_skill_directories(active_names: Optional[Set[str]] = None) -> List[str]:
     """Discover skill directories contributed by installed plugins.
 
-    Iterates ``datus.plugins`` entry points, loads each plugin class, and
-    collects its ``skills_dir()`` when it points at an existing directory.
+    Iterates ``datus.plugins`` manifests and collects each ``skills`` path
+    that resolves to an existing directory inside the plugin's package.
     ``active_names`` gates which plugins contribute (``None`` = every plugin;
-    otherwise only names in the project's activation whitelist). Every failure
-    is swallowed so skill discovery never blocks startup.
+    otherwise only names in the project's activation whitelist). No plugin
+    code is executed. Every failure is swallowed so skill discovery never
+    blocks startup.
     """
     found: List[str] = []
-    for _name, plugin_cls in _loaded_plugins():
-        if plugin_cls is None:
+    for name, manifest in _loaded_manifests():
+        if manifest is None or not manifest.skills:
             continue
-        if not _is_active(_name, active_names):
+        if not _is_active(name, active_names):
             continue
-        skill_dir = _skill_dir_of(plugin_cls)
-        if skill_dir and skill_dir not in found:
-            found.append(skill_dir)
+        candidate = _confined_package_path(manifest, manifest.skills, "skills")
+        if candidate is None or not candidate.is_dir():
+            continue
+        path_str = str(candidate)
+        if path_str not in found:
+            found.append(path_str)
     return found
 
 
@@ -298,22 +351,15 @@ def _plugin_config_preamble() -> str:
 def plugin_system_prompt_sections(agent_config) -> List[str]:
     """Collect system-prompt sections contributed by installed plugins.
 
-    Each plugin may expose an *optional* class-level
-    ``system_prompt(profiles) -> str | None`` (classmethod/staticmethod). It is
-    resolved at prompt-build time, i.e. **without an active profile instance**,
-    so it must be reachable at the class level — mirroring ``skills_dir()``.
-
-    datus passes the plugin's profile mapping taken from
-    ``agent_config.plugin_services[<ep.name>]``, **narrowed to the profiles the
-    project activated** (``plugins.<name>.active_profile`` in
-    ``./.datus/config.yml``): when the project pins a subset, only those
-    profiles are surfaced to the agent — the rest never enter the LLM context.
-    With no ``active_profile`` pin the full mapping is passed. An
-    installed-but-unconfigured plugin (or one whose pin matches nothing) still
-    receives ``{}`` and may return setup guidance. The plugin decides which
-    non-secret fields to surface; datus never splices profile values itself.
-    Every failure is swallowed so one bad plugin never blocks prompt
-    construction.
+    Renders each manifest's ``system_prompt`` Jinja2 template with the
+    plugin's profile mapping taken from
+    ``agent_config.plugin_services[<ep.name>]``, **narrowed to the profiles
+    the project activated** (``plugins.<name>.active_profile`` in
+    ``./.datus/config.yml``) and **secret-stripped against the manifest's
+    config schema** — undeclared or ``x-secret`` fields never reach the
+    template. An installed-but-unconfigured plugin renders with ``{}`` and may
+    emit setup guidance. Every failure is swallowed so one bad plugin never
+    blocks prompt construction.
 
     When at least one plugin contributes a section, a datus-owned ``## Plugins``
     preamble naming the loaded config file location is prepended so the agent
@@ -321,76 +367,63 @@ def plugin_system_prompt_sections(agent_config) -> List[str]:
     """
     plugin_services = getattr(agent_config, "plugin_services", None) or {}
     active_names = _active_names_from_config(agent_config)
+    config_path = _agent_config_location()
     sections: List[str] = []
-    for name, plugin_cls in _loaded_plugins():
-        if plugin_cls is None:
+    for name, manifest in _loaded_manifests():
+        if manifest is None or not manifest.system_prompt:
             continue
         if not _is_active(name, active_names):
             continue
-        attr = getattr(plugin_cls, "system_prompt", None)
-        if not callable(attr):
-            continue
         profiles = _active_profiles_subset(agent_config, name, plugin_services.get(name, {}))
-        try:
-            section = attr(profiles)
-        except Exception as exc:  # noqa: BLE001 - one bad plugin must not break prompt build
-            logger.debug("plugin %r system_prompt() failed: %s", name, exc)
-            continue
-        if isinstance(section, str) and section.strip():
-            sections.append(section.strip())
+        section = render_plugin_prompt(manifest, profiles, config_path=config_path)
+        if section:
+            sections.append(section)
     if sections:
         sections.insert(0, _plugin_config_preamble())
     return sections
 
 
-def _tool_transformers_of(plugin_cls: type) -> Optional[dict]:
-    """Resolve a plugin class's optional ``tool_transformers`` declaration.
-
-    Accepts a classmethod/staticmethod/function or a plain dict attribute,
-    mirroring ``_skill_dir_of``. Returns the dict, or ``None`` when absent,
-    malformed, or raising.
-    """
-    return _resolve_class_hook(plugin_cls, "tool_transformers", "a dict", (dict,))
+def _resolved_transformer(plugin_name: str, ref: str) -> Optional[Any]:
+    """Resolve (and memoize) one declared transformer ref to a callable."""
+    key = (plugin_name, ref)
+    if key not in _RESOLVED_TRANSFORMER_CACHE:
+        target = resolve_code_ref(ref, plugin_name)
+        if target is not None and not callable(target):
+            logger.warning("Plugin %r tool_transformers ref %r is not callable; skipping.", plugin_name, ref)
+            target = None
+        _RESOLVED_TRANSFORMER_CACHE[key] = target
+    return _RESOLVED_TRANSFORMER_CACHE[key]
 
 
 def collect_plugin_tool_transformers(active_names: Optional[Set[str]] = None) -> Dict[str, List]:
     """Collect tool argument transformers declared by installed plugins.
 
-    Iterates ``datus.plugins`` entry points, resolves each class's optional
-    ``tool_transformers()`` hook, and accumulates a mapping of tool pattern
+    Iterates ``datus.plugins`` manifests and lazily resolves each declared
+    ``tool_transformers`` code ref, accumulating a mapping of tool pattern
     (proxy syntax: ``"execute_sql"``, ``"db_tools.*"``) to a flat transformer
-    list. A declaration value may be a single callable or a list of callables;
-    non-callable entries and non-string patterns are warned about and skipped.
+    list. A ref that fails to import or is not callable is warned about and
+    skipped — the plugin's remaining transformers still apply.
     ``active_names`` gates which plugins contribute (``None`` = every plugin).
-    Every failure is logged and skipped; collection never raises.
+    Collection never raises.
 
     Transformer semantics (rewrite/deny, fail-closed) are documented in
     :mod:`datus.plugins.base` and enforced by
     :mod:`datus.tools.middleware.tool_middleware`.
     """
     accumulated: Dict[str, List] = {}
-    for name, plugin_cls in _loaded_plugins():
-        if plugin_cls is None:
+    for name, manifest in _loaded_manifests():
+        if manifest is None or not manifest.tool_transformers:
             continue
         if not _is_active(name, active_names):
             continue
-        declared = _tool_transformers_of(plugin_cls)
-        if declared is None:
-            continue
-        for pattern, value in declared.items():
-            if not isinstance(pattern, str) or not pattern.strip():
-                logger.warning("Plugin %r tool_transformers has invalid pattern %r; ignoring.", name, pattern)
-                continue
-            transformers = value if isinstance(value, list) else [value]
-            valid = [t for t in transformers if callable(t)]
-            if len(valid) != len(transformers):
-                logger.warning(
-                    "Plugin %r tool_transformers[%r] contains non-callable entries; skipping those.",
-                    name,
-                    pattern,
-                )
+        for pattern, refs in manifest.tool_transformers.items():
+            valid: List[Any] = []
+            for ref in refs:
+                target = _resolved_transformer(str(name), ref)
+                if target is not None:
+                    valid.append(target)
             if valid:
-                accumulated.setdefault(pattern.strip(), []).extend(valid)
+                accumulated.setdefault(pattern, []).extend(valid)
     return accumulated
 
 
@@ -421,24 +454,14 @@ def _prefix_cli_pattern(ep_name: str, pattern: str) -> Optional[str]:
     return f"{new_prefix}:{glob}" if glob is not None else new_prefix
 
 
-def _cli_permissions_of(plugin_cls: type) -> Optional[dict]:
-    """Resolve a plugin class's optional ``cli_permissions`` declaration.
-
-    Accepts a classmethod/staticmethod/function or a plain dict attribute,
-    mirroring ``_skill_dir_of``. Returns the dict, or ``None`` when absent,
-    malformed, or raising.
-    """
-    return _resolve_class_hook(plugin_cls, "cli_permissions", "a dict", (dict,))
-
-
 def collect_plugin_cli_permissions(active_names: Optional[Set[str]] = None) -> Dict[str, "BashCommandRules"]:
     """Collect per-profile bash rules declared by installed plugins.
 
-    Iterates ``datus.plugins`` entry points, resolves each class's optional
-    ``cli_permissions()`` hook, validates the shape (profile name ->
-    ``{allow/ask/deny: [patterns]}``), and prefixes every pattern with
-    ``datus <entry-point-name> `` so a plugin can only shape permissions for
-    its own CLI namespace.
+    Iterates ``datus.plugins`` manifests, validates each ``permissions``
+    declaration's shape (profile name -> ``{allow/ask/deny: [patterns]}``),
+    and prefixes every pattern with ``datus <entry-point-name> `` so a plugin
+    can only shape permissions for its own CLI namespace. No plugin code is
+    executed.
 
     ``active_names`` gates which plugins contribute (``None`` = every plugin).
     Only ``normal`` and ``auto`` profile keys are accepted; ``dangerous``
@@ -452,51 +475,49 @@ def collect_plugin_cli_permissions(active_names: Optional[Set[str]] = None) -> D
 
     accumulated: Dict[str, Dict[str, List[str]]] = {}
     seen_names: set = set()
-    for name, plugin_cls in _loaded_plugins():
+    for name, manifest in _loaded_manifests():
         if not isinstance(name, str) or name in seen_names or not name:
             if name in seen_names:
-                logger.warning("Duplicate datus.plugins entry point %r; using the first for cli_permissions.", name)
+                logger.warning("Duplicate datus.plugins entry point %r; using the first for permissions.", name)
             continue
         seen_names.add(name)
         if not _is_active(name, active_names):
             continue
         if not _SAFE_PLUGIN_NAME_RE.match(name):
-            logger.warning("Plugin entry-point name %r is not a safe CLI token; skipping its cli_permissions.", name)
+            logger.warning("Plugin entry-point name %r is not a safe CLI token; skipping its permissions.", name)
             continue
-        if plugin_cls is None:
+        if manifest is None:
             continue
-        declared = _cli_permissions_of(plugin_cls)
-        if declared is None:
+        declared = manifest.permissions
+        if not declared:
             continue
         for profile_key, actions in declared.items():
             if profile_key == "dangerous":
                 logger.warning(
-                    "Plugin %r declares cli_permissions for 'dangerous'; the dangerous profile "
+                    "Plugin %r declares permissions for 'dangerous'; the dangerous profile "
                     "ignores bash rules — entry dropped.",
                     name,
                 )
                 continue
             if profile_key not in _CLI_PERMISSION_PROFILES:
-                logger.warning("Plugin %r cli_permissions has unknown profile key %r; ignoring.", name, profile_key)
+                logger.warning("Plugin %r permissions has unknown profile key %r; ignoring.", name, profile_key)
                 continue
             if not isinstance(actions, dict):
-                logger.warning("Plugin %r cli_permissions[%r] must be a dict; ignoring.", name, profile_key)
+                logger.warning("Plugin %r permissions[%r] must be a dict; ignoring.", name, profile_key)
                 continue
             for action, patterns in actions.items():
                 if action not in _CLI_PERMISSION_ACTIONS:
                     logger.warning(
-                        "Plugin %r cli_permissions[%r] has unknown action %r; ignoring.", name, profile_key, action
+                        "Plugin %r permissions[%r] has unknown action %r; ignoring.", name, profile_key, action
                     )
                     continue
                 if not isinstance(patterns, list):
-                    logger.warning(
-                        "Plugin %r cli_permissions[%r][%r] must be a list; ignoring.", name, profile_key, action
-                    )
+                    logger.warning("Plugin %r permissions[%r][%r] must be a list; ignoring.", name, profile_key, action)
                     continue
                 for pattern in patterns:
                     if not isinstance(pattern, str):
                         logger.warning(
-                            "Plugin %r cli_permissions[%r][%r] entries must be strings, got %s; skipping one.",
+                            "Plugin %r permissions[%r][%r] entries must be strings, got %s; skipping one.",
                             name,
                             profile_key,
                             action,
@@ -506,7 +527,7 @@ def collect_plugin_cli_permissions(active_names: Optional[Set[str]] = None) -> D
                     prefixed = _prefix_cli_pattern(name, pattern)
                     if prefixed is None:
                         logger.warning(
-                            "Plugin %r cli_permissions[%r][%r] contains an empty pattern; skipping.",
+                            "Plugin %r permissions[%r][%r] contains an empty pattern; skipping.",
                             name,
                             profile_key,
                             action,
@@ -524,76 +545,67 @@ def collect_plugin_cli_permissions(active_names: Optional[Set[str]] = None) -> D
     }
 
 
-def _config_schema_of(plugin_cls: type) -> Optional[list]:
-    """Resolve a plugin class's optional ``config_schema`` declaration.
-
-    Accepts a classmethod/staticmethod/function or a plain list attribute,
-    mirroring ``_skill_dir_of``. Returns the list, or ``None`` when absent,
-    malformed, or raising.
-    """
-    return _resolve_class_hook(plugin_cls, "config_schema", "a list", (list,))
-
-
 def plugin_config_schema(name: str) -> List[Dict[str, Any]]:
-    """Return the normalized config-field schema declared by plugin ``name``.
+    """Return the normalized config-field specs derived from plugin ``name``'s
+    manifest ``config_schema`` (a JSON Schema).
 
     Each returned entry has ``name`` (str), ``description`` (str), ``required``
-    (bool), ``secret`` (bool) and an optional ``default``. Entries missing a
-    string ``name`` are dropped. A plugin without the hook (or a broken one)
-    yields an empty list — the ``/plugins`` TUI then falls back to free-form
-    key/value editing. Never raises.
+    (bool — membership in the schema's ``required`` list), ``secret`` (bool —
+    the ``x-secret: true`` property marker) and an optional ``default``.
+    Property insertion order is preserved, so it defines the ``/plugins`` TUI
+    field order. A plugin without a schema yields an empty list — the TUI then
+    falls back to free-form key/value editing. Never raises.
     """
-    plugin_cls = load_plugin_class(name)
-    if plugin_cls is None:
+    manifest = load_plugin_manifest(name)
+    if manifest is None or not isinstance(manifest.config_schema, dict):
         return []
-    declared = _config_schema_of(plugin_cls)
-    if not declared:
+    properties = manifest.config_schema.get("properties")
+    if not isinstance(properties, dict):
         return []
+    required = manifest.config_schema.get("required")
+    required_names = {entry for entry in required if isinstance(entry, str)} if isinstance(required, list) else set()
     normalized: List[Dict[str, Any]] = []
-    for entry in declared:
-        if not isinstance(entry, dict):
-            logger.warning("Plugin %r config_schema entry is not a mapping: %r; skipping.", name, entry)
-            continue
-        field_name = entry.get("name")
+    for field_name, prop in properties.items():
         if not isinstance(field_name, str) or not field_name.strip():
-            logger.warning("Plugin %r config_schema entry lacks a string 'name'; skipping.", name)
+            logger.warning("Plugin %r config_schema property name %r is invalid; skipping.", name, field_name)
             continue
+        spec_source = prop if isinstance(prop, dict) else {}
         spec: Dict[str, Any] = {
             "name": field_name.strip(),
-            "description": str(entry.get("description") or ""),
-            "required": bool(entry.get("required", False)),
-            "secret": bool(entry.get("secret", False)),
+            "description": str(spec_source.get("description") or ""),
+            "required": field_name in required_names,
+            "secret": spec_source.get("x-secret") is True,
         }
-        if "default" in entry:
-            spec["default"] = entry["default"]
+        if "default" in spec_source:
+            spec["default"] = spec_source["default"]
         normalized.append(spec)
     return normalized
 
 
 def plugin_validate_profile(name: str, profile: Dict[str, Any]) -> List[str]:
-    """Run plugin ``name``'s optional ``validate_profile`` on a candidate dict.
+    """Validate a candidate profile dict against plugin ``name``'s
+    ``config_schema``.
 
-    Returns the list of error messages the plugin reported (empty = valid, or
-    no validator). A missing hook, a non-list return, or an exception all
-    resolve to "no errors" so a broken validator never blocks the TUI save —
-    the plugin constructor is the final runtime guard.
+    Returns human-readable ``"field: message"`` errors (empty = valid, or no
+    schema). String values containing ``${`` are treated as opaque
+    ``${ENV_VAR}`` placeholders and exempted from value-level validation —
+    ``required`` violations (whose instance is the whole dict) still fire.
+    A validator failure resolves to "no errors" so a broken schema never
+    blocks the TUI save — the plugin CLI remains the final runtime guard.
     """
-    plugin_cls = load_plugin_class(name)
-    if plugin_cls is None:
-        return []
-    attr = getattr(plugin_cls, "validate_profile", None)
-    if not callable(attr):
+    manifest = load_plugin_manifest(name)
+    if manifest is None or not isinstance(manifest.config_schema, dict):
         return []
     try:
-        result = attr(profile)
-    except Exception as exc:  # noqa: BLE001 - a broken validator must not block the TUI
-        logger.warning("Plugin %r validate_profile() raised: %s", name, exc)
+        from jsonschema import Draft202012Validator
+
+        errors: List[str] = []
+        for error in Draft202012Validator(manifest.config_schema).iter_errors(profile):
+            if isinstance(error.instance, str) and "${" in error.instance:
+                continue
+            path = ".".join(str(part) for part in error.path) or "profile"
+            errors.append(f"{path}: {error.message}")
+        return errors
+    except Exception as exc:  # noqa: BLE001 - a broken schema must not block the TUI
+        logger.warning("Plugin %r config_schema validation failed to run: %s", name, exc)
         return []
-    if result is None:
-        return []
-    if not isinstance(result, list):
-        logger.warning(
-            "Plugin %r validate_profile() must return a list of strings, got %s.", name, type(result).__name__
-        )
-        return []
-    return [str(msg) for msg in result if msg]

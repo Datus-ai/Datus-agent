@@ -192,7 +192,7 @@ deactivated plugin):
 | `datus plugin upgrade <name>` | Re-install from the recorded source (pip/git/src). |
 | `datus plugin uninstall <name>` | Remove the plugin's `~/.datus/plugins/{name}/` directory. |
 | `datus plugin list` | List installed plugins: package, version, source, configured profiles, project activation. |
-| `datus plugin info <name>` | Show one plugin's profiles, config schema, and activation. |
+| `datus plugin info <name>` | Show one plugin's description, profiles, config schema, and activation. |
 | `datus plugin enable/disable <name>` | Toggle per-project activation. |
 
 Inside the REPL, `/plugins` opens an interactive manager for the same tasks:

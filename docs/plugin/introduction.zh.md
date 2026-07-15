@@ -170,7 +170,7 @@ datus plugin disable noisy-plugin            # 本项目停用
 | `datus plugin upgrade <name>` | 按记录的安装源重装(pip/git/src)。 |
 | `datus plugin uninstall <name>` | 删除插件目录 `~/.datus/plugins/{name}/`。 |
 | `datus plugin list` | 列出已安装插件:包、版本、来源、已配置 profile、本项目激活状态。 |
-| `datus plugin info <name>` | 查看单个插件的 profile、配置 schema 与激活状态。 |
+| `datus plugin info <name>` | 查看单个插件的描述、profile、配置 schema 与激活状态。 |
 | `datus plugin enable/disable <name>` | 切换本项目激活状态。 |
 
 在 REPL 内,`/plugins` 打开交互式管理器完成同样的事:浏览已安装插件,增删改

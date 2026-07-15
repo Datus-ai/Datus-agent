@@ -12,16 +12,18 @@ owns:
 - **location** — :func:`plugins_root` / :func:`plugin_dir`
 - **metadata** — :func:`read_meta` / :func:`write_meta` / :func:`iter_installed`
 - **introspection** — :func:`introspect_target` reads a freshly-installed target
-  tree's ``[datus.plugins]`` entry point without importing the package
+  tree's ``[datus.plugins]`` entry point and validates its bundled
+  ``datus-plugin.yml`` manifest, without importing the package
 - **activation** — :func:`activate` appends enabled plugin directories to
   ``sys.path`` so :mod:`datus.plugins.registry` (which relies on
   ``importlib.metadata.entry_points()`` scanning ``sys.path``) discovers them,
   then invalidates the import + registry caches
 
 Adding a directory to ``sys.path`` makes its ``.dist-info`` discoverable but does
-**not** import the plugin package — the import happens lazily on ``ep.load()`` —
-so callers may inject a directory before the ``plugins_enabled`` master switch is
-checked without executing third-party module-level code.
+**not** import the plugin package — manifest reading never executes plugin code,
+and declared code refs are imported lazily by ``resolve_code_ref`` — so callers
+may inject a directory before the ``plugins_enabled`` master switch is checked
+without executing third-party module-level code.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from email.parser import Parser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+from datus.plugins.base import MANIFEST_FILENAME, read_manifest_file
 from datus.plugins.registry import _SAFE_PLUGIN_NAME_RE, PLUGIN_ENTRY_POINT_GROUP, invalidate_plugin_cache
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
@@ -165,9 +168,13 @@ def _find_plugin_dist_info(target_dir: Path) -> Optional[Path]:
 def introspect_target(target_dir: Path) -> Dict[str, Any]:
     """Read plugin identity from a ``pip install --target`` tree, without import.
 
-    Locates the ``.dist-info`` that declares a ``datus.plugins`` entry point and
-    returns ``{name, distribution, version, entry_point, requires_python}``.
-    Raises :class:`StoreError` when the tree contains no datus plugin.
+    Locates the ``.dist-info`` that declares a ``datus.plugins`` entry point,
+    validates the package's bundled ``datus-plugin.yml`` manifest, and returns
+    ``{name, distribution, version, entry_point, requires_python}``. Raises
+    :class:`StoreError` when the tree contains no datus plugin, the entry
+    point still targets an object (legacy class-based contract), or the
+    manifest is missing/unparseable — so a broken plugin fails at install
+    time, not at first use.
     """
     dist_info = _find_plugin_dist_info(target_dir)
     if dist_info is None:
@@ -179,6 +186,18 @@ def introspect_target(target_dir: Path) -> Dict[str, Any]:
     section = parser[PLUGIN_ENTRY_POINT_GROUP]
     name = next(iter(section))
     entry_point = section[name].strip()
+
+    module_ref, _, attr = entry_point.partition(":")
+    if attr.strip():
+        raise StoreError(
+            f"entry point `{name} = {entry_point}` targets an object (legacy class-based contract); "
+            f"rebuild the plugin against the {MANIFEST_FILENAME} manifest contract"
+        )
+    package_dir = target_dir.joinpath(*module_ref.strip().split("."))
+    if read_manifest_file(package_dir, name) is None:
+        raise StoreError(
+            f"package bundles no valid {MANIFEST_FILENAME} under {module_ref.strip()}/ (see log for details)"
+        )
 
     distribution = ""
     version = ""

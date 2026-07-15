@@ -46,6 +46,7 @@ from datus.cli.plugin_service import (
     BUNDLE_WHEELS_DIR,
     _sha256_file,
 )
+from datus.plugins.base import MANIFEST_FILENAME
 from datus.plugins.registry import PLUGIN_ENTRY_POINT_GROUP
 from datus.utils.loggings import get_logger
 
@@ -153,12 +154,15 @@ def _download_dependencies(main_wheel: Path, wheels_dir: Path) -> None:
 def _read_plugin_entry(wheel_path: Path) -> Tuple[str, str]:
     """Read the ``datus.plugins`` entry point ``(name, target)`` from a wheel.
 
-    Raises :class:`PackError` when the wheel declares no entry points or none in
-    the ``datus.plugins`` group — i.e. it is not a datus plugin, caught before
-    any dependency download happens.
+    Raises :class:`PackError` when the wheel declares no entry points or none
+    in the ``datus.plugins`` group, when the entry point still targets an
+    object (legacy class-based contract), or when the wheel does not bundle
+    the package's ``datus-plugin.yml`` — i.e. it is not a valid manifest
+    plugin, caught before any dependency download happens.
     """
     with zipfile.ZipFile(wheel_path) as zf:
-        candidates = [n for n in zf.namelist() if n.endswith(".dist-info/entry_points.txt")]
+        names = zf.namelist()
+        candidates = [n for n in names if n.endswith(".dist-info/entry_points.txt")]
         if not candidates:
             raise PackError(f"{wheel_path.name} declares no entry points (not a datus plugin)")
         text = zf.read(candidates[0]).decode("utf-8", errors="replace")
@@ -172,7 +176,20 @@ def _read_plugin_entry(wheel_path: Path) -> Tuple[str, str]:
         raise PackError(f"{wheel_path.name} has no [{PLUGIN_ENTRY_POINT_GROUP}] entry point (not a datus plugin)")
     section = parser[PLUGIN_ENTRY_POINT_GROUP]
     for name in section:
-        return name, section[name].strip()
+        target = section[name].strip()
+        module_ref, _, attr = target.partition(":")
+        if attr.strip():
+            raise PackError(
+                f"{wheel_path.name} entry point `{name} = {target}` targets an object (legacy class-based "
+                f"contract); rebuild the plugin against the {MANIFEST_FILENAME} manifest contract"
+            )
+        manifest_arcname = "/".join(module_ref.strip().split(".")) + f"/{MANIFEST_FILENAME}"
+        if manifest_arcname not in names:
+            raise PackError(
+                f"{wheel_path.name} does not bundle {manifest_arcname} — include {MANIFEST_FILENAME} "
+                "in the package data"
+            )
+        return name, target
     raise PackError(f"{wheel_path.name} has an empty [{PLUGIN_ENTRY_POINT_GROUP}] entry-point group")
 
 

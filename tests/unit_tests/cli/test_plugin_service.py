@@ -44,6 +44,7 @@ def _write_dist_info(target: Path, *, name, dist, version, entry, requires_pytho
     pkg = target / "datus_demo_plugin"
     pkg.mkdir(parents=True, exist_ok=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / store.MANIFEST_FILENAME).write_text("manifest_version: 1\n", encoding="utf-8")
     dinfo = target / f"{dist.replace('-', '_')}-{version}.dist-info"
     dinfo.mkdir(parents=True, exist_ok=True)
     (dinfo / "entry_points.txt").write_text(f"[{group}]\n{name} = {entry}\n", encoding="utf-8")
@@ -53,7 +54,7 @@ def _write_dist_info(target: Path, *, name, dist, version, entry, requires_pytho
     )
 
 
-def _installer(name="demo", dist="datus-demo-plugin", version="0.1.0", entry="datus_demo_plugin.plugin:DemoPlugin"):
+def _installer(name="demo", dist="datus-demo-plugin", version="0.1.0", entry="datus_demo_plugin"):
     """Return a fake ``subprocess.run`` that populates the ``--target`` tree."""
     calls = []
 
@@ -75,7 +76,7 @@ def _zip_installer():
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         target = Path(cmd[cmd.index("--target") + 1])
-        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.1.0", entry="m:C")
+        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.1.0", entry="datus_demo_plugin")
         return _fake_proc(0)
 
     fake_run.calls = calls
@@ -257,7 +258,7 @@ def test_install_git_normalizes_and_records_ref(home, monkeypatch):
     def fake_run(cmd, **kwargs):
         captured["cmd"] = cmd
         target = Path(cmd[cmd.index("--target") + 1])
-        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.1.0", entry="m:C")
+        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.1.0", entry="datus_demo_plugin")
         return _fake_proc(0)
 
     monkeypatch.setattr(svc.shutil, "which", lambda name: None)
@@ -446,7 +447,7 @@ def test_upgrade_pip_adds_upgrade_flag(home, monkeypatch):
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         target = Path(cmd[cmd.index("--target") + 1])
-        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.2.0", entry="m:C")
+        _write_dist_info(target, name="demo", dist="datus-demo-plugin", version="0.2.0", entry="datus_demo_plugin")
         return _fake_proc(0)
 
     monkeypatch.setattr(svc.subprocess, "run", fake_run)
