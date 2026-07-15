@@ -1942,10 +1942,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-contract" class="md-nav__link">
+  <a href="#the-manifest-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The contract
+        The manifest reference
       
     </span>
   </a>
@@ -1964,10 +1964,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementing-run_cli" class="md-nav__link">
+  <a href="#config-schema-and-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Implementing run_cli
+        Config schema and validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementing-the-cli-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementing the CLI entry
       
     </span>
   </a>
@@ -2047,10 +2058,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#system-prompt-injection" class="md-nav__link">
+  <a href="#system-prompt-template" class="md-nav__link">
     <span class="md-ellipsis">
       
-        System-prompt injection
+        System-prompt template
       
     </span>
   </a>
@@ -2106,6 +2117,17 @@
     <span class="md-ellipsis">
       
         Testing your plugin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#distributing-for-offline-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Distributing for offline install
       
     </span>
   </a>
@@ -4377,10 +4399,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-contract" class="md-nav__link">
+  <a href="#the-manifest-reference" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The contract
+        The manifest reference
       
     </span>
   </a>
@@ -4399,10 +4421,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementing-run_cli" class="md-nav__link">
+  <a href="#config-schema-and-validation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Implementing run_cli
+        Config schema and validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#implementing-the-cli-entry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Implementing the CLI entry
       
     </span>
   </a>
@@ -4482,10 +4515,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#system-prompt-injection" class="md-nav__link">
+  <a href="#system-prompt-template" class="md-nav__link">
     <span class="md-ellipsis">
       
-        System-prompt injection
+        System-prompt template
       
     </span>
   </a>
@@ -4548,6 +4581,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#distributing-for-offline-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Distributing for offline install
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#constraints-checklist" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4600,12 +4644,21 @@ command to the full contract. For what plugins are, how users install and
 configure them, and how profiles are resolved, start with the
 <a href="../introduction/">introduction</a>.</p>
 <p>A plugin is an installable Python package discovered through the
-<code>datus.plugins</code> entry-point group. The defining constraint: <strong>a plugin never
-imports <code>datus.*</code> and depends on no shared SDK</strong>. The contract is a small set
-of method names that Datus calls by structure (duck typing). Datus is the
-<em>config broker</em> — it reads <code>agent.yml</code>, expands <code>${VAR}</code> references, resolves
-the active profile, constructs your plugin with a plain <code>dict</code>, and calls it.
-You just implement the methods.</p>
+<code>datus.plugins</code> entry-point group. The defining constraints:</p>
+<ul>
+<li><strong>A plugin never imports <code>datus.*</code></strong> and depends on no shared SDK.</li>
+<li><strong>The whole contract is one declarative file</strong> — <code>datus-plugin.yml</code>, shipped
+  inside your package. It names your CLI entry function, your tool
+  transformers, your skills directory, your system-prompt template, your bash
+  permission rules, and your config schema. The only Python you write are
+  plain functions.</li>
+</ul>
+<p>Datus is the <em>config broker</em> — it reads <code>agent.yml</code>, expands <code>${VAR}</code>
+references, resolves the active profile, and calls your declared <code>cli</code>
+function with a plain <code>dict</code>. Reading the manifest never executes your code:
+skills, permissions, prompt sections and config schemas are collected without
+importing your package. Only your <code>cli</code> function (on <code>datus &lt;name&gt; ...</code>) and
+your declared tool transformers are imported, lazily.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>A Python package you can install into the same environment as <code>datus</code>.</li>
@@ -4615,137 +4668,216 @@ You just implement the methods.</p>
   dependencies must be compatible with it.</li>
 </ul>
 <h2 id="quickstart-a-minimal-plugin">Quickstart: a minimal plugin<a class="headerlink" href="#quickstart-a-minimal-plugin" title="Permanent link">&para;</a></h2>
-<p>A plugin is one class registered under <code>datus.plugins</code>. Here is the smallest
-useful example — a <code>hello</code> command.</p>
 <p><strong>1. Package layout</strong></p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-plugin-hello/
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── pyproject.toml
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>└── datus_plugin_hello/
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    ├── __init__.py
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    └── plugin.py
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    ├── datus-plugin.yml      # the manifest — the whole plugin contract
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    └── cli.py
 </span></code></pre></div>
-<p><strong>2. The plugin class</strong> (<code>datus_plugin_hello/plugin.py</code>)</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="k">class</span><span class="w"> </span><span class="nc">HelloPlugin</span><span class="p">:</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">profile</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>        <span class="c1"># `profile` is the resolved agent.plugins.hello.&lt;profile&gt; dict</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>        <span class="c1"># (already ${VAR}-expanded by datus). Empty dict is fine.</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">profile</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">profile</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_cli</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">argv</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        <span class="n">greeting</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;greeting&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>        <span class="n">name</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">argv</span> <span class="k">else</span> <span class="s2">&quot;world&quot;</span>
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">greeting</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span><span class="p">)</span>
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>        <span class="k">return</span> <span class="mi">0</span>
+<p><strong>2. The manifest</strong> (<code>datus_plugin_hello/datus-plugin.yml</code>)</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">manifest_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Say</span><span class="nv"> </span><span class="s">hello</span><span class="nv"> </span><span class="s">to</span><span class="nv"> </span><span class="s">someone.&quot;</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">cli</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus_plugin_hello.cli:main</span>
 </span></code></pre></div>
-<p><strong>3. Register the entry point</strong> (<code>pyproject.toml</code>)</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[project]</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datus-plugin-hello&quot;</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">dependencies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="w">                      </span><span class="c1"># note: NOT datus</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">[project.entry-points.</span><span class="s2">&quot;datus.plugins&quot;</span><span class="k">]</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">hello</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datus_plugin_hello.plugin:HelloPlugin&quot;</span>
+<p><strong>3. The CLI function</strong> (<code>datus_plugin_hello/cli.py</code>)</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">profile</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="c1"># `profile` is the resolved agent.plugins.hello.&lt;profile&gt; dict</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="c1"># (already ${VAR}-expanded by datus). Empty dict is fine.</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">greeting</span> <span class="o">=</span> <span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;greeting&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">name</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">argv</span> <span class="k">else</span> <span class="s2">&quot;world&quot;</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">greeting</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span><span class="p">)</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="k">return</span> <span class="mi">0</span>
 </span></code></pre></div>
-<p>The entry-point name (<code>hello</code>) alone determines the CLI command
-(<code>datus hello</code>) and the config key (<code>agent.plugins.hello</code>) — the class and
-module names are free. Two names are <strong>reserved</strong> and never dispatched to
-plugins: <code>upgrade</code> and <code>skill</code>. A plugin registered under either is silently
-unreachable, and names starting with <code>-</code> cannot be dispatched at all.</p>
-<p><strong>4. Install and run</strong></p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>datus-plugin-hello
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>datus<span class="w"> </span>hello<span class="w"> </span>Ada<span class="w">          </span><span class="c1"># -&gt; Hello, Ada!</span>
+<p><strong>4. Register the entry point</strong> (<code>pyproject.toml</code>)</p>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">[project]</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datus-plugin-hello&quot;</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">dependencies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[]</span><span class="w">                      </span><span class="c1"># note: NOT datus</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="k">[project.entry-points.</span><span class="s2">&quot;datus.plugins&quot;</span><span class="k">]</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="n">hello</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;datus_plugin_hello&quot;</span><span class="w">           </span><span class="c1"># the PACKAGE name — not a class</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="k">[tool.setuptools.package-data]</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">datus_plugin_hello</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;datus-plugin.yml&quot;</span><span class="p">]</span>
 </span></code></pre></div>
+<p>The entry-point value is your <strong>package name</strong> — a pure name → package
+mapping, no code reference. The entry-point name (<code>hello</code>) alone determines
+the CLI command (<code>datus hello</code>) and the config key (<code>agent.plugins.hello</code>) —
+the package name is free. Three names are <strong>reserved</strong> and never dispatched to
+plugins: <code>upgrade</code>, <code>skill</code>, and <code>plugin</code>. A plugin registered under any of
+them is unreachable (and <code>datus plugin install</code> refuses it), and names
+starting with <code>-</code> cannot be dispatched at all.</p>
+<p>The manifest is package data, not Python — make sure it ships in the wheel.
+Hatchling packages every file under the package directory by default; with
+setuptools use the <code>[tool.setuptools.package-data]</code> stanza above. Verify with
+<code>unzip -l dist/*.whl | grep datus-plugin.yml</code> (both <code>datus plugin install</code> and
+<code>datus plugin pack</code> refuse a package whose manifest is missing).</p>
+<p><strong>5. Install and run</strong></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>src:./datus-plugin-hello<span class="w">   </span><span class="c1"># installs into ~/.datus/plugins/hello/</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>datus<span class="w"> </span>hello<span class="w"> </span>Ada<span class="w">          </span><span class="c1"># -&gt; Hello, Ada!</span>
+</span></code></pre></div>
+<p>For a tight edit-run loop while developing, <code>pip install -e datus-plugin-hello</code>
+into datus' own environment also works — such plugins are still discovered as a
+fallback, without a <code>~/.datus/plugins/</code> directory.</p>
 <p>That is a complete plugin. Everything below is optional surface area.</p>
-<h2 id="the-contract">The contract<a class="headerlink" href="#the-contract" title="Permanent link">&para;</a></h2>
-<p>Datus calls these members <strong>by name</strong> on the class the entry point resolves to.
-Your class does not import or subclass anything from Datus.</p>
+<h2 id="the-manifest-reference">The manifest reference<a class="headerlink" href="#the-manifest-reference" title="Permanent link">&para;</a></h2>
+<p><code>datus-plugin.yml</code> lives at your package root. Only <code>manifest_version</code> is
+required; every other key is optional:</p>
 <table>
 <thead>
 <tr>
-<th>Member</th>
-<th>Kind</th>
+<th>Key</th>
+<th>Type</th>
 <th>Purpose</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>PluginClass(profile: dict)</code></td>
-<td>constructor</td>
-<td>Datus passes the resolved <code>agent.plugins.&lt;name&gt;.&lt;profile&gt;</code> dict (env-expanded) as a <strong>keyword argument</strong> — <code>PluginClass(profile=...)</code> — so the parameter must be named <code>profile</code>. A config-free plugin may ignore its value.</td>
+<td><code>manifest_version</code></td>
+<td>int, <strong>required</strong></td>
+<td>Must be <code>1</code>. A newer version than datus understands rejects the manifest with a "requires newer datus" warning.</td>
 </tr>
 <tr>
-<td><code>run_cli(self, argv: list[str]) -&gt; int \| None</code></td>
-<td>instance method</td>
-<td>Runs the subcommand. <code>argv</code> is everything after <code>datus &lt;plugin&gt;</code>, with Datus' own <code>--profile</code> / <code>--config</code> already stripped. Return an exit code; <code>None</code> means <code>0</code>.</td>
+<td><code>description</code></td>
+<td>string</td>
+<td>One-line summary shown by <code>datus plugin info</code>.</td>
 </tr>
 <tr>
-<td><code>skills_dir() -&gt; str \| None</code></td>
-<td><strong>optional</strong>, class-level</td>
-<td>Returns the bundled skill directory. See <a href="#bundling-skills">Bundling skills</a>.</td>
+<td><code>cli</code></td>
+<td>code ref</td>
+<td><code>module.path:function</code> called as <code>main(argv, profile)</code> on <code>datus &lt;name&gt; ...</code>. See <a href="#implementing-the-cli-entry">Implementing the CLI entry</a>. Without it, <code>datus &lt;name&gt;</code> exits 2.</td>
 </tr>
 <tr>
-<td><code>system_prompt(profiles: dict[str, dict]) -&gt; str \| None</code></td>
-<td><strong>optional</strong>, class-level</td>
-<td>Returns a markdown block injected into the agent's system prompt. See <a href="#system-prompt-injection">System-prompt injection</a>.</td>
+<td><code>tool_transformers</code></td>
+<td>mapping</td>
+<td>Tool pattern → code ref (or list of refs) that rewrite or deny the agent's tool calls. See <a href="#tool-argument-transformers">Tool argument transformers</a>.</td>
 </tr>
 <tr>
-<td><code>cli_permissions() -&gt; dict \| None</code></td>
-<td><strong>optional</strong>, class-level</td>
-<td>Declares bash-permission rules for the plugin's own CLI namespace, per permission profile. See <a href="#cli-bash-permissions">CLI bash permissions</a>.</td>
+<td><code>permissions</code></td>
+<td>mapping</td>
+<td>Bash-permission rules for your own CLI namespace, per permission profile — pure YAML, no code. See <a href="#cli-bash-permissions">CLI bash permissions</a>.</td>
 </tr>
 <tr>
-<td><code>tool_transformers() -&gt; dict \| None</code></td>
-<td><strong>optional</strong>, class-level</td>
-<td>Declares tool argument transformers that rewrite or deny the agent's tool calls before execution. See <a href="#tool-argument-transformers">Tool argument transformers</a>.</td>
+<td><code>system_prompt</code></td>
+<td>path</td>
+<td>Package-relative path of a Jinja2 template rendered into the agent's system prompt. See <a href="#system-prompt-template">System-prompt template</a>.</td>
+</tr>
+<tr>
+<td><code>skills</code></td>
+<td>path</td>
+<td>Package-relative path of a bundled skill directory. See <a href="#bundling-skills">Bundling skills</a>.</td>
+</tr>
+<tr>
+<td><code>config_schema</code></td>
+<td>JSON Schema</td>
+<td>Inline object schema describing one profile — drives the <code>/plugins</code> TUI form and validates profiles before saving. See <a href="#config-schema-and-validation">Config schema and validation</a>.</td>
 </tr>
 </tbody>
 </table>
-<div class="admonition warning">
-<p class="admonition-title"><code>skills_dir</code> and <code>system_prompt</code> must be class-reachable</p>
-<p>Datus resolves both <strong>at startup, without an active profile</strong> (skill
-discovery and prompt building happen before any command runs). Declare them
-as <code>@classmethod</code> / <code>@staticmethod</code> (or a plain class attribute for
-<code>skills_dir</code>) — they must not depend on <code>__init__</code>.</p>
-</div>
+<p>A <strong>code ref</strong> is a dotted <code>module.path:function</code> string. Paths are relative
+to the package directory and may not escape it. Manifest parsing is defensive:
+a malformed section is warned about and dropped while the rest of the manifest
+stays usable; only a missing/unsupported <code>manifest_version</code> (or unreadable
+YAML) rejects the manifest as a whole.</p>
+<p>The machine-readable contract lives in <code>datus/plugins/base.py</code>; this table and
+that docstring are kept in sync.</p>
 <h2 id="configuration-what-datus-hands-you">Configuration: what Datus hands you<a class="headerlink" href="#configuration-what-datus-hands-you" title="Permanent link">&para;</a></h2>
 <p>Users configure your plugin under <code>agent.plugins.&lt;name&gt;</code>, where each key below
 <code>&lt;name&gt;</code> is a <strong>profile</strong> (an environment):</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">      </span><span class="c1"># prefer ${ENV_VAR} for secrets</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">      </span><span class="nt">staging</span><span class="p">:</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Yo</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">      </span><span class="c1"># prefer ${ENV_VAR} for secrets</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">      </span><span class="nt">staging</span><span class="p">:</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Yo</span>
 </span></code></pre></div>
 <p>Datus parses this into <code>agent.plugins.&lt;name&gt;.&lt;profile&gt; -&gt; dict</code>, <strong>expands
 <code>${VAR}</code> per profile</strong>, and injects a <code>name</code> key equal to the profile name.
-Which profile dict reaches your constructor is decided by Datus — explicit
+Which profile dict reaches your <code>cli</code> function is decided by Datus — explicit
 <code>--profile</code>, project pin, <code>default: true</code>, sole profile, or an empty dict
 when nothing is configured. The full resolution order is documented in the
 <a href="../introduction/#which-profile-runs">introduction</a>; you never write any of
-that logic. Your constructor simply receives the resolved <code>dict</code>.</p>
+that logic. Your function simply receives the resolved <code>dict</code>.</p>
 <p>When testing locally, put your profile in whichever config file your datus
 session actually loads (explicit <code>--config</code> → <code>./conf/agent.yml</code> →
 <code>~/.datus/conf/agent.yml</code>).</p>
-<h2 id="implementing-run_cli">Implementing <code>run_cli</code><a class="headerlink" href="#implementing-run_cli" title="Permanent link">&para;</a></h2>
-<p><code>argv</code> is the command tail with Datus' global flags removed:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus hello --profile staging greet Ada
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>                └── stripped ──┘ └── argv = [&quot;greet&quot;, &quot;Ada&quot;] ──┘
+<h2 id="config-schema-and-validation">Config schema and validation<a class="headerlink" href="#config-schema-and-validation" title="Permanent link">&para;</a></h2>
+<p>Declare a <code>config_schema</code> — an inline JSON Schema for <strong>one profile</strong> — and
+the <code>/plugins</code> TUI renders a proper form instead of free-form key/value
+editing, and Datus validates a candidate profile against it before saving:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">config_schema</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">object</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">required</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">token</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">s3</span><span class="p p-Indicator">]</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">properties</span><span class="p">:</span><span class="w">                    </span><span class="c1"># property order == TUI field order</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">token</span><span class="p">:</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">string</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;API</span><span class="nv"> </span><span class="s">token&quot;</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">x-secret</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">             </span><span class="c1"># masked in the TUI, stripped from the prompt</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="nt">greeting</span><span class="p">:</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">string</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">      </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Greeting</span><span class="nv"> </span><span class="s">word&quot;</span>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">      </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Hi&quot;</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">    </span><span class="nt">s3</span><span class="p">:</span><span class="w">                          </span><span class="c1"># nested objects expand into dotted form fields</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">      </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">object</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">      </span><span class="nt">required</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">secret_access_key</span><span class="p p-Indicator">]</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">      </span><span class="nt">properties</span><span class="p">:</span>
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">        </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="p p-Indicator">,</span><span class="nt"> default</span><span class="p">:</span><span class="w"> </span><span class="nv">us-east-1</span><span class="p p-Indicator">}</span>
+</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="w">        </span><span class="nt">secret_access_key</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">string</span><span class="p p-Indicator">,</span><span class="nt"> x-secret</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span>
+</span></code></pre></div>
+<p>Semantics:</p>
+<ul>
+<li><strong><code>x-secret: true</code></strong> marks a secret field: the TUI masks it and prompts the
+  user to enter a <code>${ENV_VAR}</code> reference, and the system-prompt renderer
+  strips it (see <a href="#system-prompt-template">System-prompt template</a>). It is a
+  property-level extension keyword — JSON Schema validators ignore it.</li>
+<li><strong><code>required</code></strong> membership marks a form field as required; <strong><code>default</code></strong> is
+  pre-filled as the field's initial value. A field left empty (no default,
+  nothing typed yet) shows its <code>description</code> as a dim placeholder instead.</li>
+<li><strong>Nested objects</strong> — a <code>type: object</code> property with its own <code>properties</code>
+  expands in the TUI into one field per leaf, named by its dotted path
+  (<code>s3.region</code>, <code>s3.secret_access_key</code>); submitted values are re-assembled
+  into the nested profile shape before saving. <code>x-secret: true</code> on the object
+  marks every leaf secret, and a leaf is form-required only when its whole
+  ancestor path is required too. The system-prompt whitelist filters declared
+  nested objects recursively under the same rules.</li>
+<li><strong>Free-form objects pass through wholesale.</strong> A <code>type: object</code> property
+  <strong>without</strong> its own <code>properties</code> (a free-form dict) is <em>not</em> filtered per
+  key: the TUI keeps it as a single field, and the system-prompt renderer
+  passes its entire stored value into the prompt. Only per-key stripping is
+  skipped — the field itself still has to be declared — so a secret nested
+  inside such a field would reach the LLM. Either declare its sub-<code>properties</code>
+  (to get recursive filtering) or mark the whole object <code>x-secret: true</code>.</li>
+<li><strong>Validation</strong> runs <code>jsonschema</code> on the raw candidate dict (the values the
+  user just entered, <strong>before</strong> <code>${VAR}</code> expansion). Values containing
+  <code>${ENV_VAR}</code> placeholders are treated as opaque — pattern/enum/format
+  violations on them are suppressed, while a missing <code>required</code> field still
+  fails. Keep the real runtime validation in your <code>cli</code> function.</li>
+<li><strong>TUI-entered values are strings</strong>, so prefer <code>type: string</code> with <code>pattern</code>
+  / <code>enum</code> constraints; reserve other types for hand-written <code>agent.yml</code>
+  profiles.</li>
+<li>A schema that is itself invalid (rejected by the JSON Schema meta-schema) is
+  warned about and treated as absent — the TUI falls back to free-form
+  editing.</li>
+</ul>
+<h2 id="implementing-the-cli-entry">Implementing the CLI entry<a class="headerlink" href="#implementing-the-cli-entry" title="Permanent link">&para;</a></h2>
+<p>The manifest's <code>cli</code> names a function called as <code>main(argv, profile)</code>:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>datus hello --profile staging greet Ada
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>                └── stripped ──┘ └── argv = [&quot;greet&quot;, &quot;Ada&quot;] ──┘
 </span></code></pre></div>
 <p>Only <code>--profile</code> / <code>--config</code> appearing <strong>before the first non-option token</strong>
 are consumed as Datus globals; from the first command token onward everything
 belongs to the plugin. <code>datus hello greet --profile staging</code> therefore passes
 <code>["greet", "--profile", "staging"]</code> through untouched — your subcommands are
 free to define their own <code>--profile</code> option.</p>
-<p>Return an integer exit code. Suggested conventions:</p>
+<p>Return an integer exit code (<code>None</code> means <code>0</code>). Suggested conventions:</p>
 <table>
 <thead>
 <tr>
@@ -4776,193 +4908,177 @@ free to define their own <code>--profile</code> option.</p>
 </tr>
 </tbody>
 </table>
-<p>Raising is also fine — Datus catches exceptions from <code>run_cli</code> and maps them to
-exit code <code>1</code> rather than crashing the CLI — but returning an explicit code
-gives users clearer signals.</p>
+<p>Raising is also fine — Datus catches exceptions from your <code>cli</code> function and
+maps them to exit code <code>1</code> rather than crashing the CLI — but returning an
+explicit code gives users clearer signals.</p>
 <h2 id="recipes-wrapping-functions-and-apis-into-a-cli">Recipes: wrapping functions and APIs into a CLI<a class="headerlink" href="#recipes-wrapping-functions-and-apis-into-a-cli" title="Permanent link">&para;</a></h2>
-<p><code>run_cli</code> receives a raw <code>argv</code> list, so you are free to route it however you
-like. Here are four common patterns, from quickest to richest.</p>
+<p>Your <code>cli</code> function receives a raw <code>argv</code> list, so you are free to route it
+however you like. Here are four common patterns, from quickest to richest.</p>
 <h3 id="a-dict-dispatch-a-few-functions-zero-dependencies">A. Dict dispatch — a few functions, zero dependencies<a class="headerlink" href="#a-dict-dispatch-a-few-functions-zero-dependencies" title="Permanent link">&para;</a></h3>
-<p>The fastest way to expose a handful of functions. Map the first token to a
-handler; each handler gets the rest of <code>argv</code>.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ToolboxPlugin</span><span class="p">:</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">profile</span> <span class="o">=</span> <span class="n">profile</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_cli</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">argv</span><span class="p">):</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">argv</span><span class="p">:</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;usage: datus toolbox &lt;add|upper&gt; ...&quot;</span><span class="p">)</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>            <span class="k">return</span> <span class="mi">2</span>
-</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>        <span class="n">cmd</span><span class="p">,</span> <span class="n">rest</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
-</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>        <span class="n">handlers</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;add&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_add</span><span class="p">,</span> <span class="s2">&quot;upper&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_upper</span><span class="p">}</span>
-</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>        <span class="n">handler</span> <span class="o">=</span> <span class="n">handlers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
-</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>        <span class="k">if</span> <span class="n">handler</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;unknown command: </span><span class="si">{</span><span class="n">cmd</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>            <span class="k">return</span> <span class="mi">2</span>
-</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>        <span class="k">return</span> <span class="n">handler</span><span class="p">(</span><span class="n">rest</span><span class="p">)</span>
-</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>
-</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>          <span class="c1"># datus toolbox add 1 2 3</span>
-</span><span id="__span-6-18"><a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>        <span class="nb">print</span><span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">args</span><span class="p">))</span>
-</span><span id="__span-6-19"><a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>        <span class="k">return</span> <span class="mi">0</span>
-</span><span id="__span-6-20"><a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>
-</span><span id="__span-6-21"><a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_upper</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>        <span class="c1"># datus toolbox upper hello</span>
-</span><span id="__span-6-22"><a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">args</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">())</span>
-</span><span id="__span-6-23"><a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>        <span class="k">return</span> <span class="mi">0</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">,</span> <span class="n">profile</span><span class="p">):</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">argv</span><span class="p">:</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;usage: datus toolbox &lt;add|upper&gt; ...&quot;</span><span class="p">)</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>        <span class="k">return</span> <span class="mi">2</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">cmd</span><span class="p">,</span> <span class="n">rest</span> <span class="o">=</span> <span class="n">argv</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="n">handlers</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;add&quot;</span><span class="p">:</span> <span class="n">_add</span><span class="p">,</span> <span class="s2">&quot;upper&quot;</span><span class="p">:</span> <span class="n">_upper</span><span class="p">}</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">handler</span> <span class="o">=</span> <span class="n">handlers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="k">if</span> <span class="n">handler</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;unknown command: </span><span class="si">{</span><span class="n">cmd</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>        <span class="k">return</span> <span class="mi">2</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>    <span class="k">return</span> <span class="n">handler</span><span class="p">(</span><span class="n">rest</span><span class="p">)</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="k">def</span><span class="w"> </span><span class="nf">_add</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>          <span class="c1"># datus toolbox add 1 2 3</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">a</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">args</span><span class="p">))</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>    <span class="k">return</span> <span class="mi">0</span>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="k">def</span><span class="w"> </span><span class="nf">_upper</span><span class="p">(</span><span class="n">args</span><span class="p">):</span>        <span class="c1"># datus toolbox upper hello</span>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">args</span><span class="p">)</span><span class="o">.</span><span class="n">upper</span><span class="p">())</span>
+</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>    <span class="k">return</span> <span class="mi">0</span>
 </span></code></pre></div>
 <h3 id="b-argparse-typed-args-flags-auto-usage-h">B. argparse — typed args, flags, auto usage/<code>-h</code><a class="headerlink" href="#b-argparse-typed-args-flags-auto-usage-h" title="Permanent link">&para;</a></h3>
 <p>Stdlib, no extra dependency. <code>argparse</code> prints usage and raises <code>SystemExit</code>
 on <code>-h</code> or a bad invocation; Datus surfaces that as the exit code (0 for <code>-h</code>,
 2 for usage errors), which is the conventional CLI behavior.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">ToolboxPlugin</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">profile</span> <span class="o">=</span> <span class="n">profile</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_cli</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">argv</span><span class="p">):</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>        <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">prog</span><span class="o">=</span><span class="s2">&quot;datus toolbox&quot;</span><span class="p">)</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>        <span class="n">sub</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">&quot;cmd&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
-</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>        <span class="n">p_add</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;add&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;sum numbers&quot;</span><span class="p">)</span>
-</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>        <span class="n">p_add</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;nums&quot;</span><span class="p">,</span> <span class="n">nargs</span><span class="o">=</span><span class="s2">&quot;+&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
-</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>
-</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>        <span class="n">p_grep</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;grep&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;filter lines in a file&quot;</span><span class="p">)</span>
-</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>        <span class="n">p_grep</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;pattern&quot;</span><span class="p">)</span>
-</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>        <span class="n">p_grep</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;path&quot;</span><span class="p">)</span>
-</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>        <span class="n">p_grep</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;-i&quot;</span><span class="p">,</span> <span class="s2">&quot;--ignore-case&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">)</span>
-</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>
-</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>        <span class="n">ns</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>      <span class="c1"># SystemExit on -h / bad usage</span>
-</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>        <span class="k">if</span> <span class="n">ns</span><span class="o">.</span><span class="n">cmd</span> <span class="o">==</span> <span class="s2">&quot;add&quot;</span><span class="p">:</span>
-</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>            <span class="nb">print</span><span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="n">ns</span><span class="o">.</span><span class="n">nums</span><span class="p">))</span>
-</span><span id="__span-7-22"><a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>            <span class="k">return</span> <span class="mi">0</span>
-</span><span id="__span-7-23"><a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>        <span class="k">if</span> <span class="n">ns</span><span class="o">.</span><span class="n">cmd</span> <span class="o">==</span> <span class="s2">&quot;grep&quot;</span><span class="p">:</span>
-</span><span id="__span-7-24"><a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_grep</span><span class="p">(</span><span class="n">ns</span><span class="o">.</span><span class="n">pattern</span><span class="p">,</span> <span class="n">ns</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">ns</span><span class="o">.</span><span class="n">ignore_case</span><span class="p">)</span>
-</span><span id="__span-7-25"><a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>
-</span><span id="__span-7-26"><a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">_grep</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pattern</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">ignore_case</span><span class="p">):</span>
-</span><span id="__span-7-27"><a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>        <span class="n">needle</span> <span class="o">=</span> <span class="n">pattern</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">if</span> <span class="n">ignore_case</span> <span class="k">else</span> <span class="n">pattern</span>
-</span><span id="__span-7-28"><a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fh</span><span class="p">:</span>
-</span><span id="__span-7-29"><a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>            <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">fh</span><span class="p">:</span>
-</span><span id="__span-7-30"><a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>                <span class="n">hay</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">if</span> <span class="n">ignore_case</span> <span class="k">else</span> <span class="n">line</span>
-</span><span id="__span-7-31"><a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>                <span class="k">if</span> <span class="n">needle</span> <span class="ow">in</span> <span class="n">hay</span><span class="p">:</span>
-</span><span id="__span-7-32"><a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a>                    <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">rstrip</span><span class="p">())</span>
-</span><span id="__span-7-33"><a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>        <span class="k">return</span> <span class="mi">0</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">,</span> <span class="n">profile</span><span class="p">):</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">prog</span><span class="o">=</span><span class="s2">&quot;datus toolbox&quot;</span><span class="p">)</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="n">sub</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">&quot;cmd&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="n">p_add</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;add&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;sum numbers&quot;</span><span class="p">)</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    <span class="n">p_add</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;nums&quot;</span><span class="p">,</span> <span class="n">nargs</span><span class="o">=</span><span class="s2">&quot;+&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">float</span><span class="p">)</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="n">p_grep</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;grep&quot;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">&quot;filter lines in a file&quot;</span><span class="p">)</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="n">p_grep</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;pattern&quot;</span><span class="p">)</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="n">p_grep</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;path&quot;</span><span class="p">)</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>    <span class="n">p_grep</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;-i&quot;</span><span class="p">,</span> <span class="s2">&quot;--ignore-case&quot;</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">&quot;store_true&quot;</span><span class="p">)</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="n">ns</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>      <span class="c1"># SystemExit on -h / bad usage</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>    <span class="k">if</span> <span class="n">ns</span><span class="o">.</span><span class="n">cmd</span> <span class="o">==</span> <span class="s2">&quot;add&quot;</span><span class="p">:</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>        <span class="nb">print</span><span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="n">ns</span><span class="o">.</span><span class="n">nums</span><span class="p">))</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>        <span class="k">return</span> <span class="mi">0</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>    <span class="k">if</span> <span class="n">ns</span><span class="o">.</span><span class="n">cmd</span> <span class="o">==</span> <span class="s2">&quot;grep&quot;</span><span class="p">:</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>        <span class="k">return</span> <span class="n">_grep</span><span class="p">(</span><span class="n">ns</span><span class="o">.</span><span class="n">pattern</span><span class="p">,</span> <span class="n">ns</span><span class="o">.</span><span class="n">path</span><span class="p">,</span> <span class="n">ns</span><span class="o">.</span><span class="n">ignore_case</span><span class="p">)</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a><span class="k">def</span><span class="w"> </span><span class="nf">_grep</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">ignore_case</span><span class="p">):</span>
+</span><span id="__span-9-25"><a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>    <span class="n">needle</span> <span class="o">=</span> <span class="n">pattern</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">if</span> <span class="n">ignore_case</span> <span class="k">else</span> <span class="n">pattern</span>
+</span><span id="__span-9-26"><a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fh</span><span class="p">:</span>
+</span><span id="__span-9-27"><a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">fh</span><span class="p">:</span>
+</span><span id="__span-9-28"><a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>            <span class="n">hay</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">if</span> <span class="n">ignore_case</span> <span class="k">else</span> <span class="n">line</span>
+</span><span id="__span-9-29"><a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a>            <span class="k">if</span> <span class="n">needle</span> <span class="ow">in</span> <span class="n">hay</span><span class="p">:</span>
+</span><span id="__span-9-30"><a id="__codelineno-9-30" name="__codelineno-9-30" href="#__codelineno-9-30"></a>                <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">rstrip</span><span class="p">())</span>
+</span><span id="__span-9-31"><a id="__codelineno-9-31" name="__codelineno-9-31" href="#__codelineno-9-31"></a>    <span class="k">return</span> <span class="mi">0</span>
 </span></code></pre></div>
 <h3 id="c-wrapping-a-rest-api">C. Wrapping a REST API<a class="headerlink" href="#c-wrapping-a-rest-api" title="Permanent link">&para;</a></h3>
 <p>Read the endpoint and credentials from the profile (Datus already expanded
 <code>${VAR}</code>), then map subcommands to requests. Keep credentials in the profile —
 never hard-code them, and never echo them.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">PetstorePlugin</span><span class="p">:</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">profile</span> <span class="o">=</span> <span class="n">profile</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_cli</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">argv</span><span class="p">):</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>        <span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>  <span class="c1"># a plugin may depend on its own libraries</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="n">base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;api_base_url&quot;</span><span class="p">)</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">base</span><span class="p">:</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;no api_base_url configured for the profile&quot;</span><span class="p">)</span>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>            <span class="k">return</span> <span class="mi">3</span>
-</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>        <span class="n">headers</span> <span class="o">=</span> <span class="p">{}</span>
-</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;token&quot;</span><span class="p">):</span>
-</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>            <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;Authorization&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Bearer </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">profile</span><span class="p">[</span><span class="s1">&#39;token&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>
-</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>        <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">prog</span><span class="o">=</span><span class="s2">&quot;datus petstore&quot;</span><span class="p">)</span>
-</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>        <span class="n">sub</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">&quot;cmd&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>        <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;list-pets&quot;</span><span class="p">)</span>
-</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>        <span class="n">p_get</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;get-pet&quot;</span><span class="p">)</span>
-</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>        <span class="n">p_get</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
-</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>        <span class="n">ns</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>
-</span><span id="__span-8-25"><a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>
-</span><span id="__span-8-26"><a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>        <span class="n">base</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
-</span><span id="__span-8-27"><a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>        <span class="k">if</span> <span class="n">ns</span><span class="o">.</span><span class="n">cmd</span> <span class="o">==</span> <span class="s2">&quot;list-pets&quot;</span><span class="p">:</span>
-</span><span id="__span-8-28"><a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>            <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">/pets&quot;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
-</span><span id="__span-8-29"><a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>        <span class="k">else</span><span class="p">:</span>
-</span><span id="__span-8-30"><a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>            <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">/pets/</span><span class="si">{</span><span class="n">ns</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
-</span><span id="__span-8-31"><a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>
-</span><span id="__span-8-32"><a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>        <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">&gt;=</span> <span class="mi">400</span><span class="p">:</span>
-</span><span id="__span-8-33"><a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error </span><span class="si">{</span><span class="n">resp</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">resp</span><span class="o">.</span><span class="n">text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-</span><span id="__span-8-34"><a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>            <span class="k">return</span> <span class="mi">1</span>
-</span><span id="__span-8-35"><a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
-</span><span id="__span-8-36"><a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>        <span class="k">return</span> <span class="mi">0</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">argparse</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">,</span> <span class="n">profile</span><span class="p">):</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>  <span class="c1"># a plugin may depend on its own libraries</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;api_base_url&quot;</span><span class="p">)</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">base</span><span class="p">:</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;no api_base_url configured for the profile&quot;</span><span class="p">)</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>        <span class="k">return</span> <span class="mi">3</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>    <span class="n">headers</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>    <span class="k">if</span> <span class="n">profile</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;token&quot;</span><span class="p">):</span>
+</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a>        <span class="n">headers</span><span class="p">[</span><span class="s2">&quot;Authorization&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Bearer </span><span class="si">{</span><span class="n">profile</span><span class="p">[</span><span class="s1">&#39;token&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>
+</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">(</span><span class="n">prog</span><span class="o">=</span><span class="s2">&quot;datus petstore&quot;</span><span class="p">)</span>
+</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>    <span class="n">sub</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">add_subparsers</span><span class="p">(</span><span class="n">dest</span><span class="o">=</span><span class="s2">&quot;cmd&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>    <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;list-pets&quot;</span><span class="p">)</span>
+</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>    <span class="n">p_get</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">add_parser</span><span class="p">(</span><span class="s2">&quot;get-pet&quot;</span><span class="p">)</span>
+</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>    <span class="n">p_get</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
+</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>    <span class="n">ns</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">(</span><span class="n">argv</span><span class="p">)</span>
+</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>
+</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="p">)</span>
+</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>    <span class="k">if</span> <span class="n">ns</span><span class="o">.</span><span class="n">cmd</span> <span class="o">==</span> <span class="s2">&quot;list-pets&quot;</span><span class="p">:</span>
+</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a>        <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">/pets&quot;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>        <span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">/pets/</span><span class="si">{</span><span class="n">ns</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a>
+</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a>    <span class="k">if</span> <span class="n">resp</span><span class="o">.</span><span class="n">status_code</span> <span class="o">&gt;=</span> <span class="mi">400</span><span class="p">:</span>
+</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;error </span><span class="si">{</span><span class="n">resp</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">resp</span><span class="o">.</span><span class="n">text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a>        <span class="k">return</span> <span class="mi">1</span>
+</span><span id="__span-10-32"><a id="__codelineno-10-32" name="__codelineno-10-32" href="#__codelineno-10-32"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">(),</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+</span><span id="__span-10-33"><a id="__codelineno-10-33" name="__codelineno-10-33" href="#__codelineno-10-33"></a>    <span class="k">return</span> <span class="mi">0</span>
 </span></code></pre></div>
 <p>Corresponding config:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">petstore</span><span class="p">:</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.example.com/v1</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${PETSTORE_TOKEN}</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">    </span><span class="nt">petstore</span><span class="p">:</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="w">        </span><span class="nt">api_base_url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.example.com/v1</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${PETSTORE_TOKEN}</span>
 </span></code></pre></div>
 <h3 id="d-typer-click-richest-ux-one-extra-dependency">D. Typer / Click — richest UX, one extra dependency<a class="headerlink" href="#d-typer-click-richest-ux-one-extra-dependency" title="Permanent link">&para;</a></h3>
 <p>For a large command surface, a framework like <a href="https://typer.tiangolo.com/">Typer</a>
-gives you help text, type coercion, and completion. Because Datus constructs
-your plugin per-invocation but the Typer app is a module-level object, expose
-the active profile through a module global that commands read.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">typer</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">app</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Typer</span><span class="p">(</span><span class="n">add_completion</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">_ACTIVE_PROFILE</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="nd">@app</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s2">&quot;greet&quot;</span><span class="p">)</span>
-</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">loud</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
-</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>    <span class="n">greeting</span> <span class="o">=</span> <span class="n">_ACTIVE_PROFILE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;greeting&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
-</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>    <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">greeting</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
-</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="k">if</span> <span class="n">loud</span> <span class="k">else</span> <span class="n">msg</span><span class="p">)</span>
-</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>
-</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a>
-</span><span id="__span-10-14"><a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="k">class</span><span class="w"> </span><span class="nc">GreeterPlugin</span><span class="p">:</span>
-</span><span id="__span-10-15"><a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
-</span><span id="__span-10-16"><a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">profile</span> <span class="o">=</span> <span class="n">profile</span> <span class="ow">or</span> <span class="p">{}</span>
-</span><span id="__span-10-17"><a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a>
-</span><span id="__span-10-18"><a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">run_cli</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">argv</span><span class="p">):</span>
-</span><span id="__span-10-19"><a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a>        <span class="k">global</span> <span class="n">_ACTIVE_PROFILE</span>
-</span><span id="__span-10-20"><a id="__codelineno-10-20" name="__codelineno-10-20" href="#__codelineno-10-20"></a>        <span class="n">_ACTIVE_PROFILE</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">profile</span>
-</span><span id="__span-10-21"><a id="__codelineno-10-21" name="__codelineno-10-21" href="#__codelineno-10-21"></a>        <span class="k">try</span><span class="p">:</span>
-</span><span id="__span-10-22"><a id="__codelineno-10-22" name="__codelineno-10-22" href="#__codelineno-10-22"></a>            <span class="c1"># standalone_mode=False stops Click from calling sys.exit itself,</span>
-</span><span id="__span-10-23"><a id="__codelineno-10-23" name="__codelineno-10-23" href="#__codelineno-10-23"></a>            <span class="c1"># so we can return a code and always clear the profile.</span>
-</span><span id="__span-10-24"><a id="__codelineno-10-24" name="__codelineno-10-24" href="#__codelineno-10-24"></a>            <span class="n">app</span><span class="p">(</span><span class="n">args</span><span class="o">=</span><span class="n">argv</span><span class="p">,</span> <span class="n">standalone_mode</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</span><span id="__span-10-25"><a id="__codelineno-10-25" name="__codelineno-10-25" href="#__codelineno-10-25"></a>            <span class="k">return</span> <span class="mi">0</span>
-</span><span id="__span-10-26"><a id="__codelineno-10-26" name="__codelineno-10-26" href="#__codelineno-10-26"></a>        <span class="k">except</span> <span class="ne">SystemExit</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>      <span class="c1"># -h / usage</span>
-</span><span id="__span-10-27"><a id="__codelineno-10-27" name="__codelineno-10-27" href="#__codelineno-10-27"></a>            <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">exc</span><span class="o">.</span><span class="n">code</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">)</span>
-</span><span id="__span-10-28"><a id="__codelineno-10-28" name="__codelineno-10-28" href="#__codelineno-10-28"></a>        <span class="k">except</span> <span class="n">typer</span><span class="o">.</span><span class="n">Exit</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
-</span><span id="__span-10-29"><a id="__codelineno-10-29" name="__codelineno-10-29" href="#__codelineno-10-29"></a>            <span class="k">return</span> <span class="n">exc</span><span class="o">.</span><span class="n">exit_code</span>
-</span><span id="__span-10-30"><a id="__codelineno-10-30" name="__codelineno-10-30" href="#__codelineno-10-30"></a>        <span class="k">finally</span><span class="p">:</span>
-</span><span id="__span-10-31"><a id="__codelineno-10-31" name="__codelineno-10-31" href="#__codelineno-10-31"></a>            <span class="n">_ACTIVE_PROFILE</span> <span class="o">=</span> <span class="p">{}</span>
+gives you help text, type coercion, and completion. Because Datus calls your
+entry function per-invocation but the Typer app is a module-level object,
+expose the active profile through a module global that commands read.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">typer</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="n">app</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Typer</span><span class="p">(</span><span class="n">add_completion</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">_ACTIVE_PROFILE</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="nd">@app</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="s2">&quot;greet&quot;</span><span class="p">)</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">loud</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="n">greeting</span> <span class="o">=</span> <span class="n">_ACTIVE_PROFILE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;greeting&quot;</span><span class="p">,</span> <span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>    <span class="n">msg</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">greeting</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span> <span class="k">if</span> <span class="n">loud</span> <span class="k">else</span> <span class="n">msg</span><span class="p">)</span>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="n">argv</span><span class="p">,</span> <span class="n">profile</span><span class="p">):</span>
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>    <span class="k">global</span> <span class="n">_ACTIVE_PROFILE</span>
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>    <span class="n">_ACTIVE_PROFILE</span> <span class="o">=</span> <span class="n">profile</span>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>    <span class="k">try</span><span class="p">:</span>
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>        <span class="c1"># standalone_mode=False stops Click from calling sys.exit itself,</span>
+</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>        <span class="c1"># so we can return a code and always clear the profile.</span>
+</span><span id="__span-12-20"><a id="__codelineno-12-20" name="__codelineno-12-20" href="#__codelineno-12-20"></a>        <span class="n">app</span><span class="p">(</span><span class="n">args</span><span class="o">=</span><span class="n">argv</span><span class="p">,</span> <span class="n">standalone_mode</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-12-21"><a id="__codelineno-12-21" name="__codelineno-12-21" href="#__codelineno-12-21"></a>        <span class="k">return</span> <span class="mi">0</span>
+</span><span id="__span-12-22"><a id="__codelineno-12-22" name="__codelineno-12-22" href="#__codelineno-12-22"></a>    <span class="k">except</span> <span class="ne">SystemExit</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>      <span class="c1"># -h / usage</span>
+</span><span id="__span-12-23"><a id="__codelineno-12-23" name="__codelineno-12-23" href="#__codelineno-12-23"></a>        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">exc</span><span class="o">.</span><span class="n">code</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-12-24"><a id="__codelineno-12-24" name="__codelineno-12-24" href="#__codelineno-12-24"></a>    <span class="k">except</span> <span class="n">typer</span><span class="o">.</span><span class="n">Exit</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+</span><span id="__span-12-25"><a id="__codelineno-12-25" name="__codelineno-12-25" href="#__codelineno-12-25"></a>        <span class="k">return</span> <span class="n">exc</span><span class="o">.</span><span class="n">exit_code</span>
+</span><span id="__span-12-26"><a id="__codelineno-12-26" name="__codelineno-12-26" href="#__codelineno-12-26"></a>    <span class="k">finally</span><span class="p">:</span>
+</span><span id="__span-12-27"><a id="__codelineno-12-27" name="__codelineno-12-27" href="#__codelineno-12-27"></a>        <span class="n">_ACTIVE_PROFILE</span> <span class="o">=</span> <span class="p">{}</span>
 </span></code></pre></div>
 <p>Add <code>typer</code> to your package's <code>dependencies</code> (your plugin's deps are its own —
 just not <code>datus</code>).</p>
 <h2 id="bundling-skills">Bundling skills<a class="headerlink" href="#bundling-skills" title="Permanent link">&para;</a></h2>
-<p>If your package ships a skill directory, expose it via a class-level
-<code>skills_dir()</code> and Datus will discover the skills at startup (they show up in
-<code>/skill list</code>, alongside project and user skills).</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">HelloPlugin</span><span class="p">:</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="nd">@classmethod</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">skills_dir</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>        <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s2">&quot;skills&quot;</span><span class="p">)</span>
+<p>Declare a package-relative skills directory in the manifest and Datus
+discovers the skills at startup (they show up in <code>/skill list</code>, alongside
+project and user skills) — no code involved:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nt">skills</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">skills</span>
 </span></code></pre></div>
 <p>Layout and packaging:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>datus_plugin_hello/
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>└── skills/
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    └── hello/
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>        └── SKILL.md
+<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>datus_plugin_hello/
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>├── datus-plugin.yml
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>└── skills/
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    └── hello/
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>        └── SKILL.md
 </span></code></pre></div>
 <p>A minimal <code>SKILL.md</code> is YAML frontmatter plus markdown instructions (the
 frontmatter follows the <a href="https://agentskills.io">agentskills.io</a> spec used by
 the Skills system):</p>
-<div class="language-markdown highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>---
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>name: hello
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="gu">description: Say hello to someone via the `datus hello` CLI</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="gu">---</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="gh"># Hello</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>
-</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>Run <span class="sb">`datus hello &lt;name&gt;`</span> to greet someone. ...
+<div class="language-markdown highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>---
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>name: hello
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="gu">description: Say hello to someone via the `datus hello` CLI</span>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="gu">---</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="gh"># Hello</span>
+</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>
+</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>Run <span class="sb">`datus hello &lt;name&gt;`</span> to greet someone. ...
 </span></code></pre></div>
 <p>See the <a href="../../skills/introduction/">Skills</a> docs for the full frontmatter
 field reference.</p>
@@ -4971,67 +5087,94 @@ Python). Hatchling packages every file under the package directory by default,
 so nothing extra is needed unless the files are VCS-ignored (then list them
 under <code>[tool.hatch.build.targets.wheel] artifacts</code>). With setuptools you must
 opt in explicitly:</p>
-<div class="language-toml highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">[tool.setuptools.package-data]</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">datus_plugin_hello</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;skills/**/*&quot;</span><span class="p">]</span>
+<div class="language-toml highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">[tool.setuptools.package-data]</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">datus_plugin_hello</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;datus-plugin.yml&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;skills/**/*&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;prompts/*&quot;</span><span class="p">]</span>
 </span></code></pre></div>
 <p>After building, verify with <code>unzip -l dist/*.whl | grep SKILL.md</code>.</p>
-<h2 id="system-prompt-injection">System-prompt injection<a class="headerlink" href="#system-prompt-injection" title="Permanent link">&para;</a></h2>
+<h2 id="system-prompt-template">System-prompt template<a class="headerlink" href="#system-prompt-template" title="Permanent link">&para;</a></h2>
 <p>A plugin can tell the agent, up front, what it is and which environments are
-configured — so the model chooses it proactively instead of guessing. Expose a
-class-level <code>system_prompt(profiles)</code>:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">HelloPlugin</span><span class="p">:</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>    <span class="nd">@classmethod</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">system_prompt</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">profiles</span><span class="p">):</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>        <span class="k">if</span> <span class="ow">not</span> <span class="n">profiles</span><span class="p">:</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>            <span class="c1"># Installed but unconfigured: point the agent at the setup</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>            <span class="c1"># skill instead of disappearing from the prompt.</span>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a>            <span class="k">return</span> <span class="p">(</span>
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>                <span class="s2">&quot;## Hello (installed, not configured)</span><span class="se">\n</span><span class="s2">&quot;</span>
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a>                <span class="s2">&quot;The `datus hello` CLI is installed but has no environment &quot;</span>
-</span><span id="__span-15-10"><a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a>                <span class="s2">&quot;configured.</span><span class="se">\n</span><span class="s2">Run the `hello-setup` skill to configure one.&quot;</span>
-</span><span id="__span-15-11"><a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>            <span class="p">)</span>
-</span><span id="__span-15-12"><a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>        <span class="n">envs</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
-</span><span id="__span-15-13"><a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>            <span class="sa">f</span><span class="s2">&quot;- </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">cfg</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;greeting&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;?&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-15-14"><a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">cfg</span> <span class="ow">in</span> <span class="n">profiles</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
-</span><span id="__span-15-15"><a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>        <span class="p">)</span>
-</span><span id="__span-15-16"><a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>        <span class="k">return</span> <span class="p">(</span>
-</span><span id="__span-15-17"><a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>            <span class="s2">&quot;## Hello</span><span class="se">\n</span><span class="s2">&quot;</span>
-</span><span id="__span-15-18"><a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>            <span class="s2">&quot;Say hello via `datus hello &lt;name&gt;`.</span><span class="se">\n</span><span class="s2">&quot;</span>
-</span><span id="__span-15-19"><a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>            <span class="sa">f</span><span class="s2">&quot;Environments (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">profiles</span><span class="p">)</span><span class="si">}</span><span class="s2">):</span><span class="se">\n</span><span class="si">{</span><span class="n">envs</span><span class="si">}</span><span class="s2">&quot;</span>
-</span><span id="__span-15-20"><a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>        <span class="p">)</span>
+configured — so the model chooses it proactively instead of guessing. Declare
+a Jinja2 template in the manifest:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="nt">system_prompt</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prompts/system.md.j2</span>
 </span></code></pre></div>
-<p>Datus passes the plugin's <strong>full</strong> profile mapping (all environments, not just
-the active one) and appends the returned markdown to the system prompt of every
-agentic node. An installed-but-unconfigured plugin receives <code>{}</code> — return a
-short "installed, not configured" note pointing at your bundled setup skill
-(see below) so the agent can walk the user through configuration. Return
-<code>None</code> only when there is truly nothing to say.</p>
+<div class="language-jinja highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="x">## Hello</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="x">Say hello via `datus hello &lt;name&gt;`.</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="cp">{%</span> <span class="k">if</span> <span class="nv">profiles</span> <span class="cp">%}</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="x">Environments (</span><span class="cp">{{</span> <span class="nv">profiles</span> <span class="o">|</span> <span class="nf">length</span> <span class="cp">}}</span><span class="x">):</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="cp">{%</span> <span class="k">for</span> <span class="nv">name</span><span class="o">,</span> <span class="nv">cfg</span> <span class="k">in</span> <span class="nv">profiles.items</span><span class="o">()</span> <span class="cp">%}</span>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="x">- </span><span class="cp">{{</span> <span class="nv">name</span> <span class="cp">}}</span><span class="x">: </span><span class="cp">{{</span> <span class="nv">cfg.get</span><span class="o">(</span><span class="s2">&quot;greeting&quot;</span><span class="o">,</span> <span class="s2">&quot;?&quot;</span><span class="o">)</span> <span class="cp">}}</span>
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="cp">{%</span> <span class="k">endfor</span> <span class="cp">%}</span>
+</span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="cp">{%</span> <span class="k">else</span> <span class="cp">%}</span>
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="x">Installed but not configured — run the `hello-setup` skill to configure an</span>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="x">environment.</span>
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="cp">{%</span> <span class="k">endif</span> <span class="cp">%}</span>
+</span></code></pre></div>
+<p>The render context:</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>plugin_name</code></td>
+<td>your entry-point name</td>
+</tr>
+<tr>
+<td><code>profiles</code></td>
+<td><code>dict[str, dict]</code> — the plugin's profile mapping, <strong>narrowed to the profiles the project activated</strong> (<code>plugins.&lt;name&gt;.active_profile</code> in <code>./.datus/config.yml</code>) and <strong>secret-stripped</strong> (see below)</td>
+</tr>
+<tr>
+<td><code>config_path</code></td>
+<td>the loaded agent config file path, or <code>None</code></td>
+</tr>
+</tbody>
+</table>
+<p>An installed-but-unconfigured plugin (or one whose pin matches nothing)
+renders with <code>profiles == {}</code> — use <code>{% if profiles %}</code> to emit a short
+"installed, not configured" note pointing at your bundled setup skill instead
+of disappearing from the prompt.</p>
 <p>When at least one plugin contributes a section, Datus prepends its own
 <code>## Plugins</code> preamble naming the loaded config file and the
-<code>agent.plugins.&lt;plugin&gt;.&lt;profile&gt;</code> shape — your text never needs to hard-code
-config paths.</p>
-<div class="admonition danger">
-<p class="admonition-title">Never surface secrets</p>
-<p>The returned text enters the LLM context. Datus hands you the full profile
-dicts — which include <code>password</code>, secret keys, access keys — but you must
-emit <strong>only non-secret fields</strong> (endpoints, region, environment names).
-Datus never splices profile values itself; keeping credentials out of the
-prompt is the plugin's responsibility. Use a field allow-list.</p>
+<code>agent.plugins.&lt;plugin&gt;.&lt;profile&gt;</code> shape — your template never needs to
+hard-code config paths.</p>
+<div class="admonition note">
+<p class="admonition-title">Secrets are stripped structurally</p>
+<p>The rendered text enters the LLM context, and profile values are already
+<code>${VAR}</code>-expanded (real secrets) at prompt time — so Datus filters the
+profiles <strong>before</strong> your template sees them: only fields declared in your
+<code>config_schema</code> and <strong>not</strong> marked <code>x-secret: true</code> pass through;
+undeclared fields are dropped too, and declared nested objects (a
+<code>type: object</code> with its own <code>properties</code>) are filtered recursively under
+the same rules. The one exception is a <strong>free-form</strong> object field
+(declared <code>type: object</code> with no <code>properties</code>): its whole value passes
+through unfiltered, so mark it <code>x-secret: true</code> if it can hold anything
+sensitive. Without a <code>config_schema</code>, templates
+receive profile names with empty dicts. A template referencing a stripped
+field fails to render (strict mode) and the section is skipped — it can
+never leak.</p>
 </div>
+<p>Template errors (missing file, syntax error, undefined variable) are logged
+and the section is skipped — they never break prompt construction. The
+template renders in strict mode (<code>StrictUndefined</code>), so a typo shows up in the
+log instead of as silently wrong prompt text.</p>
 <h2 id="cli-bash-permissions">CLI bash permissions<a class="headerlink" href="#cli-bash-permissions" title="Permanent link">&para;</a></h2>
 <p>When the <strong>agent</strong> (not a human) runs your CLI through its bash tool — e.g. the
 model decides to execute <code>datus hello greet Ada</code> — the command goes through
 Datus' permission layer. Without a declaration, every such command prompts the
-user for confirmation. A class-level <code>cli_permissions()</code> lets your plugin
-declare, per permission profile, which of its subcommands are safe to auto-run
-(<code>allow</code>), which must be confirmed (<code>ask</code>), and which are blocked (<code>deny</code>):</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">HelloPlugin</span><span class="p">:</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="nd">@classmethod</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">cli_permissions</span><span class="p">(</span><span class="bp">cls</span><span class="p">):</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>        <span class="k">return</span> <span class="p">{</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>            <span class="s2">&quot;normal&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;allow&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;greet:*&quot;</span><span class="p">],</span> <span class="s2">&quot;ask&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;config set:*&quot;</span><span class="p">]},</span>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>            <span class="s2">&quot;auto&quot;</span><span class="p">:</span>   <span class="p">{</span><span class="s2">&quot;allow&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;greet:*&quot;</span><span class="p">,</span> <span class="s2">&quot;config set:*&quot;</span><span class="p">]},</span>
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>        <span class="p">}</span>
+user for confirmation. The manifest's <code>permissions</code> key declares, per
+permission profile, which of your subcommands are safe to auto-run (<code>allow</code>),
+which must be confirmed (<code>ask</code>), and which are blocked (<code>deny</code>) — pure YAML,
+no code:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="nt">permissions</span><span class="p">:</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">normal</span><span class="p">:</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">    </span><span class="nt">allow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;greet:*&quot;</span><span class="p p-Indicator">]</span>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">    </span><span class="nt">ask</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;config</span><span class="nv"> </span><span class="s">set:*&quot;</span><span class="p p-Indicator">]</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">auto</span><span class="p">:</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">    </span><span class="nt">allow</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;greet:*&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;config</span><span class="nv"> </span><span class="s">set:*&quot;</span><span class="p p-Indicator">]</span>
 </span></code></pre></div>
 <p>Semantics:</p>
 <ul>
@@ -5074,28 +5217,26 @@ declare, per permission profile, which of its subcommands are safe to auto-run
 under <code>normal</code>; promote routine state changes to <code>allow</code> under <code>auto</code> only
 when re-running them is harmless.</p>
 <h2 id="tool-argument-transformers">Tool argument transformers<a class="headerlink" href="#tool-argument-transformers" title="Permanent link">&para;</a></h2>
-<p>A class-level <code>tool_transformers()</code> lets your plugin intercept the <strong>agent's
-tool calls</strong> — inspect and rewrite the arguments before the tool executes, or
-deny the call outright. The canonical use case is SQL policy enforcement:
-append a tenant-scope predicate to every <code>execute_sql</code> query, using the
-request principal the deployment injects.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ScopedSqlPlugin</span><span class="p">:</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>    <span class="nd">@classmethod</span>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">tool_transformers</span><span class="p">(</span><span class="bp">cls</span><span class="p">):</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;db_tools.execute_sql&quot;</span><span class="p">:</span> <span class="n">enforce_tenant_scope</span><span class="p">}</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
-</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="k">def</span><span class="w"> </span><span class="nf">enforce_tenant_scope</span><span class="p">(</span><span class="n">tool_name</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
-</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>    <span class="n">tenant_id</span> <span class="o">=</span> <span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;principal&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tenant&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
-</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">tenant_id</span><span class="p">:</span>
-</span><span id="__span-17-10"><a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>        <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;missing principal.tenant.id; cannot scope query&quot;</span><span class="p">)</span>
-</span><span id="__span-17-11"><a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>    <span class="n">args</span><span class="p">[</span><span class="s2">&quot;sql&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">add_where_predicate</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="s2">&quot;sql&quot;</span><span class="p">],</span> <span class="sa">f</span><span class="s2">&quot;tenant_id = &#39;</span><span class="si">{</span><span class="n">tenant_id</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
-</span><span id="__span-17-12"><a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>    <span class="k">return</span> <span class="n">args</span>
+<p>The manifest's <code>tool_transformers</code> key lets your plugin intercept the
+<strong>agent's tool calls</strong> — inspect and rewrite the arguments before the tool
+executes, or deny the call outright. The canonical use case is SQL policy
+enforcement: append a tenant-scope predicate to every <code>execute_sql</code> query,
+using the request principal the deployment injects.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="nt">tool_transformers</span><span class="p">:</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="s">&quot;db_tools.execute_sql&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">datus_plugin_scoped_sql.transformers:enforce_tenant_scope</span>
+</span></code></pre></div>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="c1"># datus_plugin_scoped_sql/transformers.py</span>
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">enforce_tenant_scope</span><span class="p">(</span><span class="n">tool_name</span><span class="p">,</span> <span class="n">args</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>    <span class="n">tenant_id</span> <span class="o">=</span> <span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;principal&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;tenant&quot;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">tenant_id</span><span class="p">:</span>
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>        <span class="k">raise</span> <span class="ne">PermissionError</span><span class="p">(</span><span class="s2">&quot;missing principal.tenant.id; cannot scope query&quot;</span><span class="p">)</span>
+</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>    <span class="n">args</span><span class="p">[</span><span class="s2">&quot;sql&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">add_where_predicate</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="s2">&quot;sql&quot;</span><span class="p">],</span> <span class="sa">f</span><span class="s2">&quot;tenant_id = &#39;</span><span class="si">{</span><span class="n">tenant_id</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>    <span class="k">return</span> <span class="n">args</span>
 </span></code></pre></div>
 <p>Semantics:</p>
 <ul>
-<li><strong>Declaration shape</strong>: a dict mapping tool patterns to a transformer or a
-  list of transformers. Patterns use the proxy syntax — a bare tool name
+<li><strong>Declaration shape</strong>: a mapping of tool patterns to a code ref or a list of
+  code refs. Patterns use the proxy syntax — a bare tool name
   (<code>execute_sql</code>), or <code>category.method</code> with fnmatch globs (<code>db_tools.*</code>).</li>
 <li><strong>Transformer signature</strong>: <code>transformer(tool_name, args, context) -&gt; dict</code>,
   sync or async. Return the (possibly modified) argument dict to continue.
@@ -5108,6 +5249,10 @@ request principal the deployment injects.</p>
   profile via <code>context["agent_config"].get_plugin_profile("&lt;name&gt;")</code>; access
   it duck-typed, never import <code>datus.*</code> for it). It is rebuilt on every call,
   so per-request values are always fresh.</li>
+<li><strong>Loading is lazy</strong>: the referenced module is imported when transformers are
+  first collected for an agent node, not at manifest load. A ref that fails to
+  import (or is not callable) is warned about and skipped — the plugin's
+  remaining transformers still apply.</li>
 <li><strong>Coverage</strong>: transformers wrap the agent's <code>FunctionTool</code> layer, which
   both execution paths (SDK Runner and the native loop) go through. They do
   <strong>not</strong> cover direct Python invocations of tool methods (e.g.
@@ -5119,21 +5264,19 @@ request principal the deployment injects.</p>
   <code>plugins_enabled</code> master switch as the rest of the plugin surface.</li>
 <li>Use a SQL parser or a database-safe query builder when rewriting SQL —
   never string concatenation for policy predicates.</li>
-<li>Malformed declarations (non-dict, non-callable entries, empty patterns)
-  are logged and skipped — they never break Datus startup. A declaration
-  that collects successfully but fails to apply aborts the agent node
-  instead of silently running without enforcement.</li>
+<li>A declaration that collects successfully but fails to apply aborts the
+  agent node instead of silently running without enforcement.</li>
 </ul>
 <h2 id="bundling-a-setup-skill">Bundling a setup skill<a class="headerlink" href="#bundling-a-setup-skill" title="Permanent link">&para;</a></h2>
 <p>Editing YAML by hand is the main friction after <code>pip install</code>. Ship a
 <code>&lt;name&gt;-setup</code> skill next to your main skill so the agent can collect the
 values and write the profile itself:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>datus_plugin_hello/
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>└── skills/
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    ├── hello/
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    │   └── SKILL.md
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    └── hello-setup/
-</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>        └── SKILL.md
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>datus_plugin_hello/
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>└── skills/
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>    ├── hello/
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>    │   └── SKILL.md
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>    └── hello-setup/
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>        └── SKILL.md
 </span></code></pre></div>
 <p>The setup <code>SKILL.md</code> should cover, in order:</p>
 <ol>
@@ -5156,99 +5299,147 @@ values and write the profile itself:</p>
 (API / VSCode / web deployment), the agent should tell the user to edit
 <code>agent.yml</code> on the server instead.</p>
 <p>A complete minimal <code>hello-setup/SKILL.md</code>:</p>
-<div class="language-markdown highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>---
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>name: hello-setup
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="gu">description: Configure an environment profile for the `datus hello` plugin</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="gu">---</span>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="gh"># Hello Setup</span>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
-</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>Use this skill when <span class="sb">`datus hello`</span> is installed but has no configured
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a>environment, or when the user wants to add another one.
-</span><span id="__span-19-10"><a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a>
-</span><span id="__span-19-11"><a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a><span class="gu">## Config structure</span>
-</span><span id="__span-19-12"><a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a>
-</span><span id="__span-19-13"><a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>Profiles live under <span class="sb">`agent.plugins.hello.&lt;profile&gt;`</span> in the config file named
-</span><span id="__span-19-14"><a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>by the <span class="sb">`## Plugins`</span> section of the system prompt:
-</span><span id="__span-19-15"><a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a>
-</span><span id="__span-19-16"><a id="__codelineno-19-16" name="__codelineno-19-16" href="#__codelineno-19-16"></a><span class="sb">```yaml</span>
-</span><span id="__span-19-17"><a id="__codelineno-19-17" name="__codelineno-19-17" href="#__codelineno-19-17"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-19-18"><a id="__codelineno-19-18" name="__codelineno-19-18" href="#__codelineno-19-18"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-19-19"><a id="__codelineno-19-19" name="__codelineno-19-19" href="#__codelineno-19-19"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
-</span><span id="__span-19-20"><a id="__codelineno-19-20" name="__codelineno-19-20" href="#__codelineno-19-20"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
-</span><span id="__span-19-21"><a id="__codelineno-19-21" name="__codelineno-19-21" href="#__codelineno-19-21"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">            </span><span class="c1"># mark the first profile as default</span>
-</span><span id="__span-19-22"><a id="__codelineno-19-22" name="__codelineno-19-22" href="#__codelineno-19-22"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span><span class="w">             </span><span class="c1"># required</span>
-</span><span id="__span-19-23"><a id="__codelineno-19-23" name="__codelineno-19-23" href="#__codelineno-19-23"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">    </span><span class="c1"># secret — reference an env var, never a literal</span>
-</span><span id="__span-19-24"><a id="__codelineno-19-24" name="__codelineno-19-24" href="#__codelineno-19-24"></a><span class="sb">```</span>
-</span><span id="__span-19-25"><a id="__codelineno-19-25" name="__codelineno-19-25" href="#__codelineno-19-25"></a>
-</span><span id="__span-19-26"><a id="__codelineno-19-26" name="__codelineno-19-26" href="#__codelineno-19-26"></a><span class="gu">## Steps</span>
-</span><span id="__span-19-27"><a id="__codelineno-19-27" name="__codelineno-19-27" href="#__codelineno-19-27"></a>
-</span><span id="__span-19-28"><a id="__codelineno-19-28" name="__codelineno-19-28" href="#__codelineno-19-28"></a><span class="k">1.</span> Ask the user for <span class="sb">`greeting`</span> and which environment variable holds the
-</span><span id="__span-19-29"><a id="__codelineno-19-29" name="__codelineno-19-29" href="#__codelineno-19-29"></a>   token. Have the user export the variable; write <span class="sb">`${VAR}`</span> into the YAML —
-</span><span id="__span-19-30"><a id="__codelineno-19-30" name="__codelineno-19-30" href="#__codelineno-19-30"></a>   never a literal secret.
-</span><span id="__span-19-31"><a id="__codelineno-19-31" name="__codelineno-19-31" href="#__codelineno-19-31"></a><span class="k">2.</span> Write the profile into the config file above; mark the first profile
-</span><span id="__span-19-32"><a id="__codelineno-19-32" name="__codelineno-19-32" href="#__codelineno-19-32"></a>   <span class="sb">`default: true`</span>.
-</span><span id="__span-19-33"><a id="__codelineno-19-33" name="__codelineno-19-33" href="#__codelineno-19-33"></a><span class="k">3.</span> Verify with a cheap read-only call: <span class="sb">`datus hello Ada`</span>.
-</span><span id="__span-19-34"><a id="__codelineno-19-34" name="__codelineno-19-34" href="#__codelineno-19-34"></a>
-</span><span id="__span-19-35"><a id="__codelineno-19-35" name="__codelineno-19-35" href="#__codelineno-19-35"></a>If this environment cannot edit the config file (API / web deployment), tell
-</span><span id="__span-19-36"><a id="__codelineno-19-36" name="__codelineno-19-36" href="#__codelineno-19-36"></a>the user to edit <span class="sb">`agent.yml`</span> on the server instead.
+<div class="language-markdown highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>---
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>name: hello-setup
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="gu">description: Configure an environment profile for the `datus hello` plugin</span>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="gu">---</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="gh"># Hello Setup</span>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>Use this skill when <span class="sb">`datus hello`</span> is installed but has no configured
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>environment, or when the user wants to add another one.
+</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>
+</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="gu">## Config structure</span>
+</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>
+</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>Profiles live under <span class="sb">`agent.plugins.hello.&lt;profile&gt;`</span> in the config file named
+</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>by the <span class="sb">`## Plugins`</span> section of the system prompt:
+</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>
+</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="sb">```yaml</span>
+</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">            </span><span class="c1"># mark the first profile as default</span>
+</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span><span class="w">             </span><span class="c1"># required</span>
+</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">    </span><span class="c1"># secret — reference an env var, never a literal</span>
+</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="sb">```</span>
+</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>
+</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a><span class="gu">## Steps</span>
+</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>
+</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a><span class="k">1.</span> Ask the user for <span class="sb">`greeting`</span> and which environment variable holds the
+</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a>   token. Have the user export the variable; write <span class="sb">`${VAR}`</span> into the YAML —
+</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a>   never a literal secret.
+</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a><span class="k">2.</span> Write the profile into the config file above; mark the first profile
+</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a>   <span class="sb">`default: true`</span>.
+</span><span id="__span-23-33"><a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a><span class="k">3.</span> Verify with a cheap read-only call: <span class="sb">`datus hello Ada`</span>.
+</span><span id="__span-23-34"><a id="__codelineno-23-34" name="__codelineno-23-34" href="#__codelineno-23-34"></a>
+</span><span id="__span-23-35"><a id="__codelineno-23-35" name="__codelineno-23-35" href="#__codelineno-23-35"></a>If this environment cannot edit the config file (API / web deployment), tell
+</span><span id="__span-23-36"><a id="__codelineno-23-36" name="__codelineno-23-36" href="#__codelineno-23-36"></a>the user to edit <span class="sb">`agent.yml`</span> on the server instead.
 </span></code></pre></div>
 <h2 id="verifying-your-plugin-end-to-end">Verifying your plugin end-to-end<a class="headerlink" href="#verifying-your-plugin-end-to-end" title="Permanent link">&para;</a></h2>
 <p>After <code>pip install -e</code>, each surface can be checked without restarting
 anything (plugins are discovered per invocation):</p>
 <ul>
 <li><strong>CLI dispatch</strong> — run <code>datus &lt;name&gt; ...</code> from any directory. If it falls
-  through to the REPL instead, the entry point is missing or misnamed; check
-  <code>pip show -f your-package</code> for the <code>entry_points.txt</code>.</li>
+  through to the REPL instead, the entry point is missing or misnamed, or the
+  manifest was rejected (check the log); <code>datus &lt;name&gt;</code> printing "declares no
+  CLI command" means the manifest loaded but has no <code>cli</code> key. Check
+  <code>pip show -f your-package</code> for the <code>entry_points.txt</code> and the bundled
+  <code>datus-plugin.yml</code>.</li>
 <li><strong>Skills</strong> — start <code>datus</code> and run <code>/skill list</code>; plugin-bundled skills
   appear alongside project and user skills.</li>
-<li><strong>Prompt injection</strong> — the easiest check is a unit test calling
-  <code>system_prompt()</code> directly (next section). To confirm it lands in a live
-  session, start <code>datus</code> and ask the agent "which plugins are configured?" —
-  the answer comes from the injected section. Note that config edits take
-  effect on the next <code>datus &lt;plugin&gt;</code> invocation immediately, but the prompt
-  section refreshes only on the next session.</li>
+<li><strong>Prompt injection</strong> — render the template in a unit test (next section).
+  To confirm it lands in a live session, start <code>datus</code> and ask the agent
+  "which plugins are configured?" — the answer comes from the injected
+  section. Note that config edits take effect on the next <code>datus &lt;plugin&gt;</code>
+  invocation immediately, but the prompt section refreshes only on the next
+  session.</li>
 </ul>
 <h2 id="testing-your-plugin">Testing your plugin<a class="headerlink" href="#testing-your-plugin" title="Permanent link">&para;</a></h2>
-<p>Because Datus is the broker, unit tests construct your plugin with a plain dict
-— no <code>agent.yml</code>, no Datus imports:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus_plugin_hello.plugin</span><span class="w"> </span><span class="kn">import</span> <span class="n">HelloPlugin</span>
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_run_cli_uses_profile_greeting</span><span class="p">(</span><span class="n">capsys</span><span class="p">):</span>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>    <span class="n">rc</span> <span class="o">=</span> <span class="n">HelloPlugin</span><span class="p">(</span><span class="n">profile</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;prod&quot;</span><span class="p">,</span> <span class="s2">&quot;greeting&quot;</span><span class="p">:</span> <span class="s2">&quot;Hi&quot;</span><span class="p">})</span><span class="o">.</span><span class="n">run_cli</span><span class="p">([</span><span class="s2">&quot;Ada&quot;</span><span class="p">])</span>
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>    <span class="k">assert</span> <span class="n">rc</span> <span class="o">==</span> <span class="mi">0</span>
-</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>    <span class="k">assert</span> <span class="s2">&quot;Hi, Ada!&quot;</span> <span class="ow">in</span> <span class="n">capsys</span><span class="o">.</span><span class="n">readouterr</span><span class="p">()</span><span class="o">.</span><span class="n">out</span>
-</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>
-</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_system_prompt_lists_envs_without_secrets</span><span class="p">():</span>
-</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">HelloPlugin</span><span class="o">.</span><span class="n">system_prompt</span><span class="p">({</span>
-</span><span id="__span-20-10"><a id="__codelineno-20-10" name="__codelineno-20-10" href="#__codelineno-20-10"></a>        <span class="s2">&quot;prod&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;prod&quot;</span><span class="p">,</span> <span class="s2">&quot;greeting&quot;</span><span class="p">:</span> <span class="s2">&quot;Hi&quot;</span><span class="p">,</span> <span class="s2">&quot;token&quot;</span><span class="p">:</span> <span class="s2">&quot;s3cr3t&quot;</span><span class="p">},</span>
-</span><span id="__span-20-11"><a id="__codelineno-20-11" name="__codelineno-20-11" href="#__codelineno-20-11"></a>    <span class="p">})</span>
-</span><span id="__span-20-12"><a id="__codelineno-20-12" name="__codelineno-20-12" href="#__codelineno-20-12"></a>    <span class="k">assert</span> <span class="s2">&quot;## Hello&quot;</span> <span class="ow">in</span> <span class="n">text</span>
-</span><span id="__span-20-13"><a id="__codelineno-20-13" name="__codelineno-20-13" href="#__codelineno-20-13"></a>    <span class="k">assert</span> <span class="s2">&quot;s3cr3t&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">text</span>          <span class="c1"># secrets must never leak</span>
-</span><span id="__span-20-14"><a id="__codelineno-20-14" name="__codelineno-20-14" href="#__codelineno-20-14"></a>
-</span><span id="__span-20-15"><a id="__codelineno-20-15" name="__codelineno-20-15" href="#__codelineno-20-15"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_system_prompt_unconfigured_points_to_setup_skill</span><span class="p">():</span>
-</span><span id="__span-20-16"><a id="__codelineno-20-16" name="__codelineno-20-16" href="#__codelineno-20-16"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">HelloPlugin</span><span class="o">.</span><span class="n">system_prompt</span><span class="p">({})</span>
-</span><span id="__span-20-17"><a id="__codelineno-20-17" name="__codelineno-20-17" href="#__codelineno-20-17"></a>    <span class="k">assert</span> <span class="s2">&quot;not configured&quot;</span> <span class="ow">in</span> <span class="n">text</span>
-</span><span id="__span-20-18"><a id="__codelineno-20-18" name="__codelineno-20-18" href="#__codelineno-20-18"></a>    <span class="k">assert</span> <span class="s2">&quot;hello-setup&quot;</span> <span class="ow">in</span> <span class="n">text</span>
+<p>Because Datus is the broker, unit tests call your functions with a plain dict
+— no <code>agent.yml</code>, no Datus imports. Validate the manifest and template with
+plain YAML/Jinja2 tooling:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">yaml</span>
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">jinja2</span><span class="w"> </span><span class="kn">import</span> <span class="n">Environment</span><span class="p">,</span> <span class="n">FileSystemLoader</span><span class="p">,</span> <span class="n">StrictUndefined</span>
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">datus_plugin_hello.cli</span><span class="w"> </span><span class="kn">import</span> <span class="n">main</span>
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a><span class="n">PKG</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">parent</span> <span class="o">/</span> <span class="s2">&quot;datus_plugin_hello&quot;</span>
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>
+</span><span id="__span-24-10"><a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>
+</span><span id="__span-24-11"><a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_cli_uses_profile_greeting</span><span class="p">(</span><span class="n">capsys</span><span class="p">):</span>
+</span><span id="__span-24-12"><a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>    <span class="n">rc</span> <span class="o">=</span> <span class="n">main</span><span class="p">([</span><span class="s2">&quot;Ada&quot;</span><span class="p">],</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;prod&quot;</span><span class="p">,</span> <span class="s2">&quot;greeting&quot;</span><span class="p">:</span> <span class="s2">&quot;Hi&quot;</span><span class="p">})</span>
+</span><span id="__span-24-13"><a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a>    <span class="k">assert</span> <span class="n">rc</span> <span class="o">==</span> <span class="mi">0</span>
+</span><span id="__span-24-14"><a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a>    <span class="k">assert</span> <span class="s2">&quot;Hi, Ada!&quot;</span> <span class="ow">in</span> <span class="n">capsys</span><span class="o">.</span><span class="n">readouterr</span><span class="p">()</span><span class="o">.</span><span class="n">out</span>
+</span><span id="__span-24-15"><a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a>
+</span><span id="__span-24-16"><a id="__codelineno-24-16" name="__codelineno-24-16" href="#__codelineno-24-16"></a>
+</span><span id="__span-24-17"><a id="__codelineno-24-17" name="__codelineno-24-17" href="#__codelineno-24-17"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_manifest_is_valid</span><span class="p">():</span>
+</span><span id="__span-24-18"><a id="__codelineno-24-18" name="__codelineno-24-18" href="#__codelineno-24-18"></a>    <span class="n">manifest</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">((</span><span class="n">PKG</span> <span class="o">/</span> <span class="s2">&quot;datus-plugin.yml&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read_text</span><span class="p">())</span>
+</span><span id="__span-24-19"><a id="__codelineno-24-19" name="__codelineno-24-19" href="#__codelineno-24-19"></a>    <span class="k">assert</span> <span class="n">manifest</span><span class="p">[</span><span class="s2">&quot;manifest_version&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
+</span><span id="__span-24-20"><a id="__codelineno-24-20" name="__codelineno-24-20" href="#__codelineno-24-20"></a>    <span class="k">assert</span> <span class="n">manifest</span><span class="p">[</span><span class="s2">&quot;cli&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;datus_plugin_hello.cli:main&quot;</span>
+</span><span id="__span-24-21"><a id="__codelineno-24-21" name="__codelineno-24-21" href="#__codelineno-24-21"></a>    <span class="c1"># every declared path exists in the package</span>
+</span><span id="__span-24-22"><a id="__codelineno-24-22" name="__codelineno-24-22" href="#__codelineno-24-22"></a>    <span class="k">assert</span> <span class="p">(</span><span class="n">PKG</span> <span class="o">/</span> <span class="n">manifest</span><span class="p">[</span><span class="s2">&quot;skills&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">is_dir</span><span class="p">()</span>
+</span><span id="__span-24-23"><a id="__codelineno-24-23" name="__codelineno-24-23" href="#__codelineno-24-23"></a>    <span class="k">assert</span> <span class="p">(</span><span class="n">PKG</span> <span class="o">/</span> <span class="n">manifest</span><span class="p">[</span><span class="s2">&quot;system_prompt&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">is_file</span><span class="p">()</span>
+</span><span id="__span-24-24"><a id="__codelineno-24-24" name="__codelineno-24-24" href="#__codelineno-24-24"></a>
+</span><span id="__span-24-25"><a id="__codelineno-24-25" name="__codelineno-24-25" href="#__codelineno-24-25"></a>
+</span><span id="__span-24-26"><a id="__codelineno-24-26" name="__codelineno-24-26" href="#__codelineno-24-26"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_prompt_template_renders_without_secrets</span><span class="p">():</span>
+</span><span id="__span-24-27"><a id="__codelineno-24-27" name="__codelineno-24-27" href="#__codelineno-24-27"></a>    <span class="n">env</span> <span class="o">=</span> <span class="n">Environment</span><span class="p">(</span><span class="n">loader</span><span class="o">=</span><span class="n">FileSystemLoader</span><span class="p">(</span><span class="n">PKG</span><span class="p">),</span> <span class="n">undefined</span><span class="o">=</span><span class="n">StrictUndefined</span><span class="p">)</span>
+</span><span id="__span-24-28"><a id="__codelineno-24-28" name="__codelineno-24-28" href="#__codelineno-24-28"></a>    <span class="n">template</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_template</span><span class="p">(</span><span class="s2">&quot;prompts/system.md.j2&quot;</span><span class="p">)</span>
+</span><span id="__span-24-29"><a id="__codelineno-24-29" name="__codelineno-24-29" href="#__codelineno-24-29"></a>    <span class="c1"># datus strips undeclared / x-secret fields before rendering; emulate that.</span>
+</span><span id="__span-24-30"><a id="__codelineno-24-30" name="__codelineno-24-30" href="#__codelineno-24-30"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">plugin_name</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">profiles</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;prod&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;greeting&quot;</span><span class="p">:</span> <span class="s2">&quot;Hi&quot;</span><span class="p">}},</span> <span class="n">config_path</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-24-31"><a id="__codelineno-24-31" name="__codelineno-24-31" href="#__codelineno-24-31"></a>    <span class="k">assert</span> <span class="s2">&quot;## Hello&quot;</span> <span class="ow">in</span> <span class="n">text</span>
+</span><span id="__span-24-32"><a id="__codelineno-24-32" name="__codelineno-24-32" href="#__codelineno-24-32"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">plugin_name</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">profiles</span><span class="o">=</span><span class="p">{},</span> <span class="n">config_path</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</span><span id="__span-24-33"><a id="__codelineno-24-33" name="__codelineno-24-33" href="#__codelineno-24-33"></a>    <span class="k">assert</span> <span class="s2">&quot;hello-setup&quot;</span> <span class="ow">in</span> <span class="n">text</span>
 </span></code></pre></div>
+<h2 id="distributing-for-offline-install">Distributing for offline install<a class="headerlink" href="#distributing-for-offline-install" title="Permanent link">&para;</a></h2>
+<p>Bundle your plugin into a wheelhouse <code>.zip</code> with <code>datus plugin pack</code>, run from
+the plugin's project directory where you have network:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>pack<span class="w"> </span>-o<span class="w"> </span>./dist<span class="w">               </span><span class="c1"># plugin wheel only (default)</span>
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="c1"># → ./dist/datus-plugin-hello-1.0.0.zip</span>
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>datus<span class="w"> </span>plugin<span class="w"> </span>pack<span class="w"> </span>--with-deps<span class="w"> </span>-o<span class="w"> </span>./dist<span class="w">   </span><span class="c1"># plugin wheel + every dependency wheel</span>
+</span></code></pre></div>
+<p>The bundle is a zip of a <code>datus-bundle.json</code> manifest plus a <code>wheels/</code>
+wheelhouse. <code>pack</code> verifies the wheel declares a module-ref <code>datus.plugins</code>
+entry point <strong>and</strong> bundles its <code>datus-plugin.yml</code> — a wheel missing either is
+refused before any dependency download. Users install it via <code>datus plugin
+install zip:./….zip</code> (see
+<a href="../introduction/#offline-install-air-gapped">Offline install</a>). Choose the
+flavor:</p>
+<ul>
+<li><strong>Default (plugin wheel only)</strong> — a small bundle; the target machine resolves
+  dependencies from a package index at install time (needs network).</li>
+<li><strong><code>--with-deps</code></strong> — every transitive dependency wheel is bundled so the install
+  is fully offline (<code>pip install --no-index --find-links</code>). <code>pack</code> uses
+  <code>pip download --only-binary=:all:</code>, so every dependency must publish a wheel
+  (no sdist-only packages). A pure-Python dependency set is portable; a
+  dependency with a native extension makes the bundle a <strong>same-platform
+  snapshot</strong> — build it on a machine matching the target's OS/Python.</li>
+<li><strong>A declared <code>Requires-Python</code>.</strong> Set it in <code>pyproject.toml</code>; <code>pack</code> copies it
+  into the manifest so install can reject a mismatched interpreter early (with a
+  clear message, overridable via <code>--force</code>).</li>
+</ul>
 <h2 id="constraints-checklist">Constraints checklist<a class="headerlink" href="#constraints-checklist" title="Permanent link">&para;</a></h2>
 <p>Before publishing, verify:</p>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The package does <strong>not</strong> <code>import datus</code> anywhere (<code>grep -rn "import datus" your_pkg/</code>).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The package does <strong>not</strong> depend on <code>datus</code> or a shared plugin SDK in <code>pyproject.toml</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>__init__</code> accepts the profile as a keyword argument named <code>profile</code> (Datus calls <code>PluginClass(profile=...)</code>).</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The entry-point name is not a reserved name (<code>upgrade</code>, <code>skill</code>) and does not start with <code>-</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>skills_dir</code>, <code>system_prompt</code>, and <code>cli_permissions</code> are class-reachable (<code>@classmethod</code> / <code>@staticmethod</code> / class attribute).</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>system_prompt</code> emits only non-secret fields.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>cli_permissions</code> patterns are namespace-relative (no <code>datus &lt;name&gt;</code> prefix — Datus adds it), and state-changing subcommands are <code>ask</code> under <code>normal</code>.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>run_cli</code> returns an int (or <code>None</code>) and does not call <code>sys.exit()</code> on the success path.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Skill files are packaged into the wheel.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The <code>datus.plugins</code> entry-point name matches the intended <code>datus &lt;name&gt;</code> command and the <code>agent.plugins.&lt;name&gt;</code> config key.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The <code>datus.plugins</code> entry-point value is the <strong>package name</strong> (no <code>:Class</code> part).</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The entry-point name is not a reserved name (<code>upgrade</code>, <code>skill</code>, <code>plugin</code>) and does not start with <code>-</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>datus-plugin.yml</code> sits at the package root, declares <code>manifest_version: 1</code>, and ships in the wheel (<code>unzip -l dist/*.whl</code>).</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The <code>cli</code> function signature is <code>main(argv: list[str], profile: dict) -&gt; int | None</code> and does not call <code>sys.exit()</code> on the success path.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Secret config fields are marked <code>x-secret: true</code> in <code>config_schema</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The system-prompt template handles <code>profiles == {}</code> via <code>{% if profiles %}</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>permissions</code> patterns are namespace-relative (no <code>datus &lt;name&gt;</code> prefix — Datus adds it), and state-changing subcommands are <code>ask</code> under <code>normal</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Skill files and the prompt template are packaged into the wheel.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> The entry-point name matches the intended <code>datus &lt;name&gt;</code> command and the <code>agent.plugins.&lt;name&gt;</code> config key.</li>
 </ul>
 <h2 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Entry-point group</strong>: <code>datus.plugins</code> — one entry per plugin, resolving to a plugin <strong>class</strong>.</li>
-<li><strong>Contract source of truth</strong>: <code>datus/plugins/base.py</code> (documented <code>DatusPlugin</code> protocol).</li>
+<li><strong>Entry-point group</strong>: <code>datus.plugins</code> — one entry per plugin, whose value is the plugin <strong>package name</strong>.</li>
+<li><strong>Contract source of truth</strong>: <code>datus/plugins/base.py</code> (the <code>datus-plugin.yml</code> manifest spec).</li>
 <li><strong>Related</strong>: <a href="../introduction/">Plugin Introduction</a>, <a href="../../skills/introduction/">Skills</a>.</li>
 </ul>
 

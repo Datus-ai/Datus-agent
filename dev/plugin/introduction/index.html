@@ -1900,6 +1900,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Installing a plugin">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#offline-install-air-gapped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Offline install (air-gapped)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exporting-an-installed-plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exporting an installed plugin
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1938,6 +1966,28 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activating-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Activating plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing plugins
+      
+    </span>
+  </a>
   
 </li>
       
@@ -4242,6 +4292,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Installing a plugin">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#offline-install-air-gapped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Offline install (air-gapped)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exporting-an-installed-plugin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exporting an installed plugin
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4280,6 +4358,28 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#activating-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Activating plugins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing plugins
+      
+    </span>
+  </a>
   
 </li>
       
@@ -4354,8 +4454,9 @@
 
 <h1 id="plugin-introduction">Plugin Introduction<a class="headerlink" href="#plugin-introduction" title="Permanent link">&para;</a></h1>
 <p>A <strong>plugin</strong> is an installable Python package that extends Datus without
-modifying it. Install one into the same Python environment as <code>datus</code> and,
-depending on what the plugin ships, you get:</p>
+modifying it. <code>datus plugin install</code> puts each plugin in its own directory under
+<code>~/.datus/plugins/{name}/</code> (with its dependencies vendored in), and — depending
+on what the plugin ships — you get:</p>
 <table>
 <thead>
 <tr>
@@ -4386,30 +4487,72 @@ depending on what the plugin ships, you get:</p>
 </tr>
 </tbody>
 </table>
-<p>Plugins are discovered through the <code>datus.plugins</code> Python entry-point group on
-every invocation — installing or upgrading a plugin requires no restart and no
-registration step.</p>
+<p>Each enabled plugin's directory is appended to <code>sys.path</code> at startup, so its
+<code>datus.plugins</code> entry point is discovered on every invocation — no restart and
+no registration step. (A plugin installed the old way, straight into the same
+Python environment with plain <code>pip install</code>, is still discovered as a fallback.)</p>
 <p>Want to build one? See the <a href="../development/">development guide</a>.</p>
 <h2 id="installing-a-plugin">Installing a plugin<a class="headerlink" href="#installing-a-plugin" title="Permanent link">&para;</a></h2>
-<p>Install the plugin package into the same environment as <code>datus</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-plugin-hello
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>hello<span class="w"> </span>Ada<span class="w">          </span><span class="c1"># the subcommand is available immediately</span>
+<p><code>datus plugin install</code> takes a <code>{type}:{src}</code> source and installs the plugin
+into <code>~/.datus/plugins/{name}/</code>. The type prefix is optional and defaults to
+<code>pip</code>, so a bare requirement is treated as <code>pip:</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-plugin-hello<span class="w">                           </span><span class="c1"># defaults to pip: (a PyPI requirement)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>pip:datus-plugin-hello<span class="w">                       </span><span class="c1"># the same, spelled out</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>src:./datus-plugin-hello<span class="w">                     </span><span class="c1"># a local project directory</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>whl:./dist/hello-1.0-py3-none-any.whl<span class="w">        </span><span class="c1"># a local wheel file</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>git:https://github.com/acme/datus-plugin-hello<span class="w">   </span><span class="c1"># a git repository</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>zip:./dist/datus-plugin-hello-1.0.0.zip<span class="w">      </span><span class="c1"># an offline bundle (see below)</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus<span class="w"> </span>hello<span class="w"> </span>Ada<span class="w">          </span><span class="c1"># the subcommand is available immediately</span>
 </span></code></pre></div>
-<p>If <code>datus &lt;name&gt;</code> falls through to the REPL instead of running the plugin, the
-package is not installed in the environment <code>datus</code> runs from.</p>
+<p><code>pip</code>, <code>src</code>, <code>whl</code>, and <code>git</code> resolve dependencies from a package index (they
+need network); the plugin and its dependencies are vendored into the plugin's
+directory via <code>pip install --target</code>. <code>datus plugin install</code> records how the
+plugin was installed in <code>~/.datus/plugins/{name}/datus-plugin.json</code>, so
+<code>datus plugin upgrade &lt;name&gt;</code> can later re-fetch it the same way. If the plugin
+is already installed, pass <code>--force</code> to replace it.</p>
+<p>If <code>datus &lt;name&gt;</code> falls through to the REPL instead of running the plugin, it is
+not installed, or it is not active for this project (see
+<a href="#activating-plugins">Activating plugins</a>).</p>
+<h3 id="offline-install-air-gapped">Offline install (air-gapped)<a class="headerlink" href="#offline-install-air-gapped" title="Permanent link">&para;</a></h3>
+<p>An offline <strong>bundle</strong> is an ordinary <code>.zip</code> holding a wheelhouse (the plugin
+wheel and, optionally, every dependency wheel). Build one where you <em>do</em> have
+network with <code>datus plugin pack</code>, copy the file across, and install it with
+<code>zip:</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># on a networked machine, from the plugin&#39;s project directory</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>pack<span class="w"> </span>--with-deps<span class="w"> </span>-o<span class="w"> </span>./dist<span class="w">     </span><span class="c1"># plugin wheel + all dependency wheels</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>pack<span class="w"> </span>-o<span class="w"> </span>./dist<span class="w">                 </span><span class="c1"># plugin wheel only (default)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># on the target machine</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>zip:./dist/datus-plugin-hello-1.0.0.zip
+</span></code></pre></div>
+<p><code>pack</code> defaults to <strong>plugin wheel only</strong> — small, but the target machine
+resolves dependencies from an index at install time (needs network). Add
+<code>--with-deps</code> to bundle every dependency wheel so the install is <strong>fully
+offline</strong> (<code>pip install --no-index --find-links</code>). Every wheel's checksum is
+verified against the bundle manifest before anything is installed; if the bundle
+was built for a different Python version or platform, install refuses with a
+clear message unless you pass <code>--force</code> (checksums are still enforced). Because a
+with-deps bundle is a same-platform snapshot, build it on a machine matching the
+target's OS/Python.</p>
+<h3 id="exporting-an-installed-plugin">Exporting an installed plugin<a class="headerlink" href="#exporting-an-installed-plugin" title="Permanent link">&para;</a></h3>
+<p><code>datus plugin export &lt;name&gt;</code> reproduces a distributable <code>.zip</code> from an already
+installed plugin — a <code>zip:</code> install returns its retained original bundle
+verbatim, while a <code>pip</code>/<code>src</code>/<code>whl</code>/<code>git</code> install is re-packed from its recorded
+source (needs network).</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>Plugins are configured under <code>agent.plugins.&lt;name&gt;</code> in <code>agent.yml</code>, where each
 key below <code>&lt;name&gt;</code> is a <strong>profile</strong> — one named environment (endpoint,
 credentials, options). A plugin can have any number of profiles:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">              </span><span class="c1"># picked when --profile is omitted (see below)</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">      </span><span class="c1"># prefer ${ENV_VAR} for secrets</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">staging</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Yo</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">              </span><span class="c1"># picked when --profile is omitted (see below)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">      </span><span class="c1"># prefer ${ENV_VAR} for secrets</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="nt">staging</span><span class="p">:</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Yo</span>
 </span></code></pre></div>
 <p>Datus resolves the config file in this order: explicit <code>--config</code> →
 <code>./conf/agent.yml</code> (project) → <code>~/.datus/conf/agent.yml</code> (user default). Put
@@ -4434,10 +4577,99 @@ you — see <a href="#using-a-plugin-with-the-agent">Using a plugin with the age
 </ol>
 <h3 id="pinning-a-profile-per-project">Pinning a profile per project<a class="headerlink" href="#pinning-a-profile-per-project" title="Permanent link">&para;</a></h3>
 <p>To make one project always use a specific profile without typing <code>--profile</code>,
-pin it in the project's <code>./.datus/config.yml</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">hello</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
+pin it in the project's <code>./.datus/config.yml</code> under <code>plugins.&lt;name&gt;
+.active_profile</code>. When exactly one profile is active it becomes the
+<code>datus &lt;plugin&gt;</code> default:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">active_profile</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
 </span></code></pre></div>
+<h2 id="activating-plugins">Activating plugins<a class="headerlink" href="#activating-plugins" title="Permanent link">&para;</a></h2>
+<p>The <code>plugins:</code> section of <code>./.datus/config.yml</code> also decides <strong>which installed
+plugins are active for the project</strong>. It is optional but authoritative:</p>
+<ul>
+<li><strong>Omit it entirely</strong> and every installed plugin — and all of its profiles —
+  is active. This is the default.</li>
+<li><strong>Write it</strong> and it becomes a whitelist. Each entry is
+  <code>{enabled: bool, active_profile: [&lt;profile&gt;, ...]}</code>. A plugin the section
+  does not list (or lists with <code>enabled: false</code>) is <strong>not loaded</strong> for the
+  project: its <code>datus &lt;plugin&gt;</code> subcommand is refused, and its bundled skills,
+  system-prompt section, tool transformers, and bash rules are all skipped.
+  <code>active_profile</code> narrows which configured profiles are active (omit it for
+  "all profiles").</li>
+</ul>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">active_profile</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">staging</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># only &#39;staging&#39; is active</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">noisy-plugin</span><span class="p">:</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">              </span><span class="c1"># installed but off for this project</span>
+</span></code></pre></div>
+<p>Toggle activation without hand-editing the file:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>hello<span class="w">                    </span><span class="c1"># activate (all profiles)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>hello<span class="w"> </span>--profile<span class="w"> </span>staging<span class="w">  </span><span class="c1"># activate, pinned to &#39;staging&#39;</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>disable<span class="w"> </span>noisy-plugin<span class="w">            </span><span class="c1"># deactivate for this project</span>
+</span></code></pre></div>
+<p>The first <code>enable</code>/<code>disable</code> in a project seeds the whitelist with every
+installed plugin (all enabled) before applying your change, so turning one
+plugin off never silently deactivates the others.</p>
+<p>This is per-project activation, distinct from the global master switch
+<a href="#disabling-the-plugin-system"><code>agent.plugins_enabled</code></a> which turns the whole
+system off everywhere.</p>
+<h2 id="managing-plugins">Managing plugins<a class="headerlink" href="#managing-plugins" title="Permanent link">&para;</a></h2>
+<p><code>datus plugin</code> is the management entry point (it always works, even for a
+deactivated plugin):</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>datus plugin install '[{type}:]{src}'</code></td>
+<td>Install from <code>pip:</code> (default) / <code>src:</code> / <code>whl:</code> / <code>git:</code> / <code>zip:</code> into <code>~/.datus/plugins/</code> (<code>--force</code> replaces an existing install).</td>
+</tr>
+<tr>
+<td><code>datus plugin pack [dir]</code></td>
+<td>Build a distributable wheelhouse <code>.zip</code> from a plugin project directory (default <code>./</code>); <code>--with-deps</code> bundles dependencies, <code>-o</code> sets the output dir.</td>
+</tr>
+<tr>
+<td><code>datus plugin export &lt;name&gt;</code></td>
+<td>Export an installed plugin as a <code>.zip</code> (<code>-o</code> sets the output dir).</td>
+</tr>
+<tr>
+<td><code>datus plugin upgrade &lt;name&gt;</code></td>
+<td>Re-install from the recorded source (<code>pip</code>/<code>git</code>/<code>src</code>). A <code>whl</code>/<code>zip</code> install is a pinned artifact and cannot be upgraded in place — reinstall a newer bundle instead.</td>
+</tr>
+<tr>
+<td><code>datus plugin uninstall &lt;name&gt;</code></td>
+<td>Remove the plugin's <code>~/.datus/plugins/{name}/</code> directory.</td>
+</tr>
+<tr>
+<td><code>datus plugin list</code></td>
+<td>List installed plugins: package, version, source, configured profiles, project activation.</td>
+</tr>
+<tr>
+<td><code>datus plugin info &lt;name&gt;</code></td>
+<td>Show one plugin's description, profiles, config schema, and activation.</td>
+</tr>
+<tr>
+<td><code>datus plugin enable/disable &lt;name&gt;</code></td>
+<td>Toggle per-project activation.</td>
+</tr>
+</tbody>
+</table>
+<p>Inside the REPL, <code>/plugins</code> opens an interactive manager for the same tasks:
+browse installed plugins, create / edit / delete global profiles (the form is
+driven by the plugin's config schema — nested schema objects expand into
+dotted fields like <code>s3.secret_access_key</code>, defaults are pre-filled, empty
+fields show their description as a dim placeholder, and secrets are entered
+as <code>${ENV_VAR}</code> references), and toggle which plugins and profiles are active
+for the project.</p>
 <h2 id="using-a-plugin-with-the-agent">Using a plugin with the agent<a class="headerlink" href="#using-a-plugin-with-the-agent" title="Permanent link">&para;</a></h2>
 <p>Beyond running <code>datus &lt;name&gt; ...</code> yourself, plugins integrate with the agent:</p>
 <ul>

@@ -1900,10 +1900,38 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="安装插件">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#offline-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        离线安装(内网/气隙环境)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        导出已安装插件
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         配置
@@ -1942,6 +1970,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#activating-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        激活插件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        管理插件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#agent" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1975,7 +2025,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         下一步
@@ -4242,10 +4292,38 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="安装插件">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#offline-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        离线安装(内网/气隙环境)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        导出已安装插件
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
-  <a href="#_2" class="md-nav__link">
+  <a href="#_3" class="md-nav__link">
     <span class="md-ellipsis">
       
         配置
@@ -4284,6 +4362,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#activating-plugins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        激活插件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        管理插件
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#agent" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4317,7 +4417,7 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_3" class="md-nav__link">
+  <a href="#_5" class="md-nav__link">
     <span class="md-ellipsis">
       
         下一步
@@ -4354,7 +4454,8 @@
 
 <h1 id="plugin">Plugin 介绍<a class="headerlink" href="#plugin" title="Permanent link">&para;</a></h1>
 <p><strong>plugin</strong>(插件)是一个可安装的 Python 包,在不修改 Datus 本身的前提下对其进行扩展。
-把插件安装到与 <code>datus</code> 相同的 Python 环境中,根据插件打包的内容,你可以获得:</p>
+<code>datus plugin install</code> 会把每个插件装到独立目录 <code>~/.datus/plugins/{name}/</code>(依赖一并
+vendored 进目录内),根据插件打包的内容,你可以获得:</p>
 <table>
 <thead>
 <tr>
@@ -4385,28 +4486,61 @@
 </tr>
 </tbody>
 </table>
-<p>Datus 通过 <code>datus.plugins</code> Python entry-point 组在每次调用时发现插件——安装或升级插件
-无需重启,也没有任何注册步骤。</p>
+<p>每个已启用插件的目录会在启动时追加到 <code>sys.path</code>,其 <code>datus.plugins</code> entry-point 因此
+在每次调用时被发现——无需重启,也没有任何注册步骤。(用旧方式直接 <code>pip install</code> 装进
+同一 Python 环境的插件仍会作为兜底被发现。)</p>
 <p>想开发自己的插件?见<a href="../development/">开发指南</a>。</p>
 <h2 id="_1">安装插件<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
-<p>把插件包安装到与 <code>datus</code> 相同的环境:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>datus-plugin-hello
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>hello<span class="w"> </span>Ada<span class="w">          </span><span class="c1"># 子命令立即可用</span>
+<p><code>datus plugin install</code> 接收 <code>{type}:{src}</code> 形式的安装源,把插件装到
+<code>~/.datus/plugins/{name}/</code>。类型前缀<strong>可选,默认为 <code>pip</code></strong>——不写前缀时整段当作 <code>pip:</code> 处理:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>datus-plugin-hello<span class="w">                           </span><span class="c1"># 默认走 pip:(PyPI 包名)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>pip:datus-plugin-hello<span class="w">                       </span><span class="c1"># 同上,显式写出</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>src:./datus-plugin-hello<span class="w">                     </span><span class="c1"># 本地项目目录</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>whl:./dist/hello-1.0-py3-none-any.whl<span class="w">        </span><span class="c1"># 本地 wheel 文件</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>git:https://github.com/acme/datus-plugin-hello<span class="w">   </span><span class="c1"># git 仓库</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>zip:./dist/datus-plugin-hello-1.0.0.zip<span class="w">      </span><span class="c1"># 离线 bundle(见下)</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>datus<span class="w"> </span>hello<span class="w"> </span>Ada<span class="w">          </span><span class="c1"># 子命令立即可用</span>
 </span></code></pre></div>
-<p>如果 <code>datus &lt;name&gt;</code> 落进了 REPL 而不是运行插件,说明该包没有安装在 <code>datus</code>
-所运行的环境里。</p>
-<h2 id="_2">配置<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
+<p><code>pip</code>、<code>src</code>、<code>whl</code>、<code>git</code> 会从 package index 解析依赖(需要网络);插件及其依赖通过
+<code>pip install --target</code> 一并 vendored 进插件目录。<code>datus plugin install</code> 会把安装方式
+记录到 <code>~/.datus/plugins/{name}/datus-plugin.json</code>,以便之后
+<code>datus plugin upgrade &lt;name&gt;</code> 用同样的方式重新拉取。若插件已安装,传 <code>--force</code> 可替换。</p>
+<p>如果 <code>datus &lt;name&gt;</code> 落进了 REPL 而不是运行插件,说明它未安装,或未在本项目激活
+(见<a href="#activating-plugins">激活插件</a>)。</p>
+<h3 id="offline-install">离线安装(内网/气隙环境)<a class="headerlink" href="#offline-install" title="Permanent link">&para;</a></h3>
+<p>离线 <strong>bundle</strong> 就是一个普通 <code>.zip</code>,内含一个 wheelhouse(插件 wheel,以及可选的每个
+依赖 wheel)。在<strong>有网</strong>的机器上用 <code>datus plugin pack</code> 打好包,把文件拷过去,再用
+<code>zip:</code> 安装:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># 有网机器,在插件的项目目录下</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span>pack<span class="w"> </span>--with-deps<span class="w"> </span>-o<span class="w"> </span>./dist<span class="w">     </span><span class="c1"># 插件 wheel + 全部依赖 wheel</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>pack<span class="w"> </span>-o<span class="w"> </span>./dist<span class="w">                 </span><span class="c1"># 仅插件 wheel(默认)</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># 目标机器</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>datus<span class="w"> </span>plugin<span class="w"> </span>install<span class="w"> </span>zip:./dist/datus-plugin-hello-1.0.0.zip
+</span></code></pre></div>
+<p><code>pack</code> 默认<strong>仅打插件 wheel</strong>——包体小,但目标机器在安装时要从 index 解析依赖(需要
+网络)。加 <code>--with-deps</code> 会把每个依赖 wheel 都打进去,从而<strong>完全离线</strong>安装
+(<code>pip install --no-index --find-links</code>)。安装前会对照 bundle manifest 逐一校验每个
+wheel 的 checksum;若 bundle 是为不同的 Python 版本或平台构建的,安装会带明确提示拒绝,
+除非传 <code>--force</code>(checksum 仍强制校验)。含依赖 bundle 是同平台快照,请在与目标机
+OS/Python 匹配的机器上构建。</p>
+<h3 id="_2">导出已安装插件<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p><code>datus plugin export &lt;name&gt;</code> 能把一个已安装插件重新导出成可分发的 <code>.zip</code>——<code>zip:</code>
+来源的安装会字节级返回其保留的原始 bundle,而 <code>pip</code>/<code>src</code>/<code>whl</code>/<code>git</code> 来源则按记录的
+安装源重新打包(需要网络)。</p>
+<h2 id="_3">配置<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>插件在 <code>agent.yml</code> 的 <code>agent.plugins.&lt;name&gt;</code> 下配置,<code>&lt;name&gt;</code> 之下的每个键是一个
 <strong>profile</strong>——一套命名环境(endpoint、凭据、选项)。一个插件可以有任意多个 profile:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">              </span><span class="c1"># 省略 --profile 时选它(见下)</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">      </span><span class="c1"># 密钥优先用 ${ENV_VAR}</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">staging</span><span class="p">:</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Yo</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">              </span><span class="c1"># 省略 --profile 时选它(见下)</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">      </span><span class="c1"># 密钥优先用 ${ENV_VAR}</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="nt">staging</span><span class="p">:</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Yo</span>
 </span></code></pre></div>
 <p>Datus 按以下顺序解析 config 文件:显式 <code>--config</code> → <code>./conf/agent.yml</code>(项目级)→
 <code>~/.datus/conf/agent.yml</code>(用户默认)。把 profile 写进你的 datus 会话实际加载的那个文件。</p>
@@ -4427,10 +4561,91 @@
 </ol>
 <h3 id="profile">按项目固定 profile<a class="headerlink" href="#profile" title="Permanent link">&para;</a></h3>
 <p>想让某个项目始终使用特定 profile 而不必每次敲 <code>--profile</code>,在项目的
-<code>./.datus/config.yml</code> 里 pin 住它:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">hello</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
+<code>./.datus/config.yml</code> 里用 <code>plugins.&lt;name&gt;.active_profile</code> pin 住它。当只有
+一个 profile 激活时,它就成为 <code>datus &lt;plugin&gt;</code> 的默认:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">active_profile</span><span class="p">:</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">staging</span>
 </span></code></pre></div>
+<h2 id="activating-plugins">激活插件<a class="headerlink" href="#activating-plugins" title="Permanent link">&para;</a></h2>
+<p><code>./.datus/config.yml</code> 的 <code>plugins:</code> 段还决定<strong>本项目激活哪些已安装插件</strong>。
+它可选,但一旦写了即为权威:</p>
+<ul>
+<li><strong>整段省略</strong> —— 全部已安装插件及其所有 profile 都激活。这是默认。</li>
+<li><strong>写了它</strong> —— 即成为白名单。每项为
+  <code>{enabled: bool, active_profile: [&lt;profile&gt;, ...]}</code>。段里未列出(或列出但
+  <code>enabled: false</code>)的插件在本项目<strong>不加载</strong>:其 <code>datus &lt;plugin&gt;</code> 子命令被拒绝,
+  自带 skill、system-prompt 段、工具 transformer、bash 规则一律跳过。
+  <code>active_profile</code> 用于收窄激活的 profile(省略即"全部 profile")。</li>
+</ul>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">active_profile</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">staging</span><span class="p p-Indicator">]</span><span class="w">   </span><span class="c1"># 只激活 &#39;staging&#39;</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">noisy-plugin</span><span class="p">:</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">              </span><span class="c1"># 已安装但本项目关闭</span>
+</span></code></pre></div>
+<p>不必手改文件也能切换激活:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>datus<span class="w"> </span>plugin<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>hello<span class="w">                    </span><span class="c1"># 激活(全部 profile)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>datus<span class="w"> </span>plugin<span class="w"> </span><span class="nb">enable</span><span class="w"> </span>hello<span class="w"> </span>--profile<span class="w"> </span>staging<span class="w">  </span><span class="c1"># 激活并固定到 &#39;staging&#39;</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>datus<span class="w"> </span>plugin<span class="w"> </span>disable<span class="w"> </span>noisy-plugin<span class="w">            </span><span class="c1"># 本项目停用</span>
+</span></code></pre></div>
+<p>项目里第一次 <code>enable</code>/<code>disable</code> 会先用全部已安装插件(均 enabled)播种白名单,
+再应用你的改动,这样关掉一个插件绝不会悄悄停用其余插件。</p>
+<p>这是<strong>按项目</strong>激活,与全局总开关
+<a href="#disabling-the-plugin-system"><code>agent.plugins_enabled</code></a>(在任何地方关掉整个系统)
+是两回事。</p>
+<h2 id="_4">管理插件<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<p><code>datus plugin</code> 是管理入口(即使插件已停用它也始终可用):</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>datus plugin install '[{type}:]{src}'</code></td>
+<td>从 <code>pip:</code>(默认)/ <code>src:</code> / <code>whl:</code> / <code>git:</code> / <code>zip:</code> 安装到 <code>~/.datus/plugins/</code>(<code>--force</code> 替换已有安装)。</td>
+</tr>
+<tr>
+<td><code>datus plugin pack [dir]</code></td>
+<td>从插件项目目录(默认 <code>./</code>)构建可分发的 wheelhouse <code>.zip</code>;<code>--with-deps</code> 打入依赖,<code>-o</code> 指定输出目录。</td>
+</tr>
+<tr>
+<td><code>datus plugin export &lt;name&gt;</code></td>
+<td>把已安装插件导出成 <code>.zip</code>(<code>-o</code> 指定输出目录)。</td>
+</tr>
+<tr>
+<td><code>datus plugin upgrade &lt;name&gt;</code></td>
+<td>按记录的安装源重装(<code>pip</code>/<code>git</code>/<code>src</code>)。<code>whl</code>/<code>zip</code> 是固定制品,不能就地升级——请重新安装更新版本的 bundle。</td>
+</tr>
+<tr>
+<td><code>datus plugin uninstall &lt;name&gt;</code></td>
+<td>删除插件目录 <code>~/.datus/plugins/{name}/</code>。</td>
+</tr>
+<tr>
+<td><code>datus plugin list</code></td>
+<td>列出已安装插件:包、版本、来源、已配置 profile、本项目激活状态。</td>
+</tr>
+<tr>
+<td><code>datus plugin info &lt;name&gt;</code></td>
+<td>查看单个插件的描述、profile、配置 schema 与激活状态。</td>
+</tr>
+<tr>
+<td><code>datus plugin enable/disable &lt;name&gt;</code></td>
+<td>切换本项目激活状态。</td>
+</tr>
+</tbody>
+</table>
+<p>在 REPL 内,<code>/plugins</code> 打开交互式管理器完成同样的事:浏览已安装插件,增删改
+全局 profile(表单由插件的配置 schema 驱动——嵌套 schema object 展开为
+<code>s3.secret_access_key</code> 这样的点分字段,默认值直接预填,留空字段以浅色占位符
+显示 description,密钥以 <code>${ENV_VAR}</code> 引用形式输入),并切换本项目激活哪些
+插件与 profile。</p>
 <h2 id="agent">与 agent 配合使用<a class="headerlink" href="#agent" title="Permanent link">&para;</a></h2>
 <p>除了自己在终端执行 <code>datus &lt;name&gt; ...</code>,插件还与 agent 深度集成:</p>
 <ul>
@@ -4466,7 +4681,7 @@ agent 发起的每条插件命令都会弹出确认。</p>
 功能——<code>datus &lt;plugin&gt;</code> 分发、插件自带 skill、prompt 注入(含 setup 引导)、
 权限声明与工具 transformer 一律失效。建议在 API/web 部署中关闭,避免 agent
 被引导去修改配置文件。默认值为 <code>true</code>。</p>
-<h2 id="_3">下一步<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
+<h2 id="_5">下一步<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../development/">Plugin 开发</a> —— 从一个最小的 <code>hello</code> 命令到完整契约,开发你
   自己的插件。</li>
