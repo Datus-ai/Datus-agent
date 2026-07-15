@@ -15,6 +15,7 @@ import yaml
 from datus.configuration.project_config import (
     ALLOWED_KEYS,
     PROJECT_CONFIG_REL,
+    PluginActivation,
     ProjectOverride,
     load_project_override,
     project_config_path,
@@ -416,34 +417,88 @@ class TestBashAllow:
         assert result.project_name == "proj_a"
 
 
-class TestPluginsPin:
-    """``plugins:`` maps a plugin name to the profile ``datus <plugin>`` uses."""
+class TestPluginsActivation:
+    """``plugins:`` declares per-plugin activation (enabled + active_profile)."""
 
-    def test_load_plugins_mapping(self, tmp_path):
+    def test_load_full_shape(self, tmp_path):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod", "dagster": "dev"}}))
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "plugins": {
+                        "hello": {"enabled": True, "active_profile": ["prod", "staging"]},
+                        "dagster": {"enabled": False},
+                    }
+                }
+            )
+        )
         result = load_project_override(str(tmp_path))
-        assert result.plugins == {"hello": "prod", "dagster": "dev"}
+        assert result.plugins == {
+            "hello": PluginActivation(enabled=True, active_profile=["prod", "staging"]),
+            "dagster": PluginActivation(enabled=False, active_profile=None),
+        }
         assert not result.is_empty()
 
-    def test_non_mapping_dropped(self, tmp_path):
+    def test_string_shorthand_is_single_active_profile(self, tmp_path):
+        """A bare ``name: profile`` reads as enabled with one active profile
+        (backward-compatible with the old string pin)."""
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"plugins": "hello"}))
+        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod"}}))
+        result = load_project_override(str(tmp_path))
+        assert result.plugins == {"hello": PluginActivation(enabled=True, active_profile=["prod"])}
+
+    def test_absent_section_is_none(self, tmp_path):
+        """No ``plugins:`` key → ``None`` (activate everything)."""
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"project_name": "p"}))
         assert load_project_override(str(tmp_path)).plugins is None
 
-    def test_non_string_profile_dropped(self, tmp_path):
+    def test_present_empty_section_is_empty_mapping(self, tmp_path):
+        """A present-but-empty ``plugins: {}`` stays a mapping (deactivate all),
+        distinct from an absent key."""
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
-        path.write_text(yaml.safe_dump({"plugins": {"hello": "prod", "bad": 123}}))
-        assert load_project_override(str(tmp_path)).plugins == {"hello": "prod"}
+        path.write_text(yaml.safe_dump({"plugins": {}}))
+        assert load_project_override(str(tmp_path)).plugins == {}
 
-    def test_plugins_save_round_trip(self, tmp_path):
-        save_project_override(ProjectOverride(plugins={"hello": "staging"}), cwd=str(tmp_path))
+    def test_non_mapping_top_level_fails_closed(self, tmp_path):
+        # A present-but-malformed ``plugins`` value must fail closed to an empty
+        # whitelist (deactivate all), NOT to None ("activate everything") — a
+        # typo can never silently re-enable every installed plugin surface.
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": 123}))
+        assert load_project_override(str(tmp_path)).plugins == {}
+
+    def test_bool_shorthand_is_enabled_flag(self, tmp_path):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"plugins": {"hello": False}}))
+        assert load_project_override(str(tmp_path)).plugins == {"hello": PluginActivation(enabled=False)}
+
+    def test_save_round_trip(self, tmp_path):
+        override = ProjectOverride(
+            plugins={
+                "hello": PluginActivation(enabled=True, active_profile=["staging"]),
+                "world": PluginActivation(enabled=False),
+            }
+        )
+        save_project_override(override, cwd=str(tmp_path))
+        # active_profile omitted when None; enabled always written.
+        raw = yaml.safe_load((tmp_path / PROJECT_CONFIG_REL).read_text())
+        assert raw["plugins"] == {
+            "hello": {"enabled": True, "active_profile": ["staging"]},
+            "world": {"enabled": False},
+        }
         result = load_project_override(str(tmp_path))
-        assert result.plugins == {"hello": "staging"}
-        assert not result.is_empty()
+        assert result.plugins == override.plugins
+
+    def test_save_present_empty_round_trip(self, tmp_path):
+        save_project_override(ProjectOverride(plugins={}), cwd=str(tmp_path))
+        assert load_project_override(str(tmp_path)).plugins == {}
 
     def test_save_round_trips_bash_allow(self, tmp_path):
         override = ProjectOverride(bash_allow=["make:*"])

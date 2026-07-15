@@ -108,6 +108,9 @@ class ErrorCode(Enum):
         "Skill at {location}: invalid frontmatter — {error_message}",
     )
 
+    # Plugin store errors
+    PLUGIN_STORE_ERROR = ("400030", "Plugin store error: {error_message}")
+
     # Storage errors - Vector Database Operations
     STORAGE_FAILED = ("410000", "Vector database operation failed: {error_message}")
     STORAGE_CONNECTION_FAILED = ("410001", "Failed to connect to vector database at path: {storage_path}")

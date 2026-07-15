@@ -6,12 +6,21 @@ configure them, and how profiles are resolved, start with the
 [introduction](introduction.md).
 
 A plugin is an installable Python package discovered through the
-`datus.plugins` entry-point group. The defining constraint: **a plugin never
-imports `datus.*` and depends on no shared SDK**. The contract is a small set
-of method names that Datus calls by structure (duck typing). Datus is the
-*config broker* — it reads `agent.yml`, expands `${VAR}` references, resolves
-the active profile, constructs your plugin with a plain `dict`, and calls it.
-You just implement the methods.
+`datus.plugins` entry-point group. The defining constraints:
+
+- **A plugin never imports `datus.*`** and depends on no shared SDK.
+- **The whole contract is one declarative file** — `datus-plugin.yml`, shipped
+  inside your package. It names your CLI entry function, your tool
+  transformers, your skills directory, your system-prompt template, your bash
+  permission rules, and your config schema. The only Python you write are
+  plain functions.
+
+Datus is the *config broker* — it reads `agent.yml`, expands `${VAR}`
+references, resolves the active profile, and calls your declared `cli`
+function with a plain `dict`. Reading the manifest never executes your code:
+skills, permissions, prompt sections and config schemas are collected without
+importing your package. Only your `cli` function (on `datus <name> ...`) and
+your declared tool transformers are imported, lazily.
 
 ## Prerequisites
 
@@ -23,41 +32,41 @@ You just implement the methods.
 
 ## Quickstart: a minimal plugin
 
-A plugin is one class registered under `datus.plugins`. Here is the smallest
-useful example — a `hello` command.
-
 **1. Package layout**
 
-```
+```text
 datus-plugin-hello/
 ├── pyproject.toml
 └── datus_plugin_hello/
     ├── __init__.py
-    └── plugin.py
+    ├── datus-plugin.yml      # the manifest — the whole plugin contract
+    └── cli.py
 ```
 
-**2. The plugin class** (`datus_plugin_hello/plugin.py`)
+**2. The manifest** (`datus_plugin_hello/datus-plugin.yml`)
+
+```yaml
+manifest_version: 1
+description: "Say hello to someone."
+cli: datus_plugin_hello.cli:main
+```
+
+**3. The CLI function** (`datus_plugin_hello/cli.py`)
 
 ```python
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 
-
-class HelloPlugin:
-    def __init__(self, profile: Optional[Dict[str, Any]] = None) -> None:
-        # `profile` is the resolved agent.plugins.hello.<profile> dict
-        # (already ${VAR}-expanded by datus). Empty dict is fine.
-        self.profile: Dict[str, Any] = profile or {}
-
-    def run_cli(self, argv: List[str]) -> int:
-        greeting = self.profile.get("greeting", "Hello")
-        name = argv[0] if argv else "world"
-        print(f"{greeting}, {name}!")
-        return 0
+def main(argv: list[str], profile: dict) -> int:
+    # `profile` is the resolved agent.plugins.hello.<profile> dict
+    # (already ${VAR}-expanded by datus). Empty dict is fine.
+    greeting = profile.get("greeting", "Hello")
+    name = argv[0] if argv else "world"
+    print(f"{greeting}, {name}!")
+    return 0
 ```
 
-**3. Register the entry point** (`pyproject.toml`)
+**4. Register the entry point** (`pyproject.toml`)
 
 ```toml
 [project]
@@ -66,43 +75,63 @@ version = "0.1.0"
 dependencies = []                      # note: NOT datus
 
 [project.entry-points."datus.plugins"]
-hello = "datus_plugin_hello.plugin:HelloPlugin"
+hello = "datus_plugin_hello"           # the PACKAGE name — not a class
+
+[tool.setuptools.package-data]
+datus_plugin_hello = ["datus-plugin.yml"]
 ```
 
-The entry-point name (`hello`) alone determines the CLI command
-(`datus hello`) and the config key (`agent.plugins.hello`) — the class and
-module names are free. Two names are **reserved** and never dispatched to
-plugins: `upgrade` and `skill`. A plugin registered under either is silently
-unreachable, and names starting with `-` cannot be dispatched at all.
+The entry-point value is your **package name** — a pure name → package
+mapping, no code reference. The entry-point name (`hello`) alone determines
+the CLI command (`datus hello`) and the config key (`agent.plugins.hello`) —
+the package name is free. Three names are **reserved** and never dispatched to
+plugins: `upgrade`, `skill`, and `plugin`. A plugin registered under any of
+them is unreachable (and `datus plugin install` refuses it), and names
+starting with `-` cannot be dispatched at all.
 
-**4. Install and run**
+The manifest is package data, not Python — make sure it ships in the wheel.
+Hatchling packages every file under the package directory by default; with
+setuptools use the `[tool.setuptools.package-data]` stanza above. Verify with
+`unzip -l dist/*.whl | grep datus-plugin.yml` (both `datus plugin install` and
+`datus plugin pack` refuse a package whose manifest is missing).
+
+**5. Install and run**
 
 ```bash
-pip install -e datus-plugin-hello
+datus plugin install src:./datus-plugin-hello   # installs into ~/.datus/plugins/hello/
 datus hello Ada          # -> Hello, Ada!
 ```
 
+For a tight edit-run loop while developing, `pip install -e datus-plugin-hello`
+into datus' own environment also works — such plugins are still discovered as a
+fallback, without a `~/.datus/plugins/` directory.
+
 That is a complete plugin. Everything below is optional surface area.
 
-## The contract
+## The manifest reference
 
-Datus calls these members **by name** on the class the entry point resolves to.
-Your class does not import or subclass anything from Datus.
+`datus-plugin.yml` lives at your package root. Only `manifest_version` is
+required; every other key is optional:
 
-| Member | Kind | Purpose |
+| Key | Type | Purpose |
 |---|---|---|
-| `PluginClass(profile: dict)` | constructor | Datus passes the resolved `agent.plugins.<name>.<profile>` dict (env-expanded) as a **keyword argument** — `PluginClass(profile=...)` — so the parameter must be named `profile`. A config-free plugin may ignore its value. |
-| `run_cli(self, argv: list[str]) -> int \| None` | instance method | Runs the subcommand. `argv` is everything after `datus <plugin>`, with Datus' own `--profile` / `--config` already stripped. Return an exit code; `None` means `0`. |
-| `skills_dir() -> str \| None` | **optional**, class-level | Returns the bundled skill directory. See [Bundling skills](#bundling-skills). |
-| `system_prompt(profiles: dict[str, dict]) -> str \| None` | **optional**, class-level | Returns a markdown block injected into the agent's system prompt. See [System-prompt injection](#system-prompt-injection). |
-| `cli_permissions() -> dict \| None` | **optional**, class-level | Declares bash-permission rules for the plugin's own CLI namespace, per permission profile. See [CLI bash permissions](#cli-bash-permissions). |
-| `tool_transformers() -> dict \| None` | **optional**, class-level | Declares tool argument transformers that rewrite or deny the agent's tool calls before execution. See [Tool argument transformers](#tool-argument-transformers). |
+| `manifest_version` | int, **required** | Must be `1`. A newer version than datus understands rejects the manifest with a "requires newer datus" warning. |
+| `description` | string | One-line summary shown by `datus plugin info`. |
+| `cli` | code ref | `module.path:function` called as `main(argv, profile)` on `datus <name> ...`. See [Implementing the CLI entry](#implementing-the-cli-entry). Without it, `datus <name>` exits 2. |
+| `tool_transformers` | mapping | Tool pattern → code ref (or list of refs) that rewrite or deny the agent's tool calls. See [Tool argument transformers](#tool-argument-transformers). |
+| `permissions` | mapping | Bash-permission rules for your own CLI namespace, per permission profile — pure YAML, no code. See [CLI bash permissions](#cli-bash-permissions). |
+| `system_prompt` | path | Package-relative path of a Jinja2 template rendered into the agent's system prompt. See [System-prompt template](#system-prompt-template). |
+| `skills` | path | Package-relative path of a bundled skill directory. See [Bundling skills](#bundling-skills). |
+| `config_schema` | JSON Schema | Inline object schema describing one profile — drives the `/plugins` TUI form and validates profiles before saving. See [Config schema and validation](#config-schema-and-validation). |
 
-!!! warning "`skills_dir` and `system_prompt` must be class-reachable"
-    Datus resolves both **at startup, without an active profile** (skill
-    discovery and prompt building happen before any command runs). Declare them
-    as `@classmethod` / `@staticmethod` (or a plain class attribute for
-    `skills_dir`) — they must not depend on `__init__`.
+A **code ref** is a dotted `module.path:function` string. Paths are relative
+to the package directory and may not escape it. Manifest parsing is defensive:
+a malformed section is warned about and dropped while the rest of the manifest
+stays usable; only a missing/unsupported `manifest_version` (or unreadable
+YAML) rejects the manifest as a whole.
+
+The machine-readable contract lives in `datus/plugins/base.py`; this table and
+that docstring are kept in sync.
 
 ## Configuration: what Datus hands you
 
@@ -123,21 +152,83 @@ agent:
 
 Datus parses this into `agent.plugins.<name>.<profile> -> dict`, **expands
 `${VAR}` per profile**, and injects a `name` key equal to the profile name.
-Which profile dict reaches your constructor is decided by Datus — explicit
+Which profile dict reaches your `cli` function is decided by Datus — explicit
 `--profile`, project pin, `default: true`, sole profile, or an empty dict
 when nothing is configured. The full resolution order is documented in the
 [introduction](introduction.md#which-profile-runs); you never write any of
-that logic. Your constructor simply receives the resolved `dict`.
+that logic. Your function simply receives the resolved `dict`.
 
 When testing locally, put your profile in whichever config file your datus
 session actually loads (explicit `--config` → `./conf/agent.yml` →
 `~/.datus/conf/agent.yml`).
 
-## Implementing `run_cli`
+## Config schema and validation
 
-`argv` is the command tail with Datus' global flags removed:
+Declare a `config_schema` — an inline JSON Schema for **one profile** — and
+the `/plugins` TUI renders a proper form instead of free-form key/value
+editing, and Datus validates a candidate profile against it before saving:
 
+```yaml
+config_schema:
+  type: object
+  required: [token, s3]
+  properties:                    # property order == TUI field order
+    token:
+      type: string
+      description: "API token"
+      x-secret: true             # masked in the TUI, stripped from the prompt
+    greeting:
+      type: string
+      description: "Greeting word"
+      default: "Hi"
+    s3:                          # nested objects expand into dotted form fields
+      type: object
+      required: [secret_access_key]
+      properties:
+        region: {type: string, default: us-east-1}
+        secret_access_key: {type: string, x-secret: true}
 ```
+
+Semantics:
+
+- **`x-secret: true`** marks a secret field: the TUI masks it and prompts the
+  user to enter a `${ENV_VAR}` reference, and the system-prompt renderer
+  strips it (see [System-prompt template](#system-prompt-template)). It is a
+  property-level extension keyword — JSON Schema validators ignore it.
+- **`required`** membership marks a form field as required; **`default`** is
+  pre-filled as the field's initial value. A field left empty (no default,
+  nothing typed yet) shows its `description` as a dim placeholder instead.
+- **Nested objects** — a `type: object` property with its own `properties`
+  expands in the TUI into one field per leaf, named by its dotted path
+  (`s3.region`, `s3.secret_access_key`); submitted values are re-assembled
+  into the nested profile shape before saving. `x-secret: true` on the object
+  marks every leaf secret, and a leaf is form-required only when its whole
+  ancestor path is required too. The system-prompt whitelist filters declared
+  nested objects recursively under the same rules.
+- **Free-form objects pass through wholesale.** A `type: object` property
+  **without** its own `properties` (a free-form dict) is *not* filtered per
+  key: the TUI keeps it as a single field, and the system-prompt renderer
+  passes its entire stored value into the prompt. Only per-key stripping is
+  skipped — the field itself still has to be declared — so a secret nested
+  inside such a field would reach the LLM. Either declare its sub-`properties`
+  (to get recursive filtering) or mark the whole object `x-secret: true`.
+- **Validation** runs `jsonschema` on the raw candidate dict (the values the
+  user just entered, **before** `${VAR}` expansion). Values containing
+  `${ENV_VAR}` placeholders are treated as opaque — pattern/enum/format
+  violations on them are suppressed, while a missing `required` field still
+  fails. Keep the real runtime validation in your `cli` function.
+- **TUI-entered values are strings**, so prefer `type: string` with `pattern`
+  / `enum` constraints; reserve other types for hand-written `agent.yml`
+  profiles.
+- A schema that is itself invalid (rejected by the JSON Schema meta-schema) is
+  warned about and treated as absent — the TUI falls back to free-form
+  editing.
+
+## Implementing the CLI entry
+
+The manifest's `cli` names a function called as `main(argv, profile)`:
+
+```text
 datus hello --profile staging greet Ada
                 └── stripped ──┘ └── argv = ["greet", "Ada"] ──┘
 ```
@@ -148,7 +239,7 @@ belongs to the plugin. `datus hello greet --profile staging` therefore passes
 `["greet", "--profile", "staging"]` through untouched — your subcommands are
 free to define their own `--profile` option.
 
-Return an integer exit code. Suggested conventions:
+Return an integer exit code (`None` means `0`). Suggested conventions:
 
 | Code | Meaning |
 |---|---|
@@ -158,44 +249,39 @@ Return an integer exit code. Suggested conventions:
 | `3` | config error |
 | `8` | missing optional dependency |
 
-Raising is also fine — Datus catches exceptions from `run_cli` and maps them to
-exit code `1` rather than crashing the CLI — but returning an explicit code
-gives users clearer signals.
+Raising is also fine — Datus catches exceptions from your `cli` function and
+maps them to exit code `1` rather than crashing the CLI — but returning an
+explicit code gives users clearer signals.
 
 ## Recipes: wrapping functions and APIs into a CLI
 
-`run_cli` receives a raw `argv` list, so you are free to route it however you
-like. Here are four common patterns, from quickest to richest.
+Your `cli` function receives a raw `argv` list, so you are free to route it
+however you like. Here are four common patterns, from quickest to richest.
 
 ### A. Dict dispatch — a few functions, zero dependencies
 
-The fastest way to expose a handful of functions. Map the first token to a
-handler; each handler gets the rest of `argv`.
-
 ```python
-class ToolboxPlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
+def main(argv, profile):
+    if not argv:
+        print("usage: datus toolbox <add|upper> ...")
+        return 2
+    cmd, rest = argv[0], argv[1:]
+    handlers = {"add": _add, "upper": _upper}
+    handler = handlers.get(cmd)
+    if handler is None:
+        print(f"unknown command: {cmd}")
+        return 2
+    return handler(rest)
 
-    def run_cli(self, argv):
-        if not argv:
-            print("usage: datus toolbox <add|upper> ...")
-            return 2
-        cmd, rest = argv[0], argv[1:]
-        handlers = {"add": self._add, "upper": self._upper}
-        handler = handlers.get(cmd)
-        if handler is None:
-            print(f"unknown command: {cmd}")
-            return 2
-        return handler(rest)
 
-    def _add(self, args):          # datus toolbox add 1 2 3
-        print(sum(float(a) for a in args))
-        return 0
+def _add(args):          # datus toolbox add 1 2 3
+    print(sum(float(a) for a in args))
+    return 0
 
-    def _upper(self, args):        # datus toolbox upper hello
-        print(" ".join(args).upper())
-        return 0
+
+def _upper(args):        # datus toolbox upper hello
+    print(" ".join(args).upper())
+    return 0
 ```
 
 ### B. argparse — typed args, flags, auto usage/`-h`
@@ -207,37 +293,35 @@ on `-h` or a bad invocation; Datus surfaces that as the exit code (0 for `-h`,
 ```python
 import argparse
 
-class ToolboxPlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
 
-    def run_cli(self, argv):
-        parser = argparse.ArgumentParser(prog="datus toolbox")
-        sub = parser.add_subparsers(dest="cmd", required=True)
+def main(argv, profile):
+    parser = argparse.ArgumentParser(prog="datus toolbox")
+    sub = parser.add_subparsers(dest="cmd", required=True)
 
-        p_add = sub.add_parser("add", help="sum numbers")
-        p_add.add_argument("nums", nargs="+", type=float)
+    p_add = sub.add_parser("add", help="sum numbers")
+    p_add.add_argument("nums", nargs="+", type=float)
 
-        p_grep = sub.add_parser("grep", help="filter lines in a file")
-        p_grep.add_argument("pattern")
-        p_grep.add_argument("path")
-        p_grep.add_argument("-i", "--ignore-case", action="store_true")
+    p_grep = sub.add_parser("grep", help="filter lines in a file")
+    p_grep.add_argument("pattern")
+    p_grep.add_argument("path")
+    p_grep.add_argument("-i", "--ignore-case", action="store_true")
 
-        ns = parser.parse_args(argv)      # SystemExit on -h / bad usage
-        if ns.cmd == "add":
-            print(sum(ns.nums))
-            return 0
-        if ns.cmd == "grep":
-            return self._grep(ns.pattern, ns.path, ns.ignore_case)
-
-    def _grep(self, pattern, path, ignore_case):
-        needle = pattern.lower() if ignore_case else pattern
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                hay = line.lower() if ignore_case else line
-                if needle in hay:
-                    print(line.rstrip())
+    ns = parser.parse_args(argv)      # SystemExit on -h / bad usage
+    if ns.cmd == "add":
+        print(sum(ns.nums))
         return 0
+    if ns.cmd == "grep":
+        return _grep(ns.pattern, ns.path, ns.ignore_case)
+
+
+def _grep(pattern, path, ignore_case):
+    needle = pattern.lower() if ignore_case else pattern
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            hay = line.lower() if ignore_case else line
+            if needle in hay:
+                print(line.rstrip())
+    return 0
 ```
 
 ### C. Wrapping a REST API
@@ -250,39 +334,36 @@ never hard-code them, and never echo them.
 import argparse
 import json
 
-class PetstorePlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
 
-    def run_cli(self, argv):
-        import requests  # a plugin may depend on its own libraries
+def main(argv, profile):
+    import requests  # a plugin may depend on its own libraries
 
-        base = self.profile.get("api_base_url")
-        if not base:
-            print("no api_base_url configured for the profile")
-            return 3
-        headers = {}
-        if self.profile.get("token"):
-            headers["Authorization"] = f"Bearer {self.profile['token']}"
+    base = profile.get("api_base_url")
+    if not base:
+        print("no api_base_url configured for the profile")
+        return 3
+    headers = {}
+    if profile.get("token"):
+        headers["Authorization"] = f"Bearer {profile['token']}"
 
-        parser = argparse.ArgumentParser(prog="datus petstore")
-        sub = parser.add_subparsers(dest="cmd", required=True)
-        sub.add_parser("list-pets")
-        p_get = sub.add_parser("get-pet")
-        p_get.add_argument("id")
-        ns = parser.parse_args(argv)
+    parser = argparse.ArgumentParser(prog="datus petstore")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list-pets")
+    p_get = sub.add_parser("get-pet")
+    p_get.add_argument("id")
+    ns = parser.parse_args(argv)
 
-        base = base.rstrip("/")
-        if ns.cmd == "list-pets":
-            resp = requests.get(f"{base}/pets", headers=headers, timeout=30)
-        else:
-            resp = requests.get(f"{base}/pets/{ns.id}", headers=headers, timeout=30)
+    base = base.rstrip("/")
+    if ns.cmd == "list-pets":
+        resp = requests.get(f"{base}/pets", headers=headers, timeout=30)
+    else:
+        resp = requests.get(f"{base}/pets/{ns.id}", headers=headers, timeout=30)
 
-        if resp.status_code >= 400:
-            print(f"error {resp.status_code}: {resp.text}")
-            return 1
-        print(json.dumps(resp.json(), indent=2))
-        return 0
+    if resp.status_code >= 400:
+        print(f"error {resp.status_code}: {resp.text}")
+        return 1
+    print(json.dumps(resp.json(), indent=2))
+    return 0
 ```
 
 Corresponding config:
@@ -300,9 +381,9 @@ agent:
 ### D. Typer / Click — richest UX, one extra dependency
 
 For a large command surface, a framework like [Typer](https://typer.tiangolo.com/)
-gives you help text, type coercion, and completion. Because Datus constructs
-your plugin per-invocation but the Typer app is a module-level object, expose
-the active profile through a module global that commands read.
+gives you help text, type coercion, and completion. Because Datus calls your
+entry function per-invocation but the Typer app is a module-level object,
+expose the active profile through a module global that commands read.
 
 ```python
 import typer
@@ -318,24 +399,20 @@ def greet(name: str, loud: bool = False):
     print(msg.upper() if loud else msg)
 
 
-class GreeterPlugin:
-    def __init__(self, profile=None):
-        self.profile = profile or {}
-
-    def run_cli(self, argv):
-        global _ACTIVE_PROFILE
-        _ACTIVE_PROFILE = self.profile
-        try:
-            # standalone_mode=False stops Click from calling sys.exit itself,
-            # so we can return a code and always clear the profile.
-            app(args=argv, standalone_mode=False)
-            return 0
-        except SystemExit as exc:      # -h / usage
-            return int(exc.code or 0)
-        except typer.Exit as exc:
-            return exc.exit_code
-        finally:
-            _ACTIVE_PROFILE = {}
+def main(argv, profile):
+    global _ACTIVE_PROFILE
+    _ACTIVE_PROFILE = profile
+    try:
+        # standalone_mode=False stops Click from calling sys.exit itself,
+        # so we can return a code and always clear the profile.
+        app(args=argv, standalone_mode=False)
+        return 0
+    except SystemExit as exc:      # -h / usage
+        return int(exc.code or 0)
+    except typer.Exit as exc:
+        return exc.exit_code
+    finally:
+        _ACTIVE_PROFILE = {}
 ```
 
 Add `typer` to your package's `dependencies` (your plugin's deps are its own —
@@ -343,22 +420,19 @@ just not `datus`).
 
 ## Bundling skills
 
-If your package ships a skill directory, expose it via a class-level
-`skills_dir()` and Datus will discover the skills at startup (they show up in
-`/skill list`, alongside project and user skills).
+Declare a package-relative skills directory in the manifest and Datus
+discovers the skills at startup (they show up in `/skill list`, alongside
+project and user skills) — no code involved:
 
-```python
-class HelloPlugin:
-    @classmethod
-    def skills_dir(cls) -> str:
-        from pathlib import Path
-        return str(Path(__file__).parent / "skills")
+```yaml
+skills: skills
 ```
 
 Layout and packaging:
 
-```
+```text
 datus_plugin_hello/
+├── datus-plugin.yml
 └── skills/
     └── hello/
         └── SKILL.md
@@ -390,76 +464,91 @@ opt in explicitly:
 
 ```toml
 [tool.setuptools.package-data]
-datus_plugin_hello = ["skills/**/*"]
+datus_plugin_hello = ["datus-plugin.yml", "skills/**/*", "prompts/*"]
 ```
 
 After building, verify with `unzip -l dist/*.whl | grep SKILL.md`.
 
-## System-prompt injection
+## System-prompt template
 
 A plugin can tell the agent, up front, what it is and which environments are
-configured — so the model chooses it proactively instead of guessing. Expose a
-class-level `system_prompt(profiles)`:
+configured — so the model chooses it proactively instead of guessing. Declare
+a Jinja2 template in the manifest:
 
-```python
-class HelloPlugin:
-    @classmethod
-    def system_prompt(cls, profiles):
-        if not profiles:
-            # Installed but unconfigured: point the agent at the setup
-            # skill instead of disappearing from the prompt.
-            return (
-                "## Hello (installed, not configured)\n"
-                "The `datus hello` CLI is installed but has no environment "
-                "configured.\nRun the `hello-setup` skill to configure one."
-            )
-        envs = "\n".join(
-            f"- {name}: {cfg.get('greeting', '?')}"
-            for name, cfg in profiles.items()
-        )
-        return (
-            "## Hello\n"
-            "Say hello via `datus hello <name>`.\n"
-            f"Environments ({len(profiles)}):\n{envs}"
-        )
+```yaml
+system_prompt: prompts/system.md.j2
 ```
 
-Datus passes the plugin's **full** profile mapping (all environments, not just
-the active one) and appends the returned markdown to the system prompt of every
-agentic node. An installed-but-unconfigured plugin receives `{}` — return a
-short "installed, not configured" note pointing at your bundled setup skill
-(see below) so the agent can walk the user through configuration. Return
-`None` only when there is truly nothing to say.
+```jinja
+## Hello
+Say hello via `datus hello <name>`.
+
+{% if profiles %}
+Environments ({{ profiles | length }}):
+{% for name, cfg in profiles.items() %}
+- {{ name }}: {{ cfg.get("greeting", "?") }}
+{% endfor %}
+{% else %}
+Installed but not configured — run the `hello-setup` skill to configure an
+environment.
+{% endif %}
+```
+
+The render context:
+
+| Variable | Value |
+|---|---|
+| `plugin_name` | your entry-point name |
+| `profiles` | `dict[str, dict]` — the plugin's profile mapping, **narrowed to the profiles the project activated** (`plugins.<name>.active_profile` in `./.datus/config.yml`) and **secret-stripped** (see below) |
+| `config_path` | the loaded agent config file path, or `None` |
+
+An installed-but-unconfigured plugin (or one whose pin matches nothing)
+renders with `profiles == {}` — use `{% if profiles %}` to emit a short
+"installed, not configured" note pointing at your bundled setup skill instead
+of disappearing from the prompt.
 
 When at least one plugin contributes a section, Datus prepends its own
 `## Plugins` preamble naming the loaded config file and the
-`agent.plugins.<plugin>.<profile>` shape — your text never needs to hard-code
-config paths.
+`agent.plugins.<plugin>.<profile>` shape — your template never needs to
+hard-code config paths.
 
-!!! danger "Never surface secrets"
-    The returned text enters the LLM context. Datus hands you the full profile
-    dicts — which include `password`, secret keys, access keys — but you must
-    emit **only non-secret fields** (endpoints, region, environment names).
-    Datus never splices profile values itself; keeping credentials out of the
-    prompt is the plugin's responsibility. Use a field allow-list.
+!!! note "Secrets are stripped structurally"
+    The rendered text enters the LLM context, and profile values are already
+    `${VAR}`-expanded (real secrets) at prompt time — so Datus filters the
+    profiles **before** your template sees them: only fields declared in your
+    `config_schema` and **not** marked `x-secret: true` pass through;
+    undeclared fields are dropped too, and declared nested objects (a
+    `type: object` with its own `properties`) are filtered recursively under
+    the same rules. The one exception is a **free-form** object field
+    (declared `type: object` with no `properties`): its whole value passes
+    through unfiltered, so mark it `x-secret: true` if it can hold anything
+    sensitive. Without a `config_schema`, templates
+    receive profile names with empty dicts. A template referencing a stripped
+    field fails to render (strict mode) and the section is skipped — it can
+    never leak.
+
+Template errors (missing file, syntax error, undefined variable) are logged
+and the section is skipped — they never break prompt construction. The
+template renders in strict mode (`StrictUndefined`), so a typo shows up in the
+log instead of as silently wrong prompt text.
 
 ## CLI bash permissions
 
 When the **agent** (not a human) runs your CLI through its bash tool — e.g. the
 model decides to execute `datus hello greet Ada` — the command goes through
 Datus' permission layer. Without a declaration, every such command prompts the
-user for confirmation. A class-level `cli_permissions()` lets your plugin
-declare, per permission profile, which of its subcommands are safe to auto-run
-(`allow`), which must be confirmed (`ask`), and which are blocked (`deny`):
+user for confirmation. The manifest's `permissions` key declares, per
+permission profile, which of your subcommands are safe to auto-run (`allow`),
+which must be confirmed (`ask`), and which are blocked (`deny`) — pure YAML,
+no code:
 
-```python
-class HelloPlugin:
-    @classmethod
-    def cli_permissions(cls):
-        return {
-            "normal": {"allow": ["greet:*"], "ask": ["config set:*"]},
-            "auto":   {"allow": ["greet:*", "config set:*"]},
-        }
+```yaml
+permissions:
+  normal:
+    allow: ["greet:*"]
+    ask: ["config set:*"]
+  auto:
+    allow: ["greet:*", "config set:*"]
 ```
 
 Semantics:
@@ -505,19 +594,19 @@ when re-running them is harmless.
 
 ## Tool argument transformers
 
-A class-level `tool_transformers()` lets your plugin intercept the **agent's
-tool calls** — inspect and rewrite the arguments before the tool executes, or
-deny the call outright. The canonical use case is SQL policy enforcement:
-append a tenant-scope predicate to every `execute_sql` query, using the
-request principal the deployment injects.
+The manifest's `tool_transformers` key lets your plugin intercept the
+**agent's tool calls** — inspect and rewrite the arguments before the tool
+executes, or deny the call outright. The canonical use case is SQL policy
+enforcement: append a tenant-scope predicate to every `execute_sql` query,
+using the request principal the deployment injects.
+
+```yaml
+tool_transformers:
+  "db_tools.execute_sql": datus_plugin_scoped_sql.transformers:enforce_tenant_scope
+```
 
 ```python
-class ScopedSqlPlugin:
-    @classmethod
-    def tool_transformers(cls):
-        return {"db_tools.execute_sql": enforce_tenant_scope}
-
-
+# datus_plugin_scoped_sql/transformers.py
 def enforce_tenant_scope(tool_name, args, context):
     tenant_id = (context.get("principal") or {}).get("tenant", {}).get("id")
     if not tenant_id:
@@ -528,8 +617,8 @@ def enforce_tenant_scope(tool_name, args, context):
 
 Semantics:
 
-- **Declaration shape**: a dict mapping tool patterns to a transformer or a
-  list of transformers. Patterns use the proxy syntax — a bare tool name
+- **Declaration shape**: a mapping of tool patterns to a code ref or a list of
+  code refs. Patterns use the proxy syntax — a bare tool name
   (`execute_sql`), or `category.method` with fnmatch globs (`db_tools.*`).
 - **Transformer signature**: `transformer(tool_name, args, context) -> dict`,
   sync or async. Return the (possibly modified) argument dict to continue.
@@ -542,6 +631,10 @@ Semantics:
   profile via `context["agent_config"].get_plugin_profile("<name>")`; access
   it duck-typed, never import `datus.*` for it). It is rebuilt on every call,
   so per-request values are always fresh.
+- **Loading is lazy**: the referenced module is imported when transformers are
+  first collected for an agent node, not at manifest load. A ref that fails to
+  import (or is not callable) is warned about and skipped — the plugin's
+  remaining transformers still apply.
 - **Coverage**: transformers wrap the agent's `FunctionTool` layer, which
   both execution paths (SDK Runner and the native loop) go through. They do
   **not** cover direct Python invocations of tool methods (e.g.
@@ -553,10 +646,8 @@ Semantics:
   `plugins_enabled` master switch as the rest of the plugin surface.
 - Use a SQL parser or a database-safe query builder when rewriting SQL —
   never string concatenation for policy predicates.
-- Malformed declarations (non-dict, non-callable entries, empty patterns)
-  are logged and skipped — they never break Datus startup. A declaration
-  that collects successfully but fails to apply aborts the agent node
-  instead of silently running without enforcement.
+- A declaration that collects successfully but fails to apply aborts the
+  agent node instead of silently running without enforcement.
 
 ## Bundling a setup skill
 
@@ -564,7 +655,7 @@ Editing YAML by hand is the main friction after `pip install`. Ship a
 `<name>-setup` skill next to your main skill so the agent can collect the
 values and write the profile itself:
 
-```
+```text
 datus_plugin_hello/
 └── skills/
     ├── hello/
@@ -641,42 +732,93 @@ After `pip install -e`, each surface can be checked without restarting
 anything (plugins are discovered per invocation):
 
 - **CLI dispatch** — run `datus <name> ...` from any directory. If it falls
-  through to the REPL instead, the entry point is missing or misnamed; check
-  `pip show -f your-package` for the `entry_points.txt`.
+  through to the REPL instead, the entry point is missing or misnamed, or the
+  manifest was rejected (check the log); `datus <name>` printing "declares no
+  CLI command" means the manifest loaded but has no `cli` key. Check
+  `pip show -f your-package` for the `entry_points.txt` and the bundled
+  `datus-plugin.yml`.
 - **Skills** — start `datus` and run `/skill list`; plugin-bundled skills
   appear alongside project and user skills.
-- **Prompt injection** — the easiest check is a unit test calling
-  `system_prompt()` directly (next section). To confirm it lands in a live
-  session, start `datus` and ask the agent "which plugins are configured?" —
-  the answer comes from the injected section. Note that config edits take
-  effect on the next `datus <plugin>` invocation immediately, but the prompt
-  section refreshes only on the next session.
+- **Prompt injection** — render the template in a unit test (next section).
+  To confirm it lands in a live session, start `datus` and ask the agent
+  "which plugins are configured?" — the answer comes from the injected
+  section. Note that config edits take effect on the next `datus <plugin>`
+  invocation immediately, but the prompt section refreshes only on the next
+  session.
 
 ## Testing your plugin
 
-Because Datus is the broker, unit tests construct your plugin with a plain dict
-— no `agent.yml`, no Datus imports:
+Because Datus is the broker, unit tests call your functions with a plain dict
+— no `agent.yml`, no Datus imports. Validate the manifest and template with
+plain YAML/Jinja2 tooling:
 
 ```python
-from datus_plugin_hello.plugin import HelloPlugin
+from pathlib import Path
 
-def test_run_cli_uses_profile_greeting(capsys):
-    rc = HelloPlugin(profile={"name": "prod", "greeting": "Hi"}).run_cli(["Ada"])
+import yaml
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+from datus_plugin_hello.cli import main
+
+PKG = Path(__file__).parent.parent / "datus_plugin_hello"
+
+
+def test_cli_uses_profile_greeting(capsys):
+    rc = main(["Ada"], {"name": "prod", "greeting": "Hi"})
     assert rc == 0
     assert "Hi, Ada!" in capsys.readouterr().out
 
-def test_system_prompt_lists_envs_without_secrets():
-    text = HelloPlugin.system_prompt({
-        "prod": {"name": "prod", "greeting": "Hi", "token": "s3cr3t"},
-    })
-    assert "## Hello" in text
-    assert "s3cr3t" not in text          # secrets must never leak
 
-def test_system_prompt_unconfigured_points_to_setup_skill():
-    text = HelloPlugin.system_prompt({})
-    assert "not configured" in text
+def test_manifest_is_valid():
+    manifest = yaml.safe_load((PKG / "datus-plugin.yml").read_text())
+    assert manifest["manifest_version"] == 1
+    assert manifest["cli"] == "datus_plugin_hello.cli:main"
+    # every declared path exists in the package
+    assert (PKG / manifest["skills"]).is_dir()
+    assert (PKG / manifest["system_prompt"]).is_file()
+
+
+def test_prompt_template_renders_without_secrets():
+    env = Environment(loader=FileSystemLoader(PKG), undefined=StrictUndefined)
+    template = env.get_template("prompts/system.md.j2")
+    # datus strips undeclared / x-secret fields before rendering; emulate that.
+    text = template.render(plugin_name="hello", profiles={"prod": {"greeting": "Hi"}}, config_path=None)
+    assert "## Hello" in text
+    text = template.render(plugin_name="hello", profiles={}, config_path=None)
     assert "hello-setup" in text
 ```
+
+## Distributing for offline install
+
+Bundle your plugin into a wheelhouse `.zip` with `datus plugin pack`, run from
+the plugin's project directory where you have network:
+
+```bash
+datus plugin pack -o ./dist               # plugin wheel only (default)
+# → ./dist/datus-plugin-hello-1.0.0.zip
+
+datus plugin pack --with-deps -o ./dist   # plugin wheel + every dependency wheel
+```
+
+The bundle is a zip of a `datus-bundle.json` manifest plus a `wheels/`
+wheelhouse. `pack` verifies the wheel declares a module-ref `datus.plugins`
+entry point **and** bundles its `datus-plugin.yml` — a wheel missing either is
+refused before any dependency download. Users install it via `datus plugin
+install zip:./….zip` (see
+[Offline install](introduction.md#offline-install-air-gapped)). Choose the
+flavor:
+
+- **Default (plugin wheel only)** — a small bundle; the target machine resolves
+  dependencies from a package index at install time (needs network).
+- **`--with-deps`** — every transitive dependency wheel is bundled so the install
+  is fully offline (`pip install --no-index --find-links`). `pack` uses
+  `pip download --only-binary=:all:`, so every dependency must publish a wheel
+  (no sdist-only packages). A pure-Python dependency set is portable; a
+  dependency with a native extension makes the bundle a **same-platform
+  snapshot** — build it on a machine matching the target's OS/Python.
+- **A declared `Requires-Python`.** Set it in `pyproject.toml`; `pack` copies it
+  into the manifest so install can reject a mismatched interpreter early (with a
+  clear message, overridable via `--force`).
 
 ## Constraints checklist
 
@@ -684,17 +826,18 @@ Before publishing, verify:
 
 - [ ] The package does **not** `import datus` anywhere (`grep -rn "import datus" your_pkg/`).
 - [ ] The package does **not** depend on `datus` or a shared plugin SDK in `pyproject.toml`.
-- [ ] `__init__` accepts the profile as a keyword argument named `profile` (Datus calls `PluginClass(profile=...)`).
-- [ ] The entry-point name is not a reserved name (`upgrade`, `skill`) and does not start with `-`.
-- [ ] `skills_dir`, `system_prompt`, and `cli_permissions` are class-reachable (`@classmethod` / `@staticmethod` / class attribute).
-- [ ] `system_prompt` emits only non-secret fields.
-- [ ] `cli_permissions` patterns are namespace-relative (no `datus <name>` prefix — Datus adds it), and state-changing subcommands are `ask` under `normal`.
-- [ ] `run_cli` returns an int (or `None`) and does not call `sys.exit()` on the success path.
-- [ ] Skill files are packaged into the wheel.
-- [ ] The `datus.plugins` entry-point name matches the intended `datus <name>` command and the `agent.plugins.<name>` config key.
+- [ ] The `datus.plugins` entry-point value is the **package name** (no `:Class` part).
+- [ ] The entry-point name is not a reserved name (`upgrade`, `skill`, `plugin`) and does not start with `-`.
+- [ ] `datus-plugin.yml` sits at the package root, declares `manifest_version: 1`, and ships in the wheel (`unzip -l dist/*.whl`).
+- [ ] The `cli` function signature is `main(argv: list[str], profile: dict) -> int | None` and does not call `sys.exit()` on the success path.
+- [ ] Secret config fields are marked `x-secret: true` in `config_schema`.
+- [ ] The system-prompt template handles `profiles == {}` via `{% if profiles %}`.
+- [ ] `permissions` patterns are namespace-relative (no `datus <name>` prefix — Datus adds it), and state-changing subcommands are `ask` under `normal`.
+- [ ] Skill files and the prompt template are packaged into the wheel.
+- [ ] The entry-point name matches the intended `datus <name>` command and the `agent.plugins.<name>` config key.
 
 ## Reference
 
-- **Entry-point group**: `datus.plugins` — one entry per plugin, resolving to a plugin **class**.
-- **Contract source of truth**: `datus/plugins/base.py` (documented `DatusPlugin` protocol).
+- **Entry-point group**: `datus.plugins` — one entry per plugin, whose value is the plugin **package name**.
+- **Contract source of truth**: `datus/plugins/base.py` (the `datus-plugin.yml` manifest spec).
 - **Related**: [Plugin Introduction](introduction.md), [Skills](../skills/introduction.md).

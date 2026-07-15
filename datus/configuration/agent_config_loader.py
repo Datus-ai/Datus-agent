@@ -361,10 +361,13 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["active_scheduler"] = override.scheduler
     if override.semantic is not None:
         agent_raw["active_semantic"] = override.semantic
-    # ``plugins`` pins the active profile per plugin for ``datus <plugin>``
-    # invocations; forwarded to AgentConfig and consulted by
-    # ``get_plugin_profile`` between the explicit ``--profile`` argument and
-    # the profile ``default: true`` flag.
+    # ``plugins`` declares per-plugin activation for this project (enabled +
+    # active_profile list). Forwarded to AgentConfig as ``active_plugins``,
+    # which gates which plugins are loaded (CLI/skills/prompt/transformers) and
+    # is consulted by ``get_plugin_profile`` for the CLI default profile. The
+    # key is only written when the ``plugins:`` section is present (a present
+    # empty mapping ``{}`` deactivates every plugin), so AgentConfig can tell
+    # "section absent — activate everything" from "section present".
     if override.plugins is not None:
         agent_raw["active_plugins"] = override.plugins
 
@@ -494,6 +497,20 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
         setup_tracing(agent_config.observability)
     except Exception as e:
         logger.warning(f"Failed to initialize tracing: {e}")
+
+    # Append this project's enabled plugin directories (~/.datus/plugins/<name>/)
+    # to sys.path so their ``datus.plugins`` entry points are discovered before
+    # skills / prompt sections / permissions / tool transformers are collected.
+    # Path-only injection — the plugin package is imported lazily on use.
+    try:
+        from datus.plugins import store
+
+        store.activate(
+            agent_config.active_plugin_names(),
+            plugins_enabled=getattr(agent_config, "plugins_enabled", True),
+        )
+    except Exception as e:  # noqa: BLE001 - a bad plugin dir must never block config load
+        logger.debug("plugin sys.path activation failed: %s", e)
 
     return agent_config
 

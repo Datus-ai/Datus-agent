@@ -21,6 +21,7 @@ from datus.cli.build_kb_commands import BuildKbCommands
 from datus.cli.datasource_commands import DatasourceCommands
 from datus.cli.init_commands import _INIT_PROMPT, InitCommands
 from datus.cli.model_commands import ModelCommands
+from datus.cli.plugin_commands import PluginCommands
 from datus.cli.repl import CommandType, DatusCLI
 from datus.cli.skill_command_utils import render_skill_prompt
 from datus.cli.slash_registry import lookup
@@ -87,6 +88,7 @@ def _build_core_cli() -> DatusCLI:
     cli.bootstrap_bi_commands = MagicMock()
     cli.bootstrap_commands = MagicMock()
     cli.model_commands = ModelCommands(cli)
+    cli.plugin_commands = PluginCommands(cli)
     cli.language_commands = MagicMock()
     cli.effort_commands = MagicMock()
     cli.init_commands = InitCommands(cli)

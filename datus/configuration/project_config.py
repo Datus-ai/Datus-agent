@@ -29,6 +29,16 @@ pin a handful of values without copying the full config:
   under ``agent.services.semantic_layer``). Resolved by
   ``AgentConfig.resolve_semantic_adapter`` between the explicit
   ``adapter_type`` argument and the global ``default: true`` flag.
+- ``plugins``: per-plugin activation for this project. A mapping of plugin
+  name to ``{enabled: bool, active_profile: [<profile>, ...]}``. Omitting
+  the whole ``plugins`` key means "activate every installed plugin and all
+  of its profiles"; once the key is present it is the authoritative
+  whitelist — an installed plugin not listed (or listed with
+  ``enabled: false``) is NOT loaded (its CLI subcommand, bundled skills,
+  system-prompt section, tool transformers and bash rules are all skipped).
+  ``active_profile`` narrows which configured profiles are active; when it
+  pins exactly one profile that becomes the ``datus <plugin>`` default.
+  Written by the ``/plugins`` TUI and ``datus plugin enable/disable``.
 - ``project_name``: shard name for ``~/.datus/sessions/{project_name}/``
   and ``~/.datus/data/{project_name}/`` (optional)
 - ``reasoning_effort``: one of ``off|minimal|low|medium|high`` — controls the
@@ -48,7 +58,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
@@ -91,6 +101,22 @@ class ProjectTarget:
 
 
 @dataclass
+class PluginActivation:
+    """Per-plugin activation state from ``./.datus/config.yml`` ``plugins:``.
+
+    ``enabled`` gates whether the plugin is loaded at all this project (its
+    CLI subcommand, bundled skills, system-prompt section, tool transformers
+    and bash rules). ``active_profile`` narrows which configured profiles are
+    active; ``None`` means "all profiles active". When it pins exactly one
+    profile that profile becomes the ``datus <plugin>`` default (equivalent to
+    the old string pin).
+    """
+
+    enabled: bool = True
+    active_profile: Optional[List[str]] = None
+
+
+@dataclass
 class ProjectOverride:
     """In-memory representation of ``./.datus/config.yml``.
 
@@ -99,6 +125,9 @@ class ProjectOverride:
     :class:`ProjectTarget` describing a provider-level entry.
     ``reasoning_effort`` accepts ``off|minimal|low|medium|high``; any other
     string is dropped by :func:`load_project_override` with a warning.
+    ``plugins`` is ``None`` when the key is absent (activate everything) and a
+    (possibly empty) mapping when present — an empty mapping deactivates every
+    installed plugin.
     """
 
     target: Optional[Union[str, ProjectTarget]] = None
@@ -106,7 +135,7 @@ class ProjectOverride:
     dashboard: Optional[str] = None
     scheduler: Optional[str] = None
     semantic: Optional[str] = None
-    plugins: Optional[Dict[str, str]] = None
+    plugins: Optional[Dict[str, PluginActivation]] = None
     project_name: Optional[str] = None
     language: Optional[str] = None
     reasoning_effort: Optional[str] = None
@@ -242,30 +271,94 @@ def _parse_optional_string(raw: Any, *, key: str) -> Optional[str]:
     return value or None
 
 
-def _parse_plugins(raw: Any) -> Optional[Dict[str, str]]:
-    """Normalize the ``plugins:`` field into a ``{plugin: profile}`` mapping.
+def _parse_active_profile(plugin: str, raw: Any) -> Optional[List[str]]:
+    """Normalize ``plugins.<plugin>.active_profile`` into a list of names.
 
-    Pins the active profile per plugin for ``datus <plugin>`` invocations when
-    ``--profile`` is omitted. Non-mapping values, and entries whose plugin name
-    or profile is not a non-empty string, are dropped with a warning so a typo
-    fails loudly rather than silently selecting the wrong profile. ``None`` /
-    empty means "no pin".
+    Accepts a single string (coerced to a one-element list) or a list of
+    strings. Non-string entries are dropped with a warning; a fully invalid or
+    empty value resolves to ``None`` ("all profiles active").
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        value = raw.strip()
+        return [value] if value else None
+    if isinstance(raw, list):
+        profiles: List[str] = []
+        for entry in raw:
+            if isinstance(entry, str) and entry.strip():
+                profiles.append(entry.strip())
+            else:
+                logger.warning(f"Ignoring non-string active_profile entry for plugin '{plugin}': {entry!r}")
+        return profiles or None
+    logger.warning(
+        f"plugins['{plugin}'].active_profile must be a string or list of strings, got {type(raw).__name__}. Ignoring."
+    )
+    return None
+
+
+def _parse_plugin_activation(plugin: str, spec: Any) -> Optional[PluginActivation]:
+    """Normalize one ``plugins.<plugin>`` entry into a :class:`PluginActivation`.
+
+    The canonical shape is a mapping with an optional boolean ``enabled``
+    (default ``True``) and an optional ``active_profile`` (see
+    :func:`_parse_active_profile`). As a shorthand, a bare string or list is
+    interpreted as ``active_profile`` with ``enabled: true`` (so a single
+    pinned profile becomes the ``datus <plugin>`` default). A boolean is
+    interpreted as ``enabled``. Any other type is dropped with a warning.
+    """
+    if isinstance(spec, bool):
+        return PluginActivation(enabled=spec)
+    if isinstance(spec, (str, list)):
+        return PluginActivation(enabled=True, active_profile=_parse_active_profile(plugin, spec))
+    if not isinstance(spec, dict):
+        logger.warning(
+            f"plugins['{plugin}'] must be a mapping with 'enabled'/'active_profile' "
+            f"(or a profile name / list), got {type(spec).__name__}. Ignoring."
+        )
+        return None
+    enabled_raw = spec.get("enabled", True)
+    if isinstance(enabled_raw, bool):
+        enabled = enabled_raw
+    else:
+        logger.warning(f"plugins['{plugin}'].enabled must be a boolean, got {enabled_raw!r}. Defaulting to true.")
+        enabled = True
+    active_profile = _parse_active_profile(plugin, spec.get("active_profile"))
+    return PluginActivation(enabled=enabled, active_profile=active_profile)
+
+
+def _parse_plugins(raw: Any) -> Optional[Dict[str, PluginActivation]]:
+    """Normalize the ``plugins:`` field into a ``{plugin: PluginActivation}`` map.
+
+    Declares per-plugin activation for this project. Returns ``None`` ONLY when
+    the key is absent (or explicitly null) — meaning "activate every installed
+    plugin and all profiles". A present mapping (even empty) is the
+    authoritative whitelist: a returned empty dict deactivates all plugins. A
+    present-but-malformed value (e.g. ``plugins: 123``) fails closed to an
+    empty whitelist rather than ``None``, so a typo can never silently
+    re-enable every plugin. Entries whose plugin name is not a non-empty string
+    are dropped with a warning.
     """
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        logger.warning(f"plugins must be a mapping, got {type(raw).__name__}. Ignoring.")
-        return None
-    parsed: Dict[str, str] = {}
-    for plugin, profile in raw.items():
+        logger.warning(
+            f"plugins must be a mapping, got {type(raw).__name__}. "
+            "Treating as an empty whitelist (all plugins deactivated for this project)."
+        )
+        return {}
+    parsed: Dict[str, PluginActivation] = {}
+    for plugin, spec in raw.items():
         if not isinstance(plugin, str) or not plugin.strip():
             logger.warning(f"plugins key must be a non-empty string, got {plugin!r}. Ignoring.")
             continue
-        if not isinstance(profile, str) or not profile.strip():
-            logger.warning(f"plugins['{plugin}'] must be a non-empty string profile, got {profile!r}. Ignoring.")
-            continue
-        parsed[plugin.strip()] = profile.strip()
-    return parsed or None
+        activation = _parse_plugin_activation(plugin.strip(), spec)
+        if activation is not None:
+            parsed[plugin.strip()] = activation
+    # A present-but-empty mapping is meaningful ("deactivate all"), so return
+    # the dict as-is rather than collapsing it to ``None`` (which would read as
+    # "key absent — activate everything").
+    return parsed
 
 
 def _parse_reasoning_effort(raw: Any) -> Optional[str]:
@@ -303,6 +396,25 @@ def _target_to_yaml(target: Optional[Union[str, ProjectTarget]]) -> Any:
     return None
 
 
+def _plugins_to_yaml(plugins: Optional[Dict[str, PluginActivation]]) -> Any:
+    """Serialize the plugin activation map back to plain YAML structures.
+
+    ``None`` is returned unchanged (the key is then omitted by
+    :func:`save_project_override`). A present mapping — including an empty one —
+    is written out so "deactivate all" round-trips. ``active_profile`` is
+    omitted when ``None`` ("all profiles active").
+    """
+    if plugins is None:
+        return None
+    out: Dict[str, Dict[str, Any]] = {}
+    for name, activation in plugins.items():
+        entry: Dict[str, Any] = {"enabled": bool(activation.enabled)}
+        if activation.active_profile is not None:
+            entry["active_profile"] = list(activation.active_profile)
+        out[name] = entry
+    return out
+
+
 def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) -> Path:
     """Write ``override`` to ``./.datus/config.yml``.
 
@@ -320,7 +432,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "dashboard": override.dashboard,
             "scheduler": override.scheduler,
             "semantic": override.semantic,
-            "plugins": override.plugins,
+            "plugins": _plugins_to_yaml(override.plugins),
             "project_name": override.project_name,
             "language": override.language,
             "reasoning_effort": override.reasoning_effort,

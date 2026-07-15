@@ -269,6 +269,9 @@ class DatusCLI:
 
         self.bootstrap_commands = BootstrapCommands(self)
         self.model_commands = ModelCommands(self)
+        from datus.cli.plugin_commands import PluginCommands
+
+        self.plugin_commands = PluginCommands(self)
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
         self.init_commands = InitCommands(self)
@@ -356,6 +359,7 @@ class DatusCLI:
             "bootstrap": self.bootstrap_commands.cmd,
             "bootstrap-bi": self.bootstrap_bi_commands.cmd,
             "model": self.model_commands.cmd_model,
+            "plugins": self.plugin_commands.cmd_plugins,
             "effort": self.effort_commands.cmd_effort,
             "init": self.init_commands.cmd_init,
             "build-kb": self.build_kb_commands.cmd_build_kb,

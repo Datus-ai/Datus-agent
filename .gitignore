@@ -71,3 +71,5 @@ conf/agent.yml.bak
 build/
 .datus/
 /build_scripts/cache/
+# Local `pip install --target` output / plugin build artifacts at the repo root.
+/plugins/

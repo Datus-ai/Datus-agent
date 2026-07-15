@@ -81,6 +81,9 @@ dependencies = [
     "datus-bi-core>=0.1.2",
     # Workflow scheduler adapters (core framework)
     "datus-scheduler-core>=0.1.1",
+    # Plugin manifest: config-schema validation and system-prompt templates
+    "jsonschema>=4.17,<5",
+    "jinja2>=3.1,<4",
 ]
 
 [project.urls]

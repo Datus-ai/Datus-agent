@@ -7,9 +7,10 @@ import os
 import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Set, Union
 
 from datus.configuration.node_type import NodeType
+from datus.configuration.project_config import PluginActivation
 from datus.observability.config import ObservabilityConfig
 from datus.schemas.base import BaseInput
 from datus.schemas.node_models import StrategyType
@@ -123,6 +124,46 @@ def _coerce_bool(value: Any, default: bool) -> bool:
         if normalized in {"0", "false", "no", "off", ""}:
             return False
     return bool(value)
+
+
+def _normalize_plugin_activations(raw: Any) -> Dict[str, "PluginActivation"]:
+    """Coerce a raw ``active_plugins`` value into ``{name: PluginActivation}``.
+
+    Accepts the value forwarded by ``_apply_project_override`` (already
+    :class:`PluginActivation` instances) as well as plain dicts / partial
+    shapes passed by API bootstraps or tests. Non-mapping inputs and malformed
+    entries are dropped so a bad value can never crash config construction.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    normalized: Dict[str, PluginActivation] = {}
+    for name, spec in raw.items():
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if isinstance(spec, PluginActivation):
+            normalized[name.strip()] = spec
+        elif isinstance(spec, dict):
+            profiles = spec.get("active_profile")
+            if isinstance(profiles, str):
+                profiles = [profiles]
+            elif isinstance(profiles, list):
+                profiles = [p for p in profiles if isinstance(p, str) and p.strip()] or None
+            else:
+                profiles = None
+            normalized[name.strip()] = PluginActivation(
+                enabled=_coerce_bool(spec.get("enabled"), True),
+                active_profile=profiles,
+            )
+        elif isinstance(spec, bool):
+            # Tolerate the shorthand ``{name: true/false}``.
+            normalized[name.strip()] = PluginActivation(enabled=spec)
+        elif isinstance(spec, str) and spec.strip():
+            # Tolerate the ``{name: profile}`` shorthand (single active profile).
+            normalized[name.strip()] = PluginActivation(enabled=True, active_profile=[spec.strip()])
+        elif isinstance(spec, list):
+            profiles = [p for p in spec if isinstance(p, str) and p.strip()] or None
+            normalized[name.strip()] = PluginActivation(enabled=True, active_profile=profiles)
+    return normalized
 
 
 def _coerce_numeric_fields(kwargs: Dict[str, Any], field_specs) -> None:
@@ -817,13 +858,17 @@ class AgentConfig:
         self._active_dashboard: Optional[str] = kwargs.get("active_dashboard") or None
         self._active_scheduler: Optional[str] = kwargs.get("active_scheduler") or None
         self._active_semantic: Optional[str] = kwargs.get("active_semantic") or None
-        # Project-level active plugin profile pins forwarded by
-        # ``_apply_project_override`` from ``./.datus/config.yml`` ``plugins:``.
-        # Maps a plugin name to the profile ``datus <plugin>`` should use when
-        # ``--profile`` is omitted. Empty means "no project pin" — profile
-        # resolution then falls back to the ``default: true`` flag / sole entry.
+        # Project-level plugin activation forwarded by ``_apply_project_override``
+        # from ``./.datus/config.yml`` ``plugins:``. Maps a plugin name to a
+        # :class:`PluginActivation` (enabled + active_profile list).
+        # ``_plugins_section_present`` distinguishes "the ``plugins:`` key was
+        # written" (authoritative whitelist — unlisted plugins are inactive)
+        # from "no ``plugins:`` key at all" (every installed plugin active).
+        # The loader only forwards ``active_plugins`` when the section is
+        # present, so a mapping value (even empty) signals presence.
         _active_plugins_raw = kwargs.get("active_plugins")
-        self._active_plugins: Dict[str, str] = _active_plugins_raw if isinstance(_active_plugins_raw, dict) else {}
+        self._plugins_section_present: bool = isinstance(_active_plugins_raw, dict)
+        self._active_plugins: Dict[str, PluginActivation] = _normalize_plugin_activations(_active_plugins_raw)
         self._runtime_db_context: Dict[str, str] = {}
         # Shared lazily-loaded ``conf/providers.yml`` catalog (metadata only:
         # default_model, base_url, api_key_env, type, model_overrides). Kept
@@ -1259,7 +1304,7 @@ class AgentConfig:
             try:
                 from datus.plugins.registry import collect_plugin_cli_permissions
 
-                self.plugin_bash_rules = collect_plugin_cli_permissions()
+                self.plugin_bash_rules = collect_plugin_cli_permissions(self.active_plugin_names())
             except Exception as e:
                 logger.warning(f"Plugin CLI permission collection failed: {e}; continuing without plugin rules")
 
@@ -1454,16 +1499,74 @@ class AgentConfig:
             ),
         )
 
+    def plugins_section_present(self) -> bool:
+        """True when ``./.datus/config.yml`` wrote an explicit ``plugins:`` key.
+
+        When ``False`` the section is absent and every installed plugin (and
+        all its profiles) is active. When ``True`` the section is the
+        authoritative activation whitelist.
+        """
+        return getattr(self, "_plugins_section_present", False)
+
+    def plugin_active(self, name: str) -> bool:
+        """Whether ``name`` is active for this project.
+
+        ``False`` when the global master switch ``plugins_enabled`` is off, or
+        when the ``plugins:`` section is present and ``name`` is either unlisted
+        or listed with ``enabled: false``. When the section is absent every
+        installed plugin is active.
+        """
+        if not getattr(self, "plugins_enabled", True):
+            return False
+        if not getattr(self, "_plugins_section_present", False):
+            return True
+        activation = getattr(self, "_active_plugins", {}).get(name)
+        return activation is not None and activation.enabled
+
+    def active_plugin_names(self) -> Optional[Set[str]]:
+        """Set of active plugin names, or ``None`` meaning "no filter (all)".
+
+        Returned to the plugin registry's collection functions to gate which
+        installed plugins contribute skills / prompt sections / tool
+        transformers / bash rules. ``None`` (section absent) means every plugin
+        passes; an empty set means none pass; the master switch being off also
+        yields an empty set. Uses ``getattr`` defaults so it is safe to call
+        during ``__init__`` (permission collection) before every attribute is
+        assigned.
+        """
+        if not getattr(self, "plugins_enabled", True):
+            return set()
+        if not getattr(self, "_plugins_section_present", False):
+            return None
+        return {name for name, act in getattr(self, "_active_plugins", {}).items() if act.enabled}
+
+    def active_plugin_profiles(self, plugin: str) -> Optional[List[str]]:
+        """Active profile names pinned for ``plugin``, or ``None`` for "all".
+
+        ``None`` when the section is absent or the plugin is listed without an
+        ``active_profile`` narrowing. An empty list means the plugin is not
+        active (unlisted or disabled) — callers should gate on
+        :meth:`plugin_active` first.
+        """
+        if not getattr(self, "_plugins_section_present", False):
+            return None
+        activation = getattr(self, "_active_plugins", {}).get(plugin)
+        if activation is None or not activation.enabled:
+            return []
+        return activation.active_profile
+
     def get_plugin_profile(self, plugin: str, profile: Optional[str] = None) -> Dict[str, Any]:
         """Resolve the active profile config dict for ``plugin``.
 
-        Resolution order when ``profile`` is not given explicitly:
-        ``--profile`` argument → project pin (``./.datus/config.yml``
-        ``plugins.<plugin>``) → the profile flagged ``default: true`` (more
-        than one is an error) → the sole profile. When the plugin has no
+        Resolution order when ``profile`` is not given explicitly: the profiles
+        are first narrowed to the project's ``active_profile`` pins (when the
+        ``plugins:`` section pins any), then resolved by the profile flagged
+        ``default: true`` (more than one is an error) → the sole (narrowed)
+        profile. So pinning exactly one ``active_profile`` makes it the
+        ``datus <plugin>`` default. When the plugin has no
         ``agent.plugins.<plugin>`` section at all, an empty dict is returned so
-        config-free plugins still run. A plugin with multiple profiles and no
-        way to disambiguate raises, asking the user to pass ``--profile``.
+        config-free plugins still run. Multiple candidates with no way to
+        disambiguate raises, asking the user to pass ``--profile``.
         """
         profiles = self.plugin_services.get(plugin) or {}
 
@@ -1478,19 +1581,24 @@ class AgentConfig:
         if not profiles:
             return {}
 
-        pinned = self._active_plugins.get(plugin)
+        # Narrow to the project's active profiles when the plugins section pins
+        # a subset; a pin that matches nothing configured degrades to "all".
+        candidates = profiles
+        pinned = self.active_plugin_profiles(plugin)
         if pinned:
-            if pinned in profiles:
-                return profiles[pinned]
-            logger.warning(
-                "Project pin plugins.%s=`%s` is not configured under `agent.plugins.%s`; "
-                "falling back to the default profile.",
-                plugin,
-                pinned,
-                plugin,
-            )
+            narrowed = {name: cfg for name, cfg in profiles.items() if name in pinned}
+            if narrowed:
+                candidates = narrowed
+            else:
+                logger.warning(
+                    "Project active_profile pin for plugin `%s` (%s) matches no configured profile "
+                    "under `agent.plugins.%s`; considering all profiles.",
+                    plugin,
+                    pinned,
+                    plugin,
+                )
 
-        defaults = [name for name, cfg in profiles.items() if isinstance(cfg, dict) and cfg.get("default")]
+        defaults = [name for name, cfg in candidates.items() if isinstance(cfg, dict) and cfg.get("default")]
         if len(defaults) > 1:
             raise DatusException(
                 ErrorCode.COMMON_CONFIG_ERROR,
@@ -1500,15 +1608,15 @@ class AgentConfig:
                 ),
             )
         if defaults:
-            return profiles[defaults[0]]
-        if len(profiles) == 1:
-            return next(iter(profiles.values()))
+            return candidates[defaults[0]]
+        if len(candidates) == 1:
+            return next(iter(candidates.values()))
 
         raise DatusException(
             ErrorCode.COMMON_CONFIG_ERROR,
             message=(
-                f"Multiple profiles configured for plugin `{plugin}` and none marked "
-                f"`default: true`; pass --profile <name>. Configured: {sorted(profiles)}"
+                f"Multiple profiles active for plugin `{plugin}` and none marked "
+                f"`default: true`; pass --profile <name>. Active: {sorted(candidates)}"
             ),
         )
 
@@ -1615,6 +1723,134 @@ class AgentConfig:
         current = load_project_override(cwd=str(self._project_root)) or ProjectOverride()
         setattr(current, field_name, value)
         save_project_override(current, cwd=str(self._project_root))
+
+    def set_plugin_activation(
+        self,
+        name: str,
+        *,
+        enabled: Optional[bool] = None,
+        active_profiles: Optional[List[str]] = None,
+        clear_profiles: bool = False,
+        persist: bool = True,
+    ) -> None:
+        """Update this project's activation for plugin ``name`` in memory and YAML.
+
+        Writing any plugin activation makes ``./.datus/config.yml`` carry the
+        ``plugins:`` section, which flips activation to whitelist mode — every
+        installed plugin the section does not list becomes inactive. To keep
+        the previous "everything active" behaviour when the section was absent,
+        the first write seeds an explicit ``enabled: true`` entry for every
+        currently-installed plugin, then applies the requested change on top.
+
+        ``enabled=None`` leaves the flag unchanged; ``active_profiles`` replaces
+        the profile pins (``clear_profiles=True`` resets them to "all"). When
+        ``persist`` is ``True`` the change is written to
+        ``./.datus/config.yml``.
+        """
+        if not self._plugins_section_present:
+            # Seed the whitelist with every installed plugin so turning one
+            # entry on/off does not silently deactivate the others. Draw from
+            # BOTH entry-point discovery and the managed store: entry points
+            # may be empty on first load (a managed plugin dir not yet on
+            # sys.path), and seeding only ``name`` would flip the project into
+            # whitelist mode with a single entry, deactivating everything else.
+            installed: set = set()
+            try:
+                from datus.plugins.registry import iter_plugin_entry_points
+
+                installed.update(
+                    getattr(ep, "name", None) for ep in iter_plugin_entry_points() if getattr(ep, "name", None)
+                )
+            except Exception as exc:  # noqa: BLE001 - discovery must not block a config edit
+                logger.debug("plugin entry-point discovery for activation seed failed: %s", exc)
+            try:
+                from datus.plugins import store
+
+                installed.update(
+                    meta.get("name") for meta in store.iter_installed() if isinstance(meta.get("name"), str)
+                )
+            except Exception as exc:  # noqa: BLE001 - store scan must not block a config edit
+                logger.debug("managed-store scan for activation seed failed: %s", exc)
+            installed.discard(None)
+            installed.add(name)
+            self._active_plugins = {p: PluginActivation(enabled=True) for p in sorted(installed)}
+            self._plugins_section_present = True
+
+        activation = self._active_plugins.get(name) or PluginActivation()
+        if enabled is not None:
+            activation.enabled = bool(enabled)
+        if clear_profiles:
+            activation.active_profile = None
+        elif active_profiles is not None:
+            cleaned = [p.strip() for p in active_profiles if isinstance(p, str) and p.strip()]
+            activation.active_profile = cleaned or None
+        self._active_plugins[name] = activation
+
+        if persist:
+            self._persist_plugins()
+
+    def _persist_plugins(self) -> None:
+        """Write the in-memory plugin activation map to ``./.datus/config.yml``."""
+        from datus.configuration.project_config import (
+            ProjectOverride,
+            load_project_override,
+            save_project_override,
+        )
+
+        current = load_project_override(cwd=str(self._project_root)) or ProjectOverride()
+        current.plugins = dict(self._active_plugins)
+        save_project_override(current, cwd=str(self._project_root))
+
+    def save_plugin_profile(self, plugin: str, profile: str, config: Dict[str, Any]) -> None:
+        """Create or replace ``agent.plugins.<plugin>.<profile>`` in agent.yml.
+
+        Writes the global agent config (mirroring the ``/model`` custom-model
+        persistence) and re-parses ``self.plugin_services`` so the new profile
+        is visible in-process without a restart. Secret values should be passed
+        as ``${ENV_VAR}`` placeholders by the caller — this method stores them
+        verbatim and never expands them into the file.
+        """
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        mgr = configuration_manager()
+        plugins = dict(mgr.get("plugins", {}) or {})
+        plugin_map = dict(plugins.get(plugin, {}) or {})
+        plugin_map[profile] = dict(config)
+        plugins[plugin] = plugin_map
+        if not mgr.update_item("plugins", plugins, delete_old_key=True, save=True):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Failed to persist profile `{profile}` for plugin `{plugin}`"},
+            )
+        self.init_plugin_services(plugins)
+
+    def delete_plugin_profile(self, plugin: str, profile: str) -> bool:
+        """Remove ``agent.plugins.<plugin>.<profile>`` from agent.yml.
+
+        Returns ``False`` when the profile (or plugin) is not configured.
+        Re-parses ``self.plugin_services`` on success.
+        """
+        from datus.configuration.agent_config_loader import configuration_manager
+
+        mgr = configuration_manager()
+        plugins = dict(mgr.get("plugins", {}) or {})
+        plugin_map = dict(plugins.get(plugin, {}) or {})
+        if profile not in plugin_map:
+            return False
+        del plugin_map[profile]
+        if plugin_map:
+            plugins[plugin] = plugin_map
+        else:
+            plugins.pop(plugin, None)
+        if not mgr.update_item("plugins", plugins, delete_old_key=True, save=True):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": f"Failed to persist deletion of profile `{profile}` for plugin `{plugin}`"
+                },
+            )
+        self.init_plugin_services(plugins)
+        return True
 
     def default_semantic_adapter(self) -> Optional[str]:
         """Return the semantic adapter marked as the global default, or ``None``.

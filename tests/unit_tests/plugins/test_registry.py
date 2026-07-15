@@ -2,156 +2,21 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""Unit tests for ``datus.plugins.registry`` (``datus.plugins`` discovery)."""
+"""Unit tests for ``datus.plugins.registry`` (manifest discovery + collection).
 
+Uses the ``plugin_env`` fixture (conftest) which builds REAL importable
+packages with a ``datus-plugin.yml`` and fake ``datus.plugins`` entry points,
+so these tests exercise the actual ``find_spec``-without-import path.
+"""
+
+import importlib
 import importlib.metadata as importlib_metadata
 
 from datus.plugins import registry
 
+MINIMAL = "manifest_version: 1\n"
 
-class _FakeEntryPoint:
-    def __init__(self, name, obj, *, raises=False, group="datus.plugins"):
-        self.name = name
-        self.group = group
-        self._obj = obj
-        self._raises = raises
-
-    def load(self):
-        if self._raises:
-            raise ImportError("cannot import plugin")
-        return self._obj
-
-
-class _FakeEntryPoints:
-    def __init__(self, eps):
-        self._eps = eps
-
-    def select(self, *, group, name=None):
-        out = [ep for ep in self._eps if ep.group == group]
-        if name is not None:
-            out = [ep for ep in out if ep.name == name]
-        return out
-
-
-def _patch(monkeypatch, eps):
-    monkeypatch.setattr(importlib_metadata, "entry_points", lambda: _FakeEntryPoints(eps))
-
-
-class _Plugin:
-    """A minimal well-formed plugin class."""
-
-    def __init__(self, profile=None):
-        self.profile = profile or {}
-
-    @classmethod
-    def skills_dir(cls):  # overridden per-test via monkeypatch when a real dir is needed
-        return None
-
-    def run_cli(self, argv):
-        return 0
-
-
-def test_load_plugin_class_matching(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin)])
-    assert registry.load_plugin_class("hello") is _Plugin
-
-
-def test_load_plugin_class_unknown_returns_none(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin)])
-    assert registry.load_plugin_class("mystery") is None
-
-
-def test_load_plugin_class_load_failure_returns_none(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin, raises=True)])
-    assert registry.load_plugin_class("hello") is None
-
-
-def test_load_plugin_class_multiple_uses_first(monkeypatch):
-    class _Other(_Plugin):
-        pass
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin), _FakeEntryPoint("hello", _Other)])
-    assert registry.load_plugin_class("hello") is _Plugin
-
-
-def test_iter_plugin_entry_points(monkeypatch):
-    eps = [_FakeEntryPoint("hello", _Plugin), _FakeEntryPoint("dagster", _Plugin)]
-    _patch(monkeypatch, eps)
-    assert {ep.name for ep in registry.iter_plugin_entry_points()} == {"hello", "dagster"}
-
-
-def test_plugin_skill_directories_collects_existing(monkeypatch, tmp_path):
-    skill_dir = tmp_path / "skills"
-    skill_dir.mkdir()
-
-    class _WithSkills(_Plugin):
-        @classmethod
-        def skills_dir(cls):
-            return str(skill_dir)
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithSkills)])
-    assert registry.plugin_skill_directories() == [str(skill_dir)]
-
-
-def test_plugin_skill_directories_skips_missing_dir(monkeypatch):
-    class _BadDir(_Plugin):
-        @classmethod
-        def skills_dir(cls):
-            return "/no/such/dir/at/all"
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _BadDir)])
-    assert registry.plugin_skill_directories() == []
-
-
-def test_plugin_skill_directories_skips_plugin_without_skills(monkeypatch):
-    class _NoSkills:
-        def run_cli(self, argv):
-            return 0
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _NoSkills)])
-    assert registry.plugin_skill_directories() == []
-
-
-def test_plugin_skill_directories_dedup(monkeypatch, tmp_path):
-    skill_dir = tmp_path / "skills"
-    skill_dir.mkdir()
-
-    class _WithSkills(_Plugin):
-        @classmethod
-        def skills_dir(cls):
-            return str(skill_dir)
-
-    _patch(monkeypatch, [_FakeEntryPoint("a", _WithSkills), _FakeEntryPoint("b", _WithSkills)])
-    # Same directory contributed by two plugins is de-duplicated.
-    assert registry.plugin_skill_directories() == [str(skill_dir)]
-
-
-def test_plugin_skill_directories_survives_bad_plugin(monkeypatch, tmp_path):
-    skill_dir = tmp_path / "skills"
-    skill_dir.mkdir()
-
-    class _WithSkills(_Plugin):
-        @classmethod
-        def skills_dir(cls):
-            return str(skill_dir)
-
-    _patch(
-        monkeypatch,
-        [_FakeEntryPoint("broken", _Plugin, raises=True), _FakeEntryPoint("hello", _WithSkills)],
-    )
-    # A broken plugin is skipped; the good one still contributes.
-    assert registry.plugin_skill_directories() == [str(skill_dir)]
-
-
-def test_lookup_never_raises_on_entry_points_failure(monkeypatch):
-    def boom():
-        raise RuntimeError("entry_points exploded")
-
-    monkeypatch.setattr(importlib_metadata, "entry_points", boom)
-    assert registry.load_plugin_class("hello") is None
-    assert registry.iter_plugin_entry_points() == []
-    assert registry.plugin_skill_directories() == []
-    assert registry.plugin_system_prompt_sections(_FakeConfig({})) == []
+TRANSFORMER_MODULE = "def passthrough(tool_name, args, context):\n    return args\n\nNOT_CALLABLE = 42\n"
 
 
 class _FakeConfig:
@@ -161,110 +26,249 @@ class _FakeConfig:
         self.plugin_services = plugin_services
 
 
-def test_system_prompt_sections_collects_and_passes_profiles(monkeypatch):
-    captured = {}
+# ---------------------------------------------------------------------------
+# Discovery / load_plugin_manifest
+# ---------------------------------------------------------------------------
 
-    class _WithPrompt(_Plugin):
-        @classmethod
-        def system_prompt(cls, profiles):
-            captured["profiles"] = profiles
-            return "## Hello\nManage DAGs."
 
-    profiles = {"local": {"name": "local", "api_base_url": "http://h"}}
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithPrompt)])
-    cfg = _FakeConfig({"hello": profiles})
+def test_load_plugin_manifest_matching(plugin_env):
+    plugin_env("hello", MINIMAL + "description: Hi.\n")
+    manifest = registry.load_plugin_manifest("hello")
+    assert manifest.name == "hello"
+    assert manifest.description == "Hi."
 
-    sections = registry.plugin_system_prompt_sections(cfg)
 
-    # A datus-owned config-location preamble is prepended to plugin sections.
+def test_load_plugin_manifest_unknown_returns_none(plugin_env):
+    plugin_env("hello", MINIMAL)
+    assert registry.load_plugin_manifest("mystery") is None
+
+
+def test_load_plugin_manifest_missing_manifest_returns_none(plugin_env, caplog):
+    plugin_env("hello", manifest_yaml=None)  # importable package, no yml
+    with caplog.at_level("WARNING"):
+        assert registry.load_plugin_manifest("hello") is None
+    assert "datus-plugin.yml" in caplog.text
+
+
+def test_load_plugin_manifest_legacy_class_entry_rejected(plugin_env, caplog):
+    pkg = plugin_env("hello", MINIMAL, value="OVERRIDDEN")
+    # Simulate the old ``pkg.plugin:Class`` entry-point style.
+    plugin_env("legacy", MINIMAL, value=f"{pkg.name}:HelloPlugin")
+    with caplog.at_level("WARNING"):
+        assert registry.load_plugin_manifest("legacy") is None
+    assert "legacy class-based contract" in caplog.text
+
+
+def test_load_plugin_manifest_dotted_entry_point_rejected(plugin_env, caplog):
+    pkg = plugin_env("hello", MINIMAL)
+    # A dotted entry-point value would make ``find_spec`` import the parent
+    # package (executing plugin code) before the manifest is read; discovery
+    # must reject it and only accept bare top-level package names.
+    plugin_env("dotted", MINIMAL, value=f"{pkg.name}.submodule")
+    with caplog.at_level("WARNING"):
+        assert registry.load_plugin_manifest("dotted") is None
+    assert "bare top-level package" in caplog.text
+
+
+def test_load_plugin_manifest_multiple_uses_first(plugin_env, caplog):
+    first = plugin_env("hello", MINIMAL + "description: first\n")
+    plugin_env("hello", MINIMAL + "description: second\n")
+    with caplog.at_level("WARNING"):
+        manifest = registry.load_plugin_manifest("hello")
+    assert manifest.description == "first"
+    assert manifest.package_dir == first
+    assert "Multiple" in caplog.text
+
+
+def test_iter_plugin_entry_points(plugin_env):
+    plugin_env("hello", MINIMAL)
+    plugin_env("dagster", MINIMAL)
+    assert {ep.name for ep in registry.iter_plugin_entry_points()} == {"hello", "dagster"}
+
+
+def test_lookup_never_raises_on_entry_points_failure(monkeypatch):
+    def boom():
+        raise RuntimeError("entry_points exploded")
+
+    monkeypatch.setattr(importlib_metadata, "entry_points", boom)
+    assert registry.load_plugin_manifest("hello") is None
+    assert registry.iter_plugin_entry_points() == []
+    assert registry.plugin_skill_directories() == []
+    assert registry.plugin_system_prompt_sections(_FakeConfig({})) == []
+    assert registry.collect_plugin_cli_permissions() == {}
+    assert registry.collect_plugin_tool_transformers() == {}
+
+
+def test_unimportable_package_skipped(plugin_env, caplog):
+    plugin_env("hello", MINIMAL, value="no_such_package_anywhere_xyz")
+    with caplog.at_level("WARNING"):
+        assert registry.load_plugin_manifest("hello") is None
+    assert "not importable" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# The no-code-execution property
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_surfaces_never_execute_plugin_code(plugin_env):
+    """skills / permissions / prompt / schema collect fine even when importing
+    the package would explode — proof that no plugin code runs."""
+    pkg = plugin_env(
+        "hello",
+        MINIMAL
+        + "cli: {pkg}.cli:main\n"
+        + "skills: skills\n"
+        + "system_prompt: prompt.md.j2\n"
+        + "permissions:\n  normal:\n    allow: ['greet:*']\n"
+        + "config_schema:\n  type: object\n  properties:\n    api_key: {type: string}\n",
+        init_body="raise AssertionError('plugin package was imported')",
+        files={"prompt.md.j2": "## hello section"},
+    )
+    (pkg / "skills").mkdir()
+
+    assert registry.plugin_skill_directories() == [str(pkg / "skills")]
+    rules = registry.collect_plugin_cli_permissions()
+    assert rules["normal"].allow == ["datus hello greet:*"]
+    sections = registry.plugin_system_prompt_sections(_FakeConfig({}))
+    assert "## hello section" in sections
+    assert registry.plugin_config_schema("hello") == [
+        {"name": "api_key", "description": "", "required": False, "secret": False}
+    ]
+    # Only an actual code ref resolution imports the package — and the
+    # exploding __init__ surfaces as a warn-and-None, never a crash.
+    assert registry.resolve_code_ref(f"{pkg.name}.cli:main", "hello") is None
+
+
+def test_transformer_import_is_lazy(plugin_env):
+    """The plugin module is imported by collect_plugin_tool_transformers, not
+    by manifest loading or the other collectors."""
+    pkg = plugin_env(
+        "hello",
+        MINIMAL + "tool_transformers:\n  execute_sql: {pkg}.tf:passthrough\nskills: skills\n",
+        init_body="import pathlib\npathlib.Path(__file__).parent.joinpath('IMPORTED').touch()\n",
+        files={"tf.py": TRANSFORMER_MODULE},
+    )
+    (pkg / "skills").mkdir()
+    marker = pkg / "IMPORTED"
+
+    registry.load_plugin_manifest("hello")
+    registry.plugin_skill_directories()
+    registry.collect_plugin_cli_permissions()
+    assert not marker.exists()
+
+    collected = registry.collect_plugin_tool_transformers()
+    assert marker.exists()
+    assert len(collected["execute_sql"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# plugin_skill_directories
+# ---------------------------------------------------------------------------
+
+
+def test_skill_directories_collects_existing(plugin_env):
+    pkg = plugin_env("hello", MINIMAL + "skills: skills\n")
+    (pkg / "skills").mkdir()
+    assert registry.plugin_skill_directories() == [str(pkg / "skills")]
+
+
+def test_skill_directories_skips_missing_dir(plugin_env):
+    plugin_env("hello", MINIMAL + "skills: skills\n")  # declared but not created
+    assert registry.plugin_skill_directories() == []
+
+
+def test_skill_directories_skips_plugin_without_skills(plugin_env):
+    plugin_env("hello", MINIMAL)
+    assert registry.plugin_skill_directories() == []
+
+
+def test_skill_directories_dedup(plugin_env):
+    pkg = plugin_env("a", MINIMAL + "skills: skills\n")
+    (pkg / "skills").mkdir()
+    # A second entry point resolving to the same package contributes the same dir.
+    plugin_env("b", manifest_yaml=None, value=pkg.name)
+    assert registry.plugin_skill_directories() == [str(pkg / "skills")]
+
+
+def test_skill_directories_escape_rejected(plugin_env, caplog):
+    pkg = plugin_env("hello", MINIMAL + "skills: ../evil\n")
+    (pkg.parent / "evil").mkdir()  # exists, but outside the package
+    with caplog.at_level("WARNING"):
+        assert registry.plugin_skill_directories() == []
+    assert "escapes the package directory" in caplog.text
+
+
+def test_skill_directories_survives_bad_plugin(plugin_env):
+    plugin_env("broken", manifest_yaml=None)
+    pkg = plugin_env("hello", MINIMAL + "skills: skills\n")
+    (pkg / "skills").mkdir()
+    assert registry.plugin_skill_directories() == [str(pkg / "skills")]
+
+
+# ---------------------------------------------------------------------------
+# plugin_system_prompt_sections
+# ---------------------------------------------------------------------------
+
+ECHO_TEMPLATE = "PROFILES={{ profiles.keys()|sort|join(',') }}"
+
+
+def _prompt_plugin(plugin_env, name="hello", template="## Hello\nManage DAGs.", schema_props=None):
+    schema = ""
+    if schema_props:
+        props = "\n".join(f"    {p}: {{type: string}}" for p in schema_props)
+        schema = f"config_schema:\n  type: object\n  properties:\n{props}\n"
+    return plugin_env(name, MINIMAL + "system_prompt: prompt.md.j2\n" + schema, files={"prompt.md.j2": template})
+
+
+def test_system_prompt_sections_renders_template_with_preamble(plugin_env):
+    _prompt_plugin(plugin_env)
+    sections = registry.plugin_system_prompt_sections(_FakeConfig({"hello": {}}))
     assert len(sections) == 2
     assert sections[0].startswith("## Plugins")
     assert sections[1] == "## Hello\nManage DAGs."
-    # datus indexes plugin_services by the entry-point name and passes it verbatim.
-    assert captured["profiles"] is profiles
 
 
-def test_system_prompt_sections_skips_plugin_without_hook(monkeypatch):
-    class _NoPrompt:
-        def run_cli(self, argv):
-            return 0
+def test_system_prompt_sections_passes_stripped_profiles(plugin_env):
+    _prompt_plugin(plugin_env, template=ECHO_TEMPLATE, schema_props=["base_url"])
+    profiles = {"local": {"base_url": "http://h", "api_key": "sk-REAL"}}
+    sections = registry.plugin_system_prompt_sections(_FakeConfig({"hello": profiles}))
+    assert "PROFILES=local" in sections
+    assert all("sk-REAL" not in s for s in sections)
 
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _NoPrompt)])
+
+def test_system_prompt_sections_skips_plugin_without_template(plugin_env):
+    plugin_env("hello", MINIMAL)
     assert registry.plugin_system_prompt_sections(_FakeConfig({"hello": {"p": {}}})) == []
 
 
-def test_system_prompt_sections_filters_empty_and_none(monkeypatch):
-    class _Empty(_Plugin):
-        @classmethod
-        def system_prompt(cls, profiles):
-            return "   "
-
-    class _NoneRet(_Plugin):
-        @classmethod
-        def system_prompt(cls, profiles):
-            return None
-
-    _patch(monkeypatch, [_FakeEntryPoint("a", _Empty), _FakeEntryPoint("b", _NoneRet)])
-    assert registry.plugin_system_prompt_sections(_FakeConfig({})) == []
-
-
-def test_system_prompt_sections_survives_raising_plugin(monkeypatch):
-    class _Boom(_Plugin):
-        @classmethod
-        def system_prompt(cls, profiles):
-            raise RuntimeError("nope")
-
-    class _Good(_Plugin):
-        @classmethod
-        def system_prompt(cls, profiles):
-            return "## Good"
-
-    _patch(monkeypatch, [_FakeEntryPoint("boom", _Boom), _FakeEntryPoint("good", _Good)])
-    # A raising plugin is skipped; the good one still contributes (after the preamble).
+def test_system_prompt_sections_survives_broken_template(plugin_env):
+    _prompt_plugin(plugin_env, name="boom", template="{% if %}")
+    _prompt_plugin(plugin_env, name="good", template="## Good")
     sections = registry.plugin_system_prompt_sections(_FakeConfig({}))
     assert sections[0].startswith("## Plugins")
     assert sections[1:] == ["## Good"]
 
 
-def test_system_prompt_sections_defaults_missing_profiles_to_empty(monkeypatch):
-    captured = {}
-
-    class _WithPrompt(_Plugin):
-        @classmethod
-        def system_prompt(cls, profiles):
-            captured["profiles"] = profiles
-            return None
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithPrompt)])
-    # No ``hello`` key in plugin_services -> the plugin receives an empty dict.
-    registry.plugin_system_prompt_sections(_FakeConfig({}))
-    assert captured["profiles"] == {}
-
-
-class _WithStaticPrompt(_Plugin):
-    @classmethod
-    def system_prompt(cls, profiles):
-        return "## Hello\nManage DAGs."
-
-
-def test_preamble_names_config_file_location(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithStaticPrompt)])
-    monkeypatch.setattr(registry, "_agent_config_location", lambda: "/srv/conf/agent.yml")
-
+def test_system_prompt_sections_defaults_missing_profiles_to_empty(plugin_env):
+    _prompt_plugin(plugin_env, template="{% if profiles %}configured{% else %}unconfigured{% endif %}")
     sections = registry.plugin_system_prompt_sections(_FakeConfig({}))
+    assert "unconfigured" in sections
 
+
+def test_preamble_names_config_file_location(plugin_env, monkeypatch):
+    _prompt_plugin(plugin_env)
+    monkeypatch.setattr(registry, "_agent_config_location", lambda: "/srv/conf/agent.yml")
+    sections = registry.plugin_system_prompt_sections(_FakeConfig({}))
     assert "`/srv/conf/agent.yml`" in sections[0]
     assert "agent.plugins.<plugin>.<profile>" in sections[0]
 
 
-def test_preamble_degrades_without_config_path(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithStaticPrompt)])
+def test_preamble_degrades_without_config_path(plugin_env, monkeypatch):
+    _prompt_plugin(plugin_env)
     monkeypatch.setattr(registry, "_agent_config_location", lambda: None)
-
     sections = registry.plugin_system_prompt_sections(_FakeConfig({}))
-
     assert sections[0].startswith("## Plugins")
-    assert "agent.plugins.<plugin>.<profile>" in sections[0]
     assert "agent.yml" in sections[0]  # generic wording instead of a path
 
 
@@ -290,22 +294,73 @@ def test_agent_config_location_none_when_unresolvable(monkeypatch):
     assert registry._agent_config_location() is None
 
 
+def _profiles_cfg(active_profiles):
+    class _Cfg:
+        plugin_services = {"hello": {"prod": {"name": "prod"}, "staging": {"name": "staging"}}}
+
+        def active_plugin_names(self):
+            return {"hello"}
+
+        def active_plugin_profiles(self, name):
+            return active_profiles
+
+    return _Cfg()
+
+
+def test_system_prompt_narrows_to_active_profiles(plugin_env):
+    """Only the project-pinned profiles reach the LLM, not every environment."""
+    _prompt_plugin(plugin_env, template=ECHO_TEMPLATE)
+    sections = registry.plugin_system_prompt_sections(_profiles_cfg(["staging"]))
+    assert "PROFILES=staging" in sections
+    assert "PROFILES=prod,staging" not in sections
+
+
+def test_system_prompt_no_pin_passes_all_profiles(plugin_env):
+    _prompt_plugin(plugin_env, template=ECHO_TEMPLATE)
+    assert "PROFILES=prod,staging" in registry.plugin_system_prompt_sections(_profiles_cfg(None))
+
+
+def test_system_prompt_stale_pin_falls_back_to_all(plugin_env):
+    """A pin that matches no configured profile surfaces everything rather than
+    blanking the plugin out of the prompt."""
+    _prompt_plugin(plugin_env, template=ECHO_TEMPLATE)
+    assert "PROFILES=prod,staging" in registry.plugin_system_prompt_sections(_profiles_cfg(["deleted"]))
+
+
+def test_system_prompt_sections_respect_active_names(plugin_env):
+    # Distinct per-plugin output so the assertion proves the *right* plugin was
+    # kept — identical text would pass even if the filter let plugin "b" through.
+    _prompt_plugin(plugin_env, name="a", template="## Plugin A section")
+    _prompt_plugin(plugin_env, name="b", template="## Plugin B section")
+
+    class _Cfg:
+        plugin_services = {}
+
+        def active_plugin_names(self):
+            return {"a"}
+
+    sections = registry.plugin_system_prompt_sections(_Cfg())
+    assert any("## Plugin A section" in s for s in sections)
+    assert not any("## Plugin B section" in s for s in sections)
+
+
 # ---------------------------------------------------------------------------
 # collect_plugin_cli_permissions
 # ---------------------------------------------------------------------------
 
+PERMS = (
+    "permissions:\n"
+    "  normal:\n"
+    "    allow: ['greet:*', 'version']\n"
+    "    ask: ['config set:*']\n"
+    "    deny: ['config wipe:*']\n"
+    "  auto:\n"
+    "    allow: [':*']\n"
+)
 
-class _WithCliPerms(_Plugin):
-    @classmethod
-    def cli_permissions(cls):
-        return {
-            "normal": {"allow": ["greet:*", "version"], "ask": ["config set:*"], "deny": ["config wipe:*"]},
-            "auto": {"allow": [":*"]},
-        }
 
-
-def test_cli_permissions_prefixing_and_shapes(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithCliPerms)])
+def test_cli_permissions_prefixing_and_shapes(plugin_env):
+    plugin_env("hello", MINIMAL + PERMS)
     rules = registry.collect_plugin_cli_permissions()
 
     assert set(rules) == {"normal", "auto"}
@@ -318,8 +373,8 @@ def test_cli_permissions_prefixing_and_shapes(monkeypatch):
     assert rules["auto"].ask == []
 
 
-def test_cli_permissions_never_set_scalar_fields(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithCliPerms)])
+def test_cli_permissions_never_set_scalar_fields(plugin_env):
+    plugin_env("hello", MINIMAL + PERMS)
     rules = registry.collect_plugin_cli_permissions()
     # ``default`` / ``classifier`` must stay unset so the profile posture and
     # merge_with scalar semantics are untouched by plugin declarations.
@@ -328,17 +383,15 @@ def test_cli_permissions_never_set_scalar_fields(monkeypatch):
         assert "classifier" not in ruleset.model_fields_set
 
 
-def test_cli_permissions_dangerous_and_unknown_profiles_dropped(monkeypatch, caplog):
-    class _Overreaching(_Plugin):
-        @classmethod
-        def cli_permissions(cls):
-            return {
-                "dangerous": {"deny": ["config wipe:*"]},
-                "paranoid": {"ask": ["greet:*"]},
-                "normal": {"allow": ["greet:*"]},
-            }
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Overreaching)])
+def test_cli_permissions_dangerous_and_unknown_profiles_dropped(plugin_env, caplog):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "permissions:\n"
+        + "  dangerous:\n    deny: ['config wipe:*']\n"
+        + "  paranoid:\n    ask: ['greet:*']\n"
+        + "  normal:\n    allow: ['greet:*']\n",
+    )
     with caplog.at_level("WARNING"):
         rules = registry.collect_plugin_cli_permissions()
 
@@ -347,20 +400,17 @@ def test_cli_permissions_dangerous_and_unknown_profiles_dropped(monkeypatch, cap
     assert "paranoid" in caplog.text
 
 
-def test_cli_permissions_malformed_entries_skipped(monkeypatch):
-    class _Malformed(_Plugin):
-        @classmethod
-        def cli_permissions(cls):
-            return {
-                "normal": {
-                    "allow": ["greet:*", 42, "", "   "],  # non-str / empty entries dropped
-                    "ask": "not-a-list",  # non-list action dropped
-                    "grant": ["greet:*"],  # unknown action dropped
-                },
-                "auto": ["not-a-dict"],  # non-dict profile dropped
-            }
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Malformed)])
+def test_cli_permissions_malformed_entries_skipped(plugin_env):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "permissions:\n"
+        + "  normal:\n"
+        + "    allow: ['greet:*', 42, '', '   ']\n"  # non-str / empty entries dropped
+        + "    ask: not-a-list\n"  # non-list action dropped
+        + "    grant: ['greet:*']\n"  # unknown action dropped
+        + "  auto: [not-a-dict]\n",  # non-dict profile dropped
+    )
     rules = registry.collect_plugin_cli_permissions()
 
     assert set(rules) == {"normal"}
@@ -369,52 +419,19 @@ def test_cli_permissions_malformed_entries_skipped(monkeypatch):
     assert rules["normal"].deny == []
 
 
-def test_cli_permissions_non_dict_hook_ignored(monkeypatch):
-    class _WrongType(_Plugin):
-        @classmethod
-        def cli_permissions(cls):
-            return ["normal"]
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WrongType)])
+def test_cli_permissions_non_dict_declaration_ignored(plugin_env):
+    plugin_env("hello", MINIMAL + "permissions: [normal]\n")
     assert registry.collect_plugin_cli_permissions() == {}
 
 
-def test_cli_permissions_plain_dict_attribute_accepted(monkeypatch):
-    class _AttrStyle(_Plugin):
-        cli_permissions = {"normal": {"allow": ["greet:*"]}}
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _AttrStyle)])
-    rules = registry.collect_plugin_cli_permissions()
-    assert rules["normal"].allow == ["datus hello greet:*"]
-
-
-def test_cli_permissions_raising_hook_skips_only_that_plugin(monkeypatch):
-    class _Boom(_Plugin):
-        @classmethod
-        def cli_permissions(cls):
-            raise RuntimeError("nope")
-
-    _patch(monkeypatch, [_FakeEntryPoint("boom", _Boom), _FakeEntryPoint("hello", _WithCliPerms)])
-    rules = registry.collect_plugin_cli_permissions()
-    assert rules["normal"].allow == ["datus hello greet:*", "datus hello version"]
-
-
-def test_cli_permissions_plugin_without_hook_skipped(monkeypatch):
-    class _NoHook:
-        def run_cli(self, argv):
-            return 0
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _NoHook)])
+def test_cli_permissions_plugin_without_permissions_skipped(plugin_env):
+    plugin_env("hello", MINIMAL)
     assert registry.collect_plugin_cli_permissions() == {}
 
 
-def test_cli_permissions_duplicate_entry_point_first_wins(monkeypatch, caplog):
-    class _Second(_Plugin):
-        @classmethod
-        def cli_permissions(cls):
-            return {"normal": {"allow": ["other:*"]}}
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithCliPerms), _FakeEntryPoint("hello", _Second)])
+def test_cli_permissions_duplicate_entry_point_first_wins(plugin_env, caplog):
+    plugin_env("hello", MINIMAL + PERMS)
+    plugin_env("hello", MINIMAL + "permissions:\n  normal:\n    allow: ['other:*']\n")
     with caplog.at_level("WARNING"):
         rules = registry.collect_plugin_cli_permissions()
 
@@ -422,146 +439,365 @@ def test_cli_permissions_duplicate_entry_point_first_wins(monkeypatch, caplog):
     assert "Duplicate" in caplog.text
 
 
-def test_cli_permissions_unsafe_entry_point_name_skipped(monkeypatch, caplog):
-    _patch(
-        monkeypatch,
-        [_FakeEntryPoint("evil name", _WithCliPerms), _FakeEntryPoint("*", _WithCliPerms)],
-    )
+def test_cli_permissions_unsafe_entry_point_name_skipped(plugin_env, caplog):
+    plugin_env("evil name", MINIMAL + PERMS)
+    plugin_env("*", MINIMAL + PERMS)
     with caplog.at_level("WARNING"):
         assert registry.collect_plugin_cli_permissions() == {}
     assert "not a safe CLI token" in caplog.text
 
 
-def test_cli_permissions_broken_load_skipped(monkeypatch):
-    _patch(
-        monkeypatch,
-        [_FakeEntryPoint("broken", _WithCliPerms, raises=True), _FakeEntryPoint("hello", _WithCliPerms)],
-    )
+def test_cli_permissions_broken_plugin_skipped(plugin_env):
+    plugin_env("broken", manifest_yaml=None)
+    plugin_env("hello", MINIMAL + PERMS)
     rules = registry.collect_plugin_cli_permissions()
     assert rules["normal"].allow == ["datus hello greet:*", "datus hello version"]
 
 
-def test_cli_permissions_entry_points_failure_returns_empty(monkeypatch):
-    def boom():
-        raise RuntimeError("entry_points exploded")
-
-    monkeypatch.setattr(importlib_metadata, "entry_points", boom)
-    assert registry.collect_plugin_cli_permissions() == {}
-
-
 # ---------------------------------------------------------------------------
-# Tests: collect_plugin_tool_transformers
+# collect_plugin_tool_transformers
 # ---------------------------------------------------------------------------
 
 
-def _sql_transformer(tool_name, args, context):
-    return args
+def _tf_plugin(plugin_env, name="hello", patterns="  db_tools.execute_sql: {pkg}.tf:passthrough\n"):
+    return plugin_env(name, MINIMAL + "tool_transformers:\n" + patterns, files={"tf.py": TRANSFORMER_MODULE})
 
 
-def _audit_transformer(tool_name, args, context):
-    return args
-
-
-class _WithTransformers(_Plugin):
-    @classmethod
-    def tool_transformers(cls):
-        return {"db_tools.execute_sql": _sql_transformer}
-
-
-class _WithTransformerList(_Plugin):
-    @classmethod
-    def tool_transformers(cls):
-        return {"execute_sql": [_audit_transformer, _sql_transformer]}
-
-
-def test_tool_transformers_collects_single_callable(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithTransformers)])
+def test_tool_transformers_collects_single_ref(plugin_env):
+    pkg = _tf_plugin(plugin_env)
     collected = registry.collect_plugin_tool_transformers()
-    assert collected == {"db_tools.execute_sql": [_sql_transformer]}
+    expected = importlib.import_module(f"{pkg.name}.tf").passthrough
+    assert collected == {"db_tools.execute_sql": [expected]}
 
 
-def test_tool_transformers_collects_callable_list(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _WithTransformerList)])
-    collected = registry.collect_plugin_tool_transformers()
-    assert collected == {"execute_sql": [_audit_transformer, _sql_transformer]}
-
-
-def test_tool_transformers_accumulates_across_plugins(monkeypatch):
-    _patch(
-        monkeypatch,
-        [_FakeEntryPoint("a", _WithTransformers), _FakeEntryPoint("b", _WithTransformers)],
+def test_tool_transformers_collects_ref_list(plugin_env):
+    pkg = _tf_plugin(
+        plugin_env,
+        patterns="  execute_sql:\n    - {pkg}.tf:passthrough\n    - {pkg}.tf:passthrough\n",
     )
     collected = registry.collect_plugin_tool_transformers()
-    assert collected == {"db_tools.execute_sql": [_sql_transformer, _sql_transformer]}
+    expected = importlib.import_module(f"{pkg.name}.tf").passthrough
+    assert collected == {"execute_sql": [expected, expected]}
 
 
-def test_tool_transformers_plugin_without_hook_skipped(monkeypatch):
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Plugin)])
+def test_tool_transformers_accumulates_across_plugins(plugin_env):
+    _tf_plugin(plugin_env, name="a")
+    _tf_plugin(plugin_env, name="b")
+    collected = registry.collect_plugin_tool_transformers()
+    assert len(collected["db_tools.execute_sql"]) == 2
+    assert all(callable(t) for t in collected["db_tools.execute_sql"])
+
+
+def test_tool_transformers_plugin_without_declaration_skipped(plugin_env):
+    plugin_env("hello", MINIMAL)
     assert registry.collect_plugin_tool_transformers() == {}
 
 
-def test_tool_transformers_non_dict_declaration_skipped(monkeypatch, caplog):
-    class _BadShape(_Plugin):
-        @classmethod
-        def tool_transformers(cls):
-            return ["not", "a", "dict"]
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _BadShape)])
-    with caplog.at_level("WARNING"):
-        assert registry.collect_plugin_tool_transformers() == {}
-    assert "must return a dict" in caplog.text
-
-
-def test_tool_transformers_raising_declaration_skipped(monkeypatch, caplog):
-    class _Raises(_Plugin):
-        @classmethod
-        def tool_transformers(cls):
-            raise RuntimeError("boom")
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Raises)])
-    with caplog.at_level("WARNING"):
-        assert registry.collect_plugin_tool_transformers() == {}
-    assert "tool_transformers() failed" in caplog.text
-
-
-def test_tool_transformers_non_callable_entries_skipped(monkeypatch, caplog):
-    class _Mixed(_Plugin):
-        @classmethod
-        def tool_transformers(cls):
-            return {"execute_sql": [_sql_transformer, "not-callable"], "other_tool": "also-not-callable"}
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _Mixed)])
-    with caplog.at_level("WARNING"):
-        collected = registry.collect_plugin_tool_transformers()
-    assert collected == {"execute_sql": [_sql_transformer]}
-    assert "non-callable" in caplog.text
-
-
-def test_tool_transformers_invalid_pattern_skipped(monkeypatch, caplog):
-    class _BadPattern(_Plugin):
-        @classmethod
-        def tool_transformers(cls):
-            return {"": _sql_transformer, 42: _sql_transformer, "  ok  ": _sql_transformer}
-
-    _patch(monkeypatch, [_FakeEntryPoint("hello", _BadPattern)])
-    with caplog.at_level("WARNING"):
-        collected = registry.collect_plugin_tool_transformers()
-    assert collected == {"ok": [_sql_transformer]}
-    assert "invalid pattern" in caplog.text
-
-
-def test_tool_transformers_broken_plugin_skipped(monkeypatch):
-    _patch(
-        monkeypatch,
-        [_FakeEntryPoint("broken", _WithTransformers, raises=True), _FakeEntryPoint("ok", _WithTransformers)],
+def test_tool_transformers_import_failure_skips_only_that_ref(plugin_env, caplog):
+    _tf_plugin(
+        plugin_env,
+        patterns="  execute_sql:\n    - {pkg}.missing_module:fn\n    - {pkg}.tf:passthrough\n",
     )
+    with caplog.at_level("WARNING"):
+        collected = registry.collect_plugin_tool_transformers()
+    assert len(collected["execute_sql"]) == 1
+    assert "failed to load code ref" in caplog.text
+
+
+def test_tool_transformers_non_callable_ref_skipped(plugin_env, caplog):
+    _tf_plugin(plugin_env, patterns="  execute_sql: {pkg}.tf:NOT_CALLABLE\n")
+    with caplog.at_level("WARNING"):
+        assert registry.collect_plugin_tool_transformers() == {}
+    assert "not callable" in caplog.text
+
+
+def test_tool_transformers_broken_plugin_skipped(plugin_env):
+    plugin_env("broken", manifest_yaml=None)
+    _tf_plugin(plugin_env, name="ok")
     collected = registry.collect_plugin_tool_transformers()
-    assert collected == {"db_tools.execute_sql": [_sql_transformer]}
+    assert len(collected["db_tools.execute_sql"]) == 1
 
 
-def test_tool_transformers_entry_points_failure_returns_empty(monkeypatch):
-    def boom():
-        raise RuntimeError("entry_points exploded")
+def test_tool_transformers_resolution_memoized(plugin_env, monkeypatch):
+    _tf_plugin(plugin_env)
+    calls = []
+    original = registry.resolve_code_ref
 
-    monkeypatch.setattr(importlib_metadata, "entry_points", boom)
-    assert registry.collect_plugin_tool_transformers() == {}
+    def counting(ref, plugin_name):
+        calls.append(ref)
+        return original(ref, plugin_name)
+
+    monkeypatch.setattr(registry, "resolve_code_ref", counting)
+    registry.collect_plugin_tool_transformers()
+    registry.collect_plugin_tool_transformers()
+    assert len(calls) == 1  # second collection served from the memo
+
+
+# ---------------------------------------------------------------------------
+# active_names filtering (per-project activation whitelist)
+# ---------------------------------------------------------------------------
+
+
+def _two_full_plugins(plugin_env):
+    dirs = []
+    for name in ("a", "b"):
+        pkg = plugin_env(
+            name,
+            MINIMAL
+            + "skills: skills\n"
+            + "tool_transformers:\n  execute_sql: {pkg}.tf:passthrough\n"
+            + "permissions:\n  normal:\n    allow: ['greet:*']\n",
+            files={"tf.py": TRANSFORMER_MODULE},
+        )
+        (pkg / "skills").mkdir()
+        dirs.append(str(pkg / "skills"))
+    return dirs
+
+
+def test_skill_directories_active_names_none_includes_all(plugin_env):
+    a_dir, b_dir = _two_full_plugins(plugin_env)
+    assert registry.plugin_skill_directories(active_names=None) == [a_dir, b_dir]
+
+
+def test_skill_directories_active_names_filters(plugin_env):
+    a_dir, _b_dir = _two_full_plugins(plugin_env)
+    assert registry.plugin_skill_directories(active_names={"a"}) == [a_dir]
+
+
+def test_skill_directories_empty_active_names_excludes_all(plugin_env):
+    _two_full_plugins(plugin_env)
+    assert registry.plugin_skill_directories(active_names=set()) == []
+
+
+def test_tool_transformers_active_names_filters(plugin_env):
+    _two_full_plugins(plugin_env)
+    assert len(registry.collect_plugin_tool_transformers(active_names={"a"})["execute_sql"]) == 1
+    assert registry.collect_plugin_tool_transformers(active_names=set()) == {}
+
+
+def test_cli_permissions_active_names_filters(plugin_env):
+    _two_full_plugins(plugin_env)
+    rules = registry.collect_plugin_cli_permissions(active_names={"b"})
+    assert rules["normal"].allow == ["datus b greet:*"]
+    assert registry.collect_plugin_cli_permissions(active_names=set()) == {}
+
+
+# ---------------------------------------------------------------------------
+# plugin_config_schema (JSON Schema -> TUI field specs)
+# ---------------------------------------------------------------------------
+
+SCHEMA_YAML = (
+    "config_schema:\n"
+    "  type: object\n"
+    "  required: [api_key]\n"
+    "  properties:\n"
+    "    api_key:\n"
+    "      type: string\n"
+    "      description: key\n"
+    "      x-secret: true\n"
+    "    base_url:\n"
+    "      type: string\n"
+    "      description: url\n"
+    "      default: https://x\n"
+)
+
+
+def test_config_schema_derives_field_specs(plugin_env):
+    plugin_env("hello", MINIMAL + SCHEMA_YAML)
+    assert registry.plugin_config_schema("hello") == [
+        {"name": "api_key", "description": "key", "required": True, "secret": True},
+        {"name": "base_url", "description": "url", "required": False, "secret": False, "default": "https://x"},
+    ]
+
+
+def test_config_schema_preserves_property_order(plugin_env):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n  type: object\n  properties:\n"
+        + "    zeta: {type: string}\n    alpha: {type: string}\n",
+    )
+    assert [f["name"] for f in registry.plugin_config_schema("hello")] == ["zeta", "alpha"]
+
+
+def test_config_schema_absent_returns_empty(plugin_env):
+    plugin_env("hello", MINIMAL)
+    assert registry.plugin_config_schema("hello") == []
+
+
+def test_config_schema_unknown_plugin_returns_empty(plugin_env):
+    plugin_env("hello", MINIMAL)
+    assert registry.plugin_config_schema("mystery") == []
+
+
+def test_config_schema_without_properties_returns_empty(plugin_env):
+    plugin_env("hello", MINIMAL + "config_schema:\n  type: object\n")
+    assert registry.plugin_config_schema("hello") == []
+
+
+NESTED_SCHEMA_YAML = (
+    "config_schema:\n"
+    "  type: object\n"
+    "  required: [api_base_url, s3]\n"
+    "  properties:\n"
+    "    api_base_url:\n"
+    "      type: string\n"
+    "      description: REST endpoint\n"
+    "    s3:\n"
+    "      type: object\n"
+    "      required: [secret_access_key]\n"
+    "      properties:\n"
+    "        region:\n"
+    "          type: string\n"
+    "          default: us-east-1\n"
+    "        secret_access_key:\n"
+    "          type: string\n"
+    "          description: S3 secret key\n"
+    "          x-secret: true\n"
+)
+
+
+def test_config_schema_flattens_nested_objects(plugin_env):
+    plugin_env("hello", MINIMAL + NESTED_SCHEMA_YAML)
+    assert registry.plugin_config_schema("hello") == [
+        {"name": "api_base_url", "description": "REST endpoint", "required": True, "secret": False},
+        {"name": "s3.region", "description": "", "required": False, "secret": False, "default": "us-east-1"},
+        {"name": "s3.secret_access_key", "description": "S3 secret key", "required": True, "secret": True},
+    ]
+
+
+def test_config_schema_nested_required_needs_required_ancestors(plugin_env):
+    """A required leaf inside an optional object is not form-required."""
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n"
+        + "  type: object\n"
+        + "  properties:\n"
+        + "    s3:\n"
+        + "      type: object\n"
+        + "      required: [key]\n"
+        + "      properties:\n"
+        + "        key: {type: string}\n",
+    )
+    assert registry.plugin_config_schema("hello") == [
+        {"name": "s3.key", "description": "", "required": False, "secret": False}
+    ]
+
+
+def test_config_schema_block_level_secret_marks_all_leaves(plugin_env):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n"
+        + "  type: object\n"
+        + "  properties:\n"
+        + "    s3:\n"
+        + "      type: object\n"
+        + "      x-secret: true\n"
+        + "      properties:\n"
+        + "        region: {type: string}\n"
+        + "        key: {type: string}\n",
+    )
+    specs = registry.plugin_config_schema("hello")
+    assert [s["name"] for s in specs] == ["s3.region", "s3.key"]
+    assert all(s["secret"] for s in specs)
+
+
+def test_config_schema_object_without_properties_stays_flat(plugin_env):
+    """A ``type: object`` property without nested ``properties`` stays one field."""
+    plugin_env("hello", MINIMAL + "config_schema:\n  type: object\n  properties:\n    extras: {type: object}\n")
+    assert [s["name"] for s in registry.plugin_config_schema("hello")] == ["extras"]
+
+
+def test_config_schema_flattens_three_levels(plugin_env):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n"
+        + "  type: object\n"
+        + "  properties:\n"
+        + "    a:\n"
+        + "      type: object\n"
+        + "      properties:\n"
+        + "        b:\n"
+        + "          type: object\n"
+        + "          properties:\n"
+        + "            c: {type: string}\n",
+    )
+    assert [s["name"] for s in registry.plugin_config_schema("hello")] == ["a.b.c"]
+
+
+def test_config_schema_nesting_depth_capped(plugin_env, caplog):
+    """Fields nested beyond the flattening cap are dropped with a warning."""
+    lines = ["config_schema:", "  type: object"]
+    indent = "  "
+    for i in range(10):
+        lines.append(f"{indent}properties:")
+        lines.append(f"{indent}  n{i}:")
+        lines.append(f"{indent}    type: object")
+        indent += "    "
+    lines.append(f"{indent}properties:")
+    lines.append(f"{indent}  leaf: {{type: string}}")
+    plugin_env("hello", MINIMAL + "\n".join(lines) + "\n")
+    with caplog.at_level("WARNING"):
+        assert registry.plugin_config_schema("hello") == []
+    assert "nests deeper" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# plugin_validate_profile (jsonschema)
+# ---------------------------------------------------------------------------
+
+VALIDATION_SCHEMA = (
+    "config_schema:\n"
+    "  type: object\n"
+    "  required: [api_key]\n"
+    "  properties:\n"
+    "    api_key:\n"
+    "      type: string\n"
+    "      pattern: '^sk-'\n"
+    "    region:\n"
+    "      type: string\n"
+    "      enum: [us, eu]\n"
+)
+
+
+def test_validate_profile_reports_missing_required(plugin_env):
+    plugin_env("hello", MINIMAL + VALIDATION_SCHEMA)
+    errors = registry.plugin_validate_profile("hello", {})
+    assert len(errors) == 1
+    assert errors[0].startswith("profile:")
+    assert "api_key" in errors[0]
+
+
+def test_validate_profile_reports_field_violations_with_path(plugin_env):
+    plugin_env("hello", MINIMAL + VALIDATION_SCHEMA)
+    errors = registry.plugin_validate_profile("hello", {"api_key": "wrong", "region": "mars"})
+    assert any(e.startswith("api_key:") for e in errors)
+    assert any(e.startswith("region:") for e in errors)
+
+
+def test_validate_profile_valid_profile_passes(plugin_env):
+    plugin_env("hello", MINIMAL + VALIDATION_SCHEMA)
+    assert registry.plugin_validate_profile("hello", {"api_key": "sk-1", "region": "us"}) == []
+
+
+def test_validate_profile_env_placeholders_are_opaque(plugin_env):
+    """``${ENV_VAR}`` values are shape-only: pattern/enum violations on them are
+    suppressed, but a missing required field still fires."""
+    plugin_env("hello", MINIMAL + VALIDATION_SCHEMA)
+    assert registry.plugin_validate_profile("hello", {"api_key": "${STATSIG_KEY}"}) == []
+    errors = registry.plugin_validate_profile("hello", {"region": "${REGION}"})
+    assert len(errors) == 1  # required api_key missing; placeholder region passes
+    assert "api_key" in errors[0]
+
+
+def test_validate_profile_no_schema_returns_empty(plugin_env):
+    plugin_env("hello", MINIMAL)
+    assert registry.plugin_validate_profile("hello", {}) == []
+
+
+def test_validate_profile_unknown_plugin_returns_empty(plugin_env):
+    plugin_env("hello", MINIMAL + VALIDATION_SCHEMA)
+    assert registry.plugin_validate_profile("mystery", {}) == []

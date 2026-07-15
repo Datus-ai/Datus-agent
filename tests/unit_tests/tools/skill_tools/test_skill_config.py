@@ -260,7 +260,7 @@ class TestPluginSkillDirectories:
         legacy_dir.mkdir()
         builtin_dir = tmp_path / "builtin_skills"
         builtin_dir.mkdir()
-        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [str(plugin_dir)])
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda *a, **k: [str(plugin_dir)])
         _patch_entry_points(monkeypatch, [_FakeEntryPoint("mwaa", str(legacy_dir))])
         monkeypatch.setattr("datus.tools.skill_tools.skill_config._builtin_skills_dir", lambda: str(builtin_dir))
 
@@ -275,14 +275,14 @@ class TestPluginSkillDirectories:
         shared = tmp_path / "shared_skills"
         shared.mkdir()
         # Same dir contributed by both a plugin and a legacy adapter appears once.
-        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [str(shared)])
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda *a, **k: [str(shared)])
         _patch_entry_points(monkeypatch, [_FakeEntryPoint("mwaa", str(shared))])
         assert _default_skill_directories().count(str(shared)) == 1
 
     def test_from_dict_appends_plugin_dirs(self, monkeypatch, tmp_path):
         plugin_dir = tmp_path / "plugin_skills"
         plugin_dir.mkdir()
-        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [str(plugin_dir)])
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda *a, **k: [str(plugin_dir)])
         _patch_entry_points(monkeypatch, [])
         config = SkillConfig.from_dict({"directories": ["/my/skills"]})
         assert config.directories[0] == "/my/skills"
@@ -317,7 +317,7 @@ class TestPluginsEnabledGate:
         plugin_dir.mkdir()
         legacy_dir = tmp_path / "legacy_skills"
         legacy_dir.mkdir()
-        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [str(plugin_dir)])
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda *a, **k: [str(plugin_dir)])
         _patch_entry_points(monkeypatch, [_FakeEntryPoint("mwaa", str(legacy_dir))])
         self._disable(monkeypatch)
 
@@ -329,7 +329,7 @@ class TestPluginsEnabledGate:
     def test_disabled_excludes_plugin_dirs_from_from_dict(self, monkeypatch, tmp_path):
         plugin_dir = tmp_path / "plugin_skills"
         plugin_dir.mkdir()
-        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda: [str(plugin_dir)])
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", lambda *a, **k: [str(plugin_dir)])
         _patch_entry_points(monkeypatch, [])
         self._disable(monkeypatch)
 
