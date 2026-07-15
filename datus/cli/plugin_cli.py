@@ -300,9 +300,14 @@ def _cmd_activation(console: Console, args: argparse.Namespace) -> int:
     from datus.plugins.registry import plugin_entry_point_exists
 
     # A managed plugin's directory must be on sys.path before the entry-point
-    # probe can see it (metadata-only; no plugin code is imported).
+    # probe can see it (metadata-only; no plugin code is imported). Plugins
+    # mounted through ``agent.plugin_paths`` may equally be inactive (and thus
+    # off sys.path), so those directories are injected too — a disabled plugin
+    # must stay re-enable-able.
     if store.plugin_dir(args.name).is_dir():
         store.activate_name(args.name)
+    else:
+        store.activate_paths(getattr(agent_config, "plugin_paths", None))
 
     if not plugin_entry_point_exists(args.name):
         print_error(console, f"No installed plugin named `{args.name}`. Run `datus plugin list`.")

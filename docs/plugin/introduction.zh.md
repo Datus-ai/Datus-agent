@@ -70,6 +70,26 @@ OS/Python 匹配的机器上构建。
 来源的安装会字节级返回其保留的原始 bundle,而 `pip`/`src`/`whl`/`git` 来源则按记录的
 安装源重新打包(需要网络)。
 
+## 挂载其他路径下的插件 {#plugin-paths}
+
+除受管目录外,`agent.yml` 中的 `agent.plugin_paths` 可以挂载位于磁盘任意位置的插件
+目录。每个条目本身就是**一个插件的目录**——与单个 `~/.datus/plugins/{name}/` 子目录
+的布局相同(即一棵 `pip install --target` 树:插件包、其内嵌依赖和 `*.dist-info`),
+而不是包含多个插件的根目录:
+
+```yaml
+agent:
+  plugin_paths:
+    - /opt/shared/datus-plugins/airflow          # 一个路径 = 一个插件
+    - $DATUS_PLUGIN_HOME/hello                   # 支持 ~ 与 $ENV_VAR 展开
+```
+
+启动时挂载目录与 `~/.datus/plugins/` 取并集,在所有能力面上与已安装插件行为一致:
+`datus <name>` 分发、skills、系统提示词、bash 权限,以及按项目的
+[激活开关](#activating-plugins)。同名冲突时,`~/.datus/plugins/` 下的受管安装优先。
+`datus plugin list` 会以 `path` 来源展示挂载插件。适合集中部署的插件树
+(多台机器或多个项目共享同一份拷贝),无需复制到每个用户的 home 目录。
+
 ## 配置
 
 插件在 `agent.yml` 的 `agent.plugins.<name>` 下配置,`<name>` 之下的每个键是一个

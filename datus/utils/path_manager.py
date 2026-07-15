@@ -227,7 +227,9 @@ class DatusPathManager:
         (a ``pip install --target`` tree with its dependencies vendored in) plus
         a ``datus-plugin.json`` metadata file. Enabled plugin directories are
         appended to ``sys.path`` at startup so their ``datus.plugins`` entry
-        points are discovered.
+        points are discovered. ``agent.plugin_paths`` may union in additional
+        plugin-level directories mounted outside this root (one path = one
+        plugin); see :mod:`datus.plugins.store`.
         """
         return self._datus_home / "plugins"
 

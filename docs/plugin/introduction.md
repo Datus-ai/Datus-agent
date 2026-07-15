@@ -81,6 +81,30 @@ installed plugin — a `zip:` install returns its retained original bundle
 verbatim, while a `pip`/`src`/`whl`/`git` install is re-packed from its recorded
 source (needs network).
 
+## Mounting plugins from other paths
+
+Besides the managed store, `agent.plugin_paths` in `agent.yml` mounts plugin
+directories living anywhere on disk. Each entry is already **one plugin's
+directory** — the same layout a single `~/.datus/plugins/{name}/` subdirectory
+has (a `pip install --target` tree with the package, its vendored dependencies
+and a `*.dist-info`), not a root containing several plugins:
+
+```yaml
+agent:
+  plugin_paths:
+    - /opt/shared/datus-plugins/airflow          # one path = one plugin
+    - $DATUS_PLUGIN_HOME/hello                   # ~ and $ENV_VAR are expanded
+```
+
+Mounted directories are unioned with `~/.datus/plugins/` at startup and behave
+like installed plugins on every surface: `datus <name>` dispatch, skills,
+prompt sections, bash permissions, and per-project
+[activation](#activating-plugins). On a name clash the managed install under
+`~/.datus/plugins/` wins. `datus plugin list` shows mounted plugins with source
+`path`. This suits plugin trees deployed centrally (one copy shared by several
+machines or projects) that you do not want to copy into every user's home
+store.
+
 ## Configuration
 
 Plugins are configured under `agent.plugins.<name>` in `agent.yml`, where each

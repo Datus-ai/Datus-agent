@@ -224,5 +224,108 @@ def test_activate_name_appends_single_dir(home):
     assert store.activate_name("demo") is False  # idempotent
 
 
+# ── extra plugin paths (agent.plugin_paths) ──────────────────────────────────
+
+
+def test_plugin_name_for_dir_prefers_meta(home, tmp_path):
+    target = _write_target(tmp_path / "ext")
+    store.write_meta(target, {"name": "renamed"})
+    assert store.plugin_name_for_dir(target) == "renamed"
+
+
+def test_plugin_name_for_dir_falls_back_to_dist_info(home, tmp_path):
+    target = _write_target(tmp_path / "ext")
+    assert store.plugin_name_for_dir(target) == "demo"
+
+
+def test_plugin_name_for_dir_none_for_plain_dir(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert store.plugin_name_for_dir(plain) is None
+
+
+def test_plugin_name_for_dir_none_when_entry_points_vanish(home, tmp_path, monkeypatch):
+    """A dist-info whose entry_points.txt disappears mid-read resolves to None."""
+    target = _write_target(tmp_path / "ext")
+    dist_info = next(target.glob("*.dist-info"))
+    monkeypatch.setattr(store, "_find_plugin_dist_info", lambda d: dist_info)
+    (dist_info / "entry_points.txt").unlink()
+    assert store.plugin_name_for_dir(target) is None
+
+
+def test_iter_extra_plugin_dirs_skips_bad_entries(home, tmp_path, caplog):
+    first = _write_target(tmp_path / "one")
+    _write_target(tmp_path / "two")  # same entry-point name → duplicate
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    entries = [str(first), str(tmp_path / "two"), str(tmp_path / "missing"), str(plain), "", None]
+    with caplog.at_level("WARNING"):
+        resolved = store.iter_extra_plugin_dirs(entries)
+    assert resolved == [("demo", first)]
+    assert "is not a directory" in caplog.text
+    assert "no recognizable datus plugin" in caplog.text
+    assert "duplicates plugin" in caplog.text
+
+
+def test_iter_extra_plugin_dirs_expands_env_vars(home, tmp_path, monkeypatch):
+    target = _write_target(tmp_path / "ext")
+    monkeypatch.setenv("DATUS_TEST_PLUGIN_HOME", str(tmp_path))
+    assert store.iter_extra_plugin_dirs(["$DATUS_TEST_PLUGIN_HOME/ext"]) == [("demo", target)]
+
+
+def test_iter_extra_plugin_dirs_rejects_reserved_name(home, tmp_path, caplog):
+    target = _write_target(tmp_path / "ext", name="upgrade")
+    with caplog.at_level("WARNING"):
+        assert store.iter_extra_plugin_dirs([str(target)]) == []
+    assert "no recognizable datus plugin" in caplog.text
+
+
+def test_activate_unions_extra_paths_with_store(home, tmp_path):
+    store.write_meta(store.plugin_dir("managed"), {"name": "managed"})
+    ext = _write_target(tmp_path / "ext")  # entry-point name "demo"
+    added = store.activate(None, extra_paths=[str(ext)])
+    assert set(added) == {"managed", "demo"}
+    assert str(store.plugin_dir("managed")) in sys.path
+    assert str(ext) in sys.path
+
+
+def test_activate_extra_paths_respect_whitelist(home, tmp_path):
+    ext = _write_target(tmp_path / "ext")
+    assert store.activate({"other"}, extra_paths=[str(ext)]) == []
+    assert str(ext) not in sys.path
+
+
+def test_activate_extra_path_name_clash_managed_wins(home, tmp_path, caplog):
+    store.write_meta(store.plugin_dir("demo"), {"name": "demo"})
+    ext = _write_target(tmp_path / "ext")  # also claims "demo"
+    with caplog.at_level("WARNING"):
+        added = store.activate(None, extra_paths=[str(ext)])
+    assert added == ["demo"]
+    assert str(store.plugin_dir("demo")) in sys.path
+    assert str(ext) not in sys.path
+    assert "managed install wins" in caplog.text
+
+
+def test_activate_extra_paths_without_managed_root(home, tmp_path):
+    ext = _write_target(tmp_path / "ext")
+    assert not store.plugins_root().is_dir()
+    assert store.activate(None, extra_paths=[str(ext)]) == ["demo"]
+    assert str(ext) in sys.path
+
+
+def test_activate_extra_paths_noop_when_disabled(home, tmp_path):
+    ext = _write_target(tmp_path / "ext")
+    assert store.activate(None, plugins_enabled=False, extra_paths=[str(ext)]) == []
+    assert str(ext) not in sys.path
+
+
+def test_activate_paths_unfiltered_and_idempotent(home, tmp_path):
+    ext = _write_target(tmp_path / "ext")
+    assert store.activate_paths([str(ext)]) == ["demo"]
+    assert str(ext) in sys.path
+    assert store.activate_paths([str(ext)]) == []
+    assert sys.path.count(str(ext)) == 1
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

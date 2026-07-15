@@ -39,12 +39,22 @@ def _fake_proc(returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(args=["x"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-def _write_dist_info(target: Path, *, name, dist, version, entry, requires_python=">=3.12", group="datus.plugins"):
+def _write_dist_info(
+    target: Path,
+    *,
+    name,
+    dist,
+    version,
+    entry,
+    requires_python=">=3.12",
+    group="datus.plugins",
+    manifest_text="manifest_version: 1\n",
+):
     target.mkdir(parents=True, exist_ok=True)
     pkg = target / "datus_demo_plugin"
     pkg.mkdir(parents=True, exist_ok=True)
     (pkg / "__init__.py").write_text("", encoding="utf-8")
-    (pkg / store.MANIFEST_FILENAME).write_text("manifest_version: 1\n", encoding="utf-8")
+    (pkg / store.MANIFEST_FILENAME).write_text(manifest_text, encoding="utf-8")
     dinfo = target / f"{dist.replace('-', '_')}-{version}.dist-info"
     dinfo.mkdir(parents=True, exist_ok=True)
     (dinfo / "entry_points.txt").write_text(f"[{group}]\n{name} = {entry}\n", encoding="utf-8")
@@ -54,7 +64,13 @@ def _write_dist_info(target: Path, *, name, dist, version, entry, requires_pytho
     )
 
 
-def _installer(name="demo", dist="datus-demo-plugin", version="0.1.0", entry="datus_demo_plugin"):
+def _installer(
+    name="demo",
+    dist="datus-demo-plugin",
+    version="0.1.0",
+    entry="datus_demo_plugin",
+    manifest_text="manifest_version: 1\n",
+):
     """Return a fake ``subprocess.run`` that populates the ``--target`` tree."""
     calls = []
 
@@ -62,7 +78,7 @@ def _installer(name="demo", dist="datus-demo-plugin", version="0.1.0", entry="da
         calls.append(cmd)
         if "--target" in cmd:
             target = Path(cmd[cmd.index("--target") + 1])
-            _write_dist_info(target, name=name, dist=dist, version=version, entry=entry)
+            _write_dist_info(target, name=name, dist=dist, version=version, entry=entry, manifest_text=manifest_text)
         return _fake_proc(0)
 
     fake_run.calls = calls
@@ -312,6 +328,62 @@ def test_install_empty_source():
     assert not svc.install("").ok
 
 
+def test_force_reinstall_refreshes_manifest_cache(home, monkeypatch):
+    """A same-name force replace must drop the registry's manifest cache.
+
+    The plugin directory is already on ``sys.path`` after the first install, so
+    the added-only invalidation in the activate helpers never fires — the
+    install path must invalidate unconditionally for the replaced manifest to
+    become visible in-process.
+    """
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    assert svc.install("pip:datus-demo-plugin").ok is True
+    first = registry.load_plugin_manifest("demo")
+    assert first is not None and first.skills is None  # cache primed with the v1 manifest
+
+    monkeypatch.setattr(
+        svc.subprocess,
+        "run",
+        _installer(version="0.2.0", manifest_text="manifest_version: 1\nskills: my_skills\n"),
+    )
+    assert svc.install("pip:datus-demo-plugin", force=True).ok is True
+    second = registry.load_plugin_manifest("demo")
+    assert second is not None and second.skills == "my_skills"
+
+
+# ── install: dest_dir (reserved custom destination) ─────────────────────────
+
+
+def test_install_dest_dir_lands_outside_store(home, tmp_path, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    dest = tmp_path / "mounts" / "demo-plugin"
+    result = svc.install("pip:datus-demo-plugin", dest_dir=str(dest))
+    assert result.ok is True, result.error
+    assert result.name == "demo"
+    assert result.plugin_dir == str(dest)
+    meta = store.read_meta(dest)
+    assert meta["name"] == "demo"
+    assert meta["install"]["type"] == "pip"
+    # The managed store is untouched; the custom directory is activated for
+    # this process the way an ``agent.plugin_paths`` mount would be.
+    assert not store.plugin_dir("demo").exists()
+    assert str(dest) in sys.path
+
+
+def test_install_dest_dir_existing_requires_force(home, tmp_path, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer())
+    dest = tmp_path / "mounts" / "demo-plugin"
+    assert svc.install("pip:datus-demo-plugin", dest_dir=str(dest)).ok is True
+    again = svc.install("pip:datus-demo-plugin", dest_dir=str(dest))
+    assert not again.ok and "already exists" in again.error
+    forced = svc.install("pip:datus-demo-plugin", force=True, dest_dir=str(dest))
+    assert forced.ok is True, forced.error
+    assert store.read_meta(dest)["name"] == "demo"
+
+
 # ── install: zip bundle ──────────────────────────────────────────────────────
 
 
@@ -397,6 +469,21 @@ def test_install_zip_slip_rejected(home, tmp_path, monkeypatch):
     result = svc.install(f"zip:{path}")
     assert not result.ok and "unsafe wheel filename" in result.error
     assert ran == []
+
+
+def test_install_zip_dest_dir_lands_outside_store(home, tmp_path, monkeypatch):
+    bundle = _make_bundle(tmp_path / "b.zip", bundle_deps=False)
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _zip_installer())
+    dest = tmp_path / "mounts" / "demo-plugin"
+    result = svc.install(f"zip:{bundle}", dest_dir=str(dest))
+    assert result.ok is True, result.error
+    assert result.plugin_dir == str(dest)
+    assert (dest / store.ORIGIN_ZIP).is_file()  # original bundle retained in the custom dir
+    assert not store.plugin_dir("demo").exists()
+    # The fast pre-check refuses the occupied custom destination without force.
+    again = svc.install(f"zip:{bundle}", dest_dir=str(dest))
+    assert not again.ok and "already exists" in again.error
 
 
 def test_install_zip_not_found(home):
@@ -589,6 +676,56 @@ def test_list_managed_wins_over_external_duplicate(home, monkeypatch):
         lambda: [_FakeEntryPoint("demo", "external-dist", "0.0", "e:E")],
     )
     infos = svc.list_plugins(None)
+    assert len(infos) == 1
+    assert infos[0].source == "managed" and infos[0].version == "9.9"
+
+
+def test_list_includes_path_mounted_plugins(home, tmp_path, monkeypatch):
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="pathdemo", dist="datus-path-plugin", version="1.2.3", entry="datus_demo_plugin")
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=None)
+    cfg.plugin_paths = [str(ext)]
+    infos = svc.list_plugins(cfg)
+    assert [i.name for i in infos] == ["pathdemo"]
+    assert infos[0].source == "path"
+    assert infos[0].package == "datus-path-plugin"
+    assert infos[0].version == "1.2.3"
+    assert infos[0].active is True
+
+
+def test_list_path_plugin_listed_while_inactive(home, tmp_path, monkeypatch):
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="pathdemo", dist="datus-path-plugin", version="1.2.3", entry="datus_demo_plugin")
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=set())  # whitelist present, plugin not in it
+    cfg.plugin_paths = [str(ext)]
+    infos = svc.list_plugins(cfg)
+    assert [i.name for i in infos] == ["pathdemo"]
+    assert infos[0].active is False
+
+
+def test_list_skips_path_entry_with_broken_manifest(home, tmp_path, monkeypatch):
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="pathdemo", dist="datus-path-plugin", version="1.2.3", entry="datus_demo_plugin")
+    (ext / "datus_demo_plugin" / store.MANIFEST_FILENAME).unlink()  # introspection now fails
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=None)
+    cfg.plugin_paths = [str(ext)]
+    assert svc.list_plugins(cfg) == []
+
+
+def test_list_managed_wins_over_path_duplicate(home, tmp_path, monkeypatch):
+    store.write_meta(
+        store.plugin_dir("demo"),
+        {"name": "demo", "distribution": "managed-dist", "version": "9.9", "install": {"type": "pip"}},
+    )
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="demo", dist="path-dist", version="0.1", entry="datus_demo_plugin")
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=None)
+    cfg.plugin_paths = [str(ext)]
+    infos = svc.list_plugins(cfg)
     assert len(infos) == 1
     assert infos[0].source == "managed" and infos[0].version == "9.9"
 

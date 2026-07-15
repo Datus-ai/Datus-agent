@@ -19,6 +19,12 @@ owns:
   ``importlib.metadata.entry_points()`` scanning ``sys.path``) discovers them,
   then invalidates the import + registry caches
 
+Besides the managed store, ``agent.plugin_paths`` (:class:`AgentConfig`) may
+mount plugin directories living anywhere on disk. Each entry is already ONE
+plugin's directory — the equivalent of a single ``{plugins_root}/{name}/``
+subdirectory, not a root containing several — and is merged with the managed
+store as a union; on a name clash the managed install wins.
+
 Adding a directory to ``sys.path`` makes its ``.dist-info`` discoverable but does
 **not** import the plugin package — manifest reading never executes plugin code,
 and declared code refs are imported lazily by ``resolve_code_ref`` — so callers
@@ -30,6 +36,7 @@ from __future__ import annotations
 
 import configparser
 import json
+import os
 import sys
 from email.parser import Parser
 from pathlib import Path
@@ -152,6 +159,65 @@ def iter_installed() -> List[Dict[str, Any]]:
     return installed
 
 
+# ── Extra plugin paths (agent.plugin_paths) ────────────────────────────────
+
+
+def plugin_name_for_dir(directory: Path) -> Optional[str]:
+    """Best-effort plugin (entry-point) name for one plugin directory.
+
+    Prefers the datus-owned ``datus-plugin.json`` (managed installs); falls
+    back to the ``datus.plugins`` entry point declared by the tree's
+    ``*.dist-info`` (externally built or path-mounted trees). Metadata-only —
+    never imports plugin code and never raises; returns ``None`` when neither
+    source yields a name.
+    """
+    meta = read_meta(directory)
+    if meta is not None:
+        name = meta.get("name")
+        if isinstance(name, str) and name:
+            return name
+    dist_info = _find_plugin_dist_info(directory)
+    if dist_info is None:
+        return None
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    try:
+        parser.read_string((dist_info / "entry_points.txt").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, configparser.Error):
+        return None
+    return next(iter(parser[PLUGIN_ENTRY_POINT_GROUP]), None)
+
+
+def iter_extra_plugin_dirs(extra_paths: Optional[List[str]]) -> List[tuple]:
+    """Resolve ``agent.plugin_paths`` entries to unique ``(name, dir)`` pairs.
+
+    Each entry is expected to be ONE plugin's directory (the same layout as a
+    single ``{plugins_root}/{name}/`` subdirectory). ``~`` and ``$ENV_VAR``
+    are expanded. Entries that are missing, contain no recognizable datus
+    plugin, carry an unsafe/reserved name, or repeat an earlier entry's name
+    are warned about and skipped — a bad path must never block startup.
+    """
+    resolved: List[tuple] = []
+    seen: Set[str] = set()
+    for raw in extra_paths or []:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        directory = Path(os.path.expandvars(raw.strip())).expanduser()
+        if not directory.is_dir():
+            logger.warning("plugin_paths entry %r is not a directory; skipping.", raw)
+            continue
+        name = plugin_name_for_dir(directory)
+        if name is None or not is_valid_name(name):
+            logger.warning("plugin_paths entry %r contains no recognizable datus plugin; skipping.", raw)
+            continue
+        if name in seen:
+            logger.warning("plugin_paths entry %r duplicates plugin %r; first entry wins.", raw, name)
+            continue
+        seen.add(name)
+        resolved.append((name, directory))
+    return resolved
+
+
 # ── Introspection of a freshly-installed target tree ───────────────────────
 
 
@@ -255,12 +321,19 @@ def _append_to_syspath(directory: Path) -> bool:
     return True
 
 
-def activate(active_names: Optional[Set[str]], plugins_enabled: bool = True) -> List[str]:
+def activate(
+    active_names: Optional[Set[str]],
+    plugins_enabled: bool = True,
+    extra_paths: Optional[List[str]] = None,
+) -> List[str]:
     """Append enabled plugin directories to ``sys.path`` and refresh caches.
 
     ``active_names`` mirrors ``AgentConfig.active_plugin_names()``: ``None`` means
     "no filter" (activate every installed plugin) while a set is the project's
-    activation whitelist. Directories are **appended** (not prepended) so datus'
+    activation whitelist. ``extra_paths`` (``agent.plugin_paths``) mounts
+    additional plugin-level directories, merged with the managed store as a
+    union under the same whitelist; a name claimed by the managed store wins
+    over an extra path. Directories are **appended** (not prepended) so datus'
     own dependencies keep priority over a plugin's vendored copies. When
     ``plugins_enabled`` is false this is a no-op.
 
@@ -270,20 +343,52 @@ def activate(active_names: Optional[Set[str]], plugins_enabled: bool = True) -> 
     """
     if not plugins_enabled:
         return []
-    root = plugins_root()
-    if not root.is_dir():
-        return []
 
     added: List[str] = []
+    managed_names: Set[str] = set()
     for meta in iter_installed():
         name = meta.get("name")
         if not is_valid_name(name):
             continue
+        managed_names.add(name)
         if active_names is not None and name not in active_names:
             continue
         if _append_to_syspath(Path(meta["_dir"])):
             added.append(name)
 
+    for name, directory in iter_extra_plugin_dirs(extra_paths):
+        if name in managed_names:
+            logger.warning(
+                "plugin_paths entry %s duplicates installed plugin %r; the managed install wins.", directory, name
+            )
+            continue
+        if active_names is not None and name not in active_names:
+            continue
+        if _append_to_syspath(directory):
+            added.append(name)
+
+    if added:
+        import importlib
+
+        importlib.invalidate_caches()
+        invalidate_plugin_cache()
+    return added
+
+
+def activate_paths(extra_paths: Optional[List[str]]) -> List[str]:
+    """Append every ``agent.plugin_paths`` directory to ``sys.path``, unfiltered.
+
+    Used by CLI dispatch/management paths that must make a path-mounted plugin's
+    entry point discoverable BEFORE the activation gate runs — the exact mirror
+    of :func:`activate_name` for managed plugins. Path-only (no import), so the
+    ``plugins_enabled`` / per-project activation checks that follow still run
+    before any plugin code executes. Returns the plugin names newly added;
+    refreshes caches when anything was.
+    """
+    added: List[str] = []
+    for name, directory in iter_extra_plugin_dirs(extra_paths):
+        if _append_to_syspath(directory):
+            added.append(name)
     if added:
         import importlib
 
@@ -324,7 +429,10 @@ __all__ = [
     "read_meta",
     "write_meta",
     "iter_installed",
+    "plugin_name_for_dir",
+    "iter_extra_plugin_dirs",
     "introspect_target",
     "activate",
+    "activate_paths",
     "activate_name",
 ]
