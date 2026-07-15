@@ -113,6 +113,17 @@ def _package_dir_for_entry_point(ep) -> Optional[Path]:
         return None
     if not module_name:
         return None
+    if "." in module_name:
+        # A dotted target (``parent.child``) would make ``find_spec`` import the
+        # parent package to locate the child, executing plugin code before the
+        # manifest is ever read. The entry-point value must be a bare top-level
+        # package name.
+        logger.warning(
+            "Plugin %r entry point %r must reference a bare top-level package, not a dotted module; skipping.",
+            name,
+            value,
+        )
+        return None
     try:
         spec = importlib.util.find_spec(module_name)
     except Exception as exc:  # noqa: BLE001 - a broken plugin must not crash discovery

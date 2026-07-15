@@ -167,7 +167,7 @@ datus plugin disable noisy-plugin            # 本项目停用
 | `datus plugin install '[{type}:]{src}'` | 从 `pip:`(默认)/ `src:` / `whl:` / `git:` / `zip:` 安装到 `~/.datus/plugins/`(`--force` 替换已有安装)。 |
 | `datus plugin pack [dir]` | 从插件项目目录(默认 `./`)构建可分发的 wheelhouse `.zip`;`--with-deps` 打入依赖,`-o` 指定输出目录。 |
 | `datus plugin export <name>` | 把已安装插件导出成 `.zip`(`-o` 指定输出目录)。 |
-| `datus plugin upgrade <name>` | 按记录的安装源重装(pip/git/src)。 |
+| `datus plugin upgrade <name>` | 按记录的安装源重装(`pip`/`git`/`src`)。`whl`/`zip` 是固定制品,不能就地升级——请重新安装更新版本的 bundle。 |
 | `datus plugin uninstall <name>` | 删除插件目录 `~/.datus/plugins/{name}/`。 |
 | `datus plugin list` | 列出已安装插件:包、版本、来源、已配置 profile、本项目激活状态。 |
 | `datus plugin info <name>` | 查看单个插件的描述、profile、配置 schema 与激活状态。 |

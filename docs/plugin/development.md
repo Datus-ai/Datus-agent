@@ -34,7 +34,7 @@ your declared tool transformers are imported, lazily.
 
 **1. Package layout**
 
-```
+```text
 datus-plugin-hello/
 ├── pyproject.toml
 └── datus_plugin_hello/
@@ -205,6 +205,13 @@ Semantics:
   marks every leaf secret, and a leaf is form-required only when its whole
   ancestor path is required too. The system-prompt whitelist filters declared
   nested objects recursively under the same rules.
+- **Free-form objects pass through wholesale.** A `type: object` property
+  **without** its own `properties` (a free-form dict) is *not* filtered per
+  key: the TUI keeps it as a single field, and the system-prompt renderer
+  passes its entire stored value into the prompt. Only per-key stripping is
+  skipped — the field itself still has to be declared — so a secret nested
+  inside such a field would reach the LLM. Either declare its sub-`properties`
+  (to get recursive filtering) or mark the whole object `x-secret: true`.
 - **Validation** runs `jsonschema` on the raw candidate dict (the values the
   user just entered, **before** `${VAR}` expansion). Values containing
   `${ENV_VAR}` placeholders are treated as opaque — pattern/enum/format
@@ -221,7 +228,7 @@ Semantics:
 
 The manifest's `cli` names a function called as `main(argv, profile)`:
 
-```
+```text
 datus hello --profile staging greet Ada
                 └── stripped ──┘ └── argv = ["greet", "Ada"] ──┘
 ```
@@ -423,7 +430,7 @@ skills: skills
 
 Layout and packaging:
 
-```
+```text
 datus_plugin_hello/
 ├── datus-plugin.yml
 └── skills/
@@ -510,8 +517,12 @@ hard-code config paths.
     `${VAR}`-expanded (real secrets) at prompt time — so Datus filters the
     profiles **before** your template sees them: only fields declared in your
     `config_schema` and **not** marked `x-secret: true` pass through;
-    undeclared fields are dropped too, and declared nested objects are
-    filtered recursively under the same rules. Without a `config_schema`, templates
+    undeclared fields are dropped too, and declared nested objects (a
+    `type: object` with its own `properties`) are filtered recursively under
+    the same rules. The one exception is a **free-form** object field
+    (declared `type: object` with no `properties`): its whole value passes
+    through unfiltered, so mark it `x-secret: true` if it can hold anything
+    sensitive. Without a `config_schema`, templates
     receive profile names with empty dicts. A template referencing a stripped
     field fails to render (strict mode) and the section is skipped — it can
     never leak.
@@ -644,7 +655,7 @@ Editing YAML by hand is the main friction after `pip install`. Ship a
 `<name>-setup` skill next to your main skill so the agent can collect the
 values and write the profile itself:
 
-```
+```text
 datus_plugin_hello/
 └── skills/
     ├── hello/

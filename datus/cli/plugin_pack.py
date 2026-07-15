@@ -39,6 +39,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import List, Optional, Tuple
 
+import yaml
+
 from datus.cli.plugin_service import (
     BUNDLE_FORMAT,
     BUNDLE_FORMAT_VERSION,
@@ -46,9 +48,10 @@ from datus.cli.plugin_service import (
     BUNDLE_WHEELS_DIR,
     _sha256_file,
 )
-from datus.plugins.base import MANIFEST_FILENAME
+from datus.plugins.base import MANIFEST_FILENAME, parse_manifest
 from datus.plugins.registry import PLUGIN_ENTRY_POINT_GROUP
 from datus.utils.loggings import get_logger
+from datus.utils.text_utils import redact_uri
 
 logger = get_logger(__name__)
 
@@ -79,7 +82,9 @@ class PackError(Exception):
 
 def _run(cmd: List[str], what: str) -> subprocess.CompletedProcess:
     """Run a build/download subprocess, raising :class:`PackError` on failure."""
-    logger.info("pack: %s", " ".join(cmd))
+    # Sources may carry credentials (``git+https://user:token@…`` / PEP 508
+    # direct refs), so redact each token before logging the command.
+    logger.info("pack: %s", " ".join(redact_uri(token) for token in cmd))
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except Exception as exc:  # noqa: BLE001 - tool missing, OSError, etc.
@@ -188,6 +193,20 @@ def _read_plugin_entry(wheel_path: Path) -> Tuple[str, str]:
             raise PackError(
                 f"{wheel_path.name} does not bundle {manifest_arcname} — include {MANIFEST_FILENAME} "
                 "in the package data"
+            )
+        # Validate the manifest CONTENTS (not just its presence) so an invalid
+        # manifest is rejected at build time rather than surfacing only when a
+        # consumer tries to install the bundle.
+        with zipfile.ZipFile(wheel_path) as zf:
+            manifest_text = zf.read(manifest_arcname).decode("utf-8", errors="replace")
+        try:
+            manifest_data = yaml.safe_load(manifest_text)
+        except yaml.YAMLError as exc:
+            raise PackError(f"{wheel_path.name} bundles an unparseable {manifest_arcname}: {exc}")
+        if parse_manifest(manifest_data, name, Path(module_ref.strip())) is None:
+            raise PackError(
+                f"{wheel_path.name} bundles an invalid {manifest_arcname} (see log for details); "
+                f"fix the {MANIFEST_FILENAME} manifest contract before packing"
             )
         return name, target
     raise PackError(f"{wheel_path.name} has an empty [{PLUGIN_ENTRY_POINT_GROUP}] entry-point group")

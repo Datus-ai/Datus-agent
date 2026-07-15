@@ -159,6 +159,20 @@ def test_introspect_target_rejects_invalid_manifest(home, tmp_path):
         store.introspect_target(target)
 
 
+def test_introspect_target_rejects_ambiguous_targets(home, tmp_path, caplog):
+    # A tree with two distributions each declaring a datus.plugins entry point
+    # has no single plugin identity; introspection must refuse rather than pick
+    # an arbitrary first match.
+    target = _write_target(tmp_path / "target")
+    second = target / "other_plugin-2.0.dist-info"
+    second.mkdir()
+    (second / "entry_points.txt").write_text("[datus.plugins]\nother = other_pkg\n", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        with pytest.raises(store.StoreError):
+            store.introspect_target(target)
+    assert "refusing to guess" in caplog.text
+
+
 # ── activation (sys.path) ───────────────────────────────────────────────────
 
 

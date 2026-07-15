@@ -142,7 +142,9 @@ def test_dispatch_manifest_without_cli_returns_2(monkeypatch, capsys):
     _patch_dispatch(monkeypatch, profile_dict={}, manifest=_NO_CLI_MANIFEST)
     rc = _dispatch_plugin_command(["hello", "version"])
     assert rc == 2
-    assert "declares no CLI command" in capsys.readouterr().err
+    # Collapse whitespace: print_error renders through Rich, which may soft-wrap
+    # the styled line to the (test) console width.
+    assert "declares no CLI command" in " ".join(capsys.readouterr().err.split())
 
 
 def test_dispatch_unloadable_cli_ref_returns_1(monkeypatch, capsys):
@@ -150,7 +152,7 @@ def test_dispatch_unloadable_cli_ref_returns_1(monkeypatch, capsys):
     monkeypatch.setattr("datus.plugins.registry.resolve_code_ref", lambda ref, name: None)
     rc = _dispatch_plugin_command(["hello", "version"])
     assert rc == 1
-    assert "could not be loaded" in capsys.readouterr().err
+    assert "could not be loaded" in " ".join(capsys.readouterr().err.split())
 
 
 def test_dispatch_flag_only_returns_none():
@@ -189,7 +191,7 @@ def test_dispatch_refused_when_plugins_disabled(monkeypatch, capsys):
     rc = _dispatch_plugin_command(["hello", "dags", "list"])
 
     assert rc == 3
-    assert "plugins are disabled" in capsys.readouterr().err
+    assert "plugins are disabled" in " ".join(capsys.readouterr().err.split())
     # Neither profile resolution nor the plugin itself ran.
     assert stub_cfg.requested == {}
     assert _StubCli.last == {}
@@ -204,7 +206,7 @@ def test_dispatch_refused_when_plugin_inactive(monkeypatch, capsys):
     rc = _dispatch_plugin_command(["hello", "dags", "list"])
 
     assert rc == 3
-    assert "not active for this project" in capsys.readouterr().err
+    assert "not active for this project" in " ".join(capsys.readouterr().err.split())
     # Neither profile resolution nor the plugin itself ran.
     assert stub_cfg.requested == {}
     assert _StubCli.last == {}

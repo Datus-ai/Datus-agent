@@ -470,6 +470,23 @@ def test_upgrade_unknown(home):
     assert not svc.upgrade("mystery").ok
 
 
+def test_upgrade_rejects_identity_change(home, monkeypatch):
+    monkeypatch.setattr(svc.shutil, "which", lambda name: None)
+    monkeypatch.setattr(svc.subprocess, "run", _installer(version="0.1.0"))
+    svc.install("pip:datus-demo-plugin")
+
+    # The re-fetched distribution now registers a DIFFERENT entry-point name;
+    # the upgrade must refuse rather than install a renamed plugin into a new
+    # directory while leaving the old one behind.
+    monkeypatch.setattr(svc.subprocess, "run", _installer(name="renamed", version="0.2.0"))
+    result = svc.upgrade("demo")
+    assert not result.ok
+    assert "change plugin identity" in result.error
+    # The original plugin survives; no directory was created for the new name.
+    assert store.plugin_dir("demo").is_dir()
+    assert not store.plugin_dir("renamed").exists()
+
+
 # ── export ───────────────────────────────────────────────────────────────────
 
 

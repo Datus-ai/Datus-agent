@@ -2687,6 +2687,8 @@ class TestPluginActivation:
             "datus.plugins.registry.iter_plugin_entry_points",
             lambda: [_EP("alpha"), _EP("beta")],
         )
+        # Keep the managed-store scan hermetic (no dependence on ~/.datus).
+        monkeypatch.setattr("datus.plugins.store.iter_installed", lambda: [])
         cfg = self._make(tmp_path, active_plugins=None)
         cfg.set_plugin_activation("alpha", enabled=False)
 
@@ -2700,6 +2702,25 @@ class TestPluginActivation:
         assert cfg.plugins_section_present() is True
         assert cfg.plugin_active("beta") is True
         assert cfg.plugin_active("alpha") is False
+
+    def test_set_plugin_activation_seed_includes_managed_store(self, tmp_path, monkeypatch):
+        # Entry-point discovery empty (e.g. a managed plugin dir not yet on
+        # sys.path) must NOT collapse the seed to a single-entry whitelist that
+        # deactivates every other installed plugin — the managed store is merged.
+        monkeypatch.setattr("datus.plugins.registry.iter_plugin_entry_points", lambda: [])
+        monkeypatch.setattr(
+            "datus.plugins.store.iter_installed",
+            lambda: [{"name": "airflow"}, {"name": "statsig"}],
+        )
+        cfg = self._make(tmp_path, active_plugins=None)
+        cfg.set_plugin_activation("airflow", enabled=False)
+
+        from datus.configuration.project_config import load_project_override
+
+        override = load_project_override(cwd=str(tmp_path))
+        assert set(override.plugins) == {"airflow", "statsig"}
+        assert override.plugins["airflow"].enabled is False
+        assert override.plugins["statsig"].enabled is True
 
     def test_set_plugin_activation_profiles(self, tmp_path):
         cfg = self._make(tmp_path, active_plugins={"alpha": {"enabled": True}})
@@ -2727,6 +2748,26 @@ class TestPluginActivation:
         assert "hello" not in cfg.plugin_services
         # Deleting a missing profile returns False.
         assert cfg.delete_plugin_profile("hello", "prod") is False
+
+    def test_save_plugin_profile_raises_on_persist_failure(self, tmp_path, monkeypatch):
+        # A failed disk write must propagate (not silently update in-memory
+        # state that would vanish on restart).
+        import datus.configuration.agent_config_loader as loader
+        from datus.utils.exceptions import DatusException
+
+        class _FailingMgr:
+            def get(self, key, default=None):
+                return {}
+
+            def update_item(self, *args, **kwargs):
+                return False  # save failed
+
+        monkeypatch.setattr(loader, "configuration_manager", lambda *a, **k: _FailingMgr())
+        cfg = self._make(tmp_path)
+        with pytest.raises(DatusException):
+            cfg.save_plugin_profile("hello", "prod", {"api_base_url": "http://h"})
+        # In-memory plugin services were NOT mutated.
+        assert "hello" not in cfg.plugin_services
 
 
 class TestPluginsEnabledSwitch:

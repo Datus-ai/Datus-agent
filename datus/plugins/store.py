@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from datus.plugins.base import MANIFEST_FILENAME, read_manifest_file
 from datus.plugins.registry import _SAFE_PLUGIN_NAME_RE, PLUGIN_ENTRY_POINT_GROUP, invalidate_plugin_cache
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
@@ -54,8 +55,16 @@ MANIFEST_FORMAT_VERSION = 1
 RESERVED_PLUGIN_NAMES = frozenset({"upgrade", "skill", "plugin"})
 
 
-class StoreError(Exception):
-    """A recoverable problem inspecting or writing the plugin store."""
+class StoreError(DatusException):
+    """A recoverable problem inspecting or writing the plugin store.
+
+    A coded :class:`DatusException` (``PLUGIN_STORE_ERROR``) so CLI/API callers
+    keep the repository's ``error_code=…`` contract, while remaining catchable
+    as ``StoreError`` for the store's own recoverable control flow.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(ErrorCode.PLUGIN_STORE_ERROR, message=message)
 
 
 def plugins_root() -> Path:
@@ -150,9 +159,14 @@ def _find_plugin_dist_info(target_dir: Path) -> Optional[Path]:
     """Return the ``.dist-info`` dir declaring a ``[datus.plugins]`` entry point.
 
     Scans every ``*.dist-info/entry_points.txt`` in a ``pip install --target``
-    tree and returns the first whose ``entry_points.txt`` contains the
-    ``datus.plugins`` group.
+    tree and returns the sole one whose ``entry_points.txt`` contains a
+    non-empty ``datus.plugins`` group. A target may bundle several
+    distributions (through dependencies); returning the first sorted match
+    would record an arbitrary plugin identity, so ``None`` is returned for
+    both zero and multiple candidates — the caller then surfaces a clear
+    "not a datus plugin" / ambiguity error.
     """
+    candidates: List[Path] = []
     for entry_points in sorted(target_dir.glob("*.dist-info/entry_points.txt")):
         parser = configparser.ConfigParser()
         parser.optionxform = str  # entry-point names are case-sensitive
@@ -161,7 +175,16 @@ def _find_plugin_dist_info(target_dir: Path) -> Optional[Path]:
         except (OSError, configparser.Error):
             continue
         if PLUGIN_ENTRY_POINT_GROUP in parser and len(parser[PLUGIN_ENTRY_POINT_GROUP]) > 0:
-            return entry_points.parent
+            candidates.append(entry_points.parent)
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        logger.warning(
+            "Target tree declares %d distributions with a `%s` entry point (%s); refusing to guess.",
+            len(candidates),
+            PLUGIN_ENTRY_POINT_GROUP,
+            ", ".join(sorted(c.name for c in candidates)),
+        )
     return None
 
 

@@ -142,10 +142,15 @@ def run_plugin_command(argv: List[str]) -> int:
 
 
 def _print_tail(console: Console, result) -> None:
-    """Print the last few lines of a failed subprocess for context."""
+    """Print the last few lines of a failed subprocess for context.
+
+    Subprocess output is untrusted (it may contain Rich markup tags that would
+    otherwise alter or hide terminal output), so it is rendered with markup
+    disabled and the dim style applied through the style argument.
+    """
     tail = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip().splitlines()[-10:]
     for line in tail:
-        console.print(f"  [dim]{line}[/]")
+        console.print(f"  {line}", style="dim", markup=False)
 
 
 def _cmd_install(console: Console, args: argparse.Namespace) -> int:

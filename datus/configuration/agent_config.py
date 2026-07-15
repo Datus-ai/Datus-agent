@@ -1749,16 +1749,29 @@ class AgentConfig:
         """
         if not self._plugins_section_present:
             # Seed the whitelist with every installed plugin so turning one
-            # entry on/off does not silently deactivate the others.
+            # entry on/off does not silently deactivate the others. Draw from
+            # BOTH entry-point discovery and the managed store: entry points
+            # may be empty on first load (a managed plugin dir not yet on
+            # sys.path), and seeding only ``name`` would flip the project into
+            # whitelist mode with a single entry, deactivating everything else.
+            installed: set = set()
             try:
                 from datus.plugins.registry import iter_plugin_entry_points
 
-                installed = {
+                installed.update(
                     getattr(ep, "name", None) for ep in iter_plugin_entry_points() if getattr(ep, "name", None)
-                }
+                )
             except Exception as exc:  # noqa: BLE001 - discovery must not block a config edit
-                logger.debug("plugin discovery for activation seed failed: %s", exc)
-                installed = set()
+                logger.debug("plugin entry-point discovery for activation seed failed: %s", exc)
+            try:
+                from datus.plugins import store
+
+                installed.update(
+                    meta.get("name") for meta in store.iter_installed() if isinstance(meta.get("name"), str)
+                )
+            except Exception as exc:  # noqa: BLE001 - store scan must not block a config edit
+                logger.debug("managed-store scan for activation seed failed: %s", exc)
+            installed.discard(None)
             installed.add(name)
             self._active_plugins = {p: PluginActivation(enabled=True) for p in sorted(installed)}
             self._plugins_section_present = True
@@ -1804,7 +1817,11 @@ class AgentConfig:
         plugin_map = dict(plugins.get(plugin, {}) or {})
         plugin_map[profile] = dict(config)
         plugins[plugin] = plugin_map
-        mgr.update_item("plugins", plugins, delete_old_key=True, save=True)
+        if not mgr.update_item("plugins", plugins, delete_old_key=True, save=True):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={"config_error": f"Failed to persist profile `{profile}` for plugin `{plugin}`"},
+            )
         self.init_plugin_services(plugins)
 
     def delete_plugin_profile(self, plugin: str, profile: str) -> bool:
@@ -1825,7 +1842,13 @@ class AgentConfig:
             plugins[plugin] = plugin_map
         else:
             plugins.pop(plugin, None)
-        mgr.update_item("plugins", plugins, delete_old_key=True, save=True)
+        if not mgr.update_item("plugins", plugins, delete_old_key=True, save=True):
+            raise DatusException(
+                ErrorCode.COMMON_CONFIG_ERROR,
+                message_args={
+                    "config_error": f"Failed to persist deletion of profile `{profile}` for plugin `{plugin}`"
+                },
+            )
         self.init_plugin_services(plugins)
         return True
 

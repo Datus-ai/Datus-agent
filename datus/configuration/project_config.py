@@ -330,18 +330,23 @@ def _parse_plugin_activation(plugin: str, spec: Any) -> Optional[PluginActivatio
 def _parse_plugins(raw: Any) -> Optional[Dict[str, PluginActivation]]:
     """Normalize the ``plugins:`` field into a ``{plugin: PluginActivation}`` map.
 
-    Declares per-plugin activation for this project. Returns ``None`` when the
-    key is absent (or explicitly null) — meaning "activate every installed
+    Declares per-plugin activation for this project. Returns ``None`` ONLY when
+    the key is absent (or explicitly null) — meaning "activate every installed
     plugin and all profiles". A present mapping (even empty) is the
-    authoritative whitelist: a returned empty dict deactivates all plugins.
-    Non-mapping top-level values, and entries whose plugin name is not a
-    non-empty string, are dropped with a warning.
+    authoritative whitelist: a returned empty dict deactivates all plugins. A
+    present-but-malformed value (e.g. ``plugins: 123``) fails closed to an
+    empty whitelist rather than ``None``, so a typo can never silently
+    re-enable every plugin. Entries whose plugin name is not a non-empty string
+    are dropped with a warning.
     """
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        logger.warning(f"plugins must be a mapping, got {type(raw).__name__}. Ignoring.")
-        return None
+        logger.warning(
+            f"plugins must be a mapping, got {type(raw).__name__}. "
+            "Treating as an empty whitelist (all plugins deactivated for this project)."
+        )
+        return {}
     parsed: Dict[str, PluginActivation] = {}
     for plugin, spec in raw.items():
         if not isinstance(plugin, str) or not plugin.strip():

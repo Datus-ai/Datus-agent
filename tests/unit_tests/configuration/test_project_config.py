@@ -464,11 +464,14 @@ class TestPluginsActivation:
         path.write_text(yaml.safe_dump({"plugins": {}}))
         assert load_project_override(str(tmp_path)).plugins == {}
 
-    def test_non_mapping_top_level_dropped(self, tmp_path):
+    def test_non_mapping_top_level_fails_closed(self, tmp_path):
+        # A present-but-malformed ``plugins`` value must fail closed to an empty
+        # whitelist (deactivate all), NOT to None ("activate everything") — a
+        # typo can never silently re-enable every installed plugin surface.
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
         path.write_text(yaml.safe_dump({"plugins": 123}))
-        assert load_project_override(str(tmp_path)).plugins is None
+        assert load_project_override(str(tmp_path)).plugins == {}
 
     def test_bool_shorthand_is_enabled_flag(self, tmp_path):
         path = tmp_path / PROJECT_CONFIG_REL

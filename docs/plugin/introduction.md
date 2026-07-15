@@ -189,7 +189,7 @@ deactivated plugin):
 | `datus plugin install '[{type}:]{src}'` | Install from `pip:` (default) / `src:` / `whl:` / `git:` / `zip:` into `~/.datus/plugins/` (`--force` replaces an existing install). |
 | `datus plugin pack [dir]` | Build a distributable wheelhouse `.zip` from a plugin project directory (default `./`); `--with-deps` bundles dependencies, `-o` sets the output dir. |
 | `datus plugin export <name>` | Export an installed plugin as a `.zip` (`-o` sets the output dir). |
-| `datus plugin upgrade <name>` | Re-install from the recorded source (pip/git/src). |
+| `datus plugin upgrade <name>` | Re-install from the recorded source (`pip`/`git`/`src`). A `whl`/`zip` install is a pinned artifact and cannot be upgraded in place — reinstall a newer bundle instead. |
 | `datus plugin uninstall <name>` | Remove the plugin's `~/.datus/plugins/{name}/` directory. |
 | `datus plugin list` | List installed plugins: package, version, source, configured profiles, project activation. |
 | `datus plugin info <name>` | Show one plugin's description, profiles, config schema, and activation. |

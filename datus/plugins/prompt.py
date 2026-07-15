@@ -104,12 +104,15 @@ def render_plugin_prompt(
         logger.warning("Plugin %r system_prompt template %s does not exist; skipping.", manifest.name, template_path)
         return None
     try:
-        from jinja2 import Environment, FileSystemLoader, StrictUndefined
+        from jinja2 import FileSystemLoader, StrictUndefined
+        from jinja2.sandbox import SandboxedEnvironment
 
-        # autoescape stays off: templates emit markdown for the LLM context,
-        # not HTML. StrictUndefined turns template typos into a logged skip
-        # instead of silently corrupted prompt text.
-        env = Environment(
+        # A SandboxedEnvironment blocks unsafe attribute/object traversal, so a
+        # plugin-controlled template can never execute arbitrary code during a
+        # prompt build. autoescape stays off: templates emit markdown for the
+        # LLM context, not HTML. StrictUndefined turns template typos into a
+        # logged skip instead of silently corrupted prompt text.
+        env = SandboxedEnvironment(
             loader=FileSystemLoader(str(package_dir)),
             autoescape=False,
             undefined=StrictUndefined,

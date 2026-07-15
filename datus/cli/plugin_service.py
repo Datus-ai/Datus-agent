@@ -45,8 +45,20 @@ from typing import List, Optional, Set, Tuple
 from datus.plugins import store
 from datus.plugins.store import StoreError
 from datus.utils.loggings import get_logger
+from datus.utils.text_utils import redact_uri
 
 logger = get_logger(__name__)
+
+
+def _redacted_cmd(cmd: List[str]) -> str:
+    """Join a subprocess command for logging, redacting credentials in URLs.
+
+    Install sources may be credential-bearing (``git+https://user:token@…``) or
+    PEP 508 direct references, so every token is passed through
+    :func:`redact_uri` before it reaches the log.
+    """
+    return " ".join(redact_uri(token) for token in cmd)
+
 
 # ── Offline wheelhouse bundle (.zip) format ────────────────────────────────
 # A bundle ``.zip`` holds a ``datus-bundle.json`` manifest plus a ``wheels/``
@@ -377,11 +389,32 @@ def _build_dir_meta(info: dict, itype: str, source: str, origin_artifact: Option
 
 
 def _replace_dir(dest: Path, src_dir: Path) -> None:
-    """Atomically-ish replace ``dest`` with ``src_dir`` (move, cross-fs safe)."""
+    """Replace ``dest`` with ``src_dir``, preserving the old ``dest`` on failure.
+
+    The current ``dest`` (if any) is moved aside to a sibling backup before the
+    freshly-staged ``src_dir`` is moved into place. The backup is restored on any
+    failure and removed only after a clean swap, so an interrupted move can never
+    destroy a working plugin or leave a half-written directory behind. Callers
+    must stage the plugin's metadata into ``src_dir`` before calling this, so the
+    committed directory is complete the instant it appears.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    backup = dest.parent / f"{dest.name}.datus-bak"
+    if backup.exists():
+        shutil.rmtree(backup)
     if dest.exists():
-        shutil.rmtree(dest)
-    shutil.move(str(src_dir), str(dest))
+        dest.rename(backup)
+    try:
+        shutil.move(str(src_dir), str(dest))
+    except Exception:
+        # Roll back: drop any partial destination and restore the backup.
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+        if backup.exists():
+            backup.rename(dest)
+        raise
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
 
 
 def _refresh(name: str) -> None:
@@ -417,8 +450,16 @@ def install(spec: str, force: bool = False) -> InstallResult:
     return _install_via_target(itype, src, force=force)
 
 
-def _install_via_target(itype: str, src: str, force: bool, upgrade: bool = False) -> InstallResult:
-    """Install a ``pip``/``src``/``whl``/``git`` source via ``pip install --target``."""
+def _install_via_target(
+    itype: str, src: str, force: bool, upgrade: bool = False, expected_name: Optional[str] = None
+) -> InstallResult:
+    """Install a ``pip``/``src``/``whl``/``git`` source via ``pip install --target``.
+
+    ``expected_name`` pins the plugin identity: when set (an ``upgrade``), an
+    installed distribution whose entry-point name differs is rejected so the
+    upgrade cannot install a renamed plugin into a new directory while leaving
+    the old one behind.
+    """
     try:
         pip_spec, ref = _pip_spec_and_ref(itype, src)
     except StoreError as exc:
@@ -428,7 +469,7 @@ def _install_via_target(itype: str, src: str, force: bool, upgrade: bool = False
         target = Path(tmp) / "target"
         target.mkdir()
         cmd, label = _target_install_command(pip_spec, target, upgrade=upgrade)
-        logger.info("Installing plugin: %s", " ".join(cmd))
+        logger.info("Installing plugin (%s): %s", label, _redacted_cmd(cmd))
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         except Exception as exc:  # uv / pip missing, OSError, etc.
@@ -451,6 +492,19 @@ def _install_via_target(itype: str, src: str, force: bool, upgrade: bool = False
 
         info["ref"] = ref if itype == "git" else None
         name = info["name"]
+        if expected_name is not None and name != expected_name:
+            return InstallResult(
+                ok=False,
+                source=src,
+                label=label,
+                name=name,
+                stdout=stdout,
+                stderr=stderr,
+                error=(
+                    f"upgrade would change plugin identity: installed distribution registers `{name}`, "
+                    f"expected `{expected_name}`. Uninstall `{expected_name}` and install `{name}` explicitly instead."
+                ),
+            )
         dest = store.plugin_dir(name)
         if dest.exists() and not force:
             return InstallResult(
@@ -459,8 +513,11 @@ def _install_via_target(itype: str, src: str, force: bool, upgrade: bool = False
                 name=name,
                 error=f"plugin '{name}' is already installed (use --force to replace, or `datus plugin upgrade {name}`)",
             )
+        # Stage metadata into the temp target BEFORE the swap so the committed
+        # directory is complete the instant it appears and a metadata failure
+        # never leaves the old plugin destroyed.
+        store.write_meta(target, _build_dir_meta(info, itype, ref, origin_artifact=None))
         _replace_dir(dest, target)
-        store.write_meta(dest, _build_dir_meta(info, itype, ref, origin_artifact=None))
         _refresh(name)
         return InstallResult(
             ok=True,
@@ -511,7 +568,7 @@ def _install_zip(src: str, force: bool) -> InstallResult:
                 target = Path(tmp) / "target"
                 target.mkdir()
                 cmd, label = _bundle_install_command(main_wheel, wheels_dir, target, bundle_deps)
-                logger.info("Installing plugin bundle: %s", " ".join(cmd))
+                logger.info("Installing plugin bundle (%s): %s", label, _redacted_cmd(cmd))
                 proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
                 stdout, stderr = proc.stdout or "", proc.stderr or ""
                 if proc.returncode != 0:
@@ -537,12 +594,15 @@ def _install_zip(src: str, force: bool) -> InstallResult:
                         name=name,
                         error=f"plugin '{name}' is already installed (use --force to replace)",
                     )
-                _replace_dir(dest, target)
-                shutil.copy2(bundle, dest / store.ORIGIN_ZIP)
+                # Stage the retained origin bundle + metadata into the temp
+                # target before the swap so the committed directory is complete
+                # and the old plugin survives any staging failure.
+                shutil.copy2(bundle, target / store.ORIGIN_ZIP)
                 store.write_meta(
-                    dest,
+                    target,
                     _build_dir_meta(info, "zip", str(bundle.resolve()), origin_artifact=store.ORIGIN_ZIP),
                 )
+                _replace_dir(dest, target)
                 _refresh(name)
                 return InstallResult(
                     ok=True,
@@ -650,7 +710,7 @@ def upgrade(name: str) -> UpgradeResult:
     if not source:
         return UpgradeResult(ok=False, name=name, error=f"plugin '{name}' has no recorded source to upgrade from")
 
-    result = _install_via_target(itype, source, force=True, upgrade=(itype == "pip"))
+    result = _install_via_target(itype, source, force=True, upgrade=(itype == "pip"), expected_name=name)
     if not result.ok:
         return UpgradeResult(
             ok=False,

@@ -88,7 +88,6 @@ def test_parse_manifest_non_int_version_rejected():
 def test_parse_manifest_unknown_keys_warned_but_kept(caplog):
     with caplog.at_level("WARNING"):
         manifest = parse_manifest({"manifest_version": 1, "skil": "skills", "cli": "pkg.mod:main"}, "hello", PKG)
-    assert manifest is not None
     assert manifest.cli == "pkg.mod:main"
     assert "skil" in caplog.text
 
@@ -140,7 +139,6 @@ def test_parse_manifest_bad_section_does_not_kill_others(caplog):
     }
     with caplog.at_level("WARNING"):
         manifest = parse_manifest(data, "hello", PKG)
-    assert manifest is not None
     assert manifest.cli == "pkg.cli:main"
     assert manifest.permissions == {}
     assert manifest.tool_transformers == {}
@@ -150,7 +148,6 @@ def test_parse_manifest_bad_section_does_not_kill_others(caplog):
 def test_parse_manifest_invalid_cli_ref_dropped(caplog):
     with caplog.at_level("WARNING"):
         manifest = parse_manifest({"manifest_version": 1, "cli": "not a ref"}, "hello", PKG)
-    assert manifest is not None
     assert manifest.cli is None
     assert "dotted code ref" in caplog.text
 
@@ -183,7 +180,6 @@ def test_parse_manifest_invalid_config_schema_dropped(caplog):
     data = {"manifest_version": 1, "config_schema": {"type": "object", "required": "not-a-list"}}
     with caplog.at_level("WARNING"):
         manifest = parse_manifest(data, "hello", PKG)
-    assert manifest is not None
     assert manifest.config_schema is None
     assert "not a valid JSON Schema" in caplog.text
 

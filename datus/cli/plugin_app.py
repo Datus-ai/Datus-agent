@@ -26,6 +26,7 @@ YAML files) as they happen, so the app simply returns when the user exits.
 from __future__ import annotations
 
 import asyncio
+import re
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -61,6 +62,10 @@ _MAX_LIST_ROWS = 12
 
 # Placeholder text (a field's schema description shown while it is empty).
 _PLACEHOLDER_STYLE = f"italic fg:{STATUS_BAR_FG_HINT}"
+
+# A ``${ENV_VAR}`` reference (optionally ``${VAR:-default}``). Secret fields must
+# carry one so a literal credential is never persisted into agent.yml.
+_ENV_REF_RE = re.compile(r"\$\{[^}]+\}")
 
 
 # Nested config_schema objects surface in the form as flat dotted field names
@@ -436,7 +441,14 @@ class PluginApp:
         else:
             materialized.add(profile)
         try:
-            if materialized == set(all_profiles):
+            if not materialized:
+                # Deselecting the last active profile disables the plugin rather
+                # than persisting enabled=True with an empty pin — which
+                # ``plugin_active()`` reads as active and an empty pin reads as
+                # "no narrowing → all profiles", the opposite of what the user
+                # just did.
+                self._agent_config.set_plugin_activation(plugin, enabled=False, clear_profiles=True)
+            elif materialized == set(all_profiles):
                 # Back to "all profiles active" — store as None for cleanliness.
                 self._agent_config.set_plugin_activation(plugin, enabled=True, clear_profiles=True)
             else:
@@ -539,7 +551,8 @@ class PluginApp:
         for spec, area in zip(self._form_specs, self._form_inputs):
             field_name = spec["name"]
             raw = area.text.strip()
-            if bool(spec.get("secret")) and raw == "" and self._form_mode == "edit":
+            is_secret = bool(spec.get("secret"))
+            if is_secret and raw == "" and self._form_mode == "edit":
                 # Blank secret on edit keeps the previously-stored value.
                 previous = _nested_get(existing, field_name)
                 if previous is not None:
@@ -547,6 +560,12 @@ class PluginApp:
                 continue
             if raw == "":
                 continue
+            if is_secret and not _ENV_REF_RE.search(raw):
+                # A secret must reference an env var (``${ENV_VAR}``), never a
+                # literal credential — those would be persisted verbatim into
+                # agent.yml.
+                self._error_message = f"`{field_name}` is a secret: use a ${{ENV_VAR}} reference, not a literal value."
+                return
             _nested_set(config, field_name, raw)
 
         # Validate required fields locally, then against the config schema.

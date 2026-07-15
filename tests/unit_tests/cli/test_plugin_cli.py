@@ -68,6 +68,20 @@ def test_install_forwards_type_spec_and_force(monkeypatch):
     assert captured == {"source": "git:https://h/x", "force": True}
 
 
+def test_install_forwards_bare_source_as_implicit_pip(monkeypatch):
+    # A prefix-less source is forwarded verbatim; the service defaults it to pip.
+    captured = {}
+
+    def fake_install(source, force=False):
+        captured["source"] = source
+        captured["force"] = force
+        return InstallResult(ok=True, name="demo")
+
+    monkeypatch.setattr(plugin_cli.svc, "install", fake_install)
+    plugin_cli.run_plugin_command(["install", "datus-demo-plugin"])
+    assert captured == {"source": "datus-demo-plugin", "force": False}
+
+
 def test_install_no_editable_flag():
     # ``-e`` was removed; argparse must reject it.
     with pytest.raises(SystemExit):

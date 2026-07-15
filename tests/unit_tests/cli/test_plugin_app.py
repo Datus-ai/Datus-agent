@@ -114,6 +114,18 @@ def test_toggle_profile_active_back_to_all(app):
     assert call["clear_profiles"] is True
 
 
+def test_toggle_profile_active_deselect_last_disables_plugin(app):
+    application, cfg = app
+    # Only 'dev' active → toggling it off leaves no active profile. That must
+    # disable the plugin, not persist enabled=True with an empty pin (which
+    # would read as active-with-no-narrowing → all profiles).
+    cfg._active_profiles_map["statsig"] = ["dev"]
+    application._toggle_profile_active("statsig", "dev")
+    call = cfg.activation_calls[-1]
+    assert call["enabled"] is False
+    assert call["clear_profiles"] is True
+
+
 def test_open_and_submit_new_profile(app, monkeypatch):
     application, cfg = app
     application._selected_plugin = "statsig"
@@ -180,6 +192,37 @@ def test_submit_validate_profile_errors_block(app, monkeypatch):
     application._submit_profile_form()
     assert application._error_message == "base_url must be https"
     assert cfg.saved == []
+
+
+def test_submit_rejects_literal_secret(app, monkeypatch):
+    application, cfg = app
+    application._selected_plugin = "statsig"
+    monkeypatch.setattr(
+        "datus.plugins.registry.plugin_config_schema",
+        lambda name: [{"name": "api_key", "description": "", "required": True, "secret": True}],
+    )
+    monkeypatch.setattr("datus.plugins.registry.plugin_validate_profile", lambda name, profile: [])
+    application._open_profile_form("new")
+    application._form_name_input.text = "staging"
+    application._form_inputs[0].text = "sk-literal-secret"  # a literal, not a ${ENV_VAR} reference
+    application._submit_profile_form()
+    assert "${ENV_VAR}" in (application._error_message or "")
+    assert cfg.saved == []
+
+
+def test_submit_accepts_env_ref_secret(app, monkeypatch):
+    application, cfg = app
+    application._selected_plugin = "statsig"
+    monkeypatch.setattr(
+        "datus.plugins.registry.plugin_config_schema",
+        lambda name: [{"name": "api_key", "description": "", "required": True, "secret": True}],
+    )
+    monkeypatch.setattr("datus.plugins.registry.plugin_validate_profile", lambda name, profile: [])
+    application._open_profile_form("new")
+    application._form_name_input.text = "staging"
+    application._form_inputs[0].text = "${STATSIG_KEY}"
+    application._submit_profile_form()
+    assert cfg.saved == [("statsig", "staging", {"api_key": "${STATSIG_KEY}"})]
 
 
 def test_edit_blank_secret_keeps_existing(app, monkeypatch):

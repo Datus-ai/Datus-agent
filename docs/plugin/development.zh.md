@@ -28,7 +28,7 @@ Datus 是 *配置 broker*——它负责读 `agent.yml`、展开 `${VAR}`、解�
 
 **1. 包结构**
 
-```
+```text
 datus-plugin-hello/
 ├── pyproject.toml
 └── datus_plugin_hello/
@@ -187,6 +187,11 @@ config_schema:
   提交时按嵌套结构重新组装后再保存。object 上的 `x-secret: true` 会把所有叶子
   标记为 secret;叶子只有在整条祖先路径都必填时才是表单必填。系统提示词的
   白名单剥离也按同样规则递归过滤已声明的嵌套 object。
+- **自由 object 会整体透传。** **没有**自身 `properties` 的 `type: object`
+  属性(自由字典)*不会*逐键过滤:TUI 把它当作单个字段,系统提示词渲染器会把
+  它存储的整个值原样送进提示词。被跳过的只是逐键剥离——字段本身仍须先声明——
+  因此这种字段里嵌套的任何 secret 都会到达 LLM。要么声明其子 `properties`
+  (以获得递归过滤),要么把整个 object 标记为 `x-secret: true`。
 - **校验**在原始候选字典上运行 `jsonschema`(用户刚输入、**尚未** `${VAR}` 展开
   的值)。含 `${ENV_VAR}` 占位符的值被视为不透明——针对它们的
   pattern/enum/format 违规会被抑制,但缺失 `required` 字段仍会报错。真正的运行
@@ -200,7 +205,7 @@ config_schema:
 
 manifest 的 `cli` 指向一个以 `main(argv, profile)` 调用的函数:
 
-```
+```text
 datus hello --profile staging greet Ada
                 └── 被剥离 ──┘ └── argv = ["greet", "Ada"] ──┘
 ```
@@ -397,7 +402,7 @@ skills: skills
 
 目录与打包:
 
-```
+```text
 datus_plugin_hello/
 ├── datus-plugin.yml
 └── skills/
@@ -477,8 +482,10 @@ environment.
     `${VAR}` 展开(是真实明文 secret)——所以 Datus 在模板看到 profiles
     **之前**就做了过滤:只有在你的 `config_schema` 中声明且**未**标记
     `x-secret: true` 的字段才会通过;未声明的字段同样被丢弃,已声明的嵌套
-    object 也按同样规则递归过滤。没有
-    `config_schema` 时,模板只能拿到 profile 名和空字典。模板若引用被剥离的
+    object(带自身 `properties` 的 `type: object`)也按同样规则递归过滤。
+    唯一例外是**自由** object 字段(声明为 `type: object` 但没有 `properties`):
+    它的整个值会原样透传,若可能存放敏感内容,请把它标记为 `x-secret: true`。
+    没有 `config_schema` 时,模板只能拿到 profile 名和空字典。模板若引用被剥离的
     字段会渲染失败(严格模式)并跳过该 section——永远不可能泄漏。
 
 模板错误(文件缺失、语法错误、未定义变量)只会记录日志并跳过该 section——绝不
@@ -585,7 +592,7 @@ def enforce_tenant_scope(tool_name, args, context):
 `pip install` 之后手工编辑 YAML 是最大的摩擦。把 `<name>-setup` skill 与主
 skill 一起分发,让 agent 自己收集值并写好 profile:
 
-```
+```text
 datus_plugin_hello/
 └── skills/
     ├── hello/

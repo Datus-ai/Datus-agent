@@ -102,6 +102,14 @@ def test_read_plugin_entry_rejects_missing_manifest(tmp_path):
         pack._read_plugin_entry(wheel)
 
 
+def test_read_plugin_entry_rejects_invalid_manifest(tmp_path):
+    # A present-but-invalid manifest (unsupported version) is rejected at build
+    # time, not deferred to install time.
+    wheel = _make_wheel(tmp_path / "w.whl", manifest="manifest_version: 99\n")
+    with pytest.raises(pack.PackError, match="invalid"):
+        pack._read_plugin_entry(wheel)
+
+
 # ── pack: default (no deps) ──────────────────────────────────────────────────
 
 

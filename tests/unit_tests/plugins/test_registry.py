@@ -59,6 +59,17 @@ def test_load_plugin_manifest_legacy_class_entry_rejected(plugin_env, caplog):
     assert "legacy class-based contract" in caplog.text
 
 
+def test_load_plugin_manifest_dotted_entry_point_rejected(plugin_env, caplog):
+    pkg = plugin_env("hello", MINIMAL)
+    # A dotted entry-point value would make ``find_spec`` import the parent
+    # package (executing plugin code) before the manifest is read; discovery
+    # must reject it and only accept bare top-level package names.
+    plugin_env("dotted", MINIMAL, value=f"{pkg.name}.submodule")
+    with caplog.at_level("WARNING"):
+        assert registry.load_plugin_manifest("dotted") is None
+    assert "bare top-level package" in caplog.text
+
+
 def test_load_plugin_manifest_multiple_uses_first(plugin_env, caplog):
     first = plugin_env("hello", MINIMAL + "description: first\n")
     plugin_env("hello", MINIMAL + "description: second\n")
@@ -317,8 +328,10 @@ def test_system_prompt_stale_pin_falls_back_to_all(plugin_env):
 
 
 def test_system_prompt_sections_respect_active_names(plugin_env):
-    _prompt_plugin(plugin_env, name="a", template="## Active plugin")
-    _prompt_plugin(plugin_env, name="b", template="## Active plugin")
+    # Distinct per-plugin output so the assertion proves the *right* plugin was
+    # kept — identical text would pass even if the filter let plugin "b" through.
+    _prompt_plugin(plugin_env, name="a", template="## Plugin A section")
+    _prompt_plugin(plugin_env, name="b", template="## Plugin B section")
 
     class _Cfg:
         plugin_services = {}
@@ -327,7 +340,8 @@ def test_system_prompt_sections_respect_active_names(plugin_env):
             return {"a"}
 
     sections = registry.plugin_system_prompt_sections(_Cfg())
-    assert sum(1 for s in sections if s == "## Active plugin") == 1
+    assert any("## Plugin A section" in s for s in sections)
+    assert not any("## Plugin B section" in s for s in sections)
 
 
 # ---------------------------------------------------------------------------
