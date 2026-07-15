@@ -417,25 +417,53 @@ def _replace_dir(dest: Path, src_dir: Path) -> None:
         shutil.rmtree(backup, ignore_errors=True)
 
 
-def _refresh(name: str) -> None:
-    """Make a freshly-installed plugin discoverable in this process."""
-    importlib.invalidate_caches()
+def _resolve_dest(name: str, dest_dir: Optional[str]) -> Path:
+    """Destination directory for plugin ``name`` (``dest_dir`` overrides the store)."""
+    return Path(dest_dir).expanduser() if dest_dir else store.plugin_dir(name)
+
+
+def _refresh(name: str, directory: Path) -> None:
+    """Make a freshly-installed plugin discoverable in this process.
+
+    Ensures ``directory`` is on ``sys.path``, then unconditionally drops the
+    import + plugin registry caches. The ``activate_*`` helpers only invalidate
+    when they newly append a directory, so a same-name replace (``--force`` /
+    ``upgrade``) — whose directory is already on ``sys.path`` — would otherwise
+    keep serving the replaced plugin's stale manifest for the rest of the
+    process.
+    """
     try:
-        store.activate_name(name)
+        if directory == store.plugin_dir(name):
+            store.activate_name(name)
+        else:
+            store.activate_paths([str(directory)])
     except Exception as exc:  # noqa: BLE001 - defensive: never crash the install on refresh
         logger.debug("plugin path activation after install failed: %s", exc)
+    importlib.invalidate_caches()
+    try:
+        from datus.plugins.registry import invalidate_plugin_cache
+
+        invalidate_plugin_cache()
+    except Exception as exc:  # noqa: BLE001 - defensive: never crash the install on refresh
+        logger.debug("plugin cache invalidation failed after install: %s", exc)
 
 
 # ── install ────────────────────────────────────────────────────────────────
 
 
-def install(spec: str, force: bool = False) -> InstallResult:
+def install(spec: str, force: bool = False, dest_dir: Optional[str] = None) -> InstallResult:
     """Install a plugin from a ``{type}:{src}`` source into ``~/.datus/plugins/``.
 
     Every non-zip source installs via ``pip install --target`` into the plugin's
     directory; ``zip:`` installs a self-contained wheelhouse bundle. Provenance
     is recorded in ``datus-plugin.json`` for later ``upgrade`` / ``export``. When
     the plugin is already installed, ``force`` replaces it.
+
+    ``dest_dir`` (reserved for future use; not surfaced on the CLI yet) installs
+    the plugin tree into that exact directory instead of
+    ``~/.datus/plugins/{name}/`` — the one-directory-one-plugin layout that
+    ``agent.plugin_paths`` mounts. Such an install is not enumerated by the
+    managed store; mount it via ``agent.plugin_paths`` to use it.
     """
     spec = (spec or "").strip()
     if not spec:
@@ -445,20 +473,27 @@ def install(spec: str, force: bool = False) -> InstallResult:
     except ValueError as exc:
         return InstallResult(ok=False, source=spec, error=str(exc))
 
+    dest_dir = (dest_dir or "").strip() or None
     if itype == "zip":
-        return _install_zip(src, force=force)
-    return _install_via_target(itype, src, force=force)
+        return _install_zip(src, force=force, dest_dir=dest_dir)
+    return _install_via_target(itype, src, force=force, dest_dir=dest_dir)
 
 
 def _install_via_target(
-    itype: str, src: str, force: bool, upgrade: bool = False, expected_name: Optional[str] = None
+    itype: str,
+    src: str,
+    force: bool,
+    upgrade: bool = False,
+    expected_name: Optional[str] = None,
+    dest_dir: Optional[str] = None,
 ) -> InstallResult:
     """Install a ``pip``/``src``/``whl``/``git`` source via ``pip install --target``.
 
     ``expected_name`` pins the plugin identity: when set (an ``upgrade``), an
     installed distribution whose entry-point name differs is rejected so the
     upgrade cannot install a renamed plugin into a new directory while leaving
-    the old one behind.
+    the old one behind. ``dest_dir`` overrides the destination directory (see
+    :func:`install`).
     """
     try:
         pip_spec, ref = _pip_spec_and_ref(itype, src)
@@ -505,20 +540,20 @@ def _install_via_target(
                     f"expected `{expected_name}`. Uninstall `{expected_name}` and install `{name}` explicitly instead."
                 ),
             )
-        dest = store.plugin_dir(name)
+        dest = _resolve_dest(name, dest_dir)
         if dest.exists() and not force:
-            return InstallResult(
-                ok=False,
-                source=src,
-                name=name,
-                error=f"plugin '{name}' is already installed (use --force to replace, or `datus plugin upgrade {name}`)",
+            error = (
+                f"destination directory {dest} already exists (pass force=True to replace)"
+                if dest_dir
+                else f"plugin '{name}' is already installed (use --force to replace, or `datus plugin upgrade {name}`)"
             )
+            return InstallResult(ok=False, source=src, name=name, error=error)
         # Stage metadata into the temp target BEFORE the swap so the committed
         # directory is complete the instant it appears and a metadata failure
         # never leaves the old plugin destroyed.
         store.write_meta(target, _build_dir_meta(info, itype, ref, origin_artifact=None))
         _replace_dir(dest, target)
-        _refresh(name)
+        _refresh(name, dest)
         return InstallResult(
             ok=True,
             source=src,
@@ -532,8 +567,18 @@ def _install_via_target(
         )
 
 
-def _install_zip(src: str, force: bool) -> InstallResult:
-    """Install a plugin from a self-contained wheelhouse ``.zip`` bundle."""
+def _zip_dest_exists_error(name: str, dest: Path, dest_dir: Optional[str]) -> str:
+    """Refusal message for a bundle install whose destination already exists."""
+    if dest_dir:
+        return f"destination directory {dest} already exists (pass force=True to replace)"
+    return f"plugin '{name}' is already installed (use --force to replace)"
+
+
+def _install_zip(src: str, force: bool, dest_dir: Optional[str] = None) -> InstallResult:
+    """Install a plugin from a self-contained wheelhouse ``.zip`` bundle.
+
+    ``dest_dir`` overrides the destination directory (see :func:`install`).
+    """
     bundle = Path(src).expanduser()
     if not bundle.is_file():
         return InstallResult(ok=False, source=src, error=f"bundle not found: {src}")
@@ -549,13 +594,15 @@ def _install_zip(src: str, force: bool) -> InstallResult:
             # Fast pre-check on the manifest's declared name (avoids a wasted
             # install when the plugin is already present and --force is absent).
             declared = manifest["plugin"].get("name")
-            if isinstance(declared, str) and declared and store.plugin_dir(declared).exists() and not force:
-                return InstallResult(
-                    ok=False,
-                    source=src,
-                    name=declared,
-                    error=f"plugin '{declared}' is already installed (use --force to replace)",
-                )
+            if isinstance(declared, str) and declared and not force:
+                pre_dest = _resolve_dest(declared, dest_dir)
+                if pre_dest.exists():
+                    return InstallResult(
+                        ok=False,
+                        source=src,
+                        name=declared,
+                        error=_zip_dest_exists_error(declared, pre_dest, dest_dir),
+                    )
             with tempfile.TemporaryDirectory(prefix="datus-zip-") as tmp:
                 wheels_dir = _extract_and_verify_wheels(zf, manifest, Path(tmp))
                 main_wheel = wheels_dir / manifest["plugin"]["wheel"]
@@ -586,13 +633,13 @@ def _install_zip(src: str, force: bool) -> InstallResult:
                 except StoreError as exc:
                     return InstallResult(ok=False, source=src, label=label, error=str(exc))
                 name = info["name"]
-                dest = store.plugin_dir(name)
+                dest = _resolve_dest(name, dest_dir)
                 if dest.exists() and not force:
                     return InstallResult(
                         ok=False,
                         source=src,
                         name=name,
-                        error=f"plugin '{name}' is already installed (use --force to replace)",
+                        error=_zip_dest_exists_error(name, dest, dest_dir),
                     )
                 # Stage the retained origin bundle + metadata into the temp
                 # target before the swap so the committed directory is complete
@@ -603,7 +650,7 @@ def _install_zip(src: str, force: bool) -> InstallResult:
                     _build_dir_meta(info, "zip", str(bundle.resolve()), origin_artifact=store.ORIGIN_ZIP),
                 )
                 _replace_dir(dest, target)
-                _refresh(name)
+                _refresh(name, dest)
                 return InstallResult(
                     ok=True,
                     source=src,
