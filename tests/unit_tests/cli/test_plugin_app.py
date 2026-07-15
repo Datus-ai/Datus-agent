@@ -199,6 +199,139 @@ def test_edit_blank_secret_keeps_existing(app, monkeypatch):
     assert cfg.saved[-1] == ("statsig", "dev", {"api_key": "${OLD}"})
 
 
+_NESTED_SPECS = [
+    {"name": "api_base_url", "description": "REST endpoint", "required": True, "secret": False},
+    {"name": "s3.region", "description": "AWS region", "required": False, "secret": False, "default": "us-east-1"},
+    {"name": "s3.secret_access_key", "description": "S3 secret key", "required": True, "secret": True},
+]
+
+
+def _placeholder_of(area):
+    """Return the placeholder processor attached to a form input, or None."""
+    from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
+
+    for proc in area.control.input_processors or []:
+        if isinstance(proc, ConditionalProcessor) and isinstance(proc.processor, AfterInput):
+            return proc
+    return None
+
+
+def test_nested_specs_submit_builds_nested_config(app, monkeypatch):
+    application, cfg = app
+    application._selected_plugin = "statsig"
+    monkeypatch.setattr("datus.plugins.registry.plugin_config_schema", lambda name: list(_NESTED_SPECS))
+    monkeypatch.setattr("datus.plugins.registry.plugin_validate_profile", lambda name, profile: [])
+
+    application._open_profile_form("new")
+    # The default is pre-filled; the no-default and secret fields start blank.
+    assert application._form_inputs[0].text == ""
+    assert application._form_inputs[1].text == "us-east-1"
+    assert application._form_inputs[2].text == ""
+    application._form_name_input.text = "alpha"
+    application._form_inputs[0].text = "http://127.0.0.1:8080"
+    application._form_inputs[2].text = "${S3_SECRET}"
+    application._submit_profile_form()
+
+    assert cfg.saved == [
+        (
+            "statsig",
+            "alpha",
+            {
+                "api_base_url": "http://127.0.0.1:8080",
+                "s3": {"region": "us-east-1", "secret_access_key": "${S3_SECRET}"},
+            },
+        )
+    ]
+
+
+def test_nested_missing_required_blocks(app, monkeypatch):
+    application, cfg = app
+    application._selected_plugin = "statsig"
+    monkeypatch.setattr("datus.plugins.registry.plugin_config_schema", lambda name: list(_NESTED_SPECS))
+    application._open_profile_form("new")
+    application._form_name_input.text = "alpha"
+    application._form_inputs[0].text = "http://127.0.0.1:8080"
+    # s3.secret_access_key (required) left blank.
+    application._submit_profile_form()
+    assert "s3.secret_access_key" in (application._error_message or "")
+    assert cfg.saved == []
+
+
+def test_edit_nested_blank_secret_keeps_existing(app, monkeypatch):
+    application, cfg = app
+    application._selected_plugin = "statsig"
+    cfg.plugin_services["statsig"]["dev"] = {
+        "name": "dev",
+        "api_base_url": "http://a",
+        "s3": {"region": "eu-west-1", "secret_access_key": "${OLD_SECRET}"},
+    }
+    monkeypatch.setattr("datus.plugins.registry.plugin_config_schema", lambda name: list(_NESTED_SPECS))
+    monkeypatch.setattr("datus.plugins.registry.plugin_validate_profile", lambda name, profile: [])
+
+    application._open_profile_form("edit", "dev")
+    # Nested non-secret values pre-fill from the stored profile; secrets stay blank.
+    assert application._form_inputs[1].text == "eu-west-1"
+    assert application._form_inputs[2].text == ""
+    application._submit_profile_form()
+    assert cfg.saved[-1] == (
+        "statsig",
+        "dev",
+        {"api_base_url": "http://a", "s3": {"region": "eu-west-1", "secret_access_key": "${OLD_SECRET}"}},
+    )
+
+
+def test_freeform_fallback_flattens_nested_existing(app, monkeypatch):
+    application, cfg = app
+    application._selected_plugin = "statsig"
+    cfg.plugin_services["statsig"]["dev"] = {"name": "dev", "url": "https://x", "s3": {"region": "us"}}
+    monkeypatch.setattr("datus.plugins.registry.plugin_config_schema", lambda name: [])
+    monkeypatch.setattr("datus.plugins.registry.plugin_validate_profile", lambda name, profile: [])
+
+    application._open_profile_form("edit", "dev")
+    assert [s["name"] for s in application._form_specs] == ["url", "s3.region"]
+    assert [a.text for a in application._form_inputs] == ["https://x", "us"]
+    application._submit_profile_form()
+    assert cfg.saved[-1] == ("statsig", "dev", {"url": "https://x", "s3": {"region": "us"}})
+
+
+def test_empty_field_shows_description_placeholder(app, monkeypatch):
+    application, _cfg = app
+    application._selected_plugin = "statsig"
+    monkeypatch.setattr(
+        "datus.plugins.registry.plugin_config_schema",
+        lambda name: [
+            {"name": "api_base_url", "description": "REST endpoint", "required": True, "secret": False},
+            {"name": "region", "description": "", "required": False, "secret": False},
+        ],
+    )
+    application._open_profile_form("new")
+
+    proc = _placeholder_of(application._form_inputs[0])
+    assert proc.processor.text == "REST endpoint"
+    # Shown while the field is empty, hidden as soon as the user types.
+    assert proc.filter()
+    application._form_inputs[0].text = "http://x"
+    assert not proc.filter()
+    # A field without a description gets no placeholder.
+    assert _placeholder_of(application._form_inputs[1]) is None
+
+
+def test_prefilled_default_hides_placeholder(app, monkeypatch):
+    application, _cfg = app
+    application._selected_plugin = "statsig"
+    monkeypatch.setattr(
+        "datus.plugins.registry.plugin_config_schema",
+        lambda name: [
+            {"name": "region", "description": "AWS region", "required": False, "secret": False, "default": "us-east-1"}
+        ],
+    )
+    application._open_profile_form("new")
+    proc = _placeholder_of(application._form_inputs[0])
+    assert proc.processor.text == "AWS region"
+    assert application._form_inputs[0].text == "us-east-1"
+    assert not proc.filter()
+
+
 def test_delete_profile_two_press_confirm(app):
     application, cfg = app
     application._selected_plugin = "statsig"

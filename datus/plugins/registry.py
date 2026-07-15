@@ -545,16 +545,86 @@ def collect_plugin_cli_permissions(active_names: Optional[Set[str]] = None) -> D
     }
 
 
+# A config_schema may nest ``type: object`` properties; the TUI flattens them
+# into dotted field names. The cap bounds recursion so a pathological schema
+# (e.g. a self-referential YAML anchor that slipped past meta-validation) can
+# never hang field derivation.
+_SCHEMA_FLATTEN_MAX_DEPTH = 8
+
+
+def _flatten_schema_properties(
+    plugin_name: str,
+    properties: Dict[str, Any],
+    required_names: Set[str],
+    *,
+    prefix: str = "",
+    inherited_required: bool = True,
+    inherited_secret: bool = False,
+    depth: int = 0,
+) -> List[Dict[str, Any]]:
+    """Flatten (possibly nested) schema properties into ordered field specs."""
+    if depth >= _SCHEMA_FLATTEN_MAX_DEPTH:
+        logger.warning(
+            "Plugin %r config_schema nests deeper than %d levels; deeper fields are skipped.",
+            plugin_name,
+            _SCHEMA_FLATTEN_MAX_DEPTH,
+        )
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for field_name, prop in properties.items():
+        if not isinstance(field_name, str) or not field_name.strip():
+            logger.warning("Plugin %r config_schema property name %r is invalid; skipping.", plugin_name, field_name)
+            continue
+        dotted = f"{prefix}{field_name.strip()}"
+        spec_source = prop if isinstance(prop, dict) else {}
+        secret = inherited_secret or spec_source.get("x-secret") is True
+        required = inherited_required and field_name in required_names
+        nested_properties = spec_source.get("properties")
+        if spec_source.get("type") == "object" and isinstance(nested_properties, dict):
+            nested_required = spec_source.get("required")
+            nested_required_names = (
+                {entry for entry in nested_required if isinstance(entry, str)}
+                if isinstance(nested_required, list)
+                else set()
+            )
+            normalized.extend(
+                _flatten_schema_properties(
+                    plugin_name,
+                    nested_properties,
+                    nested_required_names,
+                    prefix=f"{dotted}.",
+                    inherited_required=required,
+                    inherited_secret=secret,
+                    depth=depth + 1,
+                )
+            )
+            continue
+        spec: Dict[str, Any] = {
+            "name": dotted,
+            "description": str(spec_source.get("description") or ""),
+            "required": required,
+            "secret": secret,
+        }
+        if "default" in spec_source:
+            spec["default"] = spec_source["default"]
+        normalized.append(spec)
+    return normalized
+
+
 def plugin_config_schema(name: str) -> List[Dict[str, Any]]:
     """Return the normalized config-field specs derived from plugin ``name``'s
     manifest ``config_schema`` (a JSON Schema).
 
     Each returned entry has ``name`` (str), ``description`` (str), ``required``
-    (bool — membership in the schema's ``required`` list), ``secret`` (bool —
-    the ``x-secret: true`` property marker) and an optional ``default``.
-    Property insertion order is preserved, so it defines the ``/plugins`` TUI
-    field order. A plugin without a schema yields an empty list — the TUI then
-    falls back to free-form key/value editing. Never raises.
+    (bool), ``secret`` (bool — the ``x-secret: true`` property marker) and an
+    optional ``default``. A ``type: object`` property with its own
+    ``properties`` is expanded into one spec per leaf with a dotted name
+    (``s3.secret_access_key``); ``x-secret`` on the object marks every leaf
+    secret, and a leaf is ``required`` only when its whole ancestor path is
+    required too. Property insertion order is preserved, so it defines the
+    ``/plugins`` TUI field order. A plugin without a schema yields an empty
+    list — the TUI then falls back to free-form key/value editing. Never
+    raises.
     """
     manifest = load_plugin_manifest(name)
     if manifest is None or not isinstance(manifest.config_schema, dict):
@@ -564,22 +634,7 @@ def plugin_config_schema(name: str) -> List[Dict[str, Any]]:
         return []
     required = manifest.config_schema.get("required")
     required_names = {entry for entry in required if isinstance(entry, str)} if isinstance(required, list) else set()
-    normalized: List[Dict[str, Any]] = []
-    for field_name, prop in properties.items():
-        if not isinstance(field_name, str) or not field_name.strip():
-            logger.warning("Plugin %r config_schema property name %r is invalid; skipping.", name, field_name)
-            continue
-        spec_source = prop if isinstance(prop, dict) else {}
-        spec: Dict[str, Any] = {
-            "name": field_name.strip(),
-            "description": str(spec_source.get("description") or ""),
-            "required": field_name in required_names,
-            "secret": spec_source.get("x-secret") is True,
-        }
-        if "default" in spec_source:
-            spec["default"] = spec_source["default"]
-        normalized.append(spec)
-    return normalized
+    return _flatten_schema_properties(name, properties, required_names)
 
 
 def plugin_validate_profile(name: str, profile: Dict[str, Any]) -> List[str]:

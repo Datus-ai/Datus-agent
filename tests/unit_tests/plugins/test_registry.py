@@ -621,6 +621,116 @@ def test_config_schema_without_properties_returns_empty(plugin_env):
     assert registry.plugin_config_schema("hello") == []
 
 
+NESTED_SCHEMA_YAML = (
+    "config_schema:\n"
+    "  type: object\n"
+    "  required: [api_base_url, s3]\n"
+    "  properties:\n"
+    "    api_base_url:\n"
+    "      type: string\n"
+    "      description: REST endpoint\n"
+    "    s3:\n"
+    "      type: object\n"
+    "      required: [secret_access_key]\n"
+    "      properties:\n"
+    "        region:\n"
+    "          type: string\n"
+    "          default: us-east-1\n"
+    "        secret_access_key:\n"
+    "          type: string\n"
+    "          description: S3 secret key\n"
+    "          x-secret: true\n"
+)
+
+
+def test_config_schema_flattens_nested_objects(plugin_env):
+    plugin_env("hello", MINIMAL + NESTED_SCHEMA_YAML)
+    assert registry.plugin_config_schema("hello") == [
+        {"name": "api_base_url", "description": "REST endpoint", "required": True, "secret": False},
+        {"name": "s3.region", "description": "", "required": False, "secret": False, "default": "us-east-1"},
+        {"name": "s3.secret_access_key", "description": "S3 secret key", "required": True, "secret": True},
+    ]
+
+
+def test_config_schema_nested_required_needs_required_ancestors(plugin_env):
+    """A required leaf inside an optional object is not form-required."""
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n"
+        + "  type: object\n"
+        + "  properties:\n"
+        + "    s3:\n"
+        + "      type: object\n"
+        + "      required: [key]\n"
+        + "      properties:\n"
+        + "        key: {type: string}\n",
+    )
+    assert registry.plugin_config_schema("hello") == [
+        {"name": "s3.key", "description": "", "required": False, "secret": False}
+    ]
+
+
+def test_config_schema_block_level_secret_marks_all_leaves(plugin_env):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n"
+        + "  type: object\n"
+        + "  properties:\n"
+        + "    s3:\n"
+        + "      type: object\n"
+        + "      x-secret: true\n"
+        + "      properties:\n"
+        + "        region: {type: string}\n"
+        + "        key: {type: string}\n",
+    )
+    specs = registry.plugin_config_schema("hello")
+    assert [s["name"] for s in specs] == ["s3.region", "s3.key"]
+    assert all(s["secret"] for s in specs)
+
+
+def test_config_schema_object_without_properties_stays_flat(plugin_env):
+    """A ``type: object`` property without nested ``properties`` stays one field."""
+    plugin_env("hello", MINIMAL + "config_schema:\n  type: object\n  properties:\n    extras: {type: object}\n")
+    assert [s["name"] for s in registry.plugin_config_schema("hello")] == ["extras"]
+
+
+def test_config_schema_flattens_three_levels(plugin_env):
+    plugin_env(
+        "hello",
+        MINIMAL
+        + "config_schema:\n"
+        + "  type: object\n"
+        + "  properties:\n"
+        + "    a:\n"
+        + "      type: object\n"
+        + "      properties:\n"
+        + "        b:\n"
+        + "          type: object\n"
+        + "          properties:\n"
+        + "            c: {type: string}\n",
+    )
+    assert [s["name"] for s in registry.plugin_config_schema("hello")] == ["a.b.c"]
+
+
+def test_config_schema_nesting_depth_capped(plugin_env, caplog):
+    """Fields nested beyond the flattening cap are dropped with a warning."""
+    lines = ["config_schema:", "  type: object"]
+    indent = "  "
+    for i in range(10):
+        lines.append(f"{indent}properties:")
+        lines.append(f"{indent}  n{i}:")
+        lines.append(f"{indent}    type: object")
+        indent += "    "
+    lines.append(f"{indent}properties:")
+    lines.append(f"{indent}  leaf: {{type: string}}")
+    plugin_env("hello", MINIMAL + "\n".join(lines) + "\n")
+    with caplog.at_level("WARNING"):
+        assert registry.plugin_config_schema("hello") == []
+    assert "nests deeper" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # plugin_validate_profile (jsonschema)
 # ---------------------------------------------------------------------------

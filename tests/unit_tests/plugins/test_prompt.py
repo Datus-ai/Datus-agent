@@ -51,6 +51,66 @@ def test_strip_x_secret_must_be_literal_true():
     assert strip_secret_fields(profiles, schema) == {"p": {"a": "1", "b": "2"}}
 
 
+NESTED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "base_url": {"type": "string"},
+        "s3": {
+            "type": "object",
+            "properties": {
+                "region": {"type": "string"},
+                "secret_access_key": {"type": "string", "x-secret": True},
+            },
+        },
+        "credentials": {"type": "object", "x-secret": True, "properties": {"user": {"type": "string"}}},
+    },
+}
+
+
+def test_strip_recurses_into_declared_nested_objects():
+    """Nested ``x-secret`` leaves and undeclared nested keys are stripped."""
+    profiles = {
+        "prod": {
+            "base_url": "https://x",
+            "s3": {"region": "us", "secret_access_key": "REAL-SECRET", "endpoint": "http://minio"},
+        }
+    }
+    assert strip_secret_fields(profiles, NESTED_SCHEMA) == {"prod": {"base_url": "https://x", "s3": {"region": "us"}}}
+
+
+def test_strip_drops_block_level_secret_objects():
+    profiles = {"prod": {"credentials": {"user": "root"}, "base_url": "https://x"}}
+    assert strip_secret_fields(profiles, NESTED_SCHEMA) == {"prod": {"base_url": "https://x"}}
+
+
+def test_strip_nested_non_dict_value_yields_empty_object():
+    """A declared object whose stored value is not a dict exposes nothing."""
+    profiles = {"prod": {"s3": "oops"}}
+    assert strip_secret_fields(profiles, NESTED_SCHEMA) == {"prod": {"s3": {}}}
+
+
+def test_strip_recurses_three_levels():
+    schema = {
+        "type": "object",
+        "properties": {
+            "a": {
+                "type": "object",
+                "properties": {
+                    "b": {
+                        "type": "object",
+                        "properties": {
+                            "keep": {"type": "string"},
+                            "drop": {"type": "string", "x-secret": True},
+                        },
+                    }
+                },
+            }
+        },
+    }
+    profiles = {"p": {"a": {"b": {"keep": "1", "drop": "2", "undeclared": "3"}}}}
+    assert strip_secret_fields(profiles, schema) == {"p": {"a": {"b": {"keep": "1"}}}}
+
+
 # ---------------------------------------------------------------------------
 # render_plugin_prompt
 # ---------------------------------------------------------------------------

@@ -156,7 +156,7 @@ profile,或在完全未配置时给一个空字典。完整解析顺序见
 ```yaml
 config_schema:
   type: object
-  required: [token]
+  required: [token, s3]
   properties:                    # 属性顺序 == TUI 字段顺序
     token:
       type: string
@@ -166,6 +166,12 @@ config_schema:
       type: string
       description: "Greeting word"
       default: "Hi"
+    s3:                          # 嵌套 object 会展开为点分表单字段
+      type: object
+      required: [secret_access_key]
+      properties:
+        region: {type: string, default: us-east-1}
+        secret_access_key: {type: string, x-secret: true}
 ```
 
 语义:
@@ -174,7 +180,13 @@ config_schema:
   `${ENV_VAR}` 引用,系统提示词渲染器会剥离它(见
   [系统提示词模板](#系统提示词模板))。它是属性级扩展关键字——JSON Schema
   校验器会忽略它。
-- **`required`** 成员标记表单必填字段;**`default`** 作为初始值提供。
+- **`required`** 成员标记表单必填字段;**`default`** 会直接预填为字段初始值。
+  留空的字段(无 default 且尚未输入)会以浅色占位符显示其 `description`。
+- **嵌套 object** —— 带自身 `properties` 的 `type: object` 属性在 TUI 中展开
+  为每个叶子一个字段,字段名为点分路径(`s3.region`、`s3.secret_access_key`);
+  提交时按嵌套结构重新组装后再保存。object 上的 `x-secret: true` 会把所有叶子
+  标记为 secret;叶子只有在整条祖先路径都必填时才是表单必填。系统提示词的
+  白名单剥离也按同样规则递归过滤已声明的嵌套 object。
 - **校验**在原始候选字典上运行 `jsonschema`(用户刚输入、**尚未** `${VAR}` 展开
   的值)。含 `${ENV_VAR}` 占位符的值被视为不透明——针对它们的
   pattern/enum/format 违规会被抑制,但缺失 `required` 字段仍会报错。真正的运行
@@ -464,7 +476,8 @@ environment.
     渲染出的文本会进入 LLM 上下文,而 profile 的值在提示词构建时已完成
     `${VAR}` 展开(是真实明文 secret)——所以 Datus 在模板看到 profiles
     **之前**就做了过滤:只有在你的 `config_schema` 中声明且**未**标记
-    `x-secret: true` 的字段才会通过;未声明的字段同样被丢弃。没有
+    `x-secret: true` 的字段才会通过;未声明的字段同样被丢弃,已声明的嵌套
+    object 也按同样规则递归过滤。没有
     `config_schema` 时,模板只能拿到 profile 名和空字典。模板若引用被剥离的
     字段会渲染失败(严格模式)并跳过该 section——永远不可能泄漏。
 

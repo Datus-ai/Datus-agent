@@ -197,8 +197,11 @@ deactivated plugin):
 
 Inside the REPL, `/plugins` opens an interactive manager for the same tasks:
 browse installed plugins, create / edit / delete global profiles (the form is
-driven by the plugin's config schema, with secrets entered as `${ENV_VAR}`
-references), and toggle which plugins and profiles are active for the project.
+driven by the plugin's config schema — nested schema objects expand into
+dotted fields like `s3.secret_access_key`, defaults are pre-filled, empty
+fields show their description as a dim placeholder, and secrets are entered
+as `${ENV_VAR}` references), and toggle which plugins and profiles are active
+for the project.
 
 ## Using a plugin with the agent
 

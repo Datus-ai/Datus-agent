@@ -27,32 +27,53 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+# Bounds recursion into declared nested objects so a pathological schema can
+# never hang secret stripping; anything deeper is dropped (fail closed).
+_STRIP_MAX_DEPTH = 8
+
+
+def _whitelist_fields(config: Dict[str, Any], properties: Dict[str, Any], depth: int = 0) -> Dict[str, Any]:
+    """Keep only schema-declared, non-``x-secret`` fields, recursing into
+    declared nested objects so a nested secret leaf is stripped too."""
+    if depth >= _STRIP_MAX_DEPTH:
+        return {}
+    kept: Dict[str, Any] = {}
+    for key, value in config.items():
+        if not isinstance(key, str) or key not in properties:
+            continue
+        spec = properties[key]
+        if isinstance(spec, dict) and spec.get("x-secret") is True:
+            continue
+        nested_properties = spec.get("properties") if isinstance(spec, dict) else None
+        if isinstance(spec, dict) and spec.get("type") == "object" and isinstance(nested_properties, dict):
+            kept[key] = _whitelist_fields(value if isinstance(value, dict) else {}, nested_properties, depth + 1)
+        else:
+            kept[key] = value
+    return kept
+
+
 def strip_secret_fields(profiles: Any, config_schema: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """Whitelist-filter profile fields for template rendering.
 
     Only properties declared in ``config_schema`` and NOT marked
-    ``x-secret: true`` survive; undeclared fields are dropped. Without a
-    schema nothing is whitelisted, so profile names map to empty dicts — the
-    template still sees which profiles exist, but no values.
+    ``x-secret: true`` survive; undeclared fields are dropped. A declared
+    ``type: object`` property with its own ``properties`` is filtered
+    recursively under the same rules, so nested ``x-secret`` leaves and
+    undeclared nested keys never reach the template either. Without a schema
+    nothing is whitelisted, so profile names map to empty dicts — the template
+    still sees which profiles exist, but no values.
     """
     if not isinstance(profiles, dict):
         return {}
-    allowed: set = set()
-    if isinstance(config_schema, dict):
-        properties = config_schema.get("properties")
-        if isinstance(properties, dict):
-            for prop_name, spec in properties.items():
-                if not isinstance(prop_name, str):
-                    continue
-                if isinstance(spec, dict) and spec.get("x-secret") is True:
-                    continue
-                allowed.add(prop_name)
+    properties: Dict[str, Any] = {}
+    if isinstance(config_schema, dict) and isinstance(config_schema.get("properties"), dict):
+        properties = config_schema["properties"]
     stripped: Dict[str, Dict[str, Any]] = {}
     for profile_name, config in profiles.items():
         if not isinstance(profile_name, str):
             continue
         cfg = config if isinstance(config, dict) else {}
-        stripped[profile_name] = {k: v for k, v in cfg.items() if k in allowed}
+        stripped[profile_name] = _whitelist_fields(cfg, properties)
     return stripped
 
 

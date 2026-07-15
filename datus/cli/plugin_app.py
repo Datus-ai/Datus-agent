@@ -12,8 +12,10 @@ whole flow (plugin list → profile list → profile form) so the outer
 
 1. **Global profile CRUD** — create / edit / delete ``agent.plugins.<plugin>
    .<profile>`` entries in agent.yml, with the form fields derived from the
-   plugin manifest's ``config_schema`` (a JSON Schema) and candidate profiles
-   validated against it before saving.
+   plugin manifest's ``config_schema`` (a JSON Schema; nested objects expand
+   into dotted fields like ``s3.secret_access_key`` and are re-assembled into
+   the nested profile shape on save) and candidate profiles validated against
+   it before saving.
 2. **Project activation** — toggle a plugin's ``enabled`` flag and pick which
    profiles are active, persisted to ``./.datus/config.yml``.
 
@@ -25,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from enum import Enum
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from datus.cli.tui.wizard_host import EmbeddedWizard
@@ -37,16 +39,70 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import ConditionalContainer, DynamicContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.widgets import TextArea
 from rich.console import Console
 
-from datus.cli.cli_styles import CLR_CURRENT, CLR_CURSOR, SYM_ARROW, SYM_CHECK, print_error, render_tui_title_bar
+from datus.cli.cli_styles import (
+    CLR_CURRENT,
+    CLR_CURSOR,
+    STATUS_BAR_FG_HINT,
+    SYM_ARROW,
+    SYM_CHECK,
+    print_error,
+    render_tui_title_bar,
+)
 from datus.cli.plugin_service import list_plugins
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
 
 _MAX_LIST_ROWS = 12
+
+# Placeholder text (a field's schema description shown while it is empty).
+_PLACEHOLDER_STYLE = f"italic fg:{STATUS_BAR_FG_HINT}"
+
+
+# Nested config_schema objects surface in the form as flat dotted field names
+# (``s3.secret_access_key``); profiles stay nested dicts in agent.yml. These
+# helpers translate between the two shapes.
+
+
+def _nested_get(config: Dict[str, Any], dotted: str) -> Any:
+    """Read a dotted path out of a nested dict; ``None`` when absent."""
+    current: Any = config
+    for part in dotted.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _nested_set(config: Dict[str, Any], dotted: str, value: Any) -> None:
+    """Write a dotted path into a nested dict, creating intermediate dicts."""
+    parts = dotted.split(".")
+    current = config
+    for part in parts[:-1]:
+        child = current.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            current[part] = child
+        current = child
+    current[parts[-1]] = value
+
+
+def _flatten_config(config: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
+    """Flatten nested dict values into dotted keys (free-form edit fallback)."""
+    flat: Dict[str, Any] = {}
+    for key, value in config.items():
+        if not isinstance(key, str):
+            continue
+        dotted = f"{prefix}{key}"
+        if isinstance(value, dict) and value:
+            flat.update(_flatten_config(value, prefix=f"{dotted}."))
+        else:
+            flat[dotted] = value
+    return flat
 
 
 class _View(Enum):
@@ -401,11 +457,11 @@ class PluginApp:
         existing = {}
         if mode == "edit" and profile:
             existing = dict((getattr(self._agent_config, "plugin_services", {}).get(plugin, {}) or {}).get(profile, {}))
-        # Free-form fallback: no schema → surface the keys already present.
+        # Free-form fallback: no schema → surface the (flattened) keys already present.
         if not specs:
             specs = [
                 {"name": key, "description": "", "required": False, "secret": False}
-                for key in existing
+                for key in _flatten_config(existing)
                 if key != "name"
             ] or [{"name": "value", "description": "", "required": False, "secret": False}]
         self._form_specs = specs
@@ -423,27 +479,47 @@ class PluginApp:
         for spec in specs:
             name = spec["name"]
             is_secret = bool(spec.get("secret"))
-            value = existing.get(name)
+            value = _nested_get(existing, name)
             if value is None and "default" in spec:
                 value = spec["default"]
             prompt = f"{name}{' *' if spec.get('required') else ''}: "
             # Secret fields are masked and never pre-filled with the stored
             # value; a blank secret on edit keeps the current value.
             text = "" if is_secret else ("" if value is None else str(value))
-            area = TextArea(
-                text=text,
-                multiline=False,
-                height=1,
-                password=is_secret,
-                prompt=prompt,
-                style="class:plugin-app.input",
-            )
-            self._form_inputs.append(area)
+            self._form_inputs.append(self._build_form_input(spec, text=text, prompt=prompt, is_secret=is_secret))
 
         self._form_focus_order = ([self._form_name_input] if self._form_name_input else []) + self._form_inputs
         self._form_focus_idx = 0
         self._view = _View.PROFILE_FORM
         self._focus(self._form_focus_order[0] if self._form_focus_order else self._list_window)
+
+    @staticmethod
+    def _build_form_input(spec: dict, *, text: str, prompt: str, is_secret: bool) -> TextArea:
+        """One form field; while it is empty (no pre-filled default), its
+        schema ``description`` shows as a dim placeholder that disappears as
+        soon as the user types."""
+        placeholder = str(spec.get("description") or "").strip()
+        processors = None
+        if placeholder:
+            holder: Dict[str, TextArea] = {}
+            processors = [
+                ConditionalProcessor(
+                    AfterInput(placeholder, style=_PLACEHOLDER_STYLE),
+                    filter=Condition(lambda: not holder["area"].text),
+                )
+            ]
+        area = TextArea(
+            text=text,
+            multiline=False,
+            height=1,
+            password=is_secret,
+            prompt=prompt,
+            style="class:plugin-app.input",
+            input_processors=processors,
+        )
+        if placeholder:
+            holder["area"] = area
+        return area
 
     def _submit_profile_form(self) -> None:
         plugin = self._selected_plugin or ""
@@ -459,21 +535,22 @@ class PluginApp:
             name = self._form_profile_name
 
         existing = dict((getattr(self._agent_config, "plugin_services", {}).get(plugin, {}) or {}).get(name, {}))
-        config = {}
+        config: Dict[str, Any] = {}
         for spec, area in zip(self._form_specs, self._form_inputs):
             field_name = spec["name"]
             raw = area.text.strip()
             if bool(spec.get("secret")) and raw == "" and self._form_mode == "edit":
                 # Blank secret on edit keeps the previously-stored value.
-                if field_name in existing:
-                    config[field_name] = existing[field_name]
+                previous = _nested_get(existing, field_name)
+                if previous is not None:
+                    _nested_set(config, field_name, previous)
                 continue
             if raw == "":
                 continue
-            config[field_name] = raw
+            _nested_set(config, field_name, raw)
 
-        # Validate required fields locally, then via the plugin hook.
-        missing = [s["name"] for s in self._form_specs if s.get("required") and s["name"] not in config]
+        # Validate required fields locally, then against the config schema.
+        missing = [s["name"] for s in self._form_specs if s.get("required") and _nested_get(config, s["name"]) is None]
         if missing:
             self._error_message = f"Missing required field(s): {', '.join(missing)}"
             return

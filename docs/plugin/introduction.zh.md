@@ -174,8 +174,10 @@ datus plugin disable noisy-plugin            # 本项目停用
 | `datus plugin enable/disable <name>` | 切换本项目激活状态。 |
 
 在 REPL 内,`/plugins` 打开交互式管理器完成同样的事:浏览已安装插件,增删改
-全局 profile(表单由插件的配置 schema 驱动,密钥以 `${ENV_VAR}` 引用形式输入),
-并切换本项目激活哪些插件与 profile。
+全局 profile(表单由插件的配置 schema 驱动——嵌套 schema object 展开为
+`s3.secret_access_key` 这样的点分字段,默认值直接预填,留空字段以浅色占位符
+显示 description,密钥以 `${ENV_VAR}` 引用形式输入),并切换本项目激活哪些
+插件与 profile。
 
 ## 与 agent 配合使用 {#agent}
 

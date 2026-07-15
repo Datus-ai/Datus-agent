@@ -171,7 +171,7 @@ editing, and Datus validates a candidate profile against it before saving:
 ```yaml
 config_schema:
   type: object
-  required: [token]
+  required: [token, s3]
   properties:                    # property order == TUI field order
     token:
       type: string
@@ -181,6 +181,12 @@ config_schema:
       type: string
       description: "Greeting word"
       default: "Hi"
+    s3:                          # nested objects expand into dotted form fields
+      type: object
+      required: [secret_access_key]
+      properties:
+        region: {type: string, default: us-east-1}
+        secret_access_key: {type: string, x-secret: true}
 ```
 
 Semantics:
@@ -190,7 +196,15 @@ Semantics:
   strips it (see [System-prompt template](#system-prompt-template)). It is a
   property-level extension keyword — JSON Schema validators ignore it.
 - **`required`** membership marks a form field as required; **`default`** is
-  offered as the initial value.
+  pre-filled as the field's initial value. A field left empty (no default,
+  nothing typed yet) shows its `description` as a dim placeholder instead.
+- **Nested objects** — a `type: object` property with its own `properties`
+  expands in the TUI into one field per leaf, named by its dotted path
+  (`s3.region`, `s3.secret_access_key`); submitted values are re-assembled
+  into the nested profile shape before saving. `x-secret: true` on the object
+  marks every leaf secret, and a leaf is form-required only when its whole
+  ancestor path is required too. The system-prompt whitelist filters declared
+  nested objects recursively under the same rules.
 - **Validation** runs `jsonschema` on the raw candidate dict (the values the
   user just entered, **before** `${VAR}` expansion). Values containing
   `${ENV_VAR}` placeholders are treated as opaque — pattern/enum/format
@@ -496,7 +510,8 @@ hard-code config paths.
     `${VAR}`-expanded (real secrets) at prompt time — so Datus filters the
     profiles **before** your template sees them: only fields declared in your
     `config_schema` and **not** marked `x-secret: true` pass through;
-    undeclared fields are dropped too. Without a `config_schema`, templates
+    undeclared fields are dropped too, and declared nested objects are
+    filtered recursively under the same rules. Without a `config_schema`, templates
     receive profile names with empty dicts. A template referencing a stripped
     field fails to render (strict mode) and the section is skipped — it can
     never leak.
