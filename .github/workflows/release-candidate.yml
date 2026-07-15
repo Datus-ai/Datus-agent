@@ -125,7 +125,8 @@ jobs:
       - name: Build docs strictly
         run: |
           python -m pip install -r requirements-docs.txt
-          mkdocs build --strict
+          DOCS_LOCALE=en mkdocs build --strict --site-dir "${RUNNER_TEMP}/site-en"
+          DOCS_LOCALE=zh mkdocs build --strict --site-dir "${RUNNER_TEMP}/site-zh"
 
       - name: Upload release candidate distributions
         uses: actions/upload-artifact@v4

@@ -89,6 +89,57 @@ def test_merge_mkdocs_config_uses_source_nav_and_main_version_provider(tmp_path)
     assert merged["extra"]["version"]["provider"] == "mike"
 
 
+def test_merge_mkdocs_config_excludes_untranslated_default_pages_for_non_default_locale(tmp_path):
+    source_root = tmp_path / "tag-source"
+    docs_dir = source_root / "docs"
+    (docs_dir / "API").mkdir(parents=True)
+    (docs_dir / "index.md").write_text("English home", encoding="utf-8")
+    (docs_dir / "index.zh.md").write_text("Chinese home", encoding="utf-8")
+    (docs_dir / "API" / "models.md").write_text("English only", encoding="utf-8")
+    (docs_dir / "chinese-only.zh.md").write_text("Chinese only", encoding="utf-8")
+    base_config = {
+        "plugins": [
+            "search",
+            {
+                "i18n": {
+                    "languages": [
+                        {"locale": "en", "default": True},
+                        {"locale": "zh"},
+                    ]
+                }
+            },
+        ],
+        "exclude_docs": "drafts/**",
+    }
+    source_config = {"docs_dir": "docs"}
+
+    merged = prepare_docs_build.merge_mkdocs_config(
+        base_config,
+        source_config,
+        source_root,
+        locale="zh",
+    )
+
+    assert merged["exclude_docs"].splitlines() == ["drafts/**", "API/models.md"]
+
+
+def test_rewrite_legacy_chinese_docs_urls_updates_language_first_path(tmp_path):
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    page = docs_dir / "release_notes.zh.md"
+    page.write_text(
+        "[旧链接](https://docs.datus.ai/0.3/zh/cli/reference/)\n"
+        "[新链接](https://docs.datus.ai/zh/0.3/cli/reference/)\n",
+        encoding="utf-8",
+    )
+
+    prepare_docs_build.rewrite_legacy_chinese_docs_urls(docs_dir)
+
+    assert page.read_text(encoding="utf-8") == (
+        "[旧链接](https://docs.datus.ai/zh/0.3/cli/reference/)\n[新链接](https://docs.datus.ai/zh/0.3/cli/reference/)\n"
+    )
+
+
 def test_main_refuses_to_delete_non_empty_output_root_without_force(tmp_path, monkeypatch):
     output_root = tmp_path / "build"
     output_root.mkdir()

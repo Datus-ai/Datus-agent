@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://squidfunk.github.io/mkdocs-material/schema.json
 site_name: Datus Docs
-site_url: https://docs.datus.ai
+site_url: !ENV [DOCS_SITE_URL, "https://docs.datus.ai/"]
 copyright: "© 2025 Datus AI"
 nav:
   - Home:
@@ -111,10 +111,13 @@ nav:
   - Release Notes: release_notes.md
 
 plugins:
-  - search
+  - search:
+      lang: !ENV [DOCS_LOCALE, "en"]
   - mike:
       alias_type: redirect
   - i18n:
+      build_only_locale: !ENV [DOCS_LOCALE, "en"]
+      fallback_to_default: false
       languages:
         - locale: en
           name: English
@@ -257,10 +260,10 @@ extra:
 
   alternate:
     - name: English
-      link: /
+      link: !ENV [DOCS_EN_BASE, "/"]
       lang: en
     - name: 中文
-      link: /zh/
+      link: !ENV [DOCS_ZH_BASE, "/zh/"]
       lang: zh
 
   social:
