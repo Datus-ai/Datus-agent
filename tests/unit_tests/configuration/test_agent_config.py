@@ -2808,6 +2808,33 @@ class TestPluginsEnabledSwitch:
         assert cfg.get_plugin_profile("hello") == {}
 
 
+class TestPluginPathsConfig:
+    """``agent.plugin_paths`` — extra plugin-level directory mounts."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_empty(self, tmp_path):
+        assert self._make(tmp_path).plugin_paths == []
+
+    def test_keeps_string_entries_stripped(self, tmp_path):
+        cfg = self._make(tmp_path, plugin_paths=["/opt/plugins/foo", "  ~/dev/bar  ", "", "   ", 42, None])
+        assert cfg.plugin_paths == ["/opt/plugins/foo", "~/dev/bar"]
+
+    def test_non_list_value_ignored_with_warning(self, tmp_path, caplog):
+        with caplog.at_level("WARNING"):
+            cfg = self._make(tmp_path, plugin_paths="/opt/plugins/foo")
+        assert cfg.plugin_paths == []
+        assert "plugin_paths must be a list" in caplog.text
+
+
 class TestPromptManagerAttribute:
     """``AgentConfig.prompt_manager`` — the runtime prompt-template override.
 

@@ -3,7 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 
@@ -498,9 +498,10 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
     except Exception as e:
         logger.warning(f"Failed to initialize tracing: {e}")
 
-    # Append this project's enabled plugin directories (~/.datus/plugins/<name>/)
-    # to sys.path so their ``datus.plugins`` entry points are discovered before
-    # skills / prompt sections / permissions / tool transformers are collected.
+    # Append this project's enabled plugin directories (~/.datus/plugins/<name>/
+    # unioned with ``agent.plugin_paths`` mounts) to sys.path so their
+    # ``datus.plugins`` entry points are discovered before skills / prompt
+    # sections / permissions / tool transformers are collected.
     # Path-only injection — the plugin package is imported lazily on use.
     try:
         from datus.plugins import store
@@ -508,6 +509,7 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
         store.activate(
             agent_config.active_plugin_names(),
             plugins_enabled=getattr(agent_config, "plugins_enabled", True),
+            extra_paths=getattr(agent_config, "plugin_paths", None),
         )
     except Exception as e:  # noqa: BLE001 - a bad plugin dir must never block config load
         logger.debug("plugin sys.path activation failed: %s", e)
@@ -529,3 +531,26 @@ def get_agent_home(config_file: str = "") -> str:
         return "~/.datus"
 
     return raw.get("agent", {}).get("home", "~/.datus")
+
+
+def get_plugin_paths(config_file: str = "") -> List[str]:
+    """Read ``agent.plugin_paths`` from config without instantiating ``AgentConfig``.
+
+    Used by CLI plugin dispatch, which must inject configured plugin
+    directories into ``sys.path`` (path-only) BEFORE the full agent config —
+    and therefore the plugin entry-point probe — runs. Any failure resolves to
+    an empty list: dispatch falls through and the real error surfaces at
+    ``load_agent_config``.
+    """
+    try:
+        config_path = parse_config_path(config_file)
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception as e:  # noqa: BLE001 - dispatch probing must never crash
+        logger.debug(f"Error reading plugin_paths from config: {e}")
+        return []
+    agent_raw = raw.get("agent")
+    paths = agent_raw.get("plugin_paths") if isinstance(agent_raw, dict) else None
+    if not isinstance(paths, list):
+        return []
+    return [p.strip() for p in paths if isinstance(p, str) and p.strip()]

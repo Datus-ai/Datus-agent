@@ -593,6 +593,56 @@ def test_list_managed_wins_over_external_duplicate(home, monkeypatch):
     assert infos[0].source == "managed" and infos[0].version == "9.9"
 
 
+def test_list_includes_path_mounted_plugins(home, tmp_path, monkeypatch):
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="pathdemo", dist="datus-path-plugin", version="1.2.3", entry="datus_demo_plugin")
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=None)
+    cfg.plugin_paths = [str(ext)]
+    infos = svc.list_plugins(cfg)
+    assert [i.name for i in infos] == ["pathdemo"]
+    assert infos[0].source == "path"
+    assert infos[0].package == "datus-path-plugin"
+    assert infos[0].version == "1.2.3"
+    assert infos[0].active is True
+
+
+def test_list_path_plugin_listed_while_inactive(home, tmp_path, monkeypatch):
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="pathdemo", dist="datus-path-plugin", version="1.2.3", entry="datus_demo_plugin")
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=set())  # whitelist present, plugin not in it
+    cfg.plugin_paths = [str(ext)]
+    infos = svc.list_plugins(cfg)
+    assert [i.name for i in infos] == ["pathdemo"]
+    assert infos[0].active is False
+
+
+def test_list_skips_path_entry_with_broken_manifest(home, tmp_path, monkeypatch):
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="pathdemo", dist="datus-path-plugin", version="1.2.3", entry="datus_demo_plugin")
+    (ext / "datus_demo_plugin" / store.MANIFEST_FILENAME).unlink()  # introspection now fails
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=None)
+    cfg.plugin_paths = [str(ext)]
+    assert svc.list_plugins(cfg) == []
+
+
+def test_list_managed_wins_over_path_duplicate(home, tmp_path, monkeypatch):
+    store.write_meta(
+        store.plugin_dir("demo"),
+        {"name": "demo", "distribution": "managed-dist", "version": "9.9", "install": {"type": "pip"}},
+    )
+    ext = tmp_path / "ext"
+    _write_dist_info(ext, name="demo", dist="path-dist", version="0.1", entry="datus_demo_plugin")
+    monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])
+    cfg = _FakeConfig(active=None)
+    cfg.plugin_paths = [str(ext)]
+    infos = svc.list_plugins(cfg)
+    assert len(infos) == 1
+    assert infos[0].source == "managed" and infos[0].version == "9.9"
+
+
 def test_list_applies_activation_and_profiles(home, monkeypatch):
     store.write_meta(store.plugin_dir("demo"), {"name": "demo", "distribution": "d", "version": "1", "install": {}})
     monkeypatch.setattr(registry, "iter_plugin_entry_points", lambda: [])

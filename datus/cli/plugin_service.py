@@ -84,7 +84,7 @@ class PluginInfo:
     version: str = ""
     entry: str = ""  # "module:attr" target
     install_type: str = ""  # pip|src|whl|git|zip (managed) or "" (external)
-    source: str = ""  # "managed" (~/.datus/plugins) or "external" (site-packages)
+    source: str = ""  # "managed" (~/.datus/plugins), "path" (agent.plugin_paths) or "external" (site-packages)
     profiles: List[str] = field(default_factory=list)  # configured profile names
     active: Optional[bool] = None  # project activation state (None: unknown)
     active_profiles: Optional[List[str]] = None  # None: all profiles active
@@ -779,12 +779,14 @@ def uninstall(plugin_name: str) -> UninstallResult:
 
 
 def list_plugins(agent_config=None) -> List[PluginInfo]:
-    """Enumerate installed plugins (managed + externally pip-installed).
+    """Enumerate installed plugins (managed + path-mounted + pip-installed).
 
-    Managed plugins are read from ``~/.datus/plugins/*/datus-plugin.json``;
-    externally installed ones are discovered via the ``datus.plugins``
-    entry-point group as a fallback (a name present in both prefers the managed
-    entry). ``agent_config`` (optional) supplies configured profiles and the
+    Managed plugins are read from ``~/.datus/plugins/*/datus-plugin.json``,
+    then ``agent.plugin_paths`` mounts are introspected (one directory = one
+    plugin), and externally installed ones are discovered via the
+    ``datus.plugins`` entry-point group as a fallback (a name present in
+    several sources prefers the earlier one). ``agent_config`` (optional)
+    supplies configured profiles, the ``plugin_paths`` mounts and the
     project's activation state.
     """
     from datus.plugins.registry import iter_plugin_entry_points
@@ -811,6 +813,27 @@ def list_plugins(agent_config=None) -> List[PluginInfo]:
             entry=str(meta.get("entry_point") or ""),
             install_type=str(install_meta.get("type") or ""),
             source="managed",
+        )
+
+    # Path-mounted plugins (agent.plugin_paths) are listed even while inactive
+    # (their entry points may be off sys.path), so they stay visible and
+    # re-enable-able like a disabled managed plugin.
+    extra_paths = getattr(agent_config, "plugin_paths", None) if agent_config is not None else None
+    for name, directory in store.iter_extra_plugin_dirs(extra_paths):
+        if name in by_name:
+            continue
+        try:
+            ident = store.introspect_target(directory)
+        except store.StoreError as exc:
+            logger.debug("plugin_paths entry %s not listable: %s", directory, exc)
+            continue
+        by_name[name] = PluginInfo(
+            name=name,
+            package=str(ident.get("distribution") or ""),
+            version=str(ident.get("version") or ""),
+            entry=str(ident.get("entry_point") or ""),
+            install_type="",
+            source="path",
         )
 
     for ep in iter_plugin_entry_points():

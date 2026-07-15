@@ -927,6 +927,22 @@ class AgentConfig:
         # Intended for API/web deployments where the agent must not be guided
         # to edit configuration files.
         self.plugins_enabled = _coerce_bool(kwargs.get("plugins_enabled"), True)
+        # ``plugin_paths`` mounts plugin directories living OUTSIDE the managed
+        # store (``~/.datus/plugins``). Each entry is already ONE plugin's
+        # directory — the equivalent of a single ``~/.datus/plugins/{name}/``
+        # subdirectory, not a root containing several — so a shared checkout or
+        # centrally deployed plugin can be used without copying it into the
+        # home store. Merged with the managed store as a union; on a name clash
+        # the managed install wins. ``~``/``$ENV_VAR`` are expanded at
+        # activation time (``datus.plugins.store``).
+        raw_plugin_paths = kwargs.get("plugin_paths")
+        if raw_plugin_paths is not None and not isinstance(raw_plugin_paths, list):
+            logger.warning("agent.plugin_paths must be a list of directories; ignoring %r.", raw_plugin_paths)
+        self.plugin_paths: List[str] = (
+            [p.strip() for p in raw_plugin_paths if isinstance(p, str) and p.strip()]
+            if isinstance(raw_plugin_paths, list)
+            else []
+        )
         # Plugin config: plugin name -> profile name -> profile config dict.
         # Populated from ``agent.plugins`` by ``init_plugin_services``.
         self.plugin_services: Dict[str, Dict[str, Dict[str, Any]]] = {}

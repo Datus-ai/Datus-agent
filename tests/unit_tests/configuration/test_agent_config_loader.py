@@ -706,3 +706,47 @@ class TestPermissionModeCliOverride:
 
         config = load_agent_config(reload=True, config=str(cfg), permission_mode="auto")
         assert config.active_profile_name == "auto"
+
+
+# ---------------------------------------------------------------------------
+# get_plugin_paths
+# ---------------------------------------------------------------------------
+
+
+class TestGetPluginPaths:
+    """``get_plugin_paths`` reads ``agent.plugin_paths`` without an AgentConfig."""
+
+    def test_reads_string_entries(self, tmp_path):
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text(yaml.safe_dump({"agent": {"plugin_paths": ["/opt/plugins/foo", "  ~/dev/bar ", "", 42, None]}}))
+        assert get_plugin_paths(str(cfg)) == ["/opt/plugins/foo", "~/dev/bar"]
+
+    def test_missing_key_returns_empty(self, tmp_path):
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text(yaml.safe_dump({"agent": {}}))
+        assert get_plugin_paths(str(cfg)) == []
+
+    def test_non_list_value_returns_empty(self, tmp_path):
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text(yaml.safe_dump({"agent": {"plugin_paths": "/opt/plugins/foo"}}))
+        assert get_plugin_paths(str(cfg)) == []
+
+    def test_unreadable_config_returns_empty(self, tmp_path, monkeypatch):
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        monkeypatch.chdir(tmp_path)  # no conf/agent.yml anywhere
+        with patch("datus.configuration.agent_config_loader.Path.home", return_value=tmp_path / "noexist"):
+            assert get_plugin_paths() == []
+
+    def test_invalid_yaml_returns_empty(self, tmp_path):
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        cfg = tmp_path / "agent.yml"
+        cfg.write_text("agent: [unbalanced")
+        assert get_plugin_paths(str(cfg)) == []

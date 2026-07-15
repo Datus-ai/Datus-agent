@@ -692,22 +692,28 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
     # stderr-backed Console (so stdout stays reserved for the plugin's output).
     err_console = Console(stderr=True)
 
+    profile_name, config_path, rest = _split_plugin_globals(argv[1:])
+
     # A managed plugin lives in its own ``~/.datus/plugins/{name}/`` directory;
-    # append it to ``sys.path`` so the entry-point probe can see it. This is
-    # path-only — it does NOT import the plugin package (reading the manifest
-    # never executes plugin code, and the ``cli`` ref is imported only after
-    # every gate below has passed), so the ``plugins_enabled`` master switch
-    # is still honoured before any third-party module-level code runs.
+    # append it to ``sys.path`` so the entry-point probe can see it. Plugins
+    # mounted through ``agent.plugin_paths`` live elsewhere, so when no managed
+    # directory claims the token the configured paths are injected instead.
+    # Both are path-only — they do NOT import the plugin package (reading the
+    # manifest never executes plugin code, and the ``cli`` ref is imported only
+    # after every gate below has passed), so the ``plugins_enabled`` master
+    # switch is still honoured before any third-party module-level code runs.
     if store.plugin_dir(name).is_dir():
         store.activate_name(name)
+    else:
+        from datus.configuration.agent_config_loader import get_plugin_paths
+
+        store.activate_paths(get_plugin_paths(config_path or ""))
 
     # Metadata-only probe: with ``plugins_enabled: false`` the plugin package
     # must not even be imported, so the master switch is checked before
     # ``resolve_code_ref`` runs the plugin's module-level code.
     if not plugin_entry_point_exists(name):
         return None
-
-    profile_name, config_path, rest = _split_plugin_globals(argv[1:])
 
     try:
         from datus.configuration.agent_config_loader import load_agent_config

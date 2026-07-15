@@ -131,6 +131,43 @@ def test_dispatch_unknown_plugin_returns_none(monkeypatch):
     assert _dispatch_plugin_command(["mystery", "x"]) is None
 
 
+def test_dispatch_injects_plugin_paths_when_unmanaged(monkeypatch, tmp_path):
+    """Without a managed dir, ``agent.plugin_paths`` mounts are injected before the probe."""
+    _patch_dispatch(monkeypatch, profile_dict={})
+    monkeypatch.setattr("datus.plugins.store.plugin_dir", lambda name: tmp_path / "absent" / name)
+    seen: dict = {}
+
+    def fake_get_plugin_paths(config_file=""):
+        seen["config"] = config_file
+        return ["/mnt/plugins/hello"]
+
+    monkeypatch.setattr("datus.configuration.agent_config_loader.get_plugin_paths", fake_get_plugin_paths)
+    activated: list = []
+    monkeypatch.setattr("datus.plugins.store.activate_paths", lambda paths: activated.append(paths) or [])
+
+    rc = _dispatch_plugin_command(["hello", "--config", "/tmp/agent.yml", "version"])
+
+    assert rc == 7
+    assert activated == [["/mnt/plugins/hello"]]
+    assert seen["config"] == "/tmp/agent.yml"  # the --config global reaches the pre-load read
+
+
+def test_dispatch_managed_dir_skips_plugin_paths(monkeypatch, tmp_path):
+    """A managed plugin's own directory wins; configured mounts are not read."""
+    _patch_dispatch(monkeypatch, profile_dict={})
+    managed = tmp_path / "plugins" / "hello"
+    managed.mkdir(parents=True)
+    monkeypatch.setattr("datus.plugins.store.plugin_dir", lambda name: managed)
+    monkeypatch.setattr("datus.plugins.store.activate_name", lambda name: False)
+
+    def fail_activate_paths(paths):
+        raise AssertionError("plugin_paths must not be consulted")
+
+    monkeypatch.setattr("datus.plugins.store.activate_paths", fail_activate_paths)
+
+    assert _dispatch_plugin_command(["hello", "version"]) == 7
+
+
 def test_dispatch_missing_manifest_falls_through(monkeypatch):
     """An entry point that exists but has no usable manifest must fall through
     (None) so a same-named legacy handler still gets its chance."""
