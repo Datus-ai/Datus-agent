@@ -8,7 +8,7 @@ tags:
   - metrics
   - reference-sql
   - classify
-version: 1.0.0
+version: 1.1.0
 user_invocable: true
 ---
 
@@ -59,7 +59,7 @@ Gather the raw material **inside the resolved scope**, then classify it into a *
 - **Validated-query SQL corpus → handle here.** Enumerate each `(question, SQL)` pair into a `reference_sql` manifest row directly (per the bullet above). These rows skip Step 2.
 - **Tables + documentation → hand to Step 2 `explore`.** Group them under their domain; these are what the explore subagents investigate.
 
-**Record with todos when the taxonomy is large (> 3 domains):** call `todo_write` with one todo per domain — `title` = domain name (≤ 8 words), `content` = the files + tables it covers plus exploration focus notes. Track each domain's progress with `todo_update` (`pending` → `in_progress` → `completed` / `failed`) in the next steps. Skip todos for small scopes (≤ 3 domains) to avoid noise.
+**Record with todos only when Step 2 will fan out more than one `explore` subagent:** call `todo_write` **once**, with one todo per to-be-explored domain — `title` = domain name (≤ 8 words), `content` = the files + tables it covers plus exploration focus notes. Track each domain's exploration with `todo_update` (`pending` → `in_progress` → `completed` / `failed`) in Step 2. This is the **only** `todo_write` in this skill — Step 3 tracks generation through the confirmed manifest, never through new todos. Skip todos entirely when zero or one domain needs exploring (e.g. the scope is only the SQL corpus) — a single explore call is not worth a sidebar list.
 
 ---
 
@@ -85,7 +85,7 @@ Coverage focuses on **semantic_models, metrics, and knowledge** (plus **referenc
 
 **The validated-query corpus is NOT explored here — you enumerated it directly in Step 1.** The only `reference_sql` refs an explorer should return are SQL it *newly discovers* while investigating tables or docs (e.g. an example query embedded in a Markdown doc). For any such discovered SQL, instruct the explorer to carry the **original natural-language question** (if the doc states one) in the `prompt-seed` — it is the best retrieval key for future questions.
 
-**Concurrency rule:** issue at most **3** `task` calls per batch (3 tool calls in one message), wait for the batch to return, then start the next batch. Set the domain's todo to `in_progress` when you launch it and `completed` when it returns. Tell the user (briefly) how many domains were dropped if you cap anything.
+**Concurrency rule:** issue at most **3** `task` calls per batch (3 tool calls in one message), wait for the batch to return, then start the next batch. If Step 1 created todos, set the domain's todo to `in_progress` when you launch it and `completed` when it returns. Tell the user (briefly) how many domains were dropped if you cap anything.
 
 ---
 
@@ -131,7 +131,7 @@ Once the user confirms or corrects the manifest (or immediately, in the same tur
      - knowledge → run `extract-knowledge` in **lite** mode (do NOT trigger its deep blind-SQL flow); pass the **source (the SQL/doc/table) and the specific fact to mine**, plus the datasource it applies to. Only mine atoms `/init` did not already file — do not duplicate existing `./knowledge/*.md` entries.
 3. **Ordering:** metrics build on semantic models — generate all `semantic_models` items **before** their dependent `metrics` items.
 4. **Dual-route every `(question, SQL)` pair that appears as a `knowledge` row in the manifest — this is required, not optional.** For each such pair: (a) send it to `gen_sql_summary` so the example (with its original question) lands in `reference_sql`, AND (b) feed the same pair to `extract-knowledge` (lite) to mine the non-inferable rule. The example teaches *answer shape* (retrieved later for few-shot); the mined atom teaches *why* (encodings, mandatory filters, term→column mappings). One source, two stores — neither replaces the other. Mine knowledge ONLY for pairs listed as `knowledge` rows in the manifest — whether the user confirmed them, or auto-run carried the manifest through unconfirmed (see Turn Boundary).
-5. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Update each item's todo (`in_progress` → `completed` / `failed`) as you go.
+5. **Concurrency ≤ 3:** dispatch heavy `task` calls in batches of at most 3, waiting for each batch. Do **NOT** create or update todos in this step — the confirmed manifest is the item-level record; narrate per-batch progress briefly and list any failed items in the closing summary.
 
 Do not hand-write semantic_models / metrics / reference_sql YAML yourself — always go through the matching subagent (per storage-classify's Forbidden rules).
 
