@@ -8,7 +8,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.datus.ai/dev/develop/">
+        <link rel="canonical" href="https://docs.datus.ai/dev/dev/develop/">
       
       
         <link rel="prev" href="../training/llm_trace_usage/">
@@ -18,9 +18,9 @@
       
       
         
-          <link rel="alternate" href="./" hreflang="en">
+          <link rel="alternate" href="/dev/" hreflang="en">
         
-          <link rel="alternate" href="../zh/develop/" hreflang="zh">
+          <link rel="alternate" href="/zh/dev/" hreflang="zh">
         
       
       
@@ -170,13 +170,13 @@
       <ul class="md-select__list">
         
           <li class="md-select__item">
-            <a href="./" hreflang="en" class="md-select__link">
+            <a href="/dev/" hreflang="en" class="md-select__link">
               English
             </a>
           </li>
         
           <li class="md-select__item">
-            <a href="../zh/develop/" hreflang="zh" class="md-select__link">
+            <a href="/zh/dev/" hreflang="zh" class="md-select__link">
               中文
             </a>
           </li>
@@ -4305,9 +4305,11 @@
 </tbody>
 </table>
 <p><code>python -m datus.main</code> and <code>python -m datus.cli.main</code> still work for low-level debugging, but they are not the preferred user-facing commands.</p>
-<p>To build the docs from a fresh source checkout, provide the MkDocs plugins required by <code>mkdocs.yml</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uv<span class="w"> </span>run<span class="w"> </span>--with<span class="w"> </span>mkdocs-material<span class="w"> </span>--with<span class="w"> </span>mike<span class="w"> </span>--with<span class="w"> </span>mkdocs-static-i18n<span class="w"> </span>mkdocs<span class="w"> </span>build<span class="w"> </span>--strict
+<p>The English and Chinese docs are built separately so each site has its own search index. From a fresh source checkout, provide the MkDocs plugins required by <code>mkdocs.yml</code> and select the locale:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">DOCS_LOCALE</span><span class="o">=</span>en<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>--with<span class="w"> </span>mkdocs-material<span class="w"> </span>--with<span class="w"> </span>mike<span class="w"> </span>--with<span class="w"> </span>mkdocs-static-i18n<span class="w"> </span>mkdocs<span class="w"> </span>build<span class="w"> </span>--strict<span class="w"> </span>--site-dir<span class="w"> </span>site/en
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">DOCS_LOCALE</span><span class="o">=</span>zh<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>--with<span class="w"> </span>mkdocs-material<span class="w"> </span>--with<span class="w"> </span>mike<span class="w"> </span>--with<span class="w"> </span>mkdocs-static-i18n<span class="w"> </span>mkdocs<span class="w"> </span>build<span class="w"> </span>--strict<span class="w"> </span>--site-dir<span class="w"> </span>site/zh
 </span></code></pre></div>
+<p>Versioned English docs are published at <code>/&lt;version&gt;/</code>, while Chinese docs are published at <code>/zh/&lt;version&gt;/</code>.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>Configuration lookup order is:</p>
 <ol>
