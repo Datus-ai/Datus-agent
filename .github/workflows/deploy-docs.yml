@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV
+      - run: echo "cache_id=$(date --utc '+%V')" >> "${GITHUB_ENV}"
       - uses: actions/cache@v4
         with:
           key: mkdocs-material-${{ env.cache_id }}
@@ -48,6 +48,12 @@ jobs:
           else
             echo "DOCS_HAS_PUBLISHED_VERSIONS=true" >> "${GITHUB_ENV}"
           fi
+          zh_versions_json="$(mike list -j --deploy-prefix zh 2>/dev/null || echo '[]')"
+          if [[ "${zh_versions_json}" == "[]" ]]; then
+            echo "DOCS_ZH_HAS_PUBLISHED_VERSIONS=false" >> "${GITHUB_ENV}"
+          else
+            echo "DOCS_ZH_HAS_PUBLISHED_VERSIONS=true" >> "${GITHUB_ENV}"
+          fi
       - name: Resolve docs version metadata
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -61,35 +67,82 @@ jobs:
             --event-name "${EVENT_NAME}" \
             --github-ref-type "${GITHUB_REF_TYPE_VALUE}" \
             --github-ref-name "${GITHUB_REF_NAME_VALUE}" >> "${GITHUB_ENV}"
-      - name: Prepare docs build context
-        if: env.DOCS_SKIP_DEPLOY != 'true' && env.DOCS_SOURCE_REF != ''
+      - name: Configure language builds
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          {
+            echo "DOCS_EN_SITE_URL=https://docs.datus.ai/${DOCS_VERSION}/"
+            echo "DOCS_ZH_SITE_URL=https://docs.datus.ai/zh/${DOCS_VERSION}/"
+            echo "DOCS_EN_BASE=/${DOCS_VERSION}/"
+            echo "DOCS_ZH_BASE=/zh/${DOCS_VERSION}/"
+          } >> "${GITHUB_ENV}"
+      - name: Prepare English docs build context
+        if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           BUILD_ROOT="$(mktemp -d)"
-          DOCS_BUILD_ROOT="${BUILD_ROOT}/docs_build"
-          python ci/prepare_docs_build.py \
-            --base-config mkdocs.yml \
+          DOCS_BUILD_ROOT="${BUILD_ROOT}/docs_build_en"
+          SOURCE_REF="${DOCS_SOURCE_REF:-HEAD}"
+          DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" python ci/prepare_docs_build.py \
+            --base-config "${DOCS_BUILD_CONFIG}" \
             --output-root "${DOCS_BUILD_ROOT}" \
-            --source-ref "${DOCS_SOURCE_REF}"
-          echo "DOCS_BUILD_CONFIG=${DOCS_BUILD_ROOT}/mkdocs.yml" >> "${GITHUB_ENV}"
-      - run: mkdocs build --strict -f "${DOCS_BUILD_CONFIG}"
+            --source-ref "${SOURCE_REF}"
+          echo "DOCS_EN_BUILD_CONFIG=${DOCS_BUILD_ROOT}/mkdocs.yml" >> "${GITHUB_ENV}"
+      - name: Prepare Chinese docs build context
         if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          BUILD_ROOT="$(mktemp -d)"
+          DOCS_BUILD_ROOT="${BUILD_ROOT}/docs_build_zh"
+          SOURCE_REF="${DOCS_SOURCE_REF:-HEAD}"
+          DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" python ci/prepare_docs_build.py \
+            --base-config "${DOCS_BUILD_CONFIG}" \
+            --output-root "${DOCS_BUILD_ROOT}" \
+            --source-ref "${SOURCE_REF}"
+          echo "DOCS_ZH_BUILD_CONFIG=${DOCS_BUILD_ROOT}/mkdocs.yml" >> "${GITHUB_ENV}"
+      - name: Validate English docs build
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
+            mkdocs build --strict -f "${DOCS_EN_BUILD_CONFIG}" --site-dir "${RUNNER_TEMP}/site-en"
+      - name: Validate Chinese docs build
+        if: env.DOCS_SKIP_DEPLOY != 'true'
+        run: |
+          DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
+            mkdocs build --strict -f "${DOCS_ZH_BUILD_CONFIG}" --site-dir "${RUNNER_TEMP}/site-zh"
       - name: Deploy versioned docs
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           if [[ -n "${DOCS_ALIASES}" ]]; then
-            mike deploy -F "${DOCS_BUILD_CONFIG}" --push --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
+            DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
+              mike deploy -F "${DOCS_EN_BUILD_CONFIG}" --push --update-aliases "${DOCS_VERSION}" "${DOCS_ALIASES}"
+            DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
+              mike deploy -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push --update-aliases \
+              "${DOCS_VERSION}" "${DOCS_ALIASES}"
           else
-            mike deploy -F "${DOCS_BUILD_CONFIG}" --push "${DOCS_VERSION}"
+            DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
+              mike deploy -F "${DOCS_EN_BUILD_CONFIG}" --push "${DOCS_VERSION}"
+            DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
+              mike deploy -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push "${DOCS_VERSION}"
           fi
       - name: Set default docs version
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           if [[ -n "${DOCS_SET_DEFAULT}" ]]; then
-            mike set-default -F "${DOCS_BUILD_CONFIG}" --push "${DOCS_SET_DEFAULT}"
+            DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
+              mike set-default -F "${DOCS_EN_BUILD_CONFIG}" --push "${DOCS_SET_DEFAULT}"
           elif [[ "${DOCS_HAS_PUBLISHED_VERSIONS}" == "false" ]]; then
-            mike set-default -F "${DOCS_BUILD_CONFIG}" --push "${DOCS_VERSION}"
+            DOCS_LOCALE=en DOCS_SITE_URL="${DOCS_EN_SITE_URL}" \
+              mike set-default -F "${DOCS_EN_BUILD_CONFIG}" --push "${DOCS_VERSION}"
+          fi
+          if [[ -n "${DOCS_SET_DEFAULT}" ]]; then
+            DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
+              mike set-default -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push "${DOCS_SET_DEFAULT}"
+          elif [[ "${DOCS_ZH_HAS_PUBLISHED_VERSIONS}" == "false" ]]; then
+            DOCS_LOCALE=zh DOCS_SITE_URL="${DOCS_ZH_SITE_URL}" \
+              mike set-default -F "${DOCS_ZH_BUILD_CONFIG}" --deploy-prefix zh --push "${DOCS_VERSION}"
           fi
       - name: Hide legacy docs versions
         if: env.DOCS_SKIP_DEPLOY != 'true'
         run: |
           python ci/docs_versioning.py hide-legacy --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}"
+          python ci/docs_versioning.py hide-legacy --min-visible-minor "${DOCS_MIN_VISIBLE_MINOR}" \
+            --deploy-prefix zh
