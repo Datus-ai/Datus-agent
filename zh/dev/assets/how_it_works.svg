@@ -1,0 +1,123 @@
+<svg width="1200" height="280" viewBox="0 0 1200 280" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#0f172a"/>
+            <stop offset="100%" style="stop-color:#1e293b"/>
+        </linearGradient>
+        <filter id="shadow">
+            <feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.25"/>
+        </filter>
+        <marker id="arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#475569"/>
+        </marker>
+        <marker id="loopArrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+    </defs>
+
+    <!-- Background -->
+    <rect width="1200" height="280" rx="12" fill="url(#bgGrad)"/>
+
+    <!-- Title -->
+    <text x="600" y="32" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#e2e8f0" text-anchor="middle">How It Works</text>
+    <text x="600" y="50" font-family="Arial, sans-serif" font-size="12" fill="#64748b" text-anchor="middle">A continuous loop from exploration to production-grade data agents</text>
+
+    <!-- Cards: 155w x 88h, gap 20. Total: 6*155+5*20=1030. Start: (1200-1030)/2=85 -->
+
+    <!-- Step 1: Explore -->
+    <g filter="url(#shadow)">
+        <rect x="85" y="68" width="155" height="88" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+        <text x="162" y="94" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#3b82f6" text-anchor="middle">1. Explore</text>
+        <text x="162" y="114" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Chat with your</text>
+        <text x="162" y="128" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">database via CLI</text>
+        <circle cx="162" cy="145" r="3" fill="#3b82f6" opacity="0.5"/>
+    </g>
+
+    <!-- Arrow 1-2 -->
+    <line x1="244" y1="112" x2="256" y2="112" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- Step 2: Build Context -->
+    <g filter="url(#shadow)">
+        <rect x="260" y="68" width="155" height="88" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+        <text x="337" y="94" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#8b5cf6" text-anchor="middle">2. Build Context</text>
+        <text x="337" y="114" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Semantic models,</text>
+        <text x="337" y="128" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">SQL history, metrics</text>
+        <circle cx="337" cy="145" r="3" fill="#8b5cf6" opacity="0.5"/>
+    </g>
+
+    <!-- Arrow 2-3 -->
+    <line x1="419" y1="112" x2="431" y2="112" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- Step 3: Create Subagent -->
+    <g filter="url(#shadow)">
+        <rect x="435" y="68" width="155" height="88" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+        <text x="512" y="94" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#10b981" text-anchor="middle">3. Create Subagent</text>
+        <text x="512" y="114" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Package domain</text>
+        <text x="512" y="128" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">knowledge as chatbot</text>
+        <circle cx="512" cy="145" r="3" fill="#10b981" opacity="0.5"/>
+    </g>
+
+    <!-- Arrow 3-4 -->
+    <line x1="594" y1="112" x2="606" y2="112" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- Step 4: Deliver -->
+    <g filter="url(#shadow)">
+        <rect x="610" y="68" width="155" height="88" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+        <text x="687" y="94" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#f59e0b" text-anchor="middle">4. Deliver</text>
+        <text x="687" y="114" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Web, REST API,</text>
+        <text x="687" y="128" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">or MCP server</text>
+        <circle cx="687" cy="145" r="3" fill="#f59e0b" opacity="0.5"/>
+    </g>
+
+    <!-- Arrow 4-5 -->
+    <line x1="769" y1="112" x2="781" y2="112" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- Step 5: Measure -->
+    <g filter="url(#shadow)">
+        <rect x="785" y="68" width="155" height="88" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+        <text x="862" y="94" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#ec4899" text-anchor="middle">5. Measure</text>
+        <text x="862" y="114" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Benchmark with</text>
+        <text x="862" y="128" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">BIRD / Spider 2.0</text>
+        <circle cx="862" cy="145" r="3" fill="#ec4899" opacity="0.5"/>
+    </g>
+
+    <!-- Arrow 5-6 -->
+    <line x1="944" y1="112" x2="956" y2="112" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <!-- Step 6: Iterate -->
+    <g filter="url(#shadow)">
+        <rect x="960" y="68" width="155" height="88" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+        <text x="1037" y="94" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#14b8a6" text-anchor="middle">6. Iterate</text>
+        <text x="1037" y="114" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Feedback, fix SQL,</text>
+        <text x="1037" y="128" font-family="Arial, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">add rules &amp; skills</text>
+        <circle cx="1037" cy="145" r="3" fill="#14b8a6" opacity="0.5"/>
+    </g>
+
+    <!-- Feedback Loop: curved path from Step 6 bottom, left, up to Step 1 bottom -->
+    <path d="M1037,160 L1037,200 Q1037,220 1017,220 L183,220 Q163,220 163,200 L163,160"
+          fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#loopArrow)"/>
+
+    <text x="600" y="240" font-family="Arial, sans-serif" font-size="11" fill="#64748b" text-anchor="middle" font-style="italic">Continuous improvement &#x2014; every interaction makes the agent smarter</text>
+
+    <!-- Animated flow dot on forward path -->
+    <circle r="3" fill="#3b82f6" opacity="0.6">
+        <animateMotion path="M162,112 L1037,112" dur="4s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;0.6;0.6;0" dur="4s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Animated flow dot on feedback loop -->
+    <circle r="3" fill="#14b8a6" opacity="0.6">
+        <animateMotion path="M1037,160 L1037,200 Q1037,220 1017,220 L183,220 Q163,220 163,200 L163,160" dur="5s" repeatCount="indefinite"/>
+        <animate attributeName="opacity" values="0;0.6;0.6;0" dur="5s" repeatCount="indefinite"/>
+    </circle>
+
+    <!-- Role tags -->
+    <rect x="40" y="256" width="100" height="20" rx="10" fill="none" stroke="#3b82f6" stroke-width="1"/>
+    <text x="90" y="270" font-family="Arial, sans-serif" font-size="10" fill="#3b82f6" text-anchor="middle">Data Engineer</text>
+
+    <rect x="152" y="256" width="70" height="20" rx="10" fill="none" stroke="#f59e0b" stroke-width="1"/>
+    <text x="187" y="270" font-family="Arial, sans-serif" font-size="10" fill="#f59e0b" text-anchor="middle">Analyst</text>
+
+    <rect x="234" y="256" width="75" height="20" rx="10" fill="none" stroke="#10b981" stroke-width="1"/>
+    <text x="271" y="270" font-family="Arial, sans-serif" font-size="10" fill="#10b981" text-anchor="middle">AI Agent</text>
+</svg>
