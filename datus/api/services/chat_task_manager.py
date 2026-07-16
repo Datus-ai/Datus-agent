@@ -272,6 +272,10 @@ class ChatTask:
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
 
+# Bash whitelist for web clients: plugin CLIs ("datus <plugin> ...") and the
+# datus binaries themselves are the only commands the server-side bash accepts.
+WEB_BASH_ALLOWED_PATTERNS = ["datus*"]
+
 
 class ChatTaskManager:
     """Per-project manager for active chat tasks.
@@ -314,15 +318,22 @@ class ChatTaskManager:
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
         agent_config.filesystem_strict = True
-        # Remote front-ends (vscode/web) own their own shell: the daemon must
-        # not offer a server-side BashTool. ``project_root`` is intentionally
-        # left untouched — web keeps its configured root, and the read-only
-        # ``AgentConfig.project_root`` property already falls back to the
-        # launch CWD when no root was supplied, so an empty project_root
-        # naturally resolves to the current directory.
+        # vscode owns its own local shell: the daemon must not offer a
+        # server-side BashTool at all. web has no shell of its own, but plugin
+        # CLIs run through bash ("datus <plugin> ..."), so web keeps a
+        # server-side bash restricted to datus-prefixed commands only —
+        # everything else is rejected at the tool layer regardless of the
+        # permission profile. An agent.yml ``bash.enabled: false`` still wins:
+        # patterns never re-enable a disabled tool. ``project_root`` is
+        # intentionally left untouched — web keeps its configured root, and
+        # the read-only ``AgentConfig.project_root`` property already falls
+        # back to the launch CWD when no root was supplied, so an empty
+        # project_root naturally resolves to the current directory.
         effective_source = request.source or self._default_source
-        if effective_source in ("vscode", "web"):
+        if effective_source == "vscode":
             agent_config.bash_tool_enabled = False
+        elif effective_source == "web":
+            agent_config.bash_allowed_patterns = WEB_BASH_ALLOWED_PATTERNS
         # Stash the resolved source on the cloned config so downstream nodes
         # can adapt prompt-side hints to the front-end (e.g. vscode renders
         # the literal "." for the SQL files root because the IDE owns its own

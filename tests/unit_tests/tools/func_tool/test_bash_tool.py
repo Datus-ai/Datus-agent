@@ -240,14 +240,17 @@ class TestBashToolExecution:
         assert result.success == 0
         assert "not allowed" in result.error.lower()
 
-    def test_stdin_read_gets_eof_not_hang(self, multi_pattern_tool):
+    def test_stdin_read_gets_eof_not_hang(self, unrestricted_tool):
         """A command reading stdin must receive immediate EOF, never block.
 
         stdin is redirected to DEVNULL; without it the child inherits the
         agent's terminal stdin and hangs until the tool timeout, freezing the
         whole process. Reading stdin here should return an empty string fast.
+        Uses the unrestricted tool: a restrictive whitelist rejects the
+        quoted ``;`` in the inline code, and stdin handling is
+        whitelist-independent.
         """
-        result = multi_pattern_tool.bash('python -c "import sys; print(len(sys.stdin.read()))"')
+        result = unrestricted_tool.bash('python -c "import sys; print(len(sys.stdin.read()))"')
         assert result.success == 1
         assert result.result.strip() == "0"
 
@@ -550,3 +553,87 @@ class TestBashTimeoutParam:
         props = tool.params_json_schema.get("properties", {})
         assert "command" in props
         assert "timeout" in props
+
+
+class TestRestrictedWhitelistHardening:
+    """A restrictive whitelist is a hard security boundary.
+
+    Commands run through a real shell (``bash -c``), so chaining, command
+    substitution and redirection must be rejected even in unspaced or quoted
+    form — per-token inspection cannot be made safe there. Regression tests
+    for the bypass where metacharacters embedded inside a token (``x;rm``)
+    slipped past the token-equality check. The ``["datus*"]`` whitelist is
+    what the API surface hands to web clients (plugin CLIs).
+    """
+
+    @pytest.fixture
+    def datus_tool(self, temp_workspace):
+        return BashTool(workspace_root=str(temp_workspace), allowed_patterns=["datus*"])
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "datus plugin list",
+            "datus hello greet --name x",
+            "datus-api --help",
+            "datus a | datus b",
+        ],
+    )
+    def test_datus_prefixed_commands_allowed(self, datus_tool, command):
+        assert datus_tool._is_command_allowed(command) is True
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /",
+            "echo hi",
+            'bash -c "datus x"',
+            "datus a | grep x",
+        ],
+    )
+    def test_non_datus_commands_denied(self, datus_tool, command):
+        assert datus_tool._is_command_allowed(command) is False
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            # Spaced operator forms (already caught by the token check).
+            "datus x && rm y",
+            "datus x ; rm y",
+            # Unspaced forms — the historical bypass this hardening closes.
+            "datus x&&rm y",
+            "datus x;rm -rf ~",
+            "datus x>f",
+            "datus x<f",
+            "datus $(rm y)",
+            "datus `rm y`",
+            "datus ${HOME}",
+            "datus x\nrm y",
+            # Quoted metacharacters are rejected too: the raw-string check is
+            # deliberately quoting-blind, mirroring the permission safety
+            # ceiling's conservative semantics.
+            'datus query "a;b"',
+        ],
+    )
+    def test_shell_metacharacters_rejected_in_any_form(self, datus_tool, command):
+        assert datus_tool._is_command_allowed(command) is False
+
+    def test_denied_execution_never_spawns_and_reports_patterns(self, datus_tool):
+        result = datus_tool.bash("datus x;rm -rf ~")
+        assert result.success == 0
+        assert "not allowed" in result.error.lower()
+        assert "datus*" in result.error
+
+    def test_wildcard_tool_unaffected_by_hardening(self, unrestricted_tool):
+        # ``["*"]`` short-circuits before the metachar check: compound
+        # commands are gated by the permission hooks, not the execution layer.
+        assert unrestricted_tool._is_command_allowed('echo "a;b" && ls') is True
+
+    def test_restricted_description_lists_patterns(self, datus_tool):
+        tool = datus_tool.available_tools()[0]
+        assert "Restricted mode" in tool.description
+        assert "datus*" in tool.description
+
+    def test_unrestricted_description_has_no_restriction_note(self, unrestricted_tool):
+        tool = unrestricted_tool.available_tools()[0]
+        assert "Restricted mode" not in tool.description

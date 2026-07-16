@@ -254,8 +254,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         choices=["web", "vscode"],
         help=(
-            "Default proxy tool source shortcut. 'vscode' -> proxy filesystem_tools.*, "
-            "'web' -> proxy write_file/edit_file/delete_file. "
+            "Default proxy tool source shortcut. 'vscode' -> proxy filesystem_tools.* and no "
+            "server-side bash, 'web' -> proxy write_file/edit_file/delete_file with a "
+            "server-side bash restricted to datus commands. "
             "Overridable per request via ChatInput.source."
         ),
     )

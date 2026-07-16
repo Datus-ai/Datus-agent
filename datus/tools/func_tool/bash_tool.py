@@ -28,7 +28,7 @@ from typing import Any, Callable, Dict, List, Optional
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
-from datus.tools.permission.bash_rules import split_pipeline
+from datus.tools.permission.bash_rules import contains_shell_metachars, split_pipeline
 from datus.utils.loggings import get_logger
 from datus.utils.tool_archive import build_archived_marker, make_single_line_preview
 
@@ -477,15 +477,24 @@ class BashTool:
 
         A segment containing non-pipe shell metacharacters (chaining, command
         substitution, redirection) is rejected — the whitelist speaks about
-        one command, not a compound expression.
+        one command, not a compound expression. The check runs on the RAW
+        segment string (same regex as the permission safety ceiling), so
+        unspaced forms (``datus x;rm y``, ``datus $(rm y)``) and quoted
+        metacharacters are rejected alike: commands run through a real shell
+        where quoting-aware per-token inspection cannot be made safe.
         """
+        if contains_shell_metachars(segment):
+            return False
         try:
             parts = shlex.split(segment)
         except ValueError:
             return False
         if not parts:
             return False
-        if any(tok in ("&&", "||", ";", "|", "&", "`", "$(", ">", "<") for tok in parts):
+        # Belt-and-suspenders for the one metacharacter the raw check skips:
+        # a stray top-level ``|`` token can't appear (split_pipeline consumed
+        # them), but keep rejecting it in case a caller bypasses the split.
+        if any(tok in ("|", "&&", "||", ";", "&", "`", "$(", ">", "<") for tok in parts):
             return False
         base_cmd = parts[0]
         return any(self._matches_pattern(segment, base_cmd, pattern) for pattern in self.allowed_patterns)
@@ -544,8 +553,18 @@ class BashTool:
         Returns an empty list when no patterns are configured, so callers
         that opt out of bash execution simply omit the tool. Callers that
         want an "unrestricted" tool (gated only by ``PermissionManager``)
-        should pass ``allowed_patterns=["*"]``.
+        should pass ``allowed_patterns=["*"]``. A restrictive whitelist is
+        surfaced in the tool description so the model doesn't waste turns
+        probing disallowed commands.
         """
         if not self.allowed_patterns:
             return []
-        return [trans_to_function_tool(self.bash)]
+        tool = trans_to_function_tool(self.bash)
+        if "*" not in self.allowed_patterns:
+            tool.description = (
+                f"{tool.description}\n\nRestricted mode: only commands matching these patterns "
+                f"are allowed: {', '.join(self.allowed_patterns)}. Any other command "
+                f"(including pipelines mixing in other commands, chaining, command "
+                f"substitution or redirection) is rejected."
+            )
+        return [tool]
