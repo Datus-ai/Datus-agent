@@ -190,6 +190,59 @@ class TestInputPrompt:
         # Defensive fallback is exercised and still produces a usable prompt.
         assert rendered == [("class:input-prompt", "> ")]
 
+    def test_prompt_shows_red_sql_marker_in_sql_mode(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            sql_mode_fn=lambda: True,
+        )
+        assert app._get_input_prompt() == [("class:input-prompt.sql", "sql> ")]
+
+    def test_sql_prompt_takes_precedence_over_busy(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            sql_mode_fn=lambda: True,
+        )
+        app.agent_running.set()
+        # SQL mode wins over the busy style so the user always sees ``sql>``.
+        assert app._get_input_prompt() == [("class:input-prompt.sql", "sql> ")]
+
+
+class TestSqlModeChrome:
+    """SQL mode paints red chrome around the input: separators, hint line."""
+
+    @staticmethod
+    def _app_with_flag():
+        flag = {"on": False}
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            sql_mode_fn=lambda: flag["on"],
+        )
+        return app, flag
+
+    def test_plain_separator_uses_static_style(self) -> None:
+        app, _ = self._app_with_flag()
+        sep = app._make_separator()
+        # Non-SQL separators keep a plain string style (no per-paint callable).
+        assert sep.style == "class:separator"
+
+    def test_sql_aware_separator_turns_red_in_sql_mode(self) -> None:
+        app, flag = self._app_with_flag()
+        sep = app._make_separator(sql_aware=True)
+        # Style is a callable re-evaluated every paint.
+        assert callable(sep.style)
+        assert sep.style() == "class:separator"
+        flag["on"] = True
+        assert sep.style() == "class:separator.sql"
+
+    def test_sql_mode_hint_window_visibility_tracks_flag(self) -> None:
+        app, flag = self._app_with_flag()
+        assert bool(app._sql_mode_window.filter()) is False
+        flag["on"] = True
+        assert bool(app._sql_mode_window.filter()) is True
+
 
 class TestKeyBindingsContract:
     """Verify Enter's dispatch-vs-swallow contract.
@@ -238,6 +291,49 @@ class TestKeyBindingsContract:
 
         buffer.reset.assert_called_once()
         assert tui_app._test_dispatch_log == ["SELECT 1"]
+
+    def test_enter_after_backslash_inserts_newline_not_submit(self, tui_app: DatusApp) -> None:
+        """``\\`` immediately before the cursor + Enter continues the line."""
+        handler = self._enter_handler(tui_app)
+
+        buffer = mock.MagicMock()
+        buffer.complete_state = None
+        buffer.document.char_before_cursor = "\\"
+
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        # The trailing backslash is removed and replaced with a newline; the
+        # input is NOT submitted or reset.
+        buffer.delete_before_cursor.assert_called_once_with(1)
+        buffer.insert_text.assert_called_once_with("\n")
+        buffer.reset.assert_not_called()
+        assert tui_app._test_dispatch_log == []
+
+    def test_enter_backslash_ignored_while_completion_open(self, tui_app: DatusApp) -> None:
+        """With a completion menu open, Enter accepts the pick — the ``\\``
+        newline shortcut must not steal the keypress."""
+        handler = self._enter_handler(tui_app)
+
+        completion = mock.MagicMock()
+        complete_state = mock.MagicMock()
+        complete_state.current_completion = completion
+
+        buffer = mock.MagicMock()
+        buffer.complete_state = complete_state
+        buffer.document.char_before_cursor = "\\"
+        buffer.text = "SELECT \\"
+
+        event = mock.MagicMock()
+        event.app.current_buffer = buffer
+
+        handler(event)
+
+        # Newline shortcut skipped: completion applied, no manual newline.
+        buffer.apply_completion.assert_called_once_with(completion)
+        buffer.insert_text.assert_not_called()
 
     def test_enter_applies_active_completion_and_submits(self, tui_app: DatusApp) -> None:
         """Enter with a highlighted completion applies AND submits in one press.

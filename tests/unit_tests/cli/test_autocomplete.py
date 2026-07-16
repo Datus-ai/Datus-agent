@@ -44,15 +44,6 @@ class TestSQLCompleterInit:
         assert c.database_name == ""
         assert c.schema_name == ""
 
-    def test_commands_contains_expected_keys(self):
-        c = SQLCompleter()
-        # Slash commands are owned by SlashCommandCompleter; only tool
-        # (``!``) prefixes remain in the legacy word dictionary.
-        assert "!sl" in c.commands
-        assert "!bash" in c.commands
-        assert not any(k.startswith(".") for k in c.commands)
-        assert not any(k.startswith("@") for k in c.commands)
-
 
 class TestSQLCompleterUpdateMethods:
     def test_update_tables(self):
@@ -76,12 +67,13 @@ class TestSQLCompleterGetCompletions:
         completions = list(c.get_completions(doc))
         assert completions == []
 
-    def test_command_prefix_bang(self):
+    def test_bang_prefix_yields_no_command_completions(self):
+        """``!`` is the SQL-mode toggle now, not a tool-command prefix, so the
+        SQL completer no longer suggests ``!sl``/``!bash``/etc."""
         c = SQLCompleter()
         doc = Document("!sl", cursor_position=3)
         completions = list(c.get_completions(doc))
-        texts = [comp.text for comp in completions]
-        assert "!sl" in texts
+        assert completions == []
 
     def test_dot_prefix_yields_nothing(self):
         """Dot-prefix completions are no longer exposed by SQLCompleter; the

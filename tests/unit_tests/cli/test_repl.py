@@ -7,7 +7,7 @@ Unit tests for datus/cli/repl.py.
 
 Tests cover:
 - CommandType enum
-- DatusCLI._parse_command: EXIT, TOOL, SLASH, CHAT, SQL, legacy-prefix UNKNOWN
+- DatusCLI._parse_command: EXIT, SLASH, CHAT, SQL (mode + ``!<sql>`` fallback), legacy-prefix UNKNOWN
 - DatusCLI.check_agent_available: ready / initializing / not ready
 - DatasourceCommands._switch: same datasource, switch to different
 - DatusCLI._smart_display_table: empty data, few columns, many columns
@@ -48,6 +48,8 @@ def _make_cli(agent_config, available_subagents=None):
     cli.agent_initializing = False
     cli.startup_warnings = []
     cli.plan_mode_active = False
+    cli.sql_mode_active = False
+    cli.tui_app = None
     cli.default_agent = ""
     cli.at_completer = MagicMock()
     cli.db_connector = MagicMock()
@@ -82,7 +84,6 @@ def _make_cli(agent_config, available_subagents=None):
     # Build commands dict referencing the mocks. Keys mirror the canonical
     # slash names wired by ``DatusCLI._build_slash_handler_map``.
     cli.commands = {
-        "!sl": cli.agent_commands.cmd_schema_linking,
         "/catalog": cli.context_commands.cmd_catalog,
         "/tables": cli.metadata_commands.cmd_tables,
         "/datasource": cli.datasource_commands.cmd,
@@ -90,7 +91,6 @@ def _make_cli(agent_config, available_subagents=None):
         "/exit": lambda a: None,
         "/quit": lambda a: None,
         "/rewind": cli.chat_commands.cmd_rewind,
-        "!bash": cli._cmd_bash,
     }
 
     # Status bar provider so _build_prompt_message works in tests
@@ -295,7 +295,6 @@ class TestCmdExitShutsDownBgSync:
 class TestCommandType:
     def test_all_types_exist(self):
         assert CommandType.SQL.value == "sql"
-        assert CommandType.TOOL.value == "tool"
         assert CommandType.SLASH.value == "slash"
         assert CommandType.CHAT.value == "chat"
         assert CommandType.EXIT.value == "exit"
@@ -328,17 +327,38 @@ class TestParseCommand:
         assert cmd_type == CommandType.SLASH
         assert cmd == "/exit"
 
-    def test_tool_command_with_args(self, cli):
-        cmd_type, cmd, args = cli._parse_command("!sl find revenue tables")
-        assert cmd_type == CommandType.TOOL
-        assert cmd == "!sl"
-        assert args == "find revenue tables"
+    def test_bang_prefix_runs_sql_one_shot(self, cli):
+        """``!<sql>`` is the non-TUI fallback for one-shot SQL: the ``!`` is
+        stripped and the remainder is returned as the SQL to execute."""
+        cmd_type, cmd, args = cli._parse_command("!SELECT * FROM t")
+        assert cmd_type == CommandType.SQL
+        assert cmd == ""
+        assert args == "SELECT * FROM t"
 
-    def test_tool_command_no_args(self, cli):
-        cmd_type, cmd, args = cli._parse_command("!sl")
-        assert cmd_type == CommandType.TOOL
-        assert cmd == "!sl"
-        assert args == ""
+    def test_bang_prefix_only_strips_leading_bang(self, cli):
+        cmd_type, _, args = cli._parse_command("!  SHOW TABLES")
+        assert cmd_type == CommandType.SQL
+        assert args == "SHOW TABLES"
+
+    def test_sql_mode_routes_plain_text_to_sql(self, cli):
+        """In SQL mode, plain input is executed as SQL rather than chat."""
+        cli.sql_mode_active = True
+        cmd_type, cmd, args = cli._parse_command("SELECT 1")
+        assert cmd_type == CommandType.SQL
+        assert cmd == ""
+        assert args == "SELECT 1"
+
+    def test_sql_mode_still_allows_slash_commands(self, cli):
+        """Slash commands keep working without leaving SQL mode."""
+        cli.sql_mode_active = True
+        cmd_type, cmd, _ = cli._parse_command("/tables")
+        assert cmd_type == CommandType.SLASH
+        assert cmd == "/tables"
+
+    def test_sql_mode_bare_exit_still_exits(self, cli):
+        cli.sql_mode_active = True
+        cmd_type, _, _ = cli._parse_command("exit")
+        assert cmd_type == CommandType.EXIT
 
     def test_slash_catalog_command(self, cli):
         cmd_type, cmd, args = cli._parse_command("/catalog mydb")
@@ -394,30 +414,46 @@ class TestParseCommand:
         assert cmd_type == CommandType.UNKNOWN
         assert hint == "/exit"
 
-    def test_sql_trailing_semicolon_stripped(self, cli):
-        """Trailing semicolon is stripped before parsing."""
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.SELECT
-            cmd_type, _, _ = cli._parse_command("SELECT 1;")
+    def test_sql_mode_trailing_semicolon_stripped(self, cli):
+        """Trailing semicolon is stripped before the SQL is handed off."""
+        cli.sql_mode_active = True
+        cmd_type, _, args = cli._parse_command("SELECT 1;")
         assert cmd_type == CommandType.SQL
+        assert args == "SELECT 1"
+
+    def test_sql_like_text_is_chat_without_sql_mode(self, cli):
+        """SQL is never auto-detected: outside SQL mode even ``SELECT ...``
+        routes to the model instead of executing against the datasource."""
+        cmd_type, cmd, args = cli._parse_command("SELECT 1")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == cli.default_agent
+        assert args == "SELECT 1"
 
     def test_natural_language_treated_as_chat(self, cli):
-        """Natural language without any prefix still routes to CHAT."""
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, _ = cli._parse_command("show me the revenue")
+        """Natural language without any prefix routes to CHAT."""
+        cmd_type, cmd, _ = cli._parse_command("show me the revenue")
         assert cmd_type == CommandType.CHAT
         assert cmd == cli.default_agent
 
-    def test_parse_sql_exception_falls_back_to_chat(self, cli):
-        """Exception during parse_sql_type falls back to CHAT."""
-        with patch("datus.cli.repl.parse_sql_type", side_effect=Exception("parse error")):
-            cmd_type, _, _ = cli._parse_command("ambiguous text")
-        assert cmd_type == CommandType.CHAT
+
+# ---------------------------------------------------------------------------
+# Tests: _set_sql_mode
+# ---------------------------------------------------------------------------
+
+
+class TestSetSqlMode:
+    def test_toggles_flag_on_and_off(self, cli):
+        assert cli.sql_mode_active is False
+        cli._set_sql_mode(True)
+        assert cli.sql_mode_active is True
+        cli._set_sql_mode(False)
+        assert cli.sql_mode_active is False
+
+    def test_noop_when_value_unchanged(self, cli):
+        # Idempotent: setting the current value is a no-op and does not touch
+        # the (absent) TUI app.
+        cli._set_sql_mode(False)
+        assert cli.sql_mode_active is False
 
 
 # ---------------------------------------------------------------------------
@@ -661,23 +697,6 @@ class TestExecuteSql:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _execute_tool_command
-# ---------------------------------------------------------------------------
-
-
-class TestExecuteToolCommand:
-    def test_known_command_called(self, cli):
-        cli.commands["!sl"] = MagicMock()
-        cli._execute_tool_command("!sl", "find revenue")
-        cli.commands["!sl"].assert_called_once_with("find revenue")
-
-    def test_unknown_command_prints_error(self, cli):
-        cli._execute_tool_command("!nonexistent", "args")
-        output = cli.console.file.getvalue()
-        assert "Unknown command" in output
-
-
-# ---------------------------------------------------------------------------
 # Tests: _execute_slash_command
 # ---------------------------------------------------------------------------
 
@@ -812,7 +831,9 @@ class TestCmdHelp:
         cli._cmd_help("")
         output = cli.console.file.getvalue()
         assert "Datus-CLI Help" in output
-        assert "Tool Commands" in output
+        # SQL is reached via SQL mode now; the help documents it instead of
+        # the old ``!``-prefixed tool commands.
+        assert "SQL mode" in output
 
 
 # ---------------------------------------------------------------------------
@@ -1170,22 +1191,14 @@ class TestParseCommandDefaultAgent:
     def test_bare_text_uses_default_agent(self, cli):
         """Bare natural language text uses ``default_agent``."""
         cli.default_agent = "gen_sql"
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, args = cli._parse_command("show me the revenue")
+        cmd_type, cmd, args = cli._parse_command("show me the revenue")
         assert cmd_type == CommandType.CHAT
         assert cmd == "gen_sql"
 
     def test_bare_text_default_chat(self, cli):
         """Bare text with ``default_agent=''`` still routes to the chat node."""
         cli.default_agent = ""
-        with patch("datus.cli.repl.parse_sql_type") as mock_parse:
-            from datus.utils.constants import SQLType
-
-            mock_parse.return_value = SQLType.UNKNOWN
-            cmd_type, cmd, _ = cli._parse_command("hello world")
+        cmd_type, cmd, _ = cli._parse_command("hello world")
         assert cmd_type == CommandType.CHAT
         assert cmd == ""
 

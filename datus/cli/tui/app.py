@@ -193,6 +193,7 @@ class DatusApp:
         style: Optional[Style] = None,
         placeholder_fn: Optional[Callable[[], str]] = None,
         input_prompt_fn: Optional[Callable[[], str]] = None,
+        sql_mode_fn: Optional[Callable[[], bool]] = None,
         live_display_state: Optional[LiveDisplayState] = None,
         todo_tokens_fn: Optional[Callable[[], List[Tuple[str, str]]]] = None,
         todo_has_items_fn: Optional[Callable[[], bool]] = None,
@@ -212,6 +213,10 @@ class DatusApp:
         self._pending_input_provider = pending_input_provider
         self._placeholder_fn = placeholder_fn or (lambda: "")
         self._input_prompt_fn = input_prompt_fn or (lambda: "> ")
+        # Returns whether the REPL is in SQL mode. Drives the red ``sql>``
+        # prompt, the red separators bracketing the input, and the SQL-mode
+        # hint line — all re-evaluated on every paint.
+        self._sql_mode_fn = sql_mode_fn or (lambda: False)
         self._live_state = live_display_state
         self._todo_tokens_fn = todo_tokens_fn
         self._todo_has_items_fn = todo_has_items_fn
@@ -370,6 +375,19 @@ class DatusApp:
             filter=Condition(lambda: bool(self._hint_text)),
         )
 
+        # Persistent indicator pinned directly under the input while SQL mode
+        # is active. Collapses to zero rows otherwise (driven by ``sql_mode_fn``).
+        self._sql_mode_window = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(
+                    lambda: [("class:sql-mode-hint", " SQL mode · Enter run · \\+Enter newline · Esc/Ctrl+C exit ")]
+                ),
+                height=1,
+                wrap_lines=False,
+            ),
+            filter=Condition(self._sql_mode_fn),
+        )
+
         self._search_bar = self._build_search_bar()
 
         # Scrollable output pane (left, weight=4). Replaces the old
@@ -504,11 +522,13 @@ class DatusApp:
                 self._queue_preview,
                 self._make_separator(),
                 self._status_window,
-                self._make_separator(),
+                # The two rules bracketing the input turn red in SQL mode.
+                self._make_separator(sql_aware=True),
                 self._input_area,
                 self._completions_menu,
                 self._search_bar,
-                self._make_separator(),
+                self._make_separator(sql_aware=True),
+                self._sql_mode_window,
                 self._hint_window,
             ]
         )
@@ -564,14 +584,25 @@ class DatusApp:
             self._live_state.set_invalidate(self.invalidate)
             self._live_state.set_max_rows_provider(self._pinned_max_rows)
 
-    def _make_separator(self) -> Window:
-        """Full-width horizontal rule rendered with box-drawing character.
+    def _make_separator(self, sql_aware: bool = False) -> Window:
+        """Full-width horizontal rule rendered with a box-drawing character.
 
-        Wired to :meth:`_decoration_mouse_handler` because off-window
-        releases get clamped onto edge rows like these \u2014 the handler
-        closes out any in-flight selection drag so it still copies.
+        When ``sql_aware`` is set the rule turns red while SQL mode is active
+        so the input area is visibly bracketed in red; otherwise it uses the
+        default separator colour.
+
+        Wired to :meth:`_decoration_mouse_handler` because off-window releases
+        get clamped onto edge rows like these \u2014 the handler closes out any
+        in-flight selection drag so it still copies.
         """
-        window = Window(height=1, char="\u2500", style="class:separator")
+        if sql_aware:
+
+            def _sep_style() -> str:
+                return "class:separator.sql" if self._sql_mode_fn() else "class:separator"
+
+            window = Window(height=1, char="\u2500", style=_sep_style)
+        else:
+            window = Window(height=1, char="\u2500", style="class:separator")
         window.content.mouse_handler = self._decoration_mouse_handler
         return window
 
@@ -2165,6 +2196,10 @@ class DatusApp:
                     ("class:input-prompt.hint", "(Ctrl+E to expand) "),
                 ]
             )
+        # SQL mode overrides the prompt with a distinct red ``sql> `` marker
+        # so it is unmistakable that Enter will execute SQL, not chat.
+        if self._sql_mode_fn():
+            return FormattedText([("class:input-prompt.sql", "sql> ")])
         try:
             text = self._input_prompt_fn() or "> "
         except Exception:  # pragma: no cover - defensive
@@ -2240,6 +2275,15 @@ class DatusApp:
         @kb.add("enter")
         def _enter(event) -> None:  # noqa: ANN001
             buffer = event.app.current_buffer
+
+            # ``\`` immediately before the cursor + Enter inserts a newline
+            # instead of submitting — the only way to compose multi-line input
+            # (most terminals do not deliver a distinct Shift+Enter). Skipped
+            # while a completion menu is open so Enter still accepts a pick.
+            if not buffer.complete_state and buffer.document.char_before_cursor == "\\":
+                buffer.delete_before_cursor(1)
+                buffer.insert_text("\n")
+                return
 
             if buffer.complete_state:
                 cs = buffer.complete_state

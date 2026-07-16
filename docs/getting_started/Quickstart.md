@@ -75,16 +75,17 @@ Full provider list (Kimi / Qwen / GLM / MiniMax, Claude subscription, Codex OAut
 
 ## 3. Start Using Datus
 
-You'll see the startup banner and a `>` prompt. The prompt accepts three input modes:
+You'll see the startup banner and a green `>` prompt. The prompt accepts three input modes:
 
 - **Slash commands** — `/help`, `/datasource`, `/model`, `/exit`, …
-- **SQL** — `SELECT …`, `DESCRIBE …`, `SHOW …` are detected automatically and executed against the active datasource
-- **Natural language** — anything else goes to the agent
+- **Natural language** — anything else goes to the agent (this is the default)
+- **SQL mode** — press `!` on an empty line to switch into SQL mode. The prompt turns into a red `sql>` with red separators and syntax highlighting; whatever you type is executed as SQL against the active datasource. Press **Esc** or **Ctrl+C** to return to chat. Use `\` + Enter to continue a statement on a new line.
 
 ```text title="Examples"
 > /tables
-> desc gold_vs_bitcoin
 > Detailed analysis of gold–Bitcoin correlation.
+> !                       # switch into SQL mode
+sql> desc gold_vs_bitcoin
 ```
 
 For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and the final markdown report live, with a pinned status row at the bottom showing the currently running tool:

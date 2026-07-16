@@ -53,6 +53,7 @@ def _build_core_cli() -> DatusCLI:
     cli = object.__new__(DatusCLI)
     cli.console = _console()
     cli.plan_mode_active = True
+    cli.sql_mode_active = False
     cli.tui_app = None
     cli._prefill_input = None
     cli.default_agent = ""
@@ -177,7 +178,13 @@ def test_quickstart_documented_repl_entrypoints_stay_routable() -> None:
         (CommandType.SLASH, "/tables", ""),
     ]
 
+    # SQL is no longer auto-detected: bare ``desc ...`` is model chat by
+    # default, and only executes as SQL once the user opts into SQL mode
+    # (``!`` on an empty line in the TUI).
+    assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.CHAT
+    cli.sql_mode_active = True
     assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.SQL
+    cli.sql_mode_active = False
     assert DatusCLI._parse_command(cli, "Detailed analysis of gold-Bitcoin correlation.")[0] == CommandType.CHAT
 
 

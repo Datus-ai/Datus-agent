@@ -22,9 +22,11 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import ConditionalCompleter
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.lexers import DynamicLexer, PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
 from rich.console import Console
 from rich.panel import Panel
@@ -100,8 +102,7 @@ _BANNER_MIN_WIDTH = 60
 class CommandType(Enum):
     """Type of command entered by the user."""
 
-    SQL = "sql"  # Regular SQL statement
-    TOOL = "tool"  # !command (tool/workflow)
+    SQL = "sql"  # Regular SQL statement (SQL mode, or ``!<sql>`` in the non-TUI fallback)
     SLASH = "slash"  # /command (session / metadata / context / agent / system)
     CHAT = "chat"  # bare text routed to the default agent
     EXIT = "exit"  # exit/quit command
@@ -160,6 +161,13 @@ class DatusCLI:
 
         # Plan mode support
         self.plan_mode_active = False
+        # SQL mode: when active, plain input is executed as SQL against the
+        # current datasource instead of being routed to the model. Toggled in
+        # the TUI by pressing ``!`` on an empty input line (see the ``!`` key
+        # binding in ``_init_tui_app``); exited via Esc / Ctrl+C. Drives the
+        # red ``sql>`` prompt, red separators, the SQL-mode hint line, and the
+        # contextual SQL lexer/completer.
+        self.sql_mode_active = False
         self._last_ctrl_c_time: float = 0.0
         # Default agent for /message routing ("" = chat node)
         self.default_agent = ""
@@ -289,24 +297,11 @@ class DatusCLI:
         self._status_bar_provider = StatusBarProvider(self)
         self._todo_sidebar_provider = TodoSidebarProvider(self)
 
-        # Dictionary of available commands - created after handlers are initialized
-        self.commands: Dict[str, Any] = {
-            # "!run": self.agent_commands.cmd_darun_screen,
-            "!sl": self.agent_commands.cmd_schema_linking,
-            "!schema_linking": self.agent_commands.cmd_schema_linking,
-            "!sm": self.agent_commands.cmd_search_metrics,
-            "!search_metrics": self.agent_commands.cmd_search_metrics,
-            "!sq": self.agent_commands.cmd_search_reference_sql,
-            "!search_sql": self.agent_commands.cmd_search_reference_sql,
-            "!sd": self.agent_commands.cmd_doc_search,
-            "!search_document": self.agent_commands.cmd_doc_search,
-            # "!fix": self.agent_commands.cmd_fix,
-            "!save": self.agent_commands.cmd_save,
-            "!bash": self._cmd_bash,
-            # to be deprecated when sub agent is read
-            # "!reason": self.agent_commands.cmd_reason_stream,
-            # "!compare": self.agent_commands.cmd_compare_stream,
-        }
+        # Dictionary of available commands - created after handlers are initialized.
+        # The ``!`` prefix is now reserved for toggling SQL mode (see the ``!``
+        # key binding in ``_init_tui_app``), so no ``!``-tool commands are
+        # registered here; only ``/`` slash commands populate this dict below.
+        self.commands: Dict[str, Any] = {}
         # Slash commands are driven by ``slash_registry.SLASH_COMMANDS`` so the
         # completer, help text, and dispatcher share one source of truth.
         for spec_name, handler in self._build_slash_handler_map().items():
@@ -348,12 +343,14 @@ class DatusCLI:
             # context
             "catalog": self.context_commands.cmd_catalog,
             "subject": self.context_commands.cmd_subject,
+            "save": self.agent_commands.cmd_save,
             # agent
             "agent": self._cmd_agent,
             "subagent": self._cmd_subagent,
             "datasource": self.datasource_commands.cmd,
             "language": self.language_commands.cmd_language,
             # system
+            "bash": self._cmd_bash,
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,
             "bootstrap": self.bootstrap_commands.cmd,
@@ -659,7 +656,6 @@ class DatusCLI:
         # (trigger completion only, no navigation). Additional bindings —
         # Shift+Tab plan-mode toggle, Ctrl+O trace details, ESC interrupt —
         # are wired in later phases.
-        from prompt_toolkit.lexers import PygmentsLexer
 
         from datus.cli.tui.output_buffer import TUIOutputBuffer
 
@@ -709,12 +705,17 @@ class DatusCLI:
             prefix_wrap_func=lambda x: f"[red]{x}[/red]",
         )
 
+        # SQL syntax highlighting is contextual: the ``CustomSqlLexer`` is only
+        # applied while SQL mode is active, so plain model-chat input shows no
+        # SQL colouring. ``DynamicLexer`` re-evaluates the getter every paint.
+        sql_lexer = PygmentsLexer(CustomSqlLexer)
         self.tui_app = DatusApp(
             status_tokens_fn=self._status_tokens_for_tui,
             dispatch_fn=self._dispatch_command_text,
             completer=completer,
             history=self.history,
-            lexer=PygmentsLexer(CustomSqlLexer),
+            lexer=DynamicLexer(lambda: sql_lexer if self.sql_mode_active else None),
+            sql_mode_fn=lambda: self.sql_mode_active,
             style=self._build_app_style(),
             input_prompt_fn=self._get_prompt_text,
             live_display_state=self.live_state,
@@ -795,6 +796,30 @@ class DatusCLI:
             run_in_terminal_sync(_announce)
             event.app.invalidate()
 
+        @self.tui_app.key_bindings.add("!")
+        def _bang(event):  # noqa: ANN001
+            """``!`` on the empty main input line enters SQL mode.
+
+            Only the very first character of the main composer toggles. Once
+            the line has any text, SQL mode is already active, the agent is
+            running, or focus is elsewhere (search bar / wizard fields), ``!``
+            is inserted literally so SQL operators like ``!=`` type normally.
+            Binding a printable key suppresses prompt_toolkit's default
+            insertion, so every non-toggle path must insert it by hand. Exit
+            is via Esc / Ctrl+C (see the ``escape`` / ``c-c`` handlers below).
+            """
+            buffer = event.app.current_buffer
+            if (
+                buffer is self.tui_app.input_buffer
+                and not self.tui_app._agent_running.is_set()
+                and not self.sql_mode_active
+                and not buffer.text
+            ):
+                self._set_sql_mode(True)
+                event.app.invalidate()
+                return
+            buffer.insert_text("!")
+
         @self.tui_app.key_bindings.add("c-o")
         def _c_o(event):  # noqa: ANN001
             """Ctrl+O: toggle verbose during a live stream, or expand the
@@ -844,11 +869,14 @@ class DatusCLI:
 
             prompt_toolkit debounces ESC so this handler only fires for a
             standalone key press, not for the leading byte of arrow-key
-            escape sequences (``\\x1b[A`` etc.). While idle the binding is
-            a no-op so default Buffer behavior (no-op for ESC in insert
-            mode) is preserved.
+            escape sequences (``\\x1b[A`` etc.). While idle it exits SQL mode
+            if active, otherwise it is a no-op so default Buffer behavior
+            (no-op for ESC in insert mode) is preserved.
             """
             if not self.tui_app._agent_running.is_set():
+                if self.sql_mode_active:
+                    self._set_sql_mode(False)
+                    event.app.invalidate()
                 return
             self._interrupt_agent()
 
@@ -872,14 +900,49 @@ class DatusCLI:
 
             self.tui_app.clear_paste_state()
             event.app.current_buffer.reset()
+            # A single Ctrl+C while idle also drops out of SQL mode so the
+            # user is never stuck in it after clearing the line.
+            if self.sql_mode_active:
+                self._set_sql_mode(False)
             self.tui_app.show_ctrl_c_hint()
+
+    def _set_sql_mode(self, active: bool) -> None:
+        """Toggle SQL mode and announce the transition in the scrollback.
+
+        Printing through ``run_in_terminal_sync`` keeps the pinned status bar
+        and input area intact (mirrors the Plan Mode announce). Rendering of
+        the red ``sql>`` prompt / separators / hint line is driven by the
+        ``sql_mode_fn`` callback the TUI reads every paint, so flipping the
+        flag plus a single ``invalidate`` is enough to reflect the change.
+        """
+        if self.sql_mode_active == active:
+            return
+        self.sql_mode_active = active
+
+        tui_app = getattr(self, "tui_app", None)
+        if tui_app is None:
+            return
+
+        from datus.cli.tui.console_bridge import run_in_terminal_sync
+
+        def _announce() -> None:
+            if active:
+                self.console.print("[green]SQL mode on[/] — type SQL and press Enter to run it")
+                self.console.print("[dim]\\+Enter for a newline · Esc or Ctrl+C to exit[/]")
+            else:
+                self.console.print("[yellow]SQL mode off[/]")
+
+        run_in_terminal_sync(_announce)
+        tui_app.invalidate()
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
         self.session = PromptSession(
             history=self.history,
             auto_suggest=AutoSuggestFromHistory(),
-            lexer=PygmentsLexer(CustomSqlLexer),
+            # No SQL highlighting in the non-TUI fallback — SQL runs via the
+            # ``!<sql>`` one-shot prefix, and plain input is model chat.
+            lexer=None,
             completer=self.create_combined_completer(),
             multiline=True,
             key_bindings=self._create_custom_key_bindings(),
@@ -895,7 +958,11 @@ class DatusCLI:
         """Build SlashCommandCompleter + AtReferenceCompleter + SqlCompleter."""
         from datus.cli.autocomplete import SQLCompleter
 
-        sql_completer = SQLCompleter()
+        # SQL keyword/function/table completion is contextual: it only fires
+        # while SQL mode is active, so plain model-chat input gets no SQL
+        # suggestion popups. Slash / @-reference / service completers stay on
+        # in both modes.
+        sql_completer = ConditionalCompleter(SQLCompleter(), Condition(lambda: self.sql_mode_active))
         self.service_completer = ServiceCommandCompleter(self)
         self.at_completer = AtReferenceCompleter(
             self.agent_config,
@@ -912,7 +979,7 @@ class DatusCLI:
                 self.service_completer,  # .<service>.<method> dispatcher completer (highest priority)
                 self.slash_completer,  # Top-level slash commands
                 self.at_completer,  # @Table / @Metrics / @Sql inline references
-                sql_completer,  # SQL keyword completer (lowest priority)
+                sql_completer,  # SQL keyword completer (SQL mode only, lowest priority)
             ]
         )
 
@@ -955,9 +1022,7 @@ class DatusCLI:
             if cmd_type == CommandType.EXIT:
                 return EXIT_SENTINEL
             if cmd_type == CommandType.SQL:
-                self._execute_sql(user_input)
-            elif cmd_type == CommandType.TOOL:
-                self._execute_tool_command(cmd, args)
+                self._execute_sql(args)
             elif cmd_type == CommandType.SLASH:
                 slash_result = self._execute_slash_command(cmd, args)
                 # ``/rewind`` sets ``_prefill_input`` from inside the handler.
@@ -1584,7 +1649,6 @@ class DatusCLI:
             Tuple ``(command_type, command, arguments)``:
 
             * ``SQL``    — ``command`` empty, ``arguments`` is the raw SQL
-            * ``TOOL``   — ``command`` is ``"!name"`` (lowercased)
             * ``SLASH``  — ``command`` is the canonical ``"/name"`` (aliases resolved)
             * ``CHAT``   — ``command`` is the default agent, ``arguments`` is the message
             * ``EXIT``   — both empty
@@ -1602,12 +1666,13 @@ class DatusCLI:
         if text.lower() in ("exit", "quit"):
             return CommandType.EXIT, "", ""
 
-        # Tool commands (!prefix). Unchanged by this refactor.
+        # ``!`` prefix. In the TUI a leading ``!`` on an empty line is consumed
+        # by the key binding to toggle SQL mode, so it never reaches here. In
+        # the non-TUI PromptSession fallback (no key interception) ``!<sql>``
+        # runs the remainder as a one-shot SQL statement — the only way to
+        # reach SQL execution without the interactive mode toggle.
         if text.startswith("!"):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower()
-            args = parts[1] if len(parts) > 1 else ""
-            return CommandType.TOOL, cmd, args
+            return CommandType.SQL, "", text[1:].strip()
 
         # Slash commands (/prefix). ``/<agent> <msg>`` was removed — agent
         # selection is now exclusively handled by ``/agent``. Unknown tokens
@@ -1641,19 +1706,17 @@ class DatusCLI:
         if legacy_target is not None:
             return CommandType.UNKNOWN, first_token, legacy_target
 
-        # Determine if text is SQL or chat using parse_sql_type
-        try:
-            # Get current database dialect from agent_config.db_type (set from current datasource)
-            dialect = self.agent_config.db_type if self.agent_config.db_type else "snowflake"
-            sql_type = parse_sql_type(text, dialect)
+        # SQL mode (toggled via ``!`` on an empty line in the TUI): plain input
+        # is executed as SQL against the current datasource. The slash / legacy
+        # branches above run first, so ``/help`` / ``/tables`` stay reachable
+        # without leaving SQL mode.
+        if self.sql_mode_active:
+            return CommandType.SQL, "", text
 
-            # If parse_sql_type returns a valid SQL type (not UNKNOWN), treat as SQL
-            if sql_type != SQLType.UNKNOWN:
-                return CommandType.SQL, "", text
-            return CommandType.CHAT, self.default_agent, text.strip()
-        except Exception:
-            # If any exception occurs, treat as chat
-            return CommandType.CHAT, self.default_agent, text.strip()
+        # Default: route free-form text to the model. SQL is never auto-detected
+        # — the user opts into execution explicitly via SQL mode (or ``!<sql>``
+        # in the non-TUI fallback).
+        return CommandType.CHAT, self.default_agent, text.strip()
 
     def _execute_sql(self, sql: str, system: bool = False):
         """Execute a SQL query and display results."""
@@ -1824,13 +1887,6 @@ class DatusCLI:
                 messages=f"SQL execution exception: {str(e)}",
             )
 
-    def _execute_tool_command(self, cmd: str, args: str):
-        """Execute a tool command (! prefix)."""
-        if cmd in self.commands:
-            self.commands[cmd](args)
-        else:
-            self.console.print(f"[red]Unknown command:[/] {cmd}")
-
     def _execute_chat_command(self, message: str, subagent_name: str = None):
         """Route free-form chat text to the configured default agent."""
         self.chat_commands.execute_chat_command(message, plan_mode=self.plan_mode_active, subagent_name=subagent_name)
@@ -1939,25 +1995,14 @@ class DatusCLI:
 
         CMD_WIDTH = 30
         lines: list[str] = ["[green]Datus-CLI Help[/]\n"]
-        lines.append("[bold]SQL:[/]")
-        lines.append(f"    {'<sql>':<{CMD_WIDTH}}Execute SQL query directly")
-        lines.append("")
-
         lines.append("[bold]Chat:[/]")
         lines.append(f"    {'<message>':<{CMD_WIDTH}}Chat with the default agent (configure via /agent)")
         lines.append("")
 
-        lines.append("[bold]Tool Commands (! prefix):[/]")
-        tool_cmds = [
-            ("!sl, !schema_linking", "Schema linking: recommended tables and values"),
-            ("!sm, !search_metrics", "Search metrics by natural language"),
-            ("!sq, !search_sql", "Search reference SQL by natural language"),
-            ("!sd, !search_document", "Search platform documentation by keywords"),
-            ("!save", "Save the last result to a file"),
-            ("!bash <command>", "Execute a bash command (limited to safe commands)"),
-        ]
-        for cmd, desc in tool_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
+        lines.append("[bold]SQL mode:[/]")
+        lines.append(f"    {'!':<{CMD_WIDTH}}Enter SQL mode on an empty line (red sql> prompt)")
+        lines.append(f"    {'<sql>':<{CMD_WIDTH}}In SQL mode, Enter runs it; \\+Enter for a newline")
+        lines.append(f"    {'Esc / Ctrl+C':<{CMD_WIDTH}}Leave SQL mode")
         lines.append("")
 
         by_group: dict[str, list] = {group: [] for group in GROUP_ORDER}
