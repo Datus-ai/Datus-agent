@@ -6,7 +6,7 @@ tags:
   - workspace
   - project
   - classify
-version: 3.0.0
+version: 3.1.0
 user_invocable: true
 ---
 
@@ -19,7 +19,7 @@ You are initializing a project workspace **lightly**. The goal is a fast, low-co
 
 You **do not** build the vector-indexed stores (`semantic_models`, `metrics`, `reference_sql`) here — those cost tokens, fan out `explore` subagents, and write LanceDB, so they are out of scope for this lightweight pass. There is **no confirmation gate** in this skill: knowledge/memory/AGENTS.md are cheap markdown writes, so just do them.
 
-You run in the main agent context, so you may call `todo_write`/`todo_list`/`todo_read`/`todo_update`, `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), the database tools (`list_databases`, `list_tables`, `describe_table`, `get_table_ddl`, `search_table`, `execute_sql` for read-only `SELECT` / `SHOW` / `EXPLAIN` probes only), and `load_skill` (to run `extract-knowledge` lite and consult `storage-classify`).
+You run in the main agent context, so you may call `add_memory`/`edit_memory`, the filesystem tools (`glob`, `grep`, `read_file`, `write_file`, `edit_file`), the database tools (`list_databases`, `list_tables`, `describe_table`, `get_table_ddl`, `search_table`, `execute_sql` for read-only `SELECT` / `SHOW` / `EXPLAIN` probes only), and `load_skill` (to run `extract-knowledge` lite and consult `storage-classify`). Do **NOT** use the todo tools (`todo_write` / `todo_update` / `todo_list` / `todo_read`): this is a single-pass, single-turn skill with no subagent fan-out — no later step consumes todos, so writing them only adds sidebar noise.
 
 **Routing authority is `storage-classify`.** This skill decides *what to scan*; for which content lands in `knowledge` vs `memory` vs `AGENTS.md`, follow `storage-classify`'s decision tree (branches 1, 5, 6) — do not re-invent routing here.
 
@@ -53,7 +53,7 @@ Gather the raw material **inside the resolved scope**, then classify it into a *
 
 **Classify** every in-scope file and table into the domain taxonomy. A single domain may contain both files and tables.
 
-**Record with todos when the taxonomy is large (> 3 domains):** call `todo_write` with one todo per domain — `title` = domain name (≤ 8 words), `content` = the files + tables it covers. Skip todos for small projects (≤ 3 domains) to avoid noise.
+Keep the taxonomy in your working context — do **not** record it with todos (see the tool note above); no later step reads them.
 
 ---
 
