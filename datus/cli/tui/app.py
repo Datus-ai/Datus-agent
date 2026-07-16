@@ -68,6 +68,7 @@ from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 
 from datus.cli.cli_styles import PASTE_COLLAPSE_THRESHOLD
+from datus.cli.input_modes import MODE_CHROME, InputMode
 from datus.cli.tui.clipboard import copy_to_clipboard
 from datus.cli.tui.live_display_state import LiveDisplayState, compute_pinned_max_rows
 from datus.cli.tui.output_buffer import BufferedOutputControl, TUIOutputBuffer, extract_selection_text
@@ -193,7 +194,7 @@ class DatusApp:
         style: Optional[Style] = None,
         placeholder_fn: Optional[Callable[[], str]] = None,
         input_prompt_fn: Optional[Callable[[], str]] = None,
-        sql_mode_fn: Optional[Callable[[], bool]] = None,
+        input_mode_fn: Optional[Callable[[], str]] = None,
         live_display_state: Optional[LiveDisplayState] = None,
         todo_tokens_fn: Optional[Callable[[], List[Tuple[str, str]]]] = None,
         todo_has_items_fn: Optional[Callable[[], bool]] = None,
@@ -213,10 +214,10 @@ class DatusApp:
         self._pending_input_provider = pending_input_provider
         self._placeholder_fn = placeholder_fn or (lambda: "")
         self._input_prompt_fn = input_prompt_fn or (lambda: "> ")
-        # Returns whether the REPL is in SQL mode. Drives the red ``sql>``
-        # prompt, the red separators bracketing the input, and the SQL-mode
-        # hint line — all re-evaluated on every paint.
-        self._sql_mode_fn = sql_mode_fn or (lambda: False)
+        # Returns the REPL's active input mode ("chat" / "sql" / "bash").
+        # Drives the mode-coloured prompt label, the separators bracketing
+        # the input, and the mode hint line — all re-evaluated on every paint.
+        self._input_mode_fn = input_mode_fn or (lambda: InputMode.CHAT.value)
         self._live_state = live_display_state
         self._todo_tokens_fn = todo_tokens_fn
         self._todo_has_items_fn = todo_has_items_fn
@@ -375,17 +376,22 @@ class DatusApp:
             filter=Condition(lambda: bool(self._hint_text)),
         )
 
-        # Persistent indicator pinned directly under the input while SQL mode
-        # is active. Collapses to zero rows otherwise (driven by ``sql_mode_fn``).
-        self._sql_mode_window = ConditionalContainer(
+        # Persistent indicator pinned directly under the input while a
+        # non-chat mode is active. A single window whose text/style follow
+        # the active mode; collapses to zero rows in chat mode.
+        def _mode_hint_tokens() -> List[Tuple[str, str]]:
+            chrome = MODE_CHROME[self._current_input_mode()]
+            if not chrome.hint:
+                return []
+            return [(chrome.hint_style, chrome.hint)]
+
+        self._mode_hint_window = ConditionalContainer(
             content=Window(
-                content=FormattedTextControl(
-                    lambda: [("class:sql-mode-hint", " SQL mode · Enter run · \\+Enter newline · Esc/Ctrl+C exit ")]
-                ),
+                content=FormattedTextControl(_mode_hint_tokens),
                 height=1,
                 wrap_lines=False,
             ),
-            filter=Condition(self._sql_mode_fn),
+            filter=Condition(lambda: self._current_input_mode() is not InputMode.CHAT),
         )
 
         self._search_bar = self._build_search_bar()
@@ -522,13 +528,14 @@ class DatusApp:
                 self._queue_preview,
                 self._make_separator(),
                 self._status_window,
-                # The two rules bracketing the input turn red in SQL mode.
-                self._make_separator(sql_aware=True),
+                # The two rules bracketing the input take the active mode's
+                # colour (red in SQL mode, yellow in bash mode).
+                self._make_separator(mode_aware=True),
                 self._input_area,
                 self._completions_menu,
                 self._search_bar,
-                self._make_separator(sql_aware=True),
-                self._sql_mode_window,
+                self._make_separator(mode_aware=True),
+                self._mode_hint_window,
                 self._hint_window,
             ]
         )
@@ -584,21 +591,28 @@ class DatusApp:
             self._live_state.set_invalidate(self.invalidate)
             self._live_state.set_max_rows_provider(self._pinned_max_rows)
 
-    def _make_separator(self, sql_aware: bool = False) -> Window:
+    def _current_input_mode(self) -> InputMode:
+        """The REPL's active input mode, defaulting to chat on any error."""
+        try:
+            return InputMode(self._input_mode_fn())
+        except Exception:  # pragma: no cover - defensive
+            return InputMode.CHAT
+
+    def _make_separator(self, mode_aware: bool = False) -> Window:
         """Full-width horizontal rule rendered with a box-drawing character.
 
-        When ``sql_aware`` is set the rule turns red while SQL mode is active
-        so the input area is visibly bracketed in red; otherwise it uses the
-        default separator colour.
+        When ``mode_aware`` is set the rule takes the active input mode's
+        colour (red in SQL mode, yellow in bash mode) so the input area is
+        visibly bracketed; otherwise it uses the default separator colour.
 
         Wired to :meth:`_decoration_mouse_handler` because off-window releases
         get clamped onto edge rows like these \u2014 the handler closes out any
         in-flight selection drag so it still copies.
         """
-        if sql_aware:
+        if mode_aware:
 
             def _sep_style() -> str:
-                return "class:separator.sql" if self._sql_mode_fn() else "class:separator"
+                return MODE_CHROME[self._current_input_mode()].separator_style
 
             window = Window(height=1, char="\u2500", style=_sep_style)
         else:
@@ -2196,10 +2210,13 @@ class DatusApp:
                     ("class:input-prompt.hint", "(Ctrl+E to expand) "),
                 ]
             )
-        # SQL mode overrides the prompt with a distinct red ``sql> `` marker
-        # so it is unmistakable that Enter will execute SQL, not chat.
-        if self._sql_mode_fn():
-            return FormattedText([("class:input-prompt.sql", "sql> ")])
+        # Non-chat modes override the prompt with a distinct coloured marker
+        # (red ``sql> `` / yellow ``bash> ``) so it is unmistakable that
+        # Enter will execute the input, not chat.
+        mode = self._current_input_mode()
+        if mode is not InputMode.CHAT:
+            chrome = MODE_CHROME[mode]
+            return FormattedText([(chrome.prompt_style, chrome.prompt)])
         try:
             text = self._input_prompt_fn() or "> "
         except Exception:  # pragma: no cover - defensive

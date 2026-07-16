@@ -183,6 +183,9 @@ STATUS_BAR_STYLE: dict[str, str] = {
     # the red SQL-mode hint line pinned under the input.
     "input-prompt.sql": "ansired bold",
     "sql-mode-hint": "ansired",
+    # Bash mode: yellow ``bash>`` prompt label and hint line.
+    "input-prompt.bash": "ansiyellow bold",
+    "bash-mode-hint": "ansiyellow",
     "input-area": "",
     "status-bar": STATUS_BAR_FG_HINT,
     "status-bar.brand": f"{STATUS_BAR_BRAND} bold",
@@ -199,8 +202,10 @@ STATUS_BAR_STYLE: dict[str, str] = {
     "status-bar.running": f"{STATUS_BAR_RUNNING} bold",
     "status-bar.dot": f"{STATUS_BAR_RUNNING} bold",
     "separator": STATUS_BAR_SEP,
-    # Red rules bracketing the input while SQL mode is active.
+    # Rules bracketing the input take the active mode's colour: red while
+    # SQL mode is active, yellow while bash mode is active.
     "separator.sql": "ansired",
+    "separator.bash": "ansiyellow",
     # Right-side todo-list sidebar pinned above the status bar (see
     # datus.cli.todo_sidebar). Only the title may use bold; per CLAUDE.md
     # colours must not be bold.

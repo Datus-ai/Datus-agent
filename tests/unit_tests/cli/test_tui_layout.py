@@ -73,8 +73,8 @@ class TestCompletionsMenuWired:
         assert isinstance(bottom, HSplit), "no wizard active → bottom is the normal HSplit"
         bottom_children = list(bottom.get_children())
         # Expected order in normal bottom: queue_preview, top_sep, status,
-        # mid_sep, input, menu, search_bar, bottom_sep, sql_mode_hint, hint.
-        # The queue preview, search bar, and SQL-mode hint are all
+        # mid_sep, input, menu, search_bar, bottom_sep, mode_hint, hint.
+        # The queue preview, search bar, and input-mode hint are all
         # ``ConditionalContainer``s that consume zero rows when their filter
         # is False, so they don't affect the steady-state layout.
         assert len(bottom_children) == 10, f"unexpected bottom HSplit child count: {len(bottom_children)}"
@@ -84,8 +84,8 @@ class TestCompletionsMenuWired:
         # is flattened into its wrapping Window by prompt_toolkit).
         assert bottom_children[5] is app._completions_menu
         assert bottom_children[6] is app._search_bar
-        # SQL-mode hint sits below the input's bottom separator (index 7).
-        assert bottom_children[8] is app._sql_mode_window
+        # Input-mode hint (sql/bash) sits below the input's bottom separator (index 7).
+        assert bottom_children[8] is app._mode_hint_window
 
     @pytest.mark.skipif(
         os.environ.get("TERMINAL_EMULATOR", "").strip().lower() == "jetbrains-jediterm",

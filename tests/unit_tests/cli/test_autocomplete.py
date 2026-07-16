@@ -68,8 +68,9 @@ class TestSQLCompleterGetCompletions:
         assert completions == []
 
     def test_bang_prefix_yields_no_command_completions(self):
-        """``!`` is the SQL-mode toggle now, not a tool-command prefix, so the
-        SQL completer no longer suggests ``!sl``/``!bash``/etc."""
+        """``!`` is the one-shot SQL prefix now (chat mode only), not a
+        tool-command prefix, so the SQL completer no longer suggests
+        ``!sl``/``!bash``/etc."""
         c = SQLCompleter()
         doc = Document("!sl", cursor_position=3)
         completions = list(c.get_completions(doc))

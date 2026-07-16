@@ -18,6 +18,7 @@ from unittest import mock
 
 import pytest
 
+from datus.cli.input_modes import MODE_CHROME, InputMode
 from datus.cli.tui.app import (
     EXIT_SENTINEL,
     DatusApp,
@@ -194,54 +195,84 @@ class TestInputPrompt:
         app = DatusApp(
             status_tokens_fn=lambda: [],
             dispatch_fn=lambda text: None,
-            sql_mode_fn=lambda: True,
+            input_mode_fn=lambda: "sql",
         )
         assert app._get_input_prompt() == [("class:input-prompt.sql", "sql> ")]
+
+    def test_prompt_shows_yellow_bash_marker_in_bash_mode(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "bash",
+        )
+        assert app._get_input_prompt() == [("class:input-prompt.bash", "bash> ")]
 
     def test_sql_prompt_takes_precedence_over_busy(self) -> None:
         app = DatusApp(
             status_tokens_fn=lambda: [],
             dispatch_fn=lambda text: None,
-            sql_mode_fn=lambda: True,
+            input_mode_fn=lambda: "sql",
         )
         app.agent_running.set()
         # SQL mode wins over the busy style so the user always sees ``sql>``.
         assert app._get_input_prompt() == [("class:input-prompt.sql", "sql> ")]
 
-
-class TestSqlModeChrome:
-    """SQL mode paints red chrome around the input: separators, hint line."""
-
-    @staticmethod
-    def _app_with_flag():
-        flag = {"on": False}
+    def test_unknown_mode_falls_back_to_chat_prompt(self) -> None:
         app = DatusApp(
             status_tokens_fn=lambda: [],
             dispatch_fn=lambda text: None,
-            sql_mode_fn=lambda: flag["on"],
+            input_mode_fn=lambda: "garbage",
         )
-        return app, flag
+        assert app._get_input_prompt() == [("class:input-prompt", "> ")]
+
+
+class TestModeChrome:
+    """Non-chat modes paint coloured chrome around the input: separators, hint line."""
+
+    @staticmethod
+    def _app_with_mode():
+        state = {"mode": "chat"}
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: state["mode"],
+        )
+        return app, state
 
     def test_plain_separator_uses_static_style(self) -> None:
-        app, _ = self._app_with_flag()
+        app, _ = self._app_with_mode()
         sep = app._make_separator()
-        # Non-SQL separators keep a plain string style (no per-paint callable).
+        # Plain separators keep a static string style (no per-paint callable).
         assert sep.style == "class:separator"
 
-    def test_sql_aware_separator_turns_red_in_sql_mode(self) -> None:
-        app, flag = self._app_with_flag()
-        sep = app._make_separator(sql_aware=True)
+    def test_mode_aware_separator_tracks_active_mode(self) -> None:
+        app, state = self._app_with_mode()
+        sep = app._make_separator(mode_aware=True)
         # Style is a callable re-evaluated every paint.
         assert callable(sep.style)
         assert sep.style() == "class:separator"
-        flag["on"] = True
+        state["mode"] = "sql"
         assert sep.style() == "class:separator.sql"
+        state["mode"] = "bash"
+        assert sep.style() == "class:separator.bash"
 
-    def test_sql_mode_hint_window_visibility_tracks_flag(self) -> None:
-        app, flag = self._app_with_flag()
-        assert bool(app._sql_mode_window.filter()) is False
-        flag["on"] = True
-        assert bool(app._sql_mode_window.filter()) is True
+    def test_mode_hint_window_visibility_tracks_mode(self) -> None:
+        app, state = self._app_with_mode()
+        assert bool(app._mode_hint_window.filter()) is False
+        state["mode"] = "sql"
+        assert bool(app._mode_hint_window.filter()) is True
+        state["mode"] = "bash"
+        assert bool(app._mode_hint_window.filter()) is True
+
+    def test_mode_hint_text_follows_mode(self) -> None:
+        app, state = self._app_with_mode()
+        control = app._mode_hint_window.content.content
+        state["mode"] = "sql"
+        tokens = control.text()
+        assert tokens == [("class:sql-mode-hint", MODE_CHROME[InputMode.SQL].hint)]
+        state["mode"] = "bash"
+        tokens = control.text()
+        assert tokens == [("class:bash-mode-hint", MODE_CHROME[InputMode.BASH].hint)]
 
 
 class TestKeyBindingsContract:

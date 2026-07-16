@@ -575,6 +575,49 @@ class TestRenderMainAction:
         assert str(inner.spans[0].style) == "green bold on #eeeeee"
         assert str(inner.spans[1].style) == "on #eeeeee"
 
+    def test_user_action_exec_message_is_suppressed_live(self):
+        """During the live model turn, a marker-encoded manual-execution USER
+        message renders NOTHING — the execution was already shown live as the
+        streamed ``manual_exec`` frame, so re-drawing it would double it. (The
+        block is drawn via ``render_user_header`` on resume / Ctrl+O instead.)"""
+        from datus.cli.manual_exec import build_sql_payload, encode_exec_message
+
+        message = encode_exec_message(build_sql_payload("SELECT id FROM t", ["id"], [{"id": 7}], 1, 0.03))
+        action = _make_action(ActionRole.USER, ActionStatus.SUCCESS, messages=f"User: {message}")
+        assert _renderer().render_main_action(action, verbose=False) == []
+
+    def test_manual_exec_terminal_renders_block(self):
+        """The streamed ``manual_exec`` terminal action renders the styled block
+        from its stored payload (live execution frame's resolved state)."""
+        from datus.cli.manual_exec import build_bash_payload
+
+        payload = build_bash_payload("git status", True, "On branch main", None, 0.05)
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.SUCCESS,
+            action_type="manual_exec",
+            input_data={"kind": "bash", "command": "git status"},
+            output_data={"payload": payload},
+        )
+        text = _plain(_renderer().render_main_action(action, verbose=False))
+        assert "bash>" in text
+        assert "On branch main" in text
+        assert "datus-exec" not in text
+
+    def test_manual_exec_processing_renders_running_frame(self):
+        """The PROCESSING ``manual_exec`` frame shows the mode command line +
+        a ticking ``running`` indicator (the live blink)."""
+        action = _make_action(
+            ActionRole.TOOL,
+            ActionStatus.PROCESSING,
+            action_type="manual_exec",
+            input_data={"kind": "sql", "command": "SELECT 1"},
+        )
+        text = _renderer().render_processing(action, frame="○").plain
+        assert "sql>" in text
+        assert "SELECT 1" in text
+        assert "running" in text
+
 
 # ── render_task_tool_as_subagent ──────────────────────────────────
 
@@ -793,6 +836,21 @@ class TestUtilityRenderables:
         assert "What is revenue?" in inner.plain
         assert str(inner.spans[0].style) == "green bold on #eeeeee"
         assert str(inner.spans[1].style) == "on #eeeeee"
+
+    def test_user_header_exec_message_renders_styled_block(self):
+        """On resume, a manual-execution record renders as its bash/sql block
+        (identical to the live turn), never as a plain green user panel."""
+        from datus.cli.manual_exec import build_bash_payload, encode_exec_message
+
+        message = encode_exec_message(build_bash_payload("git status", True, "On branch main", None, 0.05))
+        renderable = _renderer().render_user_header(message)
+        console = Console(file=StringIO(), width=200, no_color=True)
+        console.print(renderable)
+        text = console.file.getvalue()
+        assert "bash>" in text
+        assert "git status" in text
+        assert "On branch main" in text
+        assert "datus-exec" not in text
 
     def test_separator(self):
         text = _renderer().render_separator()

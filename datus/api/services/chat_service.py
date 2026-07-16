@@ -260,6 +260,11 @@ class ChatService:
                                 sql_paths=at_ctx_raw.get("sql_paths") or [],
                                 knowledge_paths=at_ctx_raw.get("knowledge_paths") or [],
                             )
+                        # A manual-execution record renders as readable Markdown
+                        # so the raw sentinel never reaches web clients.
+                        from datus.cli.manual_exec import exec_to_markdown
+
+                        content = exec_to_markdown(content)
                         sse_messages.append(
                             SSEMessagePayload(
                                 message_id=str(uuid.uuid4()),
