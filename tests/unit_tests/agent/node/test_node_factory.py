@@ -6,12 +6,19 @@
 Unit tests for datus/agent/node/node_factory.py
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datus.agent.node.node import Node
-from datus.agent.node.node_factory import _resolve_node_class_type, create_interactive_node, create_node_input
+from datus.agent.node.node_factory import (
+    _configured_agentic_node_names,
+    _resolve_node_class_type,
+    _visible_subagent_names,
+    create_interactive_node,
+    create_node_input,
+)
 from datus.configuration.node_type import NodeType
 from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput, AskMetricsNodeResult
 
@@ -23,7 +30,16 @@ from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput, A
 def _mock_agent_config(**kwargs):
     config = MagicMock()
     config.agentic_nodes = kwargs.get("agentic_nodes", None)
+    config.current_datasource = kwargs.get("current_datasource", None)
     return config
+
+
+class _DumpableConfig:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def model_dump(self):
+        return self.payload
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +73,43 @@ class TestResolveNodeClassType:
         node_config.model_dump.return_value = {"node_class": "gen_report"}
         config = _mock_agent_config(agentic_nodes={"my_agent": node_config})
         assert _resolve_node_class_type("my_agent", config) == "gen_report"
+
+
+class TestSubagentValidationHelpers:
+    def test_configured_agentic_node_names_normalizes_keys(self):
+        config = _mock_agent_config(agentic_nodes={"my_agent": {}, 42: {}})
+
+        assert _configured_agentic_node_names(config) == frozenset({"my_agent", "42"})
+
+    def test_configured_agentic_node_names_handles_non_mapping(self):
+        config = _mock_agent_config(agentic_nodes=["my_agent"])
+
+        assert _configured_agentic_node_names(config) == frozenset()
+
+    def test_visible_subagent_names_filters_hidden_and_foreign_datasource_agents(self):
+        config = _mock_agent_config(
+            current_datasource="warehouse",
+            agentic_nodes={
+                "chat": {},
+                "feedback": {},
+                "warehouse_agent": {"scoped_context": {"datasource": "warehouse"}},
+                "sales_agent": _DumpableConfig({"scoped_context": _DumpableConfig({"datasource": "sales"})}),
+                "global_agent": {"scoped_context": {}},
+                42: {"scoped_context": {"datasource": "warehouse"}},
+                "object_config_agent": object(),
+            },
+        )
+
+        names = _visible_subagent_names(config)
+
+        assert "gen_metrics" in names
+        assert "feedback" not in names
+        assert "chat" not in names
+        assert "warehouse_agent" in names
+        assert "global_agent" in names
+        assert "42" in names
+        assert "object_config_agent" in names
+        assert "sales_agent" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +209,7 @@ class TestCreateInteractiveNode:
 
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_default_subagent_is_gen_sql(self, mock_init):
-        config = _mock_agent_config()
+        config = _mock_agent_config(agentic_nodes={"my_custom_sql": {}})
         create_interactive_node("my_custom_sql", config, node_id_suffix="_cli")
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args[1]
@@ -223,7 +276,7 @@ class TestCreateInteractiveNode:
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_execution_mode_workflow_propagates(self, mock_init):
         """API workflow callers pass execution_mode="workflow"; factory must forward it."""
-        config = _mock_agent_config()
+        config = _mock_agent_config(agentic_nodes={"my_custom_sql": {}})
         create_interactive_node("my_custom_sql", config, execution_mode="workflow")
         mock_init.assert_called_once()
         assert mock_init.call_args[1]["execution_mode"] == "workflow"
@@ -238,7 +291,7 @@ class TestCreateInteractiveNode:
     @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
     def test_node_id_override(self, mock_init):
         """node_id kwarg must take precedence over the auto-generated suffix."""
-        config = _mock_agent_config()
+        config = _mock_agent_config(agentic_nodes={"my_custom_sql": {}})
         create_interactive_node("my_custom_sql", config, node_id_suffix="_cli", node_id="api-session-42")
         assert mock_init.call_args[1]["node_id"] == "api-session-42"
 
@@ -280,6 +333,98 @@ class TestCreateInteractiveNode:
         config = _mock_agent_config()
         create_interactive_node("explore", config, execution_mode="workflow")
         assert mock_init.call_args[1]["execution_mode"] == "workflow"
+
+
+class TestUnknownSubagentWarning:
+    LOGGER_NAME = "datus.agent.node.node_factory"
+
+    @staticmethod
+    def _unknown_subagent_warnings(caplog):
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == TestUnknownSubagentWarning.LOGGER_NAME and "Unknown subagent" in record.getMessage()
+        ]
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_known_builtin_gen_sql_does_not_warn(self, mock_init, caplog):
+        config = _mock_agent_config()
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("gen_sql", config)
+
+        mock_init.assert_called_once()
+        assert self._unknown_subagent_warnings(caplog) == []
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_configured_agentic_node_key_does_not_warn(self, mock_init, caplog):
+        config = _mock_agent_config(agentic_nodes={"my_custom": {}})
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("my_custom", config)
+
+        mock_init.assert_called_once()
+        assert self._unknown_subagent_warnings(caplog) == []
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_unknown_subagent_warns_and_falls_back_to_gen_sql(self, mock_init, caplog):
+        config = _mock_agent_config()
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("totally_bogus_name_xyz", config)
+
+        mock_init.assert_called_once()
+        warning_messages = self._unknown_subagent_warnings(caplog)
+        assert len(warning_messages) == 1
+        assert "totally_bogus_name_xyz" in warning_messages[0]
+        assert "gen_sql" in warning_messages[0]
+        assert "Available subagents:" in warning_messages[0]
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_stale_generate_sql_name_warns(self, mock_init, caplog):
+        config = _mock_agent_config()
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("generate_sql", config)
+
+        mock_init.assert_called_once()
+        warning_messages = self._unknown_subagent_warnings(caplog)
+        assert len(warning_messages) == 1
+        assert "generate_sql" in warning_messages[0]
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_warning_available_names_include_builtins_and_configured_agents(self, mock_init, caplog):
+        config = _mock_agent_config(agentic_nodes={"my_custom": {}})
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("not_configured", config)
+
+        mock_init.assert_called_once()
+        warning_messages = self._unknown_subagent_warnings(caplog)
+        assert len(warning_messages) == 1
+        assert "gen_metrics" in warning_messages[0]
+        assert "my_custom" in warning_messages[0]
+
+    @patch("datus.agent.node.gen_sql_agentic_node.GenSQLAgenticNode.__init__", return_value=None)
+    def test_warning_available_names_filter_hidden_and_datasource_scoped_agents(self, mock_init, caplog):
+        config = _mock_agent_config(
+            current_datasource="warehouse",
+            agentic_nodes={
+                "feedback": {},
+                "warehouse_agent": {"scoped_context": {"datasource": "warehouse"}},
+                "sales_agent": {"scoped_context": {"datasource": "sales"}},
+            },
+        )
+
+        with caplog.at_level(logging.WARNING, logger=self.LOGGER_NAME):
+            create_interactive_node("not_configured", config)
+
+        mock_init.assert_called_once()
+        warning_messages = self._unknown_subagent_warnings(caplog)
+        assert len(warning_messages) == 1
+        assert "warehouse_agent" in warning_messages[0]
+        assert "sales_agent" not in warning_messages[0]
+        assert "feedback" not in warning_messages[0]
 
 
 # ---------------------------------------------------------------------------
