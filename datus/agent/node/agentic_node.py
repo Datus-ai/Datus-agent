@@ -2463,10 +2463,12 @@ class AgenticNode(Node):
         """Create the node's general-purpose :class:`BashTool` instance.
 
         Available to every agentic node when ``agent.bash.enabled`` is
-        ``True`` (the default). ``allowed_patterns=["*"]`` means the tool
-        exposes ``bash`` for any shell command; per-call gating
-        is the responsibility of the ``bash_tools`` ASK rule in the
-        permission profile, not a static pattern whitelist.
+        ``True`` (the default). ``allowed_patterns`` comes from
+        ``agent_config.bash_allowed_patterns``: the default ``["*"]`` exposes
+        ``bash`` for any shell command with per-call gating left to the
+        ``bash_tools`` ASK rule in the permission profile; a restrictive list
+        (e.g. the web front-end's ``["datus*"]``) is enforced as a hard
+        whitelist inside the tool itself.
 
         Only creates the instance — the tool enters ``self.tools`` via
         :meth:`_ensure_bash_tool_in_tools` so subclass ``setup_tools()``
@@ -2484,12 +2486,18 @@ class AgenticNode(Node):
             logger.warning("Skipping bash tool because permission enforcement is unavailable")
             self.bash_tool = None
             return
+        # Non-list values (configs mocked without the attribute, legacy
+        # bootstraps) fall back to the unrestricted default — the AgentConfig
+        # setter already normalizes real config input.
+        allowed_patterns = getattr(self.agent_config, "bash_allowed_patterns", None)
+        if not isinstance(allowed_patterns, list) or not allowed_patterns:
+            allowed_patterns = ["*"]
         try:
             from datus.tools.func_tool.bash_tool import BashTool
 
             self.bash_tool = BashTool(
                 workspace_root=self._resolve_workspace_root(),
-                allowed_patterns=["*"],
+                allowed_patterns=allowed_patterns,
                 # Offload oversized command output to the session data dir (the
                 # same location minor compact uses). Resolved lazily: this method
                 # runs before ``session_id`` is finalized, so the closure reads it

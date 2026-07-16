@@ -79,6 +79,20 @@ logger = get_logger(__name__)
 # the caller falls back to this safety ceiling.
 _SHELL_METACHARS_RE = re.compile(r"[;&<>`\n]|\$\(|\$\{|\|\||&&")
 
+
+def contains_shell_metachars(text: str) -> bool:
+    """True when ``text`` contains any non-pipe shell metacharacter.
+
+    Checks the RAW string (quoting is ignored on purpose): neither the
+    permission safety ceiling nor a restrictive execution-layer whitelist can
+    reason about chaining / substitution / redirection, so a quoted
+    metacharacter is treated just as conservatively as an unquoted one.
+    Shared by ``evaluate_bash_command`` (→ forced ASK) and
+    ``BashTool._segment_allowed`` (→ reject).
+    """
+    return bool(_SHELL_METACHARS_RE.search(text))
+
+
 # Commands that execute their arguments (or arbitrary strings) as new
 # commands. An allow rule matched against the OUTER argv says nothing about
 # the wrapped command, so these never auto-allow either.
@@ -557,7 +571,7 @@ def _evaluate_single_command(command: str, rules: BashCommandRules) -> BashRuleD
             bucket=session_bucket_for(argv, None),
             safety_forced=True,
         )
-    if _SHELL_METACHARS_RE.search(command):
+    if contains_shell_metachars(command):
         return BashRuleDecision(
             level=PermissionLevel.ASK,
             source=BashDecisionSource.SAFETY,

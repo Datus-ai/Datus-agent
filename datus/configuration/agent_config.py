@@ -126,6 +126,20 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def _coerce_pattern_list(value: Any) -> List[str]:
+    """Coerce ``bash.allowed_patterns`` into a non-empty list of patterns.
+
+    Missing / malformed values (non-list, empty list, non-string entries only)
+    fall back to ``["*"]`` — the unrestricted default where per-call gating is
+    the permission profile's job. An explicit valid list replaces the default
+    entirely; entries are stripped and blank entries dropped.
+    """
+    if not isinstance(value, list):
+        return ["*"]
+    patterns = [entry.strip() for entry in value if isinstance(entry, str) and entry.strip()]
+    return patterns or ["*"]
+
+
 def _normalize_plugin_activations(raw: Any) -> Dict[str, "PluginActivation"]:
     """Coerce a raw ``active_plugins`` value into ``{name: PluginActivation}``.
 
@@ -905,6 +919,13 @@ class AgentConfig:
         if not isinstance(bash_raw, dict):
             bash_raw = {}
         self._bash_tool_enabled = _coerce_bool(bash_raw.get("enabled"), True)
+        # ``bash.allowed_patterns`` optionally restricts which commands the
+        # general-purpose ``BashTool`` accepts (Claude-Code-style patterns,
+        # see ``BashTool`` docs). Default ``["*"]`` keeps the tool
+        # unrestricted at the execution layer — per-call gating stays with
+        # the permission profile. API front-ends override this at runtime
+        # (e.g. web gets ``["datus*"]``).
+        self._bash_allowed_patterns = _coerce_pattern_list(bash_raw.get("allowed_patterns"))
         # ``compact`` controls the AgenticNode session summarization /
         # archiving subsystem. Defaults preserve the legacy 90% major-compact
         # threshold while enabling the new rule-based minor compact + on-disk
@@ -1155,6 +1176,25 @@ class AgentConfig:
     @bash_tool_enabled.setter
     def bash_tool_enabled(self, value: bool) -> None:
         self._bash_tool_enabled = _coerce_bool(value, True)
+
+    @property
+    def bash_allowed_patterns(self) -> List[str]:
+        """Command patterns the general-purpose ``BashTool`` accepts.
+
+        ``["*"]`` (default): unrestricted at the execution layer — per-call
+        gating is handled by the ``bash_tools`` ASK rule in the permission
+        profile.
+
+        A restrictive list (e.g. ``["datus*"]``) turns the tool into a hard
+        whitelist enforced by ``BashTool._is_command_allowed`` regardless of
+        the active permission profile. Used by the API surface to expose a
+        datus-only bash to web clients.
+        """
+        return self._bash_allowed_patterns
+
+    @bash_allowed_patterns.setter
+    def bash_allowed_patterns(self, value: List[str]) -> None:
+        self._bash_allowed_patterns = _coerce_pattern_list(value)
 
     @property
     def current_datasource(self):

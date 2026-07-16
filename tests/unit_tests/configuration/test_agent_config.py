@@ -1871,6 +1871,47 @@ class TestAgentConfigBashToolEnabled:
         assert cfg.bash_tool_enabled is True
 
 
+class TestAgentConfigBashAllowedPatterns:
+    """``bash_allowed_patterns`` restricts which commands the general-purpose
+    ``BashTool`` accepts. Sourced from ``agent.bash.allowed_patterns`` in YAML
+    and settable at runtime (the API surface sets ``["datus*"]`` for web
+    clients); default is ``["*"]`` — unrestricted at the execution layer.
+    """
+
+    _make = TestAgentConfigBashToolEnabled._make
+
+    def test_default_unrestricted(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.bash_allowed_patterns == ["*"]
+
+    def test_from_yaml_list(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"allowed_patterns": ["datus*", "git status"]})
+        assert cfg.bash_allowed_patterns == ["datus*", "git status"]
+
+    def test_yaml_entries_stripped_and_blanks_dropped(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"allowed_patterns": [" datus* ", "", "   "]})
+        assert cfg.bash_allowed_patterns == ["datus*"]
+
+    @pytest.mark.parametrize("bad_value", ["datus*", 42, {"a": 1}, [], [42, None]])
+    def test_malformed_yaml_falls_back_to_default(self, tmp_path, bad_value):
+        # A non-list value, an empty list, or a list without a single valid
+        # string entry must not silently hide the tool — fall back to the
+        # unrestricted default where the permission profile gates calls.
+        cfg = self._make(tmp_path, bash={"allowed_patterns": bad_value})
+        assert cfg.bash_allowed_patterns == ["*"]
+
+    def test_runtime_setter_overrides(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.bash_allowed_patterns = ["datus*"]
+        assert cfg.bash_allowed_patterns == ["datus*"]
+
+    def test_runtime_setter_rejects_malformed(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.bash_allowed_patterns = ["datus*"]
+        cfg.bash_allowed_patterns = None
+        assert cfg.bash_allowed_patterns == ["*"]
+
+
 class TestAgentConfigTavilyApiKey:
     """``document.tavily_api_key`` resolution prefers the YAML value, falls
     back to ``TAVILY_API_KEY`` env only when the key is absent, and never
