@@ -6,7 +6,7 @@
 
 ### 请求
 
-```
+```http
 GET /api/v1/models
 ```
 

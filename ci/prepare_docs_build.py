@@ -247,7 +247,7 @@ def main() -> int:
 
     base_config = load_yaml(args.base_config.resolve())
     source_config = load_yaml(source_root / "mkdocs.yml")
-    source_docs_dir = source_root / source_config.get("docs_dir", "docs")
+    source_docs_dir = source_root / source_config.get("docs_dir", base_config.get("docs_dir", "docs"))
     rewrite_legacy_chinese_docs_urls(source_docs_dir)
     merged = merge_mkdocs_config(
         base_config,

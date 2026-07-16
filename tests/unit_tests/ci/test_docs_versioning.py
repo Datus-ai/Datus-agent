@@ -194,6 +194,16 @@ def test_hide_legacy_docs_versions_scopes_mike_commands_to_deploy_prefix(monkeyp
     ]
 
 
+def test_hide_legacy_cli_forwards_deploy_prefix(monkeypatch):
+    hide_legacy = Mock(return_value=False)
+    monkeypatch.setattr(docs_versioning, "hide_legacy_docs_versions", hide_legacy)
+
+    result = docs_versioning.main(["hide-legacy", "--min-visible-minor", "0.2", "--deploy-prefix", "zh"])
+
+    assert result == 0
+    hide_legacy.assert_called_once_with((0, 2), "zh")
+
+
 def test_hide_legacy_cli_reports_invalid_minor(capsys):
     result = docs_versioning.main(["hide-legacy", "--min-visible-minor", "0.2.6"])
 
