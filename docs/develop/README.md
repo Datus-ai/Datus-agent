@@ -38,11 +38,14 @@ Use these entry points in docs and scripts:
 
 `python -m datus.main` and `python -m datus.cli.main` still work for low-level debugging, but they are not the preferred user-facing commands.
 
-To build the docs from a fresh source checkout, provide the MkDocs plugins required by `mkdocs.yml`:
+The English and Chinese docs are built separately so each site has its own search index. From a fresh source checkout, provide the MkDocs plugins required by `mkdocs.yml` and select the locale:
 
 ```bash
-uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict
+DOCS_LOCALE=en uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/en
+DOCS_LOCALE=zh uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/zh
 ```
+
+Versioned English docs are published at `/<version>/`, while Chinese docs are published at `/zh/<version>/`.
 
 ## Configuration
 

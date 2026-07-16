@@ -38,11 +38,14 @@ uv run datus-agent --version
 
 `python -m datus.main` 和 `python -m datus.cli.main` 仍可用于底层调试，但不推荐作为面向用户的命令写法。
 
-从干净源码 checkout 构建文档时，需要为 `mkdocs.yml` 提供所需插件：
+英文和中文文档会分别构建，使每个站点拥有独立的搜索索引。从干净源码 checkout 构建时，需要为 `mkdocs.yml` 提供所需插件并指定语言：
 
 ```bash
-uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict
+DOCS_LOCALE=en uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/en
+DOCS_LOCALE=zh uv run --with mkdocs-material --with mike --with mkdocs-static-i18n mkdocs build --strict --site-dir site/zh
 ```
+
+英文版本文档发布到 `/<version>/`，中文版本文档发布到 `/zh/<version>/`。
 
 ## 配置
 

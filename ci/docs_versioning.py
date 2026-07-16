@@ -172,8 +172,12 @@ def should_hide_docs_version(version: str, min_visible_minor: tuple[int, int]) -
     return False
 
 
-def hide_legacy_docs_versions(min_visible_minor: tuple[int, int]) -> bool:
-    raw = subprocess.check_output(["mike", "list", "-j"], text=True)
+def hide_legacy_docs_versions(
+    min_visible_minor: tuple[int, int],
+    deploy_prefix: str = "",
+) -> bool:
+    prefix_args = ["--deploy-prefix", deploy_prefix] if deploy_prefix else []
+    raw = subprocess.check_output(["mike", "list", "-j", *prefix_args], text=True)
     versions = json.loads(raw or "[]")
     changed = False
 
@@ -191,6 +195,7 @@ def hide_legacy_docs_versions(min_visible_minor: tuple[int, int]) -> bool:
             [
                 "mike",
                 "props",
+                *prefix_args,
                 version,
                 "--set",
                 f"hidden={'true' if target_hidden else 'false'}",
@@ -218,6 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hide = subparsers.add_parser("hide-legacy", help="Hide patch/pre-release docs versions from mike version picker")
     hide.add_argument("--min-visible-minor", required=True)
+    hide.add_argument("--deploy-prefix", default="")
 
     return parser
 
@@ -247,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"::error::Invalid --min-visible-minor: {exc}", file=sys.stderr)
             return 1
-        changed = hide_legacy_docs_versions(min_visible_minor)
+        changed = hide_legacy_docs_versions(min_visible_minor, args.deploy_prefix)
         if not changed:
             print("No docs version visibility changes needed.")
         return 0
