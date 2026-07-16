@@ -1,0 +1,55 @@
+/* Theme-specific logo and favicon switching */
+
+/* Force logo to render in solid white */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg,
+[data-md-color-scheme="default"] .md-header__button.md-logo img,
+[data-md-color-scheme="default"] .md-header__button.md-logo svg,
+[data-md-color-scheme="slate"] .md-header__button.md-logo img,
+[data-md-color-scheme="slate"] .md-header__button.md-logo svg {
+  content: url("../assets/logo-dark.png");
+  filter: brightness(0) invert(1);
+}
+
+/* Table column width adjustments */
+.md-typeset table:not([class]) th:first-child,
+.md-typeset table:not([class]) td:first-child {
+  min-width: 180px;
+}
+
+/* Restyle the "Edit this page" action */
+.md-content__button[rel="edit"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: var(--md-primary-fg-color);
+  color: var(--md-primary-bg-color);
+  font-weight: 500;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(27, 31, 35, 0.12);
+  margin: 0 0 1rem auto;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+[data-md-color-scheme="slate"] .md-content__button[rel="edit"] {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.md-content__button[rel="edit"]:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(27, 31, 35, 0.16);
+  color: var(--md-primary-bg-color);
+}
+
+.md-content__button[rel="edit"]::before {
+  font-size: 1rem;
+}
+
+.md-content__button[rel="edit"]:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(68, 138, 255, 0.4);
+}

@@ -1,0 +1,298 @@
+<svg width="1200" height="800" viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#0f172a;stop-opacity:1"/>
+            <stop offset="100%" style="stop-color:#1e293b;stop-opacity:1"/>
+        </linearGradient>
+        <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1"/>
+            <stop offset="100%" style="stop-color:#2563eb;stop-opacity:1"/>
+        </linearGradient>
+        <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:1"/>
+            <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1"/>
+        </linearGradient>
+        <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#10b981;stop-opacity:1"/>
+            <stop offset="100%" style="stop-color:#059669;stop-opacity:1"/>
+        </linearGradient>
+        <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:1"/>
+            <stop offset="100%" style="stop-color:#d97706;stop-opacity:1"/>
+        </linearGradient>
+        <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+            <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+        <filter id="shadow">
+            <feDropShadow dx="2" dy="2" stdDeviation="3" flood-opacity="0.2"/>
+        </filter>
+        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+    </defs>
+
+    <!-- Background -->
+    <rect width="1200" height="800" fill="url(#bgGrad)"/>
+
+    <!-- Grid pattern -->
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e3a5f" stroke-width="0.5" opacity="0.2"/>
+    </pattern>
+    <rect width="1200" height="800" fill="url(#grid)"/>
+
+    <!-- Title -->
+    <text x="600" y="40" font-family="Arial, sans-serif" font-size="32" font-weight="bold" fill="white" text-anchor="middle">Datus Agent Architecture</text>
+    <text x="600" y="65" font-family="Arial, sans-serif" font-size="16" fill="#94a3b8" text-anchor="middle">Intelligent Data Engineering Workflow System</text>
+
+    <!-- User Layer -->
+    <g id="userLayer">
+        <rect x="50" y="100" width="300" height="120" fill="#1e293b" stroke="#334155" stroke-width="2" rx="10" filter="url(#shadow)"/>
+        <text x="200" y="130" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#3b82f6" text-anchor="middle">User Interface Layer</text>
+
+        <!-- CLI Terminal -->
+        <rect x="70" y="150" width="120" height="50" fill="#0f172a" rx="5"/>
+        <text x="130" y="180" font-family="Arial, sans-serif" font-size="14" fill="#10b981" text-anchor="middle">CLI Terminal</text>
+
+        <!-- Chat Interface -->
+        <rect x="210" y="150" width="120" height="50" fill="#0f172a" rx="5"/>
+        <text x="270" y="180" font-family="Arial, sans-serif" font-size="14" fill="#fbbf24" text-anchor="middle">API Interface</text>
+    </g>
+
+    <!-- Command Processing Layer -->
+    <g id="commandLayer">
+        <rect x="450" y="100" width="700" height="120" fill="#1e293b" stroke="#334155" stroke-width="2" rx="10" filter="url(#shadow)"/>
+        <text x="800" y="130" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#8b5cf6" text-anchor="middle">Command Processing Layer</text>
+
+        <!-- Tool Commands -->
+        <rect x="470" y="150" width="150" height="50" fill="url(#blueGrad)" rx="5" filter="url(#shadow)">
+            <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite"/>
+        </rect>
+        <text x="545" y="170" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Tool Commands (!)</text>
+        <text x="545" y="185" font-family="Arial, sans-serif" font-size="10" fill="#e0e7ff" text-anchor="middle">gen, fix, run, compare</text>
+
+        <!-- Context Commands -->
+        <rect x="640" y="150" width="150" height="50" fill="url(#purpleGrad)" rx="5" filter="url(#shadow)">
+            <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite" begin="0.5s"/>
+        </rect>
+        <text x="715" y="170" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Context Commands (@)</text>
+        <text x="715" y="185" font-family="Arial, sans-serif" font-size="10" fill="#e0e7ff" text-anchor="middle">catalogs, tables, metrics</text>
+
+        <!-- System Commands -->
+        <rect x="810" y="150" width="150" height="50" fill="url(#greenGrad)" rx="5" filter="url(#shadow)">
+            <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite" begin="1s"/>
+        </rect>
+        <text x="885" y="170" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">System Commands (.)</text>
+        <text x="885" y="185" font-family="Arial, sans-serif" font-size="10" fill="#e0e7ff" text-anchor="middle">databases, tables, exit</text>
+
+        <!-- Chat Commands -->
+        <rect x="980" y="150" width="150" height="50" fill="url(#orangeGrad)" rx="5" filter="url(#shadow)">
+            <animate attributeName="opacity" values="0.8;1;0.8" dur="3s" repeatCount="indefinite" begin="1.5s"/>
+        </rect>
+        <text x="1055" y="170" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Chat Commands (/)</text>
+        <text x="1055" y="185" font-family="Arial, sans-serif" font-size="10" fill="#e0e7ff" text-anchor="middle">natural language</text>
+    </g>
+
+    <!-- Core Processing Engine -->
+    <g id="coreEngine">
+        <rect x="350" y="280" width="500" height="200" fill="#1e293b" stroke="#8b5cf6" stroke-width="3" rx="15" filter="url(#glow)"/>
+        <text x="600" y="310" font-family="Arial, sans-serif" font-size="20" font-weight="bold" fill="#8b5cf6" text-anchor="middle">Core Processing Engine</text>
+
+        <!-- Query Parser -->
+        <g transform="translate(380, 340)">
+            <rect width="120" height="60" fill="#2d3561" rx="8" filter="url(#shadow)"/>
+            <circle cx="60" cy="30" r="25" fill="url(#blueGrad)" opacity="0.3">
+                <animate attributeName="r" values="25;30;25" dur="2s" repeatCount="indefinite"/>
+            </circle>
+            <text x="60" y="25" font-family="Arial, sans-serif" font-size="16" text-anchor="middle">💬</text>
+            <text x="60" y="45" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0" text-anchor="middle">LLM</text>
+        </g>
+
+        <!-- LLM Engine -->
+        <g transform="translate(540, 340)">
+            <rect width="120" height="60" fill="#2d3561" rx="8" filter="url(#shadow)"/>
+            <circle cx="60" cy="30" r="25" fill="url(#purpleGrad)" opacity="0.3">
+                <animate attributeName="r" values="25;30;25" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+            </circle>
+            <text x="60" y="25" font-family="Arial, sans-serif" font-size="16" text-anchor="middle">🧠</text>
+            <text x="60" y="45" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0" text-anchor="middle">Workflow</text>
+        </g>
+
+        <!-- Reasoning Engine -->
+        <g transform="translate(700, 340)">
+            <rect width="120" height="60" fill="#2d3561" rx="8" filter="url(#shadow)"/>
+            <circle cx="60" cy="30" r="25" fill="url(#orangeGrad)" opacity="0.3">
+                <animate attributeName="r" values="25;30;25" dur="2s" repeatCount="indefinite" begin="1s"/>
+            </circle>
+            <text x="60" y="25" font-family="Arial, sans-serif" font-size="16" text-anchor="middle">⚡</text>
+            <text x="60" y="45" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0" text-anchor="middle">Reasoning</text>
+        </g>
+
+        <!-- Workflow Controller -->
+        <g transform="translate(460, 420)">
+            <rect width="280" height="40" fill="#374151" rx="20" filter="url(#shadow)"/>
+            <text x="140" y="25" font-family="Arial, sans-serif" font-size="14" fill="#e2e8f0" text-anchor="middle">Workflow Controller</text>
+            <!-- Animated progress bar -->
+            <rect x="10" y="35" width="260" height="3" fill="#1e293b" rx="1"/>
+            <rect x="10" y="35" width="50" height="3" fill="#10b981" rx="1">
+                <animate attributeName="width" values="0;260;0" dur="4s" repeatCount="indefinite"/>
+            </rect>
+        </g>
+    </g>
+
+    <!-- Data Layer -->
+    <g id="dataLayer">
+        <rect x="50" y="540" width="1100" height="120" fill="#1e293b" stroke="#334155" stroke-width="2" rx="10" filter="url(#shadow)"/>
+        <text x="600" y="570" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#10b981" text-anchor="middle">Data &amp; Storage Layer</text>
+
+        <!-- Schema Database -->
+        <g transform="translate(100, 590)">
+            <rect width="150" height="50" fill="#0f172a" rx="5"/>
+            <text x="75" y="20" font-family="Arial, sans-serif" font-size="14" fill="#3b82f6" text-anchor="middle">📊 Schema Linking</text>
+            <text x="75" y="35" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Tables &amp; Columns</text>
+        </g>
+
+        <!-- Metrics Store -->
+        <g transform="translate(300, 590)">
+            <rect width="150" height="50" fill="#0f172a" rx="5"/>
+            <text x="75" y="20" font-family="Arial, sans-serif" font-size="14" fill="#8b5cf6" text-anchor="middle">📈 Semantic Layer</text>
+            <text x="75" y="35" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Business KPIs</text>
+        </g>
+
+        <!-- SQL Repository -->
+        <g transform="translate(500, 590)">
+            <rect width="150" height="50" fill="#0f172a" rx="5"/>
+            <text x="75" y="20" font-family="Arial, sans-serif" font-size="14" fill="#f59e0b" text-anchor="middle">💾 Data Lineage</text>
+            <text x="75" y="35" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Table/Column Relations</text>
+        </g>
+
+        <!-- Context Store -->
+        <g transform="translate(700, 590)">
+            <rect width="150" height="50" fill="#0f172a" rx="5"/>
+            <text x="75" y="20" font-family="Arial, sans-serif" font-size="14" fill="#10b981" text-anchor="middle">🔄 Context Store</text>
+            <text x="75" y="35" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Session Memory</text>
+        </g>
+
+        <!-- Results Cache -->
+        <g transform="translate(900, 590)">
+            <rect width="150" height="50" fill="#0f172a" rx="5"/>
+            <text x="75" y="20" font-family="Arial, sans-serif" font-size="14" fill="#dc2626" text-anchor="middle">⚡ Results Cache</text>
+            <text x="75" y="35" font-family="Arial, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Query Results</text>
+        </g>
+    </g>
+
+    <!-- Output Layer -->
+    <g id="outputLayer">
+        <rect x="350" y="700" width="500" height="80" fill="#1e293b" stroke="#334155" stroke-width="2" rx="10" filter="url(#shadow)"/>
+        <text x="600" y="730" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#f59e0b" text-anchor="middle">Output Generation</text>
+
+        <!-- SQL Output -->
+        <rect x="370" y="740" width="100" height="30" fill="url(#blueGrad)" rx="5"/>
+        <text x="420" y="758" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">SQL</text>
+
+        <!-- Metrics Output -->
+        <rect x="490" y="740" width="100" height="30" fill="url(#purpleGrad)" rx="5"/>
+        <text x="540" y="758" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Metrics</text>
+
+        <!-- Reports Output -->
+        <rect x="610" y="740" width="100" height="30" fill="url(#greenGrad)" rx="5"/>
+        <text x="660" y="758" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Reports</text>
+
+        <!-- Workflows Output -->
+        <rect x="730" y="740" width="100" height="30" fill="url(#orangeGrad)" rx="5"/>
+        <text x="780" y="758" font-family="Arial, sans-serif" font-size="12" fill="white" text-anchor="middle">Workflows</text>
+    </g>
+
+    <!-- Data Flow Animations -->
+    <!-- User to Command -->
+    <g id="flow1">
+        <circle r="4" fill="#3b82f6">
+            <animateMotion path="M350,160 L450,160" dur="2s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="4" fill="#fbbf24">
+            <animateMotion path="M350,160 L450,160" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+        </circle>
+    </g>
+
+    <!-- Command to Core -->
+    <g id="flow2">
+        <circle r="4" fill="url(#blueGrad)">
+            <animateMotion path="M545,200 L545,280" dur="1s" repeatCount="indefinite" begin="1s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1s" repeatCount="indefinite" begin="1s"/>
+        </circle>
+        <circle r="4" fill="#8b5cf6">
+            <animateMotion path="M715,200 L715,280" dur="1s" repeatCount="indefinite" begin="1s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1s" repeatCount="indefinite" begin="1s"/>
+        </circle>
+        <circle r="4" fill="url(#greenGrad)">
+            <animateMotion path="M885,200 L850,280" dur="1s" repeatCount="indefinite" begin="1s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1s" repeatCount="indefinite" begin="1s"/>
+        </circle>
+        <circle r="4" fill="url(#orangeGrad)">
+            <animateMotion path="M1055,200 L850,370" dur="1s" repeatCount="indefinite" begin="1s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1s" repeatCount="indefinite" begin="1s"/>
+        </circle>
+    </g>
+
+    <!-- Core to Data -->
+    <g id="flow3">
+        <circle r="4" fill="#10b981">
+            <animateMotion path="M600,480 L600,540" dur="1s" repeatCount="indefinite" begin="2s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1s" repeatCount="indefinite" begin="2s"/>
+        </circle>
+        <circle r="4" fill="#f59e0b">
+            <animateMotion path="M600,480 L175,540" dur="1.5s" repeatCount="indefinite" begin="2.2s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1.5s" repeatCount="indefinite" begin="2.2s"/>
+        </circle>
+        <circle r="4" fill="#dc2626">
+            <animateMotion path="M600,480 L975,540" dur="1.5s" repeatCount="indefinite" begin="2.4s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1.5s" repeatCount="indefinite" begin="2.4s"/>
+        </circle>
+    </g>
+
+    <!-- Data to Output -->
+    <g id="flow4">
+        <circle r="4" fill="#10b981">
+            <animateMotion path="M600,660 L600,700" dur="1s" repeatCount="indefinite" begin="3s"/>
+            <animate attributeName="opacity" values="0;1;1;0" dur="1s" repeatCount="indefinite" begin="3s"/>
+        </circle>
+    </g>
+
+    <!-- Connection Lines -->
+    <g id="connections" opacity="0.3">
+        <!-- User to Commands -->
+        <path d="M350,160 L450,160" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+
+        <!-- Commands to Core -->
+        <path d="M545,200 L545,280" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+        <path d="M715,200 L715,280" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+        <path d="M885,200 L850,280" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+        <path d="M1055,200 L850,370" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+
+        <!-- Core to Data -->
+        <path d="M600,480 L600,540" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+        <path d="M600,480 L175,540" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+        <path d="M600,480 L975,540" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+
+        <!-- Data to Output -->
+        <path d="M600,660 L600,700" stroke="#64748b" stroke-width="2" stroke-dasharray="5,5"/>
+    </g>
+
+    <!-- Key Features Labels -->
+    <g id="features">
+        <rect x="50" y="280" width="250" height="200" fill="#0f172a" opacity="0.8" rx="10" filter="url(#shadow)"/>
+        <text x="175" y="310" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#10b981" text-anchor="middle">Key Features</text>
+
+        <text x="70" y="340" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0">✨ Natural Language Processing</text>
+        <text x="70" y="365" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0">🔄 Real-time Streaming Output</text>
+        <text x="70" y="390" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0">🧠 AI-Powered Reasoning</text>
+        <text x="70" y="415" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0">📊 Automated Metric Generation</text>
+        <text x="70" y="440" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0">💾 Workflow Persistence</text>
+        <text x="70" y="465" font-family="Arial, sans-serif" font-size="12" fill="#e2e8f0">🔧 Interactive Refinement</text>
+    </g>
+</svg>
