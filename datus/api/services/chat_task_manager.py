@@ -1108,18 +1108,26 @@ class ChatTaskManager:
 
         Order: exact key, then ``.`` -> ``/`` (older web bundles joined subject
         paths with ``.`` while the completer store keys them with ``/``), then a
-        trailing-name match (the picker's subject-path prefix can differ from the
-        store's ``subject_path``). The name match returns a hit only when exactly
-        one entry carries that name, so it never resolves an ambiguous ref.
+        trailing-segment (suffix) match — the picker's subject-path prefix can
+        differ from the store's ``subject_path``, so a query ``b/c`` matches a
+        stored ``a/b/c``. The suffix match uses the full query segment sequence
+        and resolves only when exactly one key ends with it, so given both
+        ``A/b/c`` and ``D/b/c`` a query of ``A/b/c`` hits it exactly while a
+        bare ``b/c`` stays ambiguous and returns None (never a wrong guess).
         """
         entry = flatten.get(path)
         if entry is None and "." in path:
             entry = flatten.get(path.replace(".", "/"))
         if entry is None:
-            want = path.replace(".", "/").rstrip("/").split("/")[-1].strip('"').lower()
-            candidates = [e for e in flatten.values() if str(e.get("name", "")).lower() == want]
-            if len(candidates) == 1:
-                entry = candidates[0]
+            want_segs = [s.strip('"').lower() for s in path.replace(".", "/").split("/") if s.strip()]
+            if want_segs:
+                candidates = [
+                    e
+                    for key, e in flatten.items()
+                    if [s.strip('"').lower() for s in key.split("/") if s.strip()][-len(want_segs) :] == want_segs
+                ]
+                if len(candidates) == 1:
+                    entry = candidates[0]
         return entry
 
     @staticmethod

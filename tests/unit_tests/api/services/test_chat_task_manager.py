@@ -2038,3 +2038,21 @@ class TestLookupSubject:
 
     def test_empty_store_returns_none(self):
         assert ChatTaskManager._lookup_subject({}, "main/raw_customers") is None
+
+    def test_shared_suffix_exact_query_hits_the_right_one(self):
+        # A/b/c and D/b/c share the trailing 'b/c'. A full, exact query must
+        # resolve to that exact entry (exact-key match, no ambiguity).
+        flat = {"A/b/c": {"name": "c", "sql": "-- A"}, "D/b/c": {"name": "c", "sql": "-- D"}}
+        assert ChatTaskManager._lookup_subject(flat, "A/b/c")["sql"] == "-- A"
+        assert ChatTaskManager._lookup_subject(flat, "D/b/c")["sql"] == "-- D"
+
+    def test_shared_suffix_bare_query_is_ambiguous(self):
+        # A bare 'b/c' (or 'c') suffix-matches both -> no guess.
+        flat = {"A/b/c": {"name": "c"}, "D/b/c": {"name": "c"}}
+        assert ChatTaskManager._lookup_subject(flat, "b/c") is None
+        assert ChatTaskManager._lookup_subject(flat, "c") is None
+
+    def test_suffix_match_resolves_extra_store_prefix(self):
+        # Picker sends 'main/raw_customers'; store prepended a datasource prefix.
+        flat = {"jeff_shop_live/main/raw_customers": {"name": "raw_customers", "sql": "select 1"}}
+        assert ChatTaskManager._lookup_subject(flat, "main/raw_customers")["sql"] == "select 1"
