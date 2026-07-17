@@ -112,15 +112,15 @@ Key rules:
 - Use one canonical dataset per physical table. Do not declare separate datasets for different queries or different metrics over the same table.
 - Use OSI core `fields`, not MetricFlow `dimensions`.
 - Dataset `source` is a table-name string, not `{table: ...}`.
-- **Field roles are structural.** A field with a `dimension:` block is a grouping/filtering dimension; a field without one is a plain row-level expression. Columns that are only aggregated by metrics (balances, amounts, precomputed rates) are not declared as fields at all — metric expressions reference physical columns directly. Legacy `{"type": "categorical"|"numeric"|"identifier"}` hints are deprecated; documents that still carry them keep their old all-fields-are-dimensions behavior.
+- **Field roles are structural.** A field with a `dimension:` block is a grouping/filtering dimension; a field without one is a plain row-level expression that documents the column and backs metric expressions. Columns that are only aggregated by metrics (balances, amounts, precomputed rates) are declared as plain fields without the block, and `get_dimensions` does not list them. Field-level `type` hints are not part of the authoring contract.
 - **Keys are transcribed, never inferred.** `primary_key` / `unique_keys` are written only when the source database declares them; warehouse tables without declared constraints get no `primary_key`, and the row grain is documented in `ai_context` instead.
 - A composite primary key that contains the dataset's time dimension (monthly snapshot tables) is valid: the compiler keeps the time dimension and resolves the identifier conflict during lowering.
 - Mark time fields with `dimension.is_time: true`; put the Datus `time_granularity` hint in `custom_extensions`.
 - Declare relationships under the semantic model object, not inside datasets.
 
-### Upgrading models authored before field-role semantics
+### Refreshing a table's model
 
-Existing OSI documents keep loading unchanged (legacy `type` hints mark their fields as dimensions). To adopt the new semantics for a table, re-run `gen_semantic_model` for it, then rebuild the vector KB with `/build-kb` so catalog facts such as `is_dimension` reflect the corrected model.
+To regenerate a table's semantic model, re-run `gen_semantic_model` for it, then rebuild the vector KB with `/build-kb` so catalog facts such as `is_dimension` reflect the current model.
 
 ## Metric Generation
 

@@ -112,15 +112,15 @@ semantic_model:
 - 一个物理表对应一个 canonical dataset。不要为不同 SQL 或不同指标重复声明同一张表。
 - dataset 使用 OSI core 的 `fields`，不是 MetricFlow 的 `dimensions`。
 - dataset `source` 是表名字符串，不是 `{table: ...}`。
-- **字段角色由结构决定。** 带 `dimension:` 块的 field 是可用于分组/筛选的维度；不带块的 field 只是行级表达式。只被指标聚合的列（余额、金额、预计算比率）完全不声明为 field——metric 表达式直接引用物理列。旧的 `{"type": "categorical"|"numeric"|"identifier"}` hint 已废弃；仍带这些 hint 的存量文档保持原有"全字段皆维度"的行为。
+- **字段角色由结构决定。** 带 `dimension:` 块的 field 是可用于分组/筛选的维度；不带块的 field 是行级表达式,用于记录列语义并支撑 metric 表达式。只被指标聚合的列（余额、金额、预计算比率）声明为不带块的普通 field,`get_dimensions` 不会把它们列为维度。字段级 `type` hint 不属于 authoring 契约。
 - **键只转录、不推断。** 只有数据库显式声明了约束才写 `primary_key` / `unique_keys`；数仓表通常没有约束声明，此时不写 `primary_key`，行粒度写进 `ai_context` 说明。
 - 复合主键包含时间维度列（月度快照表）是合法的：编译器在 lowering 时保留时间维度并自动消解 identifier 冲突。
 - 时间字段用 `dimension.is_time: true` 标记，Datus 的 `time_granularity` hint 写进 `custom_extensions`。
 - 关系写在 semantic model 对象的 `relationships` 下，不要写进 dataset。
 
-### 升级字段角色语义之前生成的模型
+### 重新生成某张表的模型
 
-存量 OSI 文档可继续加载（旧 `type` hint 会把其字段标记为维度）。要让某张表采用新语义，对它重跑一次 `gen_semantic_model`，然后执行 `/build-kb` 重建向量 KB，使目录中的 `is_dimension` 等事实反映修正后的模型。
+对该表重跑一次 `gen_semantic_model`，然后执行 `/build-kb` 重建向量 KB，使目录中的 `is_dimension` 等事实反映当前模型。
 
 ## 生成指标
 
