@@ -1103,6 +1103,17 @@ class ChatTaskManager:
         return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
+    def _none_to_empty(detail: Dict[str, Any]) -> Dict[str, Any]:
+        """Coerce ``None`` values to ``""`` for typed-model construction.
+
+        The path-scoped store returns optional string columns as ``None`` (e.g.
+        a reference SQL with no ``comment`` / ``tags``), but Metric / ReferenceSql
+        declare those as ``str``; ``from_dict``'s ``.get(k, "")`` doesn't catch a
+        present-but-None value, so normalise here.
+        """
+        return {k: ("" if v is None else v) for k, v in detail.items()}
+
+    @staticmethod
     def _split_subject_path(path: str) -> tuple[List[str], str]:
         """Split a subject-tree ref path into ``(subject_path, name)``.
 
@@ -1223,7 +1234,7 @@ class ChatTaskManager:
                 subject_path, name = self._split_subject_path(path)
                 details = rag.get_metrics_detail(subject_path=subject_path, name=name) if name else []
                 if details:
-                    metrics.append(Metric.from_dict(details[0]))
+                    metrics.append(Metric.from_dict(self._none_to_empty(details[0])))
                 else:
                     logger.warning("Unresolved @Metric path '%s'", path)
             except Exception as e:
@@ -1246,7 +1257,7 @@ class ChatTaskManager:
                 subject_path, name = self._split_subject_path(path)
                 details = store.get_reference_sql_detail(subject_path=subject_path, name=name) if name else []
                 if details:
-                    sqls.append(ReferenceSql.from_dict(details[0]))
+                    sqls.append(ReferenceSql.from_dict(self._none_to_empty(details[0])))
                 else:
                     logger.warning("Unresolved @Sql path '%s'", path)
             except Exception as e:

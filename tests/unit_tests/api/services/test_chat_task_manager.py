@@ -2055,11 +2055,24 @@ class TestResolveMetricSqlPaths:
     def test_sql_uses_path_scoped_detail_lookup(self):
         mgr = ChatTaskManager()
         fake_store = MagicMock()
-        fake_store.get_reference_sql_detail.return_value = [{"name": "q", "sql": "select 1"}]
+        # Store returns optional string columns as None (no comment/tags) —
+        # must still build a valid ReferenceSql (regression: pydantic rejected None).
+        fake_store.get_reference_sql_detail.return_value = [
+            {"name": "q", "sql": "select 1", "summary": None, "comment": None, "tags": None}
+        ]
         with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", return_value=fake_store):
             out = mgr._resolve_sql_paths(MagicMock(), ["main/q"])
         fake_store.get_reference_sql_detail.assert_called_once_with(subject_path=["main"], name="q")
         assert len(out) == 1 and out[0].sql == "select 1"
+        assert out[0].comment == "" and out[0].tags == ""
+
+    def test_metric_none_description_coerced(self):
+        mgr = ChatTaskManager()
+        fake_rag = MagicMock()
+        fake_rag.get_metrics_detail.return_value = [{"name": "aov", "description": None}]
+        with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
+            out = mgr._resolve_metric_paths(MagicMock(), ["Commerce/aov"])
+        assert len(out) == 1 and out[0].name == "aov" and out[0].description == ""
 
     def test_empty_paths_short_circuit(self):
         mgr = ChatTaskManager()
