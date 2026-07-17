@@ -96,6 +96,29 @@ def test_osi_mode_expression_dialect_falls_back_to_ansi_when_no_datasource(templ
     assert "OSI expression dialect for this run: `ANSI_SQL`" in text
 
 
+def test_semantic_model_template_renders_adapter_authoring_spec():
+    # The adapter-derived spec document is injected with its dialect placeholder
+    # substituted from the active datasource's dialect.
+    pm = get_prompt_manager()
+    text = pm.render_template(
+        template_name="gen_semantic_model_system",
+        authoring_format="osi",
+        current_datasource="warehouse",
+        current_datasource_dialect="postgresql",
+        osi_authoring_spec="# spec for dialect __OSI_DIALECT__\nversion: 0.2.0.dev0",
+        **COMMON_VARS,
+    )
+    assert "OSI Core Authoring Specification" in text
+    assert "# spec for dialect POSTGRESQL" in text
+    assert "__OSI_DIALECT__" not in text
+
+
+def test_semantic_model_template_omits_spec_section_when_unavailable():
+    # Adapters without authoring_spec leave the variable empty.
+    text = _render("gen_semantic_model_system", "osi")
+    assert "OSI Core Authoring Specification" not in text
+
+
 def test_metrics_template_metricflow_mode_contract():
     text = _render("gen_metrics_system", "metricflow")
     assert "MetricFlow metric definition expert" in text

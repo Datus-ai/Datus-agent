@@ -531,6 +531,151 @@ class TestDescribeTableDuckDBSchemaPrefix:
         assert effective.get("table_name") == "stage"
 
 
+class TestDescribeTableConstraintPassthrough:
+    """describe_table must surface connector-reported constraint facts.
+
+    Connectors return ``pk`` / ``nullable`` / ``default_value`` per column
+    (see e.g. the PostgreSQL connector); describe_table must pass the
+    informative values through instead of dropping them. ``pk=False`` and
+    ``nullable=True`` are NOT emitted: several connectors hardcode those
+    when the engine exposes no constraint metadata, so they mean "unknown".
+    """
+
+    def _make_tool(self, schema_rows):
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.get_schema.return_value = schema_rows
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(mock_connector)
+
+    def test_pk_and_not_null_surfaced_from_connector_rows(self):
+        """pk=True and nullable=False pass through; pk=False / nullable=True are omitted as unknown."""
+        # Row shape mirrors real connector get_schema output (cid/name/type/nullable/default_value/pk/comment)
+        tool = self._make_tool(
+            [
+                {
+                    "cid": 0,
+                    "name": "etl_dt",
+                    "type": "date",
+                    "nullable": False,
+                    "default_value": None,
+                    "pk": True,
+                    "comment": "snapshot date",
+                },
+                {
+                    "cid": 1,
+                    "name": "org_no",
+                    "type": "character varying",
+                    "nullable": True,
+                    "default_value": None,
+                    "pk": False,
+                    "comment": None,
+                },
+            ]
+        )
+        result = tool.describe_table("t")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        cols = {c["name"]: c for c in result.result["columns"]}
+        assert cols["etl_dt"]["pk"] is True
+        assert cols["etl_dt"]["nullable"] is False
+        assert "pk" not in cols["org_no"], "pk=False must be omitted (means unknown, not verified absent)"
+        assert "nullable" not in cols["org_no"], "nullable=True is uninformative and must be omitted"
+
+    def test_sqlite_integer_pk_positions_normalized_to_true(self):
+        """SQLite PRAGMA reports pk as 1-based composite-key position; any positive value means key."""
+        tool = self._make_tool(
+            [
+                {"cid": 0, "name": "etl_dt", "type": "DATE", "nullable": False, "default_value": None, "pk": 1},
+                {"cid": 1, "name": "org_no", "type": "TEXT", "nullable": False, "default_value": None, "pk": 2},
+                {"cid": 2, "name": "amount", "type": "REAL", "nullable": True, "default_value": None, "pk": 0},
+            ]
+        )
+        result = tool.describe_table("t")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        cols = {c["name"]: c for c in result.result["columns"]}
+        assert cols["etl_dt"]["pk"] is True
+        assert cols["org_no"]["pk"] is True
+        assert "pk" not in cols["amount"]
+
+    def test_default_value_surfaced_only_when_defined(self):
+        """Non-empty default_value passes through as str; None and empty string are omitted."""
+        tool = self._make_tool(
+            [
+                {"name": "status", "type": "TEXT", "comment": "", "default_value": "'new'"},
+                {"name": "qty", "type": "INTEGER", "comment": "", "default_value": 0},
+                {"name": "note", "type": "TEXT", "comment": "", "default_value": None},
+                {"name": "tag", "type": "TEXT", "comment": "", "default_value": ""},
+            ]
+        )
+        result = tool.describe_table("t")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        cols = {c["name"]: c for c in result.result["columns"]}
+        assert cols["status"]["default_value"] == "'new'"
+        assert cols["qty"]["default_value"] == "0"
+        assert "default_value" not in cols["note"]
+        assert "default_value" not in cols["tag"]
+
+    def test_legacy_connector_rows_produce_unchanged_shape(self):
+        """Connectors returning only name/type/comment must yield exactly the pre-existing column shape."""
+        tool = self._make_tool([{"name": "a", "type": "INTEGER", "comment": "ident"}])
+        result = tool.describe_table("t")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        assert result.result["columns"] == [{"name": "a", "type": "INTEGER", "comment": "ident"}]
+
+    def test_constraint_facts_coexist_with_semantic_enrichment(self):
+        """pk passthrough and semantic-model enrichment must land on the same column dict."""
+        mock_connector = Mock()
+        mock_connector.dialect = "sqlite"
+        mock_connector.get_databases.return_value = []
+        mock_connector.get_schema.return_value = [
+            {"name": "order_id", "type": "INTEGER", "comment": "", "pk": True, "nullable": False},
+            {"name": "amount", "type": "DOUBLE", "comment": "", "pk": False, "nullable": True},
+        ]
+
+        tool = DBFuncTool(mock_connector)
+        tool._table_semantic_profiles = Mock()
+        tool.has_semantic_models = True
+        tool._semantic_storage = Mock()
+        tool._table_semantic_profiles.get_profile.return_value = {
+            "format": "osi",
+            "physical_table_fq_name": "main.orders",
+            "semantic_model_name": "shop",
+            "dataset_name": "orders",
+            "data_source_name": "",
+            "description": "Orders dataset",
+            "ai_context_json": "",
+            "columns_json": (
+                "["
+                '{"name":"order_id","expr":"order_id","role":"primary_key","description":"Order key"},'
+                '{"name":"amount","expr":"amount","role":"measure","description":"Order amount"}'
+                "]"
+            ),
+            "relationships_json": "[]",
+            "custom_extensions_json": "",
+            "yaml_path": "/tmp/orders.yml",
+        }
+
+        result = tool.describe_table("orders")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        cols = {c["name"]: c for c in result.result["columns"]}
+        assert cols["order_id"]["pk"] is True
+        assert cols["order_id"]["nullable"] is False
+        assert cols["order_id"]["semantic_role"] == "primary_key"
+        assert "pk" not in cols["amount"]
+        assert cols["amount"]["semantic_role"] == "measure"
+
+
 class TestDescribeTableSemanticProfile:
     def test_describe_table_enriches_from_table_semantic_profile(self):
         mock_connector = Mock()
