@@ -4725,7 +4725,9 @@ for the project.</p>
   itself in the prompt and points the agent at its bundled <code>&lt;name&gt;-setup</code>
   skill. Ask the agent to set the plugin up, and it collects the required
   values and writes the profile for you (secrets are referenced as <code>${VAR}</code>,
-  never written literally).</li>
+  never written literally). In managed deployments where the agent config is
+  read-only (the multi-tenant chat API / gateway), setup skills are hidden and
+  the agent directs users to their administrator instead.</li>
 </ul>
 <h2 id="agent-bash-permissions">Agent bash permissions<a class="headerlink" href="#agent-bash-permissions" title="Permanent link">&para;</a></h2>
 <p>When the <strong>agent</strong> (not you) runs a plugin's CLI through its bash tool, the

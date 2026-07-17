@@ -5322,6 +5322,11 @@
 <td><code>true</code></td>
 <td>If false, hidden from CLI menu (only model invokes)</td>
 </tr>
+<tr>
+<td><code>requires_mutable_config</code></td>
+<td><code>false</code></td>
+<td>If true, hidden and refused when the agent config is read-only (multi-tenant chat API / gateway) — for skills that guide config-file edits</td>
+</tr>
 </tbody>
 </table>
 <h2 id="skillmd-reference">SKILL.md Reference<a class="headerlink" href="#skillmd-reference" title="Permanent link">&para;</a></h2>
@@ -5374,6 +5379,11 @@
 <td><code>user_invocable</code></td>
 <td>No</td>
 <td>If false, hidden from CLI menu</td>
+</tr>
+<tr>
+<td><code>requires_mutable_config</code></td>
+<td>No</td>
+<td>If true, hidden/refused when the agent config is read-only (API mode)</td>
 </tr>
 </tbody>
 </table>
