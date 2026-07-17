@@ -2004,3 +2004,24 @@ class TestSynthesizeTableEntry:
 
     def test_empty_path(self):
         assert ChatTaskManager._synthesize_table_entry("") is None
+
+
+class TestLookupSubject:
+    """_lookup_subject — subject-tree ref resolution tolerating '.'/'/' separators."""
+
+    FLAT = {
+        "main/raw_customers": {"name": "raw_customers", "comment": "", "summary": "s", "tags": "", "sql": "select 1"}
+    }
+
+    def test_dot_separator_normalizes_to_slash(self):
+        assert ChatTaskManager._lookup_subject(self.FLAT, "main.raw_customers")["name"] == "raw_customers"
+
+    def test_exact_slash_key(self):
+        assert ChatTaskManager._lookup_subject(self.FLAT, "main/raw_customers")["name"] == "raw_customers"
+
+    def test_miss_returns_none(self):
+        assert ChatTaskManager._lookup_subject(self.FLAT, "nope.x") is None
+
+    def test_top_level_name_without_subject_path(self):
+        flat = {"raw_customers": {"name": "raw_customers"}}
+        assert ChatTaskManager._lookup_subject(flat, "raw_customers")["name"] == "raw_customers"

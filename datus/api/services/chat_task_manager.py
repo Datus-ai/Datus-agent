@@ -1103,6 +1103,19 @@ class ChatTaskManager:
         return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
+    def _lookup_subject(flatten: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
+        """Resolve a subject-tree ref (metric / reference_sql) tolerating the separator.
+
+        The completer store keys subject paths with ``/`` (``a/b/name``). A web
+        client historically joined them with ``.``; accept either so an
+        older bundle against a newer backend still resolves.
+        """
+        entry = flatten.get(path)
+        if entry is None and "." in path:
+            entry = flatten.get(path.replace(".", "/"))
+        return entry
+
+    @staticmethod
     def _synthesize_table_entry(path: str) -> Optional[Dict[str, Any]]:
         """Build a name-only table entry from a picked path when the store can't resolve it.
 
@@ -1166,18 +1179,22 @@ class ChatTaskManager:
         metrics: List[Metric] = []
         for path in metric_paths or []:
             try:
-                entry = completer.metric_completer.flatten_data.get(path)
+                entry = self._lookup_subject(completer.metric_completer.flatten_data, path)
                 if entry:
                     metrics.append(Metric.from_dict(entry))
+                else:
+                    logger.warning("Unresolved @Metric path '%s'", path)
             except Exception as e:
                 logger.warning(f"Failed to resolve metric path '{path}': {e}")
 
         sqls: List[ReferenceSql] = []
         for path in sql_paths or []:
             try:
-                entry = completer.sql_completer.flatten_data.get(path)
+                entry = self._lookup_subject(completer.sql_completer.flatten_data, path)
                 if entry:
                     sqls.append(ReferenceSql.from_dict(entry))
+                else:
+                    logger.warning("Unresolved @Sql path '%s'", path)
             except Exception as e:
                 logger.warning(f"Failed to resolve sql path '{path}': {e}")
 
