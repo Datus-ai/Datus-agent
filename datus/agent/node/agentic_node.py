@@ -47,27 +47,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _maybe_dump_prompt(node_name: str, system_instruction: str, user_prompt: str) -> None:
-    """Append the per-turn system + user prompt to a debug file for inspection.
-
-    Diagnostic only — gated on ``DATUS_PROMPT_DEBUG`` so it is a no-op in normal
-    runs. Set the env var to a file path, or to ``1`` to use the default
-    ``~/.datus/logs/prompt_dump.log``. Never raises.
-    """
-    target = os.environ.get("DATUS_PROMPT_DEBUG")
-    if not target:
-        return
-    try:
-        path = target if target not in ("1", "true", "True") else os.path.expanduser("~/.datus/logs/prompt_dump.log")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(f"\n{'=' * 80}\n[{datetime.now(timezone.utc).isoformat()}] node={node_name}\n")
-            f.write(f"----- SYSTEM PROMPT -----\n{system_instruction}\n")
-            f.write(f"----- USER PROMPT -----\n{user_prompt}\n")
-    except Exception as exc:  # pragma: no cover - diagnostics must never break a run
-        logger.debug("prompt dump failed: %s", exc)
-
-
 _LANGUAGE_NAME_MAP: Dict[str, str] = {
     "en": "English",
     "zh": "Chinese",
@@ -3155,7 +3134,6 @@ class AgenticNode(Node):
         # argument too late and the first run would execute unwrapped tools.
         self._ensure_tool_transformers()
         self._current_action_history = ctx.action_history_manager
-        _maybe_dump_prompt(self.get_node_name(), ctx.system_instruction, ctx.user_prompt)
         try:
             async for stream_action in self.model.generate_with_tools_stream(
                 prompt=ctx.user_prompt,
