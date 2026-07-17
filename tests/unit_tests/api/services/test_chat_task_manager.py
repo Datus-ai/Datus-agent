@@ -1981,3 +1981,26 @@ class TestMatchTableEntry:
         flat = {"raw_stores": {"table_name": "raw_stores", "definition": "x"}}
         entry = ChatTaskManager._match_table_entry(flat, "raw_stores")
         assert entry and entry["table_name"] == "raw_stores"
+
+
+class TestSynthesizeTableEntry:
+    """_synthesize_table_entry — name-only fallback when the metadata store
+    can't resolve a picked @Table (KB not indexed for the datasource)."""
+
+    def test_three_part_path(self):
+        from datus.schemas.node_models import TableSchema
+
+        entry = ChatTaskManager._synthesize_table_entry("default_catalog.jeff_shop_live.raw_orders")
+        assert entry["table_name"] == "raw_orders"
+        assert entry["database_name"] == "jeff_shop_live"
+        # Must build a valid TableSchema and render to its own name in the prompt.
+        ts = TableSchema.from_dict(entry)
+        assert TableSchema.table_names_to_prompt([ts]) == "raw_orders"
+
+    def test_single_segment(self):
+        entry = ChatTaskManager._synthesize_table_entry("raw_orders")
+        assert entry["table_name"] == "raw_orders"
+        assert entry["database_name"] == ""
+
+    def test_empty_path(self):
+        assert ChatTaskManager._synthesize_table_entry("") is None

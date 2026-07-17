@@ -1102,6 +1102,28 @@ class ChatTaskManager:
             candidates.append(entry)
         return candidates[0] if len(candidates) == 1 else None
 
+    @staticmethod
+    def _synthesize_table_entry(path: str) -> Optional[Dict[str, Any]]:
+        """Build a name-only table entry from a picked path when the store can't resolve it.
+
+        Only ``table_name`` is surfaced to the prompt ("Available tables"), so an
+        empty ``definition`` is fine — the node inspects the real DDL via its own
+        ``describe_table``. ``database_name`` is a best-effort guess from the
+        leading segment for display/scoping; it isn't required for resolution.
+        """
+        segs = [s.strip().strip('"') for s in path.split(".") if s.strip()]
+        if not segs:
+            return None
+        return {
+            "identifier": path,
+            "catalog_name": "",
+            "database_name": segs[-2] if len(segs) >= 2 else "",
+            "schema_name": "",
+            "table_name": segs[-1],
+            "table_type": "table",
+            "definition": "",
+        }
+
     def _resolve_at_context(
         self,
         agent_config: AgentConfig,
@@ -1122,15 +1144,22 @@ class ChatTaskManager:
         for path in table_paths or []:
             try:
                 entry = table_flatten.get(path) or self._match_table_entry(table_flatten, path)
-                if entry:
-                    tables.append(TableSchema.from_dict(entry))
-                else:
+                if not entry:
+                    # The @-picker builds table paths from live introspection, so a
+                    # picked table always exists even when the schema-metadata store
+                    # is empty/stale (KB not indexed for this datasource). The prompt
+                    # injection only needs the table NAME (the node's own describe_table
+                    # fetches the DDL), so synthesise a name-only entry rather than
+                    # silently dropping the reference and re-asking the user.
                     logger.warning(
-                        "Unresolved @Table path '%s' (%d indexed tables); sample keys: %s",
+                        "Unresolved @Table path '%s' (%d indexed tables); using name-only reference. Sample keys: %s",
                         path,
                         len(table_flatten),
                         list(table_flatten.keys())[:5],
                     )
+                    entry = self._synthesize_table_entry(path)
+                if entry:
+                    tables.append(TableSchema.from_dict(entry))
             except Exception as e:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
 
