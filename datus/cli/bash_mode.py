@@ -24,13 +24,14 @@ import asyncio
 import inspect
 import json
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Dict, List, Optional
 
+from pydantic import BaseModel
 from rich.console import Console
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled, merge_interaction_stream
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -104,13 +105,15 @@ async def _apply_plugin_transformers(
                 result = await result
             if not isinstance(result, dict):
                 name = getattr(transformer, "__name__", repr(transformer))
-                raise ValueError(f"tool transformer {name} returned {type(result).__name__} instead of an arg dict")
+                raise DatusException(
+                    ErrorCode.TOOL_EXECUTION_FAILED,
+                    message=f"tool transformer {name} returned {type(result).__name__} instead of an arg dict",
+                )
             args = result
     return args
 
 
-@dataclass
-class SqlGateResult:
+class SqlGateResult(BaseModel):
     """Outcome of the SQL permission/policy gate; ``sql`` is the effective (possibly
     transformer/policy-rewritten) statement to execute."""
 
@@ -119,8 +122,7 @@ class SqlGateResult:
     error: Optional[str] = None
 
 
-@dataclass
-class BashModeRun:
+class BashModeRun(BaseModel):
     """Outcome of one bash-mode execution, packed into a chat turn by the REPL."""
 
     command: str
@@ -361,26 +363,66 @@ def run_bash_mode_command(cli: "DatusCLI", command: str) -> BashModeRun:
 # ── SQL permission / policy gate ──────────────────────────────────────────
 
 
+def _enabled_sql_policy(agent_config):
+    """Return the enabled ``SqlPolicyConfig`` on *agent_config*, else ``None``."""
+    if agent_config is None:
+        return None
+    policy = getattr(agent_config, "sql_policy_config", None)
+    try:
+        from datus.tools.sql_policy import SqlPolicyConfig
+    except Exception:  # pragma: no cover - defensive (optional deps)
+        return None
+    if isinstance(policy, SqlPolicyConfig) and getattr(policy, "enabled", False):
+        return policy
+    return None
+
+
 def _enforce_sql_policy_if_read(cli: "DatusCLI", sql: str) -> str:
-    """Apply ``DBFuncTool._enforce_sql_policy`` to a read statement (data-governance
-    rewrite/deny), matching the tool's read path. No-op for writes/DDL (the tool
-    only enforces reads) or when no chat node / db tool exists yet.
+    """Apply the SQL data-governance policy to a read statement (rewrite/deny),
+    matching ``DBFuncTool``'s read path. No-op for writes/DDL (only reads are
+    governed).
+
+    Enforcement is resolved independently of the chat node so governance is not
+    silently skipped before the first chat turn: the live node's tool is reused
+    when present (so its request-scoped principal applies, identical to an agent
+    ``execute_sql`` call); otherwise the policy is applied directly off
+    ``agent_config`` (the enforcement only needs the policy config + principal,
+    not connector / RAG state — avoiding a heavyweight ``DBFuncTool`` build).
 
     Raises ``DatusException`` when the policy denies the query (same as the tool).
     """
     from datus.utils.constants import SQLType
     from datus.utils.sql_utils import parse_sql_type
 
-    node = getattr(getattr(cli, "chat_commands", None), "current_node", None)
-    db_func_tool = getattr(node, "db_func_tool", None) if node is not None else None
     connector = getattr(cli, "db_connector", None)
-    if db_func_tool is None or connector is None:
-        return sql
-    dialect = getattr(connector, "dialect", "") or ""
+    dialect = (getattr(connector, "dialect", "") or "") if connector is not None else ""
     if parse_sql_type(sql, dialect) not in (SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN):
         return sql
-    datasource = getattr(getattr(cli, "agent_config", None), "current_datasource", "") or ""
-    return db_func_tool._enforce_sql_policy(sql, datasource=datasource, dialect=dialect)
+
+    agent_config = getattr(cli, "agent_config", None)
+    datasource = getattr(agent_config, "current_datasource", "") or ""
+
+    node = getattr(getattr(cli, "chat_commands", None), "current_node", None)
+    db_func_tool = getattr(node, "db_func_tool", None) if node is not None else None
+    if db_func_tool is not None:
+        return db_func_tool._enforce_sql_policy(sql, datasource=datasource, dialect=dialect)
+
+    policy = _enabled_sql_policy(agent_config)
+    if policy is None:
+        return sql
+    from datus.tools.sql_policy import load_sql_policy_enforcer
+
+    principal_source = getattr(agent_config, "principal", None)
+    principal = dict(principal_source) if isinstance(principal_source, dict) else {}
+    enforced = load_sql_policy_enforcer(policy).enforce_read(
+        sql, datasource=datasource, dialect=dialect, principal=principal
+    )
+    if not enforced.allowed:
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT,
+            message=enforced.reason or "SQL policy denied the query",
+        )
+    return sql if enforced.sql is None else enforced.sql
 
 
 async def _sql_gate_stream(
@@ -419,14 +461,15 @@ def run_sql_gate(cli: "DatusCLI", sql: str) -> SqlGateResult:
     """Gate a manual SQL statement through the same hooks an LLM call uses.
 
     Returns a :class:`SqlGateResult` with ``approved`` and the effective
-    (transformer/policy-rewritten) ``sql``. When no permission config is loaded
-    the gate is skipped and the statement is allowed (preserving the pre-hook
-    behavior for minimal setups); reads auto-allow with no prompt, writes/DDL
-    prompt via the embedded wizard.
+    (transformer/policy-rewritten) ``sql``. Reads auto-allow with no prompt,
+    writes/DDL prompt via the embedded wizard. Fails closed (``approved=False``
+    with an actionable error) when no permission config is loaded or the hook
+    pipeline cannot be built — an ungoverned write/DDL must never slip through,
+    matching bash mode's posture.
     """
     result = SqlGateResult(sql=sql)
     if getattr(cli.agent_config, "permissions_config", None) is None:
-        result.approved = True
+        result.error = "SQL mode unavailable: no permission configuration loaded"
         return result
 
     try:
@@ -434,8 +477,7 @@ def run_sql_gate(cli: "DatusCLI", sql: str) -> SqlGateResult:
         hooks = _build_permission_hooks(cli, broker)
     except Exception as exc:
         logger.error(f"Failed to prepare SQL gate: {exc}", exc_info=True)
-        # Degrade to allow (SQL historically ran without any gate) but log.
-        result.approved = True
+        result.error = f"SQL gate unavailable: {exc}"
         return result
 
     collector = _make_input_collector(cli)

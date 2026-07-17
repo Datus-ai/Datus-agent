@@ -78,7 +78,6 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     SlashSpec("datasource", "Manage datasources (list/add/edit/delete/switch)", "agent"),
     SlashSpec("language", "Set or show the response language for model outputs", "agent"),
     # system
-    SlashSpec("bash", "Run a whitelisted shell command (pwd/ls/cat/head/tail/echo)", "system"),
     SlashSpec("mcp", "Manage MCP servers (list/add/remove/check/call/filter)", "system"),
     SlashSpec("skill", "Manage skills and marketplace (list/install/publish/...)", "system"),
     SlashSpec("plugins", "Manage installed plugins (profiles + per-project activation)", "system"),

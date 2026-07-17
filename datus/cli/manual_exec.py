@@ -22,8 +22,9 @@ Layering: this module may import ``cli_styles`` and Rich, but must NOT import
 """
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
+from pydantic import BaseModel, ValidationError
 from rich.box import HORIZONTALS
 from rich.console import Group, RenderableType
 from rich.panel import Panel
@@ -31,7 +32,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from datus.cli.cli_styles import CODE_THEME
+from datus.cli.cli_styles import CODE_THEME, TABLE_HEADER_STYLE
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -64,6 +65,34 @@ def is_exec_message(text: Any) -> bool:
 MANUAL_EXEC_ACTION_TYPE = "manual_exec"
 
 
+class SqlExecPayload(BaseModel):
+    """Validated shape of a persisted SQL execution record."""
+
+    kind: Literal["sql"]
+    command: str
+    success: bool
+    columns: List[str] = []
+    rows: List[List[str]] = []
+    row_count: Optional[int] = None
+    truncated: bool = False
+    meta: str = ""
+    error: Optional[str] = None
+
+
+class BashExecPayload(BaseModel):
+    """Validated shape of a persisted bash execution record."""
+
+    kind: Literal["bash"]
+    command: str
+    success: bool
+    output: str = ""
+    meta: str = ""
+    error: Optional[str] = None
+
+
+_PAYLOAD_MODELS: Dict[str, type[BaseModel]] = {"sql": SqlExecPayload, "bash": BashExecPayload}
+
+
 def mode_prompt(kind: str) -> Tuple[str, str]:
     """Return the ``(prompt, prompt_style)`` for a kind (``sql`` / ``bash``)."""
     prompt, prompt_style, _ = _KIND_CHROME.get(kind, ("> ", "bold", ""))
@@ -78,19 +107,30 @@ def encode_exec_message(payload: Dict[str, Any]) -> str:
 def decode_exec_message(text: Any) -> Optional[Dict[str, Any]]:
     """Parse a manual-execution message back into its payload dict.
 
-    Returns ``None`` for ordinary messages or malformed payloads so callers
-    can fall back to plain user-message rendering.
+    The decoded JSON is validated against the typed payload model for its
+    ``kind``; ordinary messages and malformed/incompatible records (e.g. a
+    corrupted persisted row where ``rows`` is not a list of string lists)
+    return ``None`` so callers fall back to plain user-message rendering
+    instead of crashing the downstream renderer / SSE builder.
     """
     if not is_exec_message(text):
         return None
     try:
-        payload = json.loads(text[len(EXEC_SENTINEL) :])
+        raw = json.loads(text[len(EXEC_SENTINEL) :])
     except (ValueError, TypeError) as exc:
         logger.debug("Failed to decode exec message: %s", exc)
         return None
-    if not isinstance(payload, dict) or payload.get("kind") not in _KIND_CHROME:
+    if not isinstance(raw, dict):
         return None
-    return payload
+    kind = raw.get("kind")
+    model = _PAYLOAD_MODELS.get(kind) if isinstance(kind, str) else None
+    if model is None:
+        return None
+    try:
+        return model.model_validate(raw).model_dump()
+    except ValidationError as exc:
+        logger.debug("Invalid exec payload dropped: %s", exc)
+        return None
 
 
 def exec_preview(text: Any) -> str:
@@ -106,41 +146,82 @@ def exec_preview(text: Any) -> str:
     return f"{prompt}{command}"
 
 
+def _md_fence(content: str) -> str:
+    """Pick a backtick fence longer than any backtick run in *content*.
+
+    A command or output that itself contains ```` ``` ```` would otherwise
+    close the code block early and let the remainder render as Markdown; a
+    fence of ``max_run + 1`` backticks (at least 3) keeps the block intact.
+    """
+    longest = 0
+    run = 0
+    for ch in content:
+        if ch == "`":
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+    return "`" * max(3, longest + 1)
+
+
+def _md_escape(value: Any) -> str:
+    """Escape Markdown-structural characters in inline / table-cell text.
+
+    Neutralises pipes (table columns), newlines (row/line breaks), emphasis,
+    links, inline code and raw HTML so arbitrary command output can never alter
+    the surrounding Markdown structure.
+    """
+    out: List[str] = []
+    for ch in str(value):
+        if ch in "\r\n":
+            out.append(" ")
+        elif ch in "\\`*_{}[]()#+!|<>":
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def exec_to_markdown(text: Any) -> str:
     """Render a manual-execution message as readable Markdown (for web/SSE).
 
     CLI clients decode the payload into a styled block; non-CLI consumers
     (web history / SSE) get an equivalent fenced Markdown rendering so the raw
-    sentinel never leaks. Returns *text* unchanged when it is not an exec
-    record.
+    sentinel never leaks. Command / output text goes in collision-safe code
+    fences and all inline / table content is escaped, so arbitrary SQL, shell
+    commands and results cannot break out of the Markdown structure. Returns
+    *text* unchanged when it is not an exec record.
     """
     payload = decode_exec_message(text)
     if payload is None:
         return text if isinstance(text, str) else str(text)
     prompt = _KIND_CHROME[payload["kind"]][0]
     lang = "sql" if payload["kind"] == "sql" else "bash"
-    lines = [f"`{prompt.strip()}`", f"```{lang}", str(payload.get("command", "")), "```"]
+    command = str(payload.get("command", ""))
+    cmd_fence = _md_fence(command)
+    lines = [f"`{prompt.strip()}`", f"{cmd_fence}{lang}", command, cmd_fence]
     if payload.get("meta"):
-        lines.append(f"_{payload['meta']}_")
+        lines.append(f"_{_md_escape(payload['meta'])}_")
     columns = payload.get("columns") or []
     rows = payload.get("rows") or []
     if columns:
         lines.append("")
-        lines.append("| " + " | ".join(str(c) for c in columns) + " |")
+        lines.append("| " + " | ".join(_md_escape(c) for c in columns) + " |")
         lines.append("| " + " | ".join("---" for _ in columns) + " |")
         for row in rows:
-            lines.append("| " + " | ".join(str(cell) for cell in row) + " |")
+            lines.append("| " + " | ".join(_md_escape(cell) for cell in row) + " |")
         if payload.get("truncated"):
             lines.append(f"_(showing first {len(rows)} of {payload.get('row_count', len(rows))} rows)_")
     output = payload.get("output")
     if output:
+        out_fence = _md_fence(str(output))
         lines.append("")
-        lines.append("```")
-        lines.append(output)
-        lines.append("```")
+        lines.append(out_fence)
+        lines.append(str(output))
+        lines.append(out_fence)
     if not payload.get("success") and payload.get("error"):
         lines.append("")
-        lines.append(f"**Error:** {payload['error']}")
+        lines.append(f"**Error:** {_md_escape(payload['error'])}")
     return "\n".join(lines)
 
 
@@ -232,7 +313,7 @@ def _sql_result_table(payload: Dict[str, Any]) -> Optional[Table]:
     rows = payload.get("rows") or []
     if not columns:
         return None
-    table = Table(show_header=True, header_style="bold green")
+    table = Table(show_header=True, header_style=TABLE_HEADER_STYLE)
     for col in columns:
         table.add_column(str(col), overflow="fold", no_wrap=False)
     for row in rows:

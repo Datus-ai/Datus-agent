@@ -352,7 +352,6 @@ class DatusCLI:
             "datasource": self.datasource_commands.cmd,
             "language": self.language_commands.cmd_language,
             # system
-            "bash": self._cmd_bash,
             "mcp": self._cmd_mcp,
             "skill": self._cmd_skill,
             "bootstrap": self.bootstrap_commands.cmd,
@@ -1631,11 +1630,10 @@ class DatusCLI:
         text = text.strip()
         bash_mode = self.input_mode is InputMode.BASH
 
-        # Remove trailing semicolons (common in SQL). Bash mode keeps the raw
-        # text — a trailing ``;`` is legal shell syntax and stripping user
-        # bash input would be surprising.
-        if text.endswith(";") and not bash_mode:
-            text = text[:-1].strip()
+        # Trailing ``;`` is only normalized on the SQL paths (SQL mode and the
+        # ``!<sql>`` chat prefix), where it is a redundant statement terminator.
+        # Chat keeps it (``Explain this;`` must reach the model verbatim) and
+        # bash keeps it (a trailing ``;`` is legal shell syntax).
 
         # Exit: bare ``exit`` / ``quit`` still work; ``/exit`` and ``/quit`` flow
         # through the SLASH branch via the registry's alias map.
@@ -1649,7 +1647,10 @@ class DatusCLI:
         # part of the statement (e.g. bash history expansion), so the prefix
         # is not interpreted there.
         if text.startswith("!") and self.input_mode is InputMode.CHAT:
-            return CommandType.SQL, "", text[1:].strip()
+            sql = text[1:].strip()
+            if sql.endswith(";"):
+                sql = sql[:-1].strip()
+            return CommandType.SQL, "", sql
 
         # Slash commands (/prefix). ``/<agent> <msg>`` was removed — agent
         # selection is now exclusively handled by ``/agent``. Unknown tokens
@@ -1695,7 +1696,8 @@ class DatusCLI:
         # branch above runs first, so ``/help`` / ``/tables`` stay reachable
         # without leaving the mode.
         if self.input_mode is InputMode.SQL:
-            return CommandType.SQL, "", text
+            sql = text[:-1].strip() if text.endswith(";") else text
+            return CommandType.SQL, "", sql
         if bash_mode:
             return CommandType.BASH, "", text
 
@@ -1791,9 +1793,13 @@ class DatusCLI:
                     pass
 
             if result.success:
-                # Non-arrow paths: DML row-count / DDL success / result-format error.
+                # Non-arrow success paths. A successful statement without a
+                # tabular payload is either DML (``row_count`` set — including a
+                # zero-row UPDATE/DELETE) or DDL / a side-effecting statement
+                # that returns no rows at all. Both are successes: ``result.success``
+                # is already true here, so never fall through to a format error.
                 if not hasattr(result.sql_return, "column_names"):
-                    if result.row_count is not None and result.row_count > 0:
+                    if result.row_count is not None:
                         self.actions.update_action_by_id(
                             sql_action.action_id,
                             status=ActionStatus.SUCCESS,
@@ -1803,26 +1809,13 @@ class DatusCLI:
                         return build_sql_message_payload(
                             sql, True, f"{result.row_count} rows updated in {exec_time:.2f}s"
                         )
-                    if result.sql_return:
-                        self.actions.update_action_by_id(
-                            sql_action.action_id,
-                            status=ActionStatus.SUCCESS,
-                            output={"row_count": 0, "execution_time": exec_time, "success": True},
-                            messages=f"SQL executed successfully in {exec_time:.2f}s",
-                        )
-                        return build_sql_message_payload(sql, True, f"success in {exec_time:.2f}s")
-                    error_msg = (
-                        "Query execution failed - received string instead of Arrow data: "
-                        f"{result.error or 'Unknown error'}"
-                    )
-                    self.console.print(f"[red]Error:[/] {error_msg}")
                     self.actions.update_action_by_id(
                         sql_action.action_id,
-                        status=ActionStatus.FAILED,
-                        output={"error": error_msg, "result_type_error": True},
-                        messages=f"Result format error: {error_msg}",
+                        status=ActionStatus.SUCCESS,
+                        output={"row_count": 0, "execution_time": exec_time, "success": True},
+                        messages=f"SQL executed successfully in {exec_time:.2f}s",
                     )
-                    return None
+                    return build_sql_message_payload(sql, True, f"success in {exec_time:.2f}s")
 
                 rows = result.sql_return.to_pylist()
                 columns = result.sql_return.column_names
@@ -1976,42 +1969,6 @@ class DatusCLI:
 
         self.console.print("[red]Agent initialization timed out. Try again later.[/]")
         return False
-
-    def _cmd_bash(self, args: str):
-        """Execute a bash command."""
-        # Define a whitelist of allowed commands
-        whitelist = ["pwd", "ls", "cat", "head", "tail", "echo"]
-
-        if not args.strip():
-            self.console.print("[yellow]Please provide a bash command.[/]")
-            return
-
-        # Parse the command to check against whitelist
-        cmd_parts = args.split()
-        base_cmd = cmd_parts[0]
-
-        if base_cmd not in whitelist:
-            self.console.print(
-                f"[red]Security:[/] Command '{base_cmd}' not in whitelist. Allowed: {', '.join(whitelist)}"
-            )
-            return
-
-        try:
-            # Execute the command
-            import subprocess
-
-            result = subprocess.run(args, shell=True, capture_output=True, text=True, timeout=10)
-
-            if result.returncode == 0:
-                if result.stdout:
-                    self.console.print(result.stdout)
-            else:
-                self.console.print(f"[red]Command failed with code {result.returncode}:[/]\n{result.stderr}")
-
-        except subprocess.TimeoutExpired:
-            self.console.print("[red]Error:[/] Command timed out after 10 seconds.")
-        except Exception as e:
-            self.console.print(f"[red]Error:[/] {str(e)}")
 
     def _cmd_help(self, args: str):
         """Display help for all CLI commands.
@@ -2167,6 +2124,13 @@ class DatusCLI:
         self.agent_config.permissions_config = new_effective
         self.agent_config.active_profile_name = choice
         self.active_profile = choice
+        # Drop the CLI-owned PermissionManager built lazily for manual SQL/bash
+        # before any chat node existed — it captured the *old* profile + session
+        # approvals, so the next manual execution must rebuild it on the new
+        # profile (otherwise a normal→dangerous or dangerous→normal switch would
+        # not take effect for manual runs). Node-owned managers are switched
+        # in place above.
+        self._cli_bash_permission_manager = None
         print_success(self.console, f"Profile switched: {current} → {choice}")
         print_info(self.console, f"Session approvals cleared (was: {prior_approvals})")
 

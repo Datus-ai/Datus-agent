@@ -2203,17 +2203,20 @@ class DatusApp:
         return FormattedText(tokens)
 
     def _get_input_prompt(self) -> FormattedText:
-        if self._paste_collapsed:
-            return FormattedText(
-                [
-                    ("class:input-prompt", "> "),
-                    ("class:input-prompt.hint", "(Ctrl+E to expand) "),
-                ]
-            )
         # Non-chat modes override the prompt with a distinct coloured marker
         # (red ``sql> `` / yellow ``bash> ``) so it is unmistakable that
-        # Enter will execute the input, not chat.
+        # Enter will execute the input, not chat. This holds even when pasted
+        # content is collapsed — Enter still executes in SQL/bash mode, so the
+        # prompt must not misleadingly show the green chat ``> ``.
         mode = self._current_input_mode()
+        if self._paste_collapsed:
+            prompt_tokens: List[Tuple[str, str]] = (
+                [(MODE_CHROME[mode].prompt_style, MODE_CHROME[mode].prompt)]
+                if mode is not InputMode.CHAT
+                else [("class:input-prompt", "> ")]
+            )
+            prompt_tokens.append(("class:input-prompt.hint", "(Ctrl+E to expand) "))
+            return FormattedText(prompt_tokens)
         if mode is not InputMode.CHAT:
             chrome = MODE_CHROME[mode]
             return FormattedText([(chrome.prompt_style, chrome.prompt)])

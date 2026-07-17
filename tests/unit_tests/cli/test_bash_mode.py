@@ -479,13 +479,61 @@ class TestRunSqlGate:
         assert gate.error is None
         assert gate.sql == "SELECT 1"
 
-    def test_no_permission_config_degrades_to_allow(self):
+    def test_no_permission_config_fails_closed(self):
+        """Without a permission config the gate cannot run — an ungoverned
+        write/DDL must never slip through, so the statement is refused."""
         from datus.cli.bash_mode import run_sql_gate
 
         cli = _sql_cli()
         cli.agent_config.permissions_config = None
         gate = run_sql_gate(cli, "SELECT 1")
+        assert gate.approved is False
+        assert gate.error
+
+    def test_hook_construction_failure_fails_closed(self):
+        """If the permission hook pipeline cannot be built, deny rather than
+        run the statement ungoverned."""
+        from datus.cli.bash_mode import run_sql_gate
+
+        cli = _sql_cli()
+        with patch("datus.cli.bash_mode._build_permission_hooks", side_effect=RuntimeError("boom")):
+            gate = run_sql_gate(cli, "SELECT 1")
+        assert gate.approved is False
+        assert gate.error
+
+    def test_sql_policy_applies_without_chat_node(self):
+        """Read governance is enforced even before the first chat node exists —
+        the policy is resolved off agent_config, not the (absent) node."""
+        from datus.cli import bash_mode
+
+        cli = _sql_cli()  # current_node is None
+        enforced = SimpleNamespace(allowed=True, sql="SELECT masked FROM t", applied_policies=["p"])
+        enforcer = MagicMock()
+        enforcer.enforce_read.return_value = enforced
+        with (
+            patch.object(bash_mode, "_enabled_sql_policy", return_value=object()),
+            patch("datus.tools.sql_policy.load_sql_policy_enforcer", return_value=enforcer),
+        ):
+            gate = bash_mode.run_sql_gate(cli, "SELECT * FROM t")
         assert gate.approved is True
+        assert gate.sql == "SELECT masked FROM t"
+        enforcer.enforce_read.assert_called_once()
+
+    def test_sql_policy_denies_without_chat_node(self):
+        """A policy denial before any chat node fails the gate (fail closed)."""
+        from datus.cli import bash_mode
+
+        cli = _sql_cli()
+        enforced = SimpleNamespace(allowed=False, reason="blocked by policy", sql=None, applied_policies=[])
+        enforcer = MagicMock()
+        enforcer.enforce_read.return_value = enforced
+        with (
+            patch.object(bash_mode, "_enabled_sql_policy", return_value=object()),
+            patch("datus.tools.sql_policy.load_sql_policy_enforcer", return_value=enforcer),
+        ):
+            gate = bash_mode.run_sql_gate(cli, "SELECT * FROM t")
+        assert gate.approved is False
+        assert "blocked by policy" in (gate.error or "")
 
     def test_write_ask_approved_via_collector(self):
         """A write prompts; approving via the collector marks it approved."""
@@ -544,6 +592,26 @@ class TestRunSqlGate:
             gate = run_sql_gate(cli, "SELECT 1")
         assert gate.approved is False
         assert "blocked by policy" in gate.error
+
+    def test_plugin_transformer_non_dict_return_fails_closed(self):
+        """A transformer returning a non-dict violates the arg-rewrite contract —
+        the gate raises DatusException and the statement is not approved."""
+        from datus.cli.bash_mode import run_sql_gate
+
+        cli = _sql_cli()
+        cli.agent_config.plugins_enabled = True
+        cli.agent_config.active_plugin_names = lambda: {"acme"}
+
+        def _bad(tool_name, args, ctx):
+            return "not a dict"
+
+        with patch(
+            "datus.plugins.registry.collect_plugin_tool_transformers",
+            return_value={"db_tools.execute_sql": [_bad]},
+        ):
+            gate = run_sql_gate(cli, "SELECT 1")
+        assert gate.approved is False
+        assert "instead of an arg dict" in (gate.error or "")
 
     def test_sql_policy_rewrite_applied_for_read(self):
         """``_enforce_sql_policy`` (via the node's db_func_tool) can rewrite a read."""

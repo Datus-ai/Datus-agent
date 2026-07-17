@@ -13,9 +13,10 @@ label, separator/hint styling) so :mod:`datus.cli.repl` and
 :mod:`datus.cli.tui.app` can share it without importing each other.
 """
 
-from dataclasses import dataclass
 from enum import Enum
 from typing import Dict
+
+from pydantic import BaseModel, ConfigDict
 
 
 class InputMode(str, Enum):
@@ -35,13 +36,14 @@ def next_input_mode(mode: InputMode) -> InputMode:
     return _CYCLE[(idx + 1) % len(_CYCLE)]
 
 
-@dataclass(frozen=True)
-class ModeChrome:
+class ModeChrome(BaseModel):
     """Prompt label and style classes the TUI renders for one input mode.
 
     ``hint`` is the persistent one-line reminder pinned under the input while
     the mode is active; empty for chat (the window collapses to zero rows).
     """
+
+    model_config = ConfigDict(frozen=True)
 
     prompt: str
     prompt_style: str

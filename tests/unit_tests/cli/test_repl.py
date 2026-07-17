@@ -296,6 +296,7 @@ class TestCmdExitShutsDownBgSync:
 class TestCommandType:
     def test_all_types_exist(self):
         assert CommandType.SQL.value == "sql"
+        assert CommandType.BASH.value == "bash"
         assert CommandType.SLASH.value == "slash"
         assert CommandType.CHAT.value == "chat"
         assert CommandType.EXIT.value == "exit"
@@ -430,6 +431,14 @@ class TestParseCommand:
         cmd_type, _, args = cli._parse_command("SELECT 1;")
         assert cmd_type == CommandType.SQL
         assert args == "SELECT 1"
+
+    def test_chat_preserves_trailing_semicolon(self, cli):
+        """In chat mode a trailing ``;`` is part of the message (e.g.
+        ``Explain this;``) and must reach the model verbatim, not be stripped."""
+        cmd_type, cmd, args = cli._parse_command("Explain this;")
+        assert cmd_type == CommandType.CHAT
+        assert cmd == cli.default_agent
+        assert args == "Explain this;"
 
     def test_sql_like_text_is_chat_without_sql_mode(self, cli):
         """SQL is never auto-detected: outside SQL mode even ``SELECT ...``
@@ -745,6 +754,32 @@ class TestRunManualSql:
         assert "columns" not in payload
         assert "3 rows updated" in payload["meta"]
 
+    def test_non_arrow_zero_row_dml_is_success(self, cli):
+        """A successful UPDATE/DELETE matching zero rows has ``row_count == 0``
+        and no arrow payload — it is a success, not a result-format error."""
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = 0
+        del mock_result.sql_return.column_names  # non-arrow path
+        cli.db_connector.execute.return_value = mock_result
+
+        payload = cli._run_manual_sql("UPDATE orders SET x=1 WHERE 1=0")
+        assert payload["success"] is True
+        assert "0 rows updated" in payload["meta"]
+
+    def test_non_arrow_ddl_without_payload_is_success(self, cli):
+        """Successful DDL can return no ``row_count`` and no payload; it must
+        still be reported as success rather than a format error."""
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.row_count = None
+        mock_result.sql_return = None
+        cli.db_connector.execute.return_value = mock_result
+
+        payload = cli._run_manual_sql("CREATE TABLE t (id INT)")
+        assert payload["success"] is True
+        assert "columns" not in payload
+
     def test_content_set_sql_updates_cli_context_in_place(self, cli):
         """USE/SET SQL updates cli_context in-place, preserving accumulated state."""
         from datus.utils.constants import SQLType
@@ -1021,63 +1056,6 @@ class TestExecuteBashMode:
             cli._execute_bash_mode("   ")
         runner.assert_not_called()
         cli.chat_commands.execute_chat_command.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Tests: _cmd_bash
-# ---------------------------------------------------------------------------
-
-
-class TestCmdBash:
-    def test_empty_args_prints_message(self, cli):
-        cli._cmd_bash("")
-        output = cli.console.file.getvalue()
-        assert "Please provide a bash command." in output
-
-    def test_non_whitelisted_command_prints_security_error(self, cli):
-        cli._cmd_bash("rm -rf /tmp/test")
-        output = cli.console.file.getvalue()
-        assert "Security:" in output
-        assert "not in whitelist" in output
-
-    def test_whitelisted_command_executes(self, cli):
-        mock_run_result = MagicMock()
-        mock_run_result.returncode = 0
-        mock_run_result.stdout = "/home/user\n"
-
-        with patch("subprocess.run", return_value=mock_run_result):
-            cli._cmd_bash("pwd")
-
-        output = cli.console.file.getvalue()
-        assert "/home/user" in output
-
-    def test_command_failure_prints_stderr(self, cli):
-        mock_run_result = MagicMock()
-        mock_run_result.returncode = 1
-        mock_run_result.stderr = "no such file"
-
-        with patch("subprocess.run", return_value=mock_run_result):
-            cli._cmd_bash("ls /nonexistent")
-
-        output = cli.console.file.getvalue()
-        assert "Command failed with code 1:" in output
-        assert "no such file" in output
-
-    def test_timeout_prints_error(self, cli):
-        import subprocess
-
-        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("pwd", 10)):
-            cli._cmd_bash("pwd")
-
-        output = cli.console.file.getvalue()
-        assert "timed out" in output.lower()
-
-    def test_exception_prints_error(self, cli):
-        with patch("subprocess.run", side_effect=OSError("permission denied")):
-            cli._cmd_bash("ls")
-
-        output = cli.console.file.getvalue()
-        assert "Error" in output
 
 
 # ---------------------------------------------------------------------------

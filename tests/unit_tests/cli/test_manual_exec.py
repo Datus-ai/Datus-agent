@@ -16,6 +16,7 @@ Tests cover:
 """
 
 import io
+import json
 
 from rich.console import Console
 
@@ -30,6 +31,7 @@ from datus.cli.manual_exec import (
     decode_exec_message,
     encode_exec_message,
     exec_preview,
+    exec_to_markdown,
     is_exec_message,
     render_exec_block,
 )
@@ -107,6 +109,58 @@ class TestIsExecAndDecodeGuards:
 
     def test_unknown_kind_decodes_to_none(self):
         assert decode_exec_message(EXEC_SENTINEL + '{"kind":"python","command":"x"}') is None
+
+
+class TestDecodeValidation:
+    """A persisted record is validated against its typed payload model, so a
+    corrupted row degrades to an ordinary message instead of crashing renderers."""
+
+    def test_malformed_rows_decodes_to_none(self):
+        # ``rows`` must be a list of string lists; ``[1]`` is not.
+        bad = EXEC_SENTINEL + json.dumps({"kind": "sql", "command": "x", "success": True, "rows": [1]})
+        assert decode_exec_message(bad) is None
+
+    def test_missing_required_field_decodes_to_none(self):
+        # ``success`` has no default — a record without it is not a valid payload.
+        bad = EXEC_SENTINEL + json.dumps({"kind": "sql", "command": "x"})
+        assert decode_exec_message(bad) is None
+
+    def test_kind_as_non_string_decodes_to_none(self):
+        bad = EXEC_SENTINEL + json.dumps({"kind": ["sql"], "command": "x", "success": True})
+        assert decode_exec_message(bad) is None
+
+
+class TestExecToMarkdownSafety:
+    """``exec_to_markdown`` must render arbitrary command/result content without
+    letting it break out of the Markdown structure (web/SSE consumers)."""
+
+    def test_plain_message_passthrough(self):
+        assert exec_to_markdown("hello world") == "hello world"
+
+    def test_command_with_triple_backticks_uses_collision_safe_fence(self):
+        payload = build_sql_error_payload("SELECT '```x```'", "e")
+        md = exec_to_markdown(encode_exec_message(payload))
+        # A 4-backtick fence keeps the command's own ``` runs inside the block.
+        assert "````sql\nSELECT '```x```'\n````" in md
+
+    def test_output_with_backticks_uses_collision_safe_fence(self):
+        payload = build_bash_payload("echo x", True, "```code```", None, 0.01)
+        md = exec_to_markdown(encode_exec_message(payload))
+        assert "````\n```code```\n````" in md
+
+    def test_table_cells_escape_pipes(self):
+        payload = build_sql_payload("SELECT a", ["a|b"], [{"a|b": "x|y"}], 1, 0.01)
+        md = exec_to_markdown(encode_exec_message(payload))
+        # Pipes in header and cell are escaped so they don't spawn phantom columns.
+        assert "a\\|b" in md
+        assert "x\\|y" in md
+
+    def test_error_content_markdown_is_neutralised(self):
+        payload = build_sql_error_payload("SELECT 1", "boom **bold** | pipe")
+        md = exec_to_markdown(encode_exec_message(payload))
+        assert "**Error:**" in md  # our own label stays
+        assert "\\*\\*bold\\*\\*" in md  # the error's markdown is escaped
+        assert "\\| pipe" in md
 
 
 class TestExecPreview:

@@ -225,6 +225,32 @@ class TestInputPrompt:
         )
         assert app._get_input_prompt() == [("class:input-prompt", "> ")]
 
+    def test_collapsed_paste_prompt_reflects_execution_mode(self) -> None:
+        # Enter still executes in SQL/bash mode even with pasted content
+        # collapsed, so the collapsed prompt must keep the mode marker rather
+        # than misleadingly showing the green chat ``> ``.
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+            input_mode_fn=lambda: "sql",
+        )
+        app._paste_collapsed = True
+        assert app._get_input_prompt() == [
+            ("class:input-prompt.sql", "sql> "),
+            ("class:input-prompt.hint", "(Ctrl+E to expand) "),
+        ]
+
+    def test_collapsed_paste_prompt_stays_chat_in_chat_mode(self) -> None:
+        app = DatusApp(
+            status_tokens_fn=lambda: [],
+            dispatch_fn=lambda text: None,
+        )
+        app._paste_collapsed = True
+        assert app._get_input_prompt() == [
+            ("class:input-prompt", "> "),
+            ("class:input-prompt.hint", "(Ctrl+E to expand) "),
+        ]
+
 
 class TestModeChrome:
     """Non-chat modes paint coloured chrome around the input: separators, hint line."""

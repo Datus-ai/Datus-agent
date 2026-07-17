@@ -26,32 +26,6 @@ def disable_tui_for_prompt_session_tests(monkeypatch):
 
 
 @pytest.mark.acceptance
-def test_bash_command_allowed(mock_args, capsys):
-    with (
-        patch("datus.cli.repl.PromptSession.prompt") as mock_prompt,
-        patch("subprocess.run") as mock_run,
-    ):
-        mock_prompt.side_effect = ["/bash ls -l", EOFError]
-        cli = DatusCLI(args=mock_args)
-        cli.run()
-        mock_run.assert_called_once_with("ls -l", shell=True, capture_output=True, text=True, timeout=10)
-
-
-@pytest.mark.acceptance
-def test_bash_command_denied(mock_args, capsys):
-    with (
-        patch("datus.cli.repl.PromptSession.prompt") as mock_prompt,
-        patch("subprocess.run") as mock_run,
-    ):
-        mock_prompt.side_effect = ["/bash rm -rf ./temp.temp", EOFError]
-        cli = DatusCLI(args=mock_args)
-        cli.run()
-        mock_run.assert_not_called()
-        captured = capsys.readouterr()
-        assert "Command 'rm' not in whitelist" in captured.out
-
-
-@pytest.mark.acceptance
 def test_databases_command(mock_args, capsys):
     with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
         mock_prompt.side_effect = ["/databases", EOFError]
