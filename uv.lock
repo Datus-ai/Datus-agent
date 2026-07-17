@@ -683,7 +683,7 @@ wheels = [
 
 [[package]]
 name = "datus-agent"
-version = "0.3.8rc1"
+version = "0.3.8"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
