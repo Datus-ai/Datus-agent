@@ -1154,11 +1154,24 @@ class ChatTaskManager:
         tools use — deliberately NOT the completer's vector search, which is empty
         until the KB is vectorised (and is slated for removal).
         """
-        return (
-            self._resolve_table_paths(agent_config, table_paths),
-            self._resolve_metric_paths(agent_config, metric_paths),
-            self._resolve_sql_paths(agent_config, sql_paths),
+        logger.info(
+            "AT-CONTEXT resolving: table_paths=%s metric_paths=%s sql_paths=%s (project=%s, datasource=%s)",
+            table_paths,
+            metric_paths,
+            sql_paths,
+            getattr(agent_config, "project_name", None),
+            getattr(agent_config, "current_datasource", None),
         )
+        tables = self._resolve_table_paths(agent_config, table_paths)
+        metrics = self._resolve_metric_paths(agent_config, metric_paths)
+        sqls = self._resolve_sql_paths(agent_config, sql_paths)
+        logger.info(
+            "AT-CONTEXT resolved: tables=%s metrics=%s sqls=%s",
+            [t.table_name for t in tables],
+            [m.name for m in metrics],
+            [s.name for s in sqls],
+        )
+        return tables, metrics, sqls
 
     def _resolve_table_paths(self, agent_config: AgentConfig, table_paths: Optional[List[str]]) -> List[TableSchema]:
         tables: List[TableSchema] = []
