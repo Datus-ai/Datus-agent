@@ -815,6 +815,43 @@ class AgenticNode(Node):
 
         return {key: value for key, value in context.items() if value}
 
+    def _render_at_context_parts(self, user_input: Any) -> List[str]:
+        """Render resolved @-referenced context as ordered prompt parts.
+
+        Single source of truth for surfacing @Knowledge / @Table / @Metric /
+        @Sql references to the LLM. Shared by :meth:`_build_enhanced_message`
+        and the deliverable / visual-artifact overrides so a new reference kind
+        is rendered everywhere by editing this one method. Reads every field
+        via ``getattr`` — inputs that don't declare a field (or don't inherit
+        :class:`~datus.schemas.at_context.AtContextInput`) simply contribute
+        nothing.
+        """
+        parts: List[str] = []
+
+        ext_know = getattr(user_input, "external_knowledge", "") or ""
+        if ext_know:
+            parts.append(f"MUST use these business logic:\n{ext_know}")
+
+        schemas = getattr(user_input, "schemas", None)
+        if schemas:
+            from datus.schemas.node_models import TableSchema
+
+            table_names_str = TableSchema.table_names_to_prompt(schemas)
+            parts.append(
+                "Available tables (MUST use these tables and ONLY use these "
+                f"table names in FROM/JOIN clauses): \n{table_names_str}"
+            )
+
+        metrics = getattr(user_input, "metrics", None)
+        if metrics:
+            parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
+
+        reference_sql = getattr(user_input, "reference_sql", None)
+        if reference_sql:
+            parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+
+        return parts
+
     def _build_enhanced_message(
         self,
         user_input: Any,
@@ -863,10 +900,6 @@ class AgenticNode(Node):
         if datasource_reminder:
             enhanced_parts.append(datasource_reminder)
 
-        ext_know = getattr(user_input, "external_knowledge", "") or ""
-        if ext_know:
-            enhanced_parts.append(f"MUST use these business logic:\n{ext_know}")
-
         db_type = getattr(self.agent_config, "db_type", "") if self.agent_config else ""
         if db_type and not datasource_reminder:
             # Always resolve empty database via the connector default — the
@@ -890,23 +923,7 @@ class AgenticNode(Node):
             if ctx:
                 enhanced_parts.append(ctx)
 
-        schemas = getattr(user_input, "schemas", None)
-        if schemas:
-            from datus.schemas.node_models import TableSchema
-
-            table_names_str = TableSchema.table_names_to_prompt(schemas)
-            enhanced_parts.append(
-                "Available tables (MUST use these tables and ONLY use these "
-                f"table names in FROM/JOIN clauses): \n{table_names_str}"
-            )
-
-        metrics = getattr(user_input, "metrics", None)
-        if metrics:
-            enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
-
-        reference_sql = getattr(user_input, "reference_sql", None)
-        if reference_sql:
-            enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+        enhanced_parts.extend(self._render_at_context_parts(user_input))
 
         if extra_enhanced_parts:
             enhanced_parts.extend(p for p in extra_enhanced_parts if p)

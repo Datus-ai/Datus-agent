@@ -2040,6 +2040,74 @@ class TestCopySession:
         assert [it.get("content") for it in read_items] == ["Q1", "A1", "Q2", "A2"]
 
 
+class TestUserMessageContext:
+    """save_user_message_context + get_session_messages @-context round-trip."""
+
+    def _seed_turn(self, sm_custom, session_id, user_text="gen metrics from raw_customers"):
+        import asyncio
+
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        session = AdvancedSQLiteSession(session_id=session_id, db_path=db_path, create_tables=True)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": user_text},
+                    {"role": "assistant", "content": "done"},
+                ]
+            )
+        )
+
+    def test_round_trip_attaches_at_context_to_user_bubble(self, sm_custom):
+        session_id = "chat_session_atctx01"
+        self._seed_turn(sm_custom, session_id)
+        sm_custom.save_user_message_context(
+            session_id,
+            {"table_paths": ["default_catalog.jeff_shop_live.raw_customers"], "metric_paths": ["m/gmv"]},
+        )
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 1
+        assert users[0]["at_context"]["table_paths"] == ["default_catalog.jeff_shop_live.raw_customers"]
+        assert users[0]["at_context"]["metric_paths"] == ["m/gmv"]
+
+    def test_no_context_leaves_user_bubble_without_at_context(self, sm_custom):
+        session_id = "chat_session_atctx02"
+        self._seed_turn(sm_custom, session_id)
+        # Empty context is a no-op — nothing persisted.
+        sm_custom.save_user_message_context(session_id, {})
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 1
+        assert "at_context" not in users[0]
+
+    def test_context_maps_to_correct_turn(self, sm_custom):
+        """A second turn's context must not bleed onto the first turn's bubble."""
+        import asyncio
+
+        session_id = "chat_session_atctx03"
+        db_path = os.path.join(sm_custom.session_dir, f"{session_id}.db")
+        session = AdvancedSQLiteSession(session_id=session_id, db_path=db_path, create_tables=True)
+        asyncio.run(
+            session.add_items([{"role": "user", "content": "turn one"}, {"role": "assistant", "content": "a1"}])
+        )
+        # No context for turn 1.
+        asyncio.run(
+            session.add_items([{"role": "user", "content": "turn two"}, {"role": "assistant", "content": "a2"}])
+        )
+        sm_custom.save_user_message_context(session_id, {"table_paths": ["c.d.t2"]})
+
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 2
+        assert "at_context" not in users[0]
+        assert users[1]["at_context"]["table_paths"] == ["c.d.t2"]
+
+    def test_missing_side_table_is_graceful(self, sm_custom):
+        """Sessions predating the feature (no side table) read back cleanly."""
+        session_id = "chat_session_atctx04"
+        self._seed_turn(sm_custom, session_id)
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert len(users) == 1
+        assert "at_context" not in users[0]
+
+
 # ---------------------------------------------------------------------------
 # Module-level helpers: extract_agent_from_session_id, session_matches_agent
 # ---------------------------------------------------------------------------

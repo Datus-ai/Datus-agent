@@ -36,6 +36,7 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
+from datus.schemas.at_context import apply_at_context
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
@@ -1074,7 +1075,44 @@ class SubAgentTaskTool:
                     tools.extend(ask_user_tool.available_tools())
 
     def _build_node_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
-        """Build the appropriate input object for the given node.
+        """Build the subagent input and attach inherited DB + @-context.
+
+        Delegates type dispatch to :meth:`_build_typed_subagent_input`, then
+        threads the parent node's resolved @-context (schemas / metrics /
+        reference_sql / external_knowledge) through the single
+        :func:`apply_at_context` choke point, so a ``task()``-spawned subagent
+        sees the same @Table/@Metric/@Sql references the parent turn carried.
+        """
+        node_input = self._build_typed_subagent_input(node, prompt, db_ctx=db_ctx)
+        at_ctx = self._parent_at_context()
+        return apply_at_context(
+            node_input,
+            schemas=at_ctx.get("schemas"),
+            metrics=at_ctx.get("metrics"),
+            reference_sql=at_ctx.get("reference_sql"),
+            external_knowledge=at_ctx.get("external_knowledge"),
+        )
+
+    def _parent_at_context(self) -> Dict[str, Any]:
+        """Resolved @-context (schemas/metrics/reference_sql/knowledge) the parent carries.
+
+        Mirrors :meth:`_parent_db_context`: reads the parent node's ``input`` so a
+        subagent inherits the same @-references. Empty when there is no parent or
+        the parent input declares none.
+        """
+        parent = self._parent_node
+        if parent is None:
+            return {}
+        parent_input = getattr(parent, "input", None)
+        return {
+            "schemas": getattr(parent_input, "schemas", None),
+            "metrics": getattr(parent_input, "metrics", None),
+            "reference_sql": getattr(parent_input, "reference_sql", None),
+            "external_knowledge": getattr(parent_input, "external_knowledge", None) or None,
+        }
+
+    def _build_typed_subagent_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
+        """Build the node-type-specific subagent input (DB context only, no @-context).
 
         The subagent inherits the parent node's resolved physical ``database`` (and
         ``catalog``/``db_schema`` where supported) via :meth:`_parent_db_context`; without

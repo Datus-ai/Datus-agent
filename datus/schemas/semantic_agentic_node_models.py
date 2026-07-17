@@ -13,10 +13,11 @@ from typing import List, Optional
 
 from pydantic import ConfigDict, Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class SemanticNodeInput(BaseInput):
+class SemanticNodeInput(AtContextInput):
     """
     Input model for SemanticAgenticNode interactions.
     """

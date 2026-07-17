@@ -14,7 +14,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 # LLM-supplied slug doubles as the on-disk directory name; constrained
 # to a filesystem-friendly subset so we never need to URL-escape it.
@@ -78,7 +79,7 @@ class QueryResultFile(BaseModel):
         return self
 
 
-class GenVisualReportNodeInput(BaseInput):
+class GenVisualReportNodeInput(AtContextInput):
     """Input model for GenVisualReportAgenticNode."""
 
     user_message: str = Field(..., description="User's analysis question (required)")

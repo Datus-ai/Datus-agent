@@ -710,6 +710,11 @@ class ChatTaskManager:
                     if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
                         tool_result_seen = True
 
+            # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
+            # so the history API can re-render them. Best-effort and off the
+            # event loop; must never fail the turn.
+            await asyncio.to_thread(self._persist_turn_at_context, agent_config, session_id, request, user_id)
+
             # 7. End event
             token_kwargs: dict = {}
             try:
@@ -779,6 +784,41 @@ class ChatTaskManager:
             # Keep completed task for resume within TTL
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
+
+    def _persist_turn_at_context(
+        self,
+        agent_config: AgentConfig,
+        session_id: str,
+        request: StreamChatInput,
+        user_id: Optional[str],
+    ) -> None:
+        """Persist the just-completed turn's @-references to the session side table.
+
+        Stores the raw request path identifiers (not the resolved objects) so
+        :meth:`ChatService.get_history` can echo them back for front-end display.
+        No-op when the turn carried no references; failures are swallowed.
+        """
+        context: Dict[str, Any] = {}
+        if request.table_paths:
+            context["table_paths"] = list(request.table_paths)
+        if request.metric_paths:
+            context["metric_paths"] = list(request.metric_paths)
+        if request.sql_paths:
+            context["sql_paths"] = list(request.sql_paths)
+        if request.knowledge_paths:
+            context["knowledge_paths"] = list(request.knowledge_paths)
+        if not context:
+            return
+        try:
+            from datus.models.session_manager import SessionManager
+            from datus.utils.path_manager import get_path_manager
+
+            base_dir = getattr(agent_config, "session_dir", None) or str(
+                get_path_manager(agent_config=agent_config).sessions_dir
+            )
+            SessionManager(session_dir=base_dir, scope=user_id).save_user_message_context(session_id, context)
+        except Exception:
+            logger.debug("Failed to persist turn @-context for session %s", session_id, exc_info=True)
 
     async def _push_event(self, task: ChatTask, event: SSEEvent) -> None:
         """Append an event to the task buffer and notify consumers."""

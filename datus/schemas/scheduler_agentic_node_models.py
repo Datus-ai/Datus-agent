@@ -13,10 +13,11 @@ from typing import Any, Dict, Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class SchedulerNodeInput(BaseInput):
+class SchedulerNodeInput(AtContextInput):
     """Input model for SchedulerAgenticNode."""
 
     user_message: str = Field(..., description="User's scheduler request (required)")

@@ -10,6 +10,8 @@ Used by CLI print mode and interactive REPL to avoid duplicating node creation l
 
 from typing import TYPE_CHECKING, Literal, Optional
 
+from datus.schemas.at_context import apply_at_context
+
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
 
@@ -305,11 +307,19 @@ def create_node_input(
     at_tables=None,
     at_metrics=None,
     at_sqls=None,
+    external_knowledge: Optional[str] = None,
     prompt_language: str = "en",
     plan_mode: bool = False,
     source_session_id: Optional[str] = None,
 ):
-    """Create node input based on node type.
+    """Create node input for *node*, then attach resolved @-context uniformly.
+
+    The type dispatch lives in :func:`_build_typed_node_input`; @-context
+    (``at_tables`` / ``at_metrics`` / ``at_sqls`` / ``external_knowledge``) is
+    applied here through the single :func:`apply_at_context` choke point so no
+    per-node branch can forget it. Any input inheriting
+    :class:`~datus.schemas.at_context.AtContextInput` picks the context up;
+    others are skipped silently.
 
     Args:
         user_message: The user's message.
@@ -320,11 +330,44 @@ def create_node_input(
         at_tables: @-referenced tables.
         at_metrics: @-referenced metrics.
         at_sqls: @-referenced SQL queries.
+        external_knowledge: @-referenced supplementary knowledge text.
         prompt_language: Language for prompts (default "en").
         plan_mode: Whether to enable plan mode.
         source_session_id: Source session the feedback node should copy from.
             Only consumed by :class:`FeedbackAgenticNode`.
     """
+    node_input = _build_typed_node_input(
+        user_message=user_message,
+        node=node,
+        catalog=catalog,
+        database=database,
+        db_schema=db_schema,
+        scoped_tables=scoped_tables,
+        prompt_language=prompt_language,
+        plan_mode=plan_mode,
+        source_session_id=source_session_id,
+    )
+    return apply_at_context(
+        node_input,
+        schemas=at_tables,
+        metrics=at_metrics,
+        reference_sql=at_sqls,
+        external_knowledge=external_knowledge,
+    )
+
+
+def _build_typed_node_input(
+    user_message: str,
+    node,
+    catalog: Optional[str] = None,
+    database: Optional[str] = None,
+    db_schema: Optional[str] = None,
+    scoped_tables=None,
+    prompt_language: str = "en",
+    plan_mode: bool = False,
+    source_session_id: Optional[str] = None,
+):
+    """Construct the node-type-specific input object (no @-context wiring)."""
     from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
     from datus.agent.node.gen_job_agentic_node import GenJobAgenticNode
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -414,9 +457,6 @@ def create_node_input(
             catalog=catalog,
             database=database,
             db_schema=db_schema,
-            schemas=at_tables,
-            metrics=at_metrics,
-            reference_sql=at_sqls,
             prompt_language=prompt_language,
             plan_mode=plan_mode,
         )
@@ -466,9 +506,6 @@ def create_node_input(
             catalog=catalog,
             database=database,
             db_schema=db_schema,
-            schemas=at_tables,
-            metrics=at_metrics,
-            reference_sql=at_sqls,
             plan_mode=plan_mode,
         )
 

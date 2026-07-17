@@ -50,7 +50,6 @@ from datus.tools.func_tool._visual_artifact_helpers import (
 )
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import build_structured_content
 
 logger = get_logger(__name__)
 
@@ -390,6 +389,14 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         return self._finalize_system_prompt(base_prompt)
 
     def _build_enhanced_message(self, user_input: InputT) -> str:
+        """Enrich the user message with catalog/db/schema + @-referenced context.
+
+        Visual-artifact nodes keep a focused override (they don't run the base
+        plan-mode flow); @Table/@Metric/@Sql/@Knowledge references are rendered
+        through the shared :meth:`AgenticNode._render_at_context_parts`.
+        """
+        from datus.utils.message_utils import build_structured_content
+
         parts: List[str] = []
         catalog = getattr(user_input, "catalog", None)
         database = getattr(user_input, "database", None)
@@ -402,6 +409,8 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             parts.append(f"Database context: {database}")
         if db_schema:
             parts.append(f"Schema: {db_schema}")
+
+        parts.extend(self._render_at_context_parts(user_input))
 
         if parts:
             return build_structured_content("\n".join(parts), user_message)

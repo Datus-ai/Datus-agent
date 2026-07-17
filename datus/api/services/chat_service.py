@@ -12,6 +12,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from datus.agent.node.chat_agentic_node import ChatAgenticNode
 from datus.api.models.base_models import Result
 from datus.api.models.cli_models import (
+    AtContextData,
     ChatHistoryData,
     ChatSessionData,
     ChatSessionItemInfo,
@@ -250,11 +251,21 @@ class ChatService:
                 if role == "user":
                     content = msg.get("content", "")
                     if content:
+                        at_ctx_raw = msg.get("at_context")
+                        at_context = None
+                        if isinstance(at_ctx_raw, dict):
+                            at_context = AtContextData(
+                                table_paths=at_ctx_raw.get("table_paths") or [],
+                                metric_paths=at_ctx_raw.get("metric_paths") or [],
+                                sql_paths=at_ctx_raw.get("sql_paths") or [],
+                                knowledge_paths=at_ctx_raw.get("knowledge_paths") or [],
+                            )
                         sse_messages.append(
                             SSEMessagePayload(
                                 message_id=str(uuid.uuid4()),
                                 role="user",
                                 content=[IMessageContent(type="markdown", payload={"content": content})],
+                                at_context=at_context,
                             )
                         )
                         event_id += 1
