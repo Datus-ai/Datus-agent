@@ -3581,6 +3581,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Semantic Model Generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#refreshing-a-tables-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refreshing a table's model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4304,6 +4321,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Semantic Model Generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#refreshing-a-tables-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refreshing a table's model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4489,22 +4523,22 @@
 </span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">              </span><span class="nt">dialects</span><span class="p">:</span>
 </span><span id="__span-4-22"><a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">dialect</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ANSI_SQL</span>
 </span><span id="__span-4-23"><a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="w">                  </span><span class="nt">expression</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">channel</span>
-</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">            </span><span class="nt">dimension</span><span class="p">:</span>
-</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">              </span><span class="nt">is_time</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-</span><span id="__span-4-26"><a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="w">            </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Order</span><span class="nv"> </span><span class="s">channel&quot;</span>
-</span><span id="__span-4-27"><a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a><span class="w">            </span><span class="nt">custom_extensions</span><span class="p">:</span>
-</span><span id="__span-4-28"><a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="w">              </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">vendor_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DATUS</span>
-</span><span id="__span-4-29"><a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="w">                </span><span class="nt">data</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;{&quot;type&quot;:&quot;categorical&quot;}&#39;</span>
+</span><span id="__span-4-24"><a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="w">            </span><span class="nt">dimension</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+</span><span id="__span-4-25"><a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="w">            </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Order</span><span class="nv"> </span><span class="s">channel&quot;</span>
 </span></code></pre></div>
 <p>Key rules:</p>
 <ul>
 <li>Use one canonical dataset per physical table. Do not declare separate datasets for different queries or different metrics over the same table.</li>
 <li>Use OSI core <code>fields</code>, not MetricFlow <code>dimensions</code>.</li>
 <li>Dataset <code>source</code> is a table-name string, not <code>{table: ...}</code>.</li>
-<li>Declare primary keys in <code>primary_key</code>.</li>
-<li>Mark time fields with <code>dimension.is_time: true</code>; put Datus time-granularity hints in <code>custom_extensions</code>.</li>
+<li><strong>Field roles are structural.</strong> A field with a <code>dimension:</code> block is a grouping/filtering dimension; a field without one is a plain row-level expression that documents the column and backs metric expressions. Columns that are only aggregated by metrics (balances, amounts, precomputed rates) are declared as plain fields without the block, and <code>get_dimensions</code> does not list them. Field-level <code>type</code> hints are not part of the authoring contract.</li>
+<li><strong>Keys are transcribed, never inferred.</strong> <code>primary_key</code> / <code>unique_keys</code> are written only when the source database declares them; warehouse tables without declared constraints get no <code>primary_key</code>, and the row grain is documented in <code>ai_context</code> instead.</li>
+<li>A composite primary key that contains the dataset's time dimension (monthly snapshot tables) is valid: the compiler keeps the time dimension and resolves the identifier conflict during lowering.</li>
+<li>Mark time fields with <code>dimension.is_time: true</code>; put the Datus <code>time_granularity</code> hint in <code>custom_extensions</code>.</li>
 <li>Declare relationships under the semantic model object, not inside datasets.</li>
 </ul>
+<h3 id="refreshing-a-tables-model">Refreshing a table's model<a class="headerlink" href="#refreshing-a-tables-model" title="Permanent link">&para;</a></h3>
+<p>To regenerate a table's semantic model, re-run <code>gen_semantic_model</code> for it, then rebuild the vector KB with <code>/build-kb</code> so catalog facts such as <code>is_dimension</code> reflect the current model.</p>
 <h2 id="metric-generation">Metric Generation<a class="headerlink" href="#metric-generation" title="Permanent link">&para;</a></h2>
 <p>In OSI mode, <code>gen_metrics</code> appends metrics under <code>semantic_model[0].metrics</code>. Business expressions live in OSI core <code>expression</code>; Datus execution hints live in <code>custom_extensions</code>.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.2.0.dev0</span>
@@ -4671,7 +4705,7 @@
 <li>The OSI adapter currently defaults to the MetricFlow execution backend.</li>
 <li>The current relationship execution profile supports single-column joins. Composite joins require future extension.</li>
 <li>SQL window functions cannot be written directly in OSI metric expressions. Use <code>offset_window</code> for period comparisons; ranking and TopN detail queries need a query layer or precomputed dataset.</li>
-<li>When a semantic model has multiple datasets, each metric must declare its owning <code>dataset</code> in the DATUS custom extension.</li>
+<li>When a semantic model has multiple datasets, each metric resolves its owning dataset from qualified column names in its expression (<code>SUM(orders.amount)</code>); a DATUS <code>dataset</code> hint is required only when the expression contains no qualified columns.</li>
 <li>Datus execution information outside OSI core must be encoded in <code>custom_extensions[{vendor_name: DATUS}]</code>, not as top-level OSI fields.</li>
 </ul>
 
