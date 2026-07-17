@@ -1928,3 +1928,56 @@ class TestStartChatDatasourceOverride:
         request = StreamChatInput(message="hi", session_id="ds-invalid", datasource="nonexistent")
         with pytest.raises(DatusException):
             await manager.start_chat(real_agent_config, request)
+
+
+class TestMatchTableEntry:
+    """_match_table_entry — resilient @Table resolution when the picker's
+    fullName (live introspection) diverges from the metadata-store key."""
+
+    FLAT = {
+        "jeff_shop_live.main.raw_stores": {
+            "table_name": "raw_stores",
+            "database_name": "jeff_shop_live",
+            "schema_name": "main",
+            "definition": "x",
+            "identifier": "i",
+        },
+        "jeff_shop_live.main.raw_orders": {
+            "table_name": "raw_orders",
+            "database_name": "jeff_shop_live",
+            "schema_name": "main",
+            "definition": "x",
+            "identifier": "i",
+        },
+    }
+
+    def test_catalog_prefix_mismatch_resolves(self):
+        entry = ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.jeff_shop_live.raw_stores")
+        assert entry and entry["table_name"] == "raw_stores"
+
+    def test_bare_db_table_resolves(self):
+        entry = ChatTaskManager._match_table_entry(self.FLAT, "jeff_shop_live.raw_stores")
+        assert entry and entry["table_name"] == "raw_stores"
+
+    def test_unknown_table_returns_none(self):
+        assert ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.jeff_shop_live.nope") is None
+
+    def test_ambiguous_without_db_returns_none(self):
+        amb = {
+            "db1.t": {"table_name": "t", "database_name": "db1"},
+            "db2.t": {"table_name": "t", "database_name": "db2"},
+        }
+        assert ChatTaskManager._match_table_entry(amb, "t") is None
+
+    def test_ambiguous_disambiguated_by_db(self):
+        amb = {
+            "db1.t": {"table_name": "t", "database_name": "db1"},
+            "db2.t": {"table_name": "t", "database_name": "db2"},
+        }
+        entry = ChatTaskManager._match_table_entry(amb, "db2.t")
+        assert entry and entry["database_name"] == "db2"
+
+    def test_sqlite_single_level_resolves(self):
+        flat = {"raw_stores": {"table_name": "raw_stores", "definition": "x"}}
+        entry = ChatTaskManager._match_table_entry(flat, "raw_stores")
+        assert entry and entry["table_name"] == "raw_stores"

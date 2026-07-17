@@ -1073,6 +1073,35 @@ class ChatTaskManager:
         )
         return event_id + 1
 
+    @staticmethod
+    def _match_table_entry(flatten: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
+        """Best-effort match when the picker's fullName != the metadata-store key.
+
+        The @-picker builds table paths from live introspection (the catalog
+        tree), while the completer indexes the schema-metadata store; the two can
+        differ in catalog presence or schema level (e.g. picker sends
+        ``default_catalog.db.table`` but the store key is ``db.schema.table``).
+        Fall back to matching the trailing components — table name, plus the
+        database when the path carries one. Returns a hit only when exactly one
+        candidate matches, so a genuinely ambiguous name never resolves to the
+        wrong table.
+        """
+        segs = [s.strip().strip('"').lower() for s in path.split(".") if s.strip()]
+        if not segs:
+            return None
+        want_table = segs[-1]
+        want_db = segs[-2] if len(segs) >= 2 else None
+        candidates: List[Dict[str, Any]] = []
+        for entry in flatten.values():
+            if str(entry.get("table_name", "")).lower() != want_table:
+                continue
+            if want_db is not None:
+                entry_db = str(entry.get("database_name", "")).lower()
+                if entry_db and entry_db != want_db:
+                    continue
+            candidates.append(entry)
+        return candidates[0] if len(candidates) == 1 else None
+
     def _resolve_at_context(
         self,
         agent_config: AgentConfig,
@@ -1089,11 +1118,19 @@ class ChatTaskManager:
             return [], [], []
 
         tables: List[TableSchema] = []
+        table_flatten = completer.table_completer.flatten_data
         for path in table_paths or []:
             try:
-                entry = completer.table_completer.flatten_data.get(path)
+                entry = table_flatten.get(path) or self._match_table_entry(table_flatten, path)
                 if entry:
                     tables.append(TableSchema.from_dict(entry))
+                else:
+                    logger.warning(
+                        "Unresolved @Table path '%s' (%d indexed tables); sample keys: %s",
+                        path,
+                        len(table_flatten),
+                        list(table_flatten.keys())[:5],
+                    )
             except Exception as e:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
 
