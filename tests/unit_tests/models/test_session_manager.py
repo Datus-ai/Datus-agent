@@ -2107,6 +2107,21 @@ class TestUserMessageContext:
         assert len(users) == 1
         assert "at_context" not in users[0]
 
+    def test_guard_skips_when_no_new_turn(self, sm_custom):
+        """previous_turn_number == current max => run added no turn => no write."""
+        session_id = "chat_session_atctx05"
+        self._seed_turn(sm_custom, session_id)
+        current = sm_custom.get_max_user_turn_number(session_id)
+        assert current >= 1
+        # Simulate a run that persisted no new user turn: guard must skip.
+        sm_custom.save_user_message_context(session_id, {"table_paths": ["c.d.t"]}, previous_turn_number=current)
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert "at_context" not in users[0]
+        # A genuinely new turn (previous < max) writes.
+        sm_custom.save_user_message_context(session_id, {"table_paths": ["c.d.t"]}, previous_turn_number=current - 1)
+        users = [m for m in sm_custom.get_session_messages(session_id) if m.get("role") == "user"]
+        assert users[0]["at_context"]["table_paths"] == ["c.d.t"]
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers: extract_agent_from_session_id, session_matches_agent

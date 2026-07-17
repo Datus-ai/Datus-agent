@@ -1047,13 +1047,44 @@ class SessionManager:
         ")"
     )
 
-    def save_user_message_context(self, session_id: str, context: Dict[str, Any]) -> None:
+    def get_max_user_turn_number(self, session_id: str) -> int:
+        """Return the highest ``user_turn_number`` recorded, or 0 when none/no DB.
+
+        ``user_turn_number`` is session-global and monotonic (assigned by the
+        SDK across every branch), so callers use it to detect whether a run
+        actually persisted a new user turn. Captured before a run and compared
+        after — see :meth:`save_user_message_context`.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return 0
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                row = conn.execute(
+                    "SELECT MAX(user_turn_number) FROM message_structure WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def save_user_message_context(
+        self, session_id: str, context: Dict[str, Any], previous_turn_number: int = -1
+    ) -> None:
         """Persist a turn's @-context against its ``user_turn_number``.
 
-        Call after the turn's user message is persisted by the SDK. Resolves the
-        turn number as ``MAX(user_turn_number)`` — each API run adds exactly one
-        new user turn, so the newest number is this turn's. No-op when *context*
-        is empty (no references) or the session DB / turn isn't there yet.
+        Call after the turn's user message is persisted by the SDK. The turn is
+        resolved as ``MAX(user_turn_number)``. ``previous_turn_number`` is the
+        value captured *before* the run: the write only happens when the new max
+        strictly exceeds it, so a run that persisted no new user turn (e.g. a
+        node type that emits no user message, or a failed/cancelled turn) can
+        never mis-attach this run's context onto the previous turn's bubble.
+
+        ``user_turn_number`` is session-global monotonic, so a bare ``MAX`` is
+        the right turn even across rewind/fork branches — no ``branch_id``
+        filter is needed. No-op when *context* is empty or the session DB /
+        turn isn't there yet.
         """
         if not context:
             return
@@ -1069,7 +1100,8 @@ class SessionManager:
                     (session_id,),
                 ).fetchone()
                 turn_number = row[0] if row else None
-                if turn_number is None:
+                if turn_number is None or int(turn_number) <= previous_turn_number:
+                    # No new user turn was persisted this run — don't attach.
                     return
                 conn.execute(self._USER_MESSAGE_CONTEXT_DDL)
                 conn.execute(

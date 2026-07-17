@@ -499,6 +499,10 @@ class ChatTaskManager:
         try:
             start_time = datetime.now()
 
+            # Snapshot the turn counter BEFORE the run so the @-context persist
+            # below only fires when this run actually adds a new user turn.
+            pre_turn_number = await asyncio.to_thread(self._max_user_turn_number, agent_config, session_id, user_id)
+
             # 1. Create node.
             #    Runs in thread pool because setup_tools() triggers synchronous
             #    operations (psycopg ConnectionPool creation, PG DDL for table
@@ -713,7 +717,9 @@ class ChatTaskManager:
             # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
             # so the history API can re-render them. Best-effort and off the
             # event loop; must never fail the turn.
-            await asyncio.to_thread(self._persist_turn_at_context, agent_config, session_id, request, user_id)
+            await asyncio.to_thread(
+                self._persist_turn_at_context, agent_config, session_id, request, user_id, pre_turn_number
+            )
 
             # 7. End event
             token_kwargs: dict = {}
@@ -785,17 +791,38 @@ class ChatTaskManager:
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
 
+    @staticmethod
+    def _session_manager(agent_config: AgentConfig, user_id: Optional[str]):
+        """Build a SessionManager pointed at this run's session dir + scope."""
+        from datus.models.session_manager import SessionManager
+        from datus.utils.path_manager import get_path_manager
+
+        base_dir = getattr(agent_config, "session_dir", None) or str(
+            get_path_manager(agent_config=agent_config).sessions_dir
+        )
+        return SessionManager(session_dir=base_dir, scope=user_id)
+
+    def _max_user_turn_number(self, agent_config: AgentConfig, session_id: str, user_id: Optional[str]) -> int:
+        """Best-effort snapshot of the session's turn counter (0 on any error)."""
+        try:
+            return self._session_manager(agent_config, user_id).get_max_user_turn_number(session_id)
+        except Exception:
+            return 0
+
     def _persist_turn_at_context(
         self,
         agent_config: AgentConfig,
         session_id: str,
         request: StreamChatInput,
         user_id: Optional[str],
+        previous_turn_number: int = -1,
     ) -> None:
         """Persist the just-completed turn's @-references to the session side table.
 
         Stores the raw request path identifiers (not the resolved objects) so
         :meth:`ChatService.get_history` can echo them back for front-end display.
+        ``previous_turn_number`` (captured before the run) gates the write so a
+        run that added no new user turn never mis-attaches to the prior bubble.
         No-op when the turn carried no references; failures are swallowed.
         """
         context: Dict[str, Any] = {}
@@ -810,13 +837,9 @@ class ChatTaskManager:
         if not context:
             return
         try:
-            from datus.models.session_manager import SessionManager
-            from datus.utils.path_manager import get_path_manager
-
-            base_dir = getattr(agent_config, "session_dir", None) or str(
-                get_path_manager(agent_config=agent_config).sessions_dir
+            self._session_manager(agent_config, user_id).save_user_message_context(
+                session_id, context, previous_turn_number=previous_turn_number
             )
-            SessionManager(session_dir=base_dir, scope=user_id).save_user_message_context(session_id, context)
         except Exception:
             logger.debug("Failed to persist turn @-context for session %s", session_id, exc_info=True)
 
