@@ -53,6 +53,42 @@ class TestDBFuncToolIntegrationReal:
             assert "name" in col
             assert "type" in col
 
+    def test_sqlite_describe_table_surfaces_constraints(self, tmp_path):
+        """Constraint facts (composite pk, NOT NULL, default) survive the real connector round-trip."""
+        import sqlite3
+
+        from datus.tools.db_tools.config import SQLiteConfig
+        from datus.tools.db_tools.sqlite_connector import SQLiteConnector
+
+        db_path = tmp_path / "constraints.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE snapshot (
+                etl_dt TEXT NOT NULL,
+                org_no TEXT NOT NULL,
+                amount REAL,
+                status TEXT DEFAULT 'new',
+                PRIMARY KEY (etl_dt, org_no)
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        connector = SQLiteConnector(SQLiteConfig(db_path=str(db_path)))
+        tool = DBFuncTool(connector)
+        result = tool.describe_table("snapshot")
+
+        assert result.success == 1, f"Expected success but got error: {result.error}"
+        cols = {c["name"]: c for c in result.result["columns"]}
+        assert cols["etl_dt"]["pk"] is True
+        assert cols["org_no"]["pk"] is True
+        assert cols["etl_dt"]["nullable"] is False
+        assert "pk" not in cols["amount"]
+        assert "nullable" not in cols["amount"]
+        assert cols["status"]["default_value"] == "'new'"
+
     def test_sqlite_read_query_executes_sql(self, ssb_db_tool):
         """Test that read_query executes actual SQL."""
         result = ssb_db_tool.read_query("SELECT COUNT(*) as cnt FROM customer")

@@ -315,6 +315,18 @@ class GenSemanticModelAgenticNode(AgenticNode):
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
+        context["osi_authoring_spec"] = ""
+        if context["authoring_format"] == "osi":
+            # The OSI core spec document ships with the adapter package so the
+            # contract the LLM is shown and the schema the adapter validates
+            # against cannot drift. The dialect placeholder is substituted at
+            # template render time from the active datasource's dialect map.
+            try:
+                from datus_semantic_osi.authoring_spec import authoring_spec_text
+
+                context["osi_authoring_spec"] = authoring_spec_text("__OSI_DIALECT__")
+            except ImportError:
+                logger.debug("datus_semantic_osi.authoring_spec unavailable; skipping spec injection")
 
         logger.debug(f"Prepared template context: {context}")
         return context
