@@ -1199,6 +1199,11 @@ class DBFuncTool:
               - name (str): Column name (required)
               - type (str): Column data type (required)
               - comment (str): Column description/comment, enriched with semantic model description if available
+              - pk (bool, optional): present and true when the database reports the column
+                as part of the table's primary key; absent when not a key or unknown
+              - nullable (bool, optional): present and false when the column is NOT NULL;
+                absent when nullable or unknown
+              - default_value (str, optional): column default expression, when defined
               - is_dimension (bool): Whether this column is a dimension in semantic model
                 (semantic fields only present if semantic model exists)
             - table (dict, optional): Table-level metadata from semantic model (only if model exists):
@@ -1256,6 +1261,19 @@ class DBFuncTool:
                     "type": col.get("type", ""),
                     "comment": col.get("comment", "") or "",  # Ensure empty string if None
                 }
+                # Constraint facts are emitted only when informative: several
+                # connectors hardcode pk=False / nullable=True when the engine
+                # exposes no constraint metadata, so those values mean
+                # "unknown", not "verified absent".
+                pk_flag = col.get("pk")
+                # bool is an int subclass; SQLite reports the 1-based position
+                # within a composite key instead of a bool.
+                if isinstance(pk_flag, int) and pk_flag:
+                    normalized_col["pk"] = True
+                if col.get("nullable") is False:
+                    normalized_col["nullable"] = False
+                if col.get("default_value") not in (None, ""):
+                    normalized_col["default_value"] = str(col["default_value"])
                 columns.append(normalized_col)
 
             # 3. Enrich with Semantic Model Info if available
