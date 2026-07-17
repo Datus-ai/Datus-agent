@@ -30,7 +30,7 @@ The OSI expression dialect and target semantic model file for the current run ar
 Metric definitions inside a valid OSI core document:
 
 ```yaml
-version: 0.2.0.dev0
+version: <osi_version>            # use the exact version from the existing semantic model file
 semantic_model:
   - name: <target_model_name>
     datasets:

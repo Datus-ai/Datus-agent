@@ -16,11 +16,13 @@ The complete authoring specification for this run — YAML structure, field clas
 - OSI expression dialect for this run: `{{ osi_dialect_map.expression_dialect(datasource_type) }}` — the active datasource's dialect. Write expressions in this datasource's native SQL and use this exact value in every `expression.dialects[].dialect`.
 - Target semantic model name: `{{ default_osi_semantic_model_name | default('<model_name>', true) }}`
 - Target semantic model file: `{{ default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) }}`
-{% if osi_spec_skeleton %}
-## OSI Core Authoring Skeleton (from the active semantic adapter)
+{% if osi_authoring_spec %}
+## OSI Core Authoring Specification (from the active semantic adapter)
+
+The authoritative document shape you author against, including the Datus execution subset notes at the end:
 
 ```yaml
-{{ osi_spec_skeleton | replace("__OSI_DIALECT__", osi_dialect_map.expression_dialect(datasource_type)) }}
+{{ osi_authoring_spec | replace("__OSI_DIALECT__", osi_dialect_map.expression_dialect(datasource_type)) }}
 ```
 {% endif %}
 {% endif %}

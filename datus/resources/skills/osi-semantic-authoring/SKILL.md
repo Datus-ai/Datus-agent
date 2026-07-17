@@ -34,52 +34,7 @@ The presence of the `dimension:` block IS the dimension declaration. A field wit
 
 ## What you produce
 
-One valid OSI core document for the current business domain / semantic model scope:
-
-```yaml
-version: 0.2.0.dev0
-semantic_model:
-  - name: <target_model_name>
-    datasets:
-      - name: <dataset_name>
-        source: <physical_table_view_or_query_name>
-        description: "<business purpose and row grain of this dataset>"
-        ai_context:
-          instructions: "<how AI should use this dataset: grain, time field, common row-selection conditions or groupings, join caveats>"
-          synonyms: ["<business term>"]
-          examples: ["<question this dataset can answer>"]
-        primary_key: [<col>, ...]        # ONLY when the source metadata declares one — see rule 7
-        fields:
-          - name: <date_or_timestamp_column>
-            expression:
-              dialects:
-                - dialect: <osi_dialect>
-                  expression: <date_or_timestamp_column>
-            dimension:
-              is_time: true
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"time_granularity":"day"}'
-          - name: <grouping_or_filter_column>
-            expression:
-              dialects:
-                - dialect: <osi_dialect>
-                  expression: <grouping_or_filter_column>
-            dimension: {}
-            description: "<business meaning of the column>"
-          - name: <aggregation_only_column>
-            expression:
-              dialects:
-                - dialect: <osi_dialect>
-                  expression: <aggregation_only_column>
-            description: "<business meaning>"   # no dimension block: row-level measure source
-    relationships:
-      - name: <fact_dataset>_to_<dimension_dataset>
-        from: <fact_or_many_side_dataset>
-        to: <dimension_or_one_side_dataset>
-        from_columns: [<foreign_key_column>]
-        to_columns: [<primary_or_unique_key_column>]
-```
+One valid OSI core document for the current business domain / semantic model scope. The authoritative document shape — object structures, field lists, `version`, and the Datus execution subset notes — is the **OSI Core Authoring Specification** section of the system prompt; author against it exactly. This skill adds the decision rules the specification cannot express: which columns become which role, and how to fix validation conflicts.
 
 ## Authoring rules
 
