@@ -1270,7 +1270,11 @@ class ChatTaskManager:
             try:
                 details = rag.get_metrics_detail(subject_path=subject_path, name=name) if rag else []
                 if details:
-                    metrics.append(Metric.from_dict(self._none_to_empty(details[0])))
+                    metric = Metric.from_dict(self._none_to_empty(details[0]))
+                    # Authoritative subject_path from the picked path (the store row
+                    # may omit it), so the prompt can name where the metric lives.
+                    metric.subject_path = subject_path
+                    metrics.append(metric)
                     continue
                 logger.warning("Unresolved @Metric path '%s'; emitting look-up hint", path)
             except Exception as e:
@@ -1299,7 +1303,9 @@ class ChatTaskManager:
             try:
                 details = store.get_reference_sql_detail(subject_path=subject_path, name=name) if store else []
                 if details:
-                    sqls.append(ReferenceSql.from_dict(self._none_to_empty(details[0])))
+                    ref = ReferenceSql.from_dict(self._none_to_empty(details[0]))
+                    ref.subject_path = subject_path
+                    sqls.append(ref)
                     continue
                 logger.warning("Unresolved @Sql path '%s'; emitting look-up hint", path)
             except Exception as e:

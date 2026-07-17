@@ -2042,6 +2042,9 @@ class TestResolveMetricSqlPaths:
             metrics, hints = mgr._resolve_metric_paths(MagicMock(), ["Commerce/Orders/aov"])
         fake_rag.get_metrics_detail.assert_called_once_with(subject_path=["Commerce", "Orders"], name="aov")
         assert len(metrics) == 1 and metrics[0].name == "aov"
+        # subject_path must survive into the resolved metric (authoritative from
+        # the picked path), so the prompt can name where it lives.
+        assert metrics[0].subject_path == ["Commerce", "Orders"]
         assert hints == []
 
     def test_metric_unresolved_becomes_hint(self):
@@ -2066,6 +2069,7 @@ class TestResolveMetricSqlPaths:
         fake_store.get_reference_sql_detail.assert_called_once_with(subject_path=["main"], name="q")
         assert len(sqls) == 1 and sqls[0].sql == "select 1"
         assert sqls[0].comment == "" and sqls[0].tags == ""
+        assert sqls[0].subject_path == ["main"]
         assert hints == []
 
     def test_metric_none_description_coerced(self):

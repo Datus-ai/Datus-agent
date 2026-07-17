@@ -862,19 +862,41 @@ class AgenticNode(Node):
 
         metrics = getattr(user_input, "metrics", None)
         if metrics:
-            lines = []
+            blocks = []
             for m in metrics:
+                subject_path = getattr(m, "subject_path", []) or []
+                header = f"### {m.name}"
+                if subject_path:
+                    header += f"  (subject_path: {'/'.join(subject_path)})"
+                lines = [header]
                 desc = (getattr(m, "description", "") or "").strip()
-                lines.append(f"- {m.name}: {desc}" if desc else f"- {m.name}")
-            parts.append("## Referenced metrics\n" + "\n".join(lines))
+                if desc:
+                    lines.append(desc)
+                meta = []
+                metric_type = (getattr(m, "metric_type", "") or "").strip()
+                measure_expr = (getattr(m, "measure_expr", "") or "").strip()
+                dimensions = getattr(m, "dimensions", []) or []
+                if metric_type:
+                    meta.append(f"type: {metric_type}")
+                if measure_expr:
+                    meta.append(f"measure: {measure_expr}")
+                if dimensions:
+                    meta.append(f"dimensions: {', '.join(dimensions)}")
+                if meta:
+                    lines.append(" · ".join(meta))
+                blocks.append("\n".join(lines))
+            parts.append("## Referenced metrics\n" + "\n\n".join(blocks))
 
         reference_sql = getattr(user_input, "reference_sql", None)
         if reference_sql:
             blocks = []
             for r in reference_sql:
                 summary = (getattr(r, "summary", "") or "").strip()
-                sql = (getattr(r, "sql", "") or "").strip()
+                subject_path = getattr(r, "subject_path", []) or []
                 header = f"### {r.name}" + (f" — {summary}" if summary else "")
+                if subject_path:
+                    header += f"  (subject_path: {'/'.join(subject_path)})"
+                sql = (getattr(r, "sql", "") or "").strip()
                 blocks.append(header + (f"\n```sql\n{sql}\n```" if sql else ""))
             parts.append("## Referenced SQL\n" + "\n\n".join(blocks))
 

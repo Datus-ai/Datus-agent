@@ -316,6 +316,15 @@ class TableValue(BaseTableSchema):
         return self.model_dump()
 
 
+def _coerce_subject_path(value: Any) -> List[str]:
+    """Normalise a subject path to a list of segments (accepts list or '/'-joined str)."""
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    if isinstance(value, str) and value:
+        return [s for s in value.split("/") if s]
+    return []
+
+
 class Metric(BaseModel):
     """
     Model for metrics information used in SQL generation.
@@ -323,6 +332,12 @@ class Metric(BaseModel):
 
     name: str = Field(..., description="Name of the metric")
     description: str = Field(default="", description="Description of the metric")
+    subject_path: List[str] = Field(
+        default_factory=list, description="Subject-tree hierarchy (excludes the metric name)"
+    )
+    metric_type: str = Field(default="", description="Metric type (simple/derived/ratio/cumulative)")
+    measure_expr: str = Field(default="", description="Underlying measure/aggregation expression")
+    dimensions: List[str] = Field(default_factory=list, description="Available dimensions")
 
     def to_prompt(self, dialect: str = "snowflake") -> str:
         return self.description if self.description else f"Metric: {self.name}"
@@ -331,7 +346,11 @@ class Metric(BaseModel):
     def from_dict(cls, data: Dict[str, Any]) -> Metric:
         return cls(
             name=data.get("name", ""),
-            description=data.get("description", ""),
+            description=data.get("description", "") or "",
+            subject_path=_coerce_subject_path(data.get("subject_path")),
+            metric_type=data.get("metric_type", "") or "",
+            measure_expr=data.get("measure_expr", "") or "",
+            dimensions=list(data.get("dimensions") or []),
         )
 
 
@@ -341,6 +360,9 @@ class ReferenceSql(BaseModel):
     comment: str = Field(default="", description="Comment of the reference SQL table")
     summary: str = Field(default="", description="Summary of the reference SQL table")
     tags: str = Field(default="", description="Tags of the reference SQL table")
+    subject_path: List[str] = Field(
+        default_factory=list, description="Subject-tree hierarchy (excludes the reference SQL name)"
+    )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> ReferenceSql:
@@ -350,6 +372,7 @@ class ReferenceSql(BaseModel):
             comment=data.get("comment", ""),
             summary=data.get("summary", ""),
             tags=data.get("tags", ""),
+            subject_path=_coerce_subject_path(data.get("subject_path")),
         )
 
 
