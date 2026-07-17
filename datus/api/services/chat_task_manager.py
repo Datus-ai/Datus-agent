@@ -1103,32 +1103,19 @@ class ChatTaskManager:
         return candidates[0] if len(candidates) == 1 else None
 
     @staticmethod
-    def _lookup_subject(flatten: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
-        """Resolve a subject-tree ref (metric / reference_sql) resiliently.
+    def _split_subject_path(path: str) -> tuple[List[str], str]:
+        """Split a subject-tree ref path into ``(subject_path, name)``.
 
-        Order: exact key, then ``.`` -> ``/`` (older web bundles joined subject
-        paths with ``.`` while the completer store keys them with ``/``), then a
-        trailing-segment (suffix) match — the picker's subject-path prefix can
-        differ from the store's ``subject_path``, so a query ``b/c`` matches a
-        stored ``a/b/c``. The suffix match uses the full query segment sequence
-        and resolves only when exactly one key ends with it, so given both
-        ``A/b/c`` and ``D/b/c`` a query of ``A/b/c`` hits it exactly while a
-        bare ``b/c`` stays ambiguous and returns None (never a wrong guess).
+        The canonical form is ``/``-joined (``Commerce/Orders/aov``). A path that
+        contains no ``/`` is treated as an older ``.``-joined form and converted;
+        a ``/``-joined path is trusted verbatim so a ``.`` inside a leaf name
+        (``v1.2``) is preserved. The last segment is the leaf name.
         """
-        entry = flatten.get(path)
-        if entry is None and "." in path:
-            entry = flatten.get(path.replace(".", "/"))
-        if entry is None:
-            want_segs = [s.strip('"').lower() for s in path.replace(".", "/").split("/") if s.strip()]
-            if want_segs:
-                candidates = [
-                    e
-                    for key, e in flatten.items()
-                    if [s.strip('"').lower() for s in key.split("/") if s.strip()][-len(want_segs) :] == want_segs
-                ]
-                if len(candidates) == 1:
-                    entry = candidates[0]
-        return entry
+        normalized = path if "/" in path else path.replace(".", "/")
+        segs = [s.strip().strip('"') for s in normalized.split("/") if s.strip()]
+        if not segs:
+            return [], ""
+        return segs[:-1], segs[-1]
 
     @staticmethod
     def _synthesize_table_entry(path: str) -> Optional[Dict[str, Any]]:
@@ -1159,17 +1146,32 @@ class ChatTaskManager:
         metric_paths: Optional[List[str]],
         sql_paths: Optional[List[str]],
     ) -> tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
-        """Resolve @-reference paths to typed objects using a fresh completer."""
+        """Resolve @-reference paths to typed objects.
+
+        Tables come from the schema-metadata completer with a name-only fallback.
+        Metrics and reference SQL are resolved by EXACT subject path via the same
+        non-vector, path-scoped store lookup the get_metrics / get_reference_sql
+        tools use — deliberately NOT the completer's vector search, which is empty
+        until the KB is vectorised (and is slated for removal).
+        """
+        return (
+            self._resolve_table_paths(agent_config, table_paths),
+            self._resolve_metric_paths(agent_config, metric_paths),
+            self._resolve_sql_paths(agent_config, sql_paths),
+        )
+
+    def _resolve_table_paths(self, agent_config: AgentConfig, table_paths: Optional[List[str]]) -> List[TableSchema]:
+        tables: List[TableSchema] = []
+        if not table_paths:
+            return tables
         try:
             completer = AtReferenceCompleter(agent_config)
-            completer.reload_data()
+            completer.table_completer.reload_data()
+            table_flatten = completer.table_completer.flatten_data
         except Exception as exc:
-            logger.warning("Failed to resolve @ references; continuing without context references: %s", exc)
-            return [], [], []
-
-        tables: List[TableSchema] = []
-        table_flatten = completer.table_completer.flatten_data
-        for path in table_paths or []:
+            logger.warning("Table completer unavailable; falling back to name-only @Table refs: %s", exc)
+            table_flatten = {}
+        for path in table_paths:
             try:
                 entry = table_flatten.get(path) or self._match_table_entry(table_flatten, path)
                 if not entry:
@@ -1190,39 +1192,50 @@ class ChatTaskManager:
                     tables.append(TableSchema.from_dict(entry))
             except Exception as e:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
+        return tables
 
+    def _resolve_metric_paths(self, agent_config: AgentConfig, metric_paths: Optional[List[str]]) -> List[Metric]:
         metrics: List[Metric] = []
-        metric_flatten = completer.metric_completer.flatten_data
-        for path in metric_paths or []:
-            try:
-                entry = self._lookup_subject(metric_flatten, path)
-                if entry:
-                    metrics.append(Metric.from_dict(entry))
-                else:
-                    logger.warning(
-                        "Unresolved @Metric path '%s' (%d indexed metrics); sample keys: %s",
-                        path,
-                        len(metric_flatten),
-                        list(metric_flatten.keys())[:5],
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to resolve metric path '{path}': {e}")
+        if not metric_paths:
+            return metrics
+        try:
+            from datus.storage.metric.store import MetricRAG
 
+            rag = MetricRAG(agent_config)
+        except Exception as exc:
+            logger.warning("MetricRAG unavailable; skipping @Metric resolution: %s", exc)
+            return metrics
+        for path in metric_paths:
+            try:
+                subject_path, name = self._split_subject_path(path)
+                details = rag.get_metrics_detail(subject_path=subject_path, name=name) if name else []
+                if details:
+                    metrics.append(Metric.from_dict(details[0]))
+                else:
+                    logger.warning("Unresolved @Metric path '%s'", path)
+            except Exception as e:
+                logger.warning("Failed to resolve metric path '%s': %s", path, e)
+        return metrics
+
+    def _resolve_sql_paths(self, agent_config: AgentConfig, sql_paths: Optional[List[str]]) -> List[ReferenceSql]:
         sqls: List[ReferenceSql] = []
-        sql_flatten = completer.sql_completer.flatten_data
-        for path in sql_paths or []:
-            try:
-                entry = self._lookup_subject(sql_flatten, path)
-                if entry:
-                    sqls.append(ReferenceSql.from_dict(entry))
-                else:
-                    logger.warning(
-                        "Unresolved @Sql path '%s' (%d indexed reference SQL); sample keys: %s",
-                        path,
-                        len(sql_flatten),
-                        list(sql_flatten.keys())[:5],
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to resolve sql path '{path}': {e}")
+        if not sql_paths:
+            return sqls
+        try:
+            from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-        return tables, metrics, sqls
+            store = ReferenceSqlRAG(agent_config)
+        except Exception as exc:
+            logger.warning("ReferenceSqlRAG unavailable; skipping @Sql resolution: %s", exc)
+            return sqls
+        for path in sql_paths:
+            try:
+                subject_path, name = self._split_subject_path(path)
+                details = store.get_reference_sql_detail(subject_path=subject_path, name=name) if name else []
+                if details:
+                    sqls.append(ReferenceSql.from_dict(details[0]))
+                else:
+                    logger.warning("Unresolved @Sql path '%s'", path)
+            except Exception as e:
+                logger.warning("Failed to resolve sql path '%s': %s", path, e)
+        return sqls

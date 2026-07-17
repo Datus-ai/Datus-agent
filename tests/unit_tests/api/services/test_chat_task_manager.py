@@ -956,20 +956,27 @@ class TestResolveAtContext:
         assert isinstance(metrics, list)
         assert isinstance(sqls, list)
 
-    def test_resolve_at_context_returns_empty_when_completer_fails(self, real_agent_config):
+    def test_table_completer_failure_still_yields_name_only_ref(self, real_agent_config):
+        """A completer failure must not drop a picked @Table — it degrades to a
+        name-only reference so the node still knows which table to inspect."""
         manager = ChatTaskManager()
 
         with patch("datus.api.services.chat_task_manager.AtReferenceCompleter", side_effect=RuntimeError("hf offline")):
-            tables, metrics, sqls = manager._resolve_at_context(
-                real_agent_config,
-                ["db.schema.table"],
-                ["Finance.revenue"],
-                ["Finance.sql"],
-            )
+            tables = manager._resolve_table_paths(real_agent_config, ["db.schema.table"])
 
-        assert tables == []
-        assert metrics == []
-        assert sqls == []
+        assert [t.table_name for t in tables] == ["table"]
+
+    def test_metric_store_failure_degrades_to_empty(self, real_agent_config):
+        """@Metric resolution swallows a store failure and yields no refs."""
+        manager = ChatTaskManager()
+        with patch("datus.storage.metric.store.MetricRAG", side_effect=RuntimeError("store down")):
+            assert manager._resolve_metric_paths(real_agent_config, ["Finance/revenue"]) == []
+
+    def test_sql_store_failure_degrades_to_empty(self, real_agent_config):
+        """@Sql resolution swallows a store failure and yields no refs."""
+        manager = ChatTaskManager()
+        with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", side_effect=RuntimeError("store down")):
+            assert manager._resolve_sql_paths(real_agent_config, ["Finance/sql"]) == []
 
 
 class TestCreateNode:
@@ -2006,53 +2013,55 @@ class TestSynthesizeTableEntry:
         assert ChatTaskManager._synthesize_table_entry("") is None
 
 
-class TestLookupSubject:
-    """_lookup_subject — subject-tree ref resolution tolerating '.'/'/' separators."""
+class TestSplitSubjectPath:
+    """_split_subject_path — (subject_path, name) from a picked ref path."""
 
-    FLAT = {
-        "main/raw_customers": {"name": "raw_customers", "comment": "", "summary": "s", "tags": "", "sql": "select 1"}
-    }
+    def test_slash_joined(self):
+        assert ChatTaskManager._split_subject_path("Commerce/Orders/aov") == (["Commerce", "Orders"], "aov")
 
-    def test_dot_separator_normalizes_to_slash(self):
-        assert ChatTaskManager._lookup_subject(self.FLAT, "main.raw_customers")["name"] == "raw_customers"
+    def test_dot_joined_when_no_slash(self):
+        assert ChatTaskManager._split_subject_path("Commerce.Orders.aov") == (["Commerce", "Orders"], "aov")
 
-    def test_exact_slash_key(self):
-        assert ChatTaskManager._lookup_subject(self.FLAT, "main/raw_customers")["name"] == "raw_customers"
+    def test_slash_present_preserves_dot_in_name(self):
+        assert ChatTaskManager._split_subject_path("A/B/v1.2") == (["A", "B"], "v1.2")
 
-    def test_miss_returns_none(self):
-        assert ChatTaskManager._lookup_subject(self.FLAT, "nope.x") is None
+    def test_single_segment(self):
+        assert ChatTaskManager._split_subject_path("aov") == ([], "aov")
 
-    def test_top_level_name_without_subject_path(self):
-        flat = {"raw_customers": {"name": "raw_customers"}}
-        assert ChatTaskManager._lookup_subject(flat, "raw_customers")["name"] == "raw_customers"
+    def test_empty(self):
+        assert ChatTaskManager._split_subject_path("") == ([], "")
 
-    def test_name_fallback_when_subject_prefix_differs(self):
-        # Picker sent 'main/raw_customers' but the store keyed it differently.
-        flat = {"jeff_shop_live/main/raw_customers": {"name": "raw_customers", "sql": "select 1"}}
-        entry = ChatTaskManager._lookup_subject(flat, "main/raw_customers")
-        assert entry and entry["name"] == "raw_customers"
 
-    def test_name_fallback_ambiguous_returns_none(self):
-        flat = {"a/raw_customers": {"name": "raw_customers"}, "b/raw_customers": {"name": "raw_customers"}}
-        assert ChatTaskManager._lookup_subject(flat, "x/raw_customers") is None
+class TestResolveMetricSqlPaths:
+    """@Metric/@Sql resolve by exact subject path via the non-vector store
+    lookup (same as the get_metrics / get_reference_sql tools)."""
 
-    def test_empty_store_returns_none(self):
-        assert ChatTaskManager._lookup_subject({}, "main/raw_customers") is None
+    def test_metric_uses_path_scoped_detail_lookup(self):
+        mgr = ChatTaskManager()
+        fake_rag = MagicMock()
+        fake_rag.get_metrics_detail.return_value = [{"name": "aov", "description": "avg order value"}]
+        with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
+            out = mgr._resolve_metric_paths(MagicMock(), ["Commerce/Orders/aov"])
+        fake_rag.get_metrics_detail.assert_called_once_with(subject_path=["Commerce", "Orders"], name="aov")
+        assert len(out) == 1 and out[0].name == "aov"
 
-    def test_shared_suffix_exact_query_hits_the_right_one(self):
-        # A/b/c and D/b/c share the trailing 'b/c'. A full, exact query must
-        # resolve to that exact entry (exact-key match, no ambiguity).
-        flat = {"A/b/c": {"name": "c", "sql": "-- A"}, "D/b/c": {"name": "c", "sql": "-- D"}}
-        assert ChatTaskManager._lookup_subject(flat, "A/b/c")["sql"] == "-- A"
-        assert ChatTaskManager._lookup_subject(flat, "D/b/c")["sql"] == "-- D"
+    def test_metric_unresolved_returns_empty(self):
+        mgr = ChatTaskManager()
+        fake_rag = MagicMock()
+        fake_rag.get_metrics_detail.return_value = []
+        with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
+            assert mgr._resolve_metric_paths(MagicMock(), ["A/b/missing"]) == []
 
-    def test_shared_suffix_bare_query_is_ambiguous(self):
-        # A bare 'b/c' (or 'c') suffix-matches both -> no guess.
-        flat = {"A/b/c": {"name": "c"}, "D/b/c": {"name": "c"}}
-        assert ChatTaskManager._lookup_subject(flat, "b/c") is None
-        assert ChatTaskManager._lookup_subject(flat, "c") is None
+    def test_sql_uses_path_scoped_detail_lookup(self):
+        mgr = ChatTaskManager()
+        fake_store = MagicMock()
+        fake_store.get_reference_sql_detail.return_value = [{"name": "q", "sql": "select 1"}]
+        with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", return_value=fake_store):
+            out = mgr._resolve_sql_paths(MagicMock(), ["main/q"])
+        fake_store.get_reference_sql_detail.assert_called_once_with(subject_path=["main"], name="q")
+        assert len(out) == 1 and out[0].sql == "select 1"
 
-    def test_suffix_match_resolves_extra_store_prefix(self):
-        # Picker sends 'main/raw_customers'; store prepended a datasource prefix.
-        flat = {"jeff_shop_live/main/raw_customers": {"name": "raw_customers", "sql": "select 1"}}
-        assert ChatTaskManager._lookup_subject(flat, "main/raw_customers")["sql"] == "select 1"
+    def test_empty_paths_short_circuit(self):
+        mgr = ChatTaskManager()
+        assert mgr._resolve_metric_paths(MagicMock(), []) == []
+        assert mgr._resolve_sql_paths(MagicMock(), None) == []
