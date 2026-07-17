@@ -5360,6 +5360,11 @@
 <td><code>true</code></td>
 <td>如为 false，从 CLI 菜单隐藏（仅模型调用）</td>
 </tr>
+<tr>
+<td><code>requires_mutable_config</code></td>
+<td><code>false</code></td>
+<td>如为 true，在 agent 配置只读的部署（多租户 chat API / gateway）中隐藏并拒绝加载——用于引导修改配置文件的技能</td>
+</tr>
 </tbody>
 </table>
 <h2 id="skillmd">SKILL.md 参考<a class="headerlink" href="#skillmd" title="Permanent link">&para;</a></h2>
@@ -5417,6 +5422,11 @@
 <td><code>user_invocable</code></td>
 <td>否</td>
 <td>如为 false，从 CLI 菜单隐藏</td>
+</tr>
+<tr>
+<td><code>requires_mutable_config</code></td>
+<td>否</td>
+<td>如为 true，配置只读（API 模式）时隐藏/拒绝加载</td>
 </tr>
 </tbody>
 </table>

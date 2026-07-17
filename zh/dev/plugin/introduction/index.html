@@ -4692,7 +4692,9 @@ OS/Python 匹配的机器上构建。</p>
   掌握的信息。prompt 段落在会话启动时刷新;会话中途的配置修改要到下一个会话才可见。</li>
 <li><strong>引导式配置</strong> —— 已安装但未配置的插件通常会在 prompt 中声明自己,并指向自带的
   <code>&lt;name&gt;-setup</code> skill。让 agent 帮你配置,它会收集必填项并替你写入 profile
-  (密钥以 <code>${VAR}</code> 形式引用,绝不写明文)。</li>
+  (密钥以 <code>${VAR}</code> 形式引用,绝不写明文)。在 agent 配置只读的托管部署
+  (多租户 chat API / gateway)中,setup skill 会被隐藏,agent 会引导用户联系
+  管理员。</li>
 </ul>
 <h2 id="agent-bash">Agent bash 权限<a class="headerlink" href="#agent-bash" title="Permanent link">&para;</a></h2>
 <p>当 <strong>agent</strong>(而非你本人)通过它的 bash 工具执行插件 CLI 时,命令会经过 Datus 的

@@ -5073,9 +5073,14 @@ Skills 系统使用的 <a href="https://agentskills.io">agentskills.io</a> 规�
 </span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="x">- </span><span class="cp">{{</span> <span class="nv">name</span> <span class="cp">}}</span><span class="x">: </span><span class="cp">{{</span> <span class="nv">cfg.get</span><span class="o">(</span><span class="s2">&quot;greeting&quot;</span><span class="o">,</span> <span class="s2">&quot;?&quot;</span><span class="o">)</span> <span class="cp">}}</span>
 </span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="cp">{%</span> <span class="k">endfor</span> <span class="cp">%}</span>
 </span><span id="__span-18-9"><a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="cp">{%</span> <span class="k">else</span> <span class="cp">%}</span>
-</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="x">Installed but not configured — run the `hello-setup` skill to configure an</span>
-</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="x">environment.</span>
-</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="cp">{%</span> <span class="k">endif</span> <span class="cp">%}</span>
+</span><span id="__span-18-10"><a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="x">Installed but not configured.</span>
+</span><span id="__span-18-11"><a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="cp">{%</span> <span class="k">if</span> <span class="nv">config_mutable</span> <span class="cp">%}</span>
+</span><span id="__span-18-12"><a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="x">Run the `hello-setup` skill to configure an environment.</span>
+</span><span id="__span-18-13"><a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="cp">{%</span> <span class="k">else</span> <span class="cp">%}</span>
+</span><span id="__span-18-14"><a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="x">Configuration is managed by the deployment administrator — tell the user to</span>
+</span><span id="__span-18-15"><a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="x">contact them.</span>
+</span><span id="__span-18-16"><a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="cp">{%</span> <span class="k">endif</span> <span class="cp">%}</span>
+</span><span id="__span-18-17"><a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="cp">{%</span> <span class="k">endif</span> <span class="cp">%}</span>
 </span></code></pre></div>
 <p>渲染上下文:</p>
 <table>
@@ -5096,16 +5101,21 @@ Skills 系统使用的 <a href="https://agentskills.io">agentskills.io</a> 规�
 </tr>
 <tr>
 <td><code>config_path</code></td>
-<td>已加载的 agent 配置文件路径,或 <code>None</code></td>
+<td>已加载的 agent 配置文件路径,或 <code>None</code>(配置只读时恒为 <code>None</code>)</td>
+</tr>
+<tr>
+<td><code>config_mutable</code></td>
+<td>agent 可编辑配置文件时为 <code>True</code>;托管部署(多租户 chat API / gateway)下为 <code>False</code>。需要引入该变量的 datus-agent 版本及以上——旧版本中引用它的模板会渲染失败(严格模式)并跳过该 section</td>
 </tr>
 </tbody>
 </table>
 <p>已安装但未配置的 plugin(或 pin 无匹配)渲染时 <code>profiles == {}</code>——用
-<code>{% if profiles %}</code> 输出一段"已安装未配置"提示并指向捆绑的 setup skill,而不是
-从提示词中消失。</p>
+<code>{% if profiles %}</code> 输出一段"已安装未配置"提示而不是从提示词中消失,并在该
+分支内检查 <code>config_mutable</code>:仅当它为 <code>True</code> 时指向捆绑的 setup skill,否则
+提示用户联系管理员。</p>
 <p>只要有任一 plugin 贡献了 section,Datus 会前置自己的 <code>## Plugins</code> 导语,写明已
 加载的配置文件和 <code>agent.plugins.&lt;plugin&gt;.&lt;profile&gt;</code> 结构——你的模板永远不需要
-硬编码配置路径。</p>
+硬编码配置路径。只读模式下导语会换成禁止建议修改配置、请联系管理员的措辞。</p>
 <div class="admonition note">
 <p class="admonition-title">secret 是结构性剥离的</p>
 <p>渲染出的文本会进入 LLM 上下文,而 profile 的值在提示词构建时已完成
@@ -5228,45 +5238,50 @@ skill 一起分发,让 agent 自己收集值并写好 profile:</p>
    <code>datus &lt;plugin&gt;</code> 每次调用都重新加载配置,profile 立即生效;提示词里的环境列
    表下个会话刷新。</li>
 </ol>
-<p>加一条保护性说明:若当前环境无法编辑配置文件(API / VSCode / web 部署),agent
-应告知用户去服务器上改 <code>agent.yml</code>。</p>
+<p>在 setup skill 的 frontmatter 里声明 <code>requires_mutable_config: true</code>。配置只读
+的部署(多租户 chat API / gateway)中,Datus 会把该 skill 从
+<code>&lt;available_skills&gt;</code> 中隐藏并拒绝 <code>load_skill</code>——agent 会引导用户联系管理员,
+而不是走一遍它做不到的配置编辑。同时在正文保留一条保护性说明,作为旧版
+datus-agent(会忽略该 frontmatter 字段)的兜底:若当前环境无法编辑配置文件,
+agent 应告知用户去服务器上改 <code>agent.yml</code>。</p>
 <p>一个完整的最小 <code>hello-setup/SKILL.md</code>:</p>
 <div class="language-markdown highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>---
 </span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>name: hello-setup
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="gu">description: Configure an environment profile for the `datus hello` plugin</span>
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="gu">---</span>
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="gh"># Hello Setup</span>
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>Use this skill when <span class="sb">`datus hello`</span> is installed but has no configured
-</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>environment, or when the user wants to add another one.
-</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>
-</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a><span class="gu">## Config structure</span>
-</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a>
-</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>Profiles live under <span class="sb">`agent.plugins.hello.&lt;profile&gt;`</span> in the config file named
-</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>by the <span class="sb">`## Plugins`</span> section of the system prompt:
-</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>
-</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a><span class="sb">```yaml</span>
-</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="nt">agent</span><span class="p">:</span>
-</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
-</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
-</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
-</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">            </span><span class="c1"># mark the first profile as default</span>
-</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span><span class="w">             </span><span class="c1"># required</span>
-</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">    </span><span class="c1"># secret — reference an env var, never a literal</span>
-</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="sb">```</span>
-</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a>
-</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a><span class="gu">## Steps</span>
-</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a>
-</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a><span class="k">1.</span> Ask the user for <span class="sb">`greeting`</span> and which environment variable holds the
-</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a>   token. Have the user export the variable; write <span class="sb">`${VAR}`</span> into the YAML —
-</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a>   never a literal secret.
-</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a><span class="k">2.</span> Write the profile into the config file above; mark the first profile
-</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a>   <span class="sb">`default: true`</span>.
-</span><span id="__span-23-33"><a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a><span class="k">3.</span> Verify with a cheap read-only call: <span class="sb">`datus hello Ada`</span>.
-</span><span id="__span-23-34"><a id="__codelineno-23-34" name="__codelineno-23-34" href="#__codelineno-23-34"></a>
-</span><span id="__span-23-35"><a id="__codelineno-23-35" name="__codelineno-23-35" href="#__codelineno-23-35"></a>If this environment cannot edit the config file (API / web deployment), tell
-</span><span id="__span-23-36"><a id="__codelineno-23-36" name="__codelineno-23-36" href="#__codelineno-23-36"></a>the user to edit <span class="sb">`agent.yml`</span> on the server instead.
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>description: Configure an environment profile for the <span class="sb">`datus hello`</span> plugin
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="gu">requires_mutable_config: true</span>
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="gu">---</span>
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>
+</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="gh"># Hello Setup</span>
+</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>
+</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>Use this skill when <span class="sb">`datus hello`</span> is installed but has no configured
+</span><span id="__span-23-10"><a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a>environment, or when the user wants to add another one.
+</span><span id="__span-23-11"><a id="__codelineno-23-11" name="__codelineno-23-11" href="#__codelineno-23-11"></a>
+</span><span id="__span-23-12"><a id="__codelineno-23-12" name="__codelineno-23-12" href="#__codelineno-23-12"></a><span class="gu">## Config structure</span>
+</span><span id="__span-23-13"><a id="__codelineno-23-13" name="__codelineno-23-13" href="#__codelineno-23-13"></a>
+</span><span id="__span-23-14"><a id="__codelineno-23-14" name="__codelineno-23-14" href="#__codelineno-23-14"></a>Profiles live under <span class="sb">`agent.plugins.hello.&lt;profile&gt;`</span> in the config file named
+</span><span id="__span-23-15"><a id="__codelineno-23-15" name="__codelineno-23-15" href="#__codelineno-23-15"></a>by the <span class="sb">`## Plugins`</span> section of the system prompt:
+</span><span id="__span-23-16"><a id="__codelineno-23-16" name="__codelineno-23-16" href="#__codelineno-23-16"></a>
+</span><span id="__span-23-17"><a id="__codelineno-23-17" name="__codelineno-23-17" href="#__codelineno-23-17"></a><span class="sb">```yaml</span>
+</span><span id="__span-23-18"><a id="__codelineno-23-18" name="__codelineno-23-18" href="#__codelineno-23-18"></a><span class="nt">agent</span><span class="p">:</span>
+</span><span id="__span-23-19"><a id="__codelineno-23-19" name="__codelineno-23-19" href="#__codelineno-23-19"></a><span class="w">  </span><span class="nt">plugins</span><span class="p">:</span>
+</span><span id="__span-23-20"><a id="__codelineno-23-20" name="__codelineno-23-20" href="#__codelineno-23-20"></a><span class="w">    </span><span class="nt">hello</span><span class="p">:</span>
+</span><span id="__span-23-21"><a id="__codelineno-23-21" name="__codelineno-23-21" href="#__codelineno-23-21"></a><span class="w">      </span><span class="nt">prod</span><span class="p">:</span>
+</span><span id="__span-23-22"><a id="__codelineno-23-22" name="__codelineno-23-22" href="#__codelineno-23-22"></a><span class="w">        </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">            </span><span class="c1"># mark the first profile as default</span>
+</span><span id="__span-23-23"><a id="__codelineno-23-23" name="__codelineno-23-23" href="#__codelineno-23-23"></a><span class="w">        </span><span class="nt">greeting</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Hi</span><span class="w">             </span><span class="c1"># required</span>
+</span><span id="__span-23-24"><a id="__codelineno-23-24" name="__codelineno-23-24" href="#__codelineno-23-24"></a><span class="w">        </span><span class="nt">token</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${HELLO_TOKEN}</span><span class="w">    </span><span class="c1"># secret — reference an env var, never a literal</span>
+</span><span id="__span-23-25"><a id="__codelineno-23-25" name="__codelineno-23-25" href="#__codelineno-23-25"></a><span class="sb">```</span>
+</span><span id="__span-23-26"><a id="__codelineno-23-26" name="__codelineno-23-26" href="#__codelineno-23-26"></a>
+</span><span id="__span-23-27"><a id="__codelineno-23-27" name="__codelineno-23-27" href="#__codelineno-23-27"></a><span class="gu">## Steps</span>
+</span><span id="__span-23-28"><a id="__codelineno-23-28" name="__codelineno-23-28" href="#__codelineno-23-28"></a>
+</span><span id="__span-23-29"><a id="__codelineno-23-29" name="__codelineno-23-29" href="#__codelineno-23-29"></a><span class="k">1.</span> Ask the user for <span class="sb">`greeting`</span> and which environment variable holds the
+</span><span id="__span-23-30"><a id="__codelineno-23-30" name="__codelineno-23-30" href="#__codelineno-23-30"></a>   token. Have the user export the variable; write <span class="sb">`${VAR}`</span> into the YAML —
+</span><span id="__span-23-31"><a id="__codelineno-23-31" name="__codelineno-23-31" href="#__codelineno-23-31"></a>   never a literal secret.
+</span><span id="__span-23-32"><a id="__codelineno-23-32" name="__codelineno-23-32" href="#__codelineno-23-32"></a><span class="k">2.</span> Write the profile into the config file above; mark the first profile
+</span><span id="__span-23-33"><a id="__codelineno-23-33" name="__codelineno-23-33" href="#__codelineno-23-33"></a>   <span class="sb">`default: true`</span>.
+</span><span id="__span-23-34"><a id="__codelineno-23-34" name="__codelineno-23-34" href="#__codelineno-23-34"></a><span class="k">3.</span> Verify with a cheap read-only call: <span class="sb">`datus hello Ada`</span>.
+</span><span id="__span-23-35"><a id="__codelineno-23-35" name="__codelineno-23-35" href="#__codelineno-23-35"></a>
+</span><span id="__span-23-36"><a id="__codelineno-23-36" name="__codelineno-23-36" href="#__codelineno-23-36"></a>If this environment cannot edit the config file (API / web deployment), tell
+</span><span id="__span-23-37"><a id="__codelineno-23-37" name="__codelineno-23-37" href="#__codelineno-23-37"></a>the user to edit <span class="sb">`agent.yml`</span> on the server instead.
 </span></code></pre></div>
 <h2 id="plugin_2">端到端验证你的 plugin<a class="headerlink" href="#plugin_2" title="Permanent link">&para;</a></h2>
 <p><code>pip install -e</code> 之后,每个扩展面都可以在不重启任何东西的情况下验证(plugin 每
@@ -5315,10 +5330,14 @@ skill 一起分发,让 agent 自己收集值并写好 profile:</p>
 </span><span id="__span-24-27"><a id="__codelineno-24-27" name="__codelineno-24-27" href="#__codelineno-24-27"></a>    <span class="n">env</span> <span class="o">=</span> <span class="n">Environment</span><span class="p">(</span><span class="n">loader</span><span class="o">=</span><span class="n">FileSystemLoader</span><span class="p">(</span><span class="n">PKG</span><span class="p">),</span> <span class="n">undefined</span><span class="o">=</span><span class="n">StrictUndefined</span><span class="p">)</span>
 </span><span id="__span-24-28"><a id="__codelineno-24-28" name="__codelineno-24-28" href="#__codelineno-24-28"></a>    <span class="n">template</span> <span class="o">=</span> <span class="n">env</span><span class="o">.</span><span class="n">get_template</span><span class="p">(</span><span class="s2">&quot;prompts/system.md.j2&quot;</span><span class="p">)</span>
 </span><span id="__span-24-29"><a id="__codelineno-24-29" name="__codelineno-24-29" href="#__codelineno-24-29"></a>    <span class="c1"># datus 渲染前会剥离未声明 / x-secret 字段;此处模拟同样的输入。</span>
-</span><span id="__span-24-30"><a id="__codelineno-24-30" name="__codelineno-24-30" href="#__codelineno-24-30"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">plugin_name</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">profiles</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;prod&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;greeting&quot;</span><span class="p">:</span> <span class="s2">&quot;Hi&quot;</span><span class="p">}},</span> <span class="n">config_path</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-24-31"><a id="__codelineno-24-31" name="__codelineno-24-31" href="#__codelineno-24-31"></a>    <span class="k">assert</span> <span class="s2">&quot;## Hello&quot;</span> <span class="ow">in</span> <span class="n">text</span>
-</span><span id="__span-24-32"><a id="__codelineno-24-32" name="__codelineno-24-32" href="#__codelineno-24-32"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">plugin_name</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">profiles</span><span class="o">=</span><span class="p">{},</span> <span class="n">config_path</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
-</span><span id="__span-24-33"><a id="__codelineno-24-33" name="__codelineno-24-33" href="#__codelineno-24-33"></a>    <span class="k">assert</span> <span class="s2">&quot;hello-setup&quot;</span> <span class="ow">in</span> <span class="n">text</span>
+</span><span id="__span-24-30"><a id="__codelineno-24-30" name="__codelineno-24-30" href="#__codelineno-24-30"></a>    <span class="n">ctx</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;plugin_name&quot;</span><span class="p">:</span> <span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="s2">&quot;config_path&quot;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="s2">&quot;config_mutable&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+</span><span id="__span-24-31"><a id="__codelineno-24-31" name="__codelineno-24-31" href="#__codelineno-24-31"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">profiles</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;prod&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;greeting&quot;</span><span class="p">:</span> <span class="s2">&quot;Hi&quot;</span><span class="p">}},</span> <span class="o">**</span><span class="n">ctx</span><span class="p">)</span>
+</span><span id="__span-24-32"><a id="__codelineno-24-32" name="__codelineno-24-32" href="#__codelineno-24-32"></a>    <span class="k">assert</span> <span class="s2">&quot;## Hello&quot;</span> <span class="ow">in</span> <span class="n">text</span>
+</span><span id="__span-24-33"><a id="__codelineno-24-33" name="__codelineno-24-33" href="#__codelineno-24-33"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">profiles</span><span class="o">=</span><span class="p">{},</span> <span class="o">**</span><span class="n">ctx</span><span class="p">)</span>
+</span><span id="__span-24-34"><a id="__codelineno-24-34" name="__codelineno-24-34" href="#__codelineno-24-34"></a>    <span class="k">assert</span> <span class="s2">&quot;hello-setup&quot;</span> <span class="ow">in</span> <span class="n">text</span>
+</span><span id="__span-24-35"><a id="__codelineno-24-35" name="__codelineno-24-35" href="#__codelineno-24-35"></a>    <span class="c1"># 只读部署下绝不能把 agent 指向 setup skill</span>
+</span><span id="__span-24-36"><a id="__codelineno-24-36" name="__codelineno-24-36" href="#__codelineno-24-36"></a>    <span class="n">text</span> <span class="o">=</span> <span class="n">template</span><span class="o">.</span><span class="n">render</span><span class="p">(</span><span class="n">profiles</span><span class="o">=</span><span class="p">{},</span> <span class="n">plugin_name</span><span class="o">=</span><span class="s2">&quot;hello&quot;</span><span class="p">,</span> <span class="n">config_path</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">config_mutable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="__span-24-37"><a id="__codelineno-24-37" name="__codelineno-24-37" href="#__codelineno-24-37"></a>    <span class="k">assert</span> <span class="s2">&quot;hello-setup&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">text</span>
 </span></code></pre></div>
 <h2 id="_3">分发离线安装包<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <p>在有网络的机器上、从 plugin 项目目录用 <code>datus plugin pack</code> 打出 wheelhouse
