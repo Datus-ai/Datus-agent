@@ -927,34 +927,28 @@ class TestResolveAtContext:
     """Tests for _resolve_at_context — @ reference resolution."""
 
     def test_resolve_empty_paths_returns_empty(self, real_agent_config):
-        """_resolve_at_context with no paths returns empty lists."""
+        """_resolve_at_context with no paths returns empty lists + no hints."""
         manager = ChatTaskManager()
-        tables, metrics, sqls = manager._resolve_at_context(real_agent_config, None, None, None)
+        tables, metrics, sqls, hints = manager._resolve_at_context(real_agent_config, None, None, None, None)
         assert tables == []
         assert metrics == []
         assert sqls == []
+        assert hints == []
 
     def test_resolve_with_empty_lists(self, real_agent_config):
         """_resolve_at_context with empty lists returns empty results."""
         manager = ChatTaskManager()
-        tables, metrics, sqls = manager._resolve_at_context(real_agent_config, [], [], [])
+        tables, metrics, sqls, hints = manager._resolve_at_context(real_agent_config, [], [], [], [])
         assert tables == []
         assert metrics == []
         assert sqls == []
+        assert hints == []
 
-    def test_resolve_nonexistent_paths(self, real_agent_config):
-        """_resolve_at_context with nonexistent paths returns empty (no crash)."""
+    def test_knowledge_paths_always_become_hints(self, real_agent_config):
+        """@Knowledge has no store loader, so every ref surfaces as a look-up hint."""
         manager = ChatTaskManager()
-        tables, metrics, sqls = manager._resolve_at_context(
-            real_agent_config,
-            ["nonexistent/table/path"],
-            ["nonexistent/metric/path"],
-            ["nonexistent/sql/path"],
-        )
-        # Should return empty lists since paths don't exist
-        assert isinstance(tables, list)
-        assert isinstance(metrics, list)
-        assert isinstance(sqls, list)
+        _, _, _, hints = manager._resolve_at_context(real_agent_config, None, None, None, ["Domain/Glossary/gmv"])
+        assert hints == [{"kind": "knowledge", "name": "gmv", "subject_path": ["Domain", "Glossary"]}]
 
     def test_table_completer_failure_still_yields_name_only_ref(self, real_agent_config):
         """A completer failure must not drop a picked @Table — it degrades to a
@@ -966,17 +960,21 @@ class TestResolveAtContext:
 
         assert [t.table_name for t in tables] == ["table"]
 
-    def test_metric_store_failure_degrades_to_empty(self, real_agent_config):
-        """@Metric resolution swallows a store failure and yields no refs."""
+    def test_metric_store_failure_degrades_to_hint(self, real_agent_config):
+        """A store failure yields no typed metric but a look-up hint (not a silent drop)."""
         manager = ChatTaskManager()
         with patch("datus.storage.metric.store.MetricRAG", side_effect=RuntimeError("store down")):
-            assert manager._resolve_metric_paths(real_agent_config, ["Finance/revenue"]) == []
+            metrics, hints = manager._resolve_metric_paths(real_agent_config, ["Finance/revenue"])
+        assert metrics == []
+        assert hints == [{"kind": "metric", "name": "revenue", "subject_path": ["Finance"]}]
 
-    def test_sql_store_failure_degrades_to_empty(self, real_agent_config):
-        """@Sql resolution swallows a store failure and yields no refs."""
+    def test_sql_store_failure_degrades_to_hint(self, real_agent_config):
+        """A store failure yields no typed reference SQL but a look-up hint."""
         manager = ChatTaskManager()
         with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", side_effect=RuntimeError("store down")):
-            assert manager._resolve_sql_paths(real_agent_config, ["Finance/sql"]) == []
+            sqls, hints = manager._resolve_sql_paths(real_agent_config, ["Finance/sql"])
+        assert sqls == []
+        assert hints == [{"kind": "reference_sql", "name": "sql", "subject_path": ["Finance"]}]
 
 
 class TestCreateNode:
@@ -2041,16 +2039,19 @@ class TestResolveMetricSqlPaths:
         fake_rag = MagicMock()
         fake_rag.get_metrics_detail.return_value = [{"name": "aov", "description": "avg order value"}]
         with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
-            out = mgr._resolve_metric_paths(MagicMock(), ["Commerce/Orders/aov"])
+            metrics, hints = mgr._resolve_metric_paths(MagicMock(), ["Commerce/Orders/aov"])
         fake_rag.get_metrics_detail.assert_called_once_with(subject_path=["Commerce", "Orders"], name="aov")
-        assert len(out) == 1 and out[0].name == "aov"
+        assert len(metrics) == 1 and metrics[0].name == "aov"
+        assert hints == []
 
-    def test_metric_unresolved_returns_empty(self):
+    def test_metric_unresolved_becomes_hint(self):
         mgr = ChatTaskManager()
         fake_rag = MagicMock()
         fake_rag.get_metrics_detail.return_value = []
         with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
-            assert mgr._resolve_metric_paths(MagicMock(), ["A/b/missing"]) == []
+            metrics, hints = mgr._resolve_metric_paths(MagicMock(), ["A/b/missing"])
+        assert metrics == []
+        assert hints == [{"kind": "metric", "name": "missing", "subject_path": ["A", "b"]}]
 
     def test_sql_uses_path_scoped_detail_lookup(self):
         mgr = ChatTaskManager()
@@ -2061,20 +2062,21 @@ class TestResolveMetricSqlPaths:
             {"name": "q", "sql": "select 1", "summary": None, "comment": None, "tags": None}
         ]
         with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", return_value=fake_store):
-            out = mgr._resolve_sql_paths(MagicMock(), ["main/q"])
+            sqls, hints = mgr._resolve_sql_paths(MagicMock(), ["main/q"])
         fake_store.get_reference_sql_detail.assert_called_once_with(subject_path=["main"], name="q")
-        assert len(out) == 1 and out[0].sql == "select 1"
-        assert out[0].comment == "" and out[0].tags == ""
+        assert len(sqls) == 1 and sqls[0].sql == "select 1"
+        assert sqls[0].comment == "" and sqls[0].tags == ""
+        assert hints == []
 
     def test_metric_none_description_coerced(self):
         mgr = ChatTaskManager()
         fake_rag = MagicMock()
         fake_rag.get_metrics_detail.return_value = [{"name": "aov", "description": None}]
         with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
-            out = mgr._resolve_metric_paths(MagicMock(), ["Commerce/aov"])
-        assert len(out) == 1 and out[0].name == "aov" and out[0].description == ""
+            metrics, _ = mgr._resolve_metric_paths(MagicMock(), ["Commerce/aov"])
+        assert len(metrics) == 1 and metrics[0].name == "aov" and metrics[0].description == ""
 
     def test_empty_paths_short_circuit(self):
         mgr = ChatTaskManager()
-        assert mgr._resolve_metric_paths(MagicMock(), []) == []
-        assert mgr._resolve_sql_paths(MagicMock(), None) == []
+        assert mgr._resolve_metric_paths(MagicMock(), []) == ([], [])
+        assert mgr._resolve_sql_paths(MagicMock(), None) == ([], [])

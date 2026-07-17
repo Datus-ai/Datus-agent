@@ -579,12 +579,13 @@ class ChatTaskManager:
             # creation): the metric/reference-sql stores use blocking psycopg
             # connections that must not be driven from the event-loop thread —
             # doing so corrupts the pooled connection ("the connection is lost").
-            at_tables, at_metrics, at_sqls = await asyncio.to_thread(
+            at_tables, at_metrics, at_sqls, at_hints = await asyncio.to_thread(
                 self._resolve_at_context,
                 agent_config,
                 request.table_paths,
                 request.metric_paths,
                 request.sql_paths,
+                request.knowledge_paths,
             )
 
             # 4. Build typed input and assign to node
@@ -594,6 +595,7 @@ class ChatTaskManager:
                 at_tables=at_tables,
                 at_metrics=at_metrics,
                 at_sqls=at_sqls,
+                at_hints=at_hints,
                 catalog=request.catalog,
                 database=request.database,
                 db_schema=request.db_schema,
@@ -1008,6 +1010,7 @@ class ChatTaskManager:
         at_tables: List[TableSchema],
         at_metrics: List[Metric],
         at_sqls: List[ReferenceSql],
+        at_hints: Optional[List[Dict[str, Any]]] = None,
         catalog: Optional[str] = None,
         database: Optional[str] = None,
         db_schema: Optional[str] = None,
@@ -1042,6 +1045,7 @@ class ChatTaskManager:
             at_tables=at_tables,
             at_metrics=at_metrics,
             at_sqls=at_sqls,
+            context_hints=at_hints,
             prompt_language="en",
             plan_mode=plan_mode,
             source_session_id=source_session_id,
@@ -1163,33 +1167,53 @@ class ChatTaskManager:
         table_paths: Optional[List[str]],
         metric_paths: Optional[List[str]],
         sql_paths: Optional[List[str]],
-    ) -> tuple[List[TableSchema], List[Metric], List[ReferenceSql]]:
-        """Resolve @-reference paths to typed objects.
+        knowledge_paths: Optional[List[str]] = None,
+    ) -> tuple[List[TableSchema], List[Metric], List[ReferenceSql], List[Dict[str, Any]]]:
+        """Resolve @-reference paths to typed objects (+ look-up hints).
 
         Tables come from the schema-metadata completer with a name-only fallback.
         Metrics and reference SQL are resolved by EXACT subject path via the same
         non-vector, path-scoped store lookup the get_metrics / get_reference_sql
         tools use — deliberately NOT the completer's vector search, which is empty
         until the KB is vectorised (and is slated for removal).
+
+        Anything that can't be pre-loaded (a metric/sql that didn't resolve, and
+        every @Knowledge ref, which has no store loader) becomes a ``hint`` —
+        ``{kind, name, subject_path}`` — so the prompt can still name it and tell
+        the model which tool to call, instead of dropping it and forcing a blind
+        search.
         """
         logger.info(
-            "AT-CONTEXT resolving: table_paths=%s metric_paths=%s sql_paths=%s (project=%s, datasource=%s)",
+            "AT-CONTEXT resolving: table_paths=%s metric_paths=%s sql_paths=%s knowledge_paths=%s "
+            "(project=%s, datasource=%s)",
             table_paths,
             metric_paths,
             sql_paths,
+            knowledge_paths,
             getattr(agent_config, "project_name", None),
             getattr(agent_config, "current_datasource", None),
         )
         tables = self._resolve_table_paths(agent_config, table_paths)
-        metrics = self._resolve_metric_paths(agent_config, metric_paths)
-        sqls = self._resolve_sql_paths(agent_config, sql_paths)
+        metrics, metric_hints = self._resolve_metric_paths(agent_config, metric_paths)
+        sqls, sql_hints = self._resolve_sql_paths(agent_config, sql_paths)
+        hints = metric_hints + sql_hints + self._knowledge_hints(knowledge_paths)
         logger.info(
-            "AT-CONTEXT resolved: tables=%s metrics=%s sqls=%s",
+            "AT-CONTEXT resolved: tables=%s metrics=%s sqls=%s hints=%s",
             [t.table_name for t in tables],
             [m.name for m in metrics],
             [s.name for s in sqls],
+            [f"{h['kind']}:{h['name']}" for h in hints],
         )
-        return tables, metrics, sqls
+        return tables, metrics, sqls, hints
+
+    def _knowledge_hints(self, knowledge_paths: Optional[List[str]]) -> List[Dict[str, Any]]:
+        """@Knowledge has no store loader yet — surface every ref as a hint."""
+        hints: List[Dict[str, Any]] = []
+        for path in knowledge_paths or []:
+            subject_path, name = self._split_subject_path(path)
+            if name:
+                hints.append({"kind": "knowledge", "name": name, "subject_path": subject_path})
+        return hints
 
     def _resolve_table_paths(self, agent_config: AgentConfig, table_paths: Optional[List[str]]) -> List[TableSchema]:
         tables: List[TableSchema] = []
@@ -1225,48 +1249,60 @@ class ChatTaskManager:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
         return tables
 
-    def _resolve_metric_paths(self, agent_config: AgentConfig, metric_paths: Optional[List[str]]) -> List[Metric]:
+    def _resolve_metric_paths(
+        self, agent_config: AgentConfig, metric_paths: Optional[List[str]]
+    ) -> tuple[List[Metric], List[Dict[str, Any]]]:
         metrics: List[Metric] = []
+        hints: List[Dict[str, Any]] = []
         if not metric_paths:
-            return metrics
+            return metrics, hints
         try:
             from datus.storage.metric.store import MetricRAG
 
             rag = MetricRAG(agent_config)
         except Exception as exc:
-            logger.warning("MetricRAG unavailable; skipping @Metric resolution: %s", exc)
-            return metrics
+            logger.warning("MetricRAG unavailable; emitting @Metric look-up hints: %s", exc)
+            rag = None
         for path in metric_paths:
+            subject_path, name = self._split_subject_path(path)
+            if not name:
+                continue
             try:
-                subject_path, name = self._split_subject_path(path)
-                details = rag.get_metrics_detail(subject_path=subject_path, name=name) if name else []
+                details = rag.get_metrics_detail(subject_path=subject_path, name=name) if rag else []
                 if details:
                     metrics.append(Metric.from_dict(self._none_to_empty(details[0])))
-                else:
-                    logger.warning("Unresolved @Metric path '%s'", path)
+                    continue
+                logger.warning("Unresolved @Metric path '%s'; emitting look-up hint", path)
             except Exception as e:
-                logger.warning("Failed to resolve metric path '%s': %s", path, e)
-        return metrics
+                logger.warning("Failed to resolve metric path '%s': %s; emitting look-up hint", path, e)
+            hints.append({"kind": "metric", "name": name, "subject_path": subject_path})
+        return metrics, hints
 
-    def _resolve_sql_paths(self, agent_config: AgentConfig, sql_paths: Optional[List[str]]) -> List[ReferenceSql]:
+    def _resolve_sql_paths(
+        self, agent_config: AgentConfig, sql_paths: Optional[List[str]]
+    ) -> tuple[List[ReferenceSql], List[Dict[str, Any]]]:
         sqls: List[ReferenceSql] = []
+        hints: List[Dict[str, Any]] = []
         if not sql_paths:
-            return sqls
+            return sqls, hints
         try:
             from datus.storage.reference_sql.store import ReferenceSqlRAG
 
             store = ReferenceSqlRAG(agent_config)
         except Exception as exc:
-            logger.warning("ReferenceSqlRAG unavailable; skipping @Sql resolution: %s", exc)
-            return sqls
+            logger.warning("ReferenceSqlRAG unavailable; emitting @Sql look-up hints: %s", exc)
+            store = None
         for path in sql_paths:
+            subject_path, name = self._split_subject_path(path)
+            if not name:
+                continue
             try:
-                subject_path, name = self._split_subject_path(path)
-                details = store.get_reference_sql_detail(subject_path=subject_path, name=name) if name else []
+                details = store.get_reference_sql_detail(subject_path=subject_path, name=name) if store else []
                 if details:
                     sqls.append(ReferenceSql.from_dict(self._none_to_empty(details[0])))
-                else:
-                    logger.warning("Unresolved @Sql path '%s'", path)
+                    continue
+                logger.warning("Unresolved @Sql path '%s'; emitting look-up hint", path)
             except Exception as e:
-                logger.warning("Failed to resolve sql path '%s': %s", path, e)
-        return sqls
+                logger.warning("Failed to resolve sql path '%s': %s; emitting look-up hint", path, e)
+            hints.append({"kind": "reference_sql", "name": name, "subject_path": subject_path})
+        return sqls, hints

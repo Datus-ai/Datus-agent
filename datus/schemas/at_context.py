@@ -16,7 +16,7 @@ Lives in its own module (not ``base.py``) because the field types come from
 would create a ``base`` <-> ``node_models`` import cycle.
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import AliasChoices, ConfigDict, Field
 
@@ -42,6 +42,14 @@ class AtContextInput(BaseInput):
     external_knowledge: Optional[str] = Field(
         default="", description="@Knowledge / supplementary business evidence supplied with the question"
     )
+    context_hints: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "Referenced items whose full detail could not be pre-loaded. Each hint "
+            "{kind, name, subject_path} tells the model to fetch it via the matching "
+            "tool (get_metrics / get_reference_sql) instead of searching for it."
+        ),
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -53,6 +61,7 @@ def apply_at_context(
     metrics: Optional[List[Metric]] = None,
     reference_sql: Optional[List[ReferenceSql]] = None,
     external_knowledge: Optional[str] = None,
+    context_hints: Optional[List[Dict[str, Any]]] = None,
 ) -> BaseInput:
     """Populate @-context fields on *node_input* in place, returning it.
 
@@ -70,4 +79,6 @@ def apply_at_context(
         node_input.reference_sql = reference_sql
     if external_knowledge is not None and hasattr(node_input, "external_knowledge"):
         node_input.external_knowledge = external_knowledge
+    if context_hints is not None and hasattr(node_input, "context_hints"):
+        node_input.context_hints = context_hints
     return node_input

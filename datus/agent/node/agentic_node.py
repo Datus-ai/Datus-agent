@@ -33,7 +33,6 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
@@ -851,27 +850,68 @@ class AgenticNode(Node):
 
         ext_know = getattr(user_input, "external_knowledge", "") or ""
         if ext_know:
-            parts.append(f"MUST use these business logic:\n{ext_know}")
+            parts.append(f"## Business knowledge\nMUST apply the following business logic:\n{ext_know}")
 
         schemas = getattr(user_input, "schemas", None)
         if schemas:
             from datus.schemas.node_models import TableSchema
 
-            table_names_str = TableSchema.table_names_to_prompt(schemas)
-            parts.append(
-                "Available tables (MUST use these tables and ONLY use these "
-                f"table names in FROM/JOIN clauses): \n{table_names_str}"
-            )
+            names = TableSchema.table_names_to_prompt(schemas)
+            bullets = "\n".join(f"- {n.strip()}" for n in names.splitlines() if n.strip())
+            parts.append("## Referenced tables\nMUST use ONLY these tables in FROM/JOIN clauses:\n" + bullets)
 
         metrics = getattr(user_input, "metrics", None)
         if metrics:
-            parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
+            lines = []
+            for m in metrics:
+                desc = (getattr(m, "description", "") or "").strip()
+                lines.append(f"- {m.name}: {desc}" if desc else f"- {m.name}")
+            parts.append("## Referenced metrics\n" + "\n".join(lines))
 
         reference_sql = getattr(user_input, "reference_sql", None)
         if reference_sql:
-            parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+            blocks = []
+            for r in reference_sql:
+                summary = (getattr(r, "summary", "") or "").strip()
+                sql = (getattr(r, "sql", "") or "").strip()
+                header = f"### {r.name}" + (f" — {summary}" if summary else "")
+                blocks.append(header + (f"\n```sql\n{sql}\n```" if sql else ""))
+            parts.append("## Referenced SQL\n" + "\n\n".join(blocks))
+
+        hint_part = self._render_context_hint_part(getattr(user_input, "context_hints", None))
+        if hint_part:
+            parts.append(hint_part)
 
         return parts
+
+    @staticmethod
+    def _render_context_hint_part(hints: Optional[List[Dict[str, Any]]]) -> str:
+        """Render look-up hints for referenced items that couldn't be pre-loaded.
+
+        Names the item and points the model at the exact tool call so it fetches
+        the detail directly instead of searching the subject tree blindly.
+        """
+        if not hints:
+            return ""
+        tool_by_kind = {"metric": "get_metrics", "reference_sql": "get_reference_sql"}
+        label_by_kind = {"metric": "Metric", "reference_sql": "Reference SQL", "knowledge": "Knowledge"}
+        lines = [
+            "## Referenced items to look up",
+            "The user attached these but their details are not loaded here. Fetch each with the "
+            "indicated tool (using the exact subject_path and name) before answering — do not search blindly:",
+        ]
+        for h in hints:
+            kind = h.get("kind", "")
+            name = h.get("name", "")
+            subject_path = h.get("subject_path", []) or []
+            label = label_by_kind.get(kind, kind or "Item")
+            tool = tool_by_kind.get(kind)
+            if tool:
+                lines.append(f'- {label} "{name}" → call {tool}(subject_path={subject_path}, name="{name}")')
+            else:
+                full = "/".join(list(subject_path) + [name])
+                lines.append(f'- {label} "{name}" (subject path: {full}) → locate it via list_subject_tree')
+        return "\n".join(lines)
 
     def _build_enhanced_message(
         self,

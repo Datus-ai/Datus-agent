@@ -1091,6 +1091,7 @@ class SubAgentTaskTool:
             metrics=at_ctx.get("metrics"),
             reference_sql=at_ctx.get("reference_sql"),
             external_knowledge=at_ctx.get("external_knowledge"),
+            context_hints=at_ctx.get("context_hints"),
         )
 
     def _parent_at_context(self) -> Dict[str, Any]:
@@ -1109,6 +1110,7 @@ class SubAgentTaskTool:
             "metrics": getattr(parent_input, "metrics", None),
             "reference_sql": getattr(parent_input, "reference_sql", None),
             "external_knowledge": getattr(parent_input, "external_knowledge", None) or None,
+            "context_hints": getattr(parent_input, "context_hints", None),
         }
 
     def _build_typed_subagent_input(self, node, prompt: str, db_ctx: Optional[Dict[str, Optional[str]]] = None):
