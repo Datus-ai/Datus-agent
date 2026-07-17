@@ -1,10 +1,10 @@
 ---
 name: osi-semantic-authoring
-description: OSI core schema semantic model authoring specification — dataset shape, Datus extension hints, relationships, and validation
+description: OSI core schema semantic model authoring specification — field roles, structural keys, Datus extension hints, relationships, and validation
 tags:
   - semantic-model
   - osi
-version: "1.1.0"
+version: "2.0.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -18,11 +18,23 @@ Describe tables as strict **OSI (Open Semantic Interchange) core schema** docume
 
 CRITICAL BOUNDARY: You author **OSI core semantics only**. You do NOT write MetricFlow `data_source:`, `measures:`, `identifiers:`, `agg_time_dimension`, `create_metric`, or any execution-engine YAML. The Datus OSI compiler lowers OSI core documents to the configured backend.
 
-The OSI expression dialect, target semantic model name, and target semantic model file for the current run are shown in the system prompt Workspace section — use those exact values.
+The OSI expression dialect, target semantic model name, and target semantic model file for the current run are shown in the system prompt Workspace section — use those exact values (`<osi_dialect>` below stands for that dialect).
+
+## Field roles — the three-way decision
+
+OSI core separates three column roles by **structure**, not by type labels:
+
+| Role | How it is declared | Examples |
+|------|--------------------|----------|
+| **Dimension** — used for GROUP BY / filtering | A field **with** a `dimension:` block | code columns, names, statuses, dates |
+| **Key** — identifies rows / joins | Dataset `primary_key` / `unique_keys`, relationship `from_columns`/`to_columns`. NOT a field type. | declared PK columns, FK join columns |
+| **Measure source** — only aggregated | **Not declared as a field at all.** Metric expressions reference the physical column directly. | balances, amounts, quantities, precomputed rates |
+
+The presence of the `dimension:` block IS the dimension declaration. A field without the block is a plain row-level expression. **NEVER write `dimension: {is_time: false}` to mean "this is not a time column" — omit the entire block for non-dimension fields.**
 
 ## What you produce
 
-One valid OSI core document for the current business domain / semantic model scope (`<osi_dialect>` stands for the OSI expression dialect from the system prompt):
+One valid OSI core document for the current business domain / semantic model scope:
 
 ```yaml
 version: 0.2.0.dev0
@@ -31,12 +43,12 @@ semantic_model:
     datasets:
       - name: <dataset_name>
         source: <physical_table_view_or_query_name>
-        description: "<human-readable business purpose and grain of this dataset>"
+        description: "<business purpose and row grain of this dataset>"
         ai_context:
-          instructions: "<how AI should use this dataset for analytics, including grain, time field, common row-selection conditions or groupings, and join caveats>"
-          synonyms: ["<business term>", "<alternate table name>"]
+          instructions: "<how AI should use this dataset: grain, time field, common row-selection conditions or groupings, join caveats>"
+          synonyms: ["<business term>"]
           examples: ["<question this dataset can answer>"]
-        primary_key: [<primary_key_column>]
+        primary_key: [<col>, ...]        # ONLY when the source metadata declares one — see rule 7
         fields:
           - name: <date_or_timestamp_column>
             expression:
@@ -47,29 +59,15 @@ semantic_model:
               is_time: true
             custom_extensions:
               - vendor_name: DATUS
-                data: '{"type":"time","time_granularity":"day"}'
-          - name: <categorical_business_column>
+                data: '{"time_granularity":"day"}'
+          - name: <grouping_or_filter_column>
             expression:
               dialects:
                 - dialect: <osi_dialect>
-                  expression: <categorical_business_column>
-            dimension:
-              is_time: false
+                  expression: <grouping_or_filter_column>
+            dimension: {}
             description: "<business meaning of the column>"
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"type":"categorical"}'
-          - name: <numeric_business_column>
-            expression:
-              dialects:
-                - dialect: <osi_dialect>
-                  expression: <numeric_business_column>
-            dimension:
-              is_time: false
-            description: "<business meaning of the measured numeric value>"
-            custom_extensions:
-              - vendor_name: DATUS
-                data: '{"type":"numeric"}'
+          # Columns that are only aggregated (balances, amounts, rates) are NOT declared.
     relationships:
       - name: <fact_dataset>_to_<dimension_dataset>
         from: <fact_or_many_side_dataset>
@@ -82,32 +80,60 @@ semantic_model:
 
 1. **Root schema is fixed.** Root keys are only `version` and `semantic_model`. `semantic_model` is a list. Do NOT write top-level `datasets:`, `relationships:`, or `metrics:`.
 2. **Use OSI core dataset shape.** Dataset `source` is a string, not `{table: ...}`. Dataset columns are `fields`, not `dimensions`. Field expressions are `expression.dialects[]`, not `expr`. Use the exact OSI expression dialect from the system prompt in every `expression.dialects[].dialect`.
-3. **Datus-only hints go into `custom_extensions`.** OSI core does not have top-level dataset `time_dimension`, field `type`, field `granularity`, metric `dataset`, metric `window`, etc. Put those Datus execution hints in `custom_extensions: [{vendor_name: DATUS, data: '<JSON object string>'}]`.
-4. **Semantic model boundary.** One OSI `semantic_model` represents the current business domain / metric domain. Put all related logical datasets needed by the provided SQL history in this semantic model, with relationships declared once under the semantic model object.
-5. **Canonical logical datasets.** A dataset is a logical dataset backed by a table, view, or query. For the same source and row grain, create one canonical dataset that metrics can reference by name. Create a separate dataset only when the logical row grain or fixed business scope is genuinely different. Include the full logical dataset: primary key, primary time field, and all business-meaningful fields.
-6. **Dataset description and AI context are required for every dataset.**
-   - `description` is for humans: one concise sentence describing the business entity/event represented by the dataset and its row grain.
-   - `ai_context` is for AI use: include `instructions`, optional `synonyms`, and optional `examples`. The instructions should explain when to use this dataset, the row grain, the primary time field, important row-selection or grouping columns, and relationship caveats. Keep it generic and derived from schema/comments/history; do not write scenario-specific examples unless they come from provided history.
-7. **Primary / unique keys** -> OSI core `primary_key: [<column>]`. Use real columns only.
-8. **Time dimension**: mark the primary date/time field with `dimension.is_time: true` and Datus extension `{"type":"time","time_granularity":"day|week|month|quarter|year"}`. Point it at a real date/time column, never a numeric surrogate key.
-9. **Fields**: include every business-meaningful column the user may group or slice by. Populate `description` for ALL non-obvious fields by combining the column comment, sample values, profiler evidence, and external knowledge. Useful profiler evidence may include null rate, numeric ranges/percentiles, date span/freshness/duration, distinct counts, representative stable values, common filter templates, and relationship coverage/fanout. Wrap descriptions in double quotes and keep each description concise.
-10. **Field type classification must follow actual data type and analytical usage.** The DATUS `custom_extensions.data.type` value is not a display hint; it is the semantic field type.
-    - Use `{"type":"numeric"}` for DECIMAL/NUMERIC/INTEGER/FLOAT/DOUBLE or equivalent fields that represent measured quantities, scores, rates, prices, amounts, durations, counts, percentages, or other arithmetic values.
-    - Keep a field `numeric` when historical SQL uses it in arithmetic, range predicates, numeric ordering, or numeric aggregates such as `AVG`, `SUM`, `MIN`, `MAX`, `STD`, `VARIANCE`, `CORR`, or `COVAR`. A numeric field does not become categorical just because it is selected, displayed, filtered, or grouped.
-    - Use `{"type":"categorical"}` for text/enums/labels/booleans and code fields whose values are categories, not quantities. Numeric-coded categories such as status codes, product type codes, or channel codes can be categorical when averaging or summing the code would have no business meaning; explain the code semantics in the description.
-    - Use `{"type":"identifier"}` for primary keys, foreign keys, unique entity IDs, or opaque IDs. Do not classify identifiers as numeric merely because their physical storage type is integer.
-    - Use `{"type":"time","time_granularity":"..."}` only for real date/time values as described above.
-    - If evidence conflicts, prefer the physical column type plus concrete SQL usage. A DECIMAL field used by `AVG(<field>)` or numeric threshold filters must be `numeric`; an integer status code used only as labels/groups should be `categorical`.
-11. **One column, one type model-wide.** A given column name must carry the SAME `type` everywhere it appears across ALL datasets and in `primary_key`. Do not model the same column as `identifier` in one place and `categorical`/`dimension` in another. Decide its role once from its strongest signal: a key/foreign-key/join column is an `identifier` even when it also appears in a `GROUP BY`; a code/label column is `categorical`. If `validate_semantic` reports a column "used as multiple types", fix every occurrence to a SINGLE type and re-validate — never toggle it back and forth between validation attempts.
-12. **Do not model columns no query uses.** Include a field only when the provided SQL selects, filters, groups, joins, or aggregates by it, or it is the dataset primary key or primary time field. A key column present in the DDL but never referenced by any provided SQL should be a plain `identifier` (or the dataset `primary_key`) consistently — do not guess whether it is a dimension. When in doubt about an unused column, omit it rather than introduce an ambiguous type.
-13. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `to_dataset`, `to_identifier`, `join_on`, `from_column`, or `to_column`.
-14. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
-15. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
+3. **Datus-only hints go into `custom_extensions`.** The only field-level hint is `time_granularity` (on the time field). Dataset-level: `source_type: "query"` for query sources. Field `type` hints (`categorical`/`numeric`/`identifier`) are **deprecated** — roles are expressed structurally per the table above; do not emit type hints.
+4. **Semantic model boundary.** One OSI `semantic_model` represents the current business domain. Put all related logical datasets needed by the provided SQL history in this semantic model, with relationships declared once under the semantic model object.
+5. **Canonical logical datasets.** For the same source and row grain, create one canonical dataset that metrics can reference by name. Create a separate dataset only when the logical row grain or fixed business scope is genuinely different.
+6. **Dataset `description` and `ai_context` are required.** `description`: one concise human sentence with the business entity and row grain. `ai_context.instructions`: when to use the dataset, the row grain (spell out the full grain explicitly — this is where grain lives when no primary key is declared), the primary time field, important row-selection columns, relationship caveats.
+7. **Keys are transcribed, never inferred.** Write `primary_key` ONLY when the source metadata explicitly declares one: a `PRIMARY KEY` in the DDL, or `pk: true` columns in `describe_table` output. If the source declares no key — the normal case for warehouse tables — **omit `primary_key` entirely**; do not guess from column names, comments, or data. The same applies to `unique_keys` (unique constraints/indexes only). Exceptions: ClickHouse `PRIMARY KEY`/`ORDER BY` and StarRocks `DUPLICATE KEY` in DDL are **sort keys, not uniqueness** — never transcribe them (a StarRocks `PRIMARY KEY` table model is a true upsert key and may be transcribed).
+8. **Field selection — decide by role, not by listing every column:**
+   - Code / name / status / label columns the SQL groups or filters by → field **with** `dimension: {}` block.
+   - The primary date/time column → field with `dimension: {is_time: true}` plus `{"time_granularity":"day|week|month|quarter|year"}` hint. Point it at a real date/time column, never a numeric surrogate key.
+   - Columns whose comments/usage indicate measured quantities (balance, amount, quantity and their equivalents in the comment language) and that are only aggregated → **do not declare a field**; metric expressions will reference them directly.
+   - Precomputed ratio columns (rate, ratio, percent and equivalents) → **do not declare a field**; the metrics workflow recomputes weighted ratios from their numerator/denominator columns.
+   - Declared key columns (rule 7) → they live in `primary_key`/`unique_keys`/relationships; also add a `dimension: {}` field ONLY when queries genuinely group by them.
+   - Columns no provided SQL uses and that carry no key/time role → omit.
+   - Populate `description` for all non-obvious fields from column comments, sample values, and profiler evidence; keep original language, do not translate.
+9. **Time dimension**: exactly one primary time field per dataset. When several date columns exist and the primary one is ambiguous, ASK before generating.
+10. **Validation conflicts are fixed structurally.** If `validate_semantic` reports an element lowering to multiple types, follow the structural fix in the message: move the column into `primary_key`/a relationship everywhere, or make it a `dimension:` field everywhere, or remove the field from datasets that only aggregate it. Never bounce a column between roles across validation attempts, and never falsify keys to silence the validator (e.g. do not delete a snapshot date from a declared composite key — the compiler resolves that case automatically).
+11. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `join_on`, `from_column`, or `to_column`.
+12. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
+13. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
+
+## Worked example — monthly snapshot table
+
+Input (describe_table): `branch_loan_quality_monthly` — a **monthly** loan-quality statistics table, no declared primary key, columns: `snapshot_date` (date), `branch_no`/`assess_dim_code`/`scope_code` (varchar code columns), `branch_name` (varchar), `loan_balance`/`npl_balance`/`overdue_balance` (numeric balances), `npl_rate`/`overdue_rate` (numeric precomputed rates).
+
+Correct field layout:
+
+```yaml
+        # no primary_key: the source declares none — the grain ("one row per month per branch per assessment dimension per scope") goes in ai_context.instructions
+        fields:
+          - name: snapshot_date
+            expression: {dialects: [{dialect: <osi_dialect>, expression: snapshot_date}]}
+            dimension: {is_time: true}
+            custom_extensions: [{vendor_name: DATUS, data: '{"time_granularity":"month"}'}]
+          - name: branch_no
+            expression: {dialects: [{dialect: <osi_dialect>, expression: branch_no}]}
+            dimension: {}
+          - name: assess_dim_code
+            expression: {dialects: [{dialect: <osi_dialect>, expression: assess_dim_code}]}
+            dimension: {}
+          - name: scope_code
+            expression: {dialects: [{dialect: <osi_dialect>, expression: scope_code}]}
+            dimension: {}
+          - name: branch_name
+            expression: {dialects: [{dialect: <osi_dialect>, expression: branch_name}]}
+            dimension: {}
+          # loan_balance / npl_balance / overdue_balance: aggregation-only -> NOT declared
+          # npl_rate / overdue_rate: precomputed ratios -> NOT declared (metrics recompute weighted)
+```
+
+WRONG (do not do this): declaring `loan_balance` or `npl_rate` as fields with `dimension: {is_time: false}`; inventing `primary_key: [branch_no, ...]` when the DDL declares none; adding `{"type":"numeric"}` hints.
 
 ## Workflow notes
 
 - Write OSI core YAML under the semantic model directory shown in the system prompt only, at the target semantic model file path.
-- Inspect the table schema and comments; map columns to keys, the time field, business fields, and relationships.
-- When a critical modeling choice is ambiguous (which column is the grain, which is the primary time dimension), ASK before generating.
-- Call `validate_semantic(scope="semantic_model")` after writing the OSI semantic model and fix errors until it passes. The Datus OSI compiler validates against the OSI core schema, then lowers to the configured execution backend.
+- Inspect the table schema and comments (`describe_table` reports `pk`/`nullable` facts when the database declares them); map columns to roles per the table above.
+- When a critical modeling choice is ambiguous (which column set is the grain, which is the primary time dimension), ASK before generating.
+- Call `validate_semantic(scope="semantic_model")` after writing the OSI semantic model and fix errors until it passes; treat warnings about "aggregates column X which is also a dimension" as instructions to drop that field's `dimension:` block or the field itself.
 - After validation passes, call `end_semantic_model_generation(semantic_model_files=[...])`. In OSI mode this syncs OSI datasets to the Knowledge Base without using MetricFlow YAML.

@@ -315,6 +315,18 @@ class GenSemanticModelAgenticNode(AgenticNode):
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
+        context["osi_spec_skeleton"] = ""
+        if context["authoring_format"] == "osi":
+            # The authoring skeleton ships with the adapter package so the shape
+            # the LLM is shown and the schema the adapter validates against
+            # cannot drift. The dialect placeholder is substituted at template
+            # render time from the active datasource's dialect map.
+            try:
+                from datus_semantic_osi.spec_skeleton import authoring_spec_skeleton
+
+                context["osi_spec_skeleton"] = authoring_spec_skeleton("__OSI_DIALECT__")
+            except ImportError:
+                logger.debug("datus_semantic_osi.spec_skeleton unavailable; skipping skeleton injection")
 
         logger.debug(f"Prepared template context: {context}")
         return context

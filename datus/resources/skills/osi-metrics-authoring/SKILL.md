@@ -4,7 +4,7 @@ description: OSI core schema metric authoring specification — metric expressio
 tags:
   - metrics
   - osi
-version: "1.1.0"
+version: "1.2.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -47,18 +47,20 @@ semantic_model:
         expression:
           dialects:
             - dialect: <osi_dialect>
-              expression: "COUNT(DISTINCT id)" # aggregate business expression; no OVER/LAG/RANK
+              expression: "COUNT(DISTINCT <existing_dataset_name>.id)" # aggregate business expression; no OVER/LAG/RANK
         custom_extensions:
           - vendor_name: DATUS
-            data: '{"dataset":"<existing_dataset_name>","time_dimension":"<date_column>","subject_path":["<domain>","<layer1>","<layer2>"],"format":"0.00%","unit":"<unit>"}'
+            data: '{"time_dimension":"<date_column>","subject_path":["<domain>","<layer1>","<layer2>"],"format":"0.00%","unit":"<unit>"}'
 ```
+
+Qualify every column in the metric expression with its **dataset name** (`SUM(orders.amount)`, not `SUM(amount)`). The compiler resolves the metric's dataset from the qualifier and strips it before execution, so a DATUS `dataset` hint is only needed when the expression references no qualified columns (e.g. some derived metrics).
 
 Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `inputs`, `numerator`, `denominator`, `window`, `grain_to_date`, `window_aggregation`, `offset_window`, `period_over_period`, `subject_path`, `format`, and `unit` MUST be encoded in the metric's DATUS `custom_extensions[].data` JSON string. They are not OSI core top-level metric fields.
 
 ## Authoring rules
 
-1. **Reference, don't rebuild.** Every metric's DATUS `dataset` hint must reference an existing dataset of the semantic model. If a needed dataset, field, time field, or relationship is missing, stop and report the prerequisite; do not modify semantic objects in this workflow.
-2. **Aggregates**: write the natural business expression in OSI core `expression.dialects[0].expression`, e.g. `COUNT(DISTINCT order_id)`, `SUM(amount)`, `AVG(score)`.
+1. **Reference, don't rebuild.** Every metric must anchor on an existing dataset of the semantic model — via qualified column names in its expression, or via a DATUS `dataset` hint. If a needed dataset, field, time field, or relationship is missing, stop and report the prerequisite; do not modify semantic objects in this workflow.
+2. **Aggregates**: write the natural business expression in OSI core `expression.dialects[0].expression`, qualifying columns with the owning dataset name, e.g. `COUNT(DISTINCT orders.order_id)`, `SUM(orders.amount)`, `AVG(reviews.score)`. Aggregated columns do NOT need to be declared as dataset fields — expressions reference physical columns directly.
 3. **Conditional aggregates**: keep the CASE inside the expression, e.g. `COUNT(DISTINCT CASE WHEN <condition> THEN id END)`. Preserve literal values exactly.
 4. **Conditional semantics**: encode metric-specific business conditions inside the OSI core metric expression, e.g. `COUNT(DISTINCT CASE WHEN status = 'paid' THEN id END)`. Do NOT create a separate dataset for a metric-only condition. Fixed logical dataset scope belongs in the dataset `source` query plus `description`/`ai_context`. Do NOT bury query-time date ranges into the metric; time ranges are query parameters.
 5. **Ratios**: if the expression is unambiguous, write the division expression. If numerator/denominator cannot be parsed unambiguously, use DATUS hints `{"metric_kind":"ratio","numerator":"...","denominator":"..."}`.
