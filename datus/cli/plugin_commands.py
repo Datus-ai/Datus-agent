@@ -38,10 +38,14 @@ class PluginCommands:
         if not getattr(self.agent_config, "plugins_enabled", True):
             print_warning(self.console, "Plugins are disabled (`agent.plugins_enabled: false`).")
             return
+        # Gate on list_plugins() (manifest-based) rather than entry points:
+        # a disabled managed plugin's directory is off sys.path, so an
+        # entry-point probe would misreport "no plugins installed" and make
+        # the manager — the tool for re-enabling plugins — unreachable.
         try:
-            from datus.plugins.registry import iter_plugin_entry_points
+            from datus.cli.plugin_service import list_plugins
 
-            if not list(iter_plugin_entry_points()):
+            if not list_plugins(self.agent_config):
                 print_info(
                     self.console,
                     "No plugins installed. Install one with `datus plugin install <source>`.",

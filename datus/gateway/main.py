@@ -104,6 +104,10 @@ def _run_gateway(args: argparse.Namespace) -> None:
     # file access. Force filesystem strict mode so nodes reject EXTERNAL
     # paths instead of hanging on a prompt.
     agent_config.filesystem_strict = True
+    # IM users must never be guided to edit the server's config file:
+    # hide/refuse setup skills and use the read-only plugin prompt preamble.
+    # (ChatTaskManager.start_chat re-asserts this on its per-request clone.)
+    agent_config.config_mutable = False
 
     try:
         am = agent_config.active_model()

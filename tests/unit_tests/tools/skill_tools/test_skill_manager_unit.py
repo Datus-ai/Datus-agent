@@ -108,6 +108,68 @@ class TestGetAvailableSkills:
         assert skills == []
 
 
+class TestConfigMutableFiltering:
+    """Read-only config mode hides and refuses ``requires_mutable_config`` skills."""
+
+    def _registry(self, *skills):
+        registry = MagicMock()
+        registry.get_skill_count.return_value = len(skills)
+        registry.list_skills.return_value = list(skills)
+        registry.get_skill.side_effect = lambda name: next((s for s in skills if s.name == name), None)
+        registry.load_skill_content.return_value = "# Setup steps"
+        return registry
+
+    def test_immutable_hides_requires_mutable_skill(self):
+        setup = _make_skill("hello-setup", requires_mutable_config=True)
+        plain = _make_skill("hello")
+        manager = SkillManager(registry=self._registry(setup, plain), config_mutable=False)
+        assert [s.name for s in manager.get_available_skills("chat")] == ["hello"]
+
+    def test_mutable_keeps_requires_mutable_skill(self):
+        setup = _make_skill("hello-setup", requires_mutable_config=True)
+        manager = SkillManager(registry=self._registry(setup))
+        assert [s.name for s in manager.get_available_skills("chat")] == ["hello-setup"]
+
+    def test_immutable_xml_omits_requires_mutable_skill(self):
+        setup = _make_skill("hello-setup", requires_mutable_config=True)
+        plain = _make_skill("hello")
+        manager = SkillManager(registry=self._registry(setup, plain), config_mutable=False)
+        xml = manager.generate_available_skills_xml("chat")
+        assert "hello-setup" not in xml
+        assert 'name="hello"' in xml
+
+    def test_load_refused_when_immutable(self):
+        setup = _make_skill("hello-setup", requires_mutable_config=True)
+        manager = SkillManager(registry=self._registry(setup), config_mutable=False)
+        ok, msg, content = manager.load_skill("hello-setup", "chat")
+        assert ok is False
+        assert content is None
+        assert "read-only" in msg
+        assert "administrator" in msg
+
+    def test_load_refused_even_with_authoring_bypasses(self):
+        """The guard sits before scope/permission bypasses — gen_skill in API mode is refused too."""
+        setup = _make_skill("hello-setup", requires_mutable_config=True, allowed_agents=["gen_skill"])
+        manager = SkillManager(registry=self._registry(setup), config_mutable=False)
+        ok, msg, _ = manager.load_skill("hello-setup", "gen_skill", check_permission=False, check_scope=False)
+        assert ok is False
+        assert "read-only" in msg
+
+    def test_load_succeeds_when_mutable(self):
+        setup = _make_skill("hello-setup", requires_mutable_config=True)
+        manager = SkillManager(registry=self._registry(setup))
+        ok, _, content = manager.load_skill("hello-setup", "chat")
+        assert ok is True
+        assert content == "# Setup steps"
+
+    def test_ordinary_skill_unaffected_when_immutable(self):
+        plain = _make_skill("hello")
+        manager = SkillManager(registry=self._registry(plain), config_mutable=False)
+        ok, _, content = manager.load_skill("hello", "chat")
+        assert ok is True
+        assert content == "# Setup steps"
+
+
 class TestLoadSkill:
     def test_load_success(self):
         registry = MagicMock()

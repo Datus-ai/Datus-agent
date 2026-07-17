@@ -489,8 +489,13 @@ Environments ({{ profiles | length }}):
 - {{ name }}: {{ cfg.get("greeting", "?") }}
 {% endfor %}
 {% else %}
-Installed but not configured — run the `hello-setup` skill to configure an
-environment.
+Installed but not configured.
+{% if config_mutable %}
+Run the `hello-setup` skill to configure an environment.
+{% else %}
+Configuration is managed by the deployment administrator — tell the user to
+contact them.
+{% endif %}
 {% endif %}
 ```
 
@@ -500,17 +505,20 @@ The render context:
 |---|---|
 | `plugin_name` | your entry-point name |
 | `profiles` | `dict[str, dict]` — the plugin's profile mapping, **narrowed to the profiles the project activated** (`plugins.<name>.active_profile` in `./.datus/config.yml`) and **secret-stripped** (see below) |
-| `config_path` | the loaded agent config file path, or `None` |
+| `config_path` | the loaded agent config file path, or `None` (always `None` when the config is read-only) |
+| `config_mutable` | `True` when the agent may edit the config file; `False` in managed deployments (multi-tenant chat API / gateway). Requires datus-agent ≥ the release introducing it — on older versions a template referencing it fails to render (strict mode) and the section is skipped |
 
 An installed-but-unconfigured plugin (or one whose pin matches nothing)
 renders with `profiles == {}` — use `{% if profiles %}` to emit a short
-"installed, not configured" note pointing at your bundled setup skill instead
-of disappearing from the prompt.
+"installed, not configured" note instead of disappearing from the prompt, and
+inside that branch check `config_mutable`: point at your bundled setup skill
+only when it is `True`, otherwise defer to the administrator.
 
 When at least one plugin contributes a section, Datus prepends its own
 `## Plugins` preamble naming the loaded config file and the
 `agent.plugins.<plugin>.<profile>` shape — your template never needs to
-hard-code config paths.
+hard-code config paths. In read-only mode the preamble switches to wording
+that forbids config-edit suggestions and defers to the administrator.
 
 !!! note "Secrets are stripped structurally"
     The rendered text enters the LLM context, and profile values are already
@@ -681,9 +689,14 @@ The setup `SKILL.md` should cover, in order:
    `datus <plugin>` reloads the config on every invocation, so the profile
    works immediately; the prompt's environment list refreshes next session.
 
-Add a guard note: if the current environment cannot edit the config file
-(API / VSCode / web deployment), the agent should tell the user to edit
-`agent.yml` on the server instead.
+Declare `requires_mutable_config: true` in the setup skill's frontmatter.
+Datus then hides the skill from `<available_skills>` and refuses `load_skill`
+in deployments where the agent config is read-only (multi-tenant chat API /
+gateway) — the agent defers to the administrator instead of walking the user
+through an edit it cannot make. Keep an in-body guard note as a fallback for
+older datus-agent versions that ignore the frontmatter field: if the current
+environment cannot edit the config file, the agent should tell the user to
+edit `agent.yml` on the server instead.
 
 A complete minimal `hello-setup/SKILL.md`:
 
@@ -691,6 +704,7 @@ A complete minimal `hello-setup/SKILL.md`:
 ---
 name: hello-setup
 description: Configure an environment profile for the `datus hello` plugin
+requires_mutable_config: true
 ---
 
 # Hello Setup
@@ -782,10 +796,14 @@ def test_prompt_template_renders_without_secrets():
     env = Environment(loader=FileSystemLoader(PKG), undefined=StrictUndefined)
     template = env.get_template("prompts/system.md.j2")
     # datus strips undeclared / x-secret fields before rendering; emulate that.
-    text = template.render(plugin_name="hello", profiles={"prod": {"greeting": "Hi"}}, config_path=None)
+    ctx = {"plugin_name": "hello", "config_path": None, "config_mutable": True}
+    text = template.render(profiles={"prod": {"greeting": "Hi"}}, **ctx)
     assert "## Hello" in text
-    text = template.render(plugin_name="hello", profiles={}, config_path=None)
+    text = template.render(profiles={}, **ctx)
     assert "hello-setup" in text
+    # read-only deployments must not be pointed at the setup skill
+    text = template.render(profiles={}, plugin_name="hello", config_path=None, config_mutable=False)
+    assert "hello-setup" not in text
 ```
 
 ## Distributing for offline install

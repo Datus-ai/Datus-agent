@@ -277,6 +277,7 @@ class SkillMetadata(BaseModel):
           - gen_dashboard
         context: fork
         agent: Explore
+        requires_mutable_config: false
         ---
 
     Attributes:
@@ -291,6 +292,11 @@ class SkillMetadata(BaseModel):
         allowed_agents: Node names (from ``AgenticNode.get_node_name()``) allowed
             to see and load this skill. Empty list means no restriction — every
             agent can see it.
+        requires_mutable_config: If true, the skill guides the agent through
+            editing the agent config file (the plugin ``<name>-setup``
+            convention). Hidden from ``<available_skills>`` and refused by
+            ``load_skill`` when ``AgentConfig.config_mutable`` is False
+            (chat API / gateway deployments with read-only config).
         context: "fork" to run in isolated subagent
         agent: Subagent type when context=fork (Explore, Plan, general-purpose)
         content: Full SKILL.md content (lazy loaded)
@@ -309,6 +315,13 @@ class SkillMetadata(BaseModel):
     allowed_agents: List[str] = Field(
         default_factory=list,
         description="Agent node names allowed to see/load this skill; empty = unrestricted",
+    )
+    # Config mutability: skills whose purpose is editing local config files
+    # (the plugin ``<name>-setup`` convention) declare this so they can be
+    # hidden/refused when the runtime config is read-only (API mode).
+    requires_mutable_config: bool = Field(
+        default=False,
+        description="If true, hidden/refused when the agent config is read-only (API mode)",
     )
     # Subagent execution
     context: Optional[str] = Field(default=None, description="'fork' to run in isolated subagent")
@@ -407,6 +420,7 @@ class SkillMetadata(BaseModel):
             disable_model_invocation=frontmatter.get("disable_model_invocation", False),
             user_invocable=frontmatter.get("user_invocable", True),
             allowed_agents=frontmatter.get("allowed_agents", []),
+            requires_mutable_config=bool(frontmatter.get("requires_mutable_config", False)),
             context=frontmatter.get("context"),
             agent=frontmatter.get("agent"),
             kind=frontmatter.get("kind", "skill"),
@@ -478,6 +492,7 @@ class SkillMetadata(BaseModel):
             "disable_model_invocation": self.disable_model_invocation,
             "user_invocable": self.user_invocable,
             "allowed_agents": self.allowed_agents,
+            "requires_mutable_config": self.requires_mutable_config,
             "context": self.context,
             "agent": self.agent,
             "kind": self.kind,

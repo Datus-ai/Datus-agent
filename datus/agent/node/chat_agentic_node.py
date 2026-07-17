@@ -238,6 +238,7 @@ class ChatAgenticNode(AgenticNode):
             self.skill_manager = SkillManager(
                 config=skills_config,
                 permission_manager=self.permission_manager,
+                config_mutable=self._resolve_config_mutable(),
             )
             self.skill_func_tool = SkillFuncTool(
                 manager=self.skill_manager,

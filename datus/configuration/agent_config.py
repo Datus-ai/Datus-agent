@@ -909,6 +909,15 @@ class AgentConfig:
         # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
+        # ``config_mutable`` gates whether the agent may be guided to edit the
+        # loaded agent config file (e.g. ``agent.plugins`` profiles). Default
+        # ``True`` (CLI). The chat API and gateway force it to ``False`` on
+        # their per-request config clone: in multi-tenant deployments the
+        # AgentConfig may be supplied by an AuthProvider and must never be
+        # modified by the agent — skills declaring ``requires_mutable_config``
+        # are hidden/refused and the plugin prompt preamble stops naming the
+        # config file.
+        self._config_mutable = _coerce_bool(kwargs.get("config_mutable"), True)
         # ``bash.enabled`` toggles whether agentic nodes instantiate the
         # general-purpose ``BashTool``. Default ``True`` preserves the
         # current behaviour where every node exposes ``bash``
@@ -1158,6 +1167,24 @@ class AgentConfig:
     @filesystem_strict.setter
     def filesystem_strict(self, value: bool) -> None:
         self._filesystem_strict = bool(value)
+
+    @property
+    def config_mutable(self) -> bool:
+        """Whether the agent may edit the loaded agent config file.
+
+        ``True`` (default, CLI): config-editing setup skills may guide the
+        user through writing ``agent.plugins`` profiles.
+
+        ``False`` (chat API / gateway): the config is read-only — skills
+        declaring ``requires_mutable_config: true`` are hidden from
+        ``<available_skills>`` and refused on load, and plugin system-prompt
+        sections must not suggest configuration edits.
+        """
+        return self._config_mutable
+
+    @config_mutable.setter
+    def config_mutable(self, value: bool) -> None:
+        self._config_mutable = bool(value)
 
     @property
     def bash_tool_enabled(self) -> bool:

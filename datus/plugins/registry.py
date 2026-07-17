@@ -341,13 +341,26 @@ def _agent_config_location() -> Optional[str]:
         return None
 
 
-def _plugin_config_preamble() -> str:
+def _plugin_config_preamble(config_mutable: bool = True) -> str:
     """datus-owned header prepended to the plugin prompt sections.
 
     Tells the agent where plugin profiles live so it can add or edit them
     (e.g. when a setup skill walks the user through configuration). Contains
     only the file path and the config shape — never profile values.
+
+    When ``config_mutable`` is ``False`` (multi-tenant chat API / gateway) the
+    header must not name the config file nor describe its shape — the agent is
+    told configuration is administrator-managed instead.
     """
+    if not config_mutable:
+        return (
+            "## Plugins\n"
+            "Plugin profiles are managed by the deployment administrator and the "
+            "agent configuration is read-only in this environment. Never suggest "
+            "editing configuration files and never walk the user through plugin "
+            "setup; if a plugin is not configured, tell the user to contact their "
+            "administrator. Configured `datus <plugin>` commands work normally."
+        )
     config_path = _agent_config_location()
     location = f"`{config_path}` " if config_path else "the agent config file (agent.yml) "
     return (
@@ -374,11 +387,17 @@ def plugin_system_prompt_sections(agent_config) -> List[str]:
 
     When at least one plugin contributes a section, a datus-owned ``## Plugins``
     preamble naming the loaded config file location is prepended so the agent
-    knows where profiles are added or edited.
+    knows where profiles are added or edited. When
+    ``agent_config.config_mutable`` is ``False`` (multi-tenant chat API /
+    gateway) the preamble switches to read-only wording, ``config_path`` is
+    withheld from templates (a server-local path must not leak to tenants) and
+    templates receive ``config_mutable=False`` so they can defer to the
+    administrator instead of pointing at their setup skill.
     """
     plugin_services = getattr(agent_config, "plugin_services", None) or {}
     active_names = _active_names_from_config(agent_config)
-    config_path = _agent_config_location()
+    config_mutable = bool(getattr(agent_config, "config_mutable", True))
+    config_path = _agent_config_location() if config_mutable else None
     sections: List[str] = []
     for name, manifest in _loaded_manifests():
         if manifest is None or not manifest.system_prompt:
@@ -386,11 +405,11 @@ def plugin_system_prompt_sections(agent_config) -> List[str]:
         if not _is_active(name, active_names):
             continue
         profiles = _active_profiles_subset(agent_config, name, plugin_services.get(name, {}))
-        section = render_plugin_prompt(manifest, profiles, config_path=config_path)
+        section = render_plugin_prompt(manifest, profiles, config_path=config_path, config_mutable=config_mutable)
         if section:
             sections.append(section)
     if sections:
-        sections.insert(0, _plugin_config_preamble())
+        sections.insert(0, _plugin_config_preamble(config_mutable))
     return sections
 
 

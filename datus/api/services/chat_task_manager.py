@@ -318,6 +318,12 @@ class ChatTaskManager:
         # access, so force filesystem strict mode — every node constructed
         # below reads this flag via AgenticNode._resolve_filesystem_strict().
         agent_config.filesystem_strict = True
+        # Multi-tenant API surface: the AgentConfig may be supplied by an
+        # AuthProvider and the agent must never modify configuration. Hides
+        # ``requires_mutable_config`` setup skills and switches the plugin
+        # prompt preamble to read-only wording. Set on the per-request clone
+        # only — the shared config keeps its default.
+        agent_config.config_mutable = False
         # vscode owns its own local shell: the daemon must not offer a
         # server-side BashTool at all. web has no shell of its own, but plugin
         # CLIs run through bash ("datus <plugin> ..."), so web keeps a

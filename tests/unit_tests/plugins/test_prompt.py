@@ -206,6 +206,25 @@ def test_render_config_path_in_context(tmp_path):
     assert render_plugin_prompt(manifest, {}, config_path="/srv/agent.yml") == "cfg=/srv/agent.yml"
 
 
+def test_render_config_mutable_in_context(tmp_path):
+    manifest = _manifest(tmp_path, "{% if config_mutable %}RW{% else %}RO{% endif %}")
+    assert render_plugin_prompt(manifest, {}, config_mutable=True) == "RW"
+    assert render_plugin_prompt(manifest, {}, config_mutable=False) == "RO"
+
+
+def test_render_config_mutable_defaults_true(tmp_path):
+    manifest = _manifest(tmp_path, "{% if config_mutable %}RW{% else %}RO{% endif %}")
+    assert render_plugin_prompt(manifest, {}) == "RW"
+
+
+def test_render_template_without_config_mutable_still_renders(tmp_path):
+    """Back-compat: templates that never reference the new variable render
+    unchanged under both values (StrictUndefined only fails on reference)."""
+    manifest = _manifest(tmp_path, "{% if profiles %}configured{% else %}unconfigured{% endif %}")
+    assert render_plugin_prompt(manifest, {}, config_mutable=True) == "unconfigured"
+    assert render_plugin_prompt(manifest, {}, config_mutable=False) == "unconfigured"
+
+
 def test_render_nested_template_dir(tmp_path):
     manifest = _manifest(tmp_path, "nested ok", rel="prompts/system.md.j2")
     assert render_plugin_prompt(manifest, {}) == "nested ok"

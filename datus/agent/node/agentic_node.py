@@ -2294,6 +2294,7 @@ class AgenticNode(Node):
             self.skill_manager = SkillManager(
                 config=skills_config,
                 permission_manager=self.permission_manager,
+                config_mutable=self._resolve_config_mutable(),
             )
             logger.debug(
                 f"Skill manager initialized for node '{self.get_node_name()}' "
@@ -2339,6 +2340,7 @@ class AgenticNode(Node):
 
                 self.skill_manager = SkillManager(
                     permission_manager=self.permission_manager,
+                    config_mutable=self._resolve_config_mutable(),
                 )
                 logger.info(
                     f"Created default SkillManager for node '{self.get_node_name()}' "
@@ -2392,7 +2394,10 @@ class AgenticNode(Node):
         if not self.skill_manager:
             from datus.tools.skill_tools.skill_manager import SkillManager
 
-            self.skill_manager = SkillManager(permission_manager=self.permission_manager)
+            self.skill_manager = SkillManager(
+                permission_manager=self.permission_manager,
+                config_mutable=self._resolve_config_mutable(),
+            )
 
         from xml.sax.saxutils import quoteattr as xml_quoteattr
 
@@ -3526,6 +3531,17 @@ class AgenticNode(Node):
         if self.agent_config is None:
             return False
         return bool(self.agent_config.filesystem_strict)
+
+    def _resolve_config_mutable(self) -> bool:
+        """Whether the agent may edit the agent config file (agent.yml).
+
+        Reads ``self.agent_config.config_mutable`` (default ``True``). The
+        chat API / gateway set it to ``False`` on their per-request config
+        clone so config-editing setup skills are hidden and refused.
+        """
+        if not self.agent_config:
+            return True
+        return bool(getattr(self.agent_config, "config_mutable", True))
 
     def _make_filesystem_tool(self, **kwargs):
         """Construct a ``FilesystemFuncTool`` with this node's identity baked in.

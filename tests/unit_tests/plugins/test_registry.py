@@ -20,10 +20,16 @@ TRANSFORMER_MODULE = "def passthrough(tool_name, args, context):\n    return arg
 
 
 class _FakeConfig:
-    """Stand-in for AgentConfig exposing only ``plugin_services``."""
+    """Stand-in for AgentConfig exposing only ``plugin_services``.
 
-    def __init__(self, plugin_services):
+    ``config_mutable`` is only set when supplied so the default case also
+    exercises the ``getattr``-fallback path in the registry.
+    """
+
+    def __init__(self, plugin_services, config_mutable=None):
         self.plugin_services = plugin_services
+        if config_mutable is not None:
+            self.config_mutable = config_mutable
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +276,34 @@ def test_preamble_degrades_without_config_path(plugin_env, monkeypatch):
     sections = registry.plugin_system_prompt_sections(_FakeConfig({}))
     assert sections[0].startswith("## Plugins")
     assert "agent.yml" in sections[0]  # generic wording instead of a path
+
+
+def test_preamble_immutable_omits_config_path_and_edit_guidance(plugin_env, monkeypatch):
+    """Read-only mode: the preamble must not leak the server config path nor
+    describe the profile shape — it defers to the administrator instead."""
+    _prompt_plugin(plugin_env)
+    monkeypatch.setattr(registry, "_agent_config_location", lambda: "/srv/conf/agent.yml")
+    sections = registry.plugin_system_prompt_sections(_FakeConfig({}, config_mutable=False))
+    assert sections[0].startswith("## Plugins")
+    assert "/srv/conf/agent.yml" not in sections[0]
+    assert "agent.plugins.<plugin>.<profile>" not in sections[0]
+    assert "administrator" in sections[0]
+    assert "read-only" in sections[0]
+
+
+def test_sections_pass_config_mutable_to_template(plugin_env):
+    _prompt_plugin(plugin_env, template="{% if config_mutable %}CAN-EDIT{% else %}NO-EDIT{% endif %}")
+    assert "NO-EDIT" in registry.plugin_system_prompt_sections(_FakeConfig({}, config_mutable=False))
+    assert "CAN-EDIT" in registry.plugin_system_prompt_sections(_FakeConfig({}, config_mutable=True))
+
+
+def test_immutable_withholds_config_path_from_template(plugin_env, monkeypatch):
+    _prompt_plugin(plugin_env, template="PATH={{ config_path }}")
+    monkeypatch.setattr(registry, "_agent_config_location", lambda: "/srv/conf/agent.yml")
+    sections = registry.plugin_system_prompt_sections(_FakeConfig({}, config_mutable=False))
+    assert "PATH=None" in sections
+    mutable_sections = registry.plugin_system_prompt_sections(_FakeConfig({}, config_mutable=True))
+    assert "PATH=/srv/conf/agent.yml" in mutable_sections
 
 
 def test_agent_config_location_prefers_loaded_manager(monkeypatch):

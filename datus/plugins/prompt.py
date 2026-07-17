@@ -5,7 +5,9 @@
 """Render a plugin's system-prompt Jinja2 template.
 
 The template named by ``manifest.system_prompt`` is rendered with a context of
-``plugin_name``, ``profiles`` and ``config_path``. Secret handling is
+``plugin_name``, ``profiles``, ``config_path`` and ``config_mutable``
+(``config_path`` is ``None`` and ``config_mutable`` is ``False`` when the
+runtime config is read-only, e.g. the multi-tenant chat API). Secret handling is
 structural: :func:`strip_secret_fields` whitelists profile fields against the
 manifest's ``config_schema`` BEFORE the template sees them — profile values
 are env-expanded (real secrets) by the time prompts are built, so undeclared
@@ -81,11 +83,15 @@ def render_plugin_prompt(
     manifest: PluginManifest,
     profiles: Any,
     config_path: Optional[str] = None,
+    config_mutable: bool = True,
 ) -> Optional[str]:
     """Render ``manifest.system_prompt`` into a system-prompt section.
 
     ``profiles`` is the plugin's (already project-narrowed) profile mapping;
-    it is secret-stripped here before rendering. Returns the stripped rendered
+    it is secret-stripped here before rendering. ``config_mutable`` tells the
+    template whether the agent may guide config edits — unconfigured plugins
+    should point at their setup skill only when it is ``True`` and defer to
+    the administrator otherwise. Returns the stripped rendered
     text, or ``None`` when the manifest declares no template, the template
     escapes the package dir, or rendering fails for any reason. Never raises.
     """
@@ -124,6 +130,7 @@ def render_plugin_prompt(
             plugin_name=manifest.name,
             profiles=strip_secret_fields(profiles, manifest.config_schema),
             config_path=config_path,
+            config_mutable=config_mutable,
         )
     except Exception as exc:  # noqa: BLE001 - one bad template must not break prompt build
         logger.warning("Plugin %r system_prompt template failed to render: %s; skipping.", manifest.name, exc)

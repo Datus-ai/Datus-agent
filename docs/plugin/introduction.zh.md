@@ -209,7 +209,9 @@ datus plugin disable noisy-plugin            # 本项目停用
   掌握的信息。prompt 段落在会话启动时刷新;会话中途的配置修改要到下一个会话才可见。
 - **引导式配置** —— 已安装但未配置的插件通常会在 prompt 中声明自己,并指向自带的
   `<name>-setup` skill。让 agent 帮你配置,它会收集必填项并替你写入 profile
-  (密钥以 `${VAR}` 形式引用,绝不写明文)。
+  (密钥以 `${VAR}` 形式引用,绝不写明文)。在 agent 配置只读的托管部署
+  (多租户 chat API / gateway)中,setup skill 会被隐藏,agent 会引导用户联系
+  管理员。
 
 ## Agent bash 权限
 
