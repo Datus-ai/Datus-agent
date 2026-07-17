@@ -575,9 +575,16 @@ class ChatTaskManager:
             event_id += 1
             event_id = await self._push_degraded_capability_warnings(task, node, event_id)
 
-            # 3. Resolve @-references
-            at_tables, at_metrics, at_sqls = self._resolve_at_context(
-                agent_config, request.table_paths, request.metric_paths, request.sql_paths
+            # 3. Resolve @-references. Run in a worker thread (like node
+            # creation): the metric/reference-sql stores use blocking psycopg
+            # connections that must not be driven from the event-loop thread —
+            # doing so corrupts the pooled connection ("the connection is lost").
+            at_tables, at_metrics, at_sqls = await asyncio.to_thread(
+                self._resolve_at_context,
+                agent_config,
+                request.table_paths,
+                request.metric_paths,
+                request.sql_paths,
             )
 
             # 4. Build typed input and assign to node
