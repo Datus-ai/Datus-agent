@@ -791,6 +791,27 @@ class TestStartChat:
             "db_schema": "configured_schema",
         }
 
+    async def test_start_chat_forces_immutable_config(self, real_agent_config, monkeypatch):
+        """The per-request clone is marked read-only (filesystem + config)
+        while the shared config keeps its defaults."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        async def fake_run_loop(self, task, agent_config, request, **kwargs):
+            captured["config"] = agent_config
+
+        monkeypatch.setattr(ChatTaskManager, "_run_loop", fake_run_loop)
+        manager = ChatTaskManager()
+        request = StreamChatInput(message="hello", session_id="immutable-config")
+        task = await manager.start_chat(real_agent_config, request)
+        await task.asyncio_task
+
+        assert captured["config"].config_mutable is False
+        assert captured["config"].filesystem_strict is True
+        # The shared config must not be mutated by the request.
+        assert real_agent_config.config_mutable is True
+
     async def test_start_chat_duplicate_session_raises(self, real_agent_config, mock_llm_create):
         """start_chat raises ValueError for duplicate session_id."""
         from datus.api.models.cli_models import StreamChatInput

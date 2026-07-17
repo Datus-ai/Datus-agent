@@ -242,7 +242,9 @@ Beyond running `datus <name> ...` yourself, plugins integrate with the agent:
   itself in the prompt and points the agent at its bundled `<name>-setup`
   skill. Ask the agent to set the plugin up, and it collects the required
   values and writes the profile for you (secrets are referenced as `${VAR}`,
-  never written literally).
+  never written literally). In managed deployments where the agent config is
+  read-only (the multi-tenant chat API / gateway), setup skills are hidden and
+  the agent directs users to their administrator instead.
 
 ## Agent bash permissions
 

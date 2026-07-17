@@ -88,12 +88,17 @@ Only ``manifest_version`` is required — every other key is optional::
     # the agent's system prompt. Render context: ``plugin_name`` (str),
     # ``profiles`` (dict[str, dict] — the project-activated profiles carrying
     # ONLY fields declared non-secret in ``config_schema``; without a schema,
-    # profile names map to empty dicts) and ``config_path`` (str | None).
+    # profile names map to empty dicts), ``config_path`` (str | None —
+    # ``None`` when the runtime config is read-only) and ``config_mutable``
+    # (bool — ``False`` in deployments where the agent must not edit the
+    # config file, e.g. the multi-tenant chat API).
     # Profile values are env-expanded at load, so secret stripping is
     # structural: undeclared or ``x-secret`` fields never reach the template.
     # An installed-but-unconfigured plugin renders with ``profiles == {}`` —
-    # use ``{% if profiles %}`` to emit setup guidance (pointing at the
-    # bundled setup skill) instead of disappearing from the prompt. datus
+    # use ``{% if profiles %}`` to emit setup guidance instead of disappearing
+    # from the prompt, and inside that unconfigured branch check
+    # ``config_mutable``: point at the bundled setup skill only when it is
+    # true, otherwise tell the user to contact the administrator. datus
     # prepends its own ``## Plugins`` preamble naming the loaded config file,
     # so the template must not hard-code config paths.
 
@@ -101,7 +106,9 @@ Only ``manifest_version`` is required — every other key is optional::
     # Path (relative to the package dir) of a bundled skill directory.
     # Plugins that need configuration should bundle a ``<name>-setup`` skill
     # describing the profile YAML shape, with secrets as ``${ENV_VAR}``
-    # placeholders, never literal values.
+    # placeholders, never literal values. A setup skill must declare
+    # ``requires_mutable_config: true`` in its SKILL.md frontmatter so datus
+    # hides and refuses it when the agent config is read-only (API mode).
 
     config_schema:
       type: object

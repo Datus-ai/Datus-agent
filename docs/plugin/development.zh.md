@@ -456,8 +456,13 @@ Environments ({{ profiles | length }}):
 - {{ name }}: {{ cfg.get("greeting", "?") }}
 {% endfor %}
 {% else %}
-Installed but not configured — run the `hello-setup` skill to configure an
-environment.
+Installed but not configured.
+{% if config_mutable %}
+Run the `hello-setup` skill to configure an environment.
+{% else %}
+Configuration is managed by the deployment administrator — tell the user to
+contact them.
+{% endif %}
 {% endif %}
 ```
 
@@ -467,15 +472,17 @@ environment.
 |---|---|
 | `plugin_name` | 你的 entry-point 名 |
 | `profiles` | `dict[str, dict]`——plugin 的 profile 映射,**已收窄到项目激活的 profile**(`./.datus/config.yml` 的 `plugins.<name>.active_profile`)且**已剥离 secret**(见下) |
-| `config_path` | 已加载的 agent 配置文件路径,或 `None` |
+| `config_path` | 已加载的 agent 配置文件路径,或 `None`(配置只读时恒为 `None`) |
+| `config_mutable` | agent 可编辑配置文件时为 `True`;托管部署(多租户 chat API / gateway)下为 `False`。需要引入该变量的 datus-agent 版本及以上——旧版本中引用它的模板会渲染失败(严格模式)并跳过该 section |
 
 已安装但未配置的 plugin(或 pin 无匹配)渲染时 `profiles == {}`——用
-`{% if profiles %}` 输出一段"已安装未配置"提示并指向捆绑的 setup skill,而不是
-从提示词中消失。
+`{% if profiles %}` 输出一段"已安装未配置"提示而不是从提示词中消失,并在该
+分支内检查 `config_mutable`:仅当它为 `True` 时指向捆绑的 setup skill,否则
+提示用户联系管理员。
 
 只要有任一 plugin 贡献了 section,Datus 会前置自己的 `## Plugins` 导语,写明已
 加载的配置文件和 `agent.plugins.<plugin>.<profile>` 结构——你的模板永远不需要
-硬编码配置路径。
+硬编码配置路径。只读模式下导语会换成禁止建议修改配置、请联系管理员的措辞。
 
 !!! note "secret 是结构性剥离的"
     渲染出的文本会进入 LLM 上下文,而 profile 的值在提示词构建时已完成
@@ -614,8 +621,12 @@ setup `SKILL.md` 应按顺序覆盖:
    `datus <plugin>` 每次调用都重新加载配置,profile 立即生效;提示词里的环境列
    表下个会话刷新。
 
-加一条保护性说明:若当前环境无法编辑配置文件(API / VSCode / web 部署),agent
-应告知用户去服务器上改 `agent.yml`。
+在 setup skill 的 frontmatter 里声明 `requires_mutable_config: true`。配置只读
+的部署(多租户 chat API / gateway)中,Datus 会把该 skill 从
+`<available_skills>` 中隐藏并拒绝 `load_skill`——agent 会引导用户联系管理员,
+而不是走一遍它做不到的配置编辑。同时在正文保留一条保护性说明,作为旧版
+datus-agent(会忽略该 frontmatter 字段)的兜底:若当前环境无法编辑配置文件,
+agent 应告知用户去服务器上改 `agent.yml`。
 
 一个完整的最小 `hello-setup/SKILL.md`:
 
@@ -623,6 +634,7 @@ setup `SKILL.md` 应按顺序覆盖:
 ---
 name: hello-setup
 description: Configure an environment profile for the `datus hello` plugin
+requires_mutable_config: true
 ---
 
 # Hello Setup
@@ -709,10 +721,14 @@ def test_prompt_template_renders_without_secrets():
     env = Environment(loader=FileSystemLoader(PKG), undefined=StrictUndefined)
     template = env.get_template("prompts/system.md.j2")
     # datus 渲染前会剥离未声明 / x-secret 字段;此处模拟同样的输入。
-    text = template.render(plugin_name="hello", profiles={"prod": {"greeting": "Hi"}}, config_path=None)
+    ctx = {"plugin_name": "hello", "config_path": None, "config_mutable": True}
+    text = template.render(profiles={"prod": {"greeting": "Hi"}}, **ctx)
     assert "## Hello" in text
-    text = template.render(plugin_name="hello", profiles={}, config_path=None)
+    text = template.render(profiles={}, **ctx)
     assert "hello-setup" in text
+    # 只读部署下绝不能把 agent 指向 setup skill
+    text = template.render(profiles={}, plugin_name="hello", config_path=None, config_mutable=False)
+    assert "hello-setup" not in text
 ```
 
 ## 分发离线安装包

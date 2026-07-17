@@ -2849,6 +2849,43 @@ class TestPluginsEnabledSwitch:
         assert cfg.get_plugin_profile("hello") == {}
 
 
+class TestConfigMutable:
+    """``config_mutable`` — read-only config mode for API/gateway surfaces."""
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_defaults_to_mutable(self, tmp_path):
+        assert self._make(tmp_path).config_mutable is True
+
+    @pytest.mark.parametrize("value", [False, "false", "no", "off", "0"])
+    def test_immutable_values(self, tmp_path, value):
+        assert self._make(tmp_path, config_mutable=value).config_mutable is False
+
+    def test_setter_coerces_to_bool(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.config_mutable = 0
+        assert cfg.config_mutable is False
+        cfg.config_mutable = "yes"
+        assert cfg.config_mutable is True
+
+    def test_deepcopy_isolates_the_clone(self, tmp_path):
+        import copy
+
+        cfg = self._make(tmp_path)
+        clone = copy.deepcopy(cfg)
+        clone.config_mutable = False
+        assert clone.config_mutable is False
+        assert cfg.config_mutable is True
+
+
 class TestPluginPathsConfig:
     """``agent.plugin_paths`` — extra plugin-level directory mounts."""
 

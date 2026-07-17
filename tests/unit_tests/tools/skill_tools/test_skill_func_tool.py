@@ -189,6 +189,34 @@ class TestSkillFuncToolLoadSkill:
         assert result.success == 1
         assert "Scoped Table Skill" in result.result
 
+    def test_load_skill_blocked_in_immutable_config_mode(self, skill_config_with_extra):
+        """A ``requires_mutable_config`` skill is refused through the whole
+        ``SkillFuncTool -> SkillManager`` chain when the config is read-only."""
+        config, extra_dir = skill_config_with_extra
+        setup_dir = extra_dir / "fake-setup"
+        setup_dir.mkdir()
+        (setup_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: fake-setup\n"
+            "description: Configure a plugin profile\n"
+            "requires_mutable_config: true\n"
+            "---\n"
+            "# Fake Setup\nEdit agent.yml.\n",
+            encoding="utf-8",
+        )
+        immutable_manager = SkillManager(config=config, config_mutable=False)
+        tool = SkillFuncTool(manager=immutable_manager, node_name="chat")
+        result = tool.load_skill("fake-setup")
+
+        assert result.success == 0
+        assert "read-only" in result.error
+        assert "administrator" in result.error
+
+        mutable_manager = SkillManager(config=config)
+        ok_result = SkillFuncTool(manager=mutable_manager, node_name="chat").load_skill("fake-setup")
+        assert ok_result.success == 1
+        assert "Fake Setup" in ok_result.result
+
 
 class TestSkillFuncToolPermissionCallback:
     """Tests for permission callback integration."""

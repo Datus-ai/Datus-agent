@@ -55,6 +55,7 @@ class SkillManager:
         config: Optional[SkillConfig] = None,
         permission_manager: Optional["PermissionManager"] = None,
         registry: Optional[SkillRegistry] = None,
+        config_mutable: bool = True,
     ):
         """Initialize the skill manager.
 
@@ -62,10 +63,15 @@ class SkillManager:
             config: Skills configuration
             permission_manager: Permission manager for access control
             registry: Optional pre-configured registry (for testing)
+            config_mutable: Whether the agent config file may be edited in
+                this deployment. When False (chat API / gateway), skills
+                declaring ``requires_mutable_config: true`` are hidden from
+                listings and refused on load.
         """
         self.config = config or SkillConfig()
         self.permission_manager = permission_manager
         self.registry = registry or SkillRegistry(config=self.config)
+        self.config_mutable = bool(config_mutable)
 
         # Scan directories on initialization
         self.registry.scan_directories()
@@ -124,6 +130,12 @@ class SkillManager:
         # by the hook). See ValidationHook design doc (Part §5.3).
         all_skills = [s for s in all_skills if not s.is_validator()]
 
+        # Hide config-editing setup skills when the runtime config is
+        # immutable (chat API / gateway): the agent must not be pointed at
+        # skills whose whole purpose is editing the agent config file.
+        if not self.config_mutable:
+            all_skills = [s for s in all_skills if not s.requires_mutable_config]
+
         logger.debug(f"Available skills for {node_name}: {[s.name for s in all_skills]}")
         return all_skills
 
@@ -176,6 +188,22 @@ class SkillManager:
             return (
                 False,
                 f"Skill '{skill_name}' is a validator — executed by ValidationHook, not loadable here",
+                None,
+            )
+
+        # Refuse config-editing setup skills when the runtime config is
+        # read-only. Placed before the scope/authoring bypasses so even a
+        # ``gen_skill`` authoring flow in API mode cannot load one.
+        if not self.config_mutable and skill.requires_mutable_config:
+            logger.warning(
+                "Skill '%s' requires a mutable agent config; refused in read-only config mode",
+                skill_name,
+            )
+            return (
+                False,
+                f"Skill '{skill_name}' walks through editing the agent configuration, "
+                "which is read-only in this deployment. Plugin profiles are managed by "
+                "the administrator — ask them to configure it.",
                 None,
             )
 

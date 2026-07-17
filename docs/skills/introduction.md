@@ -267,6 +267,7 @@ Available subagent types for isolated execution:
 |-------|---------|-------------|
 | `disable_model_invocation` | `false` | If true, only user can invoke via `/skill-name` |
 | `user_invocable` | `true` | If false, hidden from CLI menu (only model invokes) |
+| `requires_mutable_config` | `false` | If true, hidden and refused when the agent config is read-only (multi-tenant chat API / gateway) — for skills that guide config-file edits |
 
 ## SKILL.md Reference
 
@@ -282,6 +283,7 @@ Available subagent types for isolated execution:
 | `agent` | No | Subagent type: `Explore`, `Plan`, `general-purpose` |
 | `disable_model_invocation` | No | If true, only user can invoke |
 | `user_invocable` | No | If false, hidden from CLI menu |
+| `requires_mutable_config` | No | If true, hidden/refused when the agent config is read-only (API mode) |
 
 ### Security Features
 

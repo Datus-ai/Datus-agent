@@ -457,6 +457,24 @@ class TestSkillMetadata:
         assert metadata.description == "Simple skill"
         assert metadata.tags == []
 
+    def test_requires_mutable_config_defaults_false(self):
+        """Omitted frontmatter key parses to False and still serializes."""
+        frontmatter = {"name": "plain", "description": "Plain skill"}
+        metadata = SkillMetadata.from_frontmatter(frontmatter, Path("/skills/plain"))
+        assert metadata.requires_mutable_config is False
+        assert metadata.to_dict()["requires_mutable_config"] is False
+
+    def test_requires_mutable_config_parsed_true(self):
+        """The plugin ``<name>-setup`` convention: frontmatter true survives parsing."""
+        frontmatter = {
+            "name": "hello-setup",
+            "description": "Configure a profile for the hello plugin",
+            "requires_mutable_config": True,
+        }
+        metadata = SkillMetadata.from_frontmatter(frontmatter, Path("/skills/hello-setup"))
+        assert metadata.requires_mutable_config is True
+        assert metadata.to_dict()["requires_mutable_config"] is True
+
     def test_skill_metadata_serialization(self):
         """Test SkillMetadata serialization."""
         metadata = SkillMetadata(

@@ -284,6 +284,7 @@ This skill runs in an isolated Explore subagent for thorough investigation.
 |------|--------|------|
 | `disable_model_invocation` | `false` | 如为 true，仅用户可通过 `/skill-name` 调用 |
 | `user_invocable` | `true` | 如为 false，从 CLI 菜单隐藏（仅模型调用） |
+| `requires_mutable_config` | `false` | 如为 true，在 agent 配置只读的部署（多租户 chat API / gateway）中隐藏并拒绝加载——用于引导修改配置文件的技能 |
 
 ## SKILL.md 参考
 
@@ -300,6 +301,7 @@ This skill runs in an isolated Explore subagent for thorough investigation.
 | `agent` | 否 | Subagent 类型：`Explore`、`Plan`、`general-purpose` |
 | `disable_model_invocation` | 否 | 如为 true，仅用户可调用 |
 | `user_invocable` | 否 | 如为 false，从 CLI 菜单隐藏 |
+| `requires_mutable_config` | 否 | 如为 true，配置只读（API 模式）时隐藏/拒绝加载 |
 
 ### 命令模式格式
 
