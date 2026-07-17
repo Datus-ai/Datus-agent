@@ -491,6 +491,21 @@ class IUpdateMessagePayload(BaseModel):
 
 
 # SSE Event Data Models
+class AtContextData(BaseModel):
+    """@-referenced context attached to a user message (path identifiers only).
+
+    Mirrors the request's ``*_paths`` fields. Populated by the history API for
+    user messages so the front-end can re-render the referenced tables /
+    metrics / SQL / knowledge as read-only chips. Empty lists when a turn
+    carried no references of that kind.
+    """
+
+    table_paths: List[str] = Field(default_factory=list, description="@Table path identifiers")
+    metric_paths: List[str] = Field(default_factory=list, description="@Metrics path identifiers")
+    sql_paths: List[str] = Field(default_factory=list, description="@Sql path identifiers")
+    knowledge_paths: List[str] = Field(default_factory=list, description="@Knowledge path identifiers")
+
+
 class SSEMessagePayload(BaseModel):
     """Payload for SSE message events."""
 
@@ -499,6 +514,9 @@ class SSEMessagePayload(BaseModel):
     content: List[IMessageContent] = Field(default_factory=list, description="Message content list")
     depth: int = Field(default=0, description="Nesting depth (0=main, 1=sub-agent)")
     parent_action_id: Optional[str] = Field(default=None, description="Parent action ID for sub-agent grouping")
+    at_context: Optional[AtContextData] = Field(
+        default=None, description="@-referenced context for a user message (history replay only)"
+    )
 
 
 class SSEMessageData(BaseModel):

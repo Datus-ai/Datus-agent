@@ -8,10 +8,11 @@ from typing import Any, Dict, Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class AskMetricsNodeInput(BaseInput):
+class AskMetricsNodeInput(AtContextInput):
     """Input model for AskMetricsAgenticNode."""
 
     user_message: str = Field(..., description="User's metric question")

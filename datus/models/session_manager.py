@@ -1026,6 +1026,123 @@ class SessionManager:
             "updated_at": to_utc_iso(updated_at) if updated_at else None,
         }
 
+    # ------------------------------------------------------------------
+    # Per-user-turn @-context (table/metric/sql/knowledge references)
+    # ------------------------------------------------------------------
+    #
+    # The SDK's ``agent_messages`` table only stores the enhanced prompt text,
+    # from which structured @-references can't be recovered. This side table —
+    # written by the API layer once a turn is persisted, never read back into
+    # the LLM — lets ``get_history`` echo the exact references a user attached
+    # so the front-end can re-render them. Keyed by ``user_turn_number`` (the
+    # SDK's canonical per-turn id) so it survives gaps (turns with no refs).
+
+    _USER_MESSAGE_CONTEXT_DDL = (
+        "CREATE TABLE IF NOT EXISTS user_message_context ("
+        "session_id TEXT NOT NULL, "
+        "user_turn_number INTEGER NOT NULL, "
+        "context_json TEXT NOT NULL, "
+        "created_at TIMESTAMP, "
+        "PRIMARY KEY (session_id, user_turn_number)"
+        ")"
+    )
+
+    def get_max_user_turn_number(self, session_id: str) -> int:
+        """Return the highest ``user_turn_number`` recorded, or 0 when none/no DB.
+
+        ``user_turn_number`` is session-global and monotonic (assigned by the
+        SDK across every branch), so callers use it to detect whether a run
+        actually persisted a new user turn. Captured before a run and compared
+        after — see :meth:`save_user_message_context`.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return 0
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                row = conn.execute(
+                    "SELECT MAX(user_turn_number) FROM message_structure WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return 0
+        return int(row[0]) if row and row[0] is not None else 0
+
+    def save_user_message_context(
+        self, session_id: str, context: Dict[str, Any], previous_turn_number: int = -1
+    ) -> None:
+        """Persist a turn's @-context against its ``user_turn_number``.
+
+        Call after the turn's user message is persisted by the SDK. The turn is
+        resolved as ``MAX(user_turn_number)``. ``previous_turn_number`` is the
+        value captured *before* the run: the write only happens when the new max
+        strictly exceeds it, so a run that persisted no new user turn (e.g. a
+        node type that emits no user message, or a failed/cancelled turn) can
+        never mis-attach this run's context onto the previous turn's bubble.
+
+        ``user_turn_number`` is session-global monotonic, so a bare ``MAX`` is
+        the right turn even across rewind/fork branches — no ``branch_id``
+        filter is needed. No-op when *context* is empty or the session DB /
+        turn isn't there yet.
+        """
+        if not context:
+            return
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+        payload = json.dumps(context, ensure_ascii=False)
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                row = conn.execute(
+                    "SELECT MAX(user_turn_number) FROM message_structure WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                turn_number = row[0] if row else None
+                if turn_number is None or int(turn_number) <= previous_turn_number:
+                    # No new user turn was persisted this run — don't attach.
+                    return
+                conn.execute(self._USER_MESSAGE_CONTEXT_DDL)
+                conn.execute(
+                    "INSERT OR REPLACE INTO user_message_context "
+                    "(session_id, user_turn_number, context_json, created_at) VALUES (?, ?, ?, ?)",
+                    (session_id, int(turn_number), payload, datetime.now(timezone.utc)),
+                )
+                conn.commit()
+        except sqlite3.OperationalError as exc:
+            logger.debug(f"save_user_message_context failed for {session_id}: {exc}")
+
+    @staticmethod
+    def _read_user_message_context(conn: sqlite3.Connection, session_id: str) -> Dict[int, Dict[str, Any]]:
+        """Return ``{user_turn_number: context_dict}`` for a session, ``{}`` if absent."""
+        try:
+            rows = conn.execute(
+                "SELECT user_turn_number, context_json FROM user_message_context WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        result: Dict[int, Dict[str, Any]] = {}
+        for turn_number, context_json in rows:
+            try:
+                result[int(turn_number)] = json.loads(context_json) if context_json else {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+        return result
+
+    @staticmethod
+    def _read_message_turn_map(conn: sqlite3.Connection, session_id: str) -> Dict[int, int]:
+        """Return ``{agent_messages.id: user_turn_number}`` from message_structure."""
+        try:
+            rows = conn.execute(
+                "SELECT message_id, user_turn_number FROM message_structure WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+        return {int(mid): int(turn) for mid, turn in rows if mid is not None and turn is not None}
+
     @staticmethod
     def _parse_final_output(actions: List[ActionHistory], current_assistant_group: Dict) -> Optional[ActionHistory]:
         """Try to parse sql/output from the last assistant action's messages and update assistant group.
@@ -1113,20 +1230,28 @@ class SessionManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT message_data, created_at
+                    SELECT id, message_data, created_at
                     FROM agent_messages
                     WHERE session_id = ?
                     ORDER BY created_at, id
                     """,
                     (session_id,),
                 )
+                rows = cursor.fetchall()
+
+                # Side-table @-context (table/metric/sql/knowledge refs) keyed by
+                # user_turn_number, plus the message_id -> turn map to attach each
+                # to the right user bubble. Empty when the session predates the
+                # feature or carried no references.
+                turn_map = self._read_message_turn_map(conn, session_id)
+                context_map = self._read_user_message_context(conn, session_id)
 
                 # Aggregate consecutive assistant messages
                 current_assistant_group = None
                 assistant_progress = []
                 current_actions = []  # Collect ActionHistory objects for detailed view
 
-                for message_data, created_at in cursor.fetchall():
+                for row_id, message_data, created_at in rows:
                     # Normalize SQLite naive UTC timestamp for outward-facing fields.
                     created_at_iso = to_utc_iso(created_at)
                     try:
@@ -1179,14 +1304,18 @@ class SessionManager:
 
                             # Add user message (extract original user input from structured content)
                             content = extract_user_input(message_json.get("content", ""))
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": content,
-                                    "timestamp": created_at_iso,
-                                    "created_at": created_at_iso,
-                                }
-                            )
+                            user_msg: Dict[str, Any] = {
+                                "role": "user",
+                                "content": content,
+                                "timestamp": created_at_iso,
+                                "created_at": created_at_iso,
+                            }
+                            # Attach the turn's resolved @-context (if any) so the
+                            # front-end can re-render referenced tables/metrics/etc.
+                            turn_no = turn_map.get(row_id)
+                            if turn_no is not None and turn_no in context_map:
+                                user_msg["at_context"] = context_map[turn_no]
+                            messages.append(user_msg)
                             continue
 
                         # Handle function calls (tool calls)

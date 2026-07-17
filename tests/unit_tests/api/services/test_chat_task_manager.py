@@ -927,49 +927,54 @@ class TestResolveAtContext:
     """Tests for _resolve_at_context — @ reference resolution."""
 
     def test_resolve_empty_paths_returns_empty(self, real_agent_config):
-        """_resolve_at_context with no paths returns empty lists."""
+        """_resolve_at_context with no paths returns empty lists + no hints."""
         manager = ChatTaskManager()
-        tables, metrics, sqls = manager._resolve_at_context(real_agent_config, None, None, None)
+        tables, metrics, sqls, hints = manager._resolve_at_context(real_agent_config, None, None, None, None)
         assert tables == []
         assert metrics == []
         assert sqls == []
+        assert hints == []
 
     def test_resolve_with_empty_lists(self, real_agent_config):
         """_resolve_at_context with empty lists returns empty results."""
         manager = ChatTaskManager()
-        tables, metrics, sqls = manager._resolve_at_context(real_agent_config, [], [], [])
+        tables, metrics, sqls, hints = manager._resolve_at_context(real_agent_config, [], [], [], [])
         assert tables == []
         assert metrics == []
         assert sqls == []
+        assert hints == []
 
-    def test_resolve_nonexistent_paths(self, real_agent_config):
-        """_resolve_at_context with nonexistent paths returns empty (no crash)."""
+    def test_knowledge_paths_always_become_hints(self, real_agent_config):
+        """@Knowledge has no store loader, so every ref surfaces as a look-up hint."""
         manager = ChatTaskManager()
-        tables, metrics, sqls = manager._resolve_at_context(
-            real_agent_config,
-            ["nonexistent/table/path"],
-            ["nonexistent/metric/path"],
-            ["nonexistent/sql/path"],
-        )
-        # Should return empty lists since paths don't exist
-        assert isinstance(tables, list)
-        assert isinstance(metrics, list)
-        assert isinstance(sqls, list)
+        _, _, _, hints = manager._resolve_at_context(real_agent_config, None, None, None, ["Domain/Glossary/gmv"])
+        assert hints == [{"kind": "knowledge", "name": "gmv", "subject_path": ["Domain", "Glossary"]}]
 
-    def test_resolve_at_context_returns_empty_when_completer_fails(self, real_agent_config):
+    def test_table_completer_failure_still_yields_name_only_ref(self, real_agent_config):
+        """A completer failure must not drop a picked @Table — it degrades to a
+        name-only reference so the node still knows which table to inspect."""
         manager = ChatTaskManager()
 
         with patch("datus.api.services.chat_task_manager.AtReferenceCompleter", side_effect=RuntimeError("hf offline")):
-            tables, metrics, sqls = manager._resolve_at_context(
-                real_agent_config,
-                ["db.schema.table"],
-                ["Finance.revenue"],
-                ["Finance.sql"],
-            )
+            tables = manager._resolve_table_paths(real_agent_config, ["db.schema.table"])
 
-        assert tables == []
+        assert [t.table_name for t in tables] == ["table"]
+
+    def test_metric_store_failure_degrades_to_hint(self, real_agent_config):
+        """A store failure yields no typed metric but a look-up hint (not a silent drop)."""
+        manager = ChatTaskManager()
+        with patch("datus.storage.metric.store.MetricRAG", side_effect=RuntimeError("store down")):
+            metrics, hints = manager._resolve_metric_paths(real_agent_config, ["Finance/revenue"])
         assert metrics == []
+        assert hints == [{"kind": "metric", "name": "revenue", "subject_path": ["Finance"]}]
+
+    def test_sql_store_failure_degrades_to_hint(self, real_agent_config):
+        """A store failure yields no typed reference SQL but a look-up hint."""
+        manager = ChatTaskManager()
+        with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", side_effect=RuntimeError("store down")):
+            sqls, hints = manager._resolve_sql_paths(real_agent_config, ["Finance/sql"])
         assert sqls == []
+        assert hints == [{"kind": "reference_sql", "name": "sql", "subject_path": ["Finance"]}]
 
 
 class TestCreateNode:
@@ -1928,3 +1933,154 @@ class TestStartChatDatasourceOverride:
         request = StreamChatInput(message="hi", session_id="ds-invalid", datasource="nonexistent")
         with pytest.raises(DatusException):
             await manager.start_chat(real_agent_config, request)
+
+
+class TestMatchTableEntry:
+    """_match_table_entry — resilient @Table resolution when the picker's
+    fullName (live introspection) diverges from the metadata-store key."""
+
+    FLAT = {
+        "jeff_shop_live.main.raw_stores": {
+            "table_name": "raw_stores",
+            "database_name": "jeff_shop_live",
+            "schema_name": "main",
+            "definition": "x",
+            "identifier": "i",
+        },
+        "jeff_shop_live.main.raw_orders": {
+            "table_name": "raw_orders",
+            "database_name": "jeff_shop_live",
+            "schema_name": "main",
+            "definition": "x",
+            "identifier": "i",
+        },
+    }
+
+    def test_catalog_prefix_mismatch_resolves(self):
+        entry = ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.jeff_shop_live.raw_stores")
+        assert entry and entry["table_name"] == "raw_stores"
+
+    def test_bare_db_table_resolves(self):
+        entry = ChatTaskManager._match_table_entry(self.FLAT, "jeff_shop_live.raw_stores")
+        assert entry and entry["table_name"] == "raw_stores"
+
+    def test_unknown_table_returns_none(self):
+        assert ChatTaskManager._match_table_entry(self.FLAT, "default_catalog.jeff_shop_live.nope") is None
+
+    def test_ambiguous_without_db_returns_none(self):
+        amb = {
+            "db1.t": {"table_name": "t", "database_name": "db1"},
+            "db2.t": {"table_name": "t", "database_name": "db2"},
+        }
+        assert ChatTaskManager._match_table_entry(amb, "t") is None
+
+    def test_ambiguous_disambiguated_by_db(self):
+        amb = {
+            "db1.t": {"table_name": "t", "database_name": "db1"},
+            "db2.t": {"table_name": "t", "database_name": "db2"},
+        }
+        entry = ChatTaskManager._match_table_entry(amb, "db2.t")
+        assert entry and entry["database_name"] == "db2"
+
+    def test_sqlite_single_level_resolves(self):
+        flat = {"raw_stores": {"table_name": "raw_stores", "definition": "x"}}
+        entry = ChatTaskManager._match_table_entry(flat, "raw_stores")
+        assert entry and entry["table_name"] == "raw_stores"
+
+
+class TestSynthesizeTableEntry:
+    """_synthesize_table_entry — name-only fallback when the metadata store
+    can't resolve a picked @Table (KB not indexed for the datasource)."""
+
+    def test_three_part_path(self):
+        from datus.schemas.node_models import TableSchema
+
+        entry = ChatTaskManager._synthesize_table_entry("default_catalog.jeff_shop_live.raw_orders")
+        assert entry["table_name"] == "raw_orders"
+        assert entry["database_name"] == "jeff_shop_live"
+        # Must build a valid TableSchema and render to its own name in the prompt.
+        ts = TableSchema.from_dict(entry)
+        assert TableSchema.table_names_to_prompt([ts]) == "raw_orders"
+
+    def test_single_segment(self):
+        entry = ChatTaskManager._synthesize_table_entry("raw_orders")
+        assert entry["table_name"] == "raw_orders"
+        assert entry["database_name"] == ""
+
+    def test_empty_path(self):
+        assert ChatTaskManager._synthesize_table_entry("") is None
+
+
+class TestSplitSubjectPath:
+    """_split_subject_path — (subject_path, name) from a picked ref path."""
+
+    def test_slash_joined(self):
+        assert ChatTaskManager._split_subject_path("Commerce/Orders/aov") == (["Commerce", "Orders"], "aov")
+
+    def test_dot_joined_when_no_slash(self):
+        assert ChatTaskManager._split_subject_path("Commerce.Orders.aov") == (["Commerce", "Orders"], "aov")
+
+    def test_slash_present_preserves_dot_in_name(self):
+        assert ChatTaskManager._split_subject_path("A/B/v1.2") == (["A", "B"], "v1.2")
+
+    def test_single_segment(self):
+        assert ChatTaskManager._split_subject_path("aov") == ([], "aov")
+
+    def test_empty(self):
+        assert ChatTaskManager._split_subject_path("") == ([], "")
+
+
+class TestResolveMetricSqlPaths:
+    """@Metric/@Sql resolve by exact subject path via the non-vector store
+    lookup (same as the get_metrics / get_reference_sql tools)."""
+
+    def test_metric_uses_path_scoped_detail_lookup(self):
+        mgr = ChatTaskManager()
+        fake_rag = MagicMock()
+        fake_rag.get_metrics_detail.return_value = [{"name": "aov", "description": "avg order value"}]
+        with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
+            metrics, hints = mgr._resolve_metric_paths(MagicMock(), ["Commerce/Orders/aov"])
+        fake_rag.get_metrics_detail.assert_called_once_with(subject_path=["Commerce", "Orders"], name="aov")
+        assert len(metrics) == 1 and metrics[0].name == "aov"
+        # subject_path must survive into the resolved metric (authoritative from
+        # the picked path), so the prompt can name where it lives.
+        assert metrics[0].subject_path == ["Commerce", "Orders"]
+        assert hints == []
+
+    def test_metric_unresolved_becomes_hint(self):
+        mgr = ChatTaskManager()
+        fake_rag = MagicMock()
+        fake_rag.get_metrics_detail.return_value = []
+        with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
+            metrics, hints = mgr._resolve_metric_paths(MagicMock(), ["A/b/missing"])
+        assert metrics == []
+        assert hints == [{"kind": "metric", "name": "missing", "subject_path": ["A", "b"]}]
+
+    def test_sql_uses_path_scoped_detail_lookup(self):
+        mgr = ChatTaskManager()
+        fake_store = MagicMock()
+        # Store returns optional string columns as None (no comment/tags) —
+        # must still build a valid ReferenceSql (regression: pydantic rejected None).
+        fake_store.get_reference_sql_detail.return_value = [
+            {"name": "q", "sql": "select 1", "summary": None, "comment": None, "tags": None}
+        ]
+        with patch("datus.storage.reference_sql.store.ReferenceSqlRAG", return_value=fake_store):
+            sqls, hints = mgr._resolve_sql_paths(MagicMock(), ["main/q"])
+        fake_store.get_reference_sql_detail.assert_called_once_with(subject_path=["main"], name="q")
+        assert len(sqls) == 1 and sqls[0].sql == "select 1"
+        assert sqls[0].comment == "" and sqls[0].tags == ""
+        assert sqls[0].subject_path == ["main"]
+        assert hints == []
+
+    def test_metric_none_description_coerced(self):
+        mgr = ChatTaskManager()
+        fake_rag = MagicMock()
+        fake_rag.get_metrics_detail.return_value = [{"name": "aov", "description": None}]
+        with patch("datus.storage.metric.store.MetricRAG", return_value=fake_rag):
+            metrics, _ = mgr._resolve_metric_paths(MagicMock(), ["Commerce/aov"])
+        assert len(metrics) == 1 and metrics[0].name == "aov" and metrics[0].description == ""
+
+    def test_empty_paths_short_circuit(self):
+        mgr = ChatTaskManager()
+        assert mgr._resolve_metric_paths(MagicMock(), []) == ([], [])
+        assert mgr._resolve_sql_paths(MagicMock(), None) == ([], [])

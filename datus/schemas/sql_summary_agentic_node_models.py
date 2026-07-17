@@ -13,10 +13,11 @@ from typing import Optional
 
 from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class SqlSummaryNodeInput(BaseInput):
+class SqlSummaryNodeInput(AtContextInput):
     """Input model for SQL summary generation node."""
 
     user_message: str = Field(..., description="User's input message or request")

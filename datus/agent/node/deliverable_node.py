@@ -27,7 +27,6 @@ from datus.schemas.semantic_agentic_node_models import SemanticNodeResult
 from datus.tools.func_tool import DBFuncTool, FilesystemFuncTool
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
-from datus.utils.message_utils import build_structured_content
 from datus.validation import ValidationHook
 from datus.validation.report import build_retry_prompt
 
@@ -411,11 +410,16 @@ class DeliverableAgenticNode(AgenticNode):
         )
 
     def _build_enhanced_message(self, user_input: Any) -> str:
-        """Enrich the user message with catalog / database / schema context.
+        """Enrich the user message with datasource + @-referenced context.
 
-        Uses ``getattr`` so subclasses with narrower Input schemas (e.g.
-        ``GenDashboardNodeInput`` omits ``catalog`` / ``db_schema``) still work.
+        Renders catalog / database / schema context (deliverable nodes don't
+        run the base plan-mode flow, so this stays a focused override) and
+        appends any @Table/@Metric/@Sql/@Knowledge references via the shared
+        :meth:`AgenticNode._render_at_context_parts`. ``getattr`` keeps it safe
+        for subclasses with narrower Input schemas (e.g. ``GenDashboardNodeInput``
+        omits ``catalog`` / ``db_schema``).
         """
+        from datus.utils.message_utils import build_structured_content
         from datus.utils.node_utils import resolve_database_name_for_prompt
 
         enhanced_parts = []
@@ -444,6 +448,8 @@ class DeliverableAgenticNode(AgenticNode):
                 if db_schema:
                     context_parts.append(f"schema: {db_schema}")
                 enhanced_parts.append(f"Context: {', '.join(context_parts)}")
+
+        enhanced_parts.extend(self._render_at_context_parts(user_input))
 
         if enhanced_parts:
             enhanced_context = "\n\n".join(enhanced_parts)

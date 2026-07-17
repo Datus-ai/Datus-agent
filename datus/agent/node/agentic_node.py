@@ -33,7 +33,6 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
-from datus.utils.json_utils import to_str
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
@@ -815,6 +814,106 @@ class AgenticNode(Node):
 
         return {key: value for key, value in context.items() if value}
 
+    def _render_at_context_parts(self, user_input: Any) -> List[str]:
+        """Render resolved @-referenced context as ordered prompt parts.
+
+        Single source of truth for surfacing @Knowledge / @Table / @Metric /
+        @Sql references to the LLM. Shared by :meth:`_build_enhanced_message`
+        and the deliverable / visual-artifact overrides so a new reference kind
+        is rendered everywhere by editing this one method. Reads every field
+        via ``getattr`` — inputs that don't declare a field (or don't inherit
+        :class:`~datus.schemas.at_context.AtContextInput`) simply contribute
+        nothing.
+        """
+        parts: List[str] = []
+
+        ext_know = getattr(user_input, "external_knowledge", "") or ""
+        if ext_know:
+            parts.append(f"## Business knowledge\nMUST apply the following business logic:\n{ext_know}")
+
+        schemas = getattr(user_input, "schemas", None)
+        if schemas:
+            from datus.schemas.node_models import TableSchema
+
+            names = TableSchema.table_names_to_prompt(schemas)
+            bullets = "\n".join(f"- {n.strip()}" for n in names.splitlines() if n.strip())
+            parts.append("## Referenced tables\nMUST use ONLY these tables in FROM/JOIN clauses:\n" + bullets)
+
+        metrics = getattr(user_input, "metrics", None)
+        if metrics:
+            blocks = []
+            for m in metrics:
+                subject_path = getattr(m, "subject_path", []) or []
+                header = f"### {m.name}"
+                if subject_path:
+                    header += f"  (subject_path: {'/'.join(subject_path)})"
+                lines = [header]
+                desc = (getattr(m, "description", "") or "").strip()
+                if desc:
+                    lines.append(desc)
+                meta = []
+                metric_type = (getattr(m, "metric_type", "") or "").strip()
+                measure_expr = (getattr(m, "measure_expr", "") or "").strip()
+                dimensions = getattr(m, "dimensions", []) or []
+                if metric_type:
+                    meta.append(f"type: {metric_type}")
+                if measure_expr:
+                    meta.append(f"measure: {measure_expr}")
+                if dimensions:
+                    meta.append(f"dimensions: {', '.join(dimensions)}")
+                if meta:
+                    lines.append(" · ".join(meta))
+                blocks.append("\n".join(lines))
+            parts.append("## Referenced metrics\n" + "\n\n".join(blocks))
+
+        reference_sql = getattr(user_input, "reference_sql", None)
+        if reference_sql:
+            blocks = []
+            for r in reference_sql:
+                summary = (getattr(r, "summary", "") or "").strip()
+                subject_path = getattr(r, "subject_path", []) or []
+                header = f"### {r.name}" + (f" — {summary}" if summary else "")
+                if subject_path:
+                    header += f"  (subject_path: {'/'.join(subject_path)})"
+                sql = (getattr(r, "sql", "") or "").strip()
+                blocks.append(header + (f"\n```sql\n{sql}\n```" if sql else ""))
+            parts.append("## Referenced SQL\n" + "\n\n".join(blocks))
+
+        hint_part = self._render_context_hint_part(getattr(user_input, "context_hints", None))
+        if hint_part:
+            parts.append(hint_part)
+
+        return parts
+
+    @staticmethod
+    def _render_context_hint_part(hints: Optional[List[Dict[str, Any]]]) -> str:
+        """Render look-up hints for referenced items that couldn't be pre-loaded.
+
+        Names the item and points the model at the exact tool call so it fetches
+        the detail directly instead of searching the subject tree blindly.
+        """
+        if not hints:
+            return ""
+        tool_by_kind = {"metric": "get_metrics", "reference_sql": "get_reference_sql"}
+        label_by_kind = {"metric": "Metric", "reference_sql": "Reference SQL", "knowledge": "Knowledge"}
+        lines = [
+            "## Referenced items to look up",
+            "The user attached these but their details are not loaded here. Fetch each with the "
+            "indicated tool (using the exact subject_path and name) before answering — do not search blindly:",
+        ]
+        for h in hints:
+            kind = h.get("kind", "")
+            name = h.get("name", "")
+            subject_path = h.get("subject_path", []) or []
+            label = label_by_kind.get(kind, kind or "Item")
+            tool = tool_by_kind.get(kind)
+            if tool:
+                lines.append(f'- {label} "{name}" → call {tool}(subject_path={subject_path}, name="{name}")')
+            else:
+                full = "/".join(list(subject_path) + [name])
+                lines.append(f'- {label} "{name}" (subject path: {full}) → locate it via list_subject_tree')
+        return "\n".join(lines)
+
     def _build_enhanced_message(
         self,
         user_input: Any,
@@ -863,10 +962,6 @@ class AgenticNode(Node):
         if datasource_reminder:
             enhanced_parts.append(datasource_reminder)
 
-        ext_know = getattr(user_input, "external_knowledge", "") or ""
-        if ext_know:
-            enhanced_parts.append(f"MUST use these business logic:\n{ext_know}")
-
         db_type = getattr(self.agent_config, "db_type", "") if self.agent_config else ""
         if db_type and not datasource_reminder:
             # Always resolve empty database via the connector default — the
@@ -890,23 +985,7 @@ class AgenticNode(Node):
             if ctx:
                 enhanced_parts.append(ctx)
 
-        schemas = getattr(user_input, "schemas", None)
-        if schemas:
-            from datus.schemas.node_models import TableSchema
-
-            table_names_str = TableSchema.table_names_to_prompt(schemas)
-            enhanced_parts.append(
-                "Available tables (MUST use these tables and ONLY use these "
-                f"table names in FROM/JOIN clauses): \n{table_names_str}"
-            )
-
-        metrics = getattr(user_input, "metrics", None)
-        if metrics:
-            enhanced_parts.append(f"Metrics: \n{to_str([item.model_dump() for item in metrics])}")
-
-        reference_sql = getattr(user_input, "reference_sql", None)
-        if reference_sql:
-            enhanced_parts.append(f"Reference SQL: \n{to_str([item.model_dump() for item in reference_sql])}")
+        enhanced_parts.extend(self._render_at_context_parts(user_input))
 
         if extra_enhanced_parts:
             enhanced_parts.extend(p for p in extra_enhanced_parts if p)

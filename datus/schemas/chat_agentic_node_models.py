@@ -11,15 +11,18 @@ providing structured validation for chat interactions with streaming support.
 
 from typing import Optional
 
-from pydantic import AliasChoices, ConfigDict, Field
+from pydantic import Field
 
-from datus.schemas.base import BaseInput, BaseResult
-from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
+from datus.schemas.at_context import AtContextInput
+from datus.schemas.base import BaseResult
 
 
-class ChatNodeInput(BaseInput):
+class ChatNodeInput(AtContextInput):
     """
     Input model for ChatAgenticNode interactions.
+
+    @-context fields (``schemas`` / ``metrics`` / ``reference_sql`` /
+    ``external_knowledge``) are inherited from :class:`AtContextInput`.
     """
 
     user_message: str = Field(..., description="User's chat message input")
@@ -35,24 +38,12 @@ class ChatNodeInput(BaseInput):
             "(agent.yml ``agentic_nodes.chat.max_turns``) is used."
         ),
     )
-    external_knowledge: Optional[str] = Field(
-        default="", description="Supplementary description / evidence supplied with the question"
-    )
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")
-    schemas: Optional[list[TableSchema]] = Field(default=None, description="Schemas to use")
-    metrics: Optional[list[Metric]] = Field(default=None, description="Metrics to use")
-    reference_sql: Optional[list[ReferenceSql]] = Field(
-        default=None,
-        description="Reference SQL snippets to reuse/adjust",
-        validation_alias=AliasChoices("reference_sql", "historical_sql"),
-    )
     plan_mode: bool = Field(default=False, description="Whether this is a plan mode interaction")
     auto_execute_plan: bool = Field(
         default=False, description="Whether to auto-execute plan without user confirmation (for workflow/benchmark)"
     )
-
-    model_config = ConfigDict(populate_by_name=True)
 
 
 class ChatNodeResult(BaseResult):
