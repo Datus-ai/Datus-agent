@@ -1104,15 +1104,22 @@ class ChatTaskManager:
 
     @staticmethod
     def _lookup_subject(flatten: Dict[str, Any], path: str) -> Optional[Dict[str, Any]]:
-        """Resolve a subject-tree ref (metric / reference_sql) tolerating the separator.
+        """Resolve a subject-tree ref (metric / reference_sql) resiliently.
 
-        The completer store keys subject paths with ``/`` (``a/b/name``). A web
-        client historically joined them with ``.``; accept either so an
-        older bundle against a newer backend still resolves.
+        Order: exact key, then ``.`` -> ``/`` (older web bundles joined subject
+        paths with ``.`` while the completer store keys them with ``/``), then a
+        trailing-name match (the picker's subject-path prefix can differ from the
+        store's ``subject_path``). The name match returns a hit only when exactly
+        one entry carries that name, so it never resolves an ambiguous ref.
         """
         entry = flatten.get(path)
         if entry is None and "." in path:
             entry = flatten.get(path.replace(".", "/"))
+        if entry is None:
+            want = path.replace(".", "/").rstrip("/").split("/")[-1].strip('"').lower()
+            candidates = [e for e in flatten.values() if str(e.get("name", "")).lower() == want]
+            if len(candidates) == 1:
+                entry = candidates[0]
         return entry
 
     @staticmethod
@@ -1177,24 +1184,36 @@ class ChatTaskManager:
                 logger.warning(f"Failed to resolve table path '{path}': {e}")
 
         metrics: List[Metric] = []
+        metric_flatten = completer.metric_completer.flatten_data
         for path in metric_paths or []:
             try:
-                entry = self._lookup_subject(completer.metric_completer.flatten_data, path)
+                entry = self._lookup_subject(metric_flatten, path)
                 if entry:
                     metrics.append(Metric.from_dict(entry))
                 else:
-                    logger.warning("Unresolved @Metric path '%s'", path)
+                    logger.warning(
+                        "Unresolved @Metric path '%s' (%d indexed metrics); sample keys: %s",
+                        path,
+                        len(metric_flatten),
+                        list(metric_flatten.keys())[:5],
+                    )
             except Exception as e:
                 logger.warning(f"Failed to resolve metric path '{path}': {e}")
 
         sqls: List[ReferenceSql] = []
+        sql_flatten = completer.sql_completer.flatten_data
         for path in sql_paths or []:
             try:
-                entry = self._lookup_subject(completer.sql_completer.flatten_data, path)
+                entry = self._lookup_subject(sql_flatten, path)
                 if entry:
                     sqls.append(ReferenceSql.from_dict(entry))
                 else:
-                    logger.warning("Unresolved @Sql path '%s'", path)
+                    logger.warning(
+                        "Unresolved @Sql path '%s' (%d indexed reference SQL); sample keys: %s",
+                        path,
+                        len(sql_flatten),
+                        list(sql_flatten.keys())[:5],
+                    )
             except Exception as e:
                 logger.warning(f"Failed to resolve sql path '{path}': {e}")
 

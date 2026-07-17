@@ -2025,3 +2025,16 @@ class TestLookupSubject:
     def test_top_level_name_without_subject_path(self):
         flat = {"raw_customers": {"name": "raw_customers"}}
         assert ChatTaskManager._lookup_subject(flat, "raw_customers")["name"] == "raw_customers"
+
+    def test_name_fallback_when_subject_prefix_differs(self):
+        # Picker sent 'main/raw_customers' but the store keyed it differently.
+        flat = {"jeff_shop_live/main/raw_customers": {"name": "raw_customers", "sql": "select 1"}}
+        entry = ChatTaskManager._lookup_subject(flat, "main/raw_customers")
+        assert entry and entry["name"] == "raw_customers"
+
+    def test_name_fallback_ambiguous_returns_none(self):
+        flat = {"a/raw_customers": {"name": "raw_customers"}, "b/raw_customers": {"name": "raw_customers"}}
+        assert ChatTaskManager._lookup_subject(flat, "x/raw_customers") is None
+
+    def test_empty_store_returns_none(self):
+        assert ChatTaskManager._lookup_subject({}, "main/raw_customers") is None
