@@ -360,14 +360,15 @@ jobs:
           git fetch origin --prune main
 
           sync_branch="sync/release-${VERSION}-metadata-to-main"
+          merged_tree="$(git merge-tree --write-tree origin/main "${SOURCE_SHA}" | sed -n '1p')"
           existing_sync_sha="$(git ls-remote --heads origin "${sync_branch}" | awk '{print $1}')"
           if [[ -n "${existing_sync_sha}" ]]; then
             git fetch origin "refs/heads/${sync_branch}:refs/remotes/origin/${sync_branch}"
           fi
 
           git checkout -B "${sync_branch}" origin/main
-          git checkout "${SOURCE_SHA}" -- pyproject.toml requirements.txt requirements-test.txt uv.lock
-          if git diff --quiet; then
+          git checkout "${merged_tree}" -- pyproject.toml requirements.txt requirements-test.txt uv.lock
+          if git diff --cached --quiet -- pyproject.toml requirements.txt requirements-test.txt uv.lock; then
             echo "Main already has release ${VERSION} metadata"
             exit 0
           fi
@@ -391,7 +392,7 @@ jobs:
 
           ## Changes
 
-          - copy release source metadata from ${SOURCE_SHA}
+          - merge release source metadata from ${SOURCE_SHA} onto the latest main branch
           - update pyproject.toml, requirements.txt, requirements-test.txt, and uv.lock on main
 
           ## Validation
