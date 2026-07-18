@@ -3,9 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import copy
-import multiprocessing
 import os
-import platform
 from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -17,22 +15,6 @@ from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import ModelConfig
-
-
-def configure_multiprocessing_start_method() -> None:
-    """Set a safe multiprocessing start method for the current platform."""
-    try:
-        if platform.system() == "Windows":
-            multiprocessing.set_start_method("spawn", force=True)
-        else:
-            multiprocessing.set_start_method("fork", force=True)
-    except RuntimeError:
-        # set_start_method can only be called once
-        pass
-
-
-# Fix multiprocessing issues with PyTorch/sentence-transformers in Python 3.12
-configure_multiprocessing_start_method()
 
 # Set environment variables to prevent multiprocessing issues
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

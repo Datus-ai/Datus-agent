@@ -93,12 +93,12 @@ Repository = "https://github.com/datus-ai/datus-agent"
 "Bug Tracker" = "https://github.com/datus-ai/datus-agent/issues"
 
 [project.scripts]
-datus-agent = "datus.main:main"
-datus-cli = "datus.cli.main:main"
-datus = "datus.cli.main:main"
-datus-api = "datus.api.main:main"
-datus-mcp = "datus.mcp_server:main"
-datus-gateway = "datus.gateway.main:main"
+datus-agent = "datus.entrypoints:agent_main"
+datus-cli = "datus.entrypoints:cli_main"
+datus = "datus.entrypoints:cli_main"
+datus-api = "datus.entrypoints:api_main"
+datus-mcp = "datus.entrypoints:mcp_main"
+datus-gateway = "datus.entrypoints:gateway_main"
 
 [build-system]
 requires = ["setuptools>=80.9.0", "wheel"]
