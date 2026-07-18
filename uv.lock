@@ -683,7 +683,7 @@ wheels = [
 
 [[package]]
 name = "datus-agent"
-version = "0.3.7"
+version = "0.3.8"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -776,7 +776,7 @@ requires-dist = [
     { name = "datus-bi-core", specifier = ">=0.1.2" },
     { name = "datus-db-core", specifier = ">=0.1.4" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
-    { name = "datus-semantic-core", specifier = ">=0.2.0" },
+    { name = "datus-semantic-core", specifier = ">=0.2.1" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "duckdb", specifier = ">=1.5.2,<2.0.0" },
@@ -823,7 +823,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 ci = [
     { name = "datus-metricflow", specifier = ">=0.2.7" },
-    { name = "datus-semantic-metricflow", specifier = ">=0.2.8" },
+    { name = "datus-semantic-metricflow", specifier = ">=0.2.9" },
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
 ]
 dev = [
@@ -940,28 +940,28 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-core"
-version = "0.2.0"
+version = "0.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/d8/782ee846a122e497fea520748721c6d2386f257ec3f7bc8105c634039144/datus_semantic_core-0.2.0.tar.gz", hash = "sha256:2e29c6df77489c4a7444ef8afa9fb0d5a37fe1512dbaaa2d81b610c2f1b65cc7", size = 12569, upload-time = "2026-04-23T08:43:57.544Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/5c/e6e53f56532d2d1360c98f025b9ac54815b1a550baa10149d866872c24a9/datus_semantic_core-0.2.1.tar.gz", hash = "sha256:f1f8f43f2dab0944372f0028af3424c1dd18e5a37de23068e4e80d38d7583b5a", size = 13288, upload-time = "2026-07-13T06:27:00.955Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/85/81cd088fc4e1c86cfff3b7764e9d47a94fef48ee519c70252e680ac0966b/datus_semantic_core-0.2.0-py3-none-any.whl", hash = "sha256:4679d031629b73788e86882e56cef2e4d6f3bd00c970930d1aac2798152d995f", size = 10394, upload-time = "2026-04-23T08:43:56.269Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/b2/9c29e92ea49485bcec9645e6ea8405011da3d101eb9e20a80ff8a177fb7b/datus_semantic_core-0.2.1-py3-none-any.whl", hash = "sha256:1ca8c1b0671f63a09175659ceac199f65664efb0d592a5495e7223c2c87de5e2", size = 10929, upload-time = "2026-07-13T06:27:00.144Z" },
 ]
 
 [[package]]
 name = "datus-semantic-metricflow"
-version = "0.2.8"
+version = "0.2.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datus-metricflow", extra = ["snowflake"] },
     { name = "datus-semantic-core" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/01/93/be8346ec6241b8ebe0dfffb9713161056dbea43625635a89820ef1fabb32/datus_semantic_metricflow-0.2.8.tar.gz", hash = "sha256:f3467bc6e5f2a50993651f5dbb5c9e0df756e9156352dd19e29a6200e8747a0a", size = 16907, upload-time = "2026-06-03T16:52:32.767Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/09/84/9156fb341a31fd2755c7d47361508a1c1512544de4975e22fc82563a298b/datus_semantic_metricflow-0.2.9.tar.gz", hash = "sha256:c00778827c1771156cd4eda76c38551e08a585597b028e88598124fe7a478a76", size = 22249, upload-time = "2026-07-13T06:41:36.809Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/4d/089899b523e4f4518ac866daceac321690b553922999fe61d9b72194c8e8/datus_semantic_metricflow-0.2.8-py3-none-any.whl", hash = "sha256:a4aa647916e9b9a96f2841ceef5d2e88a0c05bef638dbf853bc36317c37bfd8a", size = 18584, upload-time = "2026-06-03T16:52:31.754Z" },
+    { url = "https://files.pythonhosted.org/packages/27/81/c7cf2145a332a03b189b8a4a87eb1c994d1aec125b289c66a0a95daa1922/datus_semantic_metricflow-0.2.9-py3-none-any.whl", hash = "sha256:543d4249f4c029a30c36c9c018565495b187d95b70a5ba2b4861815c8750468e", size = 23758, upload-time = "2026-07-13T06:41:35.982Z" },
 ]
 
 [[package]]
@@ -3976,8 +3976,8 @@ name = "secretstorage"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
-    { name = "jeepney", marker = "platform_machine != 'arm64' or sys_platform != 'darwin'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/31/9f/11ef35cf1027c1339552ea7bfe6aaa74a8516d8b5caf6e7d338daf54fd80/secretstorage-3.4.0.tar.gz", hash = "sha256:c46e216d6815aff8a8a18706a2fbfd8d53fcbb0dce99301881687a1b0289ef7c", size = 19748, upload-time = "2025-09-09T16:42:13.859Z" }
 wheels = [
