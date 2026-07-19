@@ -52,6 +52,27 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 - Google Generative AI client integration
 - LiteLLM integration for unified token counting
 
+
+### OpenCode Go
+
+Datus supports the OpenAI-compatible subset of OpenCode Go. Set the API key in
+the environment, then select a model through `/model`:
+
+```bash
+export OPENCODE_GO_API_KEY="your-key"
+datus
+```
+
+```text
+/model opencode_go/deepseek-v4-pro
+```
+
+The model list is resolved from the OpenCode Go `/v1/models` endpoint, filtered
+through Datus's OpenAI-compatible allowlist, cached under `~/.datus/cache`, and
+falls back to the shipped list when offline. Models using Anthropic `/v1/messages`
+are intentionally excluded from the first version.
+`
+
 ### Utility Modules
 
 **`session_manager.py`** - Multi-turn conversation management
