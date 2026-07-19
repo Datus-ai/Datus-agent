@@ -90,6 +90,7 @@ from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 # Re-export for external use
 __all__ = [
@@ -1155,6 +1156,7 @@ def run_dynamic_server(
 
 def main():
     """Main entry point for the MCP server CLI."""
+    configure_multiprocessing_start_method()
     parser = argparse.ArgumentParser(
         description="Datus MCP Server - Expose Datus tools via Model Context Protocol",
         formatter_class=argparse.RawDescriptionHelpFormatter,

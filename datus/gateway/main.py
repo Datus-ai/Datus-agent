@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 
 from datus import __version__
 from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
 
@@ -268,11 +269,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """Main entry point for starting the Datus Gateway."""
-    if hasattr(multiprocessing, "set_start_method"):
-        try:
-            multiprocessing.set_start_method("spawn", force=True)
-        except RuntimeError:
-            pass
+    configure_multiprocessing_start_method()
 
     parser = _build_parser()
     args = parser.parse_args()

@@ -15,6 +15,7 @@ from datus.utils.async_utils import setup_windows_policy
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
 
@@ -769,6 +770,8 @@ def main():
     """Entry point for console scripts"""
     import signal
     import sys
+
+    configure_multiprocessing_start_method()
 
     # Intercept 'upgrade' subcommand: self-upgrade datus-agent and the installed
     # datus-* adapter packages. Handled before the REPL is built so it works even

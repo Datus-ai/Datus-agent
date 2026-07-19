@@ -23,6 +23,7 @@ from datus.configuration.agent_config_loader import load_agent_config
 from datus.schemas.node_models import SqlTask
 from datus.utils.exceptions import setup_exception_handler
 from datus.utils.loggings import configure_logging, get_logger
+from datus.utils.multiprocessing_utils import configure_multiprocessing_start_method
 
 logger = get_logger(__name__)
 
@@ -496,6 +497,7 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def main():
+    configure_multiprocessing_start_method()
     parser = create_parser()
     args = parser.parse_args()
 
