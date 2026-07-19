@@ -175,6 +175,27 @@ providers:
     models:
       - codex-mini-latest
 
+  # OpenCode Go subscription — OpenAI-compatible subset only.
+  # The remote /models response is intersected with this list because the Go
+  # catalog also contains Anthropic-compatible /v1/messages models.
+  opencode_go:
+    type: openai
+    base_url: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_GO_API_KEY
+    default_model: deepseek-v4-pro
+    models:
+      - deepseek-v4-pro
+      - deepseek-v4-flash
+      - kimi-k2.7-code
+      - kimi-k3
+      - kimi-k2.6
+      - glm-5.2
+      - glm-5.1
+      - grok-4.5
+      - mimo-v2.5-pro
+      - mimo-v2.5
+
+
 # Model-specific parameter overrides
 # Some models enforce fixed values; these are auto-applied during init.
 model_overrides:
