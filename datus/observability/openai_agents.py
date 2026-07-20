@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 
@@ -83,6 +84,7 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
 
     def on_span_end(self, span: Any) -> None:
         if span.span_id not in self._merged_root_agent_span_ids:
+            self._set_datus_span_attributes(span)
             super().on_span_end(span)
             return
 
@@ -98,6 +100,43 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
             key = f"{data.name}:{span.trace_id}"
             if parent_node := self._reverse_handoffs_dict.pop(key, None):
                 root_span.set_attribute(_oi_processor.GRAPH_NODE_PARENT_ID, parent_node)
+
+    def _set_datus_span_attributes(self, span: Any) -> None:
+        """Add provider-neutral fields missing from the upstream Agents mapper."""
+        otel_span = self._otel_spans.get(span.span_id)
+        if otel_span is None:
+            return
+        data = span.span_data
+        if isinstance(data, _oi_processor.GenerationSpanData):
+            model_config = data.model_config if isinstance(data.model_config, Mapping) else {}
+            provider = model_config.get("provider")
+            system = model_config.get("system")
+            if isinstance(provider, str) and provider:
+                otel_span.set_attribute(_oi_processor.LLM_PROVIDER, provider)
+            if isinstance(system, str) and system:
+                otel_span.set_attribute(_oi_processor.LLM_SYSTEM, system)
+
+            usage = data.usage if isinstance(data.usage, Mapping) else {}
+            _set_numeric_attribute(
+                otel_span,
+                _oi_processor.LLM_TOKEN_COUNT_TOTAL,
+                usage.get("total_tokens"),
+            )
+            _set_numeric_attribute(
+                otel_span,
+                "llm.token_count.prompt_details.cache_read",
+                usage.get("cache_read_input_tokens"),
+            )
+            _set_numeric_attribute(
+                otel_span,
+                "llm.token_count.prompt_details.cache_write",
+                usage.get("cache_creation_input_tokens"),
+            )
+        elif isinstance(data, _oi_processor.FunctionSpanData):
+            mcp_data = data.mcp_data if isinstance(data.mcp_data, Mapping) else {}
+            tool_call_id = mcp_data.get("tool_call_id")
+            if tool_call_id:
+                otel_span.set_attribute("tool.id", str(tool_call_id))
 
     def shutdown(self) -> None:
         self._merged_root_agent_span_ids.clear()
@@ -115,3 +154,9 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
             return False
         self._merged_root_trace_ids.add(span.trace_id)
         return True
+
+
+def _set_numeric_attribute(span: Any, key: str, value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return
+    span.set_attribute(key, value)

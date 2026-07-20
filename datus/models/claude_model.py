@@ -33,6 +33,13 @@ from datus.configuration.agent_config import ModelConfig
 from datus.models.litellm_adapter import is_official_anthropic_endpoint
 from datus.models.mcp_utils import multiple_mcp_servers
 from datus.models.openai_compatible import OpenAICompatibleModel
+from datus.observability.native_agents import (
+    capture_native_trace_content,
+    finish_native_span,
+    start_native_generation_span,
+    start_native_tool_span,
+    trace_native_agent_stream,
+)
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.schemas.tool_summary import detect_tool_failure
@@ -41,7 +48,6 @@ from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_sql_type
 from datus.utils.ssl_utils import is_ssl_cert_verification_error
-from datus.utils.traceable_utils import optional_traceable
 
 logger = get_logger(__name__)
 
@@ -58,6 +64,75 @@ class _ToolResult:
     """Lightweight stand-in for MCP CallToolResult (`.content[0].text`)."""
 
     content: List[_ToolResultPart] = field(default_factory=list)
+
+
+def _anthropic_trace_input(request_kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalize an Anthropic request into the chat-message shape used by Agents tracing."""
+    trace_messages: List[Dict[str, Any]] = []
+    system = request_kwargs.get("system")
+    if system is not None and system is not anthropic.NOT_GIVEN:
+        trace_messages.append({"role": "system", "content": copy.deepcopy(system)})
+    messages = request_kwargs.get("messages") or []
+    if isinstance(messages, list):
+        trace_messages.extend(copy.deepcopy(message) for message in messages if isinstance(message, dict))
+    return trace_messages
+
+
+def _anthropic_trace_output(response: Any) -> List[Dict[str, Any]]:
+    """Normalize Anthropic content blocks for ``GenerationSpanData.output``."""
+    text_parts: List[str] = []
+    tool_calls: List[Dict[str, Any]] = []
+    for block in getattr(response, "content", None) or []:
+        block_type = getattr(block, "type", None)
+        if block_type == "text":
+            text = getattr(block, "text", "") or ""
+            if text:
+                text_parts.append(text)
+        elif block_type in ("tool_use", "server_tool_use"):
+            tool_input = getattr(block, "input", None) or {}
+            tool_calls.append(
+                {
+                    "id": str(getattr(block, "id", None) or ""),
+                    "type": "function",
+                    "function": {
+                        "name": str(getattr(block, "name", None) or block_type),
+                        "arguments": json.dumps(tool_input, ensure_ascii=False, default=str),
+                    },
+                }
+            )
+    output: Dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts)}
+    if tool_calls:
+        output["tool_calls"] = tool_calls
+    return [output]
+
+
+def _anthropic_trace_usage(response: Any) -> Dict[str, int]:
+    """Return per-call token usage, including Anthropic prompt-cache tokens."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return {}
+    fresh_input = int(getattr(usage, "input_tokens", 0) or 0)
+    cache_read = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+    cache_write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    input_tokens = fresh_input + cache_read + cache_write
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": cache_write,
+    }
+
+
+def _anthropic_trace_model_config(request_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only non-content invocation parameters on the generation span."""
+    config: Dict[str, Any] = {"provider": "anthropic", "system": "anthropic"}
+    for key in ("max_tokens", "temperature", "top_p", "top_k"):
+        value = request_kwargs.get(key)
+        if value is not None and value is not anthropic.NOT_GIVEN:
+            config[key] = value
+    return config
 
 
 def wrap_prompt_cache(messages):
@@ -435,14 +510,12 @@ class ClaudeModel(OpenAICompatibleModel):
 
         return system_message if system_message else anthropic.NOT_GIVEN
 
-    @optional_traceable(name="anthropic_messages_create", run_type="llm")
     def _anthropic_messages_create(self, **kwargs):
         """Call the correct Anthropic Messages endpoint for the current auth mode."""
         if self._is_oauth_token:
             return self.anthropic_client.beta.messages.create(**kwargs)
         return self.anthropic_client.messages.create(**kwargs)
 
-    @optional_traceable(name="anthropic_messages_stream", run_type="llm")
     def _anthropic_messages_stream(self, **kwargs):
         """Return an async context manager that streams Anthropic Messages events.
 
@@ -451,11 +524,9 @@ class ClaudeModel(OpenAICompatibleModel):
         ``messages.stream`` for standard API-key auth. Caller enters via
         ``async with self._anthropic_messages_stream(...) as stream:``.
 
-        Note: ``optional_traceable`` here records the call returning the
-        context manager. For ``messages.stream`` langsmith's ``wrap_anthropic``
-        additionally instruments per-event iteration; ``beta.messages.stream``
-        is not wrapped upstream, so this decorator is the only tracing the
-        OAuth path gets.
+        The surrounding native-agent loop owns the generation span so tracing
+        covers the full stream iteration instead of only this context-manager
+        factory call.
         """
         if self.async_anthropic_client is None:
             raise DatusException(
@@ -587,6 +658,7 @@ class ClaudeModel(OpenAICompatibleModel):
             logger.error(f"Error generating with Anthropic: {str(e)}")
             raise
 
+    @trace_native_agent_stream
     async def _generate_with_mcp_stream(
         self,
         prompt: Union[str, List[Dict[str, str]]],
@@ -616,6 +688,9 @@ class ClaudeModel(OpenAICompatibleModel):
         self._setup_custom_json_encoder()
 
         logger.debug(f"Using native Anthropic API with prompt caching, model: {self.model_name}")
+        active_generation_span = None
+        active_tool_span = None
+        trace_failure: BaseException | None = None
         try:
             all_tools = []
 
@@ -756,6 +831,12 @@ class ClaudeModel(OpenAICompatibleModel):
                         tools=tools,
                         max_tokens=kwargs.get("max_tokens") or self.max_tokens() or 20480,
                         temperature=kwargs.get("temperature", anthropic.NOT_GIVEN),
+                    )
+                    generation_input = capture_native_trace_content("prompts", _anthropic_trace_input(request_kwargs))
+                    active_generation_span = start_native_generation_span(
+                        input_messages=generation_input,
+                        model=self.model_name,
+                        model_config=_anthropic_trace_model_config(request_kwargs),
                     )
 
                     # Track server-side web tool calls emitted in real time during
@@ -935,6 +1016,11 @@ class ClaudeModel(OpenAICompatibleModel):
                         )
                         await self._invoke_hook(hooks, "on_llm_end", run_ctx, hook_agent, response)
 
+                    active_generation_span.span_data.usage = _anthropic_trace_usage(response)
+                    generation_output = capture_native_trace_content("responses", _anthropic_trace_output(response))
+                    finish_native_span(active_generation_span, output=generation_output)
+                    active_generation_span = None
+
                     message = response.content
 
                     # Surface server-side tool calls (Anthropic web_search /
@@ -1072,6 +1158,11 @@ class ClaudeModel(OpenAICompatibleModel):
                                 or mcp_tool_objs.get(block.name)
                                 or SimpleNamespace(name=block.name)
                             )
+                            active_tool_span = start_native_tool_span(
+                                name=block.name,
+                                tool_call_id=block.id,
+                                input_value=block.input,
+                            )
                             await self._invoke_hook(hooks, "on_tool_start", tool_ctx, hook_agent, tool_obj)
 
                             tool_executed = False
@@ -1178,6 +1269,16 @@ class ClaudeModel(OpenAICompatibleModel):
                                 tool_obj,
                                 hook_result if tool_executed else {"success": 0, "error": result_summary},
                             )
+                            traced_tool_output = capture_native_trace_content("tool_results", tool_output)
+                            traced_tool_error = None
+                            if tool_failed:
+                                traced_tool_error = result_text or f"Tool {block.name} execution failed"
+                            finish_native_span(
+                                active_tool_span,
+                                output=traced_tool_output,
+                                error=traced_tool_error,
+                            )
+                            active_tool_span = None
 
                     # Build assistant message content from all blocks
                     content = []
@@ -1346,15 +1447,23 @@ class ClaudeModel(OpenAICompatibleModel):
                 yield final_action
 
         except anthropic.AuthenticationError as e:
+            trace_failure = e
             await self._persist_failed_turn(locals(), e)
             self._diagnose_oauth_401(e)
             raise
         except Exception as e:
+            trace_failure = e
             await self._persist_failed_turn(locals(), e)
             if is_ssl_cert_verification_error(e):
                 raise DatusException(ErrorCode.MODEL_SSL_CERT_ERROR) from e
             logger.error(f"Error in _generate_with_mcp_stream: {str(e)}")
             raise
+        except BaseException as e:
+            trace_failure = e
+            raise
+        finally:
+            finish_native_span(active_tool_span, error=trace_failure)
+            finish_native_span(active_generation_span, error=trace_failure)
 
     async def _persist_failed_turn(self, frame_locals: Dict[str, Any], error: Exception) -> None:
         """Best-effort save of an interrupted turn so the next turn isn't amnesiac.
