@@ -392,6 +392,293 @@ class TestChatTaskManagerBehavior:
         assert content.payload["content"] == "1 table: orders"
 
     @pytest.mark.asyncio
+    async def test_run_loop_shares_task_pending_queue_with_node(self, real_agent_config):
+        """The node must share the task-scoped pending queue so a /chat/insert
+        that arrived during node startup is drained on the first turn."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        captured = {}
+
+        class FakeNode:
+            session_id = "s-share"
+
+            def __init__(self):
+                self.pending_input_queue = None
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                captured["queue_during_run"] = self.pending_input_queue
+                if False:  # make this an async generator without yielding
+                    yield
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-share", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="hi", session_id="s-share"))
+
+        assert task.node.pending_input_queue is task.pending_input_queue
+        assert captured["queue_during_run"] is task.pending_input_queue
+
+    @pytest.mark.asyncio
+    async def test_run_loop_auto_continues_residual_mid_run_message(self, real_agent_config):
+        """A message queued after the final turn (never seen by the SDK filter)
+        is drained after the run, echoed as a user_insert frame, and run in a
+        fresh pass — instead of being silently dropped."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-cont"
+
+            def __init__(self):
+                self.pending_input_queue = None
+                self.input = None
+                self.run_count = 0
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                self.run_count += 1
+                if self.run_count == 1:
+                    # Simulate a mid-run insert that landed after the final
+                    # turn — the SDK's call_model_input_filter never sees it.
+                    self.pending_input_queue.push("run the second SQL")
+                yield ActionHistory(
+                    action_id=f"r{self.run_count}",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="done",
+                    input={},
+                    output={"response": f"pass {self.run_count}"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        # Avoid the real @-context/node-input machinery for the continuation turn.
+        manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-cont", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-cont"))
+
+        # Two passes: the original run + one auto-continuation for the residual.
+        assert task.node.run_count == 2
+        # The residual was echoed to the client as a user bubble.
+        user_events = [
+            e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"
+        ]
+        assert len(user_events) == 1
+        assert "run the second SQL" in user_events[0].data.payload.content[0].payload["content"]
+        # Queue fully drained.
+        assert len(task.pending_input_queue) == 0
+        # The accept window is closed once draining stops, so a tail-race insert
+        # gets SESSION_NOT_RUNNING instead of stranding.
+        assert task.accepting_inserts is False
+
+    @pytest.mark.asyncio
+    async def test_run_loop_continuation_reply_not_deduped_against_prior_pass(self, real_agent_config):
+        """A continuation pass producing the SAME visible text as the first pass
+        must still be emitted. Per-run de-dup state must not span passes — else
+        'run it again' shows the user bubble but drops the reply."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-dup"
+
+            def __init__(self):
+                self.pending_input_queue = None
+                self.input = None
+                self.run_count = 0
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                self.run_count += 1
+                if self.run_count == 1:
+                    self.pending_input_queue.push("do it again")
+                yield ActionHistory(
+                    action_id=f"r{self.run_count}",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="done",
+                    input={},
+                    output={"response": "identical reply"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-dup", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-dup"))
+
+        assert task.node.run_count == 2
+        assistant_events = [
+            e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "assistant"
+        ]
+        # Both passes' replies reach the client despite identical text.
+        assert len(assistant_events) == 2
+
+    def test_drain_pending_for_continuation_variants(self):
+        """Covers all branches of the drain helper: no queue, empty, interrupted
+        (cleared), and a normal FIFO drain."""
+        from datus.cli.execution_state import PendingInputQueue
+
+        # No queue → None.
+        assert ChatTaskManager._drain_pending_for_continuation(SimpleNamespace(pending_input_queue=None)) is None
+
+        # Empty queue → None.
+        empty = SimpleNamespace(pending_input_queue=PendingInputQueue())
+        assert ChatTaskManager._drain_pending_for_continuation(empty) is None
+
+        # Interrupted → cleared and None (residual is discarded on cancel).
+        q = PendingInputQueue()
+        q.push("x")
+        interrupted = SimpleNamespace(
+            pending_input_queue=q,
+            interrupt_controller=SimpleNamespace(is_interrupted=True),
+        )
+        assert ChatTaskManager._drain_pending_for_continuation(interrupted) is None
+        assert len(q) == 0
+
+        # Normal → FIFO list.
+        q2 = PendingInputQueue()
+        q2.push("a")
+        q2.push("b")
+        live = SimpleNamespace(
+            pending_input_queue=q2,
+            interrupt_controller=SimpleNamespace(is_interrupted=False),
+        )
+        assert ChatTaskManager._drain_pending_for_continuation(live) == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_emit_user_insert_sse_noop_when_converter_returns_none(self):
+        """If the converter drops the frame, event_id is unchanged and nothing
+        is pushed."""
+        manager = ChatTaskManager()
+        task = ChatTask(session_id="s-none", asyncio_task=MagicMock())
+
+        with patch("datus.api.services.chat_task_manager.action_to_sse_event", return_value=None):
+            new_id = await manager._emit_user_insert_sse(task, "hi", 5)
+
+        assert new_id == 5
+        assert task.events == []
+
+    @pytest.mark.asyncio
+    async def test_run_loop_caps_continuations(self, real_agent_config):
+        """A client that keeps inserting can't run one task forever — the loop
+        stops after _MAX_INSERT_CONTINUATIONS and closes the accept window."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.api.services import chat_task_manager as ctm
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-cap"
+
+            def __init__(self):
+                self.pending_input_queue = None
+                self.input = None
+                self.run_count = 0
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                self.run_count += 1
+                # Never stops producing residue.
+                self.pending_input_queue.push(f"m{self.run_count}")
+                yield ActionHistory(
+                    action_id=f"r{self.run_count}",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="x",
+                    input={},
+                    output={"response": "y"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-cap", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-cap"))
+
+        # Initial run + the cap in continuations, then it stops.
+        assert task.node.run_count == ctm._MAX_INSERT_CONTINUATIONS + 1
+        assert task.accepting_inserts is False
+
+    @pytest.mark.asyncio
+    async def test_run_loop_reopens_window_for_tail_race_insert(self, real_agent_config):
+        """A residual that only appears after the accept window closed must
+        re-open the window and continue — not be dropped."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-reopen"
+
+            def __init__(self):
+                self.pending_input_queue = None
+                self.input = None
+                self.run_count = 0
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                self.run_count += 1
+                yield ActionHistory(
+                    action_id=f"r{self.run_count}",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="x",
+                    input={},
+                    output={"response": "y"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
+        # pass 1: first drain empty → close window → second drain finds a tail
+        # message → re-open and continue. pass 2: both drains empty → stop.
+        drains = iter([None, ["tail msg"], None, None])
+        manager._drain_pending_for_continuation = lambda node: next(drains)  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-reopen", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="go", session_id="s-reopen"))
+
+        # The re-opened window ran a second pass and echoed the tail message.
+        assert task.node.run_count == 2
+        user_events = [
+            e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "user"
+        ]
+        assert len(user_events) == 1
+
+    @pytest.mark.asyncio
     async def test_run_loop_web_source_proxies_filesystem_writes(self, real_agent_config):
         """source='web' proxies the client-owned write tools (write/edit/delete_file)."""
         from datus.api.models.cli_models import StreamChatInput
