@@ -794,27 +794,62 @@ class TestTaskExecution:
         assert result.success == 0
         assert result.result["code"] == "semantic_model_required"
         assert result.result["required_subagent"] == "gen_semantic_model"
+        assert result.result["semantic_model_directory"].endswith("subject/semantic_models/test_db")
         assert result.result["retry_subagent"] == "gen_metrics"
         execute_node.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_osi_gen_metrics_accepts_any_discovered_model_in_the_datasource(self, task_tool, tmp_path):
+    async def test_osi_gen_metrics_selects_discovered_model_by_dataset(self, task_tool, tmp_path):
         task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
         task_tool.agent_config.current_datasource = "test_db"
         task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
-        target = tmp_path / "subject" / "semantic_models" / "test_db" / "orders_analytics.yml"
-        target.parent.mkdir(parents=True)
-        target.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: orders_analytics\n    datasets: []\n",
-            encoding="utf-8",
-        )
+        model_dir = tmp_path / "subject" / "semantic_models" / "test_db"
+        model_dir.mkdir(parents=True)
+        for name, dataset in (("orders_analytics", "orders"), ("support", "tickets")):
+            (model_dir / f"{name}.yml").write_text(
+                "version: 0.2.0.dev0\n"
+                "semantic_model:\n"
+                f"  - name: {name}\n"
+                "    datasets:\n"
+                f"      - name: {dataset}\n"
+                f"        source: main.{dataset}\n",
+                encoding="utf-8",
+            )
         expected = FuncToolResult(result={"response": "generated"})
 
         with patch.object(task_tool, "_execute_node", return_value=expected) as execute_node:
-            result = await task_tool.task(type="gen_metrics", prompt="Generate order count")
+            result = await task_tool.task(type="gen_metrics", prompt="Generate order count from orders")
 
         assert result is expected
         execute_node.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_osi_gen_metrics_reports_ambiguous_model_candidates(self, task_tool, tmp_path):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
+        task_tool.agent_config.current_datasource = "test_db"
+        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
+        model_dir = tmp_path / "subject" / "semantic_models" / "test_db"
+        model_dir.mkdir(parents=True)
+        for name, dataset in (("orders", "orders"), ("support", "tickets")):
+            (model_dir / f"{name}.yml").write_text(
+                "semantic_model:\n"
+                f"  - name: {name}\n"
+                "    datasets:\n"
+                f"      - name: {dataset}\n"
+                f"        source: main.{dataset}\n",
+                encoding="utf-8",
+            )
+
+        with patch.object(task_tool, "_execute_node") as execute_node:
+            result = await task_tool.task(type="gen_metrics", prompt="Generate metrics")
+
+        assert result.success == 0
+        assert result.result["code"] == "semantic_model_selection_required"
+        assert {candidate["semantic_model_name"] for candidate in result.result["candidates"]} == {
+            "orders",
+            "support",
+        }
+        execute_node.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_semantic_authoring_tasks_are_serialized_across_tool_instances(
@@ -834,9 +869,9 @@ class TestTaskExecution:
             return FuncToolResult(result={"subagent_type": subagent_type})
 
         monkeypatch.setattr(task_tool, "_execute_node", fake_execute)
-        monkeypatch.setattr(task_tool, "_osi_metric_precondition", lambda: None)
+        monkeypatch.setattr(task_tool, "_osi_metric_precondition", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(metrics_tool, "_execute_node", fake_execute)
-        monkeypatch.setattr(metrics_tool, "_osi_metric_precondition", lambda: None)
+        monkeypatch.setattr(metrics_tool, "_osi_metric_precondition", lambda *_args, **_kwargs: None)
 
         semantic_result, metrics_result = await asyncio.gather(
             task_tool.task(type="gen_semantic_model", prompt="Generate the sales model"),
@@ -846,6 +881,26 @@ class TestTaskExecution:
         assert semantic_result.success == 1
         assert metrics_result.success == 1
         assert max_active == 1
+
+    @pytest.mark.asyncio
+    async def test_semantic_authoring_guard_is_reentrant_for_nested_subagent(self, task_tool, monkeypatch, tmp_path):
+        from datus.agent.node.semantic_authoring import semantic_authoring_guard
+
+        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
+
+        async def fake_execute(subagent_type, prompt, **kwargs):
+            return FuncToolResult(result={"subagent_type": subagent_type})
+
+        monkeypatch.setattr(task_tool, "_execute_node", fake_execute)
+
+        async with semantic_authoring_guard(task_tool.agent_config):
+            result = await asyncio.wait_for(
+                task_tool.task(type="gen_semantic_model", prompt="Generate the sales model"),
+                timeout=0.5,
+            )
+
+        assert result.success == 1
+        assert result.result["subagent_type"] == "gen_semantic_model"
 
     @pytest.mark.asyncio
     async def test_execute_gen_sql_success(self, task_tool):

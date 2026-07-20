@@ -533,7 +533,7 @@ class TestPrepareTemplateContext:
 
         assert "test_tool" in context["native_tools"]
 
-    def test_osi_template_context_resolves_explicit_model_name_first(self, real_agent_config, mock_llm_create):
+    def test_osi_target_is_in_request_context_not_system_template(self, real_agent_config, mock_llm_create):
         _set_global_semantic_adapter(real_agent_config, "osi")
         node = _make_node(real_agent_config, mock_llm_create)
         user_input = SemanticNodeInput(
@@ -546,10 +546,14 @@ class TestPrepareTemplateContext:
 
         context = node._prepare_template_context(user_input)
 
-        assert context["osi_target_resolved"] is True
-        assert context["default_osi_semantic_model_name"] == "executive_sales"
-        assert context["default_osi_semantic_model_file"].endswith("/executive_sales.yml")
-        assert context["requested_dimension_tables"] == ["main.customers"]
+        assert context["osi_target_resolved"] is False
+        assert context["requested_semantic_model_name"] == ""
+        assert context["requested_dimension_tables"] == []
+        enhanced = node._build_enhanced_message(user_input)
+        assert "executive_sales" in enhanced
+        assert "executive_sales.yml" in enhanced
+        assert "main.orders" in enhanced
+        assert "main.customers" in enhanced
 
 
 class TestGetSystemPrompt:

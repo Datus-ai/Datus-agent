@@ -23,7 +23,11 @@ into the prompt at render time (see ``required_authoring_skills``).
 
 from __future__ import annotations
 
+import asyncio
 import re
+import weakref
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import fields, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -32,6 +36,12 @@ import yaml
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
+
+_SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+_HELD_SEMANTIC_AUTHORING_KEYS: ContextVar[frozenset[str]] = ContextVar(
+    "held_semantic_authoring_keys",
+    default=frozenset(),
+)
 
 # Authoring specification skills injected into the system prompt on every run,
 # keyed by node name then authoring format. These carry the full YAML format
@@ -211,6 +221,11 @@ def _osi_semantic_model_dir(agent_config: Any = None) -> Optional[Path]:
     return None
 
 
+def osi_semantic_model_directory(agent_config: Any = None) -> Optional[Path]:
+    """Return the active datasource's semantic-model directory."""
+    return _osi_semantic_model_dir(agent_config)
+
+
 def _table_lookup_names(value: Any) -> set[str]:
     """Return stable lookup keys for a logical or fully-qualified table name."""
     parts = [part.strip().strip('`"[]') for part in re.split(r"[./]", str(value or "").strip())]
@@ -317,6 +332,197 @@ def osi_semantic_models_cover_tables(agent_config: Any, tables: Iterable[str]) -
         return False
     requested = [str(table).strip() for table in tables if str(table).strip()]
     return bool(requested) and any(all(_model_covers_table(model, table) for table in requested) for model in models)
+
+
+def _dedupe_table_references(values: Iterable[Any]) -> list[str]:
+    references: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if text and key not in seen:
+            seen.add(key)
+            references.append(text)
+    return references
+
+
+def _metric_request_table_references(
+    user_input: Any,
+    request_text: str,
+    models: Iterable[Dict[str, Any]],
+) -> list[str]:
+    """Extract deterministic table hints carried by a metric request."""
+    references: list[Any] = []
+    references.extend(getattr(user_input, "fact_tables", None) or [])
+    references.extend(getattr(user_input, "dimension_tables", None) or [])
+
+    for schema in getattr(user_input, "schemas", None) or []:
+        parts = [
+            getattr(schema, "catalog_name", ""),
+            getattr(schema, "database_name", ""),
+            getattr(schema, "schema_name", ""),
+            getattr(schema, "table_name", ""),
+        ]
+        qualified = ".".join(str(part) for part in parts if part)
+        references.append(qualified or getattr(schema, "identifier", ""))
+
+    try:
+        from datus.utils.sql_utils import extract_table_names
+
+        for reference_sql in getattr(user_input, "reference_sql", None) or []:
+            references.extend(extract_table_names(getattr(reference_sql, "sql", ""), ignore_empty=True))
+        if re.search(r"\b(?:select|with)\b", str(request_text or ""), flags=re.IGNORECASE):
+            references.extend(extract_table_names(request_text, ignore_empty=True))
+    except Exception:
+        pass
+
+    if not any(str(value or "").strip() for value in references):
+        from_match = re.search(r"\bfrom\s+[`\"[]?([A-Za-z_][\w.]*)", str(request_text or ""), re.IGNORECASE)
+        if from_match:
+            references.append(from_match.group(1))
+
+    if not any(str(value or "").strip() for value in references):
+        text = str(request_text or "").lower()
+        for model in models:
+            for value in [*(model.get("dataset_names") or []), *(model.get("dataset_sources") or [])]:
+                leaf = re.split(r"[./]", str(value or ""))[-1].strip().strip('`"[]').lower()
+                if leaf and re.search(rf"(?<![\w]){re.escape(leaf)}(?![\w])", text):
+                    references.append(value)
+
+    return _dedupe_table_references(references)
+
+
+def _requested_semantic_model_name(user_input: Any, request_text: str) -> str:
+    declared = str(getattr(user_input, "semantic_model_name", "") or "").strip()
+    if declared:
+        return declared
+    for pattern in (
+        r"\bsemantic_model_name\s*[:=]\s*[`\"']?([A-Za-z0-9_.-]+)",
+        r"\bsemantic\s+model\s+(?:named|name\s*[:=])\s*[`\"']?([A-Za-z0-9_.-]+)",
+        r"semantic\s*model\s*(?:名称为|名为)\s*[`\"']?([\w.-]+)",
+    ):
+        match = re.search(pattern, str(request_text or ""), flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def _existing_model_resolution(
+    status: str,
+    *,
+    selected: Optional[Dict[str, Any]] = None,
+    candidates: Optional[Iterable[Dict[str, Any]]] = None,
+    reason: str,
+    requested_name: str = "",
+    referenced_tables: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "status": status,
+        "candidates": list(candidates or []),
+        "reason": reason,
+    }
+    if selected is not None:
+        result["selected"] = selected
+    if requested_name:
+        result["requested_name"] = requested_name
+    if referenced_tables:
+        result["referenced_tables"] = list(referenced_tables)
+    return result
+
+
+def resolve_existing_osi_semantic_model(
+    agent_config: Any,
+    *,
+    user_input: Any = None,
+    request_text: str = "",
+    referenced_tables: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """Select an existing Ossie model for metric authoring without guessing.
+
+    Source YAML is authoritative. Selection prefers an explicit model name,
+    then a unique model covering every referenced dataset. A single model is a
+    safe datasource default; otherwise ambiguity is returned to the caller.
+    """
+    models = discover_osi_semantic_models(agent_config)
+    requested_name = _requested_semantic_model_name(user_input, request_text)
+    if requested_name:
+        target = resolve_osi_semantic_model_target(
+            agent_config,
+            semantic_model_name=requested_name,
+        )
+        if target.get("ambiguous"):
+            return _existing_model_resolution(
+                "ambiguous",
+                candidates=target.get("candidates"),
+                requested_name=requested_name,
+                reason=target.get("reason") or "the explicit model name is ambiguous",
+            )
+        if target.get("exists"):
+            return _existing_model_resolution(
+                "found",
+                selected=target,
+                candidates=[target],
+                requested_name=requested_name,
+                reason="explicit semantic model name",
+            )
+        return _existing_model_resolution(
+            "missing",
+            requested_name=requested_name,
+            reason="the explicitly requested semantic model does not exist",
+        )
+
+    tables = _dedupe_table_references(
+        [
+            *_metric_request_table_references(user_input, request_text, models),
+            *(referenced_tables or []),
+        ]
+    )
+    if tables:
+        matches = [model for model in models if all(_model_covers_table(model, table) for table in tables)]
+        if len(matches) == 1:
+            return _existing_model_resolution(
+                "found",
+                selected=matches[0],
+                candidates=matches,
+                referenced_tables=tables,
+                reason="referenced datasets uniquely identify the semantic model",
+            )
+        if len(matches) > 1:
+            return _existing_model_resolution(
+                "ambiguous",
+                candidates=matches,
+                referenced_tables=tables,
+                reason="referenced datasets occur in multiple semantic models",
+            )
+        partial_matches = [model for model in models if any(_model_covers_table(model, table) for table in tables)]
+        if len(partial_matches) > 1:
+            return _existing_model_resolution(
+                "ambiguous",
+                candidates=partial_matches,
+                referenced_tables=tables,
+                reason="referenced datasets are split across multiple semantic models",
+            )
+        return _existing_model_resolution(
+            "missing",
+            candidates=partial_matches,
+            referenced_tables=tables,
+            reason="no semantic model contains all referenced datasets",
+        )
+
+    if len(models) == 1:
+        return _existing_model_resolution(
+            "found",
+            selected=models[0],
+            candidates=models,
+            reason="only one semantic model exists for the datasource",
+        )
+    if len(models) > 1:
+        return _existing_model_resolution(
+            "ambiguous",
+            candidates=models,
+            reason="multiple semantic models exist and the request does not identify a dataset",
+        )
+    return _existing_model_resolution("missing", reason="no semantic model exists for the datasource")
 
 
 def _new_osi_semantic_model_name(business_domain: str, fact_tables: Iterable[str]) -> tuple[str, str]:
@@ -494,6 +700,102 @@ def resolve_osi_semantic_model_target(
         "matched_by": matched_by,
         "dimension_tables": dimensions,
     }
+
+
+def osi_semantic_model_turn_context(agent_config: Any, user_input: Any) -> str:
+    """Render request-scoped Ossie target details for the user message.
+
+    Semantic-model intent can change between turns in one persisted session, so
+    these values must never be frozen into the session system-prompt snapshot.
+    """
+    if resolve_authoring_format(agent_config) != AUTHORING_FORMAT_OSI:
+        return ""
+
+    requested_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
+    business_domain = str(getattr(user_input, "business_domain", "") or "").strip()
+    fact_tables = [
+        str(value).strip() for value in (getattr(user_input, "fact_tables", None) or []) if str(value).strip()
+    ]
+    dimension_tables = [
+        str(value).strip() for value in (getattr(user_input, "dimension_tables", None) or []) if str(value).strip()
+    ]
+    if not (requested_name or business_domain or fact_tables or dimension_tables):
+        return ""
+
+    target = resolve_osi_semantic_model_target(
+        agent_config,
+        semantic_model_name=requested_name,
+        business_domain=business_domain,
+        fact_tables=fact_tables,
+        dimension_tables=dimension_tables,
+    )
+    lines = [
+        "## Ossie Semantic Model Target for This Turn",
+        "This block is request-scoped and supersedes any semantic-model target mentioned in earlier turns.",
+    ]
+    if requested_name:
+        lines.append(f"- Selected semantic model name: `{requested_name}`")
+    if business_domain:
+        lines.append(f"- Business domain: `{business_domain}`")
+    if fact_tables:
+        lines.append(f"- Fact tables: `{', '.join(fact_tables)}`")
+    if dimension_tables:
+        lines.append(f"- Dimension tables: `{', '.join(dimension_tables)}`")
+
+    if target.get("ambiguous"):
+        lines.append(f"- Resolution status: ambiguous ({target.get('reason') or 'target is not unique'})")
+        candidates = target.get("candidates") or []
+        if candidates:
+            rendered = ", ".join(
+                f"{candidate['semantic_model_name']} ({candidate['semantic_model_file']})" for candidate in candidates
+            )
+            lines.append(f"- Candidates: {rendered}")
+        lines.append("Do not guess; call `resolve_osi_semantic_model_target` and require clarification if needed.")
+    else:
+        lines.extend(
+            [
+                f"- Resolved semantic model name: `{target['semantic_model_name']}`",
+                f"- Resolved semantic model file: `{target['semantic_model_file']}`",
+                "Use this exact name and file for this turn.",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def semantic_authoring_lock_key(agent_config: Any = None) -> str:
+    """Return the lock key shared by semantic authoring for one datasource."""
+    path_manager = getattr(agent_config, "path_manager", None)
+    project_root = getattr(path_manager, "project_root", "")
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default")
+    try:
+        project_key = str(Path(project_root).expanduser().resolve(strict=False))
+    except TypeError:
+        project_key = str(project_root)
+    return f"{project_key}:{datasource}"
+
+
+def _semantic_authoring_lock(agent_config: Any = None) -> asyncio.Lock:
+    """Return the event-loop-local lock for one project datasource."""
+    loop = asyncio.get_running_loop()
+    loop_locks = _SEMANTIC_AUTHORING_LOCKS.setdefault(loop, {})
+    return loop_locks.setdefault(semantic_authoring_lock_key(agent_config), asyncio.Lock())
+
+
+@asynccontextmanager
+async def semantic_authoring_guard(agent_config: Any = None):
+    """Serialize semantic writes while allowing nested host delegation."""
+    key = semantic_authoring_lock_key(agent_config)
+    held_keys = _HELD_SEMANTIC_AUTHORING_KEYS.get()
+    if key in held_keys:
+        yield
+        return
+
+    async with _semantic_authoring_lock(agent_config):
+        token = _HELD_SEMANTIC_AUTHORING_KEYS.set(held_keys | {key})
+        try:
+            yield
+        finally:
+            _HELD_SEMANTIC_AUTHORING_KEYS.reset(token)
 
 
 def required_authoring_skills(agent_config: Any, node_name: str) -> str:
