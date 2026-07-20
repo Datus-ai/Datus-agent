@@ -72,6 +72,15 @@ def test_derives_from_active_semantic_adapter():
     assert resolve_authoring_format(_agent_config("metricflow"), None) == AUTHORING_FORMAT_METRICFLOW
 
 
+def test_osi_engine_adapter_authors_osi_format():
+    """The native osi-engine adapter consumes the same OSI authoring documents."""
+    assert resolve_authoring_format(_agent_config("osi_engine"), None) == AUTHORING_FORMAT_OSI
+    assert resolve_authoring_format(_agent_config("OSI_ENGINE"), None) == AUTHORING_FORMAT_OSI
+    assert resolve_semantic_adapter_type(_agent_config("osi_engine")) == "osi_engine"
+    assert required_authoring_skills(_agent_config("osi_engine"), "gen_semantic_model") == "osi-semantic-authoring"
+    assert required_authoring_skills(_agent_config("osi_engine"), "gen_metrics") == "osi-metrics-authoring"
+
+
 def test_legacy_node_semantic_adapter_is_ignored():
     assert (
         resolve_authoring_format(_agent_config("metricflow"), {"semantic_adapter": "osi"})

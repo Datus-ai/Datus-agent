@@ -142,22 +142,6 @@ def _normalize_optional_path(value) -> Optional[List[str]]:
     return names or None
 
 
-def _normalize_optional_bool(value) -> bool:
-    """Normalize optional tool boolean arguments that may arrive as strings."""
-    value = normalize_null(value)
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        text = value.strip().lower()
-        if text in {"1", "true", "yes", "y", "on"}:
-            return True
-        if text in {"0", "false", "no", "n", "off"}:
-            return False
-    return bool(value)
-
-
 def _signature_accepts_parameter(parameters, name: str) -> bool:
     """Return true when a callable explicitly accepts ``name`` or arbitrary kwargs."""
     return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
@@ -918,33 +902,29 @@ class SemanticTools:
         where: Optional[str] = None,
         limit: Optional[int] = None,
         order_by: Optional[List[str]] = None,
-        join_policy: Optional[
-            Literal["auto", "match_only", "fact_preserving", "dimension_preserving", "unmatched_only"]
-        ] = None,
-        zero_fill: bool = False,
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
         Query metrics data (requires adapter).
+
+        Join behavior is not a query-time concern: it is declared on the
+        semantic model (relationship ``join_type``) and applied by the
+        semantic adapter deterministically.
 
         Args:
             metrics: List of metric names to query
             dimensions: Optional list of dimensions to group by (from get_dimensions)
             path: Optional subject tree path (from list_subject_tree)
             time_start: Optional start time (ISO format like '2024-01-01' or relative like '-7d')
-            time_end: Optional end time (ISO format like '2024-01-31' or relative like 'now')
+            time_end: Optional end time (ISO format like '2024-01-31' or relative like 'now').
+                      For OSI-family semantic layers this is an exclusive upper bound
+                      (half-open range ``[time_start, time_end)``).
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL WHERE clause (without WHERE keyword)
             limit: Optional maximum number of rows
             order_by: Optional list of columns to sort by. Use column name for ascending,
                       prefix with '-' for descending. Examples: ['metric_time__day'] for ascending,
                       ['-message_count'] for descending. Do NOT use 'asc'/'desc' keywords.
-            join_policy: Optional relationship handling policy for joined dimensions:
-                      'auto'/'match_only' keeps only facts that match requested joined dimensions;
-                      'fact_preserving' keeps unmatched facts;
-                      'dimension_preserving' keeps all dimension values;
-                      'unmatched_only' returns only unmatched facts.
-            zero_fill: Fill missing metric values with 0 when join_policy='dimension_preserving'.
             dry_run: If True, only validate and return query plan
 
         Returns:
@@ -974,12 +954,10 @@ class SemanticTools:
         time_end = normalize_null(time_end)
         time_granularity = normalize_null(time_granularity)
         where = normalize_null(where)
-        join_policy = normalize_null(join_policy)
-        zero_fill = _normalize_optional_bool(zero_fill)
         logger.info(
             f"query_metrics called: metrics={metrics}, dimensions={dimensions}, path={path}, "
             f"time=[{time_start},{time_end}], granularity={time_granularity}, where={where}, "
-            f"limit={limit}, join_policy={join_policy}, zero_fill={zero_fill}, dry_run={dry_run}"
+            f"limit={limit}, dry_run={dry_run}"
         )
 
         try:
@@ -1000,30 +978,6 @@ class SemanticTools:
                 "order_by": order_by or None,
                 "dry_run": dry_run,
             }
-            adapter_params = inspect.signature(adapter.query_metrics).parameters
-            requested_join_controls = bool(join_policy) or bool(zero_fill)
-            supports_join_policy = _signature_accepts_parameter(adapter_params, "join_policy")
-            supports_zero_fill = _signature_accepts_parameter(adapter_params, "zero_fill")
-            if supports_join_policy and join_policy:
-                adapter_query_kwargs["join_policy"] = join_policy
-            elif join_policy:
-                return FuncToolResult(
-                    success=0,
-                    error="query_metrics join_policy is not supported by the current semantic adapter.",
-                )
-            if supports_zero_fill and zero_fill:
-                adapter_query_kwargs["zero_fill"] = zero_fill
-            elif zero_fill:
-                return FuncToolResult(
-                    success=0,
-                    error="query_metrics zero_fill is not supported by the current semantic adapter.",
-                )
-            if requested_join_controls and not (supports_join_policy or supports_zero_fill):
-                return FuncToolResult(
-                    success=0,
-                    error="query_metrics join controls are not supported by the current semantic adapter.",
-                )
-
             result = _run_async(adapter.query_metrics(**adapter_query_kwargs))
 
             # Drop non-JSON-serializable metadata entries (MetricFlow puts a
