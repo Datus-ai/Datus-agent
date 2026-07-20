@@ -27,6 +27,7 @@ from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
@@ -357,18 +358,45 @@ class GenerationTools:
             dict: Result containing completion message and semantic_model_files
         """
         try:
-            if self._is_osi_authoring() and len(semantic_model_files) != 1:
-                return FuncToolResult(
-                    success=0,
-                    error=("Ossie semantic model generation must publish exactly one target file per run."),
-                    result={"semantic_model_files": semantic_model_files},
+            osi_target: Optional[tuple[str, str]] = None
+            if self._is_osi_authoring():
+                if len(semantic_model_files) != 1:
+                    return FuncToolResult(
+                        success=0,
+                        error=("Ossie semantic model generation must publish exactly one target file per run."),
+                        result={"semantic_model_files": semantic_model_files},
+                    )
+                resolved = self._resolve_generation_path(semantic_model_files[0], "semantic")
+                if not resolved:
+                    return FuncToolResult(
+                        success=0,
+                        error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_files[0]!r}",
+                        result={"semantic_model_files": semantic_model_files},
+                    )
+                model_names = self.extract_osi_model_names(resolved)
+                if len(model_names) != 1:
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            "Generated Ossie files must declare exactly one semantic model; "
+                            f"found {model_names or '<none>'}."
+                        ),
+                        result={"semantic_model_files": semantic_model_files},
+                    )
+                osi_target = (resolved, model_names[0])
+                validation_passed = self.generation_evidence.semantic_artifact_validation_passed(
+                    model_names[0], resolved
                 )
-            if not self.generation_evidence.validation_passed:
+            else:
+                validation_passed = self.generation_evidence.validation_passed
+
+            if not validation_passed:
                 return FuncToolResult(
                     success=0,
                     error=(
-                        "validate_semantic must pass before publishing semantic models. "
-                        "Call validate_semantic, fix any issues, and retry end_semantic_model_generation."
+                        "validate_semantic must pass for the exact semantic model artifact before publishing. "
+                        "Call validate_semantic with the target semantic_model_name after the final file edit, "
+                        "then retry end_semantic_model_generation."
                     ),
                     result={"semantic_model_files": semantic_model_files},
                 )
@@ -380,33 +408,16 @@ class GenerationTools:
             self._semantic_table_object_index = None
 
             if self._is_osi_authoring():
-                sync_results = []
-                for semantic_model_file in semantic_model_files:
-                    resolved = self._resolve_generation_path(semantic_model_file, "semantic")
-                    if not resolved:
-                        return FuncToolResult(
-                            success=0,
-                            error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
-                            result={"semantic_model_files": semantic_model_files},
-                        )
-                    model_names = self.extract_osi_model_names(resolved)
-                    if len(model_names) != 1:
-                        return FuncToolResult(
-                            success=0,
-                            error=(
-                                "Generated Ossie files must declare exactly one semantic model; "
-                                f"found {model_names or '<none>'}."
-                            ),
-                            result={"semantic_model_files": semantic_model_files},
-                        )
-                    sync_result = self.sync_osi_semantic_to_db(resolved)
-                    sync_results.append(sync_result)
-                    if not sync_result.get("success"):
-                        return FuncToolResult(
-                            success=0,
-                            error=f"OSI semantic model KB sync failed: {sync_result.get('error', 'unknown')}",
-                            result={"semantic_model_files": semantic_model_files, "sync": sync_results},
-                        )
+                assert osi_target is not None
+                resolved, _model_name = osi_target
+                sync_result = self.sync_osi_semantic_to_db(resolved)
+                sync_results = [sync_result]
+                if not sync_result.get("success"):
+                    return FuncToolResult(
+                        success=0,
+                        error=f"OSI semantic model KB sync failed: {sync_result.get('error', 'unknown')}",
+                        result={"semantic_model_files": semantic_model_files, "sync": sync_results},
+                    )
                 self.generation_evidence.mark_kb_sync("semantic")
                 return FuncToolResult(
                     result={
@@ -1140,8 +1151,11 @@ class GenerationTools:
             model_names = self.extract_osi_model_names(semantic_model_file)
         if len(model_names) != 1:
             candidates = ", ".join(model_names) or "<none>"
-            raise ValueError(
-                f"Exactly one semantic model must be identifiable from the target artifact. Found: {candidates}."
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message=(
+                    f"Exactly one semantic model must be identifiable from the target artifact. Found: {candidates}."
+                ),
             )
         return load_osi_model(
             self._osi_document_root(metric_file, semantic_model_file),

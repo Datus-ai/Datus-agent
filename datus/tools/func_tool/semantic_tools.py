@@ -10,10 +10,12 @@ All public semantic tools require a successfully initialized semantic adapter.
 """
 
 import csv
+import hashlib
 import inspect
 import io
 import json
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Set, Tuple
 
 from agents import Tool
@@ -419,6 +421,29 @@ class SemanticTools:
         if resolved_adapter:
             self.adapter_type = resolved_adapter
         return resolved_adapter
+
+    def _semantic_model_artifact_evidence(self, semantic_model_name: str) -> Dict[str, str]:
+        """Return exact Ossie artifact identity for target-bound validation evidence."""
+        if str(self.adapter_type or "").strip().lower() != "osi" or not semantic_model_name:
+            return {}
+        try:
+            from datus.agent.node.semantic_authoring import discover_osi_semantic_models
+
+            matches = [
+                model
+                for model in discover_osi_semantic_models(self.agent_config)
+                if str(model.get("semantic_model_name") or "") == semantic_model_name
+            ]
+            if len(matches) != 1:
+                return {}
+            path = Path(str(matches[0]["absolute_path"])).expanduser().resolve(strict=True)
+            return {
+                "semantic_model_name": semantic_model_name,
+                "semantic_model_file": str(path),
+                "semantic_model_file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        except (KeyError, OSError, RuntimeError):
+            return {}
 
     @staticmethod
     def _normalize_runtime_db_context(runtime_db_context: Optional[Mapping[str, Any]]) -> Dict[str, str]:
@@ -1200,15 +1225,19 @@ class SemanticTools:
                 logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
+            result_payload = {
+                "valid": effective_valid,
+                "issues": effective_issues,
+                "scope": scope,
+                "checks": checks_list,
+                "ignored_issues": ignored_issues,
+            }
+            if effective_valid and semantic_model_name:
+                result_payload.update(self._semantic_model_artifact_evidence(semantic_model_name))
+
             tool_result = FuncToolResult(
                 success=1 if effective_valid else 0,
-                result={
-                    "valid": effective_valid,
-                    "issues": effective_issues,
-                    "scope": scope,
-                    "checks": checks_list,
-                    "ignored_issues": ignored_issues,
-                },
+                result=result_payload,
                 error=None if effective_valid else _format_validation_error(effective_issues),
             )
             if self.generation_evidence:

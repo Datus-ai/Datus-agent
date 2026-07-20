@@ -232,7 +232,7 @@ def test_osi_target_identity_uses_only_the_core_fact_table(tmp_path):
     assert target["exists"] is False
 
 
-def test_osi_model_coverage_is_checked_across_all_discovered_files(tmp_path):
+def test_osi_model_coverage_requires_one_model_to_cover_the_table_group(tmp_path):
     config = _osi_config(tmp_path)
     _write_osi_model(
         tmp_path,
@@ -247,7 +247,9 @@ def test_osi_model_coverage_is_checked_across_all_discovered_files(tmp_path):
         [{"name": "payments", "source": "finance.fact_payments"}],
     )
 
-    assert osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "finance.fact_payments"])
+    assert osi_semantic_models_cover_tables(config, ["analytics.fact_orders"])
+    assert osi_semantic_models_cover_tables(config, ["finance.fact_payments"])
+    assert not osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "finance.fact_payments"])
     assert not osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "support.fact_tickets"])
 
 
@@ -266,6 +268,65 @@ def test_osi_target_creates_a_different_file_for_an_unrelated_fact(tmp_path):
     assert target["semantic_model_file"].endswith("/fact_payments_analytics.yml")
     assert target["exists"] is False
     assert len(discover_osi_semantic_models(config)) == 1
+
+
+def test_osi_target_does_not_reuse_same_leaf_table_from_another_schema(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales_orders.yml",
+        "sales_orders",
+        [{"name": "orders", "source": "sales.fact_orders"}],
+    )
+
+    target = resolve_osi_semantic_model_target(config, fact_tables=["finance.fact_orders"])
+
+    assert target["semantic_model_name"] == "fact_orders_analytics"
+    assert target["semantic_model_file"].endswith("/fact_orders_analytics.yml")
+    assert target["exists"] is False
+
+
+def test_osi_target_preserves_qualified_table_component_boundaries(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales_orders.yml",
+        "sales_orders",
+        [{"name": "orders", "source": "sales_fact.orders"}],
+    )
+
+    target = resolve_osi_semantic_model_target(config, fact_tables=["sales.fact_orders"])
+
+    assert target["semantic_model_name"] == "fact_orders_analytics"
+    assert target["exists"] is False
+
+
+def test_osi_target_allows_leaf_fallback_for_unqualified_fact_reference(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "sales_orders.yml",
+        "sales_orders",
+        [{"name": "orders", "source": "sales.fact_orders"}],
+    )
+
+    target = resolve_osi_semantic_model_target(config, fact_tables=["fact_orders"])
+
+    assert target["semantic_model_name"] == "sales_orders"
+    assert target["matched_by"] == "existing_fact_table"
+
+
+def test_osi_target_refuses_to_overwrite_an_unparseable_target_file(tmp_path):
+    config = _osi_config(tmp_path)
+    target_path = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("semantic_model: [\n", encoding="utf-8")
+
+    target = resolve_osi_semantic_model_target(config, semantic_model_name="sales")
+
+    assert target["ambiguous"] is True
+    assert "already exists" in target["reason"]
+    assert target["candidates"][0]["semantic_model_file"].endswith("/sales.yml")
 
 
 def test_osi_target_refuses_an_unsafe_generic_fallback(tmp_path):

@@ -546,6 +546,22 @@ class SemanticModelRAG:
         if not table_objs:
             return None
 
+        if not semantic_model_name:
+            candidate_models = sorted(
+                {
+                    str(obj.get("semantic_model_name") or obj.get("name") or "").strip() or "<legacy>"
+                    for obj in table_objs
+                }
+            )
+            if len(candidate_models) > 1:
+                raise DatusException(
+                    ErrorCode.STORAGE_INVALID_ARGUMENT,
+                    message=(
+                        f"Table `{table_name}` belongs to multiple semantic models: "
+                        f"{', '.join(candidate_models)}. Specify semantic_model_name explicitly."
+                    ),
+                )
+
         semantic_model = table_objs[0]
         model_name = semantic_model.get("semantic_model_name") or semantic_model.get("name") or table_name
 

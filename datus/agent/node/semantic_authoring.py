@@ -213,12 +213,41 @@ def _osi_semantic_model_dir(agent_config: Any = None) -> Optional[Path]:
 
 def _table_lookup_names(value: Any) -> set[str]:
     """Return stable lookup keys for a logical or fully-qualified table name."""
-    text = str(value or "").strip().strip('`"[]')
-    if not text:
+    parts = [part.strip().strip('`"[]') for part in re.split(r"[./]", str(value or "").strip())]
+    parts = [part for part in parts if part]
+    if not parts:
         return set()
-    normalized = _normalize_model_name(text)
-    leaf = _normalize_model_name(re.split(r"[./]", text)[-1].strip('`"[]'))
+    normalized = _normalize_model_name(".".join(parts))
+    leaf = _normalize_model_name(parts[-1])
     return {candidate for candidate in (normalized, leaf) if candidate}
+
+
+def _table_reference(value: Any) -> tuple[str, str, bool]:
+    """Return ``(qualified, leaf, is_qualified)`` for safe table matching."""
+    parts = [part.strip().strip('`"[]') for part in re.split(r"[./]", str(value or "").strip())]
+    parts = [part for part in parts if part]
+    if not parts:
+        return "", "", False
+    normalized_parts = [_normalize_model_name(part) for part in parts]
+    leaf = normalized_parts[-1]
+    qualified = ".".join(normalized_parts)
+    return qualified, leaf, len(parts) > 1
+
+
+def _table_references_match(left: Any, right: Any) -> bool:
+    """Match qualified references exactly, falling back only for unqualified input."""
+    left_qualified, left_leaf, left_is_qualified = _table_reference(left)
+    right_qualified, right_leaf, right_is_qualified = _table_reference(right)
+    if not left_leaf or not right_leaf:
+        return False
+    if left_is_qualified and right_is_qualified:
+        return left_qualified == right_qualified
+    return left_leaf == right_leaf
+
+
+def _model_covers_table(model: Dict[str, Any], table: Any) -> bool:
+    references = model.get("table_references") or model.get("dataset_sources") or model.get("dataset_names") or []
+    return any(_table_references_match(table, reference) for reference in references)
 
 
 def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any]]:
@@ -251,6 +280,7 @@ def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any
                 continue
             dataset_names: list[str] = []
             dataset_sources: list[str] = []
+            table_references: list[str] = []
             table_lookup_names: set[str] = set()
             for dataset in model.get("datasets") or []:
                 if not isinstance(dataset, dict):
@@ -263,6 +293,9 @@ def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any
                 if dataset_source:
                     dataset_sources.append(dataset_source)
                     table_lookup_names.update(_table_lookup_names(dataset_source))
+                table_reference = dataset_source or dataset_name
+                if table_reference and table_reference not in table_references:
+                    table_references.append(table_reference)
             discovered.append(
                 {
                     "semantic_model_name": model_name,
@@ -270,6 +303,7 @@ def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any
                     "absolute_path": str(path),
                     "dataset_names": dataset_names,
                     "dataset_sources": dataset_sources,
+                    "table_references": table_references,
                     "table_lookup_names": sorted(table_lookup_names),
                 }
             )
@@ -277,13 +311,12 @@ def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any
 
 
 def osi_semantic_models_cover_tables(agent_config: Any, tables: Iterable[str]) -> bool:
-    """Return whether existing Ossie files cover every requested source table."""
+    """Return whether one existing Ossie model covers every requested table."""
     models = discover_osi_semantic_models(agent_config)
     if not models:
         return False
-    covered_names = {str(name) for model in models for name in model.get("table_lookup_names") or [] if str(name)}
     requested = [str(table).strip() for table in tables if str(table).strip()]
-    return bool(requested) and all(_table_lookup_names(table).intersection(covered_names) for table in requested)
+    return bool(requested) and any(all(_model_covers_table(model, table) for table in requested) for model in models)
 
 
 def _new_osi_semantic_model_name(business_domain: str, fact_tables: Iterable[str]) -> tuple[str, str]:
@@ -291,15 +324,31 @@ def _new_osi_semantic_model_name(business_domain: str, fact_tables: Iterable[str
     if normalized_domain:
         return normalized_domain, "business_domain"
 
-    for fact_table in fact_tables:
-        table_names = _table_lookup_names(fact_table)
+    facts = list(fact_tables)
+    if facts:
+        table_names = _table_lookup_names(facts[0])
         if not table_names:
-            continue
+            return "", "missing_core_fact_table"
         leaf_name = min(table_names, key=lambda value: (value.count("_"), len(value), value))
         if leaf_name.endswith(("_analytics", "_model", "_semantic_model")):
             return leaf_name, "core_fact_table"
         return f"{leaf_name}_analytics", "core_fact_table"
     return "", "missing_core_fact_table"
+
+
+def _undiscovered_target_occupant(agent_config: Any, target_file: str) -> Optional[Dict[str, Any]]:
+    """Return a fail-closed record when a target path exists but was not discoverable."""
+    model_dir = _osi_semantic_model_dir(agent_config)
+    if model_dir is None:
+        return None
+    target_path = model_dir / Path(target_file).name
+    if not target_path.exists():
+        return None
+    return {
+        "semantic_model_name": target_path.stem or "unknown",
+        "semantic_model_file": target_file,
+        "absolute_path": str(target_path),
+    }
 
 
 def _ambiguous_osi_target(
@@ -370,6 +419,14 @@ def resolve_osi_semantic_model_target(
                 dimensions,
                 "The target filename is already occupied by a differently named semantic model.",
             )
+        undiscovered_file = _undiscovered_target_occupant(agent_config, target_file)
+        if undiscovered_file:
+            return _ambiguous_osi_target(
+                "explicit_name",
+                [undiscovered_file],
+                dimensions,
+                "The target filename already exists but does not contain a safely discoverable semantic model.",
+            )
         return {
             "semantic_model_name": explicit_name,
             "semantic_model_file": target_file,
@@ -378,10 +435,7 @@ def resolve_osi_semantic_model_target(
             "dimension_tables": dimensions,
         }
 
-    fact_lookup_names = _table_lookup_names(facts[0]) if facts else set()
-    fact_matches = [
-        model for model in existing_models if fact_lookup_names.intersection(model.get("table_lookup_names") or [])
-    ]
+    fact_matches = [model for model in existing_models if facts and _model_covers_table(model, facts[0])]
     if len(fact_matches) == 1:
         target = dict(fact_matches[0])
         target.update({"exists": True, "matched_by": "existing_fact_table", "dimension_tables": dimensions})
@@ -424,6 +478,14 @@ def resolve_osi_semantic_model_target(
             occupied_file,
             dimensions,
             "The inferred target filename is already occupied by a differently named semantic model.",
+        )
+    undiscovered_file = _undiscovered_target_occupant(agent_config, target_file)
+    if undiscovered_file:
+        return _ambiguous_osi_target(
+            matched_by,
+            [undiscovered_file],
+            dimensions,
+            "The inferred target filename already exists but does not contain a safely discoverable semantic model.",
         )
     return {
         "semantic_model_name": new_name,

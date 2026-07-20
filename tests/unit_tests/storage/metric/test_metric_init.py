@@ -675,6 +675,71 @@ class TestEnsureSemanticModelsForMetrics:
         assert captured["action_callback"] is action_callback
 
     @pytest.mark.asyncio
+    async def test_osi_reuses_separate_models_for_independent_queries(self, tmp_path):
+        from unittest.mock import patch
+
+        model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
+        model_dir.mkdir(parents=True)
+        (model_dir / "orders.yml").write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: orders\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: analytics.fact_orders\n",
+            encoding="utf-8",
+        )
+        (model_dir / "payments.yml").write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: payments\n"
+            "    datasets:\n"
+            "      - name: payments\n"
+            "        source: finance.fact_payments\n",
+            encoding="utf-8",
+        )
+        config = SimpleNamespace(
+            project_root=str(tmp_path),
+            current_datasource="warehouse",
+            resolve_semantic_adapter=lambda requested=None: "osi",
+        )
+        semantic_rag = MagicMock()
+        semantic_rag.get_size.return_value = 2
+        sql_list = [
+            "SELECT COUNT(*) FROM analytics.fact_orders",
+            "SELECT SUM(amount) FROM finance.fact_payments",
+        ]
+
+        def extract_tables(sqls, _config):
+            sql = sqls[0]
+            if "fact_orders" in sql:
+                return ["analytics.fact_orders"]
+            return ["finance.fact_payments"]
+
+        with (
+            patch("datus.storage.semantic_model.store.SemanticModelRAG", return_value=semantic_rag),
+            patch(
+                "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async"
+            ) as init_mock,
+            patch(
+                "datus.storage.metric.metric_init.extract_tables_from_sql_list",
+                side_effect=extract_tables,
+            ) as extract_mock,
+        ):
+            ok, error, created = await _ensure_semantic_models_for_metrics(
+                config,
+                "success_story.csv",
+                [{"sql": sql, "question": sql} for sql in sql_list],
+                sql_list,
+            )
+
+        assert ok is True
+        assert error == ""
+        assert created == []
+        assert extract_mock.call_count == 2
+        init_mock.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_metricflow_keeps_per_table_semantic_model_auto_create(self):
         from unittest.mock import patch
 

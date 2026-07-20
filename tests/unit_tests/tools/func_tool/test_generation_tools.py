@@ -4,7 +4,8 @@
 
 import json
 import os
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -216,6 +217,57 @@ class TestEndSemanticModelGeneration:
             result = generation_tools.end_semantic_model_generation(["/path/model.yaml"])
         assert result.success == 0
         assert "log failure" in result.error
+
+    def test_osi_requires_validation_for_the_exact_target_artifact(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        sales_file = tmp_path / "semantic_models" / "warehouse" / "sales.yml"
+        finance_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
+        sales_file.parent.mkdir(parents=True)
+        sales_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        finance_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: finance\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        generation_tools.generation_evidence.validation_passed = True
+        generation_tools.generation_evidence.record_semantic_artifact_validation("sales", sales_file)
+        mock_pm = Mock(subject_dir=str(tmp_path))
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(generation_tools, "sync_osi_semantic_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_semantic_model_generation([str(finance_file)])
+
+        assert result.success == 0
+        assert "exact semantic model artifact" in result.error
+        sync_mock.assert_not_called()
+
+    def test_osi_publishes_the_exact_validated_artifact(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        model_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
+        model_file.parent.mkdir(parents=True)
+        model_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: finance\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        generation_tools.generation_evidence.record_semantic_artifact_validation("finance", model_file)
+        mock_pm = Mock(subject_dir=str(tmp_path))
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(
+                generation_tools,
+                "sync_osi_semantic_to_db",
+                return_value={"success": True},
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_semantic_model_generation([str(model_file)])
+
+        assert result.success == 1
+        sync_mock.assert_called_once_with(str(model_file))
 
 
 class TestEndMetricGeneration:
@@ -1338,11 +1390,42 @@ class TestOsiSync:
             '            data: \'{"dataset":"budgets"}\'\n'
         )
 
-        doc = generation_tools._load_osi_document(metric_file=str(metric_file))
+        calls = {}
+        finance_doc = SimpleNamespace(
+            name="finance",
+            datasets=[SimpleNamespace(name="budgets")],
+            metrics=[SimpleNamespace(name="budget_total")],
+        )
+        profile_module = ModuleType("datus_semantic_osi.profile")
+
+        def load_osi_model(path, semantic_model_name, normalize):
+            calls.update(
+                path=path,
+                semantic_model_name=semantic_model_name,
+                normalize=normalize,
+            )
+            return finance_doc
+
+        profile_module.load_osi_model = load_osi_model
+        package_module = ModuleType("datus_semantic_osi")
+        package_module.__path__ = []
+        with patch.dict(
+            sys.modules,
+            {
+                "datus_semantic_osi": package_module,
+                "datus_semantic_osi.profile": profile_module,
+            },
+        ):
+            doc = generation_tools._load_osi_document(metric_file=str(metric_file))
 
         assert doc.name == "finance"
         assert [dataset.name for dataset in doc.datasets] == ["budgets"]
         assert [metric.name for metric in doc.metrics] == ["budget_total"]
+        assert calls == {
+            "path": str(tmp_path),
+            "semantic_model_name": "finance",
+            "normalize": True,
+        }
 
     def test_sync_osi_semantic_to_db_distinguishes_same_named_tables_across_databases(self, generation_tools, tmp_path):
         """Issue #1084 (OSI path): qualified source tables in different databases keep distinct ids."""

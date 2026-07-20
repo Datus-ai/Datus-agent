@@ -492,30 +492,42 @@ class GenSemanticModelAgenticNode(AgenticNode):
         if not semantic_model_files or self.generation_evidence.semantic_kb_sync_passed:
             return
 
-        if not self.generation_evidence.validation_passed:
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        osi_target = None
+        validation_passed = self.generation_evidence.validation_passed
+        if is_osi_authoring(self.agent_config):
+            if len(semantic_model_files) != 1:
+                raise RuntimeError("Ossie semantic model generation must publish exactly one target file.")
+            if not getattr(self, "generation_tools", None):
+                raise RuntimeError("Cannot resolve the generated Ossie model name without generation tools.")
+            resolved = self.generation_tools._resolve_generation_path(semantic_model_files[0], "semantic")
+            if not resolved:
+                raise RuntimeError("The generated Ossie file is outside the Knowledge Base sandbox.")
+            model_names = self.generation_tools.extract_osi_model_names(resolved)
+            if len(model_names) != 1:
+                raise RuntimeError("The generated Ossie file must declare exactly one semantic model.")
+            osi_target = (resolved, model_names[0])
+            validation_passed = self.generation_evidence.semantic_artifact_validation_passed(model_names[0], resolved)
+
+        if not validation_passed:
             if not getattr(self, "semantic_func_tool", None):
                 raise RuntimeError(
                     "Semantic model generation produced semantic_model_files, but validate_semantic is unavailable."
                 )
             validation_kwargs = {"scope": "semantic_model"}
-            from datus.agent.node.semantic_authoring import is_osi_authoring
-
-            if is_osi_authoring(self.agent_config):
-                if len(semantic_model_files) != 1:
-                    raise RuntimeError("Ossie semantic model generation must publish exactly one target file.")
-                if not getattr(self, "generation_tools", None):
-                    raise RuntimeError("Cannot resolve the generated Ossie model name without generation tools.")
-                resolved = self.generation_tools._resolve_generation_path(semantic_model_files[0], "semantic")
-                model_names = self.generation_tools.extract_osi_model_names(resolved)
-                if len(model_names) != 1:
-                    raise RuntimeError("The generated Ossie file must declare exactly one semantic model.")
-                validation_kwargs["semantic_model_name"] = model_names[0]
+            if osi_target is not None:
+                resolved, model_name = osi_target
+                validation_kwargs["semantic_model_name"] = model_name
             validation_result = self.semantic_func_tool.validate_semantic(**validation_kwargs)
             self.generation_evidence.record_validation_result(validation_result)
             if not self._tool_succeeded(validation_result):
                 raise RuntimeError(
                     f"validate_semantic failed before publishing semantic models: {self._tool_error(validation_result)}"
                 )
+            if osi_target is not None:
+                if not self.generation_evidence.record_semantic_artifact_validation(model_name, resolved):
+                    raise RuntimeError("Cannot bind semantic validation evidence to the generated Ossie artifact.")
 
         synced_files = []
         failed_files = []

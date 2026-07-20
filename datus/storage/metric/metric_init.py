@@ -257,10 +257,12 @@ async def _ensure_semantic_models_for_metrics(
         from datus.storage.semantic_model.store import SemanticModelRAG
 
         before_models = discover_osi_semantic_models(agent_config)
-        requested_tables = extract_tables_from_sql_list(sql_list, agent_config)
+        requested_table_groups = [extract_tables_from_sql_list([sql], agent_config) for sql in sql_list]
+        requested_tables = list(dict.fromkeys(table for table_group in requested_table_groups for table in table_group))
         has_semantic_rows = SemanticModelRAG(agent_config).get_size() > 0
-        existing_models_cover_request = not requested_tables or osi_semantic_models_cover_tables(
-            agent_config, requested_tables
+        existing_models_cover_request = not requested_tables or all(
+            not table_group or osi_semantic_models_cover_tables(agent_config, table_group)
+            for table_group in requested_table_groups
         )
         if has_semantic_rows and before_models and existing_models_cover_request:
             logger.info(

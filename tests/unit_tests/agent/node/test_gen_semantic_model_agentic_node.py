@@ -24,6 +24,7 @@ Design principle: NO mock except LLM.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -658,6 +659,41 @@ class TestExecutionModeGenSemanticModel:
 
 
 class TestExecuteStreamGenSemanticModelError:
+    def test_osi_finalizer_revalidates_when_evidence_targets_another_model(self, tmp_path):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+        from datus.tools.func_tool.generation_evidence import GenerationEvidence
+
+        sales_file = tmp_path / "sales.yml"
+        finance_file = tmp_path / "finance.yml"
+        sales_file.write_text("semantic_model: sales\n", encoding="utf-8")
+        finance_file.write_text("semantic_model: finance\n", encoding="utf-8")
+
+        node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
+        node.agent_config = SimpleNamespace(resolve_semantic_adapter=lambda requested=None: "osi")
+        node.generation_evidence = GenerationEvidence(validation_passed=True)
+        node.generation_evidence.record_semantic_artifact_validation("sales", sales_file)
+        node.generation_tools = MagicMock()
+        node.generation_tools._resolve_generation_path.return_value = str(finance_file)
+        node.generation_tools.extract_osi_model_names.return_value = ["finance"]
+        node.semantic_func_tool = MagicMock()
+        node.semantic_func_tool.validate_semantic.return_value = FuncToolResult(result={"valid": True, "issues": []})
+        node._save_to_db = MagicMock(return_value=True)
+
+        node._finalize_semantic_model_generation(["finance.yml"])
+
+        node.semantic_func_tool.validate_semantic.assert_called_once_with(
+            scope="semantic_model",
+            semantic_model_name="finance",
+        )
+        node._save_to_db.assert_called_once_with(
+            "finance.yml",
+            catalog=None,
+            database=None,
+            db_schema=None,
+        )
+        assert node.generation_evidence.semantic_artifact_validation_passed("finance", finance_file)
+
     @pytest.mark.asyncio
     async def test_execute_stream_error_yields_error_action(self, real_agent_config, mock_llm_create):
         """When model raises a generic exception, execute_stream yields error action."""

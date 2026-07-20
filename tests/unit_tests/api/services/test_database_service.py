@@ -275,6 +275,16 @@ class TestGetSemanticModel:
             "table_name": "schools",
         }
 
+    def test_get_semantic_model_passes_explicit_model_name(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        semantic_rag = MagicMock()
+        semantic_rag.get_semantic_model.return_value = None
+        svc._ensure_semantic_rag = lambda: semantic_rag
+
+        svc._get_semantic_model("schools", semantic_model_name="education")
+
+        assert semantic_rag.get_semantic_model.call_args.kwargs["semantic_model_name"] == "education"
+
     @pytest.mark.asyncio
     async def test_validate_semantic_model_nonexistent(self, real_agent_config):
         """validate_semantic_model for nonexistent table returns error."""
