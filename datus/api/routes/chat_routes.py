@@ -462,7 +462,7 @@ async def insert_message(
     # node (``task.node is None``) is fine — enqueue anyway; the node picks up
     # the queue on startup. Only reject when there is no live run at all
     # (missing, or already completed/errored/cancelled).
-    if task is None or task.status != "running":
+    if task is None or task.status != "running" or not getattr(task, "accepting_inserts", True):
         return Result[InsertMessageData](
             success=False,
             errorCode="SESSION_NOT_RUNNING",

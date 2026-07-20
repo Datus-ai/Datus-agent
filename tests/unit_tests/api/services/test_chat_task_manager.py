@@ -481,6 +481,59 @@ class TestChatTaskManagerBehavior:
         assert "run the second SQL" in user_events[0].data.payload.content[0].payload["content"]
         # Queue fully drained.
         assert len(task.pending_input_queue) == 0
+        # The accept window is closed once draining stops, so a tail-race insert
+        # gets SESSION_NOT_RUNNING instead of stranding.
+        assert task.accepting_inserts is False
+
+    @pytest.mark.asyncio
+    async def test_run_loop_continuation_reply_not_deduped_against_prior_pass(self, real_agent_config):
+        """A continuation pass producing the SAME visible text as the first pass
+        must still be emitted. Per-run de-dup state must not span passes — else
+        'run it again' shows the user bubble but drops the reply."""
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        class FakeNode:
+            session_id = "s-dup"
+
+            def __init__(self):
+                self.pending_input_queue = None
+                self.input = None
+                self.run_count = 0
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                self.run_count += 1
+                if self.run_count == 1:
+                    self.pending_input_queue.push("do it again")
+                yield ActionHistory(
+                    action_id=f"r{self.run_count}",
+                    role=ActionRole.ASSISTANT,
+                    action_type="chat_response",
+                    messages="done",
+                    input={},
+                    output={"response": "identical reply"},
+                    status=ActionStatus.SUCCESS,
+                )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-dup", asyncio_task=MagicMock())
+
+        await manager._run_loop(task, real_agent_config, StreamChatInput(message="explore", session_id="s-dup"))
+
+        assert task.node.run_count == 2
+        assistant_events = [
+            e for e in task.events if e.event == "message" and getattr(e.data.payload, "role", None) == "assistant"
+        ]
+        # Both passes' replies reach the client despite identical text.
+        assert len(assistant_events) == 2
 
     @pytest.mark.asyncio
     async def test_run_loop_web_source_proxies_filesystem_writes(self, real_agent_config):

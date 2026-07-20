@@ -43,6 +43,10 @@ logger = get_logger(__name__)
 
 HEARTBEAT_INTERVAL = 10  # seconds
 
+# Max run-boundary auto-continuations per task, bounding a client that keeps
+# POSTing /chat/insert from running one task indefinitely.
+_MAX_INSERT_CONTINUATIONS = 20
+
 
 def is_thinking_only_content(content_items) -> bool:
     """Return True if all content items are thinking chunks (i.e. a delta message).
@@ -274,6 +278,12 @@ class ChatTask:
         # to_thread`` that can take hundreds of ms). ``_run_loop`` points the
         # node at this same instance, so the filter drains these on turn one.
         self.pending_input_queue: PendingInputQueue = PendingInputQueue()
+        # Whether ``/chat/insert`` may still enqueue. ``_run_loop`` flips this
+        # off once it stops draining (final drain empty), so inserts arriving
+        # during the run's tail (persist / usage / end events) get
+        # SESSION_NOT_RUNNING and the client falls back to a fresh turn, rather
+        # than enqueueing with nothing left to drain them.
+        self.accepting_inserts: bool = True
 
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
@@ -669,13 +679,18 @@ class ChatTaskManager:
             # 6. Execute streaming
             action_history = ActionHistoryManager()
             action_count = 0
+            # action_id is globally unique, so delta de-dup can safely span passes.
             seen_delta_action_ids: set[str] = set()
-            assistant_response_sent = False
-            tool_result_seen = False
-            seen_assistant_message_fingerprints: set[str] = set()
 
             async def _run_pass() -> None:
-                nonlocal event_id, action_count, assistant_response_sent, tool_result_seen
+                nonlocal event_id, action_count
+                # Per-run render state — reset each pass. A continuation pass is a
+                # fresh turn, so its reply must not be dropped as a duplicate of an
+                # earlier pass ("re-run it" is a common steering ask) nor suppressed
+                # by a stale assistant_response_sent carried over between passes.
+                assistant_response_sent = False
+                tool_result_seen = False
+                seen_assistant_message_fingerprints: set[str] = set()
                 async for action in node.execute_stream_with_interactions(action_history):
                     action_count += 1
 
@@ -753,11 +768,35 @@ class ChatTaskManager:
             # the CLI's execute_chat_command loop and prevents silently dropping
             # late mid-run messages. Messages queued mid-turn are injected in-run
             # by the filter and never reach here.
+            continuations = 0
             while True:
                 await _run_pass()
                 residual = self._drain_pending_for_continuation(node)
                 if not residual:
+                    # Close the accept window, then drain once more. An insert
+                    # that landed during this run's tail must not be stranded;
+                    # after the window closes /chat/insert returns
+                    # SESSION_NOT_RUNNING and the client re-sends as a new turn.
+                    task.accepting_inserts = False
+                    residual = self._drain_pending_for_continuation(node)
+                    if not residual:
+                        break
+                    task.accepting_inserts = True
+
+                continuations += 1
+                if continuations > _MAX_INSERT_CONTINUATIONS:
+                    # Defensive bound: a client that inserts without pause could
+                    # otherwise keep one task running forever. Stop accepting and
+                    # log what we drop rather than silently truncating.
+                    task.accepting_inserts = False
+                    logger.warning(
+                        "Mid-run insert continuation cap (%d) hit for session %s; dropping %d residual message(s)",
+                        _MAX_INSERT_CONTINUATIONS,
+                        session_id,
+                        len(residual),
+                    )
                     break
+
                 # Echo each residual as a user_insert frame so the client
                 # dismisses its pending entry and renders the user bubble —
                 # the same wire shape the in-run filter path emits via the
