@@ -623,7 +623,7 @@ class TestEnsureSemanticModelsForMetrics:
     async def test_osi_generates_domain_semantic_model_once(self, tmp_path):
         from unittest.mock import patch
 
-        target_file = "subject/semantic_models/warehouse/warehouse.yml"
+        target_file = "subject/semantic_models/warehouse/orders_analytics.yml"
         target_path = tmp_path / target_file
         config = SimpleNamespace(
             project_root=str(tmp_path),
@@ -637,7 +637,10 @@ class TestEnsureSemanticModelsForMetrics:
 
         async def fake_init(agent_config, success_story, emit=None, build_mode="overwrite", action_callback=None):
             target_path.parent.mkdir(parents=True)
-            target_path.write_text("version: 0.2.0.dev0\nsemantic_model:\n  - name: warehouse\n", encoding="utf-8")
+            target_path.write_text(
+                "version: 0.2.0.dev0\nsemantic_model:\n  - name: orders_analytics\n",
+                encoding="utf-8",
+            )
             captured["build_mode"] = build_mode
             captured["action_callback"] = action_callback
             return True, ""
@@ -648,7 +651,10 @@ class TestEnsureSemanticModelsForMetrics:
                 "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
                 side_effect=fake_init,
             ) as init_mock,
-            patch("datus.storage.metric.metric_init.extract_tables_from_sql_list") as extract_mock,
+            patch(
+                "datus.storage.metric.metric_init.extract_tables_from_sql_list",
+                return_value=["orders"],
+            ) as extract_mock,
             patch("datus.storage.metric.metric_init.ensure_semantic_models_exist") as ensure_mock,
         ):
             ok, error, created = await _ensure_semantic_models_for_metrics(
@@ -663,7 +669,7 @@ class TestEnsureSemanticModelsForMetrics:
         assert error == ""
         assert created == [target_file]
         init_mock.assert_called_once()
-        extract_mock.assert_not_called()
+        extract_mock.assert_called_once()
         ensure_mock.assert_not_called()
         assert captured["build_mode"] == "incremental"
         assert captured["action_callback"] is action_callback

@@ -387,7 +387,7 @@ class SubAgentTaskTool:
     def _osi_metric_precondition(self) -> Optional[FuncToolResult]:
         """Require the OSI domain model before starting the metric subagent."""
         from datus.agent.node.semantic_authoring import (
-            default_osi_semantic_model_file,
+            discover_osi_semantic_models,
             is_osi_authoring,
         )
 
@@ -399,9 +399,11 @@ class SubAgentTaskTool:
         if project_root is None:
             return None
 
-        target = Path(project_root) / default_osi_semantic_model_file(self.agent_config)
-        if target.is_file():
+        if discover_osi_semantic_models(self.agent_config):
             return None
+
+        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default")
+        target_dir = Path(project_root) / "subject" / "semantic_models" / datasource
 
         return FuncToolResult(
             success=0,
@@ -412,7 +414,7 @@ class SubAgentTaskTool:
             result={
                 "code": "semantic_model_required",
                 "required_subagent": "gen_semantic_model",
-                "semantic_model_file": str(target),
+                "semantic_model_directory": str(target_dir),
                 "retry_subagent": "gen_metrics",
             },
         )

@@ -2159,8 +2159,15 @@ class TestValidateSemantic:
         calls = {}
 
         class _Adapter:
-            async def validate_semantic(self, scope="all", checks=None, baseline_artifact=None):
+            async def validate_semantic(
+                self,
+                scope="all",
+                semantic_model_name=None,
+                checks=None,
+                baseline_artifact=None,
+            ):
                 calls["scope"] = scope
+                calls["semantic_model_name"] = semantic_model_name
                 calls["checks"] = checks
                 calls["baseline_artifact"] = baseline_artifact
                 result = Mock()
@@ -2173,6 +2180,7 @@ class TestValidateSemantic:
 
         with patch.object(tool, "_reload_adapter", return_value=True):
             result = tool.validate_semantic(
+                semantic_model_name="shop",
                 checks="authoring_quality,mutation_guard",
                 baseline_artifact_json=json.dumps(baseline),
             )
@@ -2181,6 +2189,7 @@ class TestValidateSemantic:
         assert result.result["checks"] == ["authoring_quality", "mutation_guard"]
         assert calls == {
             "scope": "all",
+            "semantic_model_name": "shop",
             "checks": ["authoring_quality", "mutation_guard"],
             "baseline_artifact": baseline,
         }
@@ -2203,6 +2212,7 @@ class TestValidateSemantic:
         with patch.object(tool, "_reload_adapter", return_value=True):
             result = tool.validate_semantic(
                 scope="semantic_model",
+                semantic_model_name="commerce",
                 checks=["authoring_quality"],
                 baseline_artifact_json=json.dumps(baseline),
             )
@@ -2210,9 +2220,27 @@ class TestValidateSemantic:
         assert result.success == 1
         assert calls == {
             "scope": "semantic_model",
+            "semantic_model_name": "commerce",
             "checks": ["authoring_quality"],
             "baseline_artifact": baseline,
         }
+
+    def test_rejects_target_when_adapter_does_not_support_it(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+
+        class _Adapter:
+            async def validate_semantic(self, scope="all"):
+                result = Mock()
+                result.valid = True
+                result.issues = []
+                return result
+
+        tool._adapter = _Adapter()
+
+        result = tool.validate_semantic(semantic_model_name="shop")
+
+        assert result.success == 0
+        assert "Targeted semantic-model validation is not supported" in result.error
 
     def test_rejects_checks_when_adapter_does_not_support_them(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter

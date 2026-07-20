@@ -785,20 +785,36 @@ class TestTaskExecution:
     @pytest.mark.asyncio
     async def test_osi_gen_metrics_requires_existing_semantic_model(self, task_tool, tmp_path):
         task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
+        task_tool.agent_config.current_datasource = "test_db"
         task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
 
-        with patch(
-            "datus.agent.node.semantic_authoring.default_osi_semantic_model_file",
-            return_value="subject/semantic_models/test_db/sales.yml",
-        ):
-            with patch.object(task_tool, "_execute_node") as execute_node:
-                result = await task_tool.task(type="gen_metrics", prompt="Generate revenue")
+        with patch.object(task_tool, "_execute_node") as execute_node:
+            result = await task_tool.task(type="gen_metrics", prompt="Generate revenue")
 
         assert result.success == 0
         assert result.result["code"] == "semantic_model_required"
         assert result.result["required_subagent"] == "gen_semantic_model"
         assert result.result["retry_subagent"] == "gen_metrics"
         execute_node.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_osi_gen_metrics_accepts_any_discovered_model_in_the_datasource(self, task_tool, tmp_path):
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
+        task_tool.agent_config.current_datasource = "test_db"
+        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
+        target = tmp_path / "subject" / "semantic_models" / "test_db" / "orders_analytics.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: orders_analytics\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        expected = FuncToolResult(result={"response": "generated"})
+
+        with patch.object(task_tool, "_execute_node", return_value=expected) as execute_node:
+            result = await task_tool.task(type="gen_metrics", prompt="Generate order count")
+
+        assert result is expected
+        execute_node.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_semantic_authoring_tasks_are_serialized_across_tool_instances(

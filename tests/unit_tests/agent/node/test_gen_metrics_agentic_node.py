@@ -100,6 +100,7 @@ class TestGenMetricsAgenticNodeInit:
         assert {"write_file", "edit_file", "delete_file", "end_semantic_model_generation", "bash"}.isdisjoint(
             tool_names
         )
+        assert "resolve_osi_semantic_model_target" in tool_names
         assert "end_metric_generation" in tool_names
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
@@ -1162,6 +1163,7 @@ semantic_model:
         node.semantic_tools.validate_semantic = MagicMock(
             return_value=FuncToolResult(success=0, error="invalid OSI", result={"valid": False})
         )
+        node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
 
         with pytest.raises(RuntimeError, match="validate_semantic failed"):
             node._finalize_metric_generation(None, "orders_metrics.yml", "generated")
@@ -1192,7 +1194,9 @@ semantic_model:
             "generated",
         )
 
-        node.semantic_tools.validate_semantic.assert_called_once_with(checks=["authoring_quality"])
+        node.semantic_tools.validate_semantic.assert_called_once_with(
+            semantic_model_name="shop", checks=["authoring_quality"]
+        )
 
     def test_osi_final_metric_publish_requires_query_metrics_tool(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

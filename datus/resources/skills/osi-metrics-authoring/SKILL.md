@@ -23,7 +23,7 @@ CRITICAL MODEL RULE — **build the model once, then only upsert metrics**:
 - Never use general filesystem writes to create or modify datasets, fields, or relationships. If the target model is missing, stop and report that `gen_semantic_model` must run first.
 - A given logical dataset has one canonical definition shared by all metrics. Reuse that dataset by name in each metric's DATUS `dataset` hint.
 
-The OSI expression dialect and target semantic model file for the current run are shown in the system prompt Workspace section — use those exact values (`<osi_dialect>` below stands for that dialect).
+The OSI expression dialect is shown in the system prompt Workspace section. Resolve the existing target semantic model with `resolve_osi_semantic_model_target(..., require_existing=true)` after identifying the core fact table; use the returned file exactly (`<osi_dialect>` below stands for that dialect).
 
 ## What you produce
 
@@ -110,7 +110,7 @@ Before writing any YAML, classify the source SQL:
 
 ## Workflow notes
 
-- FIRST, load the existing model from the target semantic model file to learn dataset names, fields, time fields, and relationships. If the file is missing, stop and report the prerequisite. Call `list_metrics()` to see metrics that already exist.
+- FIRST, classify fact and dimension tables and resolve the existing model target. An explicit semantic model name wins; otherwise the resolver reuses the model containing the core fact table. Dimension tables do not affect the model name. Load the returned file to learn dataset names, fields, time fields, and relationships. If the file is missing or ambiguous, stop and report the prerequisite. Call `list_metrics()` to see metrics that already exist.
 - For provided SQL/history, call `analyze_metric_candidates_from_history` before writing files. Use `direct_metric_candidates` for base metrics and fixed `period_over_period` final metrics; use `derived_metric_candidates` only for second-stage OSI metrics that explicitly depend on published input metrics. If it returns `metric_generation_skips`, skip those SQLs instead of writing metric YAML.
 - Candidate-plan compliance: every candidate in `direct_metric_candidates` and `derived_metric_candidates` (including cumulative, rolling-window, and period_over_period candidates) MUST end this run either published via `end_metric_generation` or listed in your final `output` with a concrete blocker such as a validation failure. "Covered by an existing base metric" is never a valid blocker for a cumulative/window/period_over_period candidate.
 - Reference, reconcile, reuse: point each metric's DATUS `dataset` hint at an existing dataset. If a metric with the same meaning and correct definition already exists (`check_semantic_object_exists(name, kind='metric')`), reuse/skip it. If the user requests an update or the stored definition is incorrect, replace it by name with `upsert_osi_metrics`. "Same meaning" requires the same aggregation AND the same window/offset semantics: a base aggregate never covers its cumulative/rolling/period-over-period variants, so `running_x`/`moving_x`/`previous_x` candidates must still be published when only `x` exists. For a derived metric, make sure its input metrics already exist.

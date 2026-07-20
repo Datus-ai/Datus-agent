@@ -203,6 +203,8 @@ class GenMetricsAgenticNode(AgenticNode):
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
+            if authoring_format == "osi":
+                self.tools.append(trans_to_function_tool(self.generation_tools.resolve_osi_semantic_model_target))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_metric_generation))
             if authoring_format != "osi":
                 self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
@@ -335,11 +337,33 @@ class GenMetricsAgenticNode(AgenticNode):
             default_osi_semantic_model_file,
             default_osi_semantic_model_name,
             resolve_authoring_format,
+            resolve_osi_semantic_model_target,
         )
 
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
+        requested_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
+        business_domain = str(getattr(user_input, "business_domain", "") or "").strip()
+        fact_tables = list(getattr(user_input, "fact_tables", None) or [])
+        dimension_tables = list(getattr(user_input, "dimension_tables", None) or [])
+        context["requested_semantic_model_name"] = requested_name
+        context["requested_business_domain"] = business_domain
+        context["requested_fact_tables"] = fact_tables
+        context["requested_dimension_tables"] = dimension_tables
+        context["osi_target_resolved"] = False
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
+        if context["authoring_format"] == "osi" and (requested_name or business_domain or fact_tables):
+            target = resolve_osi_semantic_model_target(
+                self.agent_config,
+                semantic_model_name=requested_name,
+                business_domain=business_domain,
+                fact_tables=fact_tables,
+                dimension_tables=dimension_tables,
+            )
+            if not target.get("ambiguous"):
+                context["osi_target_resolved"] = True
+                context["default_osi_semantic_model_name"] = target["semantic_model_name"]
+                context["default_osi_semantic_model_file"] = target["semantic_model_file"]
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -725,14 +749,20 @@ class GenMetricsAgenticNode(AgenticNode):
 
         if not getattr(self, "semantic_tools", None):
             raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
-        validation_result = self.semantic_tools.validate_semantic(checks=["authoring_quality"])
+        abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
+        model_names = self.generation_tools.extract_osi_model_names(abs_metric_file)
+        if len(model_names) != 1:
+            raise RuntimeError("The generated Ossie metric artifact must declare exactly one semantic model.")
+        validation_result = self.semantic_tools.validate_semantic(
+            semantic_model_name=model_names[0],
+            checks=["authoring_quality"],
+        )
         self.generation_evidence.record_validation_result(validation_result)
         if not self._tool_succeeded(validation_result):
             raise RuntimeError(
                 f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
             )
 
-        abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
         metric_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
         if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
             query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)

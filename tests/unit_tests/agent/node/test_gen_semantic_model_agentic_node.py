@@ -107,6 +107,28 @@ class TestGenSemanticModelAgenticNodeInit:
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
         assert "profile_semantic_model_evidence" in tool_names
 
+    def test_osi_semantic_model_restores_write_and_edit_without_delete(self, real_agent_config, mock_llm_create):
+        """Ossie authoring supports straightforward create/edit without destructive delete."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate an Ossie semantic model")
+
+        node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+        tool_names = {tool.name for tool in node.tools}
+
+        assert {
+            "read_file",
+            "write_file",
+            "edit_file",
+            "glob",
+            "grep",
+            "resolve_osi_semantic_model_target",
+        }.issubset(tool_names)
+        assert {"delete_file", "upsert_osi_metrics", "bash"}.isdisjoint(tool_names)
+        assert "end_semantic_model_generation" in tool_names
+
     def test_semantic_sql_history_profiler_tool_opt_out(self, real_agent_config, mock_llm_create):
         """An explicit empty skills entry removes the profiler tool."""
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -509,6 +531,24 @@ class TestPrepareTemplateContext:
         context = node._prepare_template_context(user_input)
 
         assert "test_tool" in context["native_tools"]
+
+    def test_osi_template_context_resolves_explicit_model_name_first(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = _make_node(real_agent_config, mock_llm_create)
+        user_input = SemanticNodeInput(
+            user_message="Generate a semantic model",
+            semantic_model_name="Executive Sales",
+            business_domain="commerce",
+            fact_tables=["main.orders"],
+            dimension_tables=["main.customers"],
+        )
+
+        context = node._prepare_template_context(user_input)
+
+        assert context["osi_target_resolved"] is True
+        assert context["default_osi_semantic_model_name"] == "executive_sales"
+        assert context["default_osi_semantic_model_file"].endswith("/executive_sales.yml")
+        assert context["requested_dimension_tables"] == ["main.customers"]
 
 
 class TestGetSystemPrompt:

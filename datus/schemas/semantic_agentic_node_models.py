@@ -26,6 +26,22 @@ class SemanticNodeInput(AtContextInput):
     catalog: Optional[str] = Field(default=None, description="Database catalog for context")
     database: Optional[str] = Field(default=None, description="Database name for context")
     db_schema: Optional[str] = Field(default=None, description="Database schema for context")
+    semantic_model_name: Optional[str] = Field(
+        default=None,
+        description="Explicit stable semantic model name; takes priority over inferred naming in Ossie mode",
+    )
+    business_domain: Optional[str] = Field(
+        default=None,
+        description="Business domain used to name a new Ossie semantic model when no explicit name is supplied",
+    )
+    fact_tables: Optional[list[str]] = Field(
+        default=None,
+        description="Fact tables in priority order; the first/core fact table is the stable naming fallback",
+    )
+    dimension_tables: Optional[list[str]] = Field(
+        default=None,
+        description="Dimension tables used by the model; recorded for context but excluded from model naming",
+    )
     max_turns: Optional[int] = Field(default=None, description="Maximum conversation turns; None uses node config")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")

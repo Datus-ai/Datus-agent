@@ -1065,6 +1065,7 @@ class SemanticTools:
     def validate_semantic(
         self,
         scope: Literal["all", "semantic_model"] = "all",
+        semantic_model_name: str = "",
         checks: Optional[List[str] | str] = None,
         baseline_artifact_json: str = "",
     ) -> FuncToolResult:
@@ -1080,6 +1081,8 @@ class SemanticTools:
                 including metrics. Use "semantic_model" when generating semantic
                 models before metric definitions exist; this still fails on real
                 semantic model errors but ignores the expected no-metrics issue.
+            semantic_model_name: Optional target model for scoped Ossie validation.
+                Required when a datasource contains multiple semantic models.
             checks: Optional adapter-specific validation checks. Adapters that do
                 not support named checks return an error when this is supplied.
             baseline_artifact_json: Optional JSON-encoded semantic artifact used
@@ -1089,6 +1092,7 @@ class SemanticTools:
             FuncToolResult with validation status and issues
         """
         scope = normalize_null(scope) or "all"
+        semantic_model_name = str(normalize_null(semantic_model_name) or "").strip()
         if scope not in ("all", "semantic_model"):
             return FuncToolResult(
                 success=0,
@@ -1131,6 +1135,16 @@ class SemanticTools:
                     validation_kwargs["scope"] = scope
                 elif scope != "all" and "validation_scope" in params:
                     validation_kwargs["validation_scope"] = scope
+                if semantic_model_name:
+                    if not _signature_accepts_parameter(params, "semantic_model_name"):
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                "Targeted semantic-model validation is not supported by the current semantic adapter"
+                            ),
+                            result=None,
+                        )
+                    validation_kwargs["semantic_model_name"] = semantic_model_name
                 if checks_list is not None:
                     if not _signature_accepts_parameter(params, "checks"):
                         return FuncToolResult(

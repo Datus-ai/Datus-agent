@@ -25,7 +25,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import fields, is_dataclass
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional
+
+import yaml
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
@@ -184,6 +187,251 @@ def default_osi_semantic_model_file(agent_config: Any = None) -> str:
     if not datasource:
         datasource = "default"
     return f"subject/semantic_models/{datasource}/{default_osi_semantic_model_name(agent_config)}.yml"
+
+
+def _osi_semantic_model_dir(agent_config: Any = None) -> Optional[Path]:
+    """Return the active datasource's semantic-model directory when resolvable."""
+    if agent_config is None:
+        return None
+
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    path_manager = getattr(agent_config, "path_manager", None)
+    semantic_model_path = getattr(path_manager, "semantic_model_path", None)
+    if callable(semantic_model_path):
+        try:
+            return Path(semantic_model_path(datasource)).expanduser()
+        except Exception:
+            pass
+
+    project_root = getattr(agent_config, "project_root", None)
+    if not isinstance(project_root, (str, Path)):
+        project_root = getattr(path_manager, "project_root", None)
+    if project_root:
+        return Path(str(project_root)).expanduser() / "subject" / "semantic_models" / datasource
+    return None
+
+
+def _table_lookup_names(value: Any) -> set[str]:
+    """Return stable lookup keys for a logical or fully-qualified table name."""
+    text = str(value or "").strip().strip('`"[]')
+    if not text:
+        return set()
+    normalized = _normalize_model_name(text)
+    leaf = _normalize_model_name(re.split(r"[./]", text)[-1].strip('`"[]'))
+    return {candidate for candidate in (normalized, leaf) if candidate}
+
+
+def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any]]:
+    """Discover Ossie semantic models already authored for the active datasource.
+
+    The result is intentionally filesystem-backed rather than vector-store-backed:
+    target selection must preserve the durable model name and file even before or
+    after Knowledge Base synchronization.
+    """
+    model_dir = _osi_semantic_model_dir(agent_config)
+    if model_dir is None or not model_dir.is_dir():
+        return []
+
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+    discovered: list[Dict[str, Any]] = []
+    paths = sorted([*model_dir.glob("*.yml"), *model_dir.glob("*.yaml")])
+    for path in paths:
+        try:
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        models = document.get("semantic_model") if isinstance(document, dict) else None
+        if not isinstance(models, list):
+            continue
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            model_name = str(model.get("name") or "").strip()
+            if not model_name:
+                continue
+            dataset_names: list[str] = []
+            dataset_sources: list[str] = []
+            table_lookup_names: set[str] = set()
+            for dataset in model.get("datasets") or []:
+                if not isinstance(dataset, dict):
+                    continue
+                dataset_name = str(dataset.get("name") or "").strip()
+                dataset_source = str(dataset.get("source") or "").strip()
+                if dataset_name:
+                    dataset_names.append(dataset_name)
+                    table_lookup_names.update(_table_lookup_names(dataset_name))
+                if dataset_source:
+                    dataset_sources.append(dataset_source)
+                    table_lookup_names.update(_table_lookup_names(dataset_source))
+            discovered.append(
+                {
+                    "semantic_model_name": model_name,
+                    "semantic_model_file": f"subject/semantic_models/{datasource}/{path.name}",
+                    "absolute_path": str(path),
+                    "dataset_names": dataset_names,
+                    "dataset_sources": dataset_sources,
+                    "table_lookup_names": sorted(table_lookup_names),
+                }
+            )
+    return discovered
+
+
+def osi_semantic_models_cover_tables(agent_config: Any, tables: Iterable[str]) -> bool:
+    """Return whether existing Ossie files cover every requested source table."""
+    models = discover_osi_semantic_models(agent_config)
+    if not models:
+        return False
+    covered_names = {str(name) for model in models for name in model.get("table_lookup_names") or [] if str(name)}
+    requested = [str(table).strip() for table in tables if str(table).strip()]
+    return bool(requested) and all(_table_lookup_names(table).intersection(covered_names) for table in requested)
+
+
+def _new_osi_semantic_model_name(business_domain: str, fact_tables: Iterable[str]) -> tuple[str, str]:
+    normalized_domain = _normalize_model_name(business_domain)
+    if normalized_domain:
+        return normalized_domain, "business_domain"
+
+    for fact_table in fact_tables:
+        table_names = _table_lookup_names(fact_table)
+        if not table_names:
+            continue
+        leaf_name = min(table_names, key=lambda value: (value.count("_"), len(value), value))
+        if leaf_name.endswith(("_analytics", "_model", "_semantic_model")):
+            return leaf_name, "core_fact_table"
+        return f"{leaf_name}_analytics", "core_fact_table"
+    return "", "missing_core_fact_table"
+
+
+def _ambiguous_osi_target(
+    matched_by: str,
+    models: Iterable[Dict[str, Any]],
+    dimensions: list[str],
+    reason: str,
+) -> Dict[str, Any]:
+    return {
+        "ambiguous": True,
+        "matched_by": matched_by,
+        "reason": reason,
+        "candidates": [
+            {
+                "semantic_model_name": model["semantic_model_name"],
+                "semantic_model_file": model["semantic_model_file"],
+            }
+            for model in models
+        ],
+        "dimension_tables": dimensions,
+    }
+
+
+def resolve_osi_semantic_model_target(
+    agent_config: Any = None,
+    semantic_model_name: str = "",
+    business_domain: str = "",
+    fact_tables: Optional[Iterable[str]] = None,
+    dimension_tables: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """Resolve a stable Ossie model name and file from authoring intent.
+
+    An explicit name always wins. Without one, an existing model containing the
+    core fact table is reused to keep its durable name. A new model is named by
+    business domain when available, then by the first/core fact table. The
+    dimension-table list is returned for observability but never participates
+    in naming, so adding dimensions cannot rename an existing model.
+    """
+    facts = [str(value).strip() for value in (fact_tables or []) if str(value).strip()]
+    dimensions = [str(value).strip() for value in (dimension_tables or []) if str(value).strip()]
+    existing_models = discover_osi_semantic_models(agent_config)
+    datasource = str(getattr(agent_config, "current_datasource", "") or "default").strip() or "default"
+
+    explicit_name = _normalize_model_name(semantic_model_name)
+    if explicit_name:
+        target_file = f"subject/semantic_models/{datasource}/{explicit_name}.yml"
+        matches = [
+            model
+            for model in existing_models
+            if _normalize_model_name(model.get("semantic_model_name")) == explicit_name
+        ]
+        if len(matches) == 1:
+            target = dict(matches[0])
+            target.update({"exists": True, "matched_by": "explicit_name", "dimension_tables": dimensions})
+            return target
+        if len(matches) > 1:
+            return _ambiguous_osi_target(
+                "explicit_name",
+                matches,
+                dimensions,
+                "The explicit semantic model name matches multiple existing files.",
+            )
+        occupied_file = [model for model in existing_models if model["semantic_model_file"] == target_file]
+        if occupied_file:
+            return _ambiguous_osi_target(
+                "explicit_name",
+                occupied_file,
+                dimensions,
+                "The target filename is already occupied by a differently named semantic model.",
+            )
+        return {
+            "semantic_model_name": explicit_name,
+            "semantic_model_file": target_file,
+            "exists": False,
+            "matched_by": "explicit_name",
+            "dimension_tables": dimensions,
+        }
+
+    fact_lookup_names = _table_lookup_names(facts[0]) if facts else set()
+    fact_matches = [
+        model for model in existing_models if fact_lookup_names.intersection(model.get("table_lookup_names") or [])
+    ]
+    if len(fact_matches) == 1:
+        target = dict(fact_matches[0])
+        target.update({"exists": True, "matched_by": "existing_fact_table", "dimension_tables": dimensions})
+        return target
+    if len(fact_matches) > 1:
+        return _ambiguous_osi_target(
+            "existing_fact_table",
+            fact_matches,
+            dimensions,
+            "The core fact table appears in multiple existing semantic models.",
+        )
+
+    new_name, matched_by = _new_osi_semantic_model_name(business_domain, facts)
+    if not new_name:
+        return _ambiguous_osi_target(
+            matched_by,
+            [],
+            dimensions,
+            "A business domain or core fact table is required to name a new semantic model safely.",
+        )
+    same_name = [
+        model for model in existing_models if _normalize_model_name(model.get("semantic_model_name")) == new_name
+    ]
+    if len(same_name) == 1:
+        target = dict(same_name[0])
+        target.update({"exists": True, "matched_by": matched_by, "dimension_tables": dimensions})
+        return target
+    if len(same_name) > 1:
+        return _ambiguous_osi_target(
+            matched_by,
+            same_name,
+            dimensions,
+            "The inferred semantic model name matches multiple existing files.",
+        )
+    target_file = f"subject/semantic_models/{datasource}/{new_name}.yml"
+    occupied_file = [model for model in existing_models if model["semantic_model_file"] == target_file]
+    if occupied_file:
+        return _ambiguous_osi_target(
+            matched_by,
+            occupied_file,
+            dimensions,
+            "The inferred target filename is already occupied by a differently named semantic model.",
+        )
+    return {
+        "semantic_model_name": new_name,
+        "semantic_model_file": target_file,
+        "exists": False,
+        "matched_by": matched_by,
+        "dimension_tables": dimensions,
+    }
 
 
 def required_authoring_skills(agent_config: Any, node_name: str) -> str:

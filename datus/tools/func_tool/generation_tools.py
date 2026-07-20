@@ -235,6 +235,70 @@ class GenerationTools:
             logger.error(f"Error checking semantic object existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check object: {str(e)}")
 
+    def resolve_osi_semantic_model_target(
+        self,
+        semantic_model_name: str = "",
+        business_domain: str = "",
+        fact_tables: Optional[List[str]] = None,
+        dimension_tables: Optional[List[str]] = None,
+        require_existing: bool = False,
+    ) -> FuncToolResult:
+        """Choose the stable Ossie semantic-model name and file for this task.
+
+        Call this after identifying fact and dimension tables, before any file
+        mutation. An explicit semantic_model_name wins. Otherwise an existing
+        model containing the core fact table is reused, then business_domain is
+        used, and finally the first/core fact table becomes the naming fallback.
+        Dimension tables never affect the name. Set require_existing for metric
+        authoring, which is not allowed to create a semantic model.
+
+        Args:
+            semantic_model_name: User-specified stable model name, when provided.
+            business_domain: Concise business-domain name inferred from the request.
+            fact_tables: Fact tables in priority order, with the core fact first.
+            dimension_tables: Related dimensions; excluded from naming.
+            require_existing: Fail when the resolved model file does not exist.
+        """
+        try:
+            from datus.agent.node.semantic_authoring import (
+                is_osi_authoring,
+                resolve_osi_semantic_model_target,
+            )
+
+            if not is_osi_authoring(self.agent_config):
+                return FuncToolResult(success=0, error="Ossie target resolution is only available in OSI mode.")
+            target = resolve_osi_semantic_model_target(
+                self.agent_config,
+                semantic_model_name=semantic_model_name,
+                business_domain=business_domain,
+                fact_tables=fact_tables,
+                dimension_tables=dimension_tables,
+            )
+            if target.get("ambiguous"):
+                candidates = ", ".join(candidate["semantic_model_name"] for candidate in target.get("candidates") or [])
+                candidate_suffix = f" Candidates: {candidates}" if candidates else ""
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        f"Unable to resolve a safe Ossie semantic model target: {target.get('reason', 'ambiguous target')}"
+                        f" Specify semantic_model_name explicitly when needed.{candidate_suffix}"
+                    ),
+                    result=target,
+                )
+            if require_existing and not target.get("exists"):
+                return FuncToolResult(
+                    success=0,
+                    error=(
+                        "No existing Ossie semantic model matches this request. "
+                        "Run gen_semantic_model first or specify an existing semantic_model_name."
+                    ),
+                    result=target,
+                )
+            return FuncToolResult(result=target)
+        except Exception as exc:
+            logger.error("Failed to resolve Ossie semantic-model target: %s", exc)
+            return FuncToolResult(success=0, error=f"Failed to resolve Ossie semantic-model target: {exc}")
+
     # Backward compatibility wrapper
     def check_semantic_model_exists(
         self,
@@ -293,6 +357,12 @@ class GenerationTools:
             dict: Result containing completion message and semantic_model_files
         """
         try:
+            if self._is_osi_authoring() and len(semantic_model_files) != 1:
+                return FuncToolResult(
+                    success=0,
+                    error=("Ossie semantic model generation must publish exactly one target file per run."),
+                    result={"semantic_model_files": semantic_model_files},
+                )
             if not self.generation_evidence.validation_passed:
                 return FuncToolResult(
                     success=0,
@@ -317,6 +387,16 @@ class GenerationTools:
                         return FuncToolResult(
                             success=0,
                             error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
+                            result={"semantic_model_files": semantic_model_files},
+                        )
+                    model_names = self.extract_osi_model_names(resolved)
+                    if len(model_names) != 1:
+                        return FuncToolResult(
+                            success=0,
+                            error=(
+                                "Generated Ossie files must declare exactly one semantic model; "
+                                f"found {model_names or '<none>'}."
+                            ),
                             result={"semantic_model_files": semantic_model_files},
                         )
                     sync_result = self.sync_osi_semantic_to_db(resolved)
@@ -989,6 +1069,19 @@ class GenerationTools:
                         names.append(item["name"])
         return names
 
+    def extract_osi_model_names(self, osi_path: str) -> List[str]:
+        """Return semantic-model names declared by one OSI artifact."""
+        names: List[str] = []
+        for doc in self._iter_yaml_docs(osi_path):
+            semantic_models = doc.get("semantic_model")
+            if isinstance(semantic_models, list):
+                for model in semantic_models:
+                    if isinstance(model, dict) and isinstance(model.get("name"), str):
+                        names.append(model["name"])
+            elif isinstance(semantic_models, dict) and isinstance(semantic_models.get("name"), str):
+                names.append(semantic_models["name"])
+        return self._dedupe_strings(names)
+
     def extract_osi_dataset_names(self, semantic_model_path: str) -> List[str]:
         """Return dataset names declared in OSI core semantic-model documents."""
         names: List[str] = []
@@ -1035,10 +1128,26 @@ class GenerationTools:
                 return str(candidate)
         return str(candidates[0]) if candidates else str(Path(metric_file or semantic_model_file or ".").parent)
 
-    def _load_osi_document(self, metric_file: Optional[str] = None, semantic_model_file: Optional[str] = None):
-        from datus_semantic_osi.profile import load_osi_path
+    def _load_osi_document(
+        self,
+        metric_file: Optional[str] = None,
+        semantic_model_file: Optional[str] = None,
+    ):
+        from datus_semantic_osi.profile import load_osi_model
 
-        return load_osi_path(self._osi_document_root(metric_file, semantic_model_file), normalize=True)
+        model_names = self.extract_osi_model_names(metric_file) if metric_file else []
+        if not model_names and semantic_model_file:
+            model_names = self.extract_osi_model_names(semantic_model_file)
+        if len(model_names) != 1:
+            candidates = ", ".join(model_names) or "<none>"
+            raise ValueError(
+                f"Exactly one semantic model must be identifiable from the target artifact. Found: {candidates}."
+            )
+        return load_osi_model(
+            self._osi_document_root(metric_file, semantic_model_file),
+            semantic_model_name=model_names[0],
+            normalize=True,
+        )
 
     @staticmethod
     def _jsonable(value: Any) -> Any:
@@ -1172,7 +1281,7 @@ class GenerationTools:
         semantic_model_name = str(getattr(doc, "name", "") or "")
         physical_table = table_fq_name or table_name
         return {
-            "id": f"osi:{physical_table}",
+            "id": f"osi:{semantic_model_name}:{physical_table}",
             "format": "osi",
             "physical_table_fq_name": physical_table,
             "table_name": table_name,
@@ -1473,6 +1582,7 @@ class GenerationTools:
                 }
 
             doc = self._load_osi_document(semantic_model_file=semantic_model_path)
+            semantic_model_name = str(getattr(doc, "name", "") or "")
             default_db_parts = self._current_db_parts(self.agent_config)
             semantic_objects: List[dict] = []
             table_profiles: List[dict] = []
@@ -1500,7 +1610,7 @@ class GenerationTools:
 
                 semantic_objects.append(
                     {
-                        "id": f"table:{table_fq_name}",
+                        "id": f"table:{semantic_model_name}:{table_fq_name}",
                         "kind": "table",
                         "name": table_name,
                         "fq_name": table_fq_name,
@@ -1509,7 +1619,7 @@ class GenerationTools:
                         "yaml_path": yaml_path,
                         "updated_at": datetime.now().replace(microsecond=0),
                         **db_parts,
-                        "semantic_model_name": dataset_name or table_name,
+                        "semantic_model_name": semantic_model_name,
                         "is_dimension": False,
                         "is_measure": False,
                         "is_entity_key": False,
@@ -1534,7 +1644,7 @@ class GenerationTools:
                         self._osi_column_object(
                             table_name=table_name,
                             table_fq_name=table_fq_name,
-                            semantic_model_name=dataset_name or table_name,
+                            semantic_model_name=semantic_model_name,
                             name=str(key),
                             description="Primary key",
                             expr=str(key),
@@ -1551,7 +1661,7 @@ class GenerationTools:
                         self._osi_column_object(
                             table_name=table_name,
                             table_fq_name=table_fq_name,
-                            semantic_model_name=dataset_name or table_name,
+                            semantic_model_name=semantic_model_name,
                             name=str(time_dimension.name),
                             description="Primary time dimension",
                             expr=str(time_dimension.name),
@@ -1571,7 +1681,7 @@ class GenerationTools:
                         self._osi_column_object(
                             table_name=table_name,
                             table_fq_name=table_fq_name,
-                            semantic_model_name=dataset_name or table_name,
+                            semantic_model_name=semantic_model_name,
                             name=str(dim_name),
                             description=getattr(dim, "description", "") or "",
                             expr=getattr(dim, "expr", None) or str(dim_name),
@@ -1641,7 +1751,7 @@ class GenerationTools:
         time_granularity: str = "",
     ) -> dict:
         return {
-            "id": f"column:{table_fq_name}.{name}",
+            "id": f"column:{semantic_model_name}:{table_fq_name}.{name}",
             "kind": "column",
             "name": name,
             "fq_name": f"{table_fq_name}.{name}",
@@ -1687,13 +1797,7 @@ class GenerationTools:
                 metric_file=metric_file,
                 semantic_model_file=semantic_model_files[0] if semantic_model_files else None,
             )
-            datasets = self._dataset_lookup(doc)
-            metrics_by_name = {getattr(item, "name", ""): item for item in getattr(doc, "metrics", [])}
-            default_dataset = (
-                str(getattr(getattr(doc, "datasets", [None])[0], "name", "") or "")
-                if getattr(doc, "datasets", None)
-                else ""
-            )
+            semantic_model_name = str(getattr(doc, "name", "") or "")
             db_parts = self._current_db_parts(self.agent_config)
             metric_objects: List[dict] = []
             synced_items: List[str] = []
@@ -1704,14 +1808,6 @@ class GenerationTools:
                     continue
                 if metric_name not in target_metric_names:
                     continue
-                dataset_names = self._metric_dataset_names(
-                    metric,
-                    metrics_by_name=metrics_by_name,
-                    default_dataset=default_dataset,
-                )
-                dataset_name = getattr(metric, "dataset", None) or (dataset_names[0] if len(dataset_names) == 1 else "")
-                dataset = datasets.get(dataset_name)
-                table_name = self._dataset_table_name(dataset) if dataset else dataset_name or "Unknown"
                 dimensions = self._metric_query_dimensions(doc, metric)
                 entities = self._metric_entities(doc, metric)
 
@@ -1720,7 +1816,7 @@ class GenerationTools:
                 metric_obj = {
                     "name": metric_name,
                     "subject_path": subject_path,
-                    "semantic_model_name": dataset_name or table_name,
+                    "semantic_model_name": semantic_model_name,
                     "id": build_metric_id(subject_path, metric_name),
                     "description": getattr(metric, "description", "") or "",
                     "metric_type": getattr(metric, "kind", None) or "aggregate",
