@@ -20,6 +20,9 @@ COMMON_VARS = {
     "kind_subdir": "subject/semantic_models/duckdb",
     "default_osi_semantic_model_name": "sales_domain",
     "default_osi_semantic_model_file": "subject/semantic_models/duckdb/sales_domain.yml",
+    "osi_target_resolved": True,
+    "requested_semantic_model_name": "",
+    "requested_business_domain": "",
 }
 
 
@@ -59,7 +62,10 @@ def test_semantic_model_template_osi_mode():
     text = _render("gen_semantic_model_system", "osi")
     assert "OSI (Open Semantic Interchange) core schema" in text
     assert "never write backend YAML" in text
-    assert "Target semantic model file: `subject/semantic_models/duckdb/sales_domain.yml`" in text
+    assert "Resolved semantic model file: `subject/semantic_models/duckdb/sales_domain.yml`" in text
+    assert "create it with `write_file`" in text
+    assert "use `edit_file` for targeted changes" in text
+    assert "Dimension tables never participate in the name" in text
     assert '"semantic_model_files"' in text  # same publish contract as metricflow
 
 

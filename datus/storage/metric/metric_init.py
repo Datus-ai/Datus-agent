@@ -13,7 +13,8 @@ import pandas as pd
 from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_OSI,
-    default_osi_semantic_model_file,
+    discover_osi_semantic_models,
+    osi_semantic_models_cover_tables,
     resolve_authoring_format,
 )
 from datus.configuration.agent_config import AgentConfig
@@ -244,14 +245,6 @@ def _metrics_authoring_format(agent_config: AgentConfig) -> str:
     return resolve_authoring_format(agent_config)
 
 
-def _project_relative_path(agent_config: AgentConfig, path_value: str) -> Path:
-    path = Path(path_value)
-    if path.is_absolute():
-        return path
-    project_root = Path(str(getattr(agent_config, "project_root", "") or ".")).expanduser()
-    return project_root / path
-
-
 async def _ensure_semantic_models_for_metrics(
     agent_config: AgentConfig,
     success_story: str,
@@ -263,14 +256,22 @@ async def _ensure_semantic_models_for_metrics(
         from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
         from datus.storage.semantic_model.store import SemanticModelRAG
 
-        target_file = default_osi_semantic_model_file(agent_config)
-        target_path = _project_relative_path(agent_config, target_file)
+        before_models = discover_osi_semantic_models(agent_config)
+        requested_table_groups = [extract_tables_from_sql_list([sql], agent_config) for sql in sql_list]
+        requested_tables = list(dict.fromkeys(table for table_group in requested_table_groups for table in table_group))
         has_semantic_rows = SemanticModelRAG(agent_config).get_size() > 0
-        if has_semantic_rows and target_path.exists():
-            logger.info("Reusing existing OSI semantic model file for metric bootstrap: %s", target_file)
+        existing_models_cover_request = not requested_tables or all(
+            not table_group or osi_semantic_models_cover_tables(agent_config, table_group)
+            for table_group in requested_table_groups
+        )
+        if has_semantic_rows and before_models and existing_models_cover_request:
+            logger.info(
+                "Reusing %d existing OSI semantic model file(s) for metric bootstrap",
+                len(before_models),
+            )
             return True, "", []
 
-        logger.info("Generating OSI semantic model for metric bootstrap: %s", target_file)
+        logger.info("Generating OSI semantic model(s) for metric bootstrap")
         success, error = await init_success_story_semantic_model_async(
             agent_config,
             success_story,
@@ -280,9 +281,14 @@ async def _ensure_semantic_models_for_metrics(
         )
         if not success:
             return False, error, []
-        if not target_path.exists():
-            return False, f"OSI semantic model generation did not create target file: {target_file}", []
-        return True, "", [target_file]
+        after_models = discover_osi_semantic_models(agent_config)
+        if not after_models:
+            return False, "OSI semantic model generation did not create a model file", []
+        before_files = {model["semantic_model_file"] for model in before_models}
+        created_files = sorted(
+            model["semantic_model_file"] for model in after_models if model["semantic_model_file"] not in before_files
+        )
+        return True, "", created_files
 
     all_tables = extract_tables_from_sql_list(sql_list, agent_config)
     if not all_tables:

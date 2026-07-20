@@ -454,6 +454,7 @@ class DatasourceService:
         catalog: Optional[str] = None,
         database: Optional[str] = None,
         db_schema: Optional[str] = None,
+        semantic_model_name: Optional[str] = None,
     ):
         # Parse table name parts
         name_parts = parse_table_name_parts(full_name, self.current_db_connector.get_type())
@@ -464,12 +465,15 @@ class DatasourceService:
         table_name = name_parts["table_name"]
 
         # Get semantic model using SemanticMetricsRAG
-        semantic_model = self._ensure_semantic_rag().get_semantic_model(
+        lookup_kwargs = dict(
             catalog_name=catalog_name,
             database_name=database_name,
             schema_name=schema_name,
             table_name=table_name,
         )
+        if semantic_model_name:
+            lookup_kwargs["semantic_model_name"] = semantic_model_name
+        semantic_model = self._ensure_semantic_rag().get_semantic_model(**lookup_kwargs)
         return semantic_model
 
     def get_semantic_model(
@@ -479,6 +483,7 @@ class DatasourceService:
         catalog: Optional[str] = None,
         database: Optional[str] = None,
         db_schema: Optional[str] = None,
+        semantic_model_name: Optional[str] = None,
     ) -> Result[GetSemanticModelData]:
         """Get SemanticModel YAML.
 
@@ -500,6 +505,7 @@ class DatasourceService:
                 catalog=catalog,
                 database=database,
                 db_schema=db_schema,
+                semantic_model_name=semantic_model_name,
             )
             if not semantic_model:
                 return Result[GetSemanticModelData](
@@ -563,6 +569,7 @@ class DatasourceService:
             catalog=request.catalog,
             database=request.database,
             db_schema=request.db_schema,
+            semantic_model_name=request.semantic_model_name,
         )
         if not semantic_model:
             return Result[dict](
@@ -642,6 +649,7 @@ class DatasourceService:
                 catalog=request.catalog,
                 database=request.database,
                 db_schema=request.db_schema,
+                semantic_model_name=request.semantic_model_name,
             )
             if not semantic_model:
                 return Result[ValidateSemanticModelData](

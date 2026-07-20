@@ -164,6 +164,28 @@ class TestGenerationEvidence:
         ev.record_validation_result({"success": 0, "result": {"valid": True}})
         assert ev.validation_passed is False
 
+    def test_semantic_validation_is_bound_to_model_and_file_content(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence()
+        ev.record_validation_result(
+            {
+                "success": 1,
+                "result": {
+                    "valid": True,
+                    "semantic_model_name": "sales",
+                    "semantic_model_file": str(artifact),
+                },
+            }
+        )
+
+        assert ev.semantic_artifact_validation_passed("sales", artifact)
+        assert not ev.semantic_artifact_validation_passed("finance", artifact)
+
+        artifact.write_text("semantic_model: changed\n", encoding="utf-8")
+
+        assert not ev.semantic_artifact_validation_passed("sales", artifact)
+
     def test_record_metric_dry_run_success(self):
         ev = GenerationEvidence()
         result = {"success": 1, "result": {"metadata": {}}}

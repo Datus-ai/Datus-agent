@@ -24,6 +24,7 @@ Design principle: NO mock except LLM.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -106,6 +107,28 @@ class TestGenSemanticModelAgenticNodeInit:
         # registered by default (the optional skill is in the default set).
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
         assert "profile_semantic_model_evidence" in tool_names
+
+    def test_osi_semantic_model_restores_write_and_edit_without_delete(self, real_agent_config, mock_llm_create):
+        """Ossie authoring supports straightforward create/edit without destructive delete."""
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate an Ossie semantic model")
+
+        node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+        tool_names = {tool.name for tool in node.tools}
+
+        assert {
+            "read_file",
+            "write_file",
+            "edit_file",
+            "glob",
+            "grep",
+            "resolve_osi_semantic_model_target",
+        }.issubset(tool_names)
+        assert {"delete_file", "upsert_osi_metrics", "bash"}.isdisjoint(tool_names)
+        assert "end_semantic_model_generation" in tool_names
 
     def test_semantic_sql_history_profiler_tool_opt_out(self, real_agent_config, mock_llm_create):
         """An explicit empty skills entry removes the profiler tool."""
@@ -510,6 +533,24 @@ class TestPrepareTemplateContext:
 
         assert "test_tool" in context["native_tools"]
 
+    def test_osi_template_context_resolves_explicit_model_name_first(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = _make_node(real_agent_config, mock_llm_create)
+        user_input = SemanticNodeInput(
+            user_message="Generate a semantic model",
+            semantic_model_name="Executive Sales",
+            business_domain="commerce",
+            fact_tables=["main.orders"],
+            dimension_tables=["main.customers"],
+        )
+
+        context = node._prepare_template_context(user_input)
+
+        assert context["osi_target_resolved"] is True
+        assert context["default_osi_semantic_model_name"] == "executive_sales"
+        assert context["default_osi_semantic_model_file"].endswith("/executive_sales.yml")
+        assert context["requested_dimension_tables"] == ["main.customers"]
+
 
 class TestGetSystemPrompt:
     def test_osi_authoring_uses_shared_template_with_osi_context(self, real_agent_config, mock_llm_create):
@@ -618,6 +659,41 @@ class TestExecutionModeGenSemanticModel:
 
 
 class TestExecuteStreamGenSemanticModelError:
+    def test_osi_finalizer_revalidates_when_evidence_targets_another_model(self, tmp_path):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+        from datus.tools.func_tool.generation_evidence import GenerationEvidence
+
+        sales_file = tmp_path / "sales.yml"
+        finance_file = tmp_path / "finance.yml"
+        sales_file.write_text("semantic_model: sales\n", encoding="utf-8")
+        finance_file.write_text("semantic_model: finance\n", encoding="utf-8")
+
+        node = GenSemanticModelAgenticNode.__new__(GenSemanticModelAgenticNode)
+        node.agent_config = SimpleNamespace(resolve_semantic_adapter=lambda requested=None: "osi")
+        node.generation_evidence = GenerationEvidence(validation_passed=True)
+        node.generation_evidence.record_semantic_artifact_validation("sales", sales_file)
+        node.generation_tools = MagicMock()
+        node.generation_tools._resolve_generation_path.return_value = str(finance_file)
+        node.generation_tools.extract_osi_model_names.return_value = ["finance"]
+        node.semantic_func_tool = MagicMock()
+        node.semantic_func_tool.validate_semantic.return_value = FuncToolResult(result={"valid": True, "issues": []})
+        node._save_to_db = MagicMock(return_value=True)
+
+        node._finalize_semantic_model_generation(["finance.yml"])
+
+        node.semantic_func_tool.validate_semantic.assert_called_once_with(
+            scope="semantic_model",
+            semantic_model_name="finance",
+        )
+        node._save_to_db.assert_called_once_with(
+            "finance.yml",
+            catalog=None,
+            database=None,
+            db_schema=None,
+        )
+        assert node.generation_evidence.semantic_artifact_validation_passed("finance", finance_file)
+
     @pytest.mark.asyncio
     async def test_execute_stream_error_yields_error_action(self, real_agent_config, mock_llm_create):
         """When model raises a generic exception, execute_stream yields error action."""

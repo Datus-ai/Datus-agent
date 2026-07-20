@@ -67,6 +67,7 @@ class SemanticModelInput(BaseModel):
     catalog: Optional[str] = Field(None, description="Current catalog context")
     database: Optional[str] = Field(None, description="Current database context")
     db_schema: Optional[str] = Field(None, description="Current schema context")
+    semantic_model_name: Optional[str] = Field(None, description="Semantic model owning a shared physical table")
 
 
 class ValidateSemanticModelData(BaseModel):

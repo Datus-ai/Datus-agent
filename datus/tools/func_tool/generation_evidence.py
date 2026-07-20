@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
 
@@ -58,6 +60,7 @@ class GenerationEvidence:
     metric_kb_sync_passed: bool = False
     generic_kb_sync_passed: bool = False
     storage_revision: int = 0
+    validated_semantic_artifacts: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
     @property
     def kb_sync_passed(self) -> bool:
@@ -68,6 +71,52 @@ class GenerationEvidence:
         valid = isinstance(payload, dict) and payload.get("valid") is True
         if _result_success(result) and valid:
             self.validation_passed = True
+            semantic_model_name = str(payload.get("semantic_model_name") or "").strip()
+            semantic_model_file = str(payload.get("semantic_model_file") or "").strip()
+            semantic_model_file_sha256 = str(payload.get("semantic_model_file_sha256") or "").strip()
+            if semantic_model_name and semantic_model_file:
+                self.record_semantic_artifact_validation(
+                    semantic_model_name,
+                    semantic_model_file,
+                    expected_sha256=semantic_model_file_sha256,
+                )
+
+    @staticmethod
+    def _semantic_artifact_state(path: str | Path) -> Optional[Dict[str, str]]:
+        try:
+            resolved = Path(path).expanduser().resolve(strict=True)
+            if not resolved.is_file():
+                return None
+            return {
+                "path": str(resolved),
+                "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+            }
+        except (OSError, RuntimeError):
+            return None
+
+    def record_semantic_artifact_validation(
+        self,
+        semantic_model_name: str,
+        path: str | Path,
+        *,
+        expected_sha256: str = "",
+    ) -> bool:
+        """Bind successful validation to one model and the exact file content."""
+        model_name = str(semantic_model_name or "").strip()
+        state = self._semantic_artifact_state(path)
+        if not model_name or state is None:
+            return False
+        if expected_sha256 and state["sha256"] != expected_sha256:
+            return False
+        self.validated_semantic_artifacts[model_name] = state
+        return True
+
+    def semantic_artifact_validation_passed(self, semantic_model_name: str, path: str | Path) -> bool:
+        """Return whether the current artifact bytes match recorded validation evidence."""
+        model_name = str(semantic_model_name or "").strip()
+        expected = self.validated_semantic_artifacts.get(model_name)
+        current = self._semantic_artifact_state(path)
+        return expected is not None and current is not None and expected == current
 
     def set_metric_queryability_contracts(
         self,

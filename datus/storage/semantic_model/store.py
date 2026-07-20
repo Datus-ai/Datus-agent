@@ -400,17 +400,25 @@ class SemanticModelRAG:
                 obj.get("catalog_name", ""),
                 obj.get("database_name", ""),
                 obj.get("schema_name", ""),
+                obj.get("semantic_model_name", ""),
             )
             if not scope[0] or scope in seen_scopes:
                 continue
             seen_scopes.add(scope)
-            table_name, catalog_name, database_name, schema_name = scope
+            (
+                table_name,
+                catalog_name,
+                database_name,
+                schema_name,
+                semantic_model_name,
+            ) = scope
             conditions = [
                 in_("kind", ["table", "column"]),
                 eq("table_name", table_name),
                 eq("catalog_name", catalog_name),
                 eq("database_name", database_name),
                 eq("schema_name", schema_name),
+                eq("semantic_model_name", semantic_model_name),
                 not_(in_("id", keep_ids)),
             ]
             try:
@@ -489,14 +497,22 @@ class SemanticModelRAG:
         database_name: str = "",
         schema_name: str = "",
         table_name: str = "",
+        semantic_model_name: str = "",
         select_fields: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Reconstruct semantic model object from granular storage."""
+        """Reconstruct one table from granular semantic-model storage.
+
+        ``semantic_model_name`` disambiguates a physical table shared by more
+        than one Ossie model. Existing callers may omit it when the table belongs
+        to only one model.
+        """
         if not table_name:
             logger.warning("get_semantic_model called without table_name")
             return None
 
         base_conds = self._sub_agent_conditions()
+        if semantic_model_name:
+            base_conds.append(eq("semantic_model_name", semantic_model_name))
 
         # Build filter conditions
         table_conds = [eq("kind", "table"), eq("table_name", table_name)] + base_conds
@@ -530,8 +546,24 @@ class SemanticModelRAG:
         if not table_objs:
             return None
 
+        if not semantic_model_name:
+            candidate_models = sorted(
+                {
+                    str(obj.get("semantic_model_name") or obj.get("name") or "").strip() or "<legacy>"
+                    for obj in table_objs
+                }
+            )
+            if len(candidate_models) > 1:
+                raise DatusException(
+                    ErrorCode.STORAGE_INVALID_ARGUMENT,
+                    message=(
+                        f"Table `{table_name}` belongs to multiple semantic models: "
+                        f"{', '.join(candidate_models)}. Specify semantic_model_name explicitly."
+                    ),
+                )
+
         semantic_model = table_objs[0]
-        model_name = semantic_model.get("name", table_name)
+        model_name = semantic_model.get("semantic_model_name") or semantic_model.get("name") or table_name
 
         # Find children
         children_conds = [
@@ -544,6 +576,8 @@ class SemanticModelRAG:
             children_conds.append(eq("database_name", semantic_model["database_name"]))
         if semantic_model.get("schema_name"):
             children_conds.append(eq("schema_name", semantic_model["schema_name"]))
+        if semantic_model.get("semantic_model_name"):
+            children_conds.append(eq("semantic_model_name", semantic_model["semantic_model_name"]))
 
         children = self.storage._search_all(where=And(children_conds)).to_pylist()
 

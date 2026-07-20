@@ -1131,6 +1131,57 @@ class TestSemanticModelRAGDeleteShadowedTableRows:
         db1_model = sem_rag.get_semantic_model(database_name="db1", schema_name="public", table_name="orders")
         assert db1_model["description"] == "db1 orders"
 
+    def test_does_not_touch_same_table_in_other_semantic_model(self, sem_rag):
+        sales = _fq_table_object("db1", description="sales customer")
+        sales["semantic_model_name"] = "sales"
+        sales["id"] = f"table:sales:{sales['fq_name']}"
+        retention = _fq_table_object("db1", description="retention customer")
+        retention["semantic_model_name"] = "retention"
+        retention["id"] = f"table:retention:{retention['fq_name']}"
+        sem_rag.store_batch([sales, retention])
+
+        sem_rag.delete_shadowed_table_rows([sales])
+
+        assert sem_rag.get_size() == 2
+        sales_model = sem_rag.get_semantic_model(
+            database_name="db1",
+            schema_name="public",
+            table_name="orders",
+            semantic_model_name="sales",
+        )
+        retention_model = sem_rag.get_semantic_model(
+            database_name="db1",
+            schema_name="public",
+            table_name="orders",
+            semantic_model_name="retention",
+        )
+        assert sales_model["description"] == "sales customer"
+        assert retention_model["description"] == "retention customer"
+
+    def test_shared_table_requires_semantic_model_name_for_lookup(self, sem_rag):
+        sales = _fq_table_object("db1", description="sales customer")
+        sales["semantic_model_name"] = "sales"
+        sales["id"] = f"table:sales:{sales['fq_name']}"
+        retention = _fq_table_object("db1", description="retention customer")
+        retention["semantic_model_name"] = "retention"
+        retention["id"] = f"table:retention:{retention['fq_name']}"
+        sem_rag.store_batch([sales, retention])
+
+        with pytest.raises(DatusException, match="multiple semantic models"):
+            sem_rag.get_semantic_model(
+                database_name="db1",
+                schema_name="public",
+                table_name="orders",
+            )
+
+        selected = sem_rag.get_semantic_model(
+            database_name="db1",
+            schema_name="public",
+            table_name="orders",
+            semantic_model_name="retention",
+        )
+        assert selected["description"] == "retention customer"
+
     def test_empty_hierarchy_scope_is_not_a_wildcard(self, sem_rag):
         """A fresh row whose hierarchy did not resolve must not delete same-named tables in other databases."""
         db1 = _fq_table_object("db1", description="db1 orders")

@@ -4,7 +4,8 @@
 
 import json
 import os
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -216,6 +217,57 @@ class TestEndSemanticModelGeneration:
             result = generation_tools.end_semantic_model_generation(["/path/model.yaml"])
         assert result.success == 0
         assert "log failure" in result.error
+
+    def test_osi_requires_validation_for_the_exact_target_artifact(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        sales_file = tmp_path / "semantic_models" / "warehouse" / "sales.yml"
+        finance_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
+        sales_file.parent.mkdir(parents=True)
+        sales_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        finance_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: finance\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        generation_tools.generation_evidence.validation_passed = True
+        generation_tools.generation_evidence.record_semantic_artifact_validation("sales", sales_file)
+        mock_pm = Mock(subject_dir=str(tmp_path))
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(generation_tools, "sync_osi_semantic_to_db") as sync_mock,
+        ):
+            result = generation_tools.end_semantic_model_generation([str(finance_file)])
+
+        assert result.success == 0
+        assert "exact semantic model artifact" in result.error
+        sync_mock.assert_not_called()
+
+    def test_osi_publishes_the_exact_validated_artifact(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        model_file = tmp_path / "semantic_models" / "warehouse" / "finance.yml"
+        model_file.parent.mkdir(parents=True)
+        model_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: finance\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        generation_tools.generation_evidence.record_semantic_artifact_validation("finance", model_file)
+        mock_pm = Mock(subject_dir=str(tmp_path))
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(
+                generation_tools,
+                "sync_osi_semantic_to_db",
+                return_value={"success": True},
+            ) as sync_mock,
+        ):
+            result = generation_tools.end_semantic_model_generation([str(model_file)])
+
+        assert result.success == 1
+        sync_mock.assert_called_once_with(str(model_file))
 
 
 class TestEndMetricGeneration:
@@ -939,7 +991,7 @@ class TestOsiSync:
             subject_path=None,
             kind=None,
         )
-        doc = SimpleNamespace(datasets=[dataset], metrics=[metric, old_metric])
+        doc = SimpleNamespace(name="shop", datasets=[dataset], metrics=[metric, old_metric])
 
         with patch.object(generation_tools, "_load_osi_document", return_value=doc):
             result = generation_tools._sync_osi_metric_to_db(
@@ -955,7 +1007,7 @@ class TestOsiSync:
         assert len(metric_objects) == 1
         metric_obj = metric_objects[0]
         assert metric_obj["name"] == "order_count"
-        assert metric_obj["semantic_model_name"] == "orders"
+        assert metric_obj["semantic_model_name"] == "shop"
         assert metric_obj["measure_expr"] == "COUNT(DISTINCT order_id)"
         assert metric_obj["dimensions"] == ["order_date", "customer_segment"]
         assert metric_obj["entities"] == ["order_id"]
@@ -1132,6 +1184,7 @@ class TestOsiSync:
             measures=[],
         )
         doc = SimpleNamespace(
+            name="shop",
             datasets=[orders, customers, regions],
             relationships=relationships,
             metrics=[base_metric, derived_metric],
@@ -1149,7 +1202,7 @@ class TestOsiSync:
             "customer_id__region_id__region_name",
         ]
         assert by_name["order_count"]["entities"] == ["order_id"]
-        assert by_name["order_count_prev"]["semantic_model_name"] == "orders"
+        assert by_name["order_count_prev"]["semantic_model_name"] == "shop"
         assert by_name["order_count_prev"]["dimensions"] == by_name["order_count"]["dimensions"]
         assert by_name["order_count_prev"]["entities"] == ["order_id"]
 
@@ -1266,7 +1319,12 @@ class TestOsiSync:
                 "to_columns": ["customer_id", "store_id"],
             }
         )
-        doc = SimpleNamespace(datasets=[dataset, other_dataset], relationships=[relationship], metrics=[])
+        doc = SimpleNamespace(
+            name="shop",
+            datasets=[dataset, other_dataset],
+            relationships=[relationship],
+            metrics=[],
+        )
 
         with patch.object(generation_tools, "_load_osi_document", return_value=doc):
             result = generation_tools.sync_osi_semantic_to_db(str(semantic_file))
@@ -1293,6 +1351,82 @@ class TestOsiSync:
         assert '"to_columns": ["customer_id", "store_id"]' in profiles[0]["relationships_json"]
         assert result["table_semantic_profiles"] == 1
 
+    def test_load_osi_document_selects_only_artifact_model(self, generation_tools, tmp_path):
+        (tmp_path / "sales.yml").write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: sales\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "        primary_key: [order_id]\n"
+        )
+        (tmp_path / "finance.yml").write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: finance\n"
+            "    datasets:\n"
+            "      - name: budgets\n"
+            "        source: budgets\n"
+            "        primary_key: [budget_id]\n"
+        )
+        metric_file = tmp_path / "finance_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: finance\n"
+            "    datasets:\n"
+            "      - name: budgets\n"
+            "        source: budgets\n"
+            "        primary_key: [budget_id]\n"
+            "    metrics:\n"
+            "      - name: budget_total\n"
+            "        expression:\n"
+            "          dialects:\n"
+            "            - dialect: ANSI_SQL\n"
+            "              expression: SUM(amount)\n"
+            "        custom_extensions:\n"
+            "          - vendor_name: DATUS\n"
+            '            data: \'{"dataset":"budgets"}\'\n'
+        )
+
+        calls = {}
+        finance_doc = SimpleNamespace(
+            name="finance",
+            datasets=[SimpleNamespace(name="budgets")],
+            metrics=[SimpleNamespace(name="budget_total")],
+        )
+        profile_module = ModuleType("datus_semantic_osi.profile")
+
+        def load_osi_model(path, semantic_model_name, normalize):
+            calls.update(
+                path=path,
+                semantic_model_name=semantic_model_name,
+                normalize=normalize,
+            )
+            return finance_doc
+
+        profile_module.load_osi_model = load_osi_model
+        package_module = ModuleType("datus_semantic_osi")
+        package_module.__path__ = []
+        with patch.dict(
+            sys.modules,
+            {
+                "datus_semantic_osi": package_module,
+                "datus_semantic_osi.profile": profile_module,
+            },
+        ):
+            doc = generation_tools._load_osi_document(metric_file=str(metric_file))
+
+        assert doc.name == "finance"
+        assert [dataset.name for dataset in doc.datasets] == ["budgets"]
+        assert [metric.name for metric in doc.metrics] == ["budget_total"]
+        assert calls == {
+            "path": str(tmp_path),
+            "semantic_model_name": "finance",
+            "normalize": True,
+        }
+
     def test_sync_osi_semantic_to_db_distinguishes_same_named_tables_across_databases(self, generation_tools, tmp_path):
         """Issue #1084 (OSI path): qualified source tables in different databases keep distinct ids."""
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
@@ -1312,6 +1446,7 @@ class TestOsiSync:
             "        source: db2.sales.orders\n"
         )
         doc = SimpleNamespace(
+            name="shop",
             datasets=[
                 SimpleNamespace(
                     name="orders_db1",
@@ -1340,14 +1475,20 @@ class TestOsiSync:
         assert result["success"] is True
         objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
         table_ids = [obj["id"] for obj in objects if obj["kind"] == "table"]
-        assert table_ids == ["table:db1.public.orders", "table:db2.sales.orders"]
+        assert table_ids == [
+            "table:shop:db1.public.orders",
+            "table:shop:db2.sales.orders",
+        ]
         column_ids = [obj["id"] for obj in objects if obj["kind"] == "column"]
-        assert column_ids == ["column:db1.public.orders.order_id", "column:db2.sales.orders.order_id"]
+        assert column_ids == [
+            "column:shop:db1.public.orders.order_id",
+            "column:shop:db2.sales.orders.order_id",
+        ]
         tables_by_id = {obj["id"]: obj for obj in objects if obj["kind"] == "table"}
-        assert tables_by_id["table:db1.public.orders"]["database_name"] == "db1"
-        assert tables_by_id["table:db1.public.orders"]["schema_name"] == "public"
-        assert tables_by_id["table:db2.sales.orders"]["database_name"] == "db2"
-        assert tables_by_id["table:db2.sales.orders"]["schema_name"] == "sales"
+        assert tables_by_id["table:shop:db1.public.orders"]["database_name"] == "db1"
+        assert tables_by_id["table:shop:db1.public.orders"]["schema_name"] == "public"
+        assert tables_by_id["table:shop:db2.sales.orders"]["database_name"] == "db2"
+        assert tables_by_id["table:shop:db2.sales.orders"]["schema_name"] == "sales"
 
     def test_sync_osi_semantic_to_db_fails_when_table_profile_sync_fails(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(

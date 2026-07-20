@@ -14,8 +14,12 @@ The complete authoring specification for this run — YAML structure, field clas
   (resolves to `{{ semantic_model_dir }}` on disk)
 {% if authoring_format == "osi" %}{% import "_osi_dialect_map.j2" as osi_dialect_map %}{% set datasource_type = current_datasource_dialect | default('', true) | lower %}- Active datasource: `{{ current_datasource | default('unknown', true) }}`
 - OSI expression dialect for this run: `{{ osi_dialect_map.expression_dialect(datasource_type) }}` — the active datasource's dialect. Write expressions in this datasource's native SQL and use this exact value in every `expression.dialects[].dialect`.
-- Target semantic model name: `{{ default_osi_semantic_model_name | default('<model_name>', true) }}`
-- Target semantic model file: `{{ default_osi_semantic_model_file | default('subject/semantic_models/<datasource>/<model_name>.yml', true) }}`
+{% if osi_target_resolved %}- Resolved semantic model name: `{{ default_osi_semantic_model_name }}`
+- Resolved semantic model file: `{{ default_osi_semantic_model_file }}`
+{% else %}- Semantic model target is not resolved yet. After classifying fact and dimension tables, call `resolve_osi_semantic_model_target` and use its returned name and file exactly.
+{% endif %}{% if requested_semantic_model_name %}- User-specified semantic model name: `{{ requested_semantic_model_name }}` (highest priority)
+{% endif %}{% if requested_business_domain %}- Provided business domain: `{{ requested_business_domain }}`
+{% endif %}
 {% if osi_authoring_spec %}
 ## OSI Core Authoring Specification (from the active semantic adapter)
 
@@ -42,20 +46,35 @@ The authoritative document shape you author against, including the Datus executi
 
 {% include "_semantic_sql_history_profiler_gate.j2" %}
 
-2. **Check for existing semantic objects**
+2. **Resolve the stable semantic model target**{% if authoring_format == "osi" %}
+   - Classify involved tables into fact tables and dimension tables. Put the core fact table first.
+   - Call `resolve_osi_semantic_model_target(semantic_model_name, business_domain, fact_tables, dimension_tables)` before any file mutation.
+   - Naming priority is: explicit `semantic_model_name`; reuse an existing model containing the core fact table; inferred business domain; core fact table fallback.
+   - Dimension tables never participate in the name. Adding a dimension to an existing model MUST reuse its current name and file.
+   - If the resolver reports ambiguity, do not guess; ask for or require an explicit semantic model name.
+   - Use the resolver's returned `semantic_model_name` inside the document and `semantic_model_file` for every file and publish operation.
+{% else %}
+   - Use the per-table file naming convention in the required MetricFlow authoring specification.
+{% endif %}
+
+3. **Check for existing semantic objects**
    - Use `check_semantic_object_exists(table_name, kind='table')` to verify whether a model already exists.
    - If it exists, decide whether to update it with `edit_file` or skip.
 
-3. **Author the semantic model YAML**
+4. **Author the semantic model YAML**
    - Follow the `<required_skill>` authoring specification for document structure, field classification, descriptions, and time-dimension rules.
-   - Save files with `write_file` under the path convention defined in the specification. If you forget the `{{ kind_subdir }}/` prefix the host silently normalizes it, but always include it so subsequent `read_file` / `edit_file` use the same path.
+{% if authoring_format == "osi" %}   - If the resolved file does not exist, create it with `write_file` at `<resolved semantic_model_file>`.
+   - If the resolved file already exists, read it first and use `edit_file` for targeted changes. Preserve its current semantic model name and all unrelated datasets, relationships, and metrics. Never replace an existing model with a partial document containing only the requested objects.
+{% else %}   - Save files with `write_file` under the path convention defined in the specification. If you forget the `{{ kind_subdir }}/` prefix the host silently normalizes it, but always include it so subsequent `read_file` / `edit_file` use the same path.
+{% endif %}
 
-4. **Validate (MANDATORY — DO NOT SKIP)**
-   - Call `validate_semantic(scope="semantic_model")`.
-   - If validation fails: analyze the error, fix the YAML with `edit_file` (actually execute the fix — do not just describe it), then call `validate_semantic` again. Repeat until it passes.
+5. **Validate (MANDATORY — DO NOT SKIP)**
+{% if authoring_format == "osi" %}   - Call `validate_semantic(scope="semantic_model", semantic_model_name="{% if osi_target_resolved %}{{ default_osi_semantic_model_name }}{% else %}<semantic_model_name returned by resolve_osi_semantic_model_target>{% endif %}")`. This validates only the resolved target model; never merge or rewrite another model to satisfy validation.
+{% else %}   - Call `validate_semantic(scope="semantic_model")`.
+{% endif %}   - If validation fails: analyze the error, fix the target YAML with `edit_file` (actually execute the fix — do not just describe it), then call the same targeted `validate_semantic` again. Repeat until it passes.
    - **ABSOLUTE RULE**: You MUST NOT return the final JSON response until `validate_semantic` returns success.
 
-5. **Publish (ONLY AFTER VALIDATION PASSES)**
+6. **Publish (ONLY AFTER VALIDATION PASSES)**
    - Prefer calling `end_semantic_model_generation(semantic_model_files=[...])` with all generated file paths so publish errors are caught while you can still fix files.
    - If you forget this tool, the host will use the final JSON `semantic_model_files` to validate and publish before reporting success.
    - Validation passing is the publish gate; no additional approval step is needed.
