@@ -178,6 +178,10 @@ class ErrorCode(Enum):
     SEMANTIC_ADAPTER_ERROR = ("600002", "Semantic adapter operation failed: {error_message}")
     SEMANTIC_ADAPTER_CONFIG_ERROR = ("600003", "Semantic adapter configuration error: {error_message}")
     SEMANTIC_ADAPTER_SYNC_FAILED = ("600004", "Failed to sync from semantic adapter: {error_message}")
+    SEMANTIC_MODEL_BOOTSTRAP_FAILED = (
+        "600005",
+        "Failed to create prerequisite OSI semantic model: {error_message}",
+    )
 
     def __init__(self, code: str, desc: str):
         self.code = code

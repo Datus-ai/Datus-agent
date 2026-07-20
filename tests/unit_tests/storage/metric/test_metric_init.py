@@ -630,8 +630,6 @@ class TestEnsureSemanticModelsForMetrics:
             current_datasource="warehouse",
             resolve_semantic_adapter=lambda requested=None: "osi",
         )
-        semantic_rag = MagicMock()
-        semantic_rag.get_size.return_value = 0
         action_callback = MagicMock()
         captured = {}
 
@@ -646,7 +644,6 @@ class TestEnsureSemanticModelsForMetrics:
             return True, ""
 
         with (
-            patch("datus.storage.semantic_model.store.SemanticModelRAG", return_value=semantic_rag),
             patch(
                 "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
                 side_effect=fake_init,
@@ -703,8 +700,6 @@ class TestEnsureSemanticModelsForMetrics:
             current_datasource="warehouse",
             resolve_semantic_adapter=lambda requested=None: "osi",
         )
-        semantic_rag = MagicMock()
-        semantic_rag.get_size.return_value = 2
         sql_list = [
             "SELECT COUNT(*) FROM analytics.fact_orders",
             "SELECT SUM(amount) FROM finance.fact_payments",
@@ -717,7 +712,6 @@ class TestEnsureSemanticModelsForMetrics:
             return ["finance.fact_payments"]
 
         with (
-            patch("datus.storage.semantic_model.store.SemanticModelRAG", return_value=semantic_rag),
             patch(
                 "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async"
             ) as init_mock,

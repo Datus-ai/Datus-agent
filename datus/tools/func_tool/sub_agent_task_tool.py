@@ -13,13 +13,10 @@ tools, template rendering, and action history.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
-import weakref
 from contextlib import nullcontext
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from agents import FunctionTool, Tool
@@ -49,8 +46,6 @@ if TYPE_CHECKING:
     from datus.schemas.base import BaseInput
 
 logger = get_logger(__name__)
-
-_SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 # Mapping from subagent type string to NodeType constants
 NODE_CLASS_MAP = {
@@ -346,10 +341,11 @@ class SubAgentTaskTool:
             normalized_type = type.strip().strip("\"'") if isinstance(type, str) else type
             semantic_types = {"gen_semantic_model", "gen_metrics"}
             if normalized_type in semantic_types and normalized_type in self._get_available_types():
-                lock = self._semantic_authoring_lock()
-                async with lock:
+                from datus.agent.node.semantic_authoring import semantic_authoring_guard
+
+                async with semantic_authoring_guard(self.agent_config):
                     if normalized_type == "gen_metrics":
-                        precondition = self._osi_metric_precondition()
+                        precondition = self._osi_metric_precondition(prompt)
                         if precondition is not None:
                             return precondition
                     return await self._execute_node(
@@ -367,43 +363,45 @@ class SubAgentTaskTool:
             logger.error(f"Task tool execution error (type={type}): {e}")
             return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
 
-    def _semantic_authoring_lock_key(self) -> str:
-        """Serialize semantic authoring tasks for one project datasource."""
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        project_root = getattr(path_manager, "project_root", "")
-        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default")
-        try:
-            project_key = str(Path(project_root).expanduser().resolve(strict=False))
-        except TypeError:
-            project_key = str(project_root)
-        return f"{project_key}:{datasource}"
-
-    def _semantic_authoring_lock(self) -> asyncio.Lock:
-        """Return the event-loop shared lock for one project datasource."""
-        loop = asyncio.get_running_loop()
-        loop_locks = _SEMANTIC_AUTHORING_LOCKS.setdefault(loop, {})
-        return loop_locks.setdefault(self._semantic_authoring_lock_key(), asyncio.Lock())
-
-    def _osi_metric_precondition(self) -> Optional[FuncToolResult]:
+    def _osi_metric_precondition(self, prompt: str = "") -> Optional[FuncToolResult]:
         """Require the OSI domain model before starting the metric subagent."""
         from datus.agent.node.semantic_authoring import (
-            discover_osi_semantic_models,
             is_osi_authoring,
+            osi_semantic_model_directory,
+            resolve_existing_osi_semantic_model,
         )
 
         if not is_osi_authoring(self.agent_config):
             return None
 
-        path_manager = getattr(self.agent_config, "path_manager", None)
-        project_root = getattr(path_manager, "project_root", None)
-        if project_root is None:
+        resolution = resolve_existing_osi_semantic_model(
+            self.agent_config,
+            user_input=getattr(self._parent_node, "input", None),
+            request_text=prompt,
+        )
+        if resolution["status"] == "found":
             return None
+        if resolution["status"] == "ambiguous":
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "Multiple OSI semantic models match this metric request. "
+                    "Specify semantic_model_name or reference a dataset from the intended model."
+                ),
+                result={
+                    "code": "semantic_model_selection_required",
+                    "candidates": [
+                        {
+                            "semantic_model_name": model["semantic_model_name"],
+                            "semantic_model_file": model["semantic_model_file"],
+                        }
+                        for model in resolution.get("candidates") or []
+                    ],
+                    "retry_subagent": "gen_metrics",
+                },
+            )
 
-        if discover_osi_semantic_models(self.agent_config):
-            return None
-
-        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default")
-        target_dir = Path(project_root) / "subject" / "semantic_models" / datasource
+        target_dir = osi_semantic_model_directory(self.agent_config)
 
         return FuncToolResult(
             success=0,
@@ -414,7 +412,7 @@ class SubAgentTaskTool:
             result={
                 "code": "semantic_model_required",
                 "required_subagent": "gen_semantic_model",
-                "semantic_model_directory": str(target_dir),
+                "semantic_model_directory": str(target_dir) if target_dir is not None else "",
                 "retry_subagent": "gen_metrics",
             },
         )

@@ -11,11 +11,12 @@ hooks, and metricflow MCP server integration.
 """
 
 import json
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
@@ -119,6 +120,16 @@ class GenMetricsAgenticNode(AgenticNode):
         """
         return self.NODE_NAME
 
+    async def execute_stream(
+        self, action_history_manager: Optional[ActionHistoryManager] = None
+    ) -> AsyncGenerator[ActionHistory, None]:
+        """Serialize metric writes with semantic-model authoring for this datasource."""
+        from datus.agent.node.semantic_authoring import semantic_authoring_guard
+
+        async with semantic_authoring_guard(self.agent_config):
+            async for action in super().execute_stream(action_history_manager):
+                yield action
+
     def setup_tools(self):
         """Setup tools for metrics generation."""
         if not self.agent_config:
@@ -132,10 +143,124 @@ class GenMetricsAgenticNode(AgenticNode):
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_tools()
+        self._setup_semantic_model_bootstrap()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
         logger.info(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
+
+    def _setup_semantic_model_bootstrap(self) -> None:
+        """Create a host-only semantic-model runner for directly selected OSI metrics."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        self.sub_agent_task_tool = None
+        if self._is_subagent or not is_osi_authoring(self.agent_config):
+            return
+
+        from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+
+        self.sub_agent_task_tool = SubAgentTaskTool(
+            agent_config=self.agent_config,
+            allowed_subagents=["gen_semantic_model"],
+            parent_node_name=self.get_node_name(),
+        )
+        self.sub_agent_task_tool.set_action_bus(self.action_bus)
+        self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
+        self.sub_agent_task_tool.set_parent_node(self)
+
+    async def _before_stream(self, ctx: StreamRunContext) -> None:
+        """Resolve or bootstrap the prerequisite OSI semantic model before metrics."""
+        await super()._before_stream(ctx)
+
+        from datus.agent.node.semantic_authoring import (
+            is_osi_authoring,
+            resolve_existing_osi_semantic_model,
+        )
+
+        if not is_osi_authoring(self.agent_config):
+            return
+
+        resolution = resolve_existing_osi_semantic_model(
+            self.agent_config,
+            user_input=ctx.user_input,
+            request_text=ctx.user_input.user_message,
+        )
+        if resolution["status"] == "found":
+            self._set_osi_semantic_model_target(ctx.user_input, resolution["selected"])
+            return
+        if resolution["status"] == "ambiguous":
+            self._raise_osi_semantic_model_selection_error(resolution)
+        if self._is_subagent:
+            raise DatusException(
+                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
+                message_args={
+                    "error_message": (
+                        "no OSI semantic model contains the requested datasets; "
+                        "run gen_semantic_model first, then retry gen_metrics"
+                    )
+                },
+            )
+        if self.sub_agent_task_tool is None:
+            raise DatusException(
+                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
+                message_args={"error_message": "gen_semantic_model runner is unavailable"},
+            )
+
+        result = await self.sub_agent_task_tool.task(
+            type="gen_semantic_model",
+            prompt=(
+                "Create the OSI semantic model prerequisite for the metric request below. "
+                "Author semantic objects only; do not generate metrics.\n\n"
+                f"Original metric request:\n{ctx.user_input.user_message}"
+            ),
+            description="Create required OSI semantic model",
+        )
+        if not result.success:
+            raise DatusException(
+                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
+                message_args={"error_message": result.error or "gen_semantic_model failed"},
+            )
+
+        post_resolution = resolve_existing_osi_semantic_model(
+            self.agent_config,
+            user_input=ctx.user_input,
+            request_text=ctx.user_input.user_message,
+        )
+        selected = post_resolution.get("selected") if post_resolution["status"] == "found" else None
+
+        if selected is None:
+            if post_resolution["status"] == "ambiguous":
+                self._raise_osi_semantic_model_selection_error(post_resolution)
+            raise DatusException(
+                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
+                message_args={
+                    "error_message": "gen_semantic_model completed without creating a resolvable OSI semantic model"
+                },
+            )
+
+        self._set_osi_semantic_model_target(ctx.user_input, selected)
+        logger.info("Bootstrapped prerequisite OSI semantic model: %s", selected["semantic_model_file"])
+
+    @staticmethod
+    def _set_osi_semantic_model_target(user_input: SemanticNodeInput, model: Dict[str, Any]) -> None:
+        """Attach the selected model name so the upstream resolver supplies its real file."""
+        user_input.semantic_model_name = model["semantic_model_name"]
+
+    @staticmethod
+    def _raise_osi_semantic_model_selection_error(resolution: Dict[str, Any]) -> None:
+        candidates = ", ".join(
+            f"{model['semantic_model_name']} ({model['semantic_model_file']})"
+            for model in resolution.get("candidates") or []
+        )
+        raise DatusException(
+            ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
+            message_args={
+                "error_message": (
+                    f"semantic model selection is ambiguous: {candidates}. "
+                    "Specify semantic_model_name or reference a dataset from the intended model."
+                )
+            },
+        )
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Keep OSI metric authoring on its metrics-only filesystem surface."""
@@ -337,33 +462,18 @@ class GenMetricsAgenticNode(AgenticNode):
             default_osi_semantic_model_file,
             default_osi_semantic_model_name,
             resolve_authoring_format,
-            resolve_osi_semantic_model_target,
         )
 
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
-        requested_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
-        business_domain = str(getattr(user_input, "business_domain", "") or "").strip()
-        fact_tables = list(getattr(user_input, "fact_tables", None) or [])
-        dimension_tables = list(getattr(user_input, "dimension_tables", None) or [])
-        context["requested_semantic_model_name"] = requested_name
-        context["requested_business_domain"] = business_domain
-        context["requested_fact_tables"] = fact_tables
-        context["requested_dimension_tables"] = dimension_tables
+        # Request-scoped target details belong in the enhanced user message;
+        # this context is frozen in the per-session system-prompt snapshot.
+        context["requested_semantic_model_name"] = ""
+        context["requested_business_domain"] = ""
+        context["requested_fact_tables"] = []
+        context["requested_dimension_tables"] = []
         context["osi_target_resolved"] = False
         context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
         context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
-        if context["authoring_format"] == "osi" and (requested_name or business_domain or fact_tables):
-            target = resolve_osi_semantic_model_target(
-                self.agent_config,
-                semantic_model_name=requested_name,
-                business_domain=business_domain,
-                fact_tables=fact_tables,
-                dimension_tables=dimension_tables,
-            )
-            if not target.get("ambiguous"):
-                context["osi_target_resolved"] = True
-                context["default_osi_semantic_model_name"] = target["semantic_model_name"]
-                context["default_osi_semantic_model_file"] = target["semantic_model_file"]
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -377,6 +487,26 @@ class GenMetricsAgenticNode(AgenticNode):
 
         logger.debug(f"Prepared template context: {context}")
         return context
+
+    def _build_enhanced_message(
+        self,
+        user_input: SemanticNodeInput,
+        extra_enhanced_parts: Optional[List[str]] = None,
+    ) -> str:
+        """Add the resolved Ossie target to this turn instead of the cached system prompt."""
+        from datus.agent.node.semantic_authoring import osi_semantic_model_turn_context
+
+        parts = list(extra_enhanced_parts or [])
+        target_context = osi_semantic_model_turn_context(self.agent_config, user_input)
+        if target_context:
+            parts.append(target_context)
+        return super()._build_enhanced_message(user_input, parts)
+
+    def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
+        """Invalidate snapshots created before semantic targets became request-scoped."""
+        meta = super()._system_prompt_snapshot_meta(prompt_version)
+        meta["semantic_target_scope"] = "per_turn_v1"
+        return meta
 
     def _get_system_prompt(
         self,

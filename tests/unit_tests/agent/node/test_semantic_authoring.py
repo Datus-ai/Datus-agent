@@ -16,6 +16,7 @@ from datus.agent.node.semantic_authoring import (
     osi_semantic_models_cover_tables,
     required_authoring_skills,
     resolve_authoring_format,
+    resolve_existing_osi_semantic_model,
     resolve_osi_semantic_model_target,
     resolve_semantic_adapter_type,
 )
@@ -251,6 +252,69 @@ def test_osi_model_coverage_requires_one_model_to_cover_the_table_group(tmp_path
     assert osi_semantic_models_cover_tables(config, ["finance.fact_payments"])
     assert not osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "finance.fact_payments"])
     assert not osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "support.fact_tickets"])
+
+
+def test_existing_osi_metric_target_uses_dataset_mentioned_in_request(tmp_path):
+    config = _osi_config(tmp_path)
+    school_file = _write_osi_model(
+        tmp_path,
+        "school-domain.yaml",
+        "school_operations",
+        [{"name": "schools", "source": "education.schools"}],
+    )
+    _write_osi_model(
+        tmp_path,
+        "sales.yml",
+        "sales",
+        [{"name": "orders", "source": "commerce.orders"}],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(
+        config,
+        request_text="Generate enrollment metrics from schools",
+    )
+
+    assert resolution["status"] == "found"
+    assert resolution["selected"]["semantic_model_name"] == "school_operations"
+    assert resolution["selected"]["absolute_path"] == str(school_file)
+
+
+def test_existing_osi_metric_target_is_ambiguous_without_dataset_hint(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(tmp_path, "schools.yml", "schools", [{"name": "schools", "source": "edu.schools"}])
+    _write_osi_model(tmp_path, "sales.yml", "sales", [{"name": "orders", "source": "sales.orders"}])
+
+    resolution = resolve_existing_osi_semantic_model(config, request_text="Generate metrics")
+
+    assert resolution["status"] == "ambiguous"
+    assert {model["semantic_model_name"] for model in resolution["candidates"]} == {"schools", "sales"}
+
+
+def test_existing_osi_metric_target_does_not_reuse_unrelated_single_model(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(tmp_path, "sales.yml", "sales", [{"name": "orders", "source": "sales.orders"}])
+
+    resolution = resolve_existing_osi_semantic_model(
+        config,
+        request_text="Generate total amount from payments",
+    )
+
+    assert resolution["status"] == "missing"
+    assert resolution["referenced_tables"] == ["payments"]
+
+
+def test_existing_osi_metric_target_rejects_tables_split_across_models(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(tmp_path, "schools.yml", "schools", [{"name": "schools", "source": "edu.schools"}])
+    _write_osi_model(tmp_path, "sales.yml", "sales", [{"name": "orders", "source": "sales.orders"}])
+
+    resolution = resolve_existing_osi_semantic_model(
+        config,
+        referenced_tables=["edu.schools", "sales.orders"],
+    )
+
+    assert resolution["status"] == "ambiguous"
+    assert resolution["reason"] == "referenced datasets are split across multiple semantic models"
 
 
 def test_osi_target_creates_a_different_file_for_an_unrelated_fact(tmp_path):

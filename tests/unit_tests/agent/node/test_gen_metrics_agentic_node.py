@@ -24,12 +24,13 @@ Design principle: NO mock except LLM.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -100,8 +101,24 @@ class TestGenMetricsAgenticNodeInit:
         assert {"write_file", "edit_file", "delete_file", "end_semantic_model_generation", "bash"}.isdisjoint(
             tool_names
         )
+        assert "task" not in tool_names
+        assert node.sub_agent_task_tool is not None
+        assert node.sub_agent_task_tool._allowed_subagents == ["gen_semantic_model"]
         assert "resolve_osi_semantic_model_target" in tool_names
         assert "end_metric_generation" in tool_names
+
+    def test_osi_metrics_subagent_does_not_bootstrap_recursively(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+            is_subagent=True,
+        )
+
+        assert node.sub_agent_task_tool is None
+        assert "task" not in {tool.name for tool in node.tools}
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -191,6 +208,197 @@ class TestGenMetricsAgenticNodeExecution:
         # Last action should be SUCCESS
         last_action = actions[-1]
         assert last_action.status == ActionStatus.SUCCESS
+
+    @pytest.mark.asyncio
+    async def test_direct_osi_metrics_bootstraps_missing_model_before_llm(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate enrollment metrics from schools")
+        target = (
+            real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+            / "school-domain.yaml"
+        )
+
+        async def bootstrap(**kwargs):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "version: 0.2.0.dev0\n"
+                "semantic_model:\n"
+                "  - name: school_operations\n"
+                "    datasets:\n"
+                "      - name: schools\n"
+                "        source: education.schools\n",
+                encoding="utf-8",
+            )
+            return FuncToolResult(result={"semantic_models": [str(target)]})
+
+        node.sub_agent_task_tool.task = AsyncMock(side_effect=bootstrap)
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+
+        await node._before_stream(ctx)
+
+        node.sub_agent_task_tool.task.assert_awaited_once()
+        assert node.input.semantic_model_name == "school_operations"
+        context = node._prepare_template_context(node.input)
+        assert context["osi_target_resolved"] is False
+        enhanced = node._build_enhanced_message(node.input)
+        assert "school_operations" in enhanced
+        assert "school-domain.yaml" in enhanced
+        assert mock_llm_create.call_history == []
+
+    @pytest.mark.asyncio
+    async def test_direct_osi_metrics_reuses_arbitrarily_named_model_by_dataset(
+        self, real_agent_config, mock_llm_create
+    ):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        target = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "ops.yml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: sales\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: commerce.orders\n",
+            encoding="utf-8",
+        )
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate revenue metrics from orders")
+        node.sub_agent_task_tool.task = AsyncMock()
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+
+        await node._before_stream(ctx)
+
+        node.sub_agent_task_tool.task.assert_not_awaited()
+        assert node.input.semantic_model_name == "sales"
+        context = node._prepare_template_context(node.input)
+        assert context["osi_target_resolved"] is False
+        enhanced = node._build_enhanced_message(node.input)
+        assert "sales" in enhanced
+        assert "ops.yml" in enhanced
+
+    @pytest.mark.asyncio
+    async def test_osi_target_is_request_scoped_when_session_switches_models(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        (model_dir / "alpha-target.yml").write_text(
+            "semantic_model:\n"
+            "  - name: alpha_orders_domain\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: commerce.orders\n",
+            encoding="utf-8",
+        )
+        (model_dir / "beta-target.yml").write_text(
+            "semantic_model:\n"
+            "  - name: beta_payments_domain\n"
+            "    datasets:\n"
+            "      - name: payments\n"
+            "        source: finance.payments\n",
+            encoding="utf-8",
+        )
+
+        session_id = "metrics_target_switch_session"
+        first = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+            session_id=session_id,
+        )
+        first.input = SemanticNodeInput(user_message="Generate metrics from orders")
+        first_ctx = StreamRunContext(user_input=first.input, action_history_manager=ActionHistoryManager())
+        await first._before_stream(first_ctx)
+        first_system = first._get_session_system_prompt(
+            template_context=first._build_template_context(first_ctx),
+        )
+        first_message = first._build_enhanced_message(first.input)
+
+        second = GenMetricsAgenticNode(
+            agent_config=real_agent_config,
+            execution_mode="workflow",
+            session_id=session_id,
+        )
+        second.input = SemanticNodeInput(user_message="Generate metrics from payments")
+        second_ctx = StreamRunContext(user_input=second.input, action_history_manager=ActionHistoryManager())
+        await second._before_stream(second_ctx)
+        second_system = second._get_session_system_prompt(
+            template_context=second._build_template_context(second_ctx),
+        )
+        second_message = second._build_enhanced_message(second.input)
+
+        assert first_system == second_system
+        assert "alpha_orders_domain" not in first_system
+        assert "beta_payments_domain" not in second_system
+        assert "alpha_orders_domain" in first_message
+        assert "alpha-target.yml" in first_message
+        assert "beta_payments_domain" in second_message
+        assert "beta-target.yml" in second_message
+        assert "alpha_orders_domain" not in second_message
+
+    @pytest.mark.asyncio
+    async def test_direct_osi_metrics_rejects_bootstrap_result_without_full_dataset_coverage(
+        self, real_agent_config, mock_llm_create
+    ):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(
+            user_message="Generate enrollment metrics",
+            fact_tables=["education.schools", "education.students"],
+        )
+        target = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource) / "school.yml"
+
+        async def incomplete_bootstrap(**kwargs):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                "semantic_model:\n"
+                "  - name: school_operations\n"
+                "    datasets:\n"
+                "      - name: schools\n"
+                "        source: education.schools\n",
+                encoding="utf-8",
+            )
+            return FuncToolResult(result={"semantic_models": [str(target)]})
+
+        node.sub_agent_task_tool.task = AsyncMock(side_effect=incomplete_bootstrap)
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        node.sub_agent_task_tool.task.assert_awaited_once()
+        assert actions[-1].action_type == "error"
+        assert actions[-1].status == ActionStatus.FAILED
+        assert "without creating a resolvable OSI semantic model" in str(actions[-1].output)
+        assert mock_llm_create.call_history == []
+
+    @pytest.mark.asyncio
+    async def test_direct_osi_metrics_bootstrap_failure_stops_before_metrics_llm(
+        self, real_agent_config, mock_llm_create
+    ):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate revenue metrics")
+        node.sub_agent_task_tool.task = AsyncMock(
+            return_value=FuncToolResult(success=0, error="semantic validation failed")
+        )
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        assert actions[-1].action_type == "error"
+        assert actions[-1].status == ActionStatus.FAILED
+        assert "semantic validation failed" in str(actions[-1].output)
+        assert mock_llm_create.call_history == []
 
     @pytest.mark.asyncio
     async def test_metrics_with_filesystem_tool(self, real_agent_config, mock_llm_create):
