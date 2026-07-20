@@ -29,8 +29,9 @@ from datus.api.models.cli_models import (
 )
 from datus.api.services.action_sse_converter import action_to_sse_event
 from datus.cli.autocomplete import AtReferenceCompleter
+from datus.cli.execution_state import PendingInputQueue
 from datus.configuration.agent_config import AgentConfig
-from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
+from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.proxy.proxy_tool import apply_proxy_tools
 from datus.utils.loggings import get_logger
@@ -268,6 +269,11 @@ class ChatTask:
         self.created_at = datetime.now()
         self.error: Optional[str] = None
         self.consumer_offset: int = 0
+        # Created up-front — before the node exists — so ``POST /chat/insert``
+        # can enqueue during node startup (node creation is an ``await
+        # to_thread`` that can take hundreds of ms). ``_run_loop`` points the
+        # node at this same instance, so the filter drains these on turn one.
+        self.pending_input_queue: PendingInputQueue = PendingInputQueue()
 
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
@@ -542,6 +548,15 @@ class ChatTaskManager:
 
             node = await asyncio.to_thread(_init_node)
             task.node = node
+            # Enable mid-run insert (steering): point the node at the
+            # task-scoped queue that ``start_chat`` created before the node
+            # existed, so messages POSTed to ``/chat/insert`` during node
+            # startup are preserved. The model layer's
+            # ``call_model_input_filter`` — wired ONLY when the queue is
+            # non-None — injects queued messages at the next LLM turn boundary.
+            # Without this the API path silently drops mid-run messages (the
+            # CLI wires its own queue in chat_commands).
+            node.pending_input_queue = task.pending_input_queue
             trace_token = set_trace_context(
                 build_chat_trace_context(
                     session_id=session_id,
@@ -659,75 +674,109 @@ class ChatTaskManager:
             tool_result_seen = False
             seen_assistant_message_fingerprints: set[str] = set()
 
-            async for action in node.execute_stream_with_interactions(action_history):
-                action_count += 1
+            async def _run_pass() -> None:
+                nonlocal event_id, action_count, assistant_response_sent, tool_result_seen
+                async for action in node.execute_stream_with_interactions(action_history):
+                    action_count += 1
 
-                # Convert action to SSE
-                # Per-request stream_response overrides the server-level --stream flag
-                effective_stream = (
-                    request.stream_response if request.stream_response is not None else self._stream_thinking
-                )
+                    # Convert action to SSE
+                    # Per-request stream_response overrides the server-level --stream flag
+                    effective_stream = (
+                        request.stream_response if request.stream_response is not None else self._stream_thinking
+                    )
 
-                is_first_delta = True
-                if action.action_type == "thinking_delta":
-                    is_first_delta = action.action_id not in seen_delta_action_ids
-                    seen_delta_action_ids.add(action.action_id)
+                    is_first_delta = True
+                    if action.action_type == "thinking_delta":
+                        is_first_delta = action.action_id not in seen_delta_action_ids
+                        seen_delta_action_ids.add(action.action_id)
 
-                # finalize_progress actions reuse the same id across stages
-                # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
-                # everything past the first emission as an update.
-                is_finalize_progress_update = False
-                if action.action_type == "finalize_progress":
-                    is_finalize_progress_update = action.action_id in seen_delta_action_ids
-                    seen_delta_action_ids.add(action.action_id)
+                    # finalize_progress actions reuse the same id across stages
+                    # so the SSE wire emits CREATE then UPDATE_MESSAGE; we mark
+                    # everything past the first emission as an update.
+                    is_finalize_progress_update = False
+                    if action.action_type == "finalize_progress":
+                        is_finalize_progress_update = action.action_id in seen_delta_action_ids
+                        seen_delta_action_ids.add(action.action_id)
 
-                is_update = is_finalize_progress_update or (
-                    effective_stream
-                    and action.action_type == "response"
-                    and isinstance(action.output, dict)
-                    and action.action_id in seen_delta_action_ids
-                )
+                    is_update = is_finalize_progress_update or (
+                        effective_stream
+                        and action.action_type == "response"
+                        and isinstance(action.output, dict)
+                        and action.action_id in seen_delta_action_ids
+                    )
 
-                sse = action_to_sse_event(
-                    action,
-                    event_id,
-                    action.action_id,
-                    stream_thinking=effective_stream,
-                    is_first_delta=is_first_delta,
-                    is_update=bool(is_update),
-                    include_final_response=_should_include_final_response(action, assistant_response_sent),
-                    proxied_tool_names=getattr(node, "proxied_tool_names", None),
-                )
-                if sse:
-                    # Per-LLM-call usage event: the converter has no access
-                    # to the service-level session ids, so we stamp them
-                    # here before fan-out. Skip the assistant-message dedup
-                    # path entirely since usage carries no rendered text.
-                    if sse.event == "usage" and isinstance(sse.data, SSEUsageData):
-                        sse.data.session_id = session_id
-                        # Only main-agent usage (depth==0) belongs to this
-                        # node's LLM session. Sub-agent usage (depth>0) keeps the
-                        # sub-agent session id stamped by the converter so the
-                        # consumer can attribute it to the right session instead
-                        # of mislabelling it as the parent's.
-                        if sse.data.depth == 0:
-                            sse.data.llm_session_id = node.session_id
+                    sse = action_to_sse_event(
+                        action,
+                        event_id,
+                        action.action_id,
+                        stream_thinking=effective_stream,
+                        is_first_delta=is_first_delta,
+                        is_update=bool(is_update),
+                        include_final_response=_should_include_final_response(action, assistant_response_sent),
+                        proxied_tool_names=getattr(node, "proxied_tool_names", None),
+                    )
+                    if sse:
+                        # Per-LLM-call usage event: the converter has no access
+                        # to the service-level session ids, so we stamp them
+                        # here before fan-out. Skip the assistant-message dedup
+                        # path entirely since usage carries no rendered text.
+                        if sse.event == "usage" and isinstance(sse.data, SSEUsageData):
+                            sse.data.session_id = session_id
+                            # Only main-agent usage (depth==0) belongs to this
+                            # node's LLM session. Sub-agent usage (depth>0) keeps the
+                            # sub-agent session id stamped by the converter so the
+                            # consumer can attribute it to the right session instead
+                            # of mislabelling it as the parent's.
+                            if sse.data.depth == 0:
+                                sse.data.llm_session_id = node.session_id
+                            await self._push_event(task, sse)
+                            event_id += 1
+                            continue
+                        if _should_skip_duplicate_assistant_message(
+                            action,
+                            sse,
+                            seen_assistant_message_fingerprints,
+                        ):
+                            continue
                         await self._push_event(task, sse)
                         event_id += 1
-                        continue
-                    if _should_skip_duplicate_assistant_message(
-                        action,
-                        sse,
-                        seen_assistant_message_fingerprints,
-                    ):
-                        continue
-                    await self._push_event(task, sse)
-                    event_id += 1
-                    _remember_assistant_message(sse, seen_assistant_message_fingerprints)
-                    if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
-                        assistant_response_sent = True
-                    if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
-                        tool_result_seen = True
+                        _remember_assistant_message(sse, seen_assistant_message_fingerprints)
+                        if _is_visible_assistant_response(action, sse, tool_result_seen=tool_result_seen):
+                            assistant_response_sent = True
+                        if action.role == ActionRole.TOOL and action.status != ActionStatus.PROCESSING:
+                            tool_result_seen = True
+
+            # Mid-run insert (steering) auto-continuation: a message queued
+            # AFTER the final LLM turn is never seen by the SDK's
+            # call_model_input_filter (no further turn boundary fires), so after
+            # each run drain any residue and continue with a fresh turn. Mirrors
+            # the CLI's execute_chat_command loop and prevents silently dropping
+            # late mid-run messages. Messages queued mid-turn are injected in-run
+            # by the filter and never reach here.
+            while True:
+                await _run_pass()
+                residual = self._drain_pending_for_continuation(node)
+                if not residual:
+                    break
+                # Echo each residual as a user_insert frame so the client
+                # dismisses its pending entry and renders the user bubble —
+                # the same wire shape the in-run filter path emits via the
+                # InteractionBroker.
+                for text in residual:
+                    event_id = await self._emit_user_insert_sse(task, text, event_id)
+                node.input = self._create_node_input(
+                    user_message="\n\n".join(residual),
+                    current_node=node,
+                    at_tables=[],
+                    at_metrics=[],
+                    at_sqls=[],
+                    at_hints=[],
+                    catalog=request.catalog,
+                    database=request.database,
+                    db_schema=request.db_schema,
+                    plan_mode=request.plan_mode or False,
+                    source_session_id=None,
+                )
 
             # 6.5 Persist this turn's @-context (table/metric/sql/knowledge refs)
             # so the history API can re-render them. Best-effort and off the
@@ -805,6 +854,46 @@ class ChatTaskManager:
             # Keep completed task for resume within TTL
             self._completed_tasks[session_id] = task
             self._purge_expired_completed()
+
+    @staticmethod
+    def _drain_pending_for_continuation(node) -> Optional[List[str]]:
+        """Drain mid-run messages left in the queue after a run finished.
+
+        Returns the FIFO list to continue with, or ``None`` when there is
+        nothing to continue or the run was interrupted (in which case the
+        queue is cleared, matching the CLI's cancel semantics).
+        """
+        queue = getattr(node, "pending_input_queue", None)
+        if queue is None or len(queue) == 0:
+            return None
+        ic = getattr(node, "interrupt_controller", None)
+        if ic is not None and getattr(ic, "is_interrupted", False):
+            queue.clear()
+            return None
+        return queue.drain()
+
+    async def _emit_user_insert_sse(self, task: "ChatTask", text: str, event_id: int) -> int:
+        """Emit a ``user_insert`` SSE frame for a residual mid-run message.
+
+        Mirrors the in-run filter path (which surfaces injections via
+        ``InteractionBroker.emit_user_insert``) so the client dismisses the
+        matching pending entry and renders the user bubble. Returns the next
+        ``event_id``.
+        """
+        action = ActionHistory(
+            action_id=str(uuid.uuid4()),
+            role=ActionRole.USER,
+            status=ActionStatus.SUCCESS,
+            action_type="user_insert",
+            messages=text,
+            input={"user_message": text, "source": "mid_run_insert"},
+            output={"user_message": text},
+        )
+        sse = action_to_sse_event(action, event_id, action.action_id)
+        if sse:
+            await self._push_event(task, sse)
+            return event_id + 1
+        return event_id
 
     @staticmethod
     def _session_manager(agent_config: AgentConfig, user_id: Optional[str]):

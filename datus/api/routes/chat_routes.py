@@ -458,7 +458,11 @@ async def insert_message(
 ) -> Result[InsertMessageData]:
     task_manager = svc.task_manager
     task = task_manager.get_task(request.session_id)
-    if task is None or task.node is None:
+    # The queue is task-scoped and created up-front, so a still-initializing
+    # node (``task.node is None``) is fine — enqueue anyway; the node picks up
+    # the queue on startup. Only reject when there is no live run at all
+    # (missing, or already completed/errored/cancelled).
+    if task is None or task.status != "running":
         return Result[InsertMessageData](
             success=False,
             errorCode="SESSION_NOT_RUNNING",
@@ -473,7 +477,7 @@ async def insert_message(
             errorMessage="message must be non-empty after stripping whitespace",
         )
 
-    queue = getattr(task.node, "pending_input_queue", None)
+    queue = getattr(task, "pending_input_queue", None)
     if queue is None:
         return Result[InsertMessageData](
             success=False,
