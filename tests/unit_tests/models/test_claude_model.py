@@ -13,7 +13,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from datus.models.claude_model import ClaudeModel, convert_tools_for_anthropic, wrap_prompt_cache
+from datus.models.claude_model import (
+    ClaudeModel,
+    _anthropic_trace_input,
+    _anthropic_trace_model_config,
+    _anthropic_trace_output,
+    _anthropic_trace_usage,
+    convert_tools_for_anthropic,
+    wrap_prompt_cache,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -103,6 +111,55 @@ class TestWrapPromptCache:
         result = wrap_prompt_cache(messages)
         # String content should remain unchanged (not list, so no cache_control added)
         assert result[-1]["content"] == "plain string"
+
+
+class TestAnthropicTraceNormalization:
+    def test_normalizes_input_output_and_usage_without_mutating_request(self):
+        request = {
+            "system": [{"type": "text", "text": "system"}],
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}],
+            "max_tokens": 2048,
+            "temperature": 0.2,
+        }
+        response = _make_response(
+            [
+                _make_text_block("working"),
+                _make_tool_use_block("sync_semantic", "toolu_1", {"model": "orders"}),
+            ],
+            input_tokens=5,
+            output_tokens=7,
+        )
+        response.usage.cache_read_input_tokens = 100
+        response.usage.cache_creation_input_tokens = 20
+
+        traced_input = _anthropic_trace_input(request)
+        traced_output = _anthropic_trace_output(response)
+
+        assert traced_input[0] == {"role": "system", "content": [{"type": "text", "text": "system"}]}
+        assert traced_input[1]["role"] == "user"
+        traced_input[1]["content"][0]["text"] = "changed"
+        assert request["messages"][0]["content"][0]["text"] == "hello"
+        assert traced_output[0]["content"] == "working"
+        assert traced_output[0]["tool_calls"] == [
+            {
+                "id": "toolu_1",
+                "type": "function",
+                "function": {"name": "sync_semantic", "arguments": '{"model": "orders"}'},
+            }
+        ]
+        assert _anthropic_trace_usage(response) == {
+            "input_tokens": 125,
+            "output_tokens": 7,
+            "total_tokens": 132,
+            "cache_read_input_tokens": 100,
+            "cache_creation_input_tokens": 20,
+        }
+        assert _anthropic_trace_model_config(request) == {
+            "provider": "anthropic",
+            "system": "anthropic",
+            "max_tokens": 2048,
+            "temperature": 0.2,
+        }
 
 
 # ---------------------------------------------------------------------------
