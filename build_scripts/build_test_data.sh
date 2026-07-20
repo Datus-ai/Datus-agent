@@ -48,15 +48,7 @@ validate_test_home() {
 }
 
 run_bootstrap_kb() {
-  uv run python - "$@" <<'PY'
-from agents import set_tracing_disabled
-
-set_tracing_disabled(True)
-
-from datus.main import main
-
-raise SystemExit(main())
-PY
+  uv run datus-agent "$@"
 }
 
 # Clean old data before creating a cacheable, deterministic fixture set.
