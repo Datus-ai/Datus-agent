@@ -56,6 +56,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr
           fetch-depth: 0
+          # recent actions/checkout v4 releases refuse fork-PR checkouts under
+          # pull_request_target by default. Safe here by construction: the
+          # pr/ tree is data for the base-repo auditor and is never executed.
+          allow-unsafe-pr-checkout: true
 
       - name: Fetch base ref inside pr/ (needed for git diff)
         if: ${{ github.event_name == 'pull_request_target' }}
