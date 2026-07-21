@@ -181,6 +181,7 @@ class TestChatAgenticNodeToolSetup:
 
     def test_main_osi_chat_exposes_only_sync_semantic_from_generation_tools(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.generation_tools import GenerationTools
 
         with patch("datus.agent.node.semantic_authoring.is_osi_authoring", return_value=True):
             node = ChatAgenticNode(
@@ -191,15 +192,15 @@ class TestChatAgenticNodeToolSetup:
             )
 
         tool_names = {tool.name for tool in node.tools}
-        assert "sync_semantic" in tool_names
-        assert "end_semantic_model_generation" not in tool_names
-        assert "end_metric_generation" not in tool_names
+        generation_tool_names = set(GenerationTools.all_tools_name())
+        assert tool_names & generation_tool_names == {"sync_semantic"}
         assert node.tool_registry.get("sync_semantic") == "semantic_tools"
         assert "sole source of truth" in node._get_system_prompt()
         assert node.semantic_sync_tools._runtime_db_context_provider == node._semantic_runtime_db_context
 
     def test_osi_subagent_does_not_expose_sync_semantic(self, real_agent_config, mock_llm_create):
         from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.generation_tools import GenerationTools
 
         with patch("datus.agent.node.semantic_authoring.is_osi_authoring", return_value=True):
             node = ChatAgenticNode(
@@ -210,7 +211,9 @@ class TestChatAgenticNodeToolSetup:
                 is_subagent=True,
             )
 
-        assert "sync_semantic" not in {tool.name for tool in node.tools}
+        tool_names = {tool.name for tool in node.tools}
+        assert tool_names.isdisjoint(GenerationTools.all_tools_name())
+        assert node.semantic_sync_tools is None
 
     def test_filesystem_strict_from_agent_config(self, real_agent_config, mock_llm_create):
         """agent_config.filesystem_strict = True propagates into the tool
