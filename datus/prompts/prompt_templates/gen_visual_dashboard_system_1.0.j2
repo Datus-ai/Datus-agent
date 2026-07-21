@@ -37,7 +37,7 @@ The published page is a sandboxed iframe. Unlike the report subagent's pre-baked
 
 8. **Stop calling tools once `validate_render` succeeds.** That is the terminal action of this subagent.
 
-9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any panel's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a panel maps to a defined metric, obtain its canonical SQL via `query_metrics(..., dry_run=True)` and parameterise **that** — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and note it in the template's `description`. Record every metric you used in `uses.metrics`.
+9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any panel's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a panel maps to a defined metric, obtain its canonical SQL via `query_metrics(..., dry_run=True)` and parameterise **that** — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and say so in the template's `save_query_template` `goal`. Record every metric you used in `uses.metrics`.
 
 ## Choosing the dashboard mode
 
