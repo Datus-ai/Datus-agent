@@ -124,7 +124,15 @@ class TestLoadProjectOverride:
         result = load_project_override(str(tmp_path))
         assert result.sandbox is expected
 
-    @pytest.mark.parametrize("bad_value", ["yess", 3, ["true"], {"enabled": True}])
+    @pytest.mark.parametrize("mode", ["strict", "normal", "STRICT", " Normal "])
+    def test_parse_sandbox_mode_strings(self, tmp_path, mode):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"sandbox": mode}))
+        result = load_project_override(str(tmp_path))
+        assert result.sandbox == mode.strip().lower()
+
+    @pytest.mark.parametrize("bad_value", ["yess", "strick", 3, ["true"], {"enabled": True}])
     def test_invalid_sandbox_dropped_with_warning(self, tmp_path, caplog, bad_value):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
@@ -233,6 +241,12 @@ class TestSaveProjectOverride:
         save_project_override(ProjectOverride(sandbox=value), cwd=str(tmp_path))
         loaded = load_project_override(str(tmp_path))
         assert loaded.sandbox is value
+
+    @pytest.mark.parametrize("value", ["strict", "normal"])
+    def test_sandbox_mode_string_round_trips(self, tmp_path, value):
+        save_project_override(ProjectOverride(sandbox=value), cwd=str(tmp_path))
+        loaded = load_project_override(str(tmp_path))
+        assert loaded.sandbox == value
 
     def test_sandbox_none_omitted_from_yaml(self, tmp_path):
         written = save_project_override(ProjectOverride(target="x"), cwd=str(tmp_path))

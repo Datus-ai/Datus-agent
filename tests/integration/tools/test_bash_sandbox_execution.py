@@ -162,3 +162,82 @@ class TestBashToolFullChain:
         result = self._tool(workspace).bash('f=$(mktemp) && echo scratch > "$f" && cat "$f" && rm -f "$f"')
         assert result.success == 1, result.error
         assert "scratch" in result.result
+
+
+@pytest.fixture
+def loopback_server():
+    """Local TCP listener so network tests never leave the machine."""
+    import socketserver
+    import threading
+
+    class Handler(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.sendall(b"pong")
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server.server_address[1]
+    server.shutdown()
+    server.server_close()
+
+
+@requires_sandbox
+class TestStrictTier:
+    """Kernel-level checks for the multi-tenant strict mode."""
+
+    def _tool(self, workspace, mode, read_dirs=None):
+        return BashTool(
+            workspace_root=str(workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=SandboxSettings(enabled=True, mode=mode),
+            sandbox_read_dirs=read_dirs,
+        )
+
+    def test_injected_read_dirs_honored_in_normal_mode(self, workspace, outside_home_dir):
+        secret = outside_home_dir / "shared.txt"
+        secret.write_text("normal-readable")
+        tool = self._tool(workspace, "normal", read_dirs=[str(outside_home_dir)])
+        result = tool.bash(f"cat {secret}")
+        assert result.success == 1, result.error
+        assert "normal-readable" in result.result
+
+    def test_injected_read_dirs_blocked_in_strict_mode(self, workspace, outside_home_dir):
+        # Same injection (the datus-home slot) must be ignored by strict —
+        # this is the multi-tenant "~/.datus is off limits" guarantee.
+        secret = outside_home_dir / "shared.txt"
+        secret.write_text("strict-blocked")
+        tool = self._tool(workspace, "strict", read_dirs=[str(outside_home_dir)])
+        result = tool.bash(f"cat {secret}")
+        assert result.success == 0
+        assert "strict-blocked" not in (result.result or "")
+
+    def test_strict_hides_env_secret_under_real_sandbox(self, workspace, monkeypatch):
+        monkeypatch.setenv("DATUS_SBX_SECRET", "sk-real-leak")
+        result = self._tool(workspace, "strict").bash('echo "[${DATUS_SBX_SECRET:-absent}]"')
+        assert result.success == 1, result.error
+        assert "[absent]" in result.result
+
+
+@requires_sandbox
+class TestDenyNetwork:
+    def _policy(self, workspace, deny):
+        return SandboxPolicy(
+            cwd=str(workspace),
+            writable_roots=(str(workspace),),
+            readable_roots=(str(Path(sys.prefix).resolve()), str(Path(sys.base_prefix).resolve())),
+            deny_network=deny,
+        )
+
+    def test_loopback_allowed_by_default(self, workspace, loopback_server):
+        # bash's /dev/tcp builtin needs no external binaries.
+        cmd = f"exec 3<>/dev/tcp/127.0.0.1/{loopback_server} && echo connected"
+        result = run_sandboxed(cmd, self._policy(workspace, deny=False), str(workspace))
+        assert result.returncode == 0, result.stderr
+        assert "connected" in result.stdout
+
+    def test_loopback_blocked_with_deny_network(self, workspace, loopback_server):
+        cmd = f"exec 3<>/dev/tcp/127.0.0.1/{loopback_server} && echo connected"
+        result = run_sandboxed(cmd, self._policy(workspace, deny=True), str(workspace))
+        assert result.returncode != 0
+        assert "connected" not in result.stdout

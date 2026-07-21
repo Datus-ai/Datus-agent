@@ -21,7 +21,10 @@ This module is intentionally stdlib-only so ``datus.configuration`` can import
 (``PermissionHooks`` / ``bash_rules``) is unaffected — the sandbox is a second,
 kernel-level line of defense at the execution layer.
 
-Network access is NOT restricted (out of scope for the lightweight sandbox).
+Two modes: ``normal`` (CLI default — datus home readable, session data dir
+writable) and ``strict`` (multi-tenant tier — project workspace + tmp +
+explicit allowlists only, minimal child environment). Network stays shared
+unless ``deny_network`` is set.
 """
 
 import os
@@ -39,6 +42,38 @@ logger = get_logger(__name__)
 
 MECHANISM_SEATBELT = "seatbelt"
 MECHANISM_BWRAP = "bwrap"
+
+# Sandbox modes. ``normal`` keeps the CLI-friendly defaults (datus home
+# readable for skills/templates, session data dir writable for command-side
+# output). ``strict`` is the multi-tenant hardening tier: file access shrinks
+# to the workspace + tmp + explicit allowlists ONLY — the caller-injected
+# datus-home read root and session-dir write root are ignored — and the child
+# environment is reduced to a small allowlist so process-wide secrets
+# (LLM API keys, DB passwords) never reach sandboxed commands.
+MODE_NORMAL = "normal"
+MODE_STRICT = "strict"
+SANDBOX_MODES = (MODE_NORMAL, MODE_STRICT)
+
+# Environment variables forwarded to the child in strict mode (plus every
+# ``LC_*`` locale variable and the caller's explicit ``extra_env``). The
+# ``python`` shim uses an absolute interpreter path, so nothing here is
+# needed for it to work.
+STRICT_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "LANG",
+        "TZ",
+        "TERM",
+        "TMPDIR",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "PWD",
+        "COLUMNS",
+        "LINES",
+    }
+)
 
 # Seconds allowed for the one-shot availability probe.
 _PROBE_TIMEOUT = 10
@@ -129,6 +164,24 @@ def _coerce_str_list(value: Any) -> List[str]:
     return []
 
 
+def _coerce_mode(value: Any) -> str:
+    if isinstance(value, str) and value.strip().lower() in SANDBOX_MODES:
+        return value.strip().lower()
+    if value is not None:
+        logger.warning("Invalid sandbox mode %r; expected one of %s. Using %r.", value, SANDBOX_MODES, MODE_NORMAL)
+    return MODE_NORMAL
+
+
+def strict_env(base_env: Dict[str, str]) -> Dict[str, str]:
+    """Reduce an environment mapping to the strict-mode allowlist.
+
+    Keeps :data:`STRICT_ENV_ALLOWLIST` plus ``LC_*`` locale variables so
+    shells and coreutils behave normally while process-wide secrets stay out
+    of the sandbox. Callers layer their explicit ``extra_env`` on top.
+    """
+    return {k: v for k, v in base_env.items() if k in STRICT_ENV_ALLOWLIST or k.startswith("LC_")}
+
+
 @dataclass
 class SandboxSettings:
     """Parsed ``agent.bash.sandbox`` configuration section.
@@ -139,8 +192,17 @@ class SandboxSettings:
     """
 
     enabled: bool = False
+    mode: str = MODE_NORMAL
     allow_read: List[str] = field(default_factory=list)
     allow_write: List[str] = field(default_factory=list)
+    # ``deny_network`` cuts network access inside the sandbox (bwrap
+    # ``--unshare-net`` / Seatbelt ``deny network*``). Orthogonal to ``mode``;
+    # off by default because it also blocks legitimate outbound calls.
+    deny_network: bool = False
+
+    @property
+    def is_strict(self) -> bool:
+        return self.mode == MODE_STRICT
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "SandboxSettings":
@@ -148,8 +210,10 @@ class SandboxSettings:
             return cls()
         return cls(
             enabled=_coerce_bool(raw.get("enabled"), False),
+            mode=_coerce_mode(raw.get("mode")),
             allow_read=_coerce_str_list(raw.get("allow_read")),
             allow_write=_coerce_str_list(raw.get("allow_write")),
+            deny_network=_coerce_bool(raw.get("deny_network"), False),
         )
 
 
@@ -169,6 +233,9 @@ class SandboxPolicy:
     # python interpreter prefixes, user allow_read). Never overlaps
     # ``writable_roots`` — write implies read in both mechanisms.
     readable_roots: Tuple[str, ...]
+    # Cut network access: bwrap ``--unshare-net`` / Seatbelt ``deny network*``
+    # (the latter also covers unix-domain sockets).
+    deny_network: bool = False
 
 
 def _normalize_roots(candidates: Sequence[Any]) -> List[str]:
@@ -199,7 +266,20 @@ def build_policy(
     ``BashTool._shell_prefix`` points at ``sys.executable``, whose venv often
     lives outside the workspace), caller-injected ``extra_read_dirs`` (datus
     home, so skills/templates stay usable) and ``settings.allow_read``.
+
+    Strict mode ignores the caller-injected ``dynamic_write_dirs`` and
+    ``extra_read_dirs`` entirely — in a multi-tenant deployment those point
+    into the shared ``~/.datus`` tree, which strict tenants must not touch.
+    Filtering here (rather than at each call site) makes the guarantee hold
+    no matter who constructs the tool. Oversized-output archiving keeps
+    working: the redirect file is opened by the parent process and inherited
+    as an fd, and both mechanisms check permissions at open time only.
+    Explicit ``allow_read``/``allow_write`` still apply — they are the
+    operator's deliberate exceptions.
     """
+    if settings.is_strict:
+        dynamic_write_dirs = ()
+        extra_read_dirs = ()
     writable = _normalize_roots(
         [
             workspace_root,
@@ -219,6 +299,7 @@ def build_policy(
         cwd=os.path.realpath(str(workspace_root)),
         writable_roots=tuple(writable),
         readable_roots=tuple(readable),
+        deny_network=settings.deny_network,
     )
 
 
@@ -337,7 +418,7 @@ def build_seatbelt_profile(policy: SandboxPolicy) -> str:
             )
         )
     )
-    return (
+    profile = (
         "(version 1)\n"
         "(allow default)\n"
         "(deny file-write*\n"
@@ -349,6 +430,9 @@ def build_seatbelt_profile(policy: SandboxPolicy) -> str:
         f"{_sb_filters(read_subpaths, _MACOS_READ_LITERALS)}\n"
         "  )))\n"
     )
+    if policy.deny_network:
+        profile += "(deny network*)\n"
+    return profile
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +467,8 @@ def build_bwrap_prefix(policy: SandboxPolicy) -> List[str]:
     if not bwrap:
         raise SandboxUnavailableError(unavailable_reason())
     args = [bwrap, "--die-with-parent"]
+    if policy.deny_network:
+        args.append("--unshare-net")
     for system_dir in _LINUX_SYSTEM_READ_DIRS:
         args.extend(_mount_args_for_system_dir(system_dir))
     args.extend(["--proc", "/proc", "--dev", "/dev"])

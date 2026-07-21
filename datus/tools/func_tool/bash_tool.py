@@ -195,7 +195,7 @@ class BashTool:
                 error=f"Command not allowed. Allowed patterns: {', '.join(self.allowed_patterns) or '(none)'}",
             )
 
-        sandbox_active = self.sandbox_settings is not None and self.sandbox_settings.enabled
+        sandbox_active = self._sandbox_active()
         if sandbox_active and not bash_sandbox.is_available():
             # Fail closed: with the sandbox switched on, running unprotected
             # would silently drop the guarantee the user asked for.
@@ -573,13 +573,26 @@ class BashTool:
 
         return False
 
+    def _sandbox_active(self) -> bool:
+        return self.sandbox_settings is not None and self.sandbox_settings.enabled
+
     def _get_safe_env(self) -> dict:
         """Build the environment for command execution.
 
         Starts from ``os.environ`` and overlays ``self.extra_env`` so callers
         can inject context-specific variables (Skill name/dir, request ID, ...).
+
+        With the sandbox in strict mode the base environment is reduced to
+        :data:`bash_sandbox.STRICT_ENV_ALLOWLIST` — the OS sandbox cannot
+        stop a command from reading its own inherited environment, so
+        process-wide secrets (LLM API keys, DB passwords) must never enter
+        it in a multi-tenant deployment. ``extra_env`` still applies: it is
+        the caller's deliberate, per-tool injection.
         """
-        env = os.environ.copy()
+        if self._sandbox_active() and self.sandbox_settings.is_strict:
+            env = bash_sandbox.strict_env(os.environ)
+        else:
+            env = os.environ.copy()
         if self.extra_env:
             env.update(self.extra_env)
         return env

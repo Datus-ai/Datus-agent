@@ -1934,6 +1934,16 @@ class TestAgentConfigBashSandbox:
         assert cfg.bash_sandbox.enabled is True
         assert cfg.bash_sandbox.allow_read == ["/data"]
         assert cfg.bash_sandbox.allow_write == ["/scratch"]
+        assert cfg.bash_sandbox.mode == "normal"
+        assert cfg.bash_sandbox.deny_network is False
+
+    def test_from_yaml_strict_tier(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            bash={"sandbox": {"enabled": True, "mode": "strict", "deny_network": True}},
+        )
+        assert cfg.bash_sandbox.is_strict is True
+        assert cfg.bash_sandbox.deny_network is True
 
     @pytest.mark.parametrize("yaml_value", ["true", "1", "yes", "on", True])
     def test_string_true_enables(self, tmp_path, yaml_value):

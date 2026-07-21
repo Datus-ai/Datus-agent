@@ -750,3 +750,62 @@ class TestBashToolSandbox:
         assert "NOT executed" in result.error
         assert "gone mid-flight" in result.error
         popen_spy.assert_not_called()
+
+
+class TestBashToolStrictEnv:
+    """Strict mode minimizes the child environment (no real sandbox spawned:
+    wrap_argv is stubbed to identity so only the env contract is exercised)."""
+
+    @pytest.fixture(autouse=True)
+    def sandbox_pass_through(self, monkeypatch):
+        monkeypatch.setattr(bash_sandbox, "is_available", lambda: True)
+        monkeypatch.setattr(bash_sandbox, "wrap_argv", lambda argv, policy: argv)
+
+    def _tool(self, workspace, mode, extra_env=None):
+        return BashTool(
+            workspace_root=str(workspace),
+            allowed_patterns=["*"],
+            extra_env=extra_env,
+            sandbox_settings=bash_sandbox.SandboxSettings(enabled=True, mode=mode),
+        )
+
+    def test_strict_hides_process_secrets(self, temp_workspace, monkeypatch):
+        monkeypatch.setenv("DATUS_TEST_SECRET", "sk-leak-me")
+        tool = self._tool(temp_workspace, bash_sandbox.MODE_STRICT)
+        result = tool.bash('echo "[${DATUS_TEST_SECRET:-absent}]"')
+        assert result.success == 1
+        assert "[absent]" in result.result
+        assert "sk-leak-me" not in result.result
+
+    def test_normal_mode_keeps_process_env(self, temp_workspace, monkeypatch):
+        monkeypatch.setenv("DATUS_TEST_SECRET", "sk-visible")
+        tool = self._tool(temp_workspace, bash_sandbox.MODE_NORMAL)
+        result = tool.bash('echo "[${DATUS_TEST_SECRET:-absent}]"')
+        assert result.success == 1
+        assert "[sk-visible]" in result.result
+
+    def test_strict_keeps_baseline_vars(self, temp_workspace):
+        tool = self._tool(temp_workspace, bash_sandbox.MODE_STRICT)
+        result = tool.bash('echo "path=${PATH:+set} home=${HOME:+set}"')
+        assert result.success == 1
+        assert "path=set" in result.result
+        assert "home=set" in result.result
+
+    def test_strict_still_applies_extra_env(self, temp_workspace):
+        tool = self._tool(temp_workspace, bash_sandbox.MODE_STRICT, extra_env={"SKILL_NAME": "demo"})
+        result = tool.bash('echo "skill=${SKILL_NAME:-absent}"')
+        assert result.success == 1
+        assert "skill=demo" in result.result
+
+    def test_sandbox_off_ignores_strict_mode_for_env(self, temp_workspace, monkeypatch):
+        # mode=strict with enabled=False must not change behavior — the env
+        # contract is tied to the sandbox being active.
+        monkeypatch.setenv("DATUS_TEST_SECRET", "sk-still-here")
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=bash_sandbox.SandboxSettings(enabled=False, mode=bash_sandbox.MODE_STRICT),
+        )
+        result = tool.bash('echo "[${DATUS_TEST_SECRET:-absent}]"')
+        assert result.success == 1
+        assert "[sk-still-here]" in result.result

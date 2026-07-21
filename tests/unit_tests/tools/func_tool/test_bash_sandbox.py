@@ -86,6 +86,52 @@ class TestSandboxSettingsFromDict:
         assert settings.allow_read == []
         assert settings.allow_write == []
 
+    def test_mode_defaults_to_normal(self):
+        settings = SandboxSettings.from_dict({"enabled": True})
+        assert settings.mode == bash_sandbox.MODE_NORMAL
+        assert settings.is_strict is False
+
+    def test_mode_strict_parsed_case_insensitive(self):
+        assert SandboxSettings.from_dict({"mode": "strict"}).is_strict is True
+        assert SandboxSettings.from_dict({"mode": " STRICT "}).is_strict is True
+        assert SandboxSettings.from_dict({"mode": "normal"}).is_strict is False
+
+    def test_invalid_mode_falls_back_to_normal(self):
+        for bad in ("paranoid", 3, ["strict"], {}):
+            assert SandboxSettings.from_dict({"mode": bad}).mode == bash_sandbox.MODE_NORMAL
+
+    def test_deny_network_parsed(self):
+        assert SandboxSettings.from_dict({"deny_network": True}).deny_network is True
+        assert SandboxSettings.from_dict({"deny_network": "true"}).deny_network is True
+        assert SandboxSettings.from_dict({}).deny_network is False
+
+
+class TestStrictEnv:
+    def test_keeps_allowlist_and_locale_only(self):
+        base = {
+            "PATH": "/usr/bin",
+            "HOME": "/home/u",
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "C",
+            "LC_CTYPE": "UTF-8",
+            "OPENAI_API_KEY": "sk-secret",
+            "DATABASE_PASSWORD": "hunter2",
+            "AWS_SECRET_ACCESS_KEY": "aws-secret",
+            "TMPDIR": "/tmp/x",
+        }
+        result = bash_sandbox.strict_env(base)
+        assert result == {
+            "PATH": "/usr/bin",
+            "HOME": "/home/u",
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "C",
+            "LC_CTYPE": "UTF-8",
+            "TMPDIR": "/tmp/x",
+        }
+
+    def test_empty_base_yields_empty(self):
+        assert bash_sandbox.strict_env({}) == {}
+
 
 class TestBuildPolicy:
     def test_workspace_and_tmp_in_writable(self, workspace):
@@ -158,6 +204,57 @@ class TestBuildPolicy:
         assert os.path.realpath(sys.prefix) in combined
         assert os.path.realpath(sys.base_prefix) in combined
 
+    def test_deny_network_propagates_to_policy(self, workspace):
+        assert build_policy(SandboxSettings(), workspace).deny_network is False
+        assert build_policy(SandboxSettings(deny_network=True), workspace).deny_network is True
+
+
+class TestBuildPolicyStrict:
+    """Strict mode drops caller-injected dirs but keeps operator allowlists."""
+
+    def test_extra_read_dirs_ignored(self, tmp_path, workspace):
+        datus_home = tmp_path / "datus_home"
+        datus_home.mkdir()
+        policy = build_policy(
+            SandboxSettings(mode=bash_sandbox.MODE_STRICT),
+            workspace,
+            extra_read_dirs=[str(datus_home)],
+        )
+        assert str(datus_home.resolve()) not in policy.readable_roots
+
+    def test_dynamic_write_dirs_ignored(self, tmp_path, workspace):
+        session_dir = tmp_path / "session_out"
+        session_dir.mkdir()
+        policy = build_policy(
+            SandboxSettings(mode=bash_sandbox.MODE_STRICT),
+            workspace,
+            dynamic_write_dirs=[session_dir],
+        )
+        assert str(session_dir.resolve()) not in policy.writable_roots
+
+    def test_explicit_allowlists_still_apply(self, tmp_path, workspace):
+        shared_read = tmp_path / "shared_read"
+        shared_read.mkdir()
+        shared_write = tmp_path / "shared_write"
+        shared_write.mkdir()
+        policy = build_policy(
+            SandboxSettings(
+                mode=bash_sandbox.MODE_STRICT,
+                allow_read=[str(shared_read)],
+                allow_write=[str(shared_write)],
+            ),
+            workspace,
+        )
+        assert str(shared_read.resolve()) in policy.readable_roots
+        assert str(shared_write.resolve()) in policy.writable_roots
+
+    def test_workspace_tmp_and_python_env_survive(self, workspace):
+        policy = build_policy(SandboxSettings(mode=bash_sandbox.MODE_STRICT), workspace)
+        assert str(workspace.resolve()) in policy.writable_roots
+        assert os.path.realpath("/tmp") in policy.writable_roots
+        combined = set(policy.readable_roots) | set(policy.writable_roots)
+        assert os.path.realpath(sys.prefix) in combined
+
 
 class TestSeatbeltProfile:
     def test_profile_structure(self, workspace):
@@ -206,6 +303,18 @@ class TestSeatbeltProfile:
 
     def test_backslash_escaped(self):
         assert bash_sandbox._sb_quote("a\\b") == '"a\\\\b"'
+
+    def test_deny_network_appends_network_deny(self, workspace):
+        policy = SandboxPolicy(
+            cwd=str(workspace),
+            writable_roots=(str(workspace),),
+            readable_roots=(),
+            deny_network=True,
+        )
+        assert build_seatbelt_profile(policy).rstrip().endswith("(deny network*)")
+
+    def test_no_network_deny_by_default(self, workspace):
+        assert "(deny network*)" not in build_seatbelt_profile(make_policy(workspace))
 
 
 class TestBwrapPrefix:
@@ -262,6 +371,19 @@ class TestBwrapPrefix:
         monkeypatch.setattr(bash_sandbox, "_find_bwrap", lambda: None)
         with pytest.raises(SandboxUnavailableError):
             build_bwrap_prefix(make_policy(workspace))
+
+    def test_deny_network_adds_unshare_net(self, workspace):
+        policy = SandboxPolicy(
+            cwd=str(workspace),
+            writable_roots=(str(workspace),),
+            readable_roots=(),
+            deny_network=True,
+        )
+        args = build_bwrap_prefix(policy)
+        assert "--unshare-net" in args
+
+    def test_no_unshare_net_by_default(self, workspace):
+        assert "--unshare-net" not in build_bwrap_prefix(make_policy(workspace))
 
 
 class TestMountArgsForSystemDir:

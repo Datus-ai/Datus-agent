@@ -7,18 +7,21 @@
 Entry points
 ------------
 
-  - ``/sandbox`` / ``/sandbox status`` — show enabled state, the detected
+  - ``/sandbox`` / ``/sandbox status`` — show state, mode, the detected
     mechanism (sandbox-exec / bwrap) and the extra allowlists.
   - ``/sandbox on|off``            — flip for this session only (immediate:
     every BashTool shares the same ``SandboxSettings`` object).
-  - ``/sandbox on|off --project``  — also persist to ``./.datus/config.yml``.
-  - ``/sandbox on|off --global``   — also persist to ``agent.yml``.
+  - ``/sandbox strict|normal``     — enable AND pin the mode. ``strict`` is
+    the multi-tenant tier: workspace + tmp + explicit allowlists only
+    (``~/.datus`` fully blocked) and a minimal child environment.
+  - ``... --project``              — also persist to ``./.datus/config.yml``.
+  - ``... --global``               — also persist to ``agent.yml``.
   - ``/sandbox --clear``           — remove the project-level override.
 
 When enabled, bash commands can only write inside the workspace, the session
-data dir and tmp, and only read system dirs plus the same allowlist
-(``agent.bash.sandbox.allow_read`` / ``allow_write`` extend it). Fail-closed:
-if no OS mechanism is available, bash commands are rejected while enabled.
+data dir (normal mode) and tmp, and only read system dirs plus the same
+allowlist (``agent.bash.sandbox.allow_read`` / ``allow_write`` extend it).
+Fail-closed: if no OS mechanism is available, commands are rejected.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_USAGE = "/sandbox [status|on|off] [--project|--global] | /sandbox --clear"
+_USAGE = "/sandbox [status|on|off|strict|normal] [--project|--global] | /sandbox --clear"
 
 
 class SandboxCommands:
@@ -60,15 +63,21 @@ class SandboxCommands:
         if value in ("", "status"):
             self._status()
             return
-        if value not in ("on", "off"):
+        if value not in ("on", "off", "strict", "normal"):
             print_error(self.console, f"Invalid argument '{value}'. Usage: {_USAGE}")
             return
 
-        enabled = value == "on"
         # Immediate session effect: BashTool holds the same SandboxSettings
-        # object and re-reads ``enabled`` on every call.
-        self.agent_config.bash_sandbox.enabled = enabled
-        if enabled and not bash_sandbox.is_available():
+        # object and re-reads it on every call. ``on``/``off`` toggle the
+        # switch (mode untouched); ``strict``/``normal`` enable and pin mode.
+        settings = self.agent_config.bash_sandbox
+        if value == "off":
+            settings.enabled = False
+        else:
+            settings.enabled = True
+            if value in (bash_sandbox.MODE_STRICT, bash_sandbox.MODE_NORMAL):
+                settings.mode = value
+        if settings.enabled and not bash_sandbox.is_available():
             print_warning(
                 self.console,
                 f"No OS sandbox mechanism is available ({bash_sandbox.unavailable_reason()}). "
@@ -76,35 +85,41 @@ class SandboxCommands:
             )
 
         if flag_project:
-            self._save_project(enabled)
+            self._save_project(value)
         elif flag_global:
-            self._save_global(enabled)
+            self._save_global()
         else:
             print_success(self.console, f"Bash sandbox {value} (this session only)")
 
-    def _save_project(self, enabled: bool) -> None:
+    def _save_project(self, value: str) -> None:
         override = load_project_override() or ProjectOverride()
-        override.sandbox = enabled
+        # ``on``/``off`` persist as booleans (mode follows global config);
+        # mode names persist as strings (enable + pin, see project_config).
+        override.sandbox = {"on": True, "off": False}.get(value, value)
         path = save_project_override(override)
-        print_success(self.console, f"Bash sandbox {'on' if enabled else 'off'} (saved to {path})")
+        print_success(self.console, f"Bash sandbox {value} (saved to {path})")
 
-    def _save_global(self, enabled: bool) -> None:
+    def _save_global(self) -> None:
         """Persist the whole ``bash.sandbox`` section to agent.yml.
 
-        Serialized from the live settings so ``allow_read``/``allow_write``
-        survive the shallow ``update_item`` merge (the ``sandbox`` sub-dict is
-        replaced as a unit; sibling ``bash.*`` keys are preserved).
+        Serialized from the live settings so ``mode``, ``deny_network`` and
+        ``allow_read``/``allow_write`` survive the shallow ``update_item``
+        merge (the ``sandbox`` sub-dict is replaced as a unit; sibling
+        ``bash.*`` keys are preserved).
         """
         settings = self.agent_config.bash_sandbox
-        sandbox_yaml = {"enabled": enabled}
+        sandbox_yaml = {"enabled": settings.enabled, "mode": settings.mode}
         if settings.allow_read:
             sandbox_yaml["allow_read"] = list(settings.allow_read)
         if settings.allow_write:
             sandbox_yaml["allow_write"] = list(settings.allow_write)
+        if settings.deny_network:
+            sandbox_yaml["deny_network"] = True
         self.cli.configuration_manager.update_item("bash", {"sandbox": sandbox_yaml})
-        print_success(self.console, f"Bash sandbox {'on' if enabled else 'off'} (saved to agent.yml)")
+        state = f"{'on' if settings.enabled else 'off'} ({settings.mode})"
+        print_success(self.console, f"Bash sandbox {state} (saved to agent.yml)")
         override = load_project_override()
-        if override is not None and override.sandbox is not None and override.sandbox != enabled:
+        if override is not None and override.sandbox is not None:
             print_info(
                 self.console,
                 f"Note: project-level override 'sandbox: {str(override.sandbox).lower()}' "
@@ -121,8 +136,10 @@ class SandboxCommands:
     def _status(self) -> None:
         settings = self.agent_config.bash_sandbox
         mechanism = bash_sandbox.detect_mechanism()
-        print_info(self.console, f"Bash sandbox: {'on' if settings.enabled else 'off'}")
+        print_info(self.console, f"Bash sandbox: {'on' if settings.enabled else 'off'} (mode: {settings.mode})")
         print_info(self.console, f"Mechanism: {mechanism or 'unavailable'}")
+        if settings.deny_network:
+            print_info(self.console, "Network: denied inside the sandbox")
         if settings.enabled and mechanism is None:
             print_warning(
                 self.console,
@@ -131,7 +148,21 @@ class SandboxCommands:
         override = load_project_override()
         if override is not None and override.sandbox is not None:
             print_info(self.console, f"Source: project (.datus/config.yml: sandbox: {str(override.sandbox).lower()})")
-        if settings.enabled:
+        if not settings.enabled:
+            return
+        if settings.is_strict:
+            print_info(
+                self.console,
+                "Writable: workspace, tmp"
+                + (f", extra: {', '.join(settings.allow_write)}" if settings.allow_write else ""),
+            )
+            print_info(
+                self.console,
+                "Readable: system dirs, python env + all writable (datus home BLOCKED)"
+                + (f", extra: {', '.join(settings.allow_read)}" if settings.allow_read else ""),
+            )
+            print_info(self.console, "Environment: minimal allowlist (process secrets hidden)")
+        else:
             print_info(
                 self.console,
                 "Writable: workspace, session data dir, tmp"

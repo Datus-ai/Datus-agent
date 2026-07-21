@@ -308,6 +308,28 @@ class TestApplyProjectOverride:
         assert agent_raw["bash"]["allowed_patterns"] == ["datus*"]
         assert agent_raw["bash"]["enabled"] is True
 
+    @pytest.mark.parametrize("mode", ["strict", "normal"])
+    def test_sandbox_mode_string_enables_and_pins_mode(self, mode):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sandbox=mode),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["bash"]["sandbox"]["enabled"] is True
+        assert agent_raw["bash"]["sandbox"]["mode"] == mode
+
+    def test_sandbox_bool_does_not_touch_mode(self):
+        agent_raw = self._base_raw()
+        agent_raw["bash"] = {"sandbox": {"enabled": False, "mode": "strict"}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sandbox=True),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["bash"]["sandbox"]["enabled"] is True
+        assert agent_raw["bash"]["sandbox"]["mode"] == "strict"
+
     def test_sandbox_override_tolerates_malformed_bash_section(self):
         agent_raw = self._base_raw()
         agent_raw["bash"] = "not-a-mapping"

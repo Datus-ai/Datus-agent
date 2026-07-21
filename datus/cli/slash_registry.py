@@ -101,7 +101,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     ),
     SlashSpec(
         "sandbox",
-        "Toggle the OS-level bash sandbox (status / on / off)",
+        "Toggle the OS-level bash sandbox (status / on / off / strict / normal)",
         "system",
     ),
     SlashSpec(

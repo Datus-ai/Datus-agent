@@ -119,6 +119,47 @@ class TestProjectPersistence:
         mock_save.assert_not_called()
 
 
+class TestModeSwitch:
+    def test_strict_enables_and_pins_mode(self, commands):
+        cmds, cli = commands
+        with patch(_PATCH_AVAILABLE, return_value=True), patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("strict")
+        settings = cli.agent_config.bash_sandbox
+        assert settings.enabled is True
+        assert settings.mode == "strict"
+        assert "session only" in cli.console.file.getvalue()
+
+    def test_normal_resets_mode(self):
+        cli = _stub_cli(SandboxSettings(enabled=True, mode="strict"))
+        cmds = SandboxCommands(cli)
+        with patch(_PATCH_AVAILABLE, return_value=True), patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("normal")
+        assert cli.agent_config.bash_sandbox.mode == "normal"
+        assert cli.agent_config.bash_sandbox.enabled is True
+
+    def test_on_off_keep_existing_mode(self):
+        cli = _stub_cli(SandboxSettings(enabled=False, mode="strict"))
+        cmds = SandboxCommands(cli)
+        with patch(_PATCH_AVAILABLE, return_value=True), patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("on")
+        assert cli.agent_config.bash_sandbox.mode == "strict"
+        assert cli.agent_config.bash_sandbox.enabled is True
+        with patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("off")
+        assert cli.agent_config.bash_sandbox.mode == "strict"
+        assert cli.agent_config.bash_sandbox.enabled is False
+
+    def test_strict_project_persists_mode_string(self, commands):
+        cmds, cli = commands
+        with (
+            patch(_PATCH_AVAILABLE, return_value=True),
+            patch(_PATCH_LOAD, return_value=None),
+            patch(_PATCH_SAVE, return_value="/tmp/.datus/config.yml") as mock_save,
+        ):
+            cmds.cmd_sandbox("strict --project")
+        assert mock_save.call_args[0][0].sandbox == "strict"
+
+
 class TestGlobalPersistence:
     def test_on_global_writes_full_sandbox_section(self):
         settings = SandboxSettings(allow_read=["/data"], allow_write=["/scratch"])
@@ -128,15 +169,33 @@ class TestGlobalPersistence:
             cmds.cmd_sandbox("on --global")
         cli.configuration_manager.update_item.assert_called_once_with(
             "bash",
-            {"sandbox": {"enabled": True, "allow_read": ["/data"], "allow_write": ["/scratch"]}},
+            {"sandbox": {"enabled": True, "mode": "normal", "allow_read": ["/data"], "allow_write": ["/scratch"]}},
         )
         assert "agent.yml" in cli.console.file.getvalue()
+
+    def test_strict_global_persists_mode(self, commands):
+        cmds, cli = commands
+        with patch(_PATCH_AVAILABLE, return_value=True), patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("strict --global")
+        cli.configuration_manager.update_item.assert_called_once_with(
+            "bash", {"sandbox": {"enabled": True, "mode": "strict"}}
+        )
+
+    def test_deny_network_survives_global_save(self):
+        cli = _stub_cli(SandboxSettings(deny_network=True))
+        cmds = SandboxCommands(cli)
+        with patch(_PATCH_AVAILABLE, return_value=True), patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("on --global")
+        saved = cli.configuration_manager.update_item.call_args[0][1]["sandbox"]
+        assert saved["deny_network"] is True
 
     def test_off_global_omits_empty_lists(self, commands):
         cmds, cli = commands
         with patch(_PATCH_LOAD, return_value=None):
             cmds.cmd_sandbox("off --global")
-        cli.configuration_manager.update_item.assert_called_once_with("bash", {"sandbox": {"enabled": False}})
+        cli.configuration_manager.update_item.assert_called_once_with(
+            "bash", {"sandbox": {"enabled": False, "mode": "normal"}}
+        )
 
     def test_global_notes_conflicting_project_override(self, commands):
         cmds, cli = commands
@@ -178,3 +237,14 @@ class TestStatus:
         assert "project" in out
         assert "/data" in out
         assert "/scratch" in out
+
+    def test_status_strict_shows_blocked_datus_home_and_env(self):
+        cli = _stub_cli(SandboxSettings(enabled=True, mode="strict", deny_network=True))
+        cmds = SandboxCommands(cli)
+        with patch(_PATCH_MECH, return_value="bwrap"), patch(_PATCH_LOAD, return_value=None):
+            cmds.cmd_sandbox("status")
+        out = cli.console.file.getvalue()
+        assert "mode: strict" in out
+        assert "BLOCKED" in out
+        assert "minimal allowlist" in out
+        assert "Network: denied" in out
