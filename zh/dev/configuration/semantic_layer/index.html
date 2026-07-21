@@ -4290,6 +4290,10 @@
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># execution_backend 默认是 metricflow，通常不需要配置。</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">      </span><span class="nt">osi_engine</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">        </span><span class="c1"># 原生 Rust 引擎路径(datus-semantic-osi-engine)。Datus 会自动从当前</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="c1"># datasource 填充 db_config,语义模型路径取 subject/semantic_models/&lt;datasource&gt;/。</span>
 </span></code></pre></div>
 <h2 id="_2">选择规则<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p><code>AgentConfig.resolve_semantic_adapter</code> 解析活动语义适配器的顺序与 BI Dashboard / Scheduler 完全一致:</p>
@@ -4315,6 +4319,8 @@
 <li>OSI 模式编写 strict OSI core YAML，并把 Datus 执行提示放在 <code>custom_extensions</code> 中。</li>
 <li>当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 <code>execution_backend</code>。</li>
 <li>配置 <code>services.semantic_layer.osi</code> 并标记 <code>default: true</code>，可在同时配置其他 adapter 时全局选择 OSI。空的 <code>osi: {}</code> 只有在它是唯一 semantic adapter，或当前项目 pin 到 <code>semantic: osi</code> 时才会被选中。</li>
+<li><code>osi_engine</code>（包 <code>datus-semantic-osi-engine</code>）在 Rust osi-engine 上原生执行同一份 OSI authoring 文档，不依赖 MetricFlow。<code>osi</code> 与 <code>osi_engine</code> 使用相同的 OSI authoring 格式；生成与问数流程对两者一视同仁。</li>
+<li>对 OSI 家族 adapter，<code>query_metrics.time_end</code> 是开上界（前闭后开时间区间 <code>[time_start, time_end)</code>）。</li>
 </ul>
 <h2 id="cli-services">通过 CLI 配置（<code>/services</code>）<a class="headerlink" href="#cli-services" title="Permanent link">&para;</a></h2>
 <p>在 Datus REPL 中运行 <code>/services semantic</code>（或者从其他 tab 按 <code>Tab</code> 切过来）会进入配置 TUI 的 <strong>Semantic</strong> tab。该 tab 支持：</p>
