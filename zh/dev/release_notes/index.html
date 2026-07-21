@@ -4109,6 +4109,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#038" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.8
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#037" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4414,6 +4425,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#038" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.8
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#037" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4699,6 +4721,37 @@
 
 <h1 id="_1">发布说明<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="038">0.3.8<a class="headerlink" href="#038" title="Permanent link">&para;</a></h3>
+<p><strong>新功能</strong></p>
+<ul>
+<li><strong>[Experimental] 可选的 Metadata 全文检索</strong> - 设置 <code>kb.search.mode: fts</code> 后，可使用 LanceDB 0.34 原生 FTS 和中文 n-gram 索引检索 metadata。默认仍使用 vector 模式；FTS 会严格检查索引兼容性，并支持增量更新。<a href="https://github.com/Datus-ai/Datus-agent/pull/1112">#1112</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1141">#1141</a> <a href="https://docs.datus.ai/zh/0.3/knowledge_base/metadata_fts/">文档</a></li>
+<li><strong>Semantic SQL History Profiler</strong> - <code>gen_semantic_model</code> 可利用历史 SQL 和 success-story SQL 收集列使用、数据分布、日期跨度、join 覆盖率和常用筛选条件等证据，辅助 MetricFlow 与 OSI 语义模型生成。明确提出 profiling 请求时会启用这条深度分析路径，也可显式关闭。<a href="https://github.com/Datus-ai/Datus-agent/pull/1082">#1082</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1108">#1108</a> <a href="https://docs.datus.ai/zh/0.3/subagent/gen_semantic_model/">文档</a></li>
+<li><strong>项目级、符合 OSI 规范的 Semantic Layer</strong> - 语义模型生成、指标生成、AskMetrics、查询和 BI bootstrap 统一使用项目当前启用的 semantic adapter。OSI 语义模型会按 datasource 的真实 SQL dialect 生成，可一次性将完整 OSI 文档同步到 Knowledge Base，并按结构判断字段角色：只有包含 <code>dimension</code> block 的字段才是可查询维度，主键和唯一键只从 <code>describe_table</code> 提供的数据库约束转录。指标生成与语义模型写入相互隔离，避免改写模型结构或并发覆盖。未显式配置 adapter 的项目仍默认使用 MetricFlow。<a href="https://github.com/Datus-ai/Datus-agent/pull/1107">#1107</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1120">#1120</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1128">#1128</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1131">#1131</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1148">#1148</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1160">#1160</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1161">#1161</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/41">datus-semantic-adapter#41</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/42">#42</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/43">#43</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/50">#50</a> <a href="https://docs.datus.ai/zh/0.3/configuration/semantic_layer/">Semantic Layer 文档</a> <a href="https://docs.datus.ai/zh/0.3/adapters/osi_semantic_adapter/">OSI adapter 文档</a></li>
+</ul>
+<p><strong>增强</strong></p>
+<ul>
+<li><strong>高级时间指标作为独立指标</strong> - 指标生成现在会将 cumulative、rolling-window 和 fixed period-over-period 变体生成为独立指标，不再因为已有基础指标而跳过。Semantic adapter 会补充必需的 <code>metric_time</code> 分组并返回结构化校验建议，生成的 OSI 指标也会获得与 MetricFlow 一致的业务域 <code>subject_path</code>。<a href="https://github.com/Datus-ai/Datus-agent/pull/1104">#1104</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1111">#1111</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1113">#1113</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1124">#1124</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/38">datus-semantic-adapter#38</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/39">#39</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/40">#40</a></li>
+<li><strong>更安全、可观察的 Bash 工具</strong> - <code>execute_command</code> 统一更名为 <code>bash</code>，支持真实 shell pipeline、命令级 allow/deny/ask 规则、项目 allowlist、单次调用 timeout 和进程组清理。长输出会归档并提供可恢复预览，命令运行时持续显示耗时，读取 stdin 的命令也不再挂住 TUI。<a href="https://github.com/Datus-ai/Datus-agent/pull/1092">#1092</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1094">#1094</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1103">#1103</a></li>
+<li><strong>Semantic Artifact 刷新保持一致</strong> - MetricFlow 与 OSI YAML 可从已保存的 table semantic profile 更新 <code>Observed profile</code> 描述。Semantic model、table profile、vector rows 和 metrics 会在当前 artifact 范围内同步，metric sync 改为只做 upsert，避免覆盖同一 datasource 下的无关指标。<a href="https://github.com/Datus-ai/Datus-agent/pull/1090">#1090</a> <a href="https://docs.datus.ai/zh/0.3/API/knowledge_base/">Knowledge Base API 文档</a> <a href="https://docs.datus.ai/zh/0.3/knowledge_base/semantic_model/">Semantic Model 文档</a></li>
+<li><code>ssl_verify</code> <strong>支持 Inline PEM</strong> - 模型配置可直接保存 CA certificate 内容，不再依赖运行容器中的证书文件。Native httpx 路径使用内存 <code>SSLContext</code>，LiteLLM 路径使用自动清理、按内容去重的临时 CA bundle。<a href="https://github.com/Datus-ai/Datus-agent/pull/1102">#1102</a> <a href="https://docs.datus.ai/zh/0.3/configuration/agent/">文档</a></li>
+<li><strong>Web 文件工具改为服务端执行</strong> - Web 会话在 <code>auto</code> 和 <code>dangerous</code> profile 下会由服务端执行 <code>write_file</code>、<code>edit_file</code> 和 <code>delete_file</code>，避免浏览器隐藏、断连或关闭时等待代理结果而超时。SSE 工具事件新增明确的 <code>proxied</code> 状态，VS Code 仍保持客户端代理执行。<a href="https://github.com/Datus-ai/Datus-agent/pull/1123">#1123</a></li>
+<li><strong>中英文文档独立构建与搜索</strong> - 英文和中文文档改为两个独立 MkDocs 站点，分别生成搜索索引、版本元数据和 canonical URL。中文页面迁移到 <code>/zh/&lt;version&gt;/</code>，避免搜索结果混入另一种语言。<a href="https://github.com/Datus-ai/Datus-agent/pull/1152">#1152</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1154">#1154</a> <a href="https://docs.datus.ai/zh/0.3/develop/">文档</a></li>
+</ul>
+<p><strong>Bug 修复</strong></p>
+<ul>
+<li><strong>按 Database 隔离 Semantic Storage</strong> - Semantic model 使用完整的 catalog/database/schema/table 标识，同名表不会再互相覆盖；旧的 simple-id 数据会在后续同步时安全清理。<code>datus-agent run --task_db_name</code> 也会保留调用方指定的真实 database。<a href="https://github.com/Datus-ai/Datus-agent/pull/1115">#1115</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1127">#1127</a></li>
+<li><strong>Agent 与 Gateway 失败可恢复</strong> - LLM stream failure 会返回稳定错误码和可读消息，缺少必填参数的工具调用会返回可重试结果而不是终止整个 turn，自定义 <code>gen_sql</code> prompt 缺失时会回退到最新内置模板。Slack 和 Feishu 缺少凭证时会跳过启动，Slack 凭证无效时会快速失败，不再无限重连。<a href="https://github.com/Datus-ai/Datus-agent/pull/1116">#1116</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1117">#1117</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1122">#1122</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1134">#1134</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1135">#1135</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1137">#1137</a></li>
+<li><strong>运行时依赖兼容性恢复</strong> - 将 <code>openai</code> 限制在 2.45.0 以下，避免 <code>openai-agents==0.7.0</code> 因 Usage schema 不兼容而在每次模型调用前崩溃；同时将 pandas 固定为 2.1.4，以兼容 Snowflake adapter 并保留 LanceDB 0.34。<a href="https://github.com/Datus-ai/Datus-agent/pull/1130">#1130</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1136">#1136</a></li>
+</ul>
+<p><strong>升级说明</strong></p>
+<ul>
+<li><strong>Bash 工具更名</strong> - 自定义 subagent tool whitelist、MCP/tool 调用或 permission rule 如果仍引用 <code>execute_command</code>，需要迁移到 <code>bash</code>；对应权限标识为 <code>bash_tools.bash</code>。<a href="https://github.com/Datus-ai/Datus-agent/pull/1092">#1092</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1094">#1094</a></li>
+<li><strong>项目级 Semantic Adapter 选择</strong> - 使用 OSI 或自定义 semantic format 的项目应将 adapter 选择迁移到项目级 semantic 配置。旧的 node-level semantic-format override 不再决定生成路径；未配置的项目仍默认使用 MetricFlow。<a href="https://github.com/Datus-ai/Datus-agent/pull/1107">#1107</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1120">#1120</a></li>
+<li><strong>Semantic Adapter 版本</strong> - Datus-agent 0.3.8 要求 <code>datus-semantic-core&gt;=0.2.1</code>。单独安装 MetricFlow adapter 的部署应使用 <code>datus-semantic-metricflow&gt;=0.2.9</code>；使用 OSI 语义模型生成时，应使用 <code>datus-semantic-osi&gt;=0.1.2</code>，以获得匹配的字段角色和约束处理。<a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/50">datus-semantic-adapter#50</a></li>
+<li><strong>FTS 索引初始化</strong> - 设置 <code>kb.search.mode: fts</code> 后，需要执行一次 overwrite metadata bootstrap 来创建 FTS 索引。已有 vector 数据不会自动迁移，FTS 无结果时也不会回退到 vector 检索。<a href="https://github.com/Datus-ai/Datus-agent/pull/1112">#1112</a></li>
+<li><strong>Web 文件权限</strong> - Web 的 <code>auto</code> profile 对 workspace 外路径执行写入时，现在需要服务端权限确认；<code>dangerous</code> profile 行为不变。<a href="https://github.com/Datus-ai/Datus-agent/pull/1123">#1123</a></li>
+<li><strong>中文文档 URL</strong> - 中文文档从 <code>/&lt;version&gt;/zh/...</code> 迁移到 <code>/zh/&lt;version&gt;/...</code>；外部书签和硬编码链接需要同步更新。<a href="https://github.com/Datus-ai/Datus-agent/pull/1152">#1152</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1154">#1154</a></li>
+</ul>
 <h3 id="037">0.3.7<a class="headerlink" href="#037" title="Permanent link">&para;</a></h3>
 <p><strong>新功能</strong></p>
 <ul>
