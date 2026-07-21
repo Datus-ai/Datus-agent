@@ -49,6 +49,13 @@ pin a handful of values without copying the full config:
   ``agent.permissions.bash_commands.allow`` at load time. Written by the
   "allow (project)" choice in the bash permission prompt via
   :func:`append_project_bash_allow`.
+- ``sql_allow``: list of SQL statement kinds (``insert``, ``drop``, ... —
+  see ``parse_sql_statement_kind`` in ``datus/utils/sql_utils.py``) that the
+  ``execute_sql`` permission gate auto-allows for this project. Unlike
+  ``bash_allow`` these are NOT merged into ``permissions`` rules; they feed
+  ``PermissionManager``'s exact-match grant set only. Written by the
+  "allow (project)" choice in the SQL permission prompt via
+  :func:`append_project_sql_allow`.
 
 Any other keys in the file are ignored with a warning so users do not
 mistakenly expect the overlay to accept arbitrary YAML.
@@ -80,6 +87,7 @@ ALLOWED_KEYS = frozenset(
         "language",
         "reasoning_effort",
         "bash_allow",
+        "sql_allow",
     }
 )
 REASONING_EFFORT_CHOICES = frozenset({"off", "minimal", "low", "medium", "high"})
@@ -140,6 +148,7 @@ class ProjectOverride:
     language: Optional[str] = None
     reasoning_effort: Optional[str] = None
     bash_allow: Optional[list] = None
+    sql_allow: Optional[list] = None
 
     def is_empty(self) -> bool:
         return (
@@ -153,6 +162,7 @@ class ProjectOverride:
             and self.language is None
             and self.reasoning_effort is None
             and self.bash_allow is None
+            and self.sql_allow is None
         )
 
 
@@ -230,6 +240,7 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         language=raw.get("language"),
         reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
         bash_allow=_parse_bash_allow(raw.get("bash_allow")),
+        sql_allow=_parse_sql_allow(raw.get("sql_allow")),
     )
 
 
@@ -251,6 +262,30 @@ def _parse_bash_allow(raw: Any) -> Optional[list]:
         else:
             logger.warning(f"Ignoring non-string bash_allow entry: {entry!r}")
     return patterns or None
+
+
+def _parse_sql_allow(raw: Any) -> Optional[list]:
+    """Normalize the ``sql_allow:`` field into a list of statement kinds.
+
+    Kinds are lower-cased for exact matching against
+    ``parse_sql_statement_kind`` output. Non-list values and non-string
+    entries are dropped with a warning; unrecognized kind strings are kept
+    (they are inert — nothing ever produces them — so they can never widen
+    the grant set, and dropping them would silently discard a future kind
+    after a downgrade).
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        logger.warning(f"sql_allow must be a list of strings, got {type(raw).__name__}. Ignoring.")
+        return None
+    kinds = []
+    for entry in raw:
+        if isinstance(entry, str) and entry.strip():
+            kinds.append(entry.strip().lower())
+        else:
+            logger.warning(f"Ignoring non-string sql_allow entry: {entry!r}")
+    return kinds or None
 
 
 def _parse_optional_string(raw: Any, *, key: str) -> Optional[str]:
@@ -437,6 +472,7 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "language": override.language,
             "reasoning_effort": override.reasoning_effort,
             "bash_allow": override.bash_allow,
+            "sql_allow": override.sql_allow,
         }.items()
         if v is not None
     }
@@ -445,18 +481,66 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
     return path
 
 
-def append_project_bash_allow(pattern: str, cwd: Optional[str] = None) -> Path:
-    """Append a bash allow pattern to ``./.datus/config.yml``'s ``bash_allow`` list.
+def _append_project_list_entry(key: str, value: str, key_comment: str, cwd: Optional[str] = None) -> Path:
+    """Append ``value`` to the ``<key>:`` list in ``./.datus/config.yml``.
 
-    Used by the "allow (project)" choice in the bash permission prompt.
     Edits at the TEXT level (not load->dump) so user comments and formatting
     in the rest of the file are preserved:
 
-    - file missing        -> create it with a commented ``bash_allow`` block
-    - no ``bash_allow:``  -> append the block at the end of the file
-    - key present         -> insert ``  - "<pattern>"`` right after the key line
-    - pattern already in the parsed list -> no-op
+    - file missing     -> create it with a commented ``<key>`` block
+    - no ``<key>:``    -> append the block at the end of the file
+    - key present      -> insert ``  - "<value>"`` right after the key line
+    - value already in the parsed list -> no-op
 
+    Raises ``OSError`` on write failures; callers degrade to a session-level
+    grant.
+    """
+    path = project_config_path(cwd)
+    # json.dumps yields a valid double-quoted YAML scalar with proper
+    # escaping, so a value containing ``"`` or a trailing backslash cannot
+    # corrupt the file (a parse failure would drop ALL project overrides).
+    entry_line = f"  - {json.dumps(value)}"
+
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = (
+            "# Project-level Datus overrides. See conf/agent.yml.example for the full schema.\n"
+            f"# {key_comment}\n"
+            f"{key}:\n{entry_line}\n"
+        )
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    text = path.read_text(encoding="utf-8")
+
+    # No-op when the value is already present (compare parsed values, not
+    # raw text, so quoting style differences don't cause duplicates).
+    try:
+        existing = yaml.safe_load(text) or {}
+        if isinstance(existing, dict) and value in (existing.get(key) or []):
+            return path
+    except yaml.YAMLError:
+        logger.warning(f"{path} is not valid YAML; appending {key} anyway.")
+
+    lines = text.splitlines()
+    key_idx = next(
+        (i for i, line in enumerate(lines) if line.startswith(f"{key}:") and not line.lstrip().startswith("#")),
+        None,
+    )
+    if key_idx is None:
+        suffix = "" if (not text or text.endswith("\n")) else "\n"
+        path.write_text(f"{text}{suffix}{key}:\n{entry_line}\n", encoding="utf-8")
+    else:
+        lines.insert(key_idx + 1, entry_line)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def append_project_bash_allow(pattern: str, cwd: Optional[str] = None) -> Path:
+    """Append a bash allow pattern to ``./.datus/config.yml``'s ``bash_allow`` list.
+
+    Used by the "allow (project)" choice in the bash permission prompt; see
+    :func:`_append_project_list_entry` for the text-level edit semantics.
     Raises ``OSError`` on write failures; callers (``PermissionManager.
     add_project_bash_allow``) degrade to a session-level grant.
     """
@@ -470,42 +554,35 @@ def append_project_bash_allow(pattern: str, cwd: Optional[str] = None) -> Path:
                 "your_value": pattern,
             },
         )
-    path = project_config_path(cwd)
-    # json.dumps yields a valid double-quoted YAML scalar with proper
-    # escaping, so a pattern containing ``"`` or a trailing backslash cannot
-    # corrupt the file (a parse failure would drop ALL project overrides).
-    entry_line = f"  - {json.dumps(pattern)}"
-
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        content = (
-            "# Project-level Datus overrides. See conf/agent.yml.example for the full schema.\n"
-            "# bash_allow patterns are appended to agent.permissions.bash_commands.allow.\n"
-            f"bash_allow:\n{entry_line}\n"
-        )
-        path.write_text(content, encoding="utf-8")
-        return path
-
-    text = path.read_text(encoding="utf-8")
-
-    # No-op when the pattern is already present (compare parsed values, not
-    # raw text, so quoting style differences don't cause duplicates).
-    try:
-        existing = yaml.safe_load(text) or {}
-        if isinstance(existing, dict) and pattern in (existing.get("bash_allow") or []):
-            return path
-    except yaml.YAMLError:
-        logger.warning(f"{path} is not valid YAML; appending bash_allow anyway.")
-
-    lines = text.splitlines()
-    key_idx = next(
-        (i for i, line in enumerate(lines) if line.startswith("bash_allow:") and not line.lstrip().startswith("#")),
-        None,
+    return _append_project_list_entry(
+        "bash_allow",
+        pattern,
+        "bash_allow patterns are appended to agent.permissions.bash_commands.allow.",
+        cwd,
     )
-    if key_idx is None:
-        suffix = "" if (not text or text.endswith("\n")) else "\n"
-        path.write_text(f"{text}{suffix}bash_allow:\n{entry_line}\n", encoding="utf-8")
-    else:
-        lines.insert(key_idx + 1, entry_line)
-        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+
+
+def append_project_sql_allow(kind: str, cwd: Optional[str] = None) -> Path:
+    """Append a SQL statement kind to ``./.datus/config.yml``'s ``sql_allow`` list.
+
+    Used by the "allow (project)" choice in the SQL permission prompt; see
+    :func:`_append_project_list_entry` for the text-level edit semantics.
+    Raises ``OSError`` on write failures; callers (``PermissionManager.
+    add_project_sql_allow``) degrade to a session-level grant.
+    """
+    kind = kind.strip().lower()
+    if not kind:
+        raise DatusException(
+            code=ErrorCode.COMMON_FIELD_INVALID,
+            message_args={
+                "field_name": "sql allow kind",
+                "except_values": "non-empty string",
+                "your_value": kind,
+            },
+        )
+    return _append_project_list_entry(
+        "sql_allow",
+        kind,
+        "sql_allow statement kinds are auto-allowed by the execute_sql permission gate.",
+        cwd,
+    )

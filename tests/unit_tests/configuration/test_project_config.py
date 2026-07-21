@@ -220,6 +220,7 @@ class TestAllowedKeys:
                 "language",
                 "reasoning_effort",
                 "bash_allow",
+                "sql_allow",
             }
         )
 
@@ -328,6 +329,97 @@ class TestServiceDefaultFields:
         loaded = yaml.safe_load(written.read_text())
         assert "dashboard" in loaded
         assert "scheduler" not in loaded
+
+
+class TestSqlAllow:
+    """Project-level sql_allow parsing and text-level appending."""
+
+    def _write(self, tmp_path, content: str):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return path
+
+    def test_parse_sql_allow_list_normalizes_case(self, tmp_path):
+        self._write(tmp_path, yaml.safe_dump({"sql_allow": ["INSERT", "drop"]}))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["insert", "drop"]
+
+    def test_non_list_sql_allow_dropped(self, tmp_path):
+        self._write(tmp_path, yaml.safe_dump({"sql_allow": "insert"}))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow is None
+
+    def test_non_string_entries_dropped(self, tmp_path):
+        self._write(tmp_path, yaml.safe_dump({"sql_allow": ["insert", 42, ""]}))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["insert"]
+
+    def test_sql_allow_round_trips_through_save(self, tmp_path):
+        save_project_override(ProjectOverride(sql_allow=["delete"]), cwd=str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["delete"]
+
+    def test_is_empty_false_when_sql_allow_set(self):
+        assert not ProjectOverride(sql_allow=["drop"]).is_empty()
+
+    def test_append_creates_file(self, tmp_path):
+        from datus.configuration.project_config import append_project_sql_allow
+
+        append_project_sql_allow("insert", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["insert"]
+
+    def test_append_normalizes_kind(self, tmp_path):
+        from datus.configuration.project_config import append_project_sql_allow
+
+        append_project_sql_allow("  DROP ", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["drop"]
+
+    def test_append_to_file_without_key_preserves_content(self, tmp_path):
+        from datus.configuration.project_config import append_project_sql_allow
+
+        self._write(tmp_path, "# my project config\nproject_name: proj_a\n")
+        append_project_sql_allow("delete", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["delete"]
+        assert result.project_name == "proj_a"
+        assert "# my project config" in (tmp_path / PROJECT_CONFIG_REL).read_text()
+
+    def test_append_to_existing_key_preserves_entries(self, tmp_path):
+        from datus.configuration.project_config import append_project_sql_allow
+
+        self._write(tmp_path, '# header comment\nsql_allow:\n  - "insert"\nproject_name: proj_a\n')
+        append_project_sql_allow("drop", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert sorted(result.sql_allow) == ["drop", "insert"]
+        assert "# header comment" in (tmp_path / PROJECT_CONFIG_REL).read_text()
+
+    def test_append_is_idempotent(self, tmp_path):
+        from datus.configuration.project_config import append_project_sql_allow
+
+        append_project_sql_allow("drop", str(tmp_path))
+        append_project_sql_allow("drop", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.sql_allow == ["drop"]
+
+    def test_append_empty_kind_raises(self, tmp_path):
+        from datus.configuration.project_config import append_project_sql_allow
+        from datus.utils.exceptions import DatusException
+
+        with pytest.raises(DatusException):
+            append_project_sql_allow("   ", str(tmp_path))
+
+    def test_append_coexists_with_bash_allow(self, tmp_path):
+        """sql_allow and bash_allow edits must not clobber each other."""
+        from datus.configuration.project_config import append_project_bash_allow, append_project_sql_allow
+
+        append_project_bash_allow("make:*", str(tmp_path))
+        append_project_sql_allow("drop", str(tmp_path))
+        result = load_project_override(str(tmp_path))
+        assert result.bash_allow == ["make:*"]
+        assert result.sql_allow == ["drop"]
 
 
 class TestBashAllow:

@@ -82,7 +82,8 @@ agent:
   #
   # Profiles:
   #   normal    — Read-only allowed; all writes prompt; named destructive deny
-  #   auto      — Normal + workspace writes auto; DB writes + destructives prompt (not deny)
+  #   auto      — Normal + workspace writes auto + SQL non-destructive writes
+  #               auto; destructive SQL (UPDATE/DELETE/DROP/...) prompts (not deny)
   #   dangerous — Nearly everything auto (writes outside workspace still prompt)
   #
   # User rules in ``rules:`` are evaluated after the profile base, so they
@@ -126,6 +127,27 @@ agent:
   #   # plugin ``ask`` rule can be relaxed per project via the prompt's
   #   # "allow (project)" choice (or a matching ``bash_allow`` entry in
   #   # ``.datus/config.yml``): an exact-match grant auto-runs that pattern.
+  #   #
+  #   # Per-class SQL statement rules for ``execute_sql`` (optional; profile
+  #   # defaults apply when omitted). The statement is classified into a kind
+  #   # and gated by its class:
+  #   #   read        — SELECT / SHOW / DESCRIBE / EXPLAIN
+  #   #   write       — INSERT, CREATE, benign DDL (COMMENT/GRANT/ANALYZE/...),
+  #   #                 USE/SET/CALL. NOTE: CALL/EXEC can run arbitrary stored
+  #   #                 procedures — set ``write: ask`` if that matters to you.
+  #   #   destructive — UPDATE, DELETE, MERGE, DROP, TRUNCATE, ALTER, REPLACE
+  #   #   unknown     — unparseable SQL (fail-safe)
+  #   # Profile defaults: normal = read allow, rest ask; auto = read+write
+  #   # allow, destructive/unknown ask; dangerous = everything allow.
+  #   # The confirmation prompt offers once / session / project scopes;
+  #   # "project" appends the statement kind (e.g. ``drop``) to
+  #   # ``.datus/config.yml``'s ``sql_allow`` list, which auto-allows that
+  #   # exact kind in this project from then on.
+  #   # sql_statements:
+  #   #   read: allow
+  #   #   write: ask
+  #   #   destructive: ask
+  #   #   unknown: ask
 
 
   nodes:

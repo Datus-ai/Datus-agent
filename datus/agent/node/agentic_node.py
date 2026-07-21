@@ -2258,6 +2258,7 @@ class AgenticNode(Node):
                 active_profile=active_profile,
                 plugin_bash_rules=getattr(self.agent_config, "plugin_bash_rules", None),
                 project_bash_allows=getattr(self.agent_config, "project_bash_allow", None),
+                project_sql_allows=getattr(self.agent_config, "project_sql_allow", None),
             )
             # Forward existing callback to permission manager
             if self._permission_callback:

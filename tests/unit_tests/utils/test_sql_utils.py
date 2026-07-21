@@ -20,6 +20,7 @@ from datus.utils.sql_utils import (
     parse_dialect,
     parse_metadata_from_ddl,
     parse_read_dialect,
+    parse_sql_statement_kind,
     parse_sql_type,
     parse_table_name_parts,
     parse_table_names_parts,
@@ -1619,3 +1620,77 @@ class TestReadWorkspaceSqlFile:
     def test_missing_file_raises_file_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             read_workspace_sql_file("sql/missing.sql", str(tmp_path))
+
+
+class TestParseSqlStatementKind:
+    """Fine-grained statement kinds for the execute_sql permission gate."""
+
+    @pytest.mark.parametrize(
+        "sql,expected",
+        [
+            # Kinds identical to parse_sql_type values.
+            ("SELECT * FROM t", "select"),
+            ("WITH cte AS (SELECT 1) SELECT * FROM cte", "select"),
+            ("VALUES (1), (2)", "select"),
+            ("SHOW TABLES", "metadata"),
+            ("DESCRIBE t", "metadata"),
+            ("EXPLAIN SELECT 1", "explain"),
+            ("INSERT INTO t VALUES (1)", "insert"),
+            ("UPDATE t SET a = 1", "update"),
+            ("DELETE FROM t WHERE id = 1", "delete"),
+            ("MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = 1", "merge"),
+            ("USE analytics", "context_set"),
+            ("SET search_path = public", "context_set"),
+            # DDL refined by leading keyword.
+            ("CREATE TABLE t (id INT)", "create"),
+            ("CREATE OR REPLACE VIEW v AS SELECT 1", "create"),
+            ("CREATE TABLE t AS SELECT * FROM s", "create"),
+            ("ALTER TABLE t ADD COLUMN b INT", "alter"),
+            ("DROP TABLE t", "drop"),
+            ("DROP VIEW IF EXISTS v", "drop"),
+            ("TRUNCATE TABLE t", "truncate"),
+            # Benign DDL stays in the coarse ddl bucket.
+            ("COMMENT ON TABLE t IS 'x'", "ddl"),
+            ("GRANT SELECT ON t TO alice", "ddl"),
+            ("ANALYZE t", "ddl"),
+            # sqlglot models VACUUM as a generic Command → CONTENT_SET; a
+            # benign maintenance command in the write class is acceptable.
+            ("VACUUM", "context_set"),
+        ],
+    )
+    def test_kind_classification(self, sql, expected):
+        assert parse_sql_statement_kind(sql, "duckdb") == expected
+
+    def test_rename_counts_as_alter(self):
+        assert parse_sql_statement_kind("RENAME TABLE t TO u", "mysql") == "alter"
+
+    def test_replace_into_is_its_own_kind(self):
+        """REPLACE deletes matched rows before inserting — must not be 'insert'."""
+        assert parse_sql_statement_kind("REPLACE INTO t VALUES (1)", "mysql") == "replace"
+
+    def test_cte_fronted_insert_is_insert(self):
+        """A WITH-fronted INSERT classifies by the real statement, not 'WITH'."""
+        assert parse_sql_statement_kind("WITH src AS (SELECT 1 AS a) INSERT INTO t SELECT * FROM src", "") == "insert"
+
+    def test_multi_statement_classifies_first_only(self):
+        """First-statement semantics: the tool layer's multi-statement
+        rejection is the backstop for trailing statements."""
+        assert parse_sql_statement_kind("SELECT 1; DROP TABLE t", "") == "select"
+
+    def test_leading_comment_ignored(self):
+        assert parse_sql_statement_kind("-- cleanup\nDROP TABLE t", "") == "drop"
+
+    def test_empty_and_garbage_fall_to_unknown(self):
+        assert parse_sql_statement_kind("", "") == "unknown"
+        assert parse_sql_statement_kind("   ", "") == "unknown"
+        assert parse_sql_statement_kind("FROBNICATE THE WIDGETS", "") == "unknown"
+
+    def test_no_dialect_works_for_common_statements(self):
+        """The permission hook has no dialect; the fallback must still split."""
+        assert parse_sql_statement_kind("DROP TABLE t", "") == "drop"
+        assert parse_sql_statement_kind("TRUNCATE TABLE t", "") == "truncate"
+        assert parse_sql_statement_kind("SELECT 1", "") == "select"
+
+    def test_case_insensitive_keywords(self):
+        assert parse_sql_statement_kind("drop table t", "") == "drop"
+        assert parse_sql_statement_kind("Truncate Table t", "") == "truncate"

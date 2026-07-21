@@ -24,6 +24,8 @@ from datus.tools.permission.permission_config import (
     PermissionConfig,
     PermissionLevel,
     PermissionRule,
+    SqlStatementRules,
+    classify_sql_kind,
 )
 from datus.tools.permission.permission_hooks import (
     CompositeHooks,
@@ -43,6 +45,8 @@ __all__ = [
     "BashCommandRules",
     "BashRuleDecision",
     "evaluate_bash_command",
+    "SqlStatementRules",
+    "classify_sql_kind",
     "BashCommandClassifier",
     "BashClassifierContext",
     "ClassifierVerdict",

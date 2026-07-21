@@ -55,6 +55,7 @@ class PermissionManager:
         active_profile: str = "normal",
         plugin_bash_rules: Optional[Dict[str, "BashCommandRules"]] = None,
         project_bash_allows: Optional[List[str]] = None,
+        project_sql_allows: Optional[List[str]] = None,
     ):
         """Initialize the permission manager.
 
@@ -78,6 +79,11 @@ class PermissionManager:
                 grant set that lets the hook bypass an *ask-rule* hit whose
                 matched pattern the project explicitly allowed — plain allow
                 entries cannot beat ask rules at evaluation time.
+            project_sql_allows: SQL statement kinds granted at project scope
+                (``./.datus/config.yml`` ``sql_allow``). Exact-match grant set
+                consulted by ``PermissionHooks._handle_sql_permission`` to
+                auto-allow a statement kind before prompting; never merged
+                into rules.
         """
         # Copy the incoming config — ``get_profile`` returns shared module-level
         # objects, and ``add_persistent_rule`` mutates ``global_config.rules``
@@ -113,6 +119,15 @@ class PermissionManager:
         # unaffected by profile switches — the on-disk grant is user intent.
         self._project_bash_grants: set = set(project_bash_allows or [])
 
+        # Exact-match project SQL statement-kind grants (``.datus/config.yml``
+        # sql_allow, plus "allow (project)" prompt choices this session).
+        # Like bash grants, unaffected by profile switches; unlike bash
+        # grants, never installed into ``global_config`` — the SQL gate
+        # consults this set directly.
+        self._project_sql_grants: set = {
+            k.strip().lower() for k in (project_sql_allows or []) if isinstance(k, str) and k.strip()
+        }
+
         logger.debug(
             f"PermissionManager initialized: profile={self.active_profile}, "
             f"{len(self.global_config.rules)} global rules"
@@ -137,6 +152,7 @@ class PermissionManager:
             # Deep copy so runtime mutations (add_project_bash_allow) never
             # bleed into the shared profile singletons in profiles.py.
             bash_commands=config.bash_commands.model_copy(deep=True) if config.bash_commands else None,
+            sql_statements=config.sql_statements.model_copy(deep=True) if config.sql_statements else None,
         )
 
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:
@@ -411,6 +427,41 @@ class PermissionManager:
         silences a narrower ask rule.
         """
         return bool(pattern) and pattern in self._project_bash_grants
+
+    def add_project_sql_allow(self, kind: str, project_root: Optional[str] = None) -> bool:
+        """Grant a SQL statement kind at project scope ("allow (project)").
+
+        Two effects (no ``global_config`` install — the SQL gate consults the
+        grant set directly, so nothing needs to survive a config rebuild):
+        1. Add the kind to the in-memory ``_project_sql_grants`` set.
+        2. Persist it to ``./.datus/config.yml`` (``sql_allow`` key) so future
+           sessions pick it up through ``_apply_project_override``.
+
+        Returns True when the kind was persisted to disk; False when the
+        write failed (read-only checkout, etc.) — the in-memory grant still
+        applies, so callers may degrade to a session-level approval message.
+        """
+        kind = kind.strip().lower()
+        self._project_sql_grants.add(kind)
+
+        try:
+            from datus.configuration.project_config import append_project_sql_allow
+
+            append_project_sql_allow(kind, project_root or ".")
+            logger.info(f"Project-level sql allow persisted: {kind!r}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to persist project sql allow {kind!r}: {e}; grant applies to this session only")
+            return False
+
+    def has_project_sql_grant(self, kind: Optional[str]) -> bool:
+        """True when statement ``kind`` was granted at project scope.
+
+        Exact match, like :meth:`has_project_bash_grant`: the grant string is
+        the concrete kind produced by ``parse_sql_statement_kind`` (e.g.
+        ``"drop"``), so a grant can never widen to a different kind.
+        """
+        return bool(kind) and kind.strip().lower() in self._project_sql_grants
 
     def is_plugin_ask_pattern(self, pattern: Optional[str]) -> bool:
         """True when ``pattern`` is an ask rule declared by a plugin for the

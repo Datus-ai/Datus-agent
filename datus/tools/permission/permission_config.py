@@ -82,6 +82,121 @@ class PermissionRule(BaseModel):
         return True
 
 
+# Fine-grained statement kinds (``parse_sql_statement_kind``) mapped to the
+# permission classes ``SqlStatementRules`` gates on. Destructive = statements
+# that irreversibly mutate or remove existing data/schema; REPLACE deletes
+# matched rows before re-inserting, and MERGE carries UPDATE/DELETE semantics
+# in its WHEN MATCHED branches, so both count as destructive.
+_SQL_KIND_TO_CLASS: Dict[str, str] = {
+    "select": "read",
+    "metadata": "read",
+    "explain": "read",
+    "insert": "write",
+    "create": "write",
+    "ddl": "write",
+    "context_set": "write",
+    "update": "destructive",
+    "delete": "destructive",
+    "merge": "destructive",
+    "drop": "destructive",
+    "truncate": "destructive",
+    "alter": "destructive",
+    "replace": "destructive",
+    "unknown": "unknown",
+}
+
+
+def classify_sql_kind(kind: str) -> str:
+    """Map a fine-grained statement kind to its permission class.
+
+    Unmapped kinds fall to ``unknown`` (fail-safe: an unrecognized statement
+    must never inherit a permissive class).
+    """
+    return _SQL_KIND_TO_CLASS.get(kind, "unknown")
+
+
+class SqlStatementRules(BaseModel):
+    """Per-class permission levels for ``db_tools.execute_sql``.
+
+    ``execute_sql`` is the unified SQL entry point, so a single static rule
+    cannot express "reads auto-allow, writes ask, destructive statements
+    always confirm". This model carries one :class:`PermissionLevel` per
+    statement class; the classes are resolved from the concrete statement by
+    ``parse_sql_statement_kind`` + :func:`classify_sql_kind`.
+
+    Configured per profile (``profiles.py``) and user-overridable under
+    ``permissions.sql_statements`` in agent.yml:
+
+        permissions:
+          sql_statements:
+            read: allow        # SELECT / SHOW / DESCRIBE / EXPLAIN
+            write: ask         # INSERT, CREATE, COMMENT/GRANT/..., USE/SET
+            destructive: ask   # UPDATE, DELETE, MERGE, DROP, TRUNCATE, ALTER, REPLACE
+            unknown: ask       # unparseable SQL (fail-safe)
+    """
+
+    read: PermissionLevel = Field(
+        default=PermissionLevel.ALLOW, description="SELECT / SHOW / DESCRIBE / EXPLAIN statements"
+    )
+    write: PermissionLevel = Field(
+        default=PermissionLevel.ASK, description="INSERT, CREATE, benign DDL, and session statements"
+    )
+    destructive: PermissionLevel = Field(
+        default=PermissionLevel.ASK,
+        description="Irreversible statements: UPDATE, DELETE, MERGE, DROP, TRUNCATE, ALTER, REPLACE",
+    )
+    unknown: PermissionLevel = Field(default=PermissionLevel.ASK, description="Unparseable statements (fail-safe)")
+
+    class Config:
+        use_enum_values = True
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> Optional["SqlStatementRules"]:
+        """Build from the ``permissions.sql_statements`` YAML block.
+
+        Returns ``None`` when the block is absent so callers can distinguish
+        "not configured" from "configured with defaults". Only keys present in
+        the YAML are passed to the constructor so ``model_fields_set`` records
+        which levels were explicit — ``merge_with`` relies on that to layer
+        user overrides without clobbering profile defaults.
+        """
+        if data is None:
+            return None
+        if not isinstance(data, dict):
+            raise ValueError(f"permissions.sql_statements must be a mapping, got {type(data).__name__}")
+        kwargs: Dict[str, Any] = {}
+        for field_name in ("read", "write", "destructive", "unknown"):
+            if field_name in data:
+                kwargs[field_name] = PermissionLevel(data[field_name])
+        return cls(**kwargs)
+
+    def merge_with(self, override: Optional["SqlStatementRules"]) -> "SqlStatementRules":
+        """Layer another ruleset on top; explicit override fields win.
+
+        Mirrors ``BashCommandRules.merge_with`` scalar semantics: a level from
+        ``override`` replaces this one only when it was explicitly set
+        (tracked via ``model_fields_set``).
+        """
+        if override is None:
+            return self
+        merged = self.model_copy()
+        for field_name in ("read", "write", "destructive", "unknown"):
+            if field_name in override.model_fields_set:
+                setattr(merged, field_name, getattr(override, field_name))
+        return merged
+
+    def level_for_class(self, sql_class: str) -> PermissionLevel:
+        """Permission level for a statement class; unmapped classes fail safe.
+
+        ``use_enum_values`` stores fields as plain strings at runtime, so the
+        value is coerced back to :class:`PermissionLevel` before returning.
+        """
+        value = getattr(self, sql_class, None)
+        if value is None:
+            value = self.unknown
+        return PermissionLevel(value)
+
+
 class PermissionConfig(BaseModel):
     """Unified permission configuration for all tools, MCP, and skills.
 
@@ -109,6 +224,9 @@ class PermissionConfig(BaseModel):
         bash_commands: Optional command-level bash rules (see ``bash_rules.py``);
             consumed by ``PermissionHooks._handle_bash_permission``. When None,
             the coarse ``bash_tools.bash`` rule governs as before.
+        sql_statements: Optional per-class statement rules for ``execute_sql``;
+            consumed by ``PermissionHooks._handle_sql_permission``. When None,
+            the legacy read-only/ASK gating governs as before.
     """
 
     rules: List[PermissionRule] = Field(default_factory=list, description="Permission rules evaluated in order")
@@ -117,6 +235,9 @@ class PermissionConfig(BaseModel):
     )
     bash_commands: Optional["BashCommandRules"] = Field(
         default=None, description="Command-level allow/deny/ask rules for the bash tool"
+    )
+    sql_statements: Optional[SqlStatementRules] = Field(
+        default=None, description="Per-class permission levels for execute_sql statements"
     )
 
     class Config:
@@ -150,6 +271,7 @@ class PermissionConfig(BaseModel):
             default_permission=PermissionLevel(default),
             rules=rules,
             bash_commands=BashCommandRules.from_dict(data.get("bash_commands")),
+            sql_statements=SqlStatementRules.from_dict(data.get("sql_statements")),
         )
 
     def merge_with(self, override: Optional["PermissionConfig"]) -> "PermissionConfig":
@@ -176,12 +298,20 @@ class PermissionConfig(BaseModel):
         else:
             merged_bash = override.bash_commands
 
+        # SQL statement rules layer: per-class levels override only when
+        # explicitly set (see SqlStatementRules.merge_with).
+        if self.sql_statements is not None:
+            merged_sql = self.sql_statements.merge_with(override.sql_statements)
+        else:
+            merged_sql = override.sql_statements
+
         # Always use override's default_permission when override is provided
         # This allows overriding just the default without adding rules
         return PermissionConfig(
             default_permission=override.default_permission,
             rules=merged_rules,
             bash_commands=merged_bash,
+            sql_statements=merged_sql,
         )
 
 

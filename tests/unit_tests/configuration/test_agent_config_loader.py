@@ -677,6 +677,40 @@ class TestApplyProjectOverrideBashAllow:
         assert "project_bash_allow" not in agent_raw
 
 
+class TestApplyProjectOverrideSqlAllow:
+    """sql_allow rides as a raw grant list only — never merged into permissions."""
+
+    def test_sql_allow_forwarded_as_raw_grant_list(self):
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sql_allow=["insert", "drop"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["project_sql_allow"] == ["insert", "drop"]
+
+    def test_sql_allow_does_not_touch_permissions(self):
+        """Unlike bash_allow, SQL grants act only through the exact-match
+        grant set — the permissions section must stay untouched."""
+        agent_raw = {"permissions": {"profile": "normal"}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sql_allow=["drop"]),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["permissions"] == {"profile": "normal"}
+        assert agent_raw["project_sql_allow"] == ["drop"]
+
+    def test_no_sql_allow_leaves_grant_list_unset(self):
+        agent_raw = {"target": "openai", "models": {"openai": {}}}
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(project_name="p"),
+        ):
+            _apply_project_override(agent_raw)
+        assert "project_sql_allow" not in agent_raw
+
+
 class TestPermissionModeCliOverride:
     """--permission-mode kwarg reshapes permissions.profile at load time."""
 

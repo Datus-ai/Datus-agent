@@ -35,7 +35,7 @@ from datus.tools.permission.bash_rules import (
     BashRuleDecision,
     evaluate_bash_command,
 )
-from datus.tools.permission.permission_config import PermissionLevel
+from datus.tools.permission.permission_config import PermissionLevel, classify_sql_kind
 from datus.tools.registry.tool_registry import ToolRegistry
 from datus.utils.constants import SQLType
 from datus.utils.json_utils import to_pretty_str
@@ -373,12 +373,15 @@ class PermissionHooks(AgentHooks):
             if handled:
                 return
 
-        # db_tools.execute_sql: statement-type gating overrides rules.
-        #   read-only (SELECT/SHOW/DESCRIBE/EXPLAIN) → bypass; writes (INSERT/
-        #   UPDATE/DELETE), DDL, and unknown/MERGE → ASK (session cache bucketed
-        #   per SQL type), dangerous bypass, non-interactive raise. A ``.sql``
-        #   file is resolved first; an unreadable file or unparseable text falls
-        #   through to UNKNOWN → ASK (fail safe).
+        # db_tools.execute_sql: statement-class gating overrides rules.
+        #   The statement is classified into a fine-grained kind (insert/
+        #   create/drop/...) whose class (read/write/destructive/unknown) is
+        #   resolved against the profile's ``sql_statements`` ruleset: read
+        #   auto-allows everywhere, write auto-allows under auto, destructive
+        #   and unknown ASK (session cache bucketed per kind, project grants
+        #   via ``.datus/config.yml`` sql_allow), dangerous bypass,
+        #   non-interactive raise. A ``.sql`` file is resolved first; an
+        #   unreadable file or unparseable text falls to unknown → ASK.
         if category == "db_tools" and tool_name == "execute_sql":
             handled = await self._handle_sql_permission(context, tool_name, pattern_name)
             if handled:
@@ -719,71 +722,82 @@ class PermissionHooks(AgentHooks):
             logger.error(f"Error in external filesystem confirmation for {tool_name}: {e}")
             return False
 
-    # Read-only SQL statement types that auto-allow under ``execute_sql``.
-    # Everything else (INSERT/UPDATE/DELETE/DDL/MERGE/UNKNOWN) defers to the
-    # normal category-level permission check.
-    _SQL_READONLY_TYPES = frozenset({SQLType.SELECT, SQLType.METADATA_SHOW, SQLType.EXPLAIN})
+    # Read-only statement kinds that auto-allow under ``execute_sql``
+    # regardless of profile (legacy path — the class-rule path resolves the
+    # same set through ``classify_sql_kind``'s ``read`` class).
+    _SQL_READONLY_KINDS = frozenset({SQLType.SELECT.value, SQLType.METADATA_SHOW.value, SQLType.EXPLAIN.value})
+
+    # Fine-grained kinds folded back into their legacy ``SQLType`` value for
+    # the no-ruleset path, so session buckets stay byte-compatible with
+    # configs that predate ``sql_statements`` (e.g. ``execute_sql.ddl``, not
+    # ``execute_sql.drop``).
+    _SQL_LEGACY_KIND_MAP = {
+        "create": SQLType.DDL.value,
+        "alter": SQLType.DDL.value,
+        "drop": SQLType.DDL.value,
+        "truncate": SQLType.DDL.value,
+        "replace": SQLType.INSERT.value,
+    }
 
     async def _handle_sql_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
-        """Statement-type gating for ``db_tools.execute_sql`` calls.
+        """Statement-class gating for ``db_tools.execute_sql`` calls.
 
         ``execute_sql`` is the unified SQL entry point, so a single static rule
-        cannot express "reads auto-allow, writes ask". This gate inspects the
-        statement type instead:
+        cannot express "reads auto-allow, writes ask, destructive statements
+        always confirm". This gate classifies the statement into a fine-grained
+        kind (``parse_sql_statement_kind``: ``insert`` / ``create`` / ``drop``
+        / ...) and gates on the kind's class (:func:`classify_sql_kind`:
+        read / write / destructive / unknown) via the effective config's
+        ``sql_statements`` ruleset:
 
-        * Read-only (SELECT/SHOW/DESCRIBE/EXPLAIN) → auto-allow, unless an
-          explicit DENY rule blocks ``db_tools.execute_sql`` (then defer so the
-          DENY is surfaced).
-        * Writes (INSERT/UPDATE/DELETE), DDL, and unknown/MERGE → category-level
-          rule check for DENY/ALLOW, then ASK with a session cache **bucketed by
-          the concrete SQL type** (``execute_sql.insert`` / ``.update`` /
-          ``.delete`` / ``.ddl`` / ``.merge`` / ``.unknown``). Per-type bucketing
-          matters because ``execute_sql`` is one tool name: an "Always allow"
-          keyed on the bare tool name would let one approved INSERT silently
-          green-light every later DELETE / DROP / MERGE, so each statement type
-          carries its own session approval. ALLOW under dangerous (rule check
-          returns ALLOW), raise when non-interactive.
+        * Coarse category rules stay authoritative: an explicit DENY defers so
+          the main flow raises the standardized message; an explicit ALLOW
+          (dangerous profile default, or a user ``db_tools/execute_sql: allow``
+          rule) bypasses everything.
+        * No ``sql_statements`` ruleset (legacy configs, bare
+          ``PermissionConfig``) → original behavior: read-only statements
+          auto-allow, everything else prompts with a per-SQLType session
+          bucket.
+        * Ruleset present → the class level decides. ALLOW passes (this is how
+          ``auto`` runs INSERT/CREATE without prompting), DENY raises in-hook,
+          ASK consults the project grant set (``.datus/config.yml``
+          ``sql_allow``), then the per-kind session cache, then prompts with
+          allow once / session / project / deny. Session and project grants
+          are keyed by the concrete kind (``execute_sql.drop`` vs
+          ``.truncate``) so one approval never cascades across kinds.
 
-        A ``.sql`` file reference is resolved (same workspace-relative read as the
-        tool) so the gate classifies the real statement — a read-only ``.sql``
-        file auto-allows instead of prompting. An unreadable file or unparseable
-        text falls through to UNKNOWN → ASK (fail safe).
+        A ``.sql`` file reference is resolved (same workspace-relative read as
+        the tool) so the gate classifies the real statement — a read-only
+        ``.sql`` file auto-allows instead of prompting. An unreadable file or
+        unparseable text falls to kind ``unknown`` → ASK (fail safe). Only the
+        first statement is classified; the tool layer's multi-statement
+        rejection (``_validate_read_sql`` and the write/DDL validators) is the
+        backstop for trailing statements.
 
-        Returns ``True`` when the call has been fully handled (read auto-allowed,
-        explicit/dangerous ALLOW, or bucketed ASK approved), ``False`` to let the
-        normal category-level permission check run (surfaces DENY / the
-        standardized non-interactive raise).
+        Returns ``True`` when the call has been fully handled, ``False`` to
+        let the normal category-level permission check run (surfaces DENY /
+        the standardized non-interactive raise).
         """
-        from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_type, read_workspace_sql_file
+        from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_statement_kind, read_workspace_sql_file
 
         args = self._parse_tool_args(context)
         if not isinstance(args, dict):
             return False
         sql = args.get("sql", "")
         # Resolve a ``.sql`` file reference to its real (single) statement so the
-        # type detection below sees the SQL, not the path. On any read failure,
-        # leave ``sql`` as-is → UNKNOWN → ASK (fail safe).
+        # kind detection below sees the SQL, not the path. On any read failure,
+        # leave ``sql`` as-is → unknown → ASK (fail safe).
         if isinstance(sql, str) and looks_like_sql_file_ref(sql):
             try:
                 sql = read_workspace_sql_file(sql.strip(), self.project_root or ".")
             except Exception as e:
                 logger.debug("execute_sql gate: could not resolve .sql file (%s); treating as UNKNOWN", e)
         # No dialect available at the hook layer; the keyword fallback in
-        # ``parse_sql_type`` is enough to separate reads from writes/DDL.
-        sql_type = parse_sql_type(sql, "") if isinstance(sql, str) else SQLType.UNKNOWN
+        # ``parse_sql_statement_kind`` is enough to separate the classes.
+        kind = parse_sql_statement_kind(sql, "") if isinstance(sql, str) else SQLType.UNKNOWN.value
+        sql_class = classify_sql_kind(kind)
 
-        if sql_type in self._SQL_READONLY_TYPES:
-            # Respect an explicit DENY; otherwise reads auto-allow regardless of
-            # profile (there is no static ALLOW rule for execute_sql to rely on).
-            if (
-                self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
-                == PermissionLevel.DENY
-            ):
-                return False
-            logger.debug("execute_sql read-only (%s): auto-allow", sql_type.value)
-            return True
-
-        # Non-read (write / DDL / unknown). Honour explicit rules first.
+        # Honour explicit coarse rules first — they are the escape hatches.
         permission = self.permission_manager.check_permission("db_tools", pattern_name, self.node_name)
         if permission == PermissionLevel.DENY:
             # Surface the standardized DENY raise via the main flow.
@@ -792,21 +806,109 @@ class PermissionHooks(AgentHooks):
             # Explicit ALLOW rule or a permissive profile (e.g. dangerous).
             return True
 
-        # ASK. Non-interactive flows must not prompt — defer so the main flow
+        rules = getattr(self.permission_manager.get_effective_config(self.node_name), "sql_statements", None)
+        if rules is None:
+            # Legacy path (no per-class ruleset): reads auto-allow, everything
+            # else prompts with the coarse SQLType bucket.
+            return await self._handle_sql_permission_legacy(context, kind)
+
+        level = rules.level_for_class(sql_class)
+        if level == PermissionLevel.ALLOW:
+            logger.debug("execute_sql %s (class %s): auto-allow by sql_statements", kind, sql_class)
+            return True
+        if level == PermissionLevel.DENY:
+            profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
+            logger.warning("execute_sql %s (class %s) denied by sql_statements rules", kind, sql_class)
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: SQL statement kind '{kind}' (class '{sql_class}') is "
+                    f"blocked by the '{profile}' permission profile's sql_statements rules. "
+                    f"STOP retrying — rewording the SQL will not change the outcome. Return "
+                    f"the failure to your caller. The user can adjust "
+                    f"`permissions.sql_statements` in agent.yml."
+                ),
+                tool_category="db_tools",
+                tool_name="execute_sql",
+            )
+
+        # ASK. A project-scope grant (``.datus/config.yml`` sql_allow or an
+        # "allow (project)" prompt choice earlier this session) covering this
+        # exact kind bypasses the confirmation.
+        if self.permission_manager.has_project_sql_grant(kind):
+            logger.debug("execute_sql %s bypassed by project grant", kind)
+            return True
+
+        # Non-interactive flows must not prompt — defer so the main flow
         # raises the standardized non-interactive PermissionDeniedException.
         if self.non_interactive:
             return False
 
-        # Bucket the session approval by the concrete SQL type so an "always
-        # allow" only ever covers that one type (e.g. approving an INSERT never
-        # green-lights a later DELETE / DROP / MERGE).
-        sql_class = sql_type.value
+        # Bucket the session approval by the concrete kind so an "always
+        # allow" only ever covers that one kind (e.g. approving a DROP never
+        # green-lights a later TRUNCATE). Broad keys still honor a deliberate
+        # wide approval (a prior un-bucketed ``db_tools.execute_sql`` or a
+        # category wildcard).
+        cache_keys = (f"db_tools.execute_sql.{kind}", "db_tools.execute_sql", "db_tools.*")
+
+        def _session_approved() -> bool:
+            return any(self.permission_manager._session_approvals.get(key) for key in cache_keys)
+
+        if _session_approved():
+            logger.debug("execute_sql %s already approved for session", kind)
+            return True
+
+        async with _get_permission_prompt_lock(self.broker):
+            if _session_approved():
+                return True
+            # The project choice is offered for every concrete kind — the user
+            # opted into project-scope grants for destructive statements too —
+            # but never for ``unknown``: persisting a grant that auto-allows
+            # every future unparseable statement would be a blank cheque.
+            offer_project = kind != SQLType.UNKNOWN.value
+            choice = await self._request_sql_confirmation(sql, kind, sql_class, offer_project=offer_project)
+            if choice == "y":
+                logger.info("User approved execute_sql (%s, once)", kind)
+                return True
+            if choice == "a":
+                self.permission_manager.approve_for_session("db_tools", f"execute_sql.{kind}")
+                logger.info("User approved execute_sql kind %r for session", kind)
+                return True
+            if choice == "p" and offer_project:
+                persisted = self.permission_manager.add_project_sql_allow(kind, self.project_root)
+                # Session cache too, so later same-kind calls this session skip
+                # the prompt without re-consulting the grant set.
+                self.permission_manager.approve_for_session("db_tools", f"execute_sql.{kind}")
+                logger.info(
+                    "User granted project-level sql allow %r%s",
+                    kind,
+                    "" if persisted else " (disk write failed; session-only)",
+                )
+                return True
+            logger.info("User rejected execute_sql (%s)", kind)
+            raise PermissionDeniedException(
+                "User rejected execution of 'execute_sql'",
+                tool_category="db_tools",
+                tool_name="execute_sql",
+            )
+
+    async def _handle_sql_permission_legacy(self, context: Any, kind: str) -> bool:
+        """Pre-``sql_statements`` gating, kept for configs without a ruleset.
+
+        Reads auto-allow; everything else prompts via the generic
+        ``_request_user_confirmation`` (allow once / session / deny — no
+        project choice) with the session approval bucketed by the coarse
+        ``SQLType`` value, exactly as before the per-class ruleset existed.
+        The caller has already resolved coarse DENY/ALLOW rules.
+        """
+        if kind in self._SQL_READONLY_KINDS:
+            logger.debug("execute_sql read-only (%s): auto-allow", kind)
+            return True
+
+        if self.non_interactive:
+            return False
+
+        sql_class = self._SQL_LEGACY_KIND_MAP.get(kind, kind)
         bucket_pattern = f"execute_sql.{sql_class}"
-        # Honour the per-type bucket plus any deliberately broad session approval
-        # (a prior un-bucketed ``db_tools.execute_sql`` or a category wildcard).
-        # Only the prompt-driven "always allow" below is bucketed per type, so a
-        # single approval never cascades across statement types — but an explicit
-        # broad approval still covers every type.
         cache_keys = (f"db_tools.{bucket_pattern}", "db_tools.execute_sql", "db_tools.*")
 
         def _session_approved() -> bool:
@@ -833,6 +935,53 @@ class PermissionHooks(AgentHooks):
                 )
             logger.info("User approved execute_sql (%s)", sql_class)
             return True
+
+    async def _request_sql_confirmation(
+        self,
+        sql: str,
+        kind: str,
+        sql_class: str,
+        *,
+        offer_project: bool,
+    ) -> str:
+        """Prompt for a SQL statement; returns the raw choice key ('' on cancel).
+
+        Mirrors ``_request_bash_confirmation``: callers need the concrete
+        choice to distinguish session from project grants.
+        """
+        profile = getattr(self.permission_manager, "active_profile", None) or "unknown"
+        sql_text = sql if isinstance(sql, str) else str(sql)
+        content = (
+            f"### SQL Statement Permission\n\n"
+            f"```sql\n{sql_text}\n```\n\n"
+            f"**Statement:** `{kind}` (class: {sql_class})\n"
+            f"**Reason:** '{sql_class}' statements require confirmation under the '{profile}' profile\n"
+        )
+        choices = {
+            "y": "Allow (once)",
+            "a": f"Allow '{kind}' (session)",
+        }
+        if offer_project:
+            choices["p"] = f"Allow '{kind}' (project)"
+        choices["n"] = "Deny"
+
+        try:
+            answers = await self.broker.request(
+                [
+                    InteractionEvent(
+                        title="SQL Permission",
+                        content=content,
+                        choices=choices,
+                        default_choice="n",
+                    )
+                ]
+            )
+            return answers[0][0] if answers and answers[0] else ""
+        except InteractionCancelled:
+            return ""
+        except Exception as e:
+            logger.error(f"Error in SQL permission confirmation: {e}")
+            return ""
 
     async def _handle_bash_permission(self, context: Any, tool_name: str, pattern_name: str) -> bool:
         """Command-level gating for ``bash_tools.bash`` calls.

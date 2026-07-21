@@ -462,3 +462,63 @@ class TestPluginBashRulesMerge:
 
         effective = build_effective_config("normal", None, plugin_bash_rules=BashCommandRules())
         assert effective is NORMAL
+
+
+class TestProfileSqlStatements:
+    """Per-class execute_sql rules attached to each profile."""
+
+    def test_normal_levels(self):
+        rules = NORMAL.sql_statements
+        assert rules.level_for_class("read") == PermissionLevel.ALLOW
+        assert rules.level_for_class("write") == PermissionLevel.ASK
+        assert rules.level_for_class("destructive") == PermissionLevel.ASK
+        assert rules.level_for_class("unknown") == PermissionLevel.ASK
+
+    def test_auto_levels(self):
+        rules = AUTO.sql_statements
+        assert rules.level_for_class("read") == PermissionLevel.ALLOW
+        assert rules.level_for_class("write") == PermissionLevel.ALLOW
+        # Destructive statements still confirm under auto — that is the point.
+        assert rules.level_for_class("destructive") == PermissionLevel.ASK
+        assert rules.level_for_class("unknown") == PermissionLevel.ASK
+
+    def test_dangerous_has_no_sql_ruleset(self):
+        """Dangerous leaves sql_statements unset so the gate falls back to the
+        coarse rule check, which resolves to default ALLOW for every class."""
+        assert DANGEROUS.sql_statements is None
+
+    def test_user_sql_statements_merge_into_profile(self):
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config("normal", {"sql_statements": {"write": "allow"}})
+        assert effective.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+        # Unset user fields keep the profile posture.
+        assert effective.sql_statements.level_for_class("destructive") == PermissionLevel.ASK
+
+    def test_user_can_deny_destructive_under_auto(self):
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config("auto", {"sql_statements": {"destructive": "deny"}})
+        assert effective.sql_statements.level_for_class("destructive") == PermissionLevel.DENY
+        assert effective.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+
+    def test_plugin_bash_rules_rebuild_preserves_sql_statements(self):
+        """Regression: the plugin-bash-rules rebuild in build_effective_config
+        constructs a fresh PermissionConfig and must carry sql_statements."""
+        from datus.tools.permission.bash_rules import BashCommandRules
+        from datus.tools.permission.profiles import build_effective_config
+
+        effective = build_effective_config(
+            "auto", None, plugin_bash_rules=BashCommandRules(allow=["datus hello greet:*"])
+        )
+        assert effective.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+        assert effective.sql_statements.level_for_class("destructive") == PermissionLevel.ASK
+
+    def test_profile_singleton_sql_rules_not_mutated_by_manager(self):
+        """PermissionManager deep-copies sql_statements; mutations must not
+        leak into the shared profile singleton."""
+        from datus.tools.permission.permission_manager import PermissionManager
+
+        manager = PermissionManager(global_config=get_profile("auto"))
+        manager.global_config.sql_statements.write = PermissionLevel.DENY
+        assert AUTO.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
