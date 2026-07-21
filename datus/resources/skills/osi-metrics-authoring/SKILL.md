@@ -94,10 +94,19 @@ Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `input
            - vendor_name: DATUS
              data: '{"dataset":"orders","time_dimension":"order_date","period_over_period":{"time_grain":"month","offset_window":"1 year","calculation":"percent_change"},"subject_path":["sales","revenue","growth"],"format":"0.00%","unit":"%"}'
      ```
-7. **Joins**: to group or slice by another table, use the existing semantic-model relationships. If the link is absent, report that the semantic model must be updated by `gen_semantic_model`; do not add relationships here.
-8. **Not metrics**: detail/list queries (`SELECT DISTINCT ...`) and window/ranking (`ROW_NUMBER()`, `RANK() OVER`, TopN per group) are NOT metrics. SKIP them. Do NOT create a dataset/view here and never force them into a metric. If the discovery tool returns `metric_generation_skips` or rank-like `derived_datasource_recommendations`, treat that SQL as skipped.
-9. Use clear English `snake_case` metric names; metric names must be globally unique. Every metric MUST include `description` and `ai_context`. Put the business definition in `description`; put LLM-facing usage guidance in `ai_context.instructions`, including grain, metric-specific conditions, time field, and join caveats.
-10. **Subject classification (required).** Every metric MUST carry a `subject_path` in its DATUS extension, encoded as an ordered `[domain, layer1, layer2]` list (e.g. `["sales","revenue","growth"]`). Choose the classification exactly as instructed by the **Subject Classification** section of the system prompt — same required categories, same reuse-or-create rule, same `{domain}/{layer1}/{layer2}` hierarchy the MetricFlow path uses; the only difference is the carrier (a DATUS `subject_path` list here, a `locked_metadata.tags` entry there).
+7. **Joins**: to group or slice by another table, use the existing semantic-model relationships. If the link is absent, report that the semantic model must be updated by `gen_semantic_model`; do not add relationships here. Join behavior (`inner`/`left`) is declared on the relationship, never on the metric.
+8. **Null fill for empty groups (`fill_nulls_with`)**: when the SQL history shows a metric's final value wrapped in `COALESCE(..., 0)` for groups with no data, declare it as a DATUS hint instead of burying the COALESCE in the expression:
+
+   ```yaml
+   custom_extensions:
+     - vendor_name: DATUS
+       data: '{"v": 1, "fill_nulls_with": 0}'
+   ```
+
+   Plain COUNT metrics read 0 for empty groups automatically — do not declare it for them. The fill applies to the metric's final output only; never emulate it on a component inside a ratio/expression (a count denominator must stay NULL-safe, not become a literal 0). Do not declare a fill for AVG-style metrics — an empty group's average is unknown, not 0.
+9. **Not metrics**: detail/list queries (`SELECT DISTINCT ...`) and window/ranking (`ROW_NUMBER()`, `RANK() OVER`, TopN per group) are NOT metrics. SKIP them. Do NOT create a dataset/view here and never force them into a metric. If the discovery tool returns `metric_generation_skips` or rank-like `derived_datasource_recommendations`, treat that SQL as skipped.
+10. Use clear English `snake_case` metric names; metric names must be globally unique. Every metric MUST include `description` and `ai_context`. Put the business definition in `description`; put LLM-facing usage guidance in `ai_context.instructions`, including grain, metric-specific conditions, time field, and join caveats.
+11. **Subject classification (required).** Every metric MUST carry a `subject_path` in its DATUS extension, encoded as an ordered `[domain, layer1, layer2]` list (e.g. `["sales","revenue","growth"]`). Choose the classification exactly as instructed by the **Subject Classification** section of the system prompt — same required categories, same reuse-or-create rule, same `{domain}/{layer1}/{layer2}` hierarchy the MetricFlow path uses; the only difference is the carrier (a DATUS `subject_path` list here, a `locked_metadata.tags` entry there).
 
 ## Hard skip gate
 

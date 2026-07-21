@@ -31,16 +31,24 @@ Use the narrow metric workflow below:
 - Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.
 - For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
 - Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
+{% if osi_semantics %}
+- `query_metrics.time_end` is an exclusive upper bound (half-open range `[time_start, time_end)`). For a closed calendar period, pass the first date after the period: month 2024-05 is `time_start=2024-05-01, time_end=2024-06-01`; May through June is `time_end=2024-07-01`.
+{% else %}
 - `query_metrics.time_end` is inclusive. For a closed calendar period, pass the inclusive final date of that period.
+{% endif %}
 - Choose grouping and filtering dimensions by semantic meaning. If the user names a concrete field, ID, code, or dimension key, pass that exact dimension and do not add sibling display/name/label dimensions. Use display or descriptive dimensions only when the user's wording explicitly asks for a display value, name, or label.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
-- For joined dimensions, use semantic join controls, not SQL join types:
-  - Ordinary grouping by a joined dimension should use the default `join_policy="auto"`/`match_only`, which excludes facts that cannot match the requested dimension.
-  - If the user asks for all dimension values, including values with no facts, use `join_policy="dimension_preserving"` and `zero_fill=true`.
-  - If the user asks to keep unmatched facts, use `join_policy="fact_preserving"`.
-  - If the user asks only for unmapped or unrecognized fact rows, use `join_policy="unmatched_only"`.
+- Join behavior is declared on the semantic model and applied by the semantic adapter; `query_metrics` has no join controls. Some question shapes therefore have no executable form unless a dedicated metric exists: "all values including those with no data" (zero-filled totals), "unmatched/unrecognized rows" audits, and "only those matching X" forced joins. For these, answer with the closest metric's standard semantics and state the difference explicitly, or state plainly that the question is not supported — never bend `where` filters to fake these semantics.
+{% if osi_semantics %}
+- Pass dimension names exactly as returned by `get_dimensions` (`dataset.field` form). In `order_by`, use output column names: the bare field name, or `<field>__<grain>` when a time grain applies — never the `dataset.field` form.
+- When `query_metrics` fails with a structured error, explain it in business terms instead of retrying blindly:
+  - `fan_out_risk`: the requested grouping or filter would double-count the metric (for example grouping a fact metric by an attribute of records that repeat per fact row); tell the user that dimension is not usable with this metric.
+  - `ambiguous_join_path`: more than one join path reaches the dimension; report the candidate paths and ask which business meaning is intended.
+  - Unknown metric/dimension errors: correct the request from the `candidates` list.
+  - Follow a `suggested_retry` only when it preserves the question's result shape; never add a time grouping just to satisfy a total-value question.
+{% endif %}
 - Query complete metric results by default. Do not pass `limit` just to preview data, reduce output size, or be conservative; the system compresses visible tool output and caches the full result. Use `limit` only when the user explicitly asks for Top N, first N, maximum N rows, a preview, or another row-count restriction. When using `limit` for Top N/Bottom N, also pass `order_by`.
-- When the user asks for multiple metric values over the same time range, grouping dimensions, and filters, request those metrics in one `query_metrics(metrics=[...])` call. Do not split them into separate queries unless the metrics require incompatible dimensions, filters, paths, or join policies.
+- When the user asks for multiple metric values over the same time range, grouping dimensions, and filters, request those metrics in one `query_metrics(metrics=[...])` call. Do not split them into separate queries unless the metrics require incompatible dimensions, filters, or paths.
 - Prefer the most specific metric whose name or description directly matches the requested business concept. Do not rebuild a specific metric by querying a generic base metric plus filters when a matching specific metric is available.
 - For ratio, rate, conditional count, and compound-condition metrics, use the dedicated metric directly when available. Do not approximate it with numerator/base metrics or ad hoc `where` filters unless no dedicated metric exists.
 - For cumulative, running, rolling, moving, grain-to-date, or other windowed concepts, use the dedicated window metric when one exists. Do not reinterpret a windowed question as a simple period total over the base metric.

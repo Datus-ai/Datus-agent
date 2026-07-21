@@ -125,6 +125,37 @@ class TestAskMetricsAgenticNode:
         assert "do not add sibling display/name/label dimensions" in prompt
         assert node.subject_tree_prompt_limit == 100
 
+    def test_system_prompt_time_bound_follows_semantic_adapter_family(
+        self, real_agent_config, mock_llm_create, monkeypatch
+    ):
+        node, _, _ = _make_node(real_agent_config, tree={"Sales": {"Orders": {"metrics": ["order_count"]}}})
+
+        monkeypatch.setattr(
+            real_agent_config,
+            "resolve_semantic_adapter",
+            lambda requested=None: "osi_engine",
+            raising=False,
+        )
+        osi_prompt = node._get_system_prompt()
+        assert "exclusive upper bound" in osi_prompt
+        assert "time_end=2024-06-01" in osi_prompt
+        assert "`query_metrics.time_end` is inclusive" not in osi_prompt
+        assert "Pass dimension names exactly as returned by `get_dimensions`" in osi_prompt
+        assert "fan_out_risk" in osi_prompt
+        assert "Join behavior is declared on the semantic model" in osi_prompt
+
+        monkeypatch.setattr(
+            real_agent_config,
+            "resolve_semantic_adapter",
+            lambda requested=None: "metricflow",
+            raising=False,
+        )
+        mf_prompt = node._get_system_prompt()
+        assert "`query_metrics.time_end` is inclusive" in mf_prompt
+        assert "exclusive upper bound" not in mf_prompt
+        assert "fan_out_risk" not in mf_prompt
+        assert "Join behavior is declared on the semantic model" in mf_prompt
+
     def test_reference_date_is_injected_into_runtime_context(self, real_agent_config, mock_llm_create):
         from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput
 
@@ -707,31 +738,6 @@ class TestAskMetricsAgenticNode:
 
         semantic_tools.query_metrics.assert_called_once()
         assert semantic_tools.query_metrics.call_args.kwargs["where"] == "region = 'east'"
-
-    def test_query_metrics_passes_join_controls(
-        self,
-        real_agent_config,
-        mock_llm_create,
-    ):
-        node, semantic_tools, _ = _make_node(
-            real_agent_config,
-            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
-        )
-        semantic_tools.list_metrics.return_value = FuncToolResult(
-            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
-        )
-        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
-
-        node.query_metrics(
-            metrics=["order_count"],
-            dimensions=["dimension_key__display_name"],
-            join_policy="dimension_preserving",
-            zero_fill=True,
-        )
-
-        semantic_tools.query_metrics.assert_called_once()
-        assert semantic_tools.query_metrics.call_args.kwargs["join_policy"] == "dimension_preserving"
-        assert semantic_tools.query_metrics.call_args.kwargs["zero_fill"] is True
 
     def test_query_metrics_aliases_joined_dimension_display_columns(
         self,

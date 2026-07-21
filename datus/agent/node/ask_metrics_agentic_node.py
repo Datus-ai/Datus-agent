@@ -427,10 +427,6 @@ class AskMetricsAgenticNode(AgenticNode):
         where: Optional[str] = None,
         limit: Optional[int] = None,
         order_by: Optional[List[str]] = None,
-        join_policy: Optional[
-            Literal["auto", "match_only", "fact_preserving", "dimension_preserving", "unmatched_only"]
-        ] = None,
-        zero_fill: bool = False,
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
@@ -449,11 +445,10 @@ class AskMetricsAgenticNode(AgenticNode):
         metrics, AskMetrics expands the request to include related executable
         metrics when they are already present in the catalog.
 
-        For joined dimensions, use semantic join policies instead of SQL join
-        types: match_only for normal matched dimension grouping,
-        fact_preserving for unmatched fact analysis, dimension_preserving with
-        zero_fill for all dimension values including those with no facts, and
-        unmatched_only for only unmapped fact rows.
+        Join behavior is declared on the semantic model and applied by the
+        adapter; there are no query-time join controls. For OSI-family
+        semantic layers, time_end is an exclusive upper bound (half-open
+        range).
         """
         if not self.semantic_tools:
             return FuncToolResult(success=0, error="semantic tools unavailable")
@@ -498,10 +493,6 @@ class AskMetricsAgenticNode(AgenticNode):
             "order_by": normalized_order_by,
             "dry_run": dry_run,
         }
-        if join_policy:
-            query_kwargs["join_policy"] = join_policy
-        if zero_fill:
-            query_kwargs["zero_fill"] = zero_fill
         result = self.semantic_tools.query_metrics(**query_kwargs)
         if self._is_deterministic_validation_failure(result):
             self._failed_query_signatures.add(signature)
@@ -891,6 +882,8 @@ class AskMetricsAgenticNode(AgenticNode):
         return get_default_current_date(input_ref_date)
 
     def _get_system_prompt(self, prompt_version: Optional[str] = None) -> str:
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
         context: Dict[str, Any] = {
             "agent_config": self.agent_config,
             "rules": self.node_config.get("rules", []),
@@ -900,6 +893,7 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
             "require_final_result_selection": self.require_final_result_selection,
+            "osi_semantics": is_osi_authoring(self.agent_config),
         }
 
         if self.agent_config:

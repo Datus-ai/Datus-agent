@@ -23,6 +23,11 @@ agent:
       osi:
         # execution_backend defaults to metricflow and normally does not need
         # to be configured.
+
+      osi_engine:
+        # Native Rust engine path (datus-semantic-osi-engine). Datus fills
+        # db_config from the active datasource and the semantic model path
+        # from subject/semantic_models/<datasource>/ automatically.
 ```
 
 ## Selection Rules
@@ -60,6 +65,8 @@ Comparison is case-insensitive and trims surrounding whitespace.
 - OSI mode authors strict OSI core YAML and stores Datus execution hints in `custom_extensions`.
 - The current OSI execution backend is MetricFlow by default. You normally do not need to set `execution_backend`.
 - Configure `services.semantic_layer.osi` and mark it `default: true` to select this path globally when other adapters are also configured. An empty `osi: {}` entry is selected automatically only when it is the sole semantic adapter, or when the current project pins `semantic: osi`.
+- `osi_engine` (package `datus-semantic-osi-engine`) executes the same OSI authoring documents natively on the Rust osi-engine — no MetricFlow dependency. Both `osi` and `osi_engine` author the OSI format; generation and ask flows treat them identically.
+- For OSI-family adapters, `query_metrics.time_end` is an exclusive upper bound (half-open time range `[time_start, time_end)`).
 
 ## Configuring through the CLI (`/services`)
 
