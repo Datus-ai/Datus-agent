@@ -3,14 +3,13 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 # -*- coding: utf-8 -*-
-import hashlib
 import json
 import os
 import tempfile
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 from agents import Tool
@@ -91,11 +90,9 @@ class GenerationTools:
         agent_config: AgentConfig,
         generation_evidence: Optional[GenerationEvidence] = None,
         authoring_format: Optional[str] = None,
-        runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
     ):
         self.agent_config = agent_config
         self.generation_evidence = generation_evidence or GenerationEvidence()
-        self._runtime_db_context_provider = runtime_db_context_provider
         if authoring_format:
             self.authoring_format = str(authoring_format).strip().lower()
         else:
@@ -105,32 +102,16 @@ class GenerationTools:
         self.metric_rag = MetricRAG(agent_config)
         self.semantic_rag = SemanticModelRAG(agent_config)
         self.table_semantic_profile_rag = None
-        self._table_semantic_profile_init_error = ""
         if isinstance(getattr(agent_config, "project_name", ""), str):
             try:
                 self.table_semantic_profile_rag = TableSemanticProfileRAG(agent_config)
             except Exception as exc:
-                self._table_semantic_profile_init_error = str(exc)
-                if self._is_osi_authoring():
-                    logger.warning("Failed to initialize table semantic profile storage: %s", exc)
-                else:
-                    logger.debug("Failed to initialize table semantic profile storage: %s", exc)
+                logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
         self._semantic_object_exists_cache: Dict[tuple[str, str, str], FuncToolResult] = {}
         self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
 
     def _is_osi_authoring(self) -> bool:
         return self.authoring_format == "osi"
-
-    @classmethod
-    def all_tools_name(cls) -> List[str]:
-        """Return every tool name that may be mounted from this group."""
-        return [
-            "check_semantic_object_exists",
-            "generate_sql_summary_id",
-            "end_semantic_model_generation",
-            "end_metric_generation",
-            "sync_semantic",
-        ]
 
     def available_tools(self) -> List[Tool]:
         """
@@ -148,92 +129,6 @@ class GenerationTools:
                 self.end_metric_generation,
             )
         ]
-
-    def sync_semantic(self, semantic_model_file: str) -> FuncToolResult:
-        """Validate and synchronize one complete Ossie semantic YAML document.
-
-        Call this after directly editing an existing Ossie semantic YAML file.
-        The YAML document is the sole source of truth: datasets, table profiles,
-        and metrics removed from it are also removed from the Knowledge Base.
-
-        Args:
-            semantic_model_file: YAML path inside the current datasource's
-                semantic-model workspace.
-        """
-        if not self._is_osi_authoring():
-            return FuncToolResult(success=0, error="sync_semantic is only available for Ossie authoring")
-
-        resolved = self._resolve_generation_path(semantic_model_file, "semantic")
-        if not resolved:
-            return FuncToolResult(
-                success=0,
-                error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}",
-            )
-        try:
-            before_hash = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
-        except OSError as exc:
-            return FuncToolResult(success=0, error=f"Failed to read semantic model file: {exc}")
-
-        model_names = self.extract_osi_model_names(resolved)
-        if len(model_names) != 1:
-            return FuncToolResult(
-                success=0,
-                error=(f"The Ossie artifact must declare exactly one semantic model; found {model_names or '<none>'}."),
-            )
-
-        try:
-            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            semantic_tools = SemanticTools(
-                self.agent_config,
-                sub_agent_name="chat",
-                adapter_type=resolve_semantic_adapter_type(self.agent_config),
-                runtime_db_context_provider=self._runtime_db_context_provider,
-            )
-            metric_names = self.extract_osi_metric_names(resolved)
-            validation = semantic_tools.validate_semantic(
-                scope="all" if metric_names else "semantic_model",
-                semantic_model_name=model_names[0],
-            )
-            if not validation.success:
-                return FuncToolResult(
-                    success=0,
-                    error=f"Semantic validation failed: {validation.error or 'unknown error'}",
-                    result={"validation": validation.result},
-                )
-
-            metric_sql_result = self._compile_osi_metric_sqls(metric_names)
-            if not metric_sql_result.success:
-                return FuncToolResult(
-                    success=0,
-                    error=metric_sql_result.error,
-                    result={"validation": validation.result, "dry_run": metric_sql_result.result},
-                )
-
-            after_hash = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
-            if after_hash != before_hash:
-                return FuncToolResult(
-                    success=0,
-                    error="Semantic YAML changed during validation; retry sync_semantic",
-                )
-
-            sync_result = self.reconcile_osi_document_to_db(
-                resolved,
-                metric_sqls=metric_sql_result.result["metric_sqls"],
-            )
-            if not sync_result.get("success"):
-                return FuncToolResult(
-                    success=0,
-                    error=f"Knowledge Base sync failed: {sync_result.get('error', 'unknown error')}",
-                    result={"sync": sync_result},
-                )
-            sync_result["source_sha256"] = before_hash
-            sync_result["validation"] = validation.result
-            return FuncToolResult(result=sync_result)
-        except Exception as exc:
-            logger.error("sync_semantic failed: %s", exc, exc_info=True)
-            return FuncToolResult(success=0, error=f"Failed to sync semantic YAML: {exc}")
 
     def check_semantic_object_exists(
         self,
@@ -515,7 +410,7 @@ class GenerationTools:
             if self._is_osi_authoring():
                 assert osi_target is not None
                 resolved, _model_name = osi_target
-                sync_result = self.reconcile_osi_document_to_db(resolved)
+                sync_result = self.sync_osi_semantic_to_db(resolved)
                 sync_results = [sync_result]
                 if not sync_result.get("success"):
                     return FuncToolResult(
@@ -576,8 +471,8 @@ class GenerationTools:
 
         try:
             if self._is_osi_authoring():
-                # One Ossie file owns the complete datasets/profiles/metrics
-                # projection, so split semantic-model file arguments are ignored.
+                # OSI gen_metrics owns only the metrics collection. Semantic
+                # objects are authored and synced by gen_semantic_model.
                 semantic_model_files = []
             elif semantic_model_files is None and semantic_model_file:
                 semantic_model_files = [semantic_model_file]
@@ -684,7 +579,9 @@ class GenerationTools:
                 )
 
             if self._is_osi_authoring():
-                sync_result = self.reconcile_osi_document_to_db(abs_metric, metric_sqls=metric_sqls)
+                sync_result = self._sync_osi_metric_to_db(
+                    abs_metric, abs_semantic_files, metric_sqls, replace_metric_artifact=False
+                )
                 if not sync_result.get("success"):
                     return FuncToolResult(
                         success=0,
@@ -1436,31 +1333,15 @@ class GenerationTools:
             )
         return len(profiles)
 
-    def _runtime_db_context(self) -> dict[str, Any]:
-        if callable(self._runtime_db_context_provider):
-            try:
-                context = self._runtime_db_context_provider()
-                return dict(context) if isinstance(context, Mapping) else {}
-            except Exception as exc:
-                logger.debug("Failed to resolve runtime DB context for OSI synchronization: %s", exc)
-                return {}
-        runtime_db_context_getter = getattr(self.agent_config, "runtime_db_context", None)
-        context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
-        return dict(context) if isinstance(context, Mapping) else {}
-
     @staticmethod
-    def _current_db_parts(
-        agent_config: AgentConfig,
-        runtime_db_context: Optional[Mapping[str, Any]] = None,
-    ) -> dict[str, str]:
+    def _current_db_parts(agent_config: AgentConfig) -> dict[str, str]:
         try:
             current_db_config = agent_config.current_db_config()
         except Exception:
             current_db_config = object()
-        if runtime_db_context is None:
-            runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
-            runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
-        runtime_db_context = runtime_db_context if isinstance(runtime_db_context, Mapping) else {}
+        runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
+        runtime_db_context = runtime_db_context_getter() if callable(runtime_db_context_getter) else {}
+        runtime_db_context = runtime_db_context if isinstance(runtime_db_context, dict) else {}
         return {
             "catalog_name": runtime_db_context.get("catalog")
             or runtime_db_context.get("catalog_name")
@@ -1704,124 +1585,168 @@ class GenerationTools:
             entities.extend(cls._dataset_primary_keys(datasets.get(dataset_name)))
         return cls._dedupe_strings(entities)
 
-    def _build_osi_semantic_projection(
-        self,
-        doc: Any,
-        yaml_path: str,
-        target_dataset_names: set[str],
-    ) -> tuple[List[dict], List[dict], List[str]]:
-        """Project one complete OSI artifact into semantic and table-profile rows."""
-        semantic_model_name = str(getattr(doc, "name", "") or "")
-        default_db_parts = self._current_db_parts(self.agent_config, self._runtime_db_context())
-        semantic_objects: List[dict] = []
-        table_profiles: List[dict] = []
-        synced_items: List[str] = []
-
-        for dataset in getattr(doc, "datasets", []):
-            dataset_name = getattr(dataset, "name", "")
-            if dataset_name not in target_dataset_names:
-                continue
-            table_name = self._dataset_table_name(dataset)
-            db_parts = self._dataset_db_parts(dataset, default_db_parts)
-            fq_parts = [db_parts["catalog_name"], db_parts["database_name"], db_parts["schema_name"], table_name]
-            table_fq_name = ".".join(part for part in fq_parts if part)
-            table_profiles.append(
-                self._osi_table_semantic_profile(
-                    doc=doc,
-                    dataset=dataset,
-                    table_name=table_name,
-                    table_fq_name=table_fq_name,
-                    db_parts=db_parts,
-                    yaml_path=yaml_path,
-                )
-            )
-
-            semantic_objects.append(
-                {
-                    "id": f"table:{semantic_model_name}:{table_fq_name}",
-                    "kind": "table",
-                    "name": table_name,
-                    "fq_name": table_fq_name,
-                    "table_name": table_name,
-                    "description": getattr(dataset, "description", "") or "",
-                    "yaml_path": yaml_path,
-                    "updated_at": datetime.now().replace(microsecond=0),
-                    **db_parts,
-                    "semantic_model_name": semantic_model_name,
-                    "is_dimension": False,
-                    "is_measure": False,
-                    "is_entity_key": False,
-                    "is_deprecated": False,
-                    "expr": "",
-                    "column_type": "",
-                    "agg": "",
-                    "create_metric": False,
-                    "agg_time_dimension": "",
-                    "is_partition": False,
-                    "time_granularity": "",
-                    "entity": "",
+    def sync_osi_semantic_to_db(self, semantic_model_path: str) -> dict:
+        """Sync OSI datasets into the semantic object store."""
+        try:
+            target_dataset_names = set(self.extract_osi_dataset_names(semantic_model_path))
+            if not target_dataset_names:
+                return {
+                    "success": False,
+                    "error": f"No OSI datasets found in semantic model file to sync: {semantic_model_path}",
                 }
-            )
-            synced_items.append(f"table:{table_fq_name}")
 
-            primary_keys = getattr(dataset, "primary_key", None) or []
-            if isinstance(primary_keys, str):
-                primary_keys = [primary_keys]
-            for key in primary_keys:
-                semantic_objects.append(
-                    self._osi_column_object(
-                        table_name=table_name,
-                        table_fq_name=table_fq_name,
-                        semantic_model_name=semantic_model_name,
-                        name=str(key),
-                        description="Primary key",
-                        expr=str(key),
-                        column_type="PRIMARY",
-                        yaml_path=yaml_path,
-                        db_parts=db_parts,
-                        is_entity_key=True,
-                    )
-                )
+            doc = self._load_osi_document(semantic_model_file=semantic_model_path)
+            semantic_model_name = str(getattr(doc, "name", "") or "")
+            default_db_parts = self._current_db_parts(self.agent_config)
+            semantic_objects: List[dict] = []
+            table_profiles: List[dict] = []
+            synced_items: List[str] = []
 
-            time_dimension = getattr(dataset, "time_dimension", None)
-            if time_dimension and getattr(time_dimension, "name", None):
-                semantic_objects.append(
-                    self._osi_column_object(
-                        table_name=table_name,
-                        table_fq_name=table_fq_name,
-                        semantic_model_name=semantic_model_name,
-                        name=str(time_dimension.name),
-                        description="Primary time dimension",
-                        expr=str(time_dimension.name),
-                        column_type="TIME",
-                        yaml_path=yaml_path,
-                        db_parts=db_parts,
-                        is_dimension=True,
-                        time_granularity=getattr(time_dimension, "granularity", "") or "",
-                    )
-                )
-
-            for dim in getattr(dataset, "dimensions", []):
-                dim_name = getattr(dim, "name", "")
-                if not dim_name:
+            for dataset in getattr(doc, "datasets", []):
+                dataset_name = getattr(dataset, "name", "")
+                if dataset_name not in target_dataset_names:
                     continue
-                semantic_objects.append(
-                    self._osi_column_object(
+                table_name = self._dataset_table_name(dataset)
+                db_parts = self._dataset_db_parts(dataset, default_db_parts)
+                fq_parts = [db_parts["catalog_name"], db_parts["database_name"], db_parts["schema_name"], table_name]
+                table_fq_name = ".".join(part for part in fq_parts if part)
+                yaml_path = semantic_model_path
+                table_profiles.append(
+                    self._osi_table_semantic_profile(
+                        doc=doc,
+                        dataset=dataset,
                         table_name=table_name,
                         table_fq_name=table_fq_name,
-                        semantic_model_name=semantic_model_name,
-                        name=str(dim_name),
-                        description=getattr(dim, "description", "") or "",
-                        expr=getattr(dim, "expr", None) or str(dim_name),
-                        column_type=str(getattr(dim, "type", "") or ""),
-                        yaml_path=yaml_path,
                         db_parts=db_parts,
-                        is_dimension=True,
-                        time_granularity=getattr(dim, "granularity", "") or "",
+                        yaml_path=yaml_path,
                     )
                 )
 
-        return semantic_objects, table_profiles, synced_items
+                semantic_objects.append(
+                    {
+                        "id": f"table:{semantic_model_name}:{table_fq_name}",
+                        "kind": "table",
+                        "name": table_name,
+                        "fq_name": table_fq_name,
+                        "table_name": table_name,
+                        "description": getattr(dataset, "description", "") or "",
+                        "yaml_path": yaml_path,
+                        "updated_at": datetime.now().replace(microsecond=0),
+                        **db_parts,
+                        "semantic_model_name": semantic_model_name,
+                        "is_dimension": False,
+                        "is_measure": False,
+                        "is_entity_key": False,
+                        "is_deprecated": False,
+                        "expr": "",
+                        "column_type": "",
+                        "agg": "",
+                        "create_metric": False,
+                        "agg_time_dimension": "",
+                        "is_partition": False,
+                        "time_granularity": "",
+                        "entity": "",
+                    }
+                )
+                synced_items.append(f"table:{table_fq_name}")
+
+                primary_keys = getattr(dataset, "primary_key", None) or []
+                if isinstance(primary_keys, str):
+                    primary_keys = [primary_keys]
+                for key in primary_keys:
+                    semantic_objects.append(
+                        self._osi_column_object(
+                            table_name=table_name,
+                            table_fq_name=table_fq_name,
+                            semantic_model_name=semantic_model_name,
+                            name=str(key),
+                            description="Primary key",
+                            expr=str(key),
+                            column_type="PRIMARY",
+                            yaml_path=yaml_path,
+                            db_parts=db_parts,
+                            is_entity_key=True,
+                        )
+                    )
+
+                time_dimension = getattr(dataset, "time_dimension", None)
+                if time_dimension and getattr(time_dimension, "name", None):
+                    semantic_objects.append(
+                        self._osi_column_object(
+                            table_name=table_name,
+                            table_fq_name=table_fq_name,
+                            semantic_model_name=semantic_model_name,
+                            name=str(time_dimension.name),
+                            description="Primary time dimension",
+                            expr=str(time_dimension.name),
+                            column_type="TIME",
+                            yaml_path=yaml_path,
+                            db_parts=db_parts,
+                            is_dimension=True,
+                            time_granularity=getattr(time_dimension, "granularity", "") or "",
+                        )
+                    )
+
+                for dim in getattr(dataset, "dimensions", []):
+                    dim_name = getattr(dim, "name", "")
+                    if not dim_name:
+                        continue
+                    semantic_objects.append(
+                        self._osi_column_object(
+                            table_name=table_name,
+                            table_fq_name=table_fq_name,
+                            semantic_model_name=semantic_model_name,
+                            name=str(dim_name),
+                            description=getattr(dim, "description", "") or "",
+                            expr=getattr(dim, "expr", None) or str(dim_name),
+                            column_type=str(getattr(dim, "type", "") or ""),
+                            yaml_path=yaml_path,
+                            db_parts=db_parts,
+                            is_dimension=True,
+                            time_granularity=getattr(dim, "granularity", "") or "",
+                        )
+                    )
+
+            if not semantic_objects:
+                return {
+                    "success": False,
+                    "error": (
+                        "OSI datasets declared in semantic model file were not found after loading datasource "
+                        f"context: {', '.join(sorted(target_dataset_names))}"
+                    ),
+                }
+            replacement_plans = [(self.semantic_rag, semantic_model_path, semantic_objects)]
+            if table_profiles and self.table_semantic_profile_rag is not None:
+                replacement_plans.append((self.table_semantic_profile_rag, semantic_model_path, table_profiles))
+            snapshots = snapshot_artifact_replacements(replacement_plans)
+            try:
+                self.semantic_rag.upsert_batch(semantic_objects)
+                self.semantic_rag.create_indices()
+                profile_count = 0
+                if table_profiles and self.table_semantic_profile_rag is not None:
+                    self.table_semantic_profile_rag.upsert_batch(table_profiles)
+                    self.table_semantic_profile_rag.create_indices()
+                    profile_count = len(table_profiles)
+                delete_stale_artifact_rows(replacement_plans)
+            except Exception as sync_exc:
+                restore_failures = restore_artifact_replacements(snapshots)
+                if restore_failures:
+                    raise RuntimeError(
+                        "OSI semantic replacement failed and rollback was incomplete for: "
+                        f"{', '.join(restore_failures)}"
+                    ) from sync_exc
+                raise
+            # Post-commit, best-effort cleanup of shadowed stale rows; never raises.
+            self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
+            return {
+                "success": True,
+                "message": f"Synced {len(semantic_objects)} OSI semantic object(s): {', '.join(synced_items[:5])}",
+                "semantic_objects": len(semantic_objects),
+                "table_semantic_profiles": profile_count,
+            }
+        except Exception as e:
+            logger.error(f"Error syncing OSI semantic objects to DB: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
 
     @staticmethod
     def _osi_column_object(
@@ -1864,29 +1789,45 @@ class GenerationTools:
             "entity": name if is_entity_key else "",
         }
 
-    def _build_osi_metric_projection(
+    def _sync_osi_metric_to_db(
         self,
-        doc: Any,
-        yaml_path: str,
-        target_metric_names: set[str],
+        metric_file: str,
+        semantic_model_file: Optional[str | List[str]] = None,
         metric_sqls: Optional[Dict[str, str]] = None,
-    ) -> tuple[List[dict], List[str]]:
-        """Project every metric declared by one OSI artifact into MetricRAG rows."""
-        semantic_model_name = str(getattr(doc, "name", "") or "")
-        db_parts = self._current_db_parts(self.agent_config, self._runtime_db_context())
-        metric_objects: List[dict] = []
-        synced_items: List[str] = []
+        replace_metric_artifact: bool = True,
+    ) -> dict:
+        """Sync OSI metrics into MetricRAG using the OSI document as source of truth."""
+        try:
+            semantic_model_files = (
+                list(semantic_model_file)
+                if isinstance(semantic_model_file, list)
+                else ([semantic_model_file] if semantic_model_file else [])
+            )
+            target_metric_names = set(self.extract_osi_metric_names(metric_file))
+            if not target_metric_names:
+                return {"success": False, "error": f"No OSI metrics found in metric file to sync: {metric_file}"}
 
-        for metric in getattr(doc, "metrics", []):
-            metric_name = getattr(metric, "name", "")
-            if not metric_name or metric_name not in target_metric_names:
-                continue
-            dimensions = self._metric_query_dimensions(doc, metric)
-            entities = self._metric_entities(doc, metric)
-            subject_path = self._metric_subject_path(metric)
-            measure_expr = self._metric_expression(metric)
-            metric_objects.append(
-                {
+            doc = self._load_osi_document(
+                metric_file=metric_file,
+                semantic_model_file=semantic_model_files[0] if semantic_model_files else None,
+            )
+            semantic_model_name = str(getattr(doc, "name", "") or "")
+            db_parts = self._current_db_parts(self.agent_config)
+            metric_objects: List[dict] = []
+            synced_items: List[str] = []
+
+            for metric in getattr(doc, "metrics", []):
+                metric_name = getattr(metric, "name", "")
+                if not metric_name:
+                    continue
+                if metric_name not in target_metric_names:
+                    continue
+                dimensions = self._metric_query_dimensions(doc, metric)
+                entities = self._metric_entities(doc, metric)
+
+                subject_path = self._metric_subject_path(metric)
+                measure_expr = self._metric_expression(metric)
+                metric_obj = {
                     "name": metric_name,
                     "subject_path": subject_path,
                     "semantic_model_name": semantic_model_name,
@@ -1901,223 +1842,77 @@ class GenerationTools:
                     "updated_at": datetime.now().replace(microsecond=0),
                     **db_parts,
                     "sql": metric_sqls.get(metric_name, "") if metric_sqls else "",
-                    "yaml_path": yaml_path,
+                    "yaml_path": metric_file,
                 }
-            )
-            synced_items.append(f"metric:{metric_name}")
+                metric_objects.append(metric_obj)
+                synced_items.append(f"metric:{metric_name}")
 
-        return metric_objects, synced_items
-
-    def _compile_osi_metric_sqls(
-        self,
-        metric_names: Iterable[str],
-        metric_sqls: Optional[Dict[str, str]] = None,
-    ) -> FuncToolResult:
-        """Ensure every metric has SQL from an independent adapter dry-run."""
-        names = self._dedupe_strings(metric_names)
-        compiled = {
-            name: sql.strip()
-            for name, sql in (metric_sqls or {}).items()
-            if name in names and isinstance(sql, str) and sql.strip()
-        }
-        missing = [name for name in names if name not in compiled]
-        if not missing:
-            return FuncToolResult(result={"metric_sqls": compiled})
-
-        try:
-            from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
-            from datus.tools.func_tool.semantic_tools import SemanticTools
-
-            evidence = GenerationEvidence()
-            semantic_tools = SemanticTools(
-                self.agent_config,
-                sub_agent_name="chat",
-                adapter_type=resolve_semantic_adapter_type(self.agent_config),
-                generation_evidence=evidence,
-                runtime_db_context_provider=self._runtime_db_context_provider,
-            )
-            for metric_name in missing:
-                dry_run = semantic_tools.query_metrics(metrics=[metric_name], dry_run=True)
-                if not dry_run.success:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"Metric dry-run failed for '{metric_name}': {dry_run.error or 'unknown error'}",
-                        result={"metric": metric_name, "dry_run": dry_run.result},
-                    )
-
-                evidence_sql = evidence.metric_sqls.get(metric_name, "")
-                sql = evidence_sql.strip() if isinstance(evidence_sql, str) else ""
-                payload = dry_run.result if isinstance(dry_run.result, dict) else {}
-                metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
-                returned_metric_sqls = metadata.get("metric_sqls")
-                if not sql and isinstance(returned_metric_sqls, dict):
-                    candidate = returned_metric_sqls.get(metric_name) or returned_metric_sqls.get(
-                        "__query_metrics_dry_run__"
-                    )
-                    sql = candidate.strip() if isinstance(candidate, str) else ""
-                if not sql:
-                    for key in ("sql", "compiled_sql", "generated_sql", "dry_run_sql", "query"):
-                        candidate = metadata.get(key)
-                        if isinstance(candidate, str) and candidate.strip():
-                            sql = candidate.strip()
-                            break
-                if not sql:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"Metric dry-run for '{metric_name}' did not return compiled SQL",
-                        result={"metric": metric_name, "dry_run": dry_run.result},
-                    )
-                compiled[metric_name] = sql
-        except Exception as exc:
-            logger.error("Failed to compile Ossie metric SQL: %s", exc, exc_info=True)
-            return FuncToolResult(success=0, error=f"Failed to compile Ossie metric SQL: {exc}")
-
-        return FuncToolResult(result={"metric_sqls": compiled})
-
-    def reconcile_osi_document_to_db(
-        self,
-        osi_file_path: str,
-        metric_sqls: Optional[Dict[str, str]] = None,
-    ) -> dict:
-        """Replace every KB projection owned by one complete OSI document.
-
-        The YAML artifact is the sole source of truth. Datasets, table profiles,
-        and metrics all participate in the same snapshot/write/stale-delete cycle;
-        an empty metrics collection therefore removes every metric row previously
-        projected from this artifact.
-        """
-        try:
-            if self.table_semantic_profile_rag is None:
-                detail = self._table_semantic_profile_init_error or "storage was not initialized"
-                return {
-                    "success": False,
-                    "error": f"Table semantic profile storage is unavailable: {detail}",
-                }
-            try:
-                canonical_path = Path(osi_file_path).expanduser().resolve(strict=True)
-            except (OSError, RuntimeError) as exc:
-                return {"success": False, "error": f"Failed to resolve OSI document path: {exc}"}
-            if not canonical_path.is_file():
-                return {"success": False, "error": f"OSI document path is not a file: {canonical_path}"}
-            osi_file_path = str(canonical_path)
-            target_dataset_names = set(self.extract_osi_dataset_names(osi_file_path))
-            if not target_dataset_names:
-                return {
-                    "success": False,
-                    "error": f"No OSI datasets found in document to sync: {osi_file_path}",
-                }
-            target_metric_names = set(self.extract_osi_metric_names(osi_file_path))
-            metric_sql_result = self._compile_osi_metric_sqls(sorted(target_metric_names), metric_sqls)
-            if not metric_sql_result.success:
-                return {
-                    "success": False,
-                    "error": metric_sql_result.error,
-                    "dry_run": metric_sql_result.result,
-                }
-            compiled_metric_sqls = metric_sql_result.result["metric_sqls"]
-            doc = self._load_osi_document(metric_file=osi_file_path, semantic_model_file=osi_file_path)
-            semantic_model_name = str(getattr(doc, "name", "") or "")
-
-            semantic_objects, table_profiles, semantic_items = self._build_osi_semantic_projection(
-                doc,
-                osi_file_path,
-                target_dataset_names,
-            )
-            if not semantic_objects:
+            if not metric_objects:
                 return {
                     "success": False,
                     "error": (
-                        "OSI datasets declared in the document were not found after loading datasource context: "
-                        f"{', '.join(sorted(target_dataset_names))}"
+                        "OSI metrics declared in metric file were not found after loading datasource context: "
+                        f"{', '.join(sorted(target_metric_names))}"
                     ),
                 }
-            metric_objects, metric_items = self._build_osi_metric_projection(
-                doc,
-                osi_file_path,
-                target_metric_names,
-                compiled_metric_sqls,
-            )
-            projected_metric_names = {obj["name"] for obj in metric_objects}
-            if projected_metric_names != target_metric_names:
-                missing = ", ".join(sorted(target_metric_names - projected_metric_names))
-                return {
-                    "success": False,
-                    "error": f"OSI metrics were not found after loading datasource context: {missing}",
-                }
 
-            replacement_plans = [(self.semantic_rag, osi_file_path, semantic_objects)]
-            if self.table_semantic_profile_rag is not None:
-                replacement_plans.append((self.table_semantic_profile_rag, osi_file_path, table_profiles))
-            # Always include MetricRAG, including when metric_objects is empty.
-            replacement_plans.append((self.metric_rag, osi_file_path, metric_objects))
+            synced_semantic_files: List[str] = []
+            for current_semantic_file in semantic_model_files:
+                sem_result = self.sync_osi_semantic_to_db(current_semantic_file)
+                if not sem_result.get("success"):
+                    return sem_result
+                synced_semantic_files.append(current_semantic_file)
 
-            snapshots = snapshot_artifact_replacements(replacement_plans)
+            metric_plan = (self.metric_rag, metric_file, metric_objects)
+            replacement_plans = [metric_plan] if replace_metric_artifact else []
+            snapshots = snapshot_artifact_replacements([metric_plan])
             try:
-                self.semantic_rag.upsert_batch(semantic_objects)
-                self.semantic_rag.create_indices()
-                if self.table_semantic_profile_rag is not None and table_profiles:
-                    self.table_semantic_profile_rag.upsert_batch(table_profiles)
-                    self.table_semantic_profile_rag.create_indices()
-                if metric_objects:
-                    self.metric_rag.upsert_batch(metric_objects)
-                    self.metric_rag.create_indices()
+                self.metric_rag.upsert_batch(metric_objects)
+                self.metric_rag.create_indices()
                 delete_stale_artifact_rows(replacement_plans)
             except Exception as sync_exc:
                 restore_failures = restore_artifact_replacements(snapshots)
                 if restore_failures:
                     raise RuntimeError(
-                        "OSI document replacement failed and rollback was incomplete for: "
-                        f"{', '.join(restore_failures)}"
+                        f"OSI metric replacement failed and rollback was incomplete for: {', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
-
-            # Post-commit, best-effort cleanup of shadowed stale rows; never raises.
-            self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
-            self._semantic_object_exists_cache.clear()
-            self._semantic_table_object_index = None
-            synced_items = [*semantic_items, *metric_items]
             return {
                 "success": True,
-                "message": (
-                    f"Synced complete OSI document with {len(semantic_objects)} semantic object(s), "
-                    f"{len(table_profiles)} table profile(s), and {len(metric_objects)} metric(s): "
-                    f"{', '.join(synced_items[:5])}"
-                ),
-                "semantic_model_name": semantic_model_name,
-                "semantic_objects": len(semantic_objects),
-                "table_semantic_profiles": len(table_profiles) if self.table_semantic_profile_rag is not None else 0,
+                "message": f"Synced {len(metric_objects)} OSI metric(s): {', '.join(synced_items[:5])}",
                 "metric_artifact_ids": [obj["id"] for obj in metric_objects],
                 "metric_names": [obj["name"] for obj in metric_objects],
-                "semantic_synced": True,
-                "semantic_model_files_synced": [osi_file_path],
-                "synced": len(semantic_objects) + len(metric_objects),
+                "semantic_synced": bool(synced_semantic_files),
+                "semantic_model_files_synced": synced_semantic_files,
             }
         except Exception as e:
-            logger.error(f"Error syncing complete OSI document to DB: {e}", exc_info=True)
+            logger.error(f"Error syncing OSI metrics to DB: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
-    def sync_osi_to_db(
-        self,
-        osi_file_path: str,
-        metric_sqls: Optional[Dict[str, str]] = None,
-    ) -> dict:
-        """Backward-compatible public name for complete OSI reconciliation."""
-        return self.reconcile_osi_document_to_db(osi_file_path, metric_sqls=metric_sqls)
+    def sync_osi_to_db(self, osi_file_path: str) -> dict:
+        """Sync a complete OSI document (datasets + metrics) into the Knowledge Base.
 
-    def sync_osi_semantic_to_db(self, semantic_model_path: str) -> dict:
-        """Deprecated alias; OSI semantic artifacts are always reconciled in full."""
-        return self.reconcile_osi_document_to_db(semantic_model_path)
+        Public composition entry for callers that materialize a self-contained OSI
+        file and need it vectorized (e.g. the SaaS Semantic Hub pull) without
+        reaching into the per-kind sync internals.
 
-    def _sync_osi_metric_to_db(
-        self,
-        metric_file: str,
-        semantic_model_file: Optional[str | List[str]] = None,
-        metric_sqls: Optional[Dict[str, str]] = None,
-        replace_metric_artifact: bool = True,
-    ) -> dict:
-        """Deprecated alias; OSI semantic artifacts are always reconciled in full."""
-        del semantic_model_file, replace_metric_artifact
-        return self.reconcile_osi_document_to_db(metric_file, metric_sqls=metric_sqls)
+        A metrics-bearing document is synced in one pass: ``_sync_osi_metric_to_db``
+        already vectorizes the referenced datasets before the metrics when a
+        ``semantic_model_file`` is given, so no separate dataset sync is needed. A
+        dataset-only document syncs just its datasets. The result always carries a
+        ``synced`` count for uniform accounting across both shapes.
+        """
+        try:
+            if self.extract_osi_metric_names(osi_file_path):
+                result = self._sync_osi_metric_to_db(metric_file=osi_file_path, semantic_model_file=osi_file_path)
+                synced = len(result.get("metric_artifact_ids") or [])
+            else:
+                result = self.sync_osi_semantic_to_db(osi_file_path)
+                synced = int(result.get("semantic_objects") or 0)
+            return {**result, "synced": synced}
+        except Exception as e:
+            logger.error(f"Error syncing OSI document to DB: {e}", exc_info=True)
+            return {"success": False, "error": str(e)}
 
     def _sync_metric_to_db(
         self,

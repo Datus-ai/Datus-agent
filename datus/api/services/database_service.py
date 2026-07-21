@@ -599,7 +599,7 @@ class DatasourceService:
                 sync_result = GenerationTools(
                     agent_config=self.agent_config,
                     authoring_format="osi",
-                ).reconcile_osi_document_to_db(semantic_file_path)
+                ).sync_osi_semantic_to_db(semantic_file_path)
             else:
                 sync_result = GenerationHooks._sync_semantic_to_db(
                     semantic_file_path,
