@@ -418,3 +418,79 @@ class TestSearchTable:
             assert "search_table" in tool_names, "search_table should be available when schema RAG exists"
         else:
             assert "search_table" not in tool_names, "search_table should not be available without schema RAG"
+
+
+@pytest.mark.acceptance
+class TestAllToolsNameContract:
+    """all_tools_name() is the agent-facing tool surface, minus non-tool methods.
+
+    It feeds two consumers: VALID_TOOL_METHODS (datus/api/services/agent_service.py,
+    the saas editor catalog returned by GET /agent/use_tools) and the permission
+    registry (AgenticNode._populate_tool_registry). Two kinds of public methods
+    must never leak into it: framework plumbing (``to_function_tool``) and the
+    internal statement-dispatch helpers of the unified ``execute_sql`` entry point
+    (``read_query`` / ``execute_write`` / ``execute_ddl`` / ``get_table_ddl``),
+    which are never decorated and never mounted as tools.
+    """
+
+    def test_all_tools_name_includes_decorated_tools(self):
+        """Every @mcp_tool()-decorated method is part of the surface."""
+        from datus.utils.mcp_decorators import get_mcp_tools
+
+        names = DBFuncTool.all_tools_name()
+
+        assert len(names) == len(set(names)), "no duplicate tool names"
+        decorated = {name for name, _, _ in get_mcp_tools(DBFuncTool)}
+        assert decorated == {
+            "search_table",
+            "list_databases",
+            "list_schemas",
+            "list_tables",
+            "describe_table",
+            "execute_sql",
+        }
+        assert decorated.issubset(set(names))
+
+    def test_all_tools_name_includes_directly_mounted_tools(self):
+        """Tools gen_job mounts directly (no decorator) stay in the surface so the
+        permission registry can classify them under db_tools — dropping them would
+        silently disable the ASK gate on ``transfer_query_result``."""
+        names = set(DBFuncTool.all_tools_name())
+
+        for tool in ("transfer_query_result", "get_migration_capabilities", "suggest_table_layout", "validate_ddl"):
+            assert tool in names, f"{tool} is mounted directly by gen_job and must stay classified"
+
+    def test_all_tools_name_excludes_non_tool_methods(self):
+        """Framework plumbing and internal execute_sql dispatch helpers are not
+        tools and must not appear in the surface (they leak into the saas editor
+        catalog otherwise)."""
+        names = set(DBFuncTool.all_tools_name())
+
+        for method in (
+            "to_function_tool",
+            "available_tools",
+            "read_query",
+            "execute_write",
+            "execute_ddl",
+            "get_table_ddl",
+        ):
+            assert hasattr(DBFuncTool, method), f"{method} should still exist as a method"
+            assert method not in names, f"{method} is not an agent tool and must be excluded"
+
+    def test_all_tools_name_is_exactly_the_real_tool_surface(self):
+        """The full db_tools surface is exactly the decorated tools plus the
+        gen_job-mounted tools — no more, no less. Pins the saas editor catalog."""
+        assert set(DBFuncTool.all_tools_name()) == {
+            # @mcp_tool()-decorated
+            "search_table",
+            "list_databases",
+            "list_schemas",
+            "list_tables",
+            "describe_table",
+            "execute_sql",
+            # mounted directly by gen_job
+            "transfer_query_result",
+            "get_migration_capabilities",
+            "suggest_table_layout",
+            "validate_ddl",
+        }

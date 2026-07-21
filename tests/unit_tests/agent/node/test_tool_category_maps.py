@@ -201,7 +201,11 @@ class TestPopulateToolRegistry:
 
     def test_real_classes_register_via_class_level_introspection(self):
         """End-to-end over real classes: ``all_tools_name()`` is class-level
-        on the core tools, so bare instances classify their full surface."""
+        on the core tools, so bare instances classify their full surface —
+        both @mcp_tool()-decorated tools (``execute_sql``) and the tools gen_job
+        mounts directly (``transfer_query_result``). The internal execute_sql
+        dispatch helpers (read_query / execute_write / execute_ddl) are not tools
+        and are intentionally excluded from the surface."""
         from datus.tools.func_tool.database import DBFuncTool
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 
@@ -211,9 +215,13 @@ class TestPopulateToolRegistry:
 
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
-        assert registry["read_query"] == "db_tools"
-        assert registry["execute_ddl"] == "db_tools"
-        assert registry["execute_write"] == "db_tools"
+        assert registry["execute_sql"] == "db_tools"
+        assert registry["describe_table"] == "db_tools"
+        assert registry["transfer_query_result"] == "db_tools"
+        # Internal execute_sql dispatch helpers are never mounted as tools, so
+        # they must not appear in the permission registry.
+        assert "read_query" not in registry
+        assert "execute_write" not in registry
         assert registry["read_file"] == "filesystem_tools"
         assert registry["write_file"] == "filesystem_tools"
         assert registry["delete_file"] == "filesystem_tools"
