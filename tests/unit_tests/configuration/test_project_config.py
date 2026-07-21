@@ -113,6 +113,27 @@ class TestLoadProjectOverride:
             result = load_project_override(str(tmp_path))
         assert result.reasoning_effort is None
 
+    @pytest.mark.parametrize(
+        "raw_value,expected",
+        [(True, True), (False, False), ("true", True), ("off", False), ("1", True), ("no", False)],
+    )
+    def test_parse_sandbox_field(self, tmp_path, raw_value, expected):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"sandbox": raw_value}))
+        result = load_project_override(str(tmp_path))
+        assert result.sandbox is expected
+
+    @pytest.mark.parametrize("bad_value", ["yess", 3, ["true"], {"enabled": True}])
+    def test_invalid_sandbox_dropped_with_warning(self, tmp_path, caplog, bad_value):
+        path = tmp_path / PROJECT_CONFIG_REL
+        path.parent.mkdir(parents=True)
+        path.write_text(yaml.safe_dump({"sandbox": bad_value}))
+        with caplog.at_level(logging.WARNING):
+            result = load_project_override(str(tmp_path))
+        assert result.sandbox is None
+        assert "sandbox" in " ".join(r.message for r in caplog.records)
+
     def test_unknown_keys_warn_and_drop(self, tmp_path, caplog):
         path = tmp_path / PROJECT_CONFIG_REL
         path.parent.mkdir(parents=True)
@@ -205,6 +226,19 @@ class TestSaveProjectOverride:
         loaded = load_project_override(str(tmp_path))
         assert loaded.target == "new"
 
+    @pytest.mark.parametrize("value", [True, False])
+    def test_sandbox_round_trips_including_false(self, tmp_path, value):
+        # ``sandbox: false`` (force-off) must survive save/load — a naive
+        # truthiness filter would drop it and lose the override.
+        save_project_override(ProjectOverride(sandbox=value), cwd=str(tmp_path))
+        loaded = load_project_override(str(tmp_path))
+        assert loaded.sandbox is value
+
+    def test_sandbox_none_omitted_from_yaml(self, tmp_path):
+        written = save_project_override(ProjectOverride(target="x"), cwd=str(tmp_path))
+        loaded = yaml.safe_load(written.read_text())
+        assert "sandbox" not in loaded
+
 
 class TestAllowedKeys:
     def test_whitelist_contains_expected_keys(self):
@@ -221,6 +255,7 @@ class TestAllowedKeys:
                 "reasoning_effort",
                 "bash_allow",
                 "sql_allow",
+                "sandbox",
             }
         )
 
@@ -241,11 +276,16 @@ class TestProjectOverrideDataclass:
             ("project_name", "z"),
             ("language", "zh"),
             ("reasoning_effort", "high"),
+            ("sandbox", True),
         ],
     )
     def test_is_not_empty_when_any_set(self, field, value):
         override = ProjectOverride(**{field: value})
         assert not override.is_empty()
+
+    def test_is_not_empty_when_sandbox_false(self):
+        # ``sandbox: false`` is a meaningful force-off override, not "unset".
+        assert not ProjectOverride(sandbox=False).is_empty()
 
 
 class TestServiceDefaultFields:

@@ -320,6 +320,18 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         agent_raw["language"] = override.language
     if override.reasoning_effort is not None:
         agent_raw["target_reasoning_effort"] = override.reasoning_effort
+    if override.sandbox is not None:
+        # Project-level bash sandbox switch: only ``enabled`` is overridden;
+        # ``allow_read``/``allow_write`` from the global agent.yml survive.
+        bash_raw = agent_raw.get("bash")
+        if not isinstance(bash_raw, dict):
+            bash_raw = {}
+        agent_raw["bash"] = bash_raw
+        sandbox_raw = bash_raw.get("sandbox")
+        if not isinstance(sandbox_raw, dict):
+            sandbox_raw = {}
+        bash_raw["sandbox"] = sandbox_raw
+        sandbox_raw["enabled"] = override.sandbox
     if override.bash_allow:
         # Append project-level bash allow patterns into the permissions raw
         # dict so they ride the normal parse/merge pipeline

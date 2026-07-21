@@ -2580,6 +2580,16 @@ class AgenticNode(Node):
         try:
             from datus.tools.func_tool.bash_tool import BashTool
 
+            # Datus home stays readable inside the sandbox: skills, templates
+            # and plugins live there and are read/executed via bash.
+            sandbox_read_dirs = []
+            try:
+                from datus.utils.path_manager import get_path_manager
+
+                sandbox_read_dirs.append(str(get_path_manager(agent_config=self.agent_config).datus_home))
+            except Exception as exc:
+                logger.debug("Failed to resolve datus home for sandbox read dirs: %s", exc)
+
             self.bash_tool = BashTool(
                 workspace_root=self._resolve_workspace_root(),
                 allowed_patterns=allowed_patterns,
@@ -2589,6 +2599,10 @@ class AgenticNode(Node):
                 # at execute time. Returns None until a session id exists → the
                 # tool falls back to in-memory truncation.
                 output_dir_provider=self._bash_output_dir,
+                # Shared mutable settings: /sandbox on|off flips ``enabled`` on
+                # the AgentConfig object and this tool sees it next call.
+                sandbox_settings=getattr(self.agent_config, "bash_sandbox", None),
+                sandbox_read_dirs=sandbox_read_dirs,
             )
             logger.debug(f"Setup bash tool with workspace: {self.bash_tool.workspace_root}")
         except Exception as e:

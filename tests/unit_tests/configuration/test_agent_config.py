@@ -1912,6 +1912,48 @@ class TestAgentConfigBashAllowedPatterns:
         assert cfg.bash_allowed_patterns == ["*"]
 
 
+class TestAgentConfigBashSandbox:
+    """``bash.sandbox`` parses into a shared, mutable ``SandboxSettings``
+    driving the OS-level sandbox around ``BashTool``. Default is disabled so
+    existing deployments see zero behavior change.
+    """
+
+    _make = TestAgentConfigBashToolEnabled._make
+
+    def test_default_disabled_with_empty_lists(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert cfg.bash_sandbox.enabled is False
+        assert cfg.bash_sandbox.allow_read == []
+        assert cfg.bash_sandbox.allow_write == []
+
+    def test_from_yaml_full_section(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            bash={"sandbox": {"enabled": True, "allow_read": ["/data"], "allow_write": ["/scratch"]}},
+        )
+        assert cfg.bash_sandbox.enabled is True
+        assert cfg.bash_sandbox.allow_read == ["/data"]
+        assert cfg.bash_sandbox.allow_write == ["/scratch"]
+
+    @pytest.mark.parametrize("yaml_value", ["true", "1", "yes", "on", True])
+    def test_string_true_enables(self, tmp_path, yaml_value):
+        cfg = self._make(tmp_path, bash={"sandbox": {"enabled": yaml_value}})
+        assert cfg.bash_sandbox.enabled is True
+
+    def test_non_mapping_sandbox_section_defaults_disabled(self, tmp_path):
+        cfg = self._make(tmp_path, bash={"sandbox": "true"})
+        assert cfg.bash_sandbox.enabled is False
+
+    def test_settings_object_is_shared_and_mutable(self, tmp_path):
+        # /sandbox on|off mutates the object in place; BashTool holds the
+        # same reference, so identity across reads is the contract here.
+        cfg = self._make(tmp_path)
+        settings = cfg.bash_sandbox
+        settings.enabled = True
+        assert cfg.bash_sandbox is settings
+        assert cfg.bash_sandbox.enabled is True
+
+
 class TestAgentConfigTavilyApiKey:
     """``document.tavily_api_key`` resolution prefers the YAML value, falls
     back to ``TAVILY_API_KEY`` env only when the key is absent, and never

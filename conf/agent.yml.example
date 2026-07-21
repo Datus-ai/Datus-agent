@@ -149,6 +149,24 @@ agent:
   #   #   destructive: ask
   #   #   unknown: ask
 
+  # ---------------------------------------------------------------------------
+  # General-purpose bash tool.
+  #   enabled          — master switch; false removes the ``bash`` tool entirely
+  #   allowed_patterns — execution-layer hard whitelist (default ["*"])
+  #   sandbox          — OS-level sandbox wrapped around every command
+  #                      (macOS sandbox-exec / Linux bubblewrap). When enabled,
+  #                      file writes are restricted to the workspace, the
+  #                      session data dir and tmp; file reads to system dirs +
+  #                      the same allowlist. Fail-closed: if no mechanism is
+  #                      available (Windows, Linux without bwrap) commands are
+  #                      rejected. Toggle at runtime with /sandbox on|off.
+  # ---------------------------------------------------------------------------
+  # bash:
+  #   enabled: true
+  #   sandbox:
+  #     enabled: false
+  #     allow_read: []        # extra readable dirs (e.g. ~/.gitconfig)
+  #     allow_write: []       # extra writable dirs
 
   nodes:
     schema_linking:

@@ -11,9 +11,11 @@ whether the tool is exposed.
 """
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+from datus.tools.func_tool import bash_sandbox
 from datus.tools.func_tool.bash_tool import BashTool
 
 
@@ -637,3 +639,114 @@ class TestRestrictedWhitelistHardening:
     def test_unrestricted_description_has_no_restriction_note(self, unrestricted_tool):
         tool = unrestricted_tool.available_tools()[0]
         assert "Restricted mode" not in tool.description
+
+
+class TestBashToolSandbox:
+    """Wiring between BashTool and the OS sandbox (no real sandbox spawned)."""
+
+    @pytest.fixture
+    def enabled_settings(self):
+        return bash_sandbox.SandboxSettings(enabled=True)
+
+    def test_fail_closed_when_mechanism_unavailable(self, temp_workspace, enabled_settings, monkeypatch):
+        monkeypatch.setattr(bash_sandbox, "is_available", lambda: False)
+        popen_spy = MagicMock()
+        monkeypatch.setattr("datus.tools.func_tool.bash_tool.subprocess.Popen", popen_spy)
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=enabled_settings,
+        )
+        result = tool.bash("echo hi")
+        assert result.success == 0
+        assert "NOT executed" in result.error
+        popen_spy.assert_not_called()
+
+    def test_wraps_argv_when_enabled(self, temp_workspace, enabled_settings, monkeypatch):
+        monkeypatch.setattr(bash_sandbox, "is_available", lambda: True)
+        captured = {}
+
+        def fake_wrap(argv, policy):
+            captured["argv"] = argv
+            captured["policy"] = policy
+            return argv
+
+        monkeypatch.setattr(bash_sandbox, "wrap_argv", fake_wrap)
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=enabled_settings,
+            sandbox_read_dirs=[str(temp_workspace / "scripts")],
+        )
+        result = tool.bash("echo sandboxed")
+        assert result.success == 1
+        assert "sandboxed" in result.result
+        assert captured["argv"][0].endswith("bash")
+        assert str(temp_workspace.resolve()) in captured["policy"].writable_roots
+        assert str((temp_workspace / "scripts").resolve()) in captured["policy"].readable_roots
+
+    def test_no_settings_never_touches_sandbox(self, temp_workspace, monkeypatch):
+        wrap_spy = MagicMock(side_effect=AssertionError("wrap_argv must not be called"))
+        availability_spy = MagicMock(side_effect=AssertionError("is_available must not be called"))
+        monkeypatch.setattr(bash_sandbox, "wrap_argv", wrap_spy)
+        monkeypatch.setattr(bash_sandbox, "is_available", availability_spy)
+        tool = BashTool(workspace_root=str(temp_workspace), allowed_patterns=["*"])
+        result = tool.bash("echo plain")
+        assert result.success == 1
+        assert "plain" in result.result
+
+    def test_disabled_settings_skip_wrapping(self, temp_workspace, monkeypatch):
+        wrap_spy = MagicMock(side_effect=AssertionError("wrap_argv must not be called"))
+        monkeypatch.setattr(bash_sandbox, "wrap_argv", wrap_spy)
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=bash_sandbox.SandboxSettings(enabled=False),
+        )
+        result = tool.bash("echo off")
+        assert result.success == 1
+        assert "off" in result.result
+
+    def test_runtime_toggle_takes_effect_next_call(self, temp_workspace, monkeypatch):
+        monkeypatch.setattr(bash_sandbox, "is_available", lambda: True)
+        calls = []
+
+        def fake_wrap(argv, policy):
+            calls.append(argv)
+            return argv
+
+        monkeypatch.setattr(bash_sandbox, "wrap_argv", fake_wrap)
+        shared = bash_sandbox.SandboxSettings(enabled=False)
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=shared,
+        )
+        assert tool.bash("echo one").success == 1
+        assert calls == []
+        shared.enabled = True  # what /sandbox on does to the shared object
+        assert tool.bash("echo two").success == 1
+        assert len(calls) == 1
+        shared.enabled = False
+        assert tool.bash("echo three").success == 1
+        assert len(calls) == 1
+
+    def test_wrap_failure_returns_error_without_execution(self, temp_workspace, enabled_settings, monkeypatch):
+        monkeypatch.setattr(bash_sandbox, "is_available", lambda: True)
+
+        def raise_unavailable(argv, policy):
+            raise bash_sandbox.SandboxUnavailableError("gone mid-flight")
+
+        monkeypatch.setattr(bash_sandbox, "wrap_argv", raise_unavailable)
+        popen_spy = MagicMock()
+        monkeypatch.setattr("datus.tools.func_tool.bash_tool.subprocess.Popen", popen_spy)
+        tool = BashTool(
+            workspace_root=str(temp_workspace),
+            allowed_patterns=["*"],
+            sandbox_settings=enabled_settings,
+        )
+        result = tool.bash("echo hi")
+        assert result.success == 0
+        assert "NOT executed" in result.error
+        assert "gone mid-flight" in result.error
+        popen_spy.assert_not_called()

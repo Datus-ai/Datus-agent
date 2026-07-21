@@ -57,4 +57,5 @@ Datus-CLI 中所有可用的斜杠命令，按类别分组。
 | `/bootstrap-bi` | | 为子 agent 上下文提取 BI 仪表盘资产 | |
 | `/services` | | 列出已配置的服务平台及其只读方法 | |
 | `/permission` | | 切换当前 CLI / agent 权限配置文件 | |
+| `/sandbox` | | 开关 OS 级 bash 沙箱（`status`/`on`/`off`，可用 `--project`/`--global` 持久化）。开启后 bash 命令只能写入工作区、会话数据目录和 tmp，只能读取系统目录与白名单目录（macOS `sandbox-exec` / Linux `bwrap`；其他平台 fail-closed 拒绝执行） | |
 | `/profile` | | 已废弃的 `/permission` 兼容别名 | |

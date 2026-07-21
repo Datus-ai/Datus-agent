@@ -57,4 +57,5 @@ All slash commands available in Datus-CLI, grouped by category.
 | `/bootstrap-bi` | | Extract BI dashboard assets for sub-agent context | |
 | `/services` | | List configured service platforms and their read-only methods | |
 | `/permission` | | Switch the active CLI / agent permission profile | |
+| `/sandbox` | | Toggle the OS-level bash sandbox (`status`/`on`/`off`, optional `--project`/`--global` persistence). When on, bash commands can only write inside the workspace, session data dir and tmp, and only read system dirs plus the allowlist (macOS `sandbox-exec` / Linux `bwrap`; fail-closed elsewhere) | |
 | `/profile` | | Deprecated alias for `/permission` | |

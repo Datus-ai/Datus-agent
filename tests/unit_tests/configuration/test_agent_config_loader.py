@@ -279,6 +279,54 @@ class TestApplyProjectOverride:
             _apply_project_override(agent_raw)
         assert agent_raw["project_name"] == "my_proj"
 
+    @pytest.mark.parametrize("value", [True, False])
+    def test_sandbox_override_sets_bash_sandbox_enabled(self, value):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sandbox=value),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["bash"]["sandbox"]["enabled"] is value
+
+    def test_sandbox_override_preserves_existing_bash_section(self):
+        # Only ``enabled`` is overridden; allow_read/allow_write and sibling
+        # bash keys from the global agent.yml must survive.
+        agent_raw = self._base_raw()
+        agent_raw["bash"] = {
+            "enabled": True,
+            "allowed_patterns": ["datus*"],
+            "sandbox": {"enabled": False, "allow_read": ["/data"]},
+        }
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sandbox=True),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["bash"]["sandbox"]["enabled"] is True
+        assert agent_raw["bash"]["sandbox"]["allow_read"] == ["/data"]
+        assert agent_raw["bash"]["allowed_patterns"] == ["datus*"]
+        assert agent_raw["bash"]["enabled"] is True
+
+    def test_sandbox_override_tolerates_malformed_bash_section(self):
+        agent_raw = self._base_raw()
+        agent_raw["bash"] = "not-a-mapping"
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(sandbox=True),
+        ):
+            _apply_project_override(agent_raw)
+        assert agent_raw["bash"]["sandbox"]["enabled"] is True
+
+    def test_no_sandbox_override_leaves_bash_untouched(self):
+        agent_raw = self._base_raw()
+        with patch(
+            "datus.configuration.agent_config_loader.load_project_override",
+            return_value=ProjectOverride(project_name="p"),
+        ):
+            _apply_project_override(agent_raw)
+        assert "bash" not in agent_raw
+
     def test_valid_default_datasource_flips_default_flags(self):
         """default_datasource overlay is applied by flipping datasources[*].default
         so AgentConfig.services.default_datasource resolves to the override target

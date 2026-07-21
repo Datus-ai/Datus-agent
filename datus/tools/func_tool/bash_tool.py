@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agents import Tool
 
+from datus.tools.func_tool import bash_sandbox
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.tools.permission.bash_rules import contains_shell_metachars, split_pipeline
 from datus.utils.loggings import get_logger
@@ -94,6 +95,8 @@ class BashTool:
         extra_env: Optional[Dict[str, str]] = None,
         identity: Optional[str] = None,
         output_dir_provider: Optional[Callable[[], Optional[Path]]] = None,
+        sandbox_settings: Optional[bash_sandbox.SandboxSettings] = None,
+        sandbox_read_dirs: Optional[List[str]] = None,
     ):
         """Initialize the bash tool.
 
@@ -114,6 +117,13 @@ class BashTool:
                 returns ``None``), output is captured in memory and truncated
                 at :data:`MAX_OUTPUT_SIZE` — the general-purpose fallback used
                 by MCP / standalone callers and tests.
+            sandbox_settings: Optional OS-sandbox settings SHARED with
+                ``AgentConfig`` — ``enabled`` is re-read on every call so
+                ``/sandbox on|off`` takes effect immediately. ``None`` means
+                the sandbox machinery is never engaged (legacy behavior).
+            sandbox_read_dirs: Extra read-only roots for the sandbox policy
+                beyond the built-in defaults (e.g. the datus home so skills
+                and templates stay readable).
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.allowed_patterns = list(allowed_patterns) if allowed_patterns else []
@@ -121,6 +131,8 @@ class BashTool:
         self.extra_env = dict(extra_env) if extra_env else {}
         self.identity = identity
         self._output_dir_provider = output_dir_provider
+        self.sandbox_settings = sandbox_settings
+        self.sandbox_read_dirs = list(sandbox_read_dirs) if sandbox_read_dirs else []
         # Monotonic per-instance counter zero-padded into archive filenames so a
         # directory listing sorts in command-invocation order. Paired with a
         # per-instance random token so a recreated/resumed BashTool (which
@@ -183,6 +195,20 @@ class BashTool:
                 error=f"Command not allowed. Allowed patterns: {', '.join(self.allowed_patterns) or '(none)'}",
             )
 
+        sandbox_active = self.sandbox_settings is not None and self.sandbox_settings.enabled
+        if sandbox_active and not bash_sandbox.is_available():
+            # Fail closed: with the sandbox switched on, running unprotected
+            # would silently drop the guarantee the user asked for.
+            logger.warning("Sandbox enabled but unavailable (identity=%s); command rejected", self.identity)
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "Sandbox is enabled but no OS sandbox mechanism is available: "
+                    f"{bash_sandbox.unavailable_reason()}. The command was NOT executed. "
+                    "Install the missing mechanism or disable the sandbox (/sandbox off)."
+                ),
+            )
+
         effective_timeout = self._resolve_timeout(timeout)
 
         try:
@@ -192,6 +218,17 @@ class BashTool:
 
         logger.info("Executing command (identity=%s, timeout=%ss): %s", self.identity, effective_timeout, command)
         output_dir = self._resolve_output_dir()
+        if sandbox_active:
+            policy = bash_sandbox.build_policy(
+                self.sandbox_settings,
+                workspace_root=self.workspace_root,
+                dynamic_write_dirs=[output_dir] if output_dir else [],
+                extra_read_dirs=self.sandbox_read_dirs,
+            )
+            try:
+                argv = bash_sandbox.wrap_argv(argv, policy)
+            except bash_sandbox.SandboxUnavailableError as e:
+                return FuncToolResult(success=0, error=f"Sandbox wrapping failed; command NOT executed: {e}")
         try:
             if output_dir is not None:
                 # Preferred path: stream the child's output straight to disk so
