@@ -2048,12 +2048,11 @@ class TestStartChatModelOverride:
 class TestStartChatRemoteSourceHardening:
     """Per-source bash policy for remote front-ends.
     ``filesystem_strict`` is always on for the API surface. vscode owns its
-    own local shell, so ``bash_tool_enabled`` is forced off; web keeps a
-    server-side bash restricted to datus-prefixed commands
-    (``bash_allowed_patterns = ["datus*"]``) so plugin CLIs
-    ("datus <plugin> ...") stay usable. ``project_root`` is intentionally
-    untouched — web keeps its configured root and the read-only property
-    falls back to CWD when empty.
+    own local shell, so ``bash_tool_enabled`` is forced off; web runs a full
+    server-side bash (``bash_allowed_patterns = ["*"]``) confined by the
+    strict OS sandbox (``bash_sandbox.enabled`` + ``mode == "strict"``).
+    ``project_root`` is intentionally untouched — web keeps its configured
+    root and the read-only property falls back to CWD when empty.
     """
 
     @pytest.mark.asyncio
@@ -2082,7 +2081,7 @@ class TestStartChatRemoteSourceHardening:
         assert real_agent_config.bash_tool_enabled is True
 
     @pytest.mark.asyncio
-    async def test_web_source_restricts_bash_to_datus_commands(self, real_agent_config, monkeypatch):
+    async def test_web_source_allows_all_bash_under_strict_sandbox(self, real_agent_config, monkeypatch):
         from datus.api.models.cli_models import StreamChatInput
 
         real_agent_config.bash_tool_enabled = True
@@ -2099,17 +2098,21 @@ class TestStartChatRemoteSourceHardening:
 
         cfg = captured["agent_config"]
         assert cfg.filesystem_strict is True
-        # web keeps bash for plugin CLIs, but only datus-prefixed commands.
+        # web runs a full bash confined by the strict OS sandbox, not a whitelist.
         assert cfg.bash_tool_enabled is True
-        assert cfg.bash_allowed_patterns == ["datus*"]
+        assert cfg.bash_allowed_patterns == ["*"]
+        assert cfg.bash_sandbox.enabled is True
+        assert cfg.bash_sandbox.is_strict is True
         assert cfg._client_source == "web"
         # Source config remains untouched because start_chat deep-copies.
         assert real_agent_config.bash_allowed_patterns == ["*"]
+        assert real_agent_config.bash_sandbox.enabled is False
 
     @pytest.mark.asyncio
     async def test_web_source_respects_yaml_bash_disable(self, real_agent_config, monkeypatch):
         """An agent.yml ``bash.enabled: false`` still wins under web —
-        restricting patterns must never re-enable a disabled tool."""
+        allowing all commands or enabling the sandbox must never re-enable a
+        disabled tool."""
         from datus.api.models.cli_models import StreamChatInput
 
         real_agent_config.bash_tool_enabled = False
@@ -2126,12 +2129,12 @@ class TestStartChatRemoteSourceHardening:
 
         cfg = captured["agent_config"]
         assert cfg.bash_tool_enabled is False
-        assert cfg.bash_allowed_patterns == ["datus*"]
+        assert cfg.bash_allowed_patterns == ["*"]
 
     @pytest.mark.asyncio
-    async def test_default_source_web_restricts_bash_without_request_source(self, real_agent_config, monkeypatch):
-        """A daemon launched with --source web applies the datus-only bash
-        whitelist to every request that does not override source."""
+    async def test_default_source_web_applies_strict_sandbox_without_request_source(self, real_agent_config, monkeypatch):
+        """A daemon launched with --source web applies the full-bash +
+        strict-sandbox policy to every request that does not override source."""
         from datus.api.models.cli_models import StreamChatInput
 
         real_agent_config.bash_tool_enabled = True
@@ -2148,7 +2151,8 @@ class TestStartChatRemoteSourceHardening:
 
         cfg = captured["agent_config"]
         assert cfg.bash_tool_enabled is True
-        assert cfg.bash_allowed_patterns == ["datus*"]
+        assert cfg.bash_allowed_patterns == ["*"]
+        assert cfg.bash_sandbox.is_strict is True
 
     @pytest.mark.asyncio
     async def test_default_source_vscode_applies_hardening_without_request_source(self, real_agent_config, monkeypatch):
