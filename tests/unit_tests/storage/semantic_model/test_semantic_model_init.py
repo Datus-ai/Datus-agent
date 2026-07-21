@@ -306,7 +306,7 @@ semantic_model:
         mock_config.path_manager = None
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as mock_tools_cls:
-            mock_tools_cls.return_value.reconcile_osi_document_to_db.return_value = {"success": True}
+            mock_tools_cls.return_value.sync_osi_semantic_to_db.return_value = {"success": True}
             success, error, changed = refresh_semantic_yaml_profile_descriptions(
                 str(yaml_file),
                 evidence,
@@ -319,7 +319,7 @@ semantic_model:
         assert error == ""
         assert changed == 2
         mock_tools_cls.assert_called_once_with(agent_config=mock_config, authoring_format="osi")
-        mock_tools_cls.return_value.reconcile_osi_document_to_db.assert_called_once_with(str(yaml_file))
+        mock_tools_cls.return_value.sync_osi_semantic_to_db.assert_called_once_with(str(yaml_file))
 
     def test_osi_refresh_returns_sync_exception(self, tmp_path):
         yaml_file = tmp_path / "orders.yml"
@@ -357,7 +357,7 @@ semantic_model:
         mock_config.path_manager = None
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as mock_tools_cls:
-            mock_tools_cls.return_value.reconcile_osi_document_to_db.side_effect = RuntimeError("storage offline")
+            mock_tools_cls.return_value.sync_osi_semantic_to_db.side_effect = RuntimeError("storage offline")
             success, error, changed = refresh_semantic_yaml_profile_descriptions(
                 str(yaml_file),
                 evidence,

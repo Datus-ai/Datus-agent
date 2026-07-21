@@ -325,7 +325,6 @@ class GenMetricsAgenticNode(AgenticNode):
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
                 authoring_format=authoring_format,
-                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
