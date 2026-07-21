@@ -12,6 +12,11 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
           fetch-depth: 0
+          # recent actions/checkout v4 releases refuse fork-PR checkouts under
+          # pull_request_target by default. Running the PR's test suite in
+          # this context is this workflow's long-standing design; opt in
+          # explicitly to restore it.
+          allow-unsafe-pr-checkout: true
 
       - name: Fetch base branch
         run: |

@@ -10,6 +10,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+          # recent actions/checkout v4 releases refuse fork-PR checkouts under
+          # pull_request_target by default. This job only runs ruff over the
+          # PR files with a read-only token and no secrets, so opting in is
+          # the intended (pre-existing) behavior.
+          allow-unsafe-pr-checkout: true
 
       - name: Debug - Show current commit
         run: |
