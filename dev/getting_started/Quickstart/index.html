@@ -4406,15 +4406,19 @@
 <h3 id="init-optional">Init (optional)<a class="headerlink" href="#init-optional" title="Permanent link">&para;</a></h3>
 <p><code>cd</code> into your project, launch <code>datus</code>, and run <code>/init</code> to scan the directory and generate a project-level <code>AGENTS.md</code> using the model + datasource you saved above. To target a different datasource, run <code>/datasource &lt;name&gt;</code> before <code>/init</code>.</p>
 <h2 id="3-start-using-datus">3. Start Using Datus<a class="headerlink" href="#3-start-using-datus" title="Permanent link">&para;</a></h2>
-<p>You'll see the startup banner and a <code>&gt;</code> prompt. The prompt accepts three input modes:</p>
+<p>You'll see the startup banner and a green <code>&gt;</code> prompt. Press <strong>Tab</strong> on an empty line to cycle through the three input modes — chat <code>&gt;</code> → <code>sql&gt;</code> → <code>bash&gt;</code> — and <strong>Esc</strong> or <strong>Ctrl+C</strong> to return to chat:</p>
 <ul>
-<li><strong>Slash commands</strong> — <code>/help</code>, <code>/datasource</code>, <code>/model</code>, <code>/exit</code>, …</li>
-<li><strong>SQL</strong> — <code>SELECT …</code>, <code>DESCRIBE …</code>, <code>SHOW …</code> are detected automatically and executed against the active datasource</li>
-<li><strong>Natural language</strong> — anything else goes to the agent</li>
+<li><strong>Chat <code>&gt;</code></strong> (default) — natural language goes to the agent; slash commands (<code>/help</code>, <code>/datasource</code>, <code>/model</code>, <code>/exit</code>, …) work in every mode</li>
+<li><strong>SQL mode <code>sql&gt;</code></strong> — the prompt turns into a red <code>sql&gt;</code> with red separators and syntax highlighting; whatever you type runs through the same enforcement an agent <code>execute_sql</code> call gets — read-only queries auto-run, writes/DDL prompt for confirmation, and any SQL policy (row/column governance) applies. Use <code>\</code> + Enter to continue a statement on a new line.</li>
+<li><strong>Bash mode <code>bash&gt;</code></strong> — the prompt turns into a yellow <code>bash&gt;</code>; whatever you type runs as a shell command through the same permission-gated bash tool the agent uses. Commands matching <code>deny</code> rules are blocked, and unmatched commands prompt for confirmation (allow once / session / project) exactly like agent-initiated bash calls.</li>
 </ul>
+<p>Each manual SQL/bash execution renders live: the command line shows immediately with a <code>· running Ns</code> indicator (like a tool call) while it runs, then resolves into a bordered execution block (command + result) framed like a user message but in the mode colour. The result is then sent to the model as a turn, so the agent immediately reasons about what you ran. The block is stored with the session, so <code>/resume</code> re-renders it in the same form.</p>
 <div class="language-text highlight"><span class="filename">Examples</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>&gt; /tables
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>&gt; desc gold_vs_bitcoin
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>&gt; Detailed analysis of gold–Bitcoin correlation.
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>&gt; Detailed analysis of gold–Bitcoin correlation.
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>                          # Tab on the empty line switches to SQL mode
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>sql&gt; desc gold_vs_bitcoin
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>                          # Tab again switches to bash mode
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>bash&gt; git status
 </span></code></pre></div>
 <p>For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and the final markdown report live, with a pinned status row at the bottom showing the currently running tool:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>● Let me check the schema of gold_vs_bitcoin and run a correlation analysis.
