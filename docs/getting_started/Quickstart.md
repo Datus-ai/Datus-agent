@@ -75,16 +75,21 @@ Full provider list (Kimi / Qwen / GLM / MiniMax, Claude subscription, Codex OAut
 
 ## 3. Start Using Datus
 
-You'll see the startup banner and a `>` prompt. The prompt accepts three input modes:
+You'll see the startup banner and a green `>` prompt. Press **Tab** on an empty line to cycle through the three input modes — chat `>` → `sql>` → `bash>` — and **Esc** or **Ctrl+C** to return to chat:
 
-- **Slash commands** — `/help`, `/datasource`, `/model`, `/exit`, …
-- **SQL** — `SELECT …`, `DESCRIBE …`, `SHOW …` are detected automatically and executed against the active datasource
-- **Natural language** — anything else goes to the agent
+- **Chat `>`** (default) — natural language goes to the agent; slash commands (`/help`, `/datasource`, `/model`, `/exit`, …) work in every mode
+- **SQL mode `sql>`** — the prompt turns into a red `sql>` with red separators and syntax highlighting; whatever you type runs through the same enforcement an agent `execute_sql` call gets — read-only queries auto-run, writes/DDL prompt for confirmation, and any SQL policy (row/column governance) applies. Use `\` + Enter to continue a statement on a new line.
+- **Bash mode `bash>`** — the prompt turns into a yellow `bash>`; whatever you type runs as a shell command through the same permission-gated bash tool the agent uses. Commands matching `deny` rules are blocked, and unmatched commands prompt for confirmation (allow once / session / project) exactly like agent-initiated bash calls.
+
+Each manual SQL/bash execution renders live: the command line shows immediately with a `· running Ns` indicator (like a tool call) while it runs, then resolves into a bordered execution block (command + result) framed like a user message but in the mode colour. The result is then sent to the model as a turn, so the agent immediately reasons about what you ran. The block is stored with the session, so `/resume` re-renders it in the same form.
 
 ```text title="Examples"
 > /tables
-> desc gold_vs_bitcoin
 > Detailed analysis of gold–Bitcoin correlation.
+                          # Tab on the empty line switches to SQL mode
+sql> desc gold_vs_bitcoin
+                          # Tab again switches to bash mode
+bash> git status
 ```
 
 For natural-language turns, Datus streams thinking deltas, tool calls, SQL, and the final markdown report live, with a pinned status row at the bottom showing the currently running tool:

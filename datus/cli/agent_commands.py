@@ -9,24 +9,20 @@ This module provides a class to handle all agent-related commands.
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict
 
 from rich.prompt import Confirm
 from rich.syntax import Syntax
-from rich.table import Table
 
 from datus.agent.evaluate import setup_node_input, update_context_from_node
 from datus.agent.node import Node
 from datus.agent.workflow import Workflow
 from datus.cli.cli_styles import (
     CODE_THEME,
-    HEADER_BOLD_CYAN,
-    TABLE_BORDER_STYLE,
     print_error,
     print_success,
     print_warning,
 )
-from datus.cli.subject_rich_utils import build_historical_sql_tags
 from datus.configuration.node_type import NodeType
 from datus.schemas.base import BaseInput
 from datus.schemas.compare_node_models import CompareInput
@@ -34,9 +30,6 @@ from datus.schemas.gen_sql_agentic_node_models import GenSQLNodeInput
 from datus.schemas.node_models import ExecuteSQLInput, OutputInput, SqlTask
 from datus.schemas.reason_sql_node_models import ReasoningInput
 from datus.schemas.schema_linking_node_models import SchemaLinkingInput
-from datus.storage.embedding_diagnostics import format_context_degraded_warning, is_embedding_unavailable_error
-from datus.tools.db_tools import connector_registry
-from datus.tools.func_tool.context_search import ContextSearchTools
 from datus.tools.output_tools import OutputTool
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -59,29 +52,11 @@ class AgentCommands:
         self.agent = cli_instance.agent
         self.darun_is_running = False
         self.agent_thread = None
-        self._context_search_tools: ContextSearchTools | None = None
-        self._context_search_warning: str = ""
         self.output_tool: OutputTool | None = None
-
-    @property
-    def context_search_tools(self) -> ContextSearchTools | None:
-        if self._context_search_tools is None and not self._context_search_warning:
-            try:
-                self._context_search_tools = ContextSearchTools(self.cli.agent_config)
-            except Exception as exc:
-                self._context_search_warning = format_context_degraded_warning(exc)
-                logger.warning("Context search tools disabled: %s", self._context_search_warning)
-        return self._context_search_tools
 
     def update_agent_reference(self):
         """Update the agent reference if it has changed in the CLI."""
         self.agent = self.cli.agent
-
-    def _print_embedding_aware_error(self, action: str, error: BaseException | str | None) -> None:
-        if is_embedding_unavailable_error(error):
-            print_warning(self.console, format_context_degraded_warning(error))
-        else:
-            print_error(self.console, f"{action}: {error}")
 
     def create_node_input(self, node_type: str, task_text: str = None) -> BaseInput:
         """Create input for a specific node type with console prompts."""
@@ -382,299 +357,6 @@ class AgentCommands:
         except Exception as e:
             logger.error(f"Failed to start agent session: {str(e)}")
             print_error(self.console, str(e))
-
-    def cmd_schema_linking(self, args: str):
-        """
-        Command to perform schema linking. Corresponds to !sl
-        """
-        self.console.print("[bold blue]Schema Linking[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for tables")
-        if not input_text:
-            print_error(self.console, "Input text cannot be empty.")
-            return
-
-        catalog_name, database_name, schema_name = self._prompt_db_layers()
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-
-        # The tool's search_similar seems to handle table_type internally.
-        # The PDF mentions table_type, but the tool implementation has it fixed to "full".
-        # I will omit prompting for it as it won't be used.
-
-        from datus.storage.schema_metadata import create_metadata_rag
-
-        schema_rag = create_metadata_rag(self.cli.agent_config)
-
-        try:
-            with self.console.status("[green]Searching for relevant tables...[/]"):
-                metadata, sample_data = schema_rag.search_similar(
-                    query_text=input_text,
-                    catalog_name=catalog_name,
-                    database_name=database_name,
-                    schema_name=schema_name,
-                    top_n=int(top_n.strip()),
-                )
-        except Exception as exc:
-            self._print_embedding_aware_error("schema linking", exc)
-            return
-
-        if metadata.num_rows > 0 or sample_data.num_rows > 0:
-            self.console.print(
-                f"Found [green]{len(metadata)}[/] relevant tables and [bold blue]{len(sample_data)}[/] sample rows"
-            )
-
-            if metadata.num_rows > 0:
-                self._print_metadata_table(
-                    metadata.to_pylist(), data_column="definition", data_column_dsc="Definition (DDL)", lexer="sql"
-                )
-
-            if sample_data.num_rows > 0:
-                self._print_metadata_table(
-                    sample_data.to_pylist(), data_column="sample_rows", data_column_dsc="Sample Rows", lexer="markdown"
-                )
-
-        else:
-            print_warning(self.console, "No relevant tables found.")
-
-    def _prompt_db_layers(self) -> Tuple[str, str, str]:
-        dialect = self.cli.db_connector.dialect
-        catalog_name, database_name, schema_name = "", "", ""
-
-        if connector_registry.support_catalog(dialect):
-            catalog_name = self.cli.prompt_input("Enter catalog name", default=self.cli_context.current_catalog or "")
-        # SQLite has no "database" capability but still needs a database (file) prompt
-        if DBType.SQLITE == dialect or connector_registry.support_database(dialect):
-            database_name = self.cli.prompt_input("Enter database name", default=self.cli_context.current_db_name or "")
-        if connector_registry.support_schema(dialect):
-            schema_name = self.cli.prompt_input("Enter schema name", default=self.cli_context.current_schema or "")
-
-        return catalog_name, database_name, schema_name
-
-    def _print_metadata_table(
-        self, data_list: List[Dict[str, Any]], data_column: str, data_column_dsc: str = "", lexer: str = "sql"
-    ):
-        table = Table(
-            title="Schema Linking Results",
-            show_header=True,
-            border_style=TABLE_BORDER_STYLE,
-            header_style=HEADER_BOLD_CYAN,
-            expand=True,
-        )
-        table.add_column("Catalog", style="green", max_width=20)
-        table.add_column("Database", style="green", max_width=20)
-        table.add_column("Schema", style="green", max_width=20)
-        table.add_column("Table Name", style="bold green")
-        table.add_column("Type", style="yellow")
-        table.add_column(data_column_dsc if data_column_dsc else data_column, style="default")
-        table.add_column("Distance", style="dim")
-        for item in data_list:
-            table.add_row(
-                item.get("catalog_name"),
-                item.get("database_name"),
-                item.get("schema_name"),
-                item.get("table_name"),
-                item.get("table_type"),
-                Syntax(item.get(data_column, ""), lexer=lexer, line_numbers=True, word_wrap=True),
-                str(item.get("_distance", "")),
-            )
-        self.console.print(table)
-
-    def cmd_search_metrics(self, args: str):
-        """
-        Command to search for metrics. Corresponds to !sm and !search_metrics
-        """
-        self.console.print("[bold blue]Search Metrics[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for metrics")
-        if not input_text:
-            print_error(self.console, "Input text cannot be empty.")
-            return
-        if self.context_search_tools is None:
-            print_warning(self.console, self._context_search_warning)
-            return
-        subject_path = self._prompt_subject_path()
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-
-        with self.console.status("[green]Searching for metrics...[/]"):
-            result = self.context_search_tools.search_metrics(
-                query_text=input_text,
-                subject_path=subject_path,
-                top_n=int(top_n.strip()),
-            )
-        if result.success and result.result:
-            metrics = result.result
-            print_success(self.console, f"Found {len(metrics)} metrics.")
-            table = Table(
-                title="Metrics Search Results",
-                show_header=True,
-                header_style=HEADER_BOLD_CYAN,
-                border_style=TABLE_BORDER_STYLE,
-                expand=True,
-            )
-            table.add_column("Name", style="bold green")
-            table.add_column("LLM Text", style="default")
-
-            for metric in metrics:
-                table.add_row(
-                    metric.get("name"),
-                    metric.get("description"),
-                )
-            self.console.print(table)
-        elif not result.success:
-            self._print_embedding_aware_error("searching metrics", result.error)
-        else:
-            print_warning(self.console, "No metrics found.")
-
-    def _prompt_subject_path(self) -> Optional[List[str]]:
-        """Prompt user for subject path input.
-
-        Returns:
-            List of subject path components or None if empty
-        """
-        subject_path_str = self.cli.prompt_input(
-            "Enter subject path (e.g., 'Finance/Revenue/Q1', or leave empty for no filter)"
-        )
-        if not subject_path_str or not subject_path_str.strip():
-            return None
-        return [component.strip() for component in subject_path_str.split("/") if component.strip()]
-
-    def cmd_search_reference_sql(self, args: str):
-        """
-        Command to search reference SQL queries. Corresponds to !sq and !search_sql
-        """
-        self.console.print("[bold blue]Search Reference SQL[/]")
-        input_text = args.strip() or self.cli.prompt_input("Enter search text for reference SQL")
-        if not input_text:
-            print_error(self.console, "Input text cannot be empty.")
-            return
-        if self.context_search_tools is None:
-            print_warning(self.console, self._context_search_warning)
-            return
-
-        subject_path = self._prompt_subject_path()
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-
-        with self.console.status("[green]Searching reference SQL...[/]"):
-            result = self.context_search_tools.search_reference_sql(
-                query_text=input_text, subject_path=subject_path, top_n=int(top_n.strip())
-            )
-
-        if result.success and result.result:
-            history = result.result
-            self.console.print(f"[bold]Found [green]{len(history)}[/] reference SQL queries.[/]")
-            table = Table(
-                title="Reference SQL Search Results",
-                show_header=True,
-                border_style=TABLE_BORDER_STYLE,
-                header_style=HEADER_BOLD_CYAN,
-                expand=True,
-            )
-            table.add_column("Name", style="bold green")
-            table.add_column("SQL", style="default")
-            table.add_column("Summary", style="default")
-            table.add_column("Comment", style="default")
-            table.add_column("Tags", style="blue")
-            table.add_column("Subject Path", style="yellow")
-            table.add_column("File Path", style="dim", overflow="fold")
-            table.add_column("Distance", style="dim")
-            #
-            for item in history:
-                # Format subject_path as string
-                subject_path_display = "/".join(item.get("subject_path", []))
-                table.add_row(
-                    item.get("name"),
-                    Syntax(item.get("sql"), lexer="sql", line_numbers=True, word_wrap=True),
-                    item.get("summary"),
-                    item.get("comment"),
-                    build_historical_sql_tags(item.get("tags", ""), "\n"),
-                    subject_path_display,
-                    item.get("filepath"),
-                    str(item.get("_distance", "")),
-                )
-            self.console.print(table)
-        elif not result.success:
-            self._print_embedding_aware_error("searching reference SQL", result.error)
-        else:
-            print_warning(self.console, "No reference SQL queries found.")
-
-    def cmd_doc_search(self, args: str):
-        """
-        Command to search platform documentation. Corresponds to !sd and !search_document
-        """
-        self.console.print("[bold blue]Search Document[/]")
-
-        platform = self.cli.prompt_input("Enter platform name (e.g., snowflake, duckdb, postgresql)")
-        if not platform or not platform.strip():
-            print_error(self.console, "Platform name is required.")
-            return
-        platform = platform.strip()
-
-        version = self.cli.prompt_input("Enter version (optional, press Enter to skip)", default="")
-        version = version.strip() or None
-
-        keywords_input = args.strip() or self.cli.prompt_input("Enter search keywords (comma-separated)")
-        if not keywords_input or not keywords_input.strip():
-            print_error(self.console, "Keywords cannot be empty.")
-            return
-        keywords = [k.strip() for k in keywords_input.split(",") if k.strip()]
-
-        top_n = self.cli.prompt_input("Enter top_n to match", default="5")
-        try:
-            top_n_value = int(top_n.strip())
-        except ValueError:
-            print_error(self.console, "top_n must be an integer.")
-            return
-
-        from datus.tools.search_tools.search_tool import SearchTool
-
-        search_tool = SearchTool(agent_config=self.cli.agent_config)
-
-        with self.console.status("[green]Searching documentation...[/]"):
-            result = search_tool.search_document(
-                platform=platform,
-                keywords=keywords,
-                version=version,
-                top_n=top_n_value,
-            )
-
-        if result.success and result.doc_count > 0:
-            print_success(self.console, f"Found {result.doc_count} document chunks.")
-            for keyword, chunks in result.docs.items():
-                if not chunks:
-                    continue
-                self.console.print(f"\n[bold cyan]Keyword: {keyword}[/] ({len(chunks)} results)")
-                table = Table(
-                    show_header=True,
-                    header_style=HEADER_BOLD_CYAN,
-                    border_style=TABLE_BORDER_STYLE,
-                    expand=True,
-                )
-                table.add_column("Title", style="bold green", max_width=30)
-                table.add_column("Titles", style="green", max_width=30)
-                table.add_column("Nav Path", style="magenta", max_width=30)
-                table.add_column("Hierarchy", style="yellow", max_width=40)
-                table.add_column("Content", style="default")
-                table.add_column("Doc Path", style="dim", max_width=30, overflow="fold")
-
-                for chunk in chunks:
-                    chunk_text = chunk.get("chunk_text", "")
-                    if len(chunk_text) > 200:
-                        chunk_text = chunk_text[:200] + "..."
-                    titles = chunk.get("titles", [])
-                    titles_str = " > ".join(titles) if isinstance(titles, list) else str(titles or "")
-                    nav_path = chunk.get("nav_path", [])
-                    nav_path_str = " > ".join(nav_path) if isinstance(nav_path, list) else str(nav_path or "")
-                    table.add_row(
-                        chunk.get("title", ""),
-                        titles_str,
-                        nav_path_str,
-                        chunk.get("hierarchy", ""),
-                        chunk_text,
-                        chunk.get("doc_path", ""),
-                    )
-                self.console.print(table)
-        elif not result.success:
-            self._print_embedding_aware_error("searching documents", result.error)
-        else:
-            print_warning(self.console, "No documents found.")
 
     def cmd_save(self, args: str):
         """

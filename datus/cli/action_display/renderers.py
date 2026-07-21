@@ -227,7 +227,6 @@ class ActionContentGenerator(BaseActionContentGenerator):
     def _generate_rich_panel_content(self, actions: List[ActionHistory]):
         """Generate rich Panel + Table content for non-truncated display"""
         from rich.console import Group
-        from rich.panel import Panel
 
         content_elements = []
 
@@ -761,6 +760,14 @@ class ActionRenderer:
 
     def render_main_action(self, action: ActionHistory, verbose: bool) -> List[RenderableType]:
         """Render a depth=0 completed action directly as Rich objects."""
+        # Manual SQL/bash execution (input-bar sql>/bash> mode): render the
+        # terminal frame as the styled execution block.
+        if action.action_type == "manual_exec":
+            from datus.cli.manual_exec import render_exec_block
+
+            payload = action.output.get("payload") if isinstance(action.output, dict) else None
+            return [render_exec_block(payload)] if payload else []
+
         # Task tool -> render as subagent
         if action.role == ActionRole.TOOL:
             fn = action.input.get("function_name", "") if action.input else ""
@@ -778,11 +785,19 @@ class ActionRenderer:
                 return [render_assistant_response_markdown(content)]
             return []
 
-        # USER -> styled Text
+        # USER -> styled Text. A marker-encoded manual-execution record is
+        # suppressed here during the LIVE model turn: the execution was already
+        # rendered live as the streamed ``manual_exec`` frame, so re-drawing the
+        # block would double it. On ``/resume`` and Ctrl+O reprint the block is
+        # drawn via ``render_user_header`` instead (no live frame there).
         if action.role == ActionRole.USER:
             msg = action.messages or ""
             if msg.startswith("User: "):
                 msg = msg[6:]
+            from datus.cli.manual_exec import is_exec_message
+
+            if is_exec_message(msg):
+                return []
             return [render_user_scrollback_text(msg)]
 
         # TOOL / WORKFLOW / SYSTEM -> generate Rich Text directly
@@ -919,6 +934,21 @@ class ActionRenderer:
             tool_specific_args_summary,
         )
 
+        # Manual SQL/bash execution: blink ``sql> <cmd> · running Ns`` (the
+        # mode-coloured command line) instead of the generic tool frame.
+        if action.action_type == "manual_exec":
+            from datus.cli.manual_exec import mode_prompt
+
+            data = action.input or {}
+            prompt, prompt_style = mode_prompt(data.get("kind", ""))
+            command = _truncate_middle(str(data.get("command", "")), max_len=80)
+            running = format_running_duration(action.start_time)
+            line = Text(f"{frame} ", style="")
+            line.append(prompt, style=prompt_style)
+            line.append(command)
+            line.append(f" · running {running}", style="dim")
+            return line
+
         function_name = action.input.get("function_name", "") if action.input else ""
         label = function_name or action.messages or ""
         # Prefer the per-tool summary (e.g. bare ``"sleep 5"`` for bash)
@@ -938,8 +968,18 @@ class ActionRenderer:
 
     # -- utility renderables ------------------------------------------------
 
-    def render_user_header(self, message: str) -> Panel:
-        """Render a restored/reprinted user message header."""
+    def render_user_header(self, message: str) -> RenderableType:
+        """Render a restored/reprinted user message header.
+
+        A marker-encoded manual-execution record renders as its styled
+        SQL/bash block (identical to the live turn); everything else uses the
+        standard user-scrollback panel.
+        """
+        from datus.cli.manual_exec import decode_exec_message, render_exec_block
+
+        payload = decode_exec_message(message)
+        if payload is not None:
+            return render_exec_block(payload)
         return render_user_scrollback_text(message)
 
     def render_separator(self) -> Text:

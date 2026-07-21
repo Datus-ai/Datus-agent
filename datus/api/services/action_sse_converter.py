@@ -189,9 +189,13 @@ def _extract_error(value: Any) -> Optional[str]:
 
 def _build_user_content(action: ActionHistory) -> List[IMessageContent]:
     """Build content for user message event."""
+    from datus.cli.manual_exec import exec_to_markdown
+
     input_data = action.input
     user_message = input_data.get("user_message", "") if isinstance(input_data, dict) else ""
-    payload_data = {"content": user_message}
+    # A manual-execution record renders as readable Markdown so the raw
+    # sentinel never reaches SSE clients.
+    payload_data = {"content": exec_to_markdown(user_message)}
     return [IMessageContent(type="markdown", payload=payload_data)]
 
 

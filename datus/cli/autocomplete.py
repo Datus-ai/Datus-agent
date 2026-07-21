@@ -169,32 +169,7 @@ class SQLCompleter(Completer):
         self.database_name = ""
         self.schema_name = ""
 
-        # Command completions
-        self.commands = self._get_command_completions()
         self.at_cmds = ["table", "metric"]
-
-    def _get_command_completions(self) -> Dict:
-        """Return tool-command prefixes for the fallback Word-style completer.
-
-        Slash commands are handled by :class:`SlashCommandCompleter` which
-        reads :data:`datus.cli.slash_registry.SLASH_COMMANDS` directly, so
-        they must not be duplicated here.
-        """
-
-        return {
-            # Tool commands (! prefix)
-            "!": None,
-            "!sl": None,
-            "!schema_linking": None,
-            "!sq": None,
-            "!search_sql": None,
-            "!sm": None,
-            "!search_metrics": None,
-            "!sd": None,
-            "!search_document": None,
-            "!save": None,
-            "!bash": None,
-        }
 
     def update_tables(self, tables: Dict[str, List[str]]):
         """
@@ -271,15 +246,6 @@ class SQLCompleter(Completer):
         word_before_cursor = document.get_word_before_cursor(WORD=True)
 
         logger.debug(f"Completion for: '{word_before_cursor}', text before: '{text}'")
-
-        # First check for command completions
-        if text.lstrip().startswith(("!", "@", ".")):
-            cmd_text = text.lstrip()
-            for cmd in self.commands:
-                if cmd.startswith(cmd_text):
-                    display = cmd
-                    yield Completion(cmd, start_position=-len(cmd_text), display=display, style="class:command")
-            return
 
         # Detect aliases in the current query
         self._detect_aliases(text)

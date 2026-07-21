@@ -408,14 +408,23 @@ class ChatCommands:
             return
 
         try:
-            at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
-            # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
-            # override: ``current_subagent_name`` and the active node remain
-            # unchanged. The hint is appended to the message so the chat
-            # agent's existing ``task`` tool fires deterministically rather
-            # than relying on the LLM to spot the bare ``@Agent`` token.
-            if at_agent:
-                message = self._render_agent_dispatch_hint(message, at_agent)
+            # Manual-execution turns (SQL/bash run from the input bar) carry a
+            # marker-encoded payload whose command may legitimately contain
+            # ``@`` / ``[`` — skip ``@``-reference parsing and the dispatch
+            # hint so the payload round-trips verbatim for resume.
+            from datus.cli.manual_exec import is_exec_message
+
+            if is_exec_message(message):
+                at_tables, at_metrics, at_sqls = [], [], []
+            else:
+                at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
+                # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
+                # override: ``current_subagent_name`` and the active node remain
+                # unchanged. The hint is appended to the message so the chat
+                # agent's existing ``task`` tool fires deterministically rather
+                # than relying on the LLM to spot the bare ``@Agent`` token.
+                if at_agent:
+                    message = self._render_agent_dispatch_hint(message, at_agent)
 
             if interactive:
                 # Decision logic: determine if we need to create a new node
@@ -524,7 +533,6 @@ class ChatCommands:
             pending_non_thinking = None
 
             if interactive:
-                self.console.print("[dim]Press ESC or Ctrl+C to interrupt[/dim]")
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
@@ -805,9 +813,6 @@ class ChatCommands:
                         self.last_actions = all_actions
                         self.all_turn_actions.append((message, all_actions))
                         self._trace_verbose = False  # reset toggle for new chat round
-
-                if interactive:
-                    self.cli.console.print("[bold bright_black]Press Ctrl+O to toggle trace details.[/]")
 
             if interactive:
                 self.chat_history.append(
@@ -1640,11 +1645,16 @@ class ChatCommands:
                 )
 
                 items = []
+                from datus.cli.manual_exec import exec_preview
+
                 for info in session_infos:
                     sid = info["session_id"]
                     raw_first_msg = info.get("first_user_message", "") or ""
                     if not isinstance(raw_first_msg, str):
                         raw_first_msg = str(raw_first_msg)
+                    # A manual-execution first message renders as its raw
+                    # marker+JSON; show the friendly ``sql>``/``bash>`` preview.
+                    raw_first_msg = exec_preview(raw_first_msg)
                     first_msg = raw_first_msg.replace("\n", " ").replace("\r", " ")
                     if not first_msg:
                         first_msg = "(empty)"

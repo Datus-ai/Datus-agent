@@ -20,6 +20,7 @@ from datus.cli.bootstrap_streams import stream_metrics, stream_semantic_model
 from datus.cli.build_kb_commands import BuildKbCommands
 from datus.cli.datasource_commands import DatasourceCommands
 from datus.cli.init_commands import _INIT_PROMPT, InitCommands
+from datus.cli.input_modes import InputMode
 from datus.cli.model_commands import ModelCommands
 from datus.cli.plugin_commands import PluginCommands
 from datus.cli.repl import CommandType, DatusCLI
@@ -53,6 +54,7 @@ def _build_core_cli() -> DatusCLI:
     cli = object.__new__(DatusCLI)
     cli.console = _console()
     cli.plan_mode_active = True
+    cli.input_mode = InputMode.CHAT
     cli.tui_app = None
     cli._prefill_input = None
     cli.default_agent = ""
@@ -177,7 +179,15 @@ def test_quickstart_documented_repl_entrypoints_stay_routable() -> None:
         (CommandType.SLASH, "/tables", ""),
     ]
 
+    # SQL is no longer auto-detected: bare ``desc ...`` is model chat by
+    # default, and only executes as SQL once the user opts into SQL mode
+    # (Tab on an empty line in the TUI cycles chat → sql → bash).
+    assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.CHAT
+    cli.input_mode = InputMode.SQL
     assert DatusCLI._parse_command(cli, "desc gold_vs_bitcoin")[0] == CommandType.SQL
+    cli.input_mode = InputMode.BASH
+    assert DatusCLI._parse_command(cli, "git status")[0] == CommandType.BASH
+    cli.input_mode = InputMode.CHAT
     assert DatusCLI._parse_command(cli, "Detailed analysis of gold-Bitcoin correlation.")[0] == CommandType.CHAT
 
 

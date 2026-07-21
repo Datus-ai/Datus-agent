@@ -4133,3 +4133,59 @@ class TestRenderFinalResponseValidationReport:
             assert "[bad]" in rendered
             # The error string's ``[RED]`` must not be consumed as a color tag.
             assert "[RED]" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Tests: manual-execution turn bypasses @-reference parsing
+# ---------------------------------------------------------------------------
+
+
+class TestExecMessageBypass:
+    """A marker-encoded execution record must reach the node verbatim — its
+    command may contain ``@`` / ``[`` that ``parse_at_context`` would mangle."""
+
+    def test_exec_message_skips_at_parsing_and_dispatch_hint(self, chat_cmd, monkeypatch):
+        from datus.cli.manual_exec import build_sql_error_payload, encode_exec_message
+
+        # A SQL command containing an ``@`` token that would otherwise be
+        # parsed as an @-reference.
+        message = encode_exec_message(build_sql_error_payload("SELECT * FROM t WHERE u = '@bob'", "boom"))
+
+        at_completer = MagicMock()
+        chat_cmd.cli.at_completer = at_completer
+
+        node = MagicMock()
+        node.pending_input_queue = None
+        node.interrupt_controller.is_interrupted = False
+        monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda subagent_name=None: False)
+        monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda subagent_name=None: False)
+        chat_cmd.current_node = node
+
+        captured = {}
+
+        def _capture(user_message, *args, **kwargs):
+            captured["message"] = user_message
+            raise RuntimeError("stop-after-input")
+
+        monkeypatch.setattr(chat_cmd, "create_node_input", _capture)
+        chat_cmd._execute_chat(message, interactive=True)
+
+        # @-reference parsing is skipped entirely, and the payload reaches the
+        # node input unchanged (no dispatch-hint appended).
+        at_completer.parse_at_context.assert_not_called()
+        assert captured["message"] == message
+
+    def test_plain_message_still_parses_at_context(self, chat_cmd, monkeypatch):
+        chat_cmd.cli.at_completer = MagicMock()
+        chat_cmd.cli.at_completer.parse_at_context.return_value = ([], [], [], None)
+
+        node = MagicMock()
+        node.pending_input_queue = None
+        node.interrupt_controller.is_interrupted = False
+        monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda subagent_name=None: False)
+        monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda subagent_name=None: False)
+        chat_cmd.current_node = node
+        monkeypatch.setattr(chat_cmd, "create_node_input", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
+
+        chat_cmd._execute_chat("what is @revenue", interactive=True)
+        chat_cmd.cli.at_completer.parse_at_context.assert_called_once_with("what is @revenue")

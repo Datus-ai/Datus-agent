@@ -22,11 +22,15 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import ConditionalCompleter
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.lexers import DynamicLexer, PygmentsLexer
 from prompt_toolkit.styles import Style, merge_styles, style_from_pygments_cls
+from pygments.lexers.shell import BashLexer
 from rich.console import Console
+from rich.markup import escape as rich_escape
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -52,7 +56,6 @@ from datus.cli.chat_commands import ChatCommands
 from datus.cli.cli_styles import (
     PASTE_COLLAPSE_THRESHOLD,
     STATUS_BAR_STYLE,
-    USER_SCROLLBACK_PROMPT,
     print_error,
     print_info,
     print_success,
@@ -62,6 +65,7 @@ from datus.cli.cli_styles import (
 from datus.cli.context_commands import ContextCommands
 from datus.cli.effort_commands import EffortCommands
 from datus.cli.init_commands import InitCommands
+from datus.cli.input_modes import MODE_CHROME, InputMode, next_input_mode
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
@@ -100,8 +104,8 @@ _BANNER_MIN_WIDTH = 60
 class CommandType(Enum):
     """Type of command entered by the user."""
 
-    SQL = "sql"  # Regular SQL statement
-    TOOL = "tool"  # !command (tool/workflow)
+    SQL = "sql"  # Regular SQL statement (SQL mode, or ``!<sql>`` in the non-TUI fallback)
+    BASH = "bash"  # shell command (bash mode), run through the permission-gated bash tool
     SLASH = "slash"  # /command (session / metadata / context / agent / system)
     CHAT = "chat"  # bare text routed to the default agent
     EXIT = "exit"  # exit/quit command
@@ -160,6 +164,13 @@ class DatusCLI:
 
         # Plan mode support
         self.plan_mode_active = False
+        # Input mode: chat routes plain input to the model, SQL mode executes
+        # it against the current datasource, bash mode runs it through the
+        # permission-gated bash tool. Cycled with Tab on an empty TUI input
+        # line (see the Tab key binding in ``_init_tui_app``); Esc / Ctrl+C
+        # return to chat. Drives the mode-coloured prompt label, separators,
+        # the mode hint line, and the contextual lexer/completer.
+        self.input_mode: InputMode = InputMode.CHAT
         self._last_ctrl_c_time: float = 0.0
         # Default agent for /message routing ("" = chat node)
         self.default_agent = ""
@@ -289,24 +300,10 @@ class DatusCLI:
         self._status_bar_provider = StatusBarProvider(self)
         self._todo_sidebar_provider = TodoSidebarProvider(self)
 
-        # Dictionary of available commands - created after handlers are initialized
-        self.commands: Dict[str, Any] = {
-            # "!run": self.agent_commands.cmd_darun_screen,
-            "!sl": self.agent_commands.cmd_schema_linking,
-            "!schema_linking": self.agent_commands.cmd_schema_linking,
-            "!sm": self.agent_commands.cmd_search_metrics,
-            "!search_metrics": self.agent_commands.cmd_search_metrics,
-            "!sq": self.agent_commands.cmd_search_reference_sql,
-            "!search_sql": self.agent_commands.cmd_search_reference_sql,
-            "!sd": self.agent_commands.cmd_doc_search,
-            "!search_document": self.agent_commands.cmd_doc_search,
-            # "!fix": self.agent_commands.cmd_fix,
-            "!save": self.agent_commands.cmd_save,
-            "!bash": self._cmd_bash,
-            # to be deprecated when sub agent is read
-            # "!reason": self.agent_commands.cmd_reason_stream,
-            # "!compare": self.agent_commands.cmd_compare_stream,
-        }
+        # Dictionary of available commands - created after handlers are initialized.
+        # Only ``/`` slash commands populate this dict below; SQL/bash execution
+        # is reached through the Tab-cycled input modes (see ``_parse_command``).
+        self.commands: Dict[str, Any] = {}
         # Slash commands are driven by ``slash_registry.SLASH_COMMANDS`` so the
         # completer, help text, and dispatcher share one source of truth.
         for spec_name, handler in self._build_slash_handler_map().items():
@@ -348,6 +345,7 @@ class DatusCLI:
             # context
             "catalog": self.context_commands.cmd_catalog,
             "subject": self.context_commands.cmd_subject,
+            "save": self.agent_commands.cmd_save,
             # agent
             "agent": self._cmd_agent,
             "subagent": self._cmd_subagent,
@@ -411,16 +409,11 @@ class DatusCLI:
             buffer.reset()
 
             # Force the prompt to exit and restart with new prefix
-            # This will cause the main loop to regenerate the prompt
+            # This will cause the main loop to regenerate the prompt.
+            # No scrollback announcement — the regenerated prompt reflects the
+            # mode, matching the TUI path.
             buffer.validation_state = None
             event.app.exit()
-
-            # Show mode change message
-            if self.plan_mode_active:
-                self.console.print("[green]Plan Mode Activated![/]")
-                self.console.print("[dim]Enter your planning task and press Enter to generate plan[/]")
-            else:
-                self.console.print("[yellow]Plan Mode Deactivated[/]")
 
         @kb.add("enter")
         def _(event):
@@ -455,12 +448,15 @@ class DatusCLI:
         self.console.print(render_user_scrollback_text(user_input, prompt_text))
 
     def _get_prompt_text(self):
-        """Input-line prompt text.
+        """Input-line prompt text for the active input mode.
 
         The Datus brand, plan mode, and current agent are rendered by the
-        status bar on the line above, so the input line uses a minimal prompt.
+        status bar on the line above, so the input line uses a minimal prompt:
+        ``> `` in chat mode, ``sql> `` / ``bash> `` in the execution modes.
+        The non-TUI PromptSession fallback has no mode cycling, so it always
+        sees the chat prompt.
         """
-        return USER_SCROLLBACK_PROMPT
+        return MODE_CHROME[self.input_mode].prompt
 
     def _update_prompt(self):
         """Update the prompt display (called when mode changes)"""
@@ -655,11 +651,10 @@ class DatusCLI:
 
     def _init_tui_app(self) -> None:
         """Create the persistent ``DatusApp`` and register REPL bindings."""
-        # The Tab handler matches the legacy PromptSession behavior
-        # (trigger completion only, no navigation). Additional bindings —
-        # Shift+Tab plan-mode toggle, Ctrl+O trace details, ESC interrupt —
-        # are wired in later phases.
-        from prompt_toolkit.lexers import PygmentsLexer
+        # Tab keeps the legacy completion behavior while a menu is open or
+        # text is typed, and cycles the input mode (chat → sql → bash) on an
+        # empty line. Additional bindings — Shift+Tab plan-mode toggle,
+        # Ctrl+O trace details, ESC interrupt — are wired below.
 
         from datus.cli.tui.output_buffer import TUIOutputBuffer
 
@@ -709,12 +704,20 @@ class DatusCLI:
             prefix_wrap_func=lambda x: f"[red]{x}[/red]",
         )
 
+        # Syntax highlighting is contextual: the ``CustomSqlLexer`` applies
+        # while SQL mode is active and ``BashLexer`` while bash mode is
+        # active, so plain model-chat input shows no code colouring.
+        # ``DynamicLexer`` re-evaluates the getter every paint.
+        sql_lexer = PygmentsLexer(CustomSqlLexer)
+        bash_lexer = PygmentsLexer(BashLexer)
+        mode_lexers = {InputMode.SQL: sql_lexer, InputMode.BASH: bash_lexer}
         self.tui_app = DatusApp(
             status_tokens_fn=self._status_tokens_for_tui,
             dispatch_fn=self._dispatch_command_text,
             completer=completer,
             history=self.history,
-            lexer=PygmentsLexer(CustomSqlLexer),
+            lexer=DynamicLexer(lambda: mode_lexers.get(self.input_mode)),
+            input_mode_fn=lambda: self.input_mode,
             style=self._build_app_style(),
             input_prompt_fn=self._get_prompt_text,
             live_display_state=self.live_state,
@@ -752,6 +755,13 @@ class DatusCLI:
 
         @self.tui_app.key_bindings.add("tab")
         def _tab(event):  # noqa: ANN001 - prompt_toolkit signature
+            """Tab: cycle the input mode on an empty line, complete otherwise.
+
+            With a completion menu open (or any text typed) Tab keeps the
+            legacy completion behavior, so mode cycling never steals Tab from
+            an in-flight completion. On the empty main composer while the
+            agent is idle it advances chat → sql → bash → chat.
+            """
             buffer = event.app.current_buffer
             if buffer.complete_state:
                 cs = buffer.complete_state
@@ -763,8 +773,12 @@ class DatusCLI:
                     cs = buffer.complete_state
                     if cs and cs.current_completion is not None:
                         buffer.apply_completion(cs.current_completion)
-            else:
-                buffer.start_completion(select_first=True)
+                return
+            if buffer is self.tui_app.input_buffer and not self.tui_app._agent_running.is_set() and not buffer.text:
+                self._cycle_input_mode()
+                event.app.invalidate()
+                return
+            buffer.start_completion(select_first=True)
 
         @self.tui_app.key_bindings.add("s-tab")
         def _s_tab(event):  # noqa: ANN001
@@ -773,26 +787,11 @@ class DatusCLI:
             Unlike the PromptSession handler, the TUI must not call
             ``event.app.exit()`` — that would tear down the persistent
             Application. Instead the REPL just flips the flag and asks the
-            layout to repaint; the status-bar's ``PLAN`` segment is driven
-            by :meth:`StatusBarState.to_formatted_tokens` so a single
-            ``invalidate`` is enough to reflect the change.
+            layout to repaint. No scrollback announcement: the status-bar's
+            ``PLAN`` segment (driven by :meth:`StatusBarState.to_formatted_tokens`)
+            already reflects the state, so a single ``invalidate`` suffices.
             """
-            from datus.cli.tui.console_bridge import run_in_terminal_sync
-
             self.plan_mode_active = not self.plan_mode_active
-            active = self.plan_mode_active
-
-            def _announce() -> None:
-                if active:
-                    self.console.print("[green]Plan Mode Activated![/]")
-                    self.console.print("[dim]Enter your planning task and press Enter to generate plan[/]")
-                else:
-                    self.console.print("[yellow]Plan Mode Deactivated[/]")
-
-            # Printing via ``run_in_terminal`` keeps the pinned status-bar +
-            # input intact: prompt_toolkit temporarily moves them out of the
-            # way, emits the message, then restores them at the bottom.
-            run_in_terminal_sync(_announce)
             event.app.invalidate()
 
         @self.tui_app.key_bindings.add("c-o")
@@ -844,11 +843,15 @@ class DatusCLI:
 
             prompt_toolkit debounces ESC so this handler only fires for a
             standalone key press, not for the leading byte of arrow-key
-            escape sequences (``\\x1b[A`` etc.). While idle the binding is
-            a no-op so default Buffer behavior (no-op for ESC in insert
-            mode) is preserved.
+            escape sequences (``\\x1b[A`` etc.). While idle it returns to chat
+            mode if a non-chat input mode is active, otherwise it is a no-op
+            so default Buffer behavior (no-op for ESC in insert mode) is
+            preserved.
             """
             if not self.tui_app._agent_running.is_set():
+                if self.input_mode is not InputMode.CHAT:
+                    self._set_input_mode(InputMode.CHAT)
+                    event.app.invalidate()
                 return
             self._interrupt_agent()
 
@@ -872,14 +875,42 @@ class DatusCLI:
 
             self.tui_app.clear_paste_state()
             event.app.current_buffer.reset()
+            # A single Ctrl+C while idle also drops back to chat mode so the
+            # user is never stuck in SQL/bash mode after clearing the line.
+            if self.input_mode is not InputMode.CHAT:
+                self._set_input_mode(InputMode.CHAT)
             self.tui_app.show_ctrl_c_hint()
+
+    def _set_input_mode(self, mode: InputMode) -> None:
+        """Switch the input mode.
+
+        No scrollback announcement — the mode is already unmistakable from the
+        coloured prompt (``>`` / ``sql>`` / ``bash>``), the bracketing
+        separators, and the persistent hint line, all driven by the
+        ``input_mode_fn`` callback the TUI reads every paint. Flipping the flag
+        plus a single ``invalidate`` is enough to reflect the change.
+        """
+        mode = InputMode(mode)
+        if self.input_mode is mode:
+            return
+        self.input_mode = mode
+
+        tui_app = getattr(self, "tui_app", None)
+        if tui_app is not None:
+            tui_app.invalidate()
+
+    def _cycle_input_mode(self) -> None:
+        """Advance the input mode one step in the Tab cycle (chat → sql → bash)."""
+        self._set_input_mode(next_input_mode(self.input_mode))
 
     def _init_prompt_session(self):
         # Setup prompt session with custom key bindings
         self.session = PromptSession(
             history=self.history,
             auto_suggest=AutoSuggestFromHistory(),
-            lexer=PygmentsLexer(CustomSqlLexer),
+            # No SQL highlighting in the non-TUI fallback — SQL runs via the
+            # ``!<sql>`` one-shot prefix, and plain input is model chat.
+            lexer=None,
             completer=self.create_combined_completer(),
             multiline=True,
             key_bindings=self._create_custom_key_bindings(),
@@ -895,7 +926,11 @@ class DatusCLI:
         """Build SlashCommandCompleter + AtReferenceCompleter + SqlCompleter."""
         from datus.cli.autocomplete import SQLCompleter
 
-        sql_completer = SQLCompleter()
+        # SQL keyword/function/table completion is contextual: it only fires
+        # while SQL mode is active, so plain model-chat and bash input get no
+        # SQL suggestion popups. Slash / @-reference / service completers stay
+        # on in every mode.
+        sql_completer = ConditionalCompleter(SQLCompleter(), Condition(lambda: self.input_mode is InputMode.SQL))
         self.service_completer = ServiceCommandCompleter(self)
         self.at_completer = AtReferenceCompleter(
             self.agent_config,
@@ -912,7 +947,7 @@ class DatusCLI:
                 self.service_completer,  # .<service>.<method> dispatcher completer (highest priority)
                 self.slash_completer,  # Top-level slash commands
                 self.at_completer,  # @Table / @Metrics / @Sql inline references
-                sql_completer,  # SQL keyword completer (lowest priority)
+                sql_completer,  # SQL keyword completer (SQL mode only, lowest priority)
             ]
         )
 
@@ -937,9 +972,11 @@ class DatusCLI:
             cmd_type, cmd, args = self._parse_command(user_input)
             # CHAT commands render the user message via the action stream
             # (the node yields a depth-0 USER ActionHistory that the renderer
-            # turns into the scrollback header). Non-CHAT commands have no
-            # action stream, so echo the input here to keep a transcript.
-            if cmd_type != CommandType.CHAT:
+            # turns into the scrollback header). SQL / BASH modes also flow
+            # through the chat stream (as an execution turn), so they render
+            # their own styled block — no echo here. Only the remaining
+            # non-CHAT commands (SLASH / UNKNOWN) echo the raw input.
+            if cmd_type not in (CommandType.CHAT, CommandType.SQL, CommandType.BASH):
                 prompt_text = self._get_prompt_text()
                 try:
                     lines = user_input.split("\n")
@@ -955,9 +992,9 @@ class DatusCLI:
             if cmd_type == CommandType.EXIT:
                 return EXIT_SENTINEL
             if cmd_type == CommandType.SQL:
-                self._execute_sql(user_input)
-            elif cmd_type == CommandType.TOOL:
-                self._execute_tool_command(cmd, args)
+                self._execute_sql_mode(args)
+            elif cmd_type == CommandType.BASH:
+                self._execute_bash_mode(args)
             elif cmd_type == CommandType.SLASH:
                 slash_result = self._execute_slash_command(cmd, args)
                 # ``/rewind`` sets ``_prefill_input`` from inside the handler.
@@ -1584,7 +1621,6 @@ class DatusCLI:
             Tuple ``(command_type, command, arguments)``:
 
             * ``SQL``    — ``command`` empty, ``arguments`` is the raw SQL
-            * ``TOOL``   — ``command`` is ``"!name"`` (lowercased)
             * ``SLASH``  — ``command`` is the canonical ``"/name"`` (aliases resolved)
             * ``CHAT``   — ``command`` is the default agent, ``arguments`` is the message
             * ``EXIT``   — both empty
@@ -1592,27 +1628,36 @@ class DatusCLI:
         """
 
         text = text.strip()
+        bash_mode = self.input_mode is InputMode.BASH
 
-        # Remove trailing semicolons (common in SQL)
-        if text.endswith(";"):
-            text = text[:-1].strip()
+        # Trailing ``;`` is only normalized on the SQL paths (SQL mode and the
+        # ``!<sql>`` chat prefix), where it is a redundant statement terminator.
+        # Chat keeps it (``Explain this;`` must reach the model verbatim) and
+        # bash keeps it (a trailing ``;`` is legal shell syntax).
 
         # Exit: bare ``exit`` / ``quit`` still work; ``/exit`` and ``/quit`` flow
         # through the SLASH branch via the registry's alias map.
         if text.lower() in ("exit", "quit"):
             return CommandType.EXIT, "", ""
 
-        # Tool commands (!prefix). Unchanged by this refactor.
-        if text.startswith("!"):
-            parts = text.split(maxsplit=1)
-            cmd = parts[0].lower()
-            args = parts[1] if len(parts) > 1 else ""
-            return CommandType.TOOL, cmd, args
+        # ``!`` prefix, chat mode only. In the TUI ``!<sql>`` typed in chat
+        # mode runs the remainder as a one-shot SQL statement, and the non-TUI
+        # PromptSession fallback (which has no mode cycling) relies on it as
+        # its only route to SQL execution. In SQL/bash mode a leading ``!`` is
+        # part of the statement (e.g. bash history expansion), so the prefix
+        # is not interpreted there.
+        if text.startswith("!") and self.input_mode is InputMode.CHAT:
+            sql = text[1:].strip()
+            if sql.endswith(";"):
+                sql = sql[:-1].strip()
+            return CommandType.SQL, "", sql
 
         # Slash commands (/prefix). ``/<agent> <msg>`` was removed — agent
         # selection is now exclusively handled by ``/agent``. Unknown tokens
         # surface as ``UNKNOWN`` rather than silently flowing to chat so typos
-        # fail loudly.
+        # fail loudly. In bash mode only *registered* slash commands are
+        # intercepted, so ``/help`` stays reachable while absolute paths like
+        # ``/usr/bin/ls`` fall through and run as bash.
         if text.startswith("/"):
             parts = text[1:].split(maxsplit=1)
             raw_token = parts[0] if parts and parts[0] else ""
@@ -1624,6 +1669,8 @@ class DatusCLI:
                 # ``_cmd_exit`` gets to close the DB connector before the
                 # handler returns ``EXIT_SENTINEL`` to the outer loop.
                 return CommandType.SLASH, f"/{spec.name}", args
+            if bash_mode:
+                return CommandType.BASH, "", text
             # Dynamic service routes (``/<service>`` for method listing or
             # ``/<service>.<method>`` for invocation) are resolved in
             # ``_execute_slash_command`` via ``ServiceCommands.dispatch``.
@@ -1635,36 +1682,71 @@ class DatusCLI:
 
         # Legacy prefix hints: ``.xxx`` / ``@catalog`` / ``@subject`` used to
         # be live commands. Surface a rename hint instead of running them so
-        # shell-history replay reports a clear error.
-        first_token = text.split(maxsplit=1)[0].lower()
-        legacy_target = _LEGACY_PREFIX_HINTS.get(first_token)
-        if legacy_target is not None:
-            return CommandType.UNKNOWN, first_token, legacy_target
+        # shell-history replay reports a clear error. Skipped in bash mode,
+        # where a leading ``.`` is the POSIX source operator.
+        if not bash_mode:
+            first_token = text.split(maxsplit=1)[0].lower()
+            legacy_target = _LEGACY_PREFIX_HINTS.get(first_token)
+            if legacy_target is not None:
+                return CommandType.UNKNOWN, first_token, legacy_target
 
-        # Determine if text is SQL or chat using parse_sql_type
-        try:
-            # Get current database dialect from agent_config.db_type (set from current datasource)
-            dialect = self.agent_config.db_type if self.agent_config.db_type else "snowflake"
-            sql_type = parse_sql_type(text, dialect)
+        # Execution modes (cycled with Tab on an empty line in the TUI):
+        # plain input runs as SQL against the current datasource or as a
+        # shell command through the permission-gated bash tool. The slash
+        # branch above runs first, so ``/help`` / ``/tables`` stay reachable
+        # without leaving the mode.
+        if self.input_mode is InputMode.SQL:
+            sql = text[:-1].strip() if text.endswith(";") else text
+            return CommandType.SQL, "", sql
+        if bash_mode:
+            return CommandType.BASH, "", text
 
-            # If parse_sql_type returns a valid SQL type (not UNKNOWN), treat as SQL
-            if sql_type != SQLType.UNKNOWN:
-                return CommandType.SQL, "", text
-            return CommandType.CHAT, self.default_agent, text.strip()
-        except Exception:
-            # If any exception occurs, treat as chat
-            return CommandType.CHAT, self.default_agent, text.strip()
+        # Default: route free-form text to the model. SQL is never auto-detected
+        # — the user opts into execution explicitly via SQL mode (or ``!<sql>``
+        # in the non-TUI fallback).
+        return CommandType.CHAT, self.default_agent, text.strip()
 
-    def _execute_sql(self, sql: str, system: bool = False):
-        """Execute a SQL query and display results."""
+    def _execute_sql_mode(self, sql: str) -> None:
+        """Run an input-bar SQL statement, then send it as an execution turn.
+
+        The statement first passes the same enforcement an LLM ``execute_sql``
+        call gets — permission (``on_tool_start`` → ``_handle_sql_permission``:
+        read auto-allow, write/DDL confirmation), plugin transformers, and
+        ``_enforce_sql_policy`` — via :func:`datus.cli.bash_mode.run_sql_gate`.
+        On approval the (possibly rewritten) statement executes and is packed
+        into a marker-encoded chat message dispatched to the model
+        (:meth:`_send_exec_turn`).
+        """
+        sql = sql.strip()
+        if not sql:
+            return
+        from datus.cli.bash_mode import run_manual_sql_live
+
+        # The live frame shows ``sql> <stmt> · running Ns`` while the gate +
+        # query run, then the bordered result block. ``run_manual_sql_live``
+        # returns ``(payload, dispatch)``; only a real execution feeds the model.
+        payload, dispatch = run_manual_sql_live(self, sql, self._run_manual_sql)
+        if dispatch and payload is not None:
+            self._send_exec_turn(payload)
+
+    def _run_manual_sql(self, sql: str):
+        """Execute *sql* against the active connector and build an exec payload.
+
+        Returns a :mod:`datus.cli.manual_exec` payload dict on success or SQL
+        error (both worth showing the model), or ``None`` for infrastructure
+        failures (no connector, empty/non-arrow result) after printing the
+        error locally. Does not render the result itself — the exec block does.
+        """
+        import time
+
+        from datus.cli.manual_exec import build_sql_error_payload, build_sql_message_payload, build_sql_payload
+
         logger.debug(f"Executing SQL query: '{sql}'")
-
-        # Create action for SQL execution
         sql_action = ActionHistory.create_action(
             role=ActionRole.USER,
             action_type="sql_execution",
             messages=f"Executing SQL: {sql[:100]}..." if len(sql) > 100 else f"Executing SQL: {sql}",
-            input_data={"sql": sql, "system": system},
+            input_data={"sql": sql},
             status=ActionStatus.PROCESSING,
         )
         self.actions.add_action(sql_action)
@@ -1673,42 +1755,33 @@ class DatusCLI:
             if not self.db_connector:
                 error_msg = "No database connection. Please initialize a connection first."
                 self.console.print(f"[red]Error:[/] {error_msg}")
-
-                # Update action with error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
                     status=ActionStatus.FAILED,
                     output={"error": error_msg},
                     messages=f"SQL execution failed: {error_msg}",
                 )
-                return
-
-            # Execute the query
-            import time
+                return None
 
             start_time = time.time()
             result = self.db_connector.execute(input_params={"sql_query": sql}, result_format="arrow")
-            end_time = time.time()
-            exec_time = end_time - start_time
+            exec_time = time.time() - start_time
 
             if not result:
                 error_msg = "No result from the query."
                 self.console.print(f"[red]Error:[/] {error_msg}")
-
-                # Update action with error
                 self.actions.update_action_by_id(
                     sql_action.action_id,
                     status=ActionStatus.FAILED,
                     output={"error": error_msg},
                     messages=f"SQL execution failed: {error_msg}",
                 )
-                return
+                return None
 
-            # Save for later reference
             self.last_sql = sql
             self.last_result = result
 
-            # For CONTENT_SET SQL (USE/SET statements), update cli_context in-place from connector state
+            # For CONTENT_SET SQL (USE/SET), sync cli_context from connector state.
             if result.success:
                 try:
                     sql_type = parse_sql_type(sql, getattr(self.db_connector, "dialect", ""))
@@ -1719,117 +1792,121 @@ class DatusCLI:
                 except Exception:
                     pass
 
-            # Display results and update action
             if result.success:
+                # Non-arrow success paths. A successful statement without a
+                # tabular payload is either DML (``row_count`` set — including a
+                # zero-row UPDATE/DELETE) or DDL / a side-effecting statement
+                # that returns no rows at all. Both are successes: ``result.success``
+                # is already true here, so never fall through to a format error.
                 if not hasattr(result.sql_return, "column_names"):
-                    if result.row_count is not None and result.row_count > 0:
-                        # Update action with success
+                    if result.row_count is not None:
                         self.actions.update_action_by_id(
                             sql_action.action_id,
                             status=ActionStatus.SUCCESS,
-                            output={
-                                "row_count": result.row_count,
-                                "execution_time": exec_time,
-                                "success": True,
-                            },
+                            output={"row_count": result.row_count, "execution_time": exec_time, "success": True},
                             messages=f"SQL executed successfully: {result.row_count} rows in {exec_time:.2f}s",
                         )
-                        self.console.print(f"[dim]Update {result.sql_return} rows in {exec_time:.2f} seconds[/]")
-                    elif result.sql_return:
-                        self.console.print(f"[dim]SQL execution successful in {exec_time:.2f} seconds[/]")
-                        # Update action with success
-                        self.actions.update_action_by_id(
-                            sql_action.action_id,
-                            status=ActionStatus.SUCCESS,
-                            output={
-                                "row_count": 0,
-                                "execution_time": exec_time,
-                                "success": True,
-                            },
-                            messages=f"SQL executed successfully in {exec_time:.2f}s",
+                        return build_sql_message_payload(
+                            sql, True, f"{result.row_count} rows updated in {exec_time:.2f}s"
                         )
-                    else:
-                        error_msg = (
-                            f"Query execution failed - received string instead of Arrow data:"
-                            f" {result.error or 'Unknown error'}"
-                        )
-                        self.console.print(f"[red]Error:[/] {error_msg}")
+                    self.actions.update_action_by_id(
+                        sql_action.action_id,
+                        status=ActionStatus.SUCCESS,
+                        output={"row_count": 0, "execution_time": exec_time, "success": True},
+                        messages=f"SQL executed successfully in {exec_time:.2f}s",
+                    )
+                    return build_sql_message_payload(sql, True, f"success in {exec_time:.2f}s")
 
-                        # Update action with error
-                        self.actions.update_action_by_id(
-                            sql_action.action_id,
-                            status=ActionStatus.FAILED,
-                            output={"error": error_msg, "result_type_error": True},
-                            messages=f"Result format error: {error_msg}",
-                        )
-                    return
-                # Convert Arrow data to list of dictionaries for smart display
                 rows = result.sql_return.to_pylist()
-                self._smart_display_table(data=rows, columns=result.sql_return.column_names)
-
+                columns = result.sql_return.column_names
                 row_count = result.sql_return.num_rows
-                self.console.print(f"[dim]Returned {row_count} rows in {exec_time:.2f} seconds[/]")
-
-                # Update action with success
                 self.actions.update_action_by_id(
                     sql_action.action_id,
                     status=ActionStatus.SUCCESS,
                     output={
                         "row_count": row_count,
                         "execution_time": exec_time,
-                        "columns": result.sql_return.column_names,
+                        "columns": columns,
                         "success": True,
                     },
                     messages=f"SQL executed successfully: {row_count} rows in {exec_time:.2f}s",
                 )
-                workflow_ready = self._workflow_runner and self._workflow_runner.workflow_ready
-                if not system and workflow_ready:  # Add to sql context if not system command
-                    new_record = SQLContext(
-                        sql_query=sql,
-                        sql_return=str(result.sql_return),
-                        row_count=row_count,
-                        explanation=f"Manual sql: Returned {row_count} rows in {exec_time:.2f} seconds",
+                if self._workflow_runner and self._workflow_runner.workflow_ready:
+                    self.workflow_runner.workflow.context.sql_contexts.append(
+                        SQLContext(
+                            sql_query=sql,
+                            sql_return=str(result.sql_return),
+                            row_count=row_count,
+                            explanation=f"Manual sql: Returned {row_count} rows in {exec_time:.2f} seconds",
+                        )
                     )
-                    self.workflow_runner.workflow.context.sql_contexts.append(new_record)
+                return build_sql_payload(sql, columns, rows, row_count, exec_time)
 
-            else:
-                error_msg = result.error or "Unknown SQL error"
-                self.console.print(f"[red]SQL Error:[/] {error_msg}")
-
-                # Update action with SQL error
-                self.actions.update_action_by_id(
-                    sql_action.action_id,
-                    status=ActionStatus.FAILED,
-                    output={"error": error_msg, "sql_error": True},
-                    messages=f"SQL error: {error_msg}",
-                )
-                workflow_ready = self._workflow_runner and self._workflow_runner.workflow_ready
-                if not system and workflow_ready:  # Add to sql context if not system command
-                    new_record = SQLContext(
+            error_msg = result.error or "Unknown SQL error"
+            self.actions.update_action_by_id(
+                sql_action.action_id,
+                status=ActionStatus.FAILED,
+                output={"error": error_msg, "sql_error": True},
+                messages=f"SQL error: {error_msg}",
+            )
+            if self._workflow_runner and self._workflow_runner.workflow_ready:
+                self._workflow_runner.workflow.context.sql_contexts.append(
+                    SQLContext(
                         sql_query=sql,
                         sql_return=str(result.error) if result.error else "Unknown error",
                         row_count=0,
                         explanation="Manual sql",
                     )
-                    self._workflow_runner.workflow.context.sql_contexts.append(new_record)
+                )
+            return build_sql_error_payload(sql, error_msg)
         except Exception as e:
             logger.error(f"SQL execution error: {str(e)}")
-            self.console.print(f"[red]Error:[/] {str(e)}")
-
-            # Update action with exception
             self.actions.update_action_by_id(
                 sql_action.action_id,
                 status=ActionStatus.FAILED,
                 output={"error": str(e), "exception": True},
                 messages=f"SQL execution exception: {str(e)}",
             )
+            return build_sql_error_payload(sql, str(e))
 
-    def _execute_tool_command(self, cmd: str, args: str):
-        """Execute a tool command (! prefix)."""
-        if cmd in self.commands:
-            self.commands[cmd](args)
-        else:
-            self.console.print(f"[red]Unknown command:[/] {cmd}")
+    # ── bash mode ────────────────────────────────────────────────────────
+
+    def _execute_bash_mode(self, command: str) -> None:
+        """Run a bash-mode command with a live frame, then send it to the model.
+
+        Permission gating + execution (BashTool + PermissionHooks, including
+        the embedded permission wizard) live in :mod:`datus.cli.bash_mode`. The
+        live frame shows ``bash> <cmd> · running Ns`` while it runs, then the
+        bordered result block. Only a real execution is dispatched to the model
+        (:meth:`_send_exec_turn`); a denied/cancelled command runs nothing.
+        """
+        command = command.strip()
+        if not command:
+            return
+        from datus.cli.bash_mode import run_manual_bash_live
+
+        payload, dispatch = run_manual_bash_live(self, command)
+        if dispatch and payload is not None:
+            self._send_exec_turn(payload)
+
+    # ── manual-execution chat turn ────────────────────────────────────────
+
+    def _send_exec_turn(self, payload: dict) -> None:
+        """Dispatch a manual-execution payload as a chat turn.
+
+        The encoded message is fed through the normal chat path so the model
+        sees the command + result and responds; its USER action renders as the
+        styled SQL/bash block (never a plain user bubble). Plan mode never
+        applies — a manual execution is not a planning task.
+        """
+        from datus.cli.manual_exec import encode_exec_message
+
+        message = encode_exec_message(payload)
+        try:
+            self.chat_commands.execute_chat_command(message, plan_mode=False)
+        except Exception as e:
+            logger.error(f"Failed to dispatch execution turn: {e}")
+            self.console.print(f"[red]Error:[/] {rich_escape(str(e))}")
 
     def _execute_chat_command(self, message: str, subagent_name: str = None):
         """Route free-form chat text to the configured default agent."""
@@ -1893,42 +1970,6 @@ class DatusCLI:
         self.console.print("[red]Agent initialization timed out. Try again later.[/]")
         return False
 
-    def _cmd_bash(self, args: str):
-        """Execute a bash command."""
-        # Define a whitelist of allowed commands
-        whitelist = ["pwd", "ls", "cat", "head", "tail", "echo"]
-
-        if not args.strip():
-            self.console.print("[yellow]Please provide a bash command.[/]")
-            return
-
-        # Parse the command to check against whitelist
-        cmd_parts = args.split()
-        base_cmd = cmd_parts[0]
-
-        if base_cmd not in whitelist:
-            self.console.print(
-                f"[red]Security:[/] Command '{base_cmd}' not in whitelist. Allowed: {', '.join(whitelist)}"
-            )
-            return
-
-        try:
-            # Execute the command
-            import subprocess
-
-            result = subprocess.run(args, shell=True, capture_output=True, text=True, timeout=10)
-
-            if result.returncode == 0:
-                if result.stdout:
-                    self.console.print(result.stdout)
-            else:
-                self.console.print(f"[red]Command failed with code {result.returncode}:[/]\n{result.stderr}")
-
-        except subprocess.TimeoutExpired:
-            self.console.print("[red]Error:[/] Command timed out after 10 seconds.")
-        except Exception as e:
-            self.console.print(f"[red]Error:[/] {str(e)}")
-
     def _cmd_help(self, args: str):
         """Display help for all CLI commands.
 
@@ -1939,25 +1980,15 @@ class DatusCLI:
 
         CMD_WIDTH = 30
         lines: list[str] = ["[green]Datus-CLI Help[/]\n"]
-        lines.append("[bold]SQL:[/]")
-        lines.append(f"    {'<sql>':<{CMD_WIDTH}}Execute SQL query directly")
-        lines.append("")
-
         lines.append("[bold]Chat:[/]")
         lines.append(f"    {'<message>':<{CMD_WIDTH}}Chat with the default agent (configure via /agent)")
         lines.append("")
 
-        lines.append("[bold]Tool Commands (! prefix):[/]")
-        tool_cmds = [
-            ("!sl, !schema_linking", "Schema linking: recommended tables and values"),
-            ("!sm, !search_metrics", "Search metrics by natural language"),
-            ("!sq, !search_sql", "Search reference SQL by natural language"),
-            ("!sd, !search_document", "Search platform documentation by keywords"),
-            ("!save", "Save the last result to a file"),
-            ("!bash <command>", "Execute a bash command (limited to safe commands)"),
-        ]
-        for cmd, desc in tool_cmds:
-            lines.append(f"    {cmd:<{CMD_WIDTH}}{desc}")
+        lines.append("[bold]Input modes:[/]")
+        lines.append(f"    {'Tab':<{CMD_WIDTH}}On an empty line, cycle chat > / sql> / bash> modes")
+        lines.append(f"    {'<sql>':<{CMD_WIDTH}}In SQL mode, Enter runs it; \\+Enter for a newline")
+        lines.append(f"    {'<command>':<{CMD_WIDTH}}In bash mode, Enter runs it via the permission-gated bash tool")
+        lines.append(f"    {'Esc / Ctrl+C':<{CMD_WIDTH}}Back to chat mode (plan mode applies to chat input only)")
         lines.append("")
 
         by_group: dict[str, list] = {group: [] for group in GROUP_ORDER}
@@ -2093,6 +2124,13 @@ class DatusCLI:
         self.agent_config.permissions_config = new_effective
         self.agent_config.active_profile_name = choice
         self.active_profile = choice
+        # Drop the CLI-owned PermissionManager built lazily for manual SQL/bash
+        # before any chat node existed — it captured the *old* profile + session
+        # approvals, so the next manual execution must rebuild it on the new
+        # profile (otherwise a normal→dangerous or dangerous→normal switch would
+        # not take effect for manual runs). Node-owned managers are switched
+        # in place above.
+        self._cli_bash_permission_manager = None
         print_success(self.console, f"Profile switched: {current} → {choice}")
         print_info(self.console, f"Session approvals cleared (was: {prior_approvals})")
 

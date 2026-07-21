@@ -71,6 +71,7 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
     # context
     SlashSpec("catalog", "Display database catalog explorer", "context"),
     SlashSpec("subject", "Display semantic models, metrics, and references", "context"),
+    SlashSpec("save", "Save the last SQL/result to a file (json/csv/sql)", "context"),
     # agent
     SlashSpec("agent", "Open the unified agent manager (built-in overrides / default)", "agent"),
     SlashSpec("subagent", "Open the unified agent manager (custom sub-agents)", "agent"),
