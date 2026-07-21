@@ -130,7 +130,7 @@ class TestInitSemanticYamlMetrics:
         yaml_file.write_text("metrics:\n  - name: revenue\n")
         mock_config = MagicMock()
         mock_tools = MagicMock()
-        mock_tools._sync_osi_metric_to_db.return_value = {"success": True, "message": "synced"}
+        mock_tools.reconcile_osi_document_to_db.return_value = {"success": True, "message": "synced"}
 
         with (
             patch(
@@ -144,7 +144,7 @@ class TestInitSemanticYamlMetrics:
         assert success is True
         assert error == "synced"
         mock_cls.assert_called_once_with(agent_config=mock_config, authoring_format="osi")
-        mock_tools._sync_osi_metric_to_db.assert_called_once_with(str(yaml_file))
+        mock_tools.reconcile_osi_document_to_db.assert_called_once_with(str(yaml_file))
 
     def test_osi_existing_file_returns_sync_error(self, tmp_path):
         """OSI sync failures are surfaced as init failures."""
@@ -152,7 +152,7 @@ class TestInitSemanticYamlMetrics:
         yaml_file.write_text("metrics:\n  - name: revenue\n")
         mock_config = MagicMock()
         mock_tools = MagicMock()
-        mock_tools._sync_osi_metric_to_db.return_value = {"success": False, "error": "invalid osi metrics"}
+        mock_tools.reconcile_osi_document_to_db.return_value = {"success": False, "error": "invalid osi metrics"}
 
         with (
             patch(

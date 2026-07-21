@@ -19,7 +19,14 @@ from datus.agent.workflow import Workflow
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionRole, ActionStatus
 from datus.schemas.chat_agentic_node_models import ChatNodeInput, ChatNodeResult
-from datus.tools.func_tool import ContextSearchTools, DBFuncTool, FilesystemFuncTool, PlatformDocSearchTool
+from datus.tools.func_tool import (
+    ContextSearchTools,
+    DBFuncTool,
+    FilesystemFuncTool,
+    GenerationTools,
+    PlatformDocSearchTool,
+    trans_to_function_tool,
+)
 from datus.tools.func_tool.date_parsing_tools import DateParsingTools
 from datus.tools.func_tool.reference_template_tools import ReferenceTemplateTools
 from datus.tools.permission.permission_manager import PermissionManager
@@ -95,6 +102,7 @@ class ChatAgenticNode(AgenticNode):
         self.degraded_capabilities: Dict[str, str] = {}
         self.date_parsing_tools: Optional[DateParsingTools] = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
+        self.semantic_sync_tools: Optional[GenerationTools] = None
         self._platform_doc_tool: Optional[PlatformDocSearchTool] = None
         self.reference_template_tools: Optional[ReferenceTemplateTools] = None
 
@@ -143,6 +151,7 @@ class ChatAgenticNode(AgenticNode):
         self._setup_reference_template_tools()
         self._setup_date_parsing_tools()
         self._setup_filesystem_tools()
+        self._setup_semantic_sync_tools()
         self._setup_memory_tools()
         # self.bash_tool was created in AgenticNode.__init__; just surface its
         # tool in this node's eager tools list (rebuild_tools also re-appends).
@@ -206,6 +215,23 @@ class ChatAgenticNode(AgenticNode):
         except Exception as e:
             logger.error(f"Failed to setup filesystem tools: {e}")
 
+    def _setup_semantic_sync_tools(self):
+        """Expose only the complete Ossie sync tool on the main chat agent."""
+        try:
+            from datus.agent.node.semantic_authoring import is_osi_authoring
+
+            if self._is_subagent or not is_osi_authoring(self.agent_config):
+                self.semantic_sync_tools = None
+                return
+            self.semantic_sync_tools = GenerationTools(
+                self.agent_config,
+                authoring_format="osi",
+                runtime_db_context_provider=self._semantic_runtime_db_context,
+            )
+        except Exception as exc:
+            self.semantic_sync_tools = None
+            logger.warning("Failed to setup semantic sync tool, continuing without it: %s", exc)
+
     def _setup_platform_doc_tools(self):
         """Setup platform documentation search tools."""
         try:
@@ -263,6 +289,8 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.date_parsing_tools.available_tools())
         if self.filesystem_func_tool:
             self.tools.extend(self.filesystem_func_tool.available_tools())
+        if self.semantic_sync_tools:
+            self.tools.append(trans_to_function_tool(self.semantic_sync_tools.sync_semantic))
         if self.memory_func_tool:
             self.tools.extend(self.memory_func_tool.available_tools())
         if self.bash_tool:
@@ -459,11 +487,23 @@ class ChatAgenticNode(AgenticNode):
         pm = get_prompt_manager(agent_config=self.agent_config)
         try:
             base_prompt = pm.render_template(template_name=template_name, version=prompt_version, **context)
+            if "sync_semantic" in exposed:
+                base_prompt += (
+                    "\n\nAfter directly modifying an existing Ossie semantic YAML file, call `sync_semantic` "
+                    "after the final write. The YAML is the sole source of truth, so removed datasets, profiles, "
+                    "and metrics are removed from the Knowledge Base. Do not report the change as effective until "
+                    "the sync succeeds."
+                )
             return self._finalize_system_prompt(base_prompt)
 
         except FileNotFoundError:
             logger.warning(f"Failed to render system prompt '{system_prompt_name}', using the default template instead")
             base_prompt = pm.render_template(template_name="chat_system", version=None, **context)
+            if "sync_semantic" in exposed:
+                base_prompt += (
+                    "\n\nAfter directly modifying an existing Ossie semantic YAML file, call `sync_semantic` "
+                    "after the final write and do not report success until synchronization succeeds."
+                )
             return self._finalize_system_prompt(base_prompt)
         except Exception as e:
             logger.error(f"Template loading error for '{template_name}': {e}")

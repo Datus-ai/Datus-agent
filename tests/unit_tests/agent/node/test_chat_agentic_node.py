@@ -179,6 +179,39 @@ class TestChatAgenticNodeToolSetup:
 
         assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
 
+    def test_main_osi_chat_exposes_only_sync_semantic_from_generation_tools(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        with patch("datus.agent.node.semantic_authoring.is_osi_authoring", return_value=True):
+            node = ChatAgenticNode(
+                node_id="test_osi_sync",
+                description="Test Ossie sync tool",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+
+        tool_names = {tool.name for tool in node.tools}
+        assert "sync_semantic" in tool_names
+        assert "end_semantic_model_generation" not in tool_names
+        assert "end_metric_generation" not in tool_names
+        assert node.tool_registry.get("sync_semantic") == "semantic_tools"
+        assert "sole source of truth" in node._get_system_prompt()
+        assert node.semantic_sync_tools._runtime_db_context_provider == node._semantic_runtime_db_context
+
+    def test_osi_subagent_does_not_expose_sync_semantic(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        with patch("datus.agent.node.semantic_authoring.is_osi_authoring", return_value=True):
+            node = ChatAgenticNode(
+                node_id="test_osi_subagent_sync",
+                description="Test Ossie subagent tool isolation",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+                is_subagent=True,
+            )
+
+        assert "sync_semantic" not in {tool.name for tool in node.tools}
+
     def test_filesystem_strict_from_agent_config(self, real_agent_config, mock_llm_create):
         """agent_config.filesystem_strict = True propagates into the tool
         and the permission-hook policy. This is how API / gateway bootstraps

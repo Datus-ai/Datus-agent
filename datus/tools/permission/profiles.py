@@ -86,6 +86,7 @@ _NORMAL_RULES = [
     _rule("semantic_tools", "query_metrics", PermissionLevel.ALLOW),
     # semantic generation helpers
     _rule("semantic_tools", "check_semantic_object_exists", PermissionLevel.ALLOW),
+    _rule("semantic_tools", "sync_semantic", PermissionLevel.ALLOW),
     _rule("semantic_tools", "end_*_generation", PermissionLevel.ALLOW),
     _rule("semantic_tools", "generate_*_id", PermissionLevel.ALLOW),
     _rule("semantic_tools", "*", PermissionLevel.ALLOW),

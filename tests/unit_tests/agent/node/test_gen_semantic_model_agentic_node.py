@@ -932,11 +932,13 @@ class TestSaveToDb:
         semantic_dir.mkdir(parents=True, exist_ok=True)
         semantic_file = semantic_dir / "orders.yml"
         semantic_file.write_text("version: 0.2.0.dev0\nsemantic_model: []\n", encoding="utf-8")
-        node.generation_tools.sync_osi_semantic_to_db = MagicMock(return_value={"success": True, "message": "synced"})
+        node.generation_tools.reconcile_osi_document_to_db = MagicMock(
+            return_value={"success": True, "message": "synced"}
+        )
 
         assert node._save_to_db(f"subject/semantic_models/{datasource}/orders.yml") is True
 
-        node.generation_tools.sync_osi_semantic_to_db.assert_called_once_with(str(semantic_file))
+        node.generation_tools.reconcile_osi_document_to_db.assert_called_once_with(str(semantic_file))
         assert node.generation_evidence.semantic_kb_sync_passed is True
 
     def test_osi_save_to_db_fails_without_generation_tools(self, real_agent_config, mock_llm_create):
@@ -958,13 +960,13 @@ class TestSaveToDb:
         semantic_dir.mkdir(parents=True, exist_ok=True)
         semantic_file = semantic_dir / "orders.yml"
         semantic_file.write_text("version: 0.2.0.dev0\nsemantic_model: []\n", encoding="utf-8")
-        node.generation_tools.sync_osi_semantic_to_db = MagicMock(
+        node.generation_tools.reconcile_osi_document_to_db = MagicMock(
             return_value={"success": False, "error": "sync failed"}
         )
 
         assert node._save_to_db(f"subject/semantic_models/{datasource}/orders.yml") is False
 
-        node.generation_tools.sync_osi_semantic_to_db.assert_called_once_with(str(semantic_file))
+        node.generation_tools.reconcile_osi_document_to_db.assert_called_once_with(str(semantic_file))
         assert node.generation_evidence.semantic_kb_sync_passed is False
 
 

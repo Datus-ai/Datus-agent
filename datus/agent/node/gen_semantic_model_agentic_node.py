@@ -250,6 +250,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
                 authoring_format=authoring_format,
+                runtime_db_context_provider=self._semantic_runtime_db_context,
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
@@ -654,7 +655,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 if not self.generation_tools:
                     logger.error("Generation tools unavailable for OSI semantic sync")
                     return False
-                result = self.generation_tools.sync_osi_semantic_to_db(full_path)
+                result = self.generation_tools.reconcile_osi_document_to_db(full_path)
                 if result.get("success"):
                     self.generation_evidence.mark_kb_sync("semantic")
                     logger.info(f"Successfully saved OSI semantic model to database: {result.get('message')}")

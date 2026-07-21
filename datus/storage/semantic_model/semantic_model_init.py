@@ -691,9 +691,9 @@ def refresh_semantic_yaml_profile_descriptions(
             try:
                 from datus.tools.func_tool.generation_tools import GenerationTools
 
-                result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_semantic_to_db(
-                    resolved_yaml_path
-                )
+                result = GenerationTools(
+                    agent_config=agent_config, authoring_format="osi"
+                ).reconcile_osi_document_to_db(resolved_yaml_path)
             except Exception as exc:
                 sync_error = f"Failed to sync OSI semantic YAML file '{resolved_yaml_path}' to vector store: {exc}"
                 logger.exception(sync_error)

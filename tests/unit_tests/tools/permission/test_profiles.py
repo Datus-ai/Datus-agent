@@ -108,6 +108,7 @@ class TestNormalProfile:
         config = NORMAL
         assert _resolve(config, "semantic_tools", "check_semantic_object_exists") == PermissionLevel.ALLOW
         assert _resolve(config, "semantic_tools", "generate_sql_summary_id") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "sync_semantic") == PermissionLevel.ALLOW
         assert _resolve(config, "semantic_tools", "end_semantic_model_generation") == PermissionLevel.ALLOW
         assert _resolve(config, "semantic_tools", "end_metric_generation") == PermissionLevel.ALLOW
 
