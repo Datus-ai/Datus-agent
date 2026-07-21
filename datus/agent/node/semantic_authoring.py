@@ -37,11 +37,6 @@ import yaml
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
 
-# Semantic adapters that consume OSI authoring documents. ``osi`` lowers to
-# MetricFlow via the Datus OSI compiler; ``osi_engine`` executes natively on
-# osi-engine. Both author the same OSI format.
-OSI_FAMILY_ADAPTERS = frozenset({"osi", "osi_engine"})
-
 _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _HELD_SEMANTIC_AUTHORING_KEYS: ContextVar[frozenset[str]] = ContextVar(
     "held_semantic_authoring_keys",
@@ -95,7 +90,7 @@ def resolve_authoring_format(
 
     adapter = _resolve_semantic_adapter(agent_config)
 
-    if adapter and str(adapter).strip().lower() in OSI_FAMILY_ADAPTERS:
+    if adapter and str(adapter).strip().lower() == AUTHORING_FORMAT_OSI:
         return AUTHORING_FORMAT_OSI
     return AUTHORING_FORMAT_METRICFLOW
 

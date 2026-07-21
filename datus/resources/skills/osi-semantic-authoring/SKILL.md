@@ -56,21 +56,8 @@ One valid OSI core document for the current business domain / semantic model sco
 9. **Time dimension**: exactly one primary time field per dataset. When several date columns exist and the primary one is ambiguous, ASK before generating. **Verify `time_granularity` with data**: run one query such as `SELECT COUNT(DISTINCT <time_col>), MIN(<time_col>), MAX(<time_col>) FROM <table>` and derive the snapshot interval (e.g. month-end dates spanning months → `month`; consecutive dates → `day`). When the data is indeterminate (a single distinct date), fall back to the table/column comments (e.g. a "monthly statistics" table comment → `month`), else default to `day`.
 10. **Validation conflicts are fixed structurally.** If `validate_semantic` reports an element lowering to multiple types, follow the structural fix in the message: move the column into `primary_key`/a relationship everywhere, or give it a `dimension:` block everywhere, or drop the `dimension:` block in datasets that only aggregate it. Never bounce a column between roles across validation attempts, and never falsify keys to silence the validator (e.g. do not delete a snapshot date from a declared composite key — the compiler resolves that case automatically).
 11. **Relationships** live inside the semantic model object, never inside a dataset. Use OSI core fields `from`, `to`, `from_columns`, `to_columns`. Do NOT use non-core fields such as `from_dataset`, `from_identifier`, `join_on`, `from_column`, or `to_column`.
-12. **Relationship join semantics (DATUS extension).** Every relationship MUST declare its join type explicitly:
-
-    ```yaml
-    custom_extensions:
-      - vendor_name: DATUS
-        data: '{"v": 1, "join_type": "inner"}'
-    ```
-
-    - `join_type` is `"inner"` (drop fact rows with no match — the standard semantics for plain grouping and filtering questions) or `"left"` (keep unmatched fact rows in a NULL dimension bucket — reconciliation/audit semantics). Mine the value from the provided SQL history: write whatever join the dominant queries use; a plain `JOIN` means `"inner"`. Never omit the declaration.
-    - `to_columns` MUST be the target dataset's declared `primary_key` or one of its `unique_keys`. Treat a `RelationshipTargetNotUnique` validation warning as an error: fix it structurally (transcribe the real key per rule 7, or drop the relationship) — never ship a model with this warning, the join can multiply results.
-    - Snapshot tables (composite key containing the time column, e.g. `[entity_id, snapshot_date]`): do NOT create a relationship that joins only the entity columns — every fact row would match one row per snapshot and metric values would multiply.
-    - The same table in two roles (e.g. owner department and executing department both referencing one department table), and self-referencing hierarchies: create two datasets with distinct names over the same `source`, and bind each relationship to its own columns.
-    - Many-to-many links: model the bridge table as its own dataset with two many-to-one relationships; do not relate the two end tables directly.
-13. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
-14. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
+12. Do NOT add metrics in the semantic-model step. Metrics are added by the metrics workflow under `semantic_model[0].metrics`.
+13. Preserve literal values and column names exactly; do not invent columns. Keep column comments in their original language — do not translate.
 
 ## Worked example — monthly snapshot table
 
