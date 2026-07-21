@@ -12,9 +12,11 @@ layered on top via ``PermissionConfig.merge_with`` (last-match-wins).
 The three profiles embody three security postures:
 
 * ``normal``:    read-only tools, semantic tools, and skill loading allowed,
-  all other writes ASK, named destructive tools DENY. Default for new installs.
+  all other writes ASK, named destructive tools DENY. SQL reads auto-allow,
+  every other statement class ASK. Default for new installs.
 * ``auto``:      Normal + workspace writes auto-execute, BI/scheduler
-  non-trigger writes auto, DB writes still ASK.
+  non-trigger writes auto, SQL non-destructive writes auto — destructive
+  statements (UPDATE/DELETE/MERGE/DROP/TRUNCATE/ALTER/REPLACE) still ASK.
 * ``dangerous``: everything ALLOW, including EXTERNAL filesystem paths in
   interactive mode. Workflow (non-interactive) flows still fail closed on
   EXTERNAL paths regardless of profile.
@@ -50,6 +52,7 @@ from datus.tools.permission.permission_config import (
     PermissionConfig,
     PermissionLevel,
     PermissionRule,
+    SqlStatementRules,
 )
 
 PROFILE_NAMES: tuple[str, ...] = ("normal", "auto", "dangerous")
@@ -65,10 +68,11 @@ _NORMAL_RULES = [
     # context search / date utilities
     _rule("context_search_tools", "*", PermissionLevel.ALLOW),
     _rule("date_parsing_tools", "*", PermissionLevel.ALLOW),
-    # db read. ``execute_sql`` is the unified SQL entry point; its read-vs-write
-    # gating is handled dynamically per statement type in
-    # ``PermissionHooks._handle_sql_permission`` (read-only bypass, writes/DDL
-    # ASK), so it intentionally has no static rule here.
+    # db read. ``execute_sql`` is the unified SQL entry point; its gating is
+    # handled dynamically per statement class in
+    # ``PermissionHooks._handle_sql_permission`` driven by each profile's
+    # ``sql_statements`` ruleset (read auto-allow, write/destructive per
+    # profile), so it intentionally has no static rule here.
     _rule("db_tools", "verify_sql", PermissionLevel.ALLOW),
     _rule("db_tools", "list_*", PermissionLevel.ALLOW),
     _rule("db_tools", "search_*", PermissionLevel.ALLOW),
@@ -271,6 +275,9 @@ NORMAL = PermissionConfig(
     default_permission=PermissionLevel.ASK,
     rules=_NORMAL_RULES,
     bash_commands=BashCommandRules(allow=_NORMAL_BASH_ALLOW),
+    # execute_sql statement classes: reads auto-allow, everything else ASK
+    # (the SqlStatementRules defaults are exactly normal's posture).
+    sql_statements=SqlStatementRules(),
 )
 
 # --- Auto --------------------------------------------------------------------
@@ -302,9 +309,10 @@ _AUTO_EXTRA_RULES = [
     _rule("scheduler_tools", "pause_job", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "resume_job", PermissionLevel.ALLOW),
     _rule("scheduler_tools", "trigger_*", PermissionLevel.ASK),
-    # db writes: always ASK. ``execute_sql`` writes/DDL are gated dynamically by
-    # ``PermissionHooks._handle_sql_permission`` (read-only bypass), so only the
-    # standalone cross-DB transfer tool needs an explicit ASK rule here.
+    # db statements: gated dynamically by ``PermissionHooks._handle_sql_permission``
+    # via auto's ``sql_statements`` ruleset below (reads + non-destructive writes
+    # auto-allow, destructive statements ASK), so only the standalone cross-DB
+    # transfer tool needs an explicit ASK rule here.
     _rule("db_tools", "transfer_query_result", PermissionLevel.ASK),
     # Named destructives — downgrade NORMAL's DENY to ASK in Auto. The user
     # can confirm at the prompt; DENY would force a profile switch to
@@ -317,13 +325,19 @@ AUTO = PermissionConfig(
     default_permission=PermissionLevel.ASK,
     rules=_NORMAL_RULES + _AUTO_EXTRA_RULES,
     bash_commands=BashCommandRules(allow=_AUTO_BASH_ALLOW),
+    # execute_sql statement classes: reads AND non-destructive writes (INSERT/
+    # CREATE/benign DDL/USE) auto-allow; destructive statements (UPDATE/DELETE/
+    # MERGE/DROP/TRUNCATE/ALTER/REPLACE) and unparseable SQL still ASK.
+    sql_statements=SqlStatementRules(write=PermissionLevel.ALLOW),
 )
 
 # --- Dangerous ---------------------------------------------------------------
 # default=ALLOW, no rules. PathZone at hook layer still gates EXTERNAL fs.
 # bash_commands stays None: the fine-grained bash gate steps aside and the
 # profile default of ALLOW lets every command through, preserving the
-# historical allow-everything behavior of this profile.
+# historical allow-everything behavior of this profile. sql_statements stays
+# None for the same reason: the SQL gate falls back to the coarse rule check,
+# which resolves to the profile default of ALLOW for every statement class.
 DANGEROUS = PermissionConfig(
     default_permission=PermissionLevel.ALLOW,
     rules=[],
@@ -421,11 +435,14 @@ def build_effective_config(
     base = get_profile(profile_name)
     if plugin_bash_rules is not None and not plugin_bash_rules.is_empty() and base.bash_commands is not None:
         # Rebuild instead of mutating: ``get_profile`` returns shared
-        # module-level singletons.
+        # module-level singletons. Every profile field must be carried over —
+        # omitting one here silently drops it whenever a plugin declares bash
+        # rules.
         base = PermissionConfig(
             default_permission=base.default_permission,
             rules=list(base.rules),
             bash_commands=base.bash_commands.merge_with(plugin_bash_rules),
+            sql_statements=base.sql_statements,
         )
     if not user_raw:
         return base

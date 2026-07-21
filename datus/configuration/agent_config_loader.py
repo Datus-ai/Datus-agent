@@ -349,6 +349,12 @@ def _apply_project_override(agent_raw: Dict[str, Any]) -> None:
         # ask-rule hit (e.g. a plugin-declared ask persisted via the
         # "allow (project)" prompt choice).
         agent_raw["project_bash_allow"] = list(override.bash_allow)
+    if override.sql_allow:
+        # Unlike bash_allow, SQL grants are NOT merged into ``permissions.*``:
+        # the execute_sql gate resolves statement classes dynamically, so a
+        # static rule cannot express a per-kind grant. The raw kind list feeds
+        # PermissionManager's exact-match grant set only.
+        agent_raw["project_sql_allow"] = list(override.sql_allow)
     # ``dashboard`` / ``scheduler`` overrides reach AgentConfig through
     # dedicated kwargs so the project-level pin is consulted between the
     # explicit call-site argument and the global default flag at lookup

@@ -986,6 +986,13 @@ class AgentConfig:
             if isinstance(raw_project_bash_allow, list)
             else []
         )
+        # Raw project-scope SQL grants (``.datus/config.yml`` sql_allow),
+        # forwarded by ``_apply_project_override``. Exact-match statement
+        # kinds the execute_sql permission gate auto-allows for this project.
+        raw_project_sql_allow = kwargs.get("project_sql_allow")
+        self.project_sql_allow: List[str] = (
+            [k for k in raw_project_sql_allow if isinstance(k, str)] if isinstance(raw_project_sql_allow, list) else []
+        )
 
         for name, raw_config in self.agentic_nodes.items():
             if not _SAFE_NAME_RE.match(name):

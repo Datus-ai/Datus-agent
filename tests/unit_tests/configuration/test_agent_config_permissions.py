@@ -170,6 +170,34 @@ def test_malformed_user_rules_falls_back_to_base(caplog):
     )
 
 
+def test_user_sql_statements_layered_on_profile_base():
+    cfg = _make_config({"profile": "normal", "sql_statements": {"write": "allow"}})
+    rules = cfg.permissions_config.sql_statements
+    assert rules.level_for_class("write") == PermissionLevel.ALLOW
+    # Unset classes keep the normal profile posture.
+    assert rules.level_for_class("destructive") == PermissionLevel.ASK
+
+
+def test_profile_sql_statements_present_without_user_override():
+    cfg = _make_config({"profile": "auto"})
+    rules = cfg.permissions_config.sql_statements
+    assert rules.level_for_class("write") == PermissionLevel.ALLOW
+    assert rules.level_for_class("destructive") == PermissionLevel.ASK
+
+
+def test_malformed_sql_statements_falls_back_to_base(caplog):
+    """An invalid sql_statements level must not crash startup — fall back to
+    the profile base (fail closed) with a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="datus.configuration.agent_config"):
+        cfg = _make_config({"profile": "auto", "sql_statements": {"destructive": "yolo"}})
+    # Fell back to base normal (the loader's fail-closed target).
+    assert cfg.permissions_config.default_permission == PermissionLevel.ASK
+    assert cfg.permissions_config.sql_statements.level_for_class("write") == PermissionLevel.ASK
+    assert any("permissions" in rec.message for rec in caplog.records)
+
+
 def test_non_mapping_permissions_falls_back_to_normal(caplog):
     """A list/scalar in ``permissions`` must not crash the loader.
 

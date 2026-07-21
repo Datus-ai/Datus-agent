@@ -254,3 +254,162 @@ class TestPermissionConfig:
         assert len(merged.rules) == 2
         assert merged.rules[0].tool == "db_tools"  # Base rule
         assert merged.rules[1].tool == "skills"  # Override rule (evaluated later)
+
+
+class TestClassifySqlKind:
+    """Kind → class mapping used by the execute_sql permission gate."""
+
+    @pytest.mark.parametrize(
+        "kind,expected",
+        [
+            ("select", "read"),
+            ("metadata", "read"),
+            ("explain", "read"),
+            ("insert", "write"),
+            ("create", "write"),
+            ("ddl", "write"),
+            ("context_set", "write"),
+            ("update", "destructive"),
+            ("delete", "destructive"),
+            ("merge", "destructive"),
+            ("drop", "destructive"),
+            ("truncate", "destructive"),
+            ("alter", "destructive"),
+            ("replace", "destructive"),
+            ("unknown", "unknown"),
+        ],
+    )
+    def test_known_kinds(self, kind, expected):
+        from datus.tools.permission.permission_config import classify_sql_kind
+
+        assert classify_sql_kind(kind) == expected
+
+    def test_unmapped_kind_fails_safe_to_unknown(self):
+        from datus.tools.permission.permission_config import classify_sql_kind
+
+        assert classify_sql_kind("frobnicate") == "unknown"
+        assert classify_sql_kind("") == "unknown"
+
+
+class TestSqlStatementRules:
+    """Per-class SQL statement rules model."""
+
+    def test_defaults_match_normal_posture(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        rules = SqlStatementRules()
+        assert rules.level_for_class("read") == PermissionLevel.ALLOW
+        assert rules.level_for_class("write") == PermissionLevel.ASK
+        assert rules.level_for_class("destructive") == PermissionLevel.ASK
+        assert rules.level_for_class("unknown") == PermissionLevel.ASK
+
+    def test_level_for_class_returns_permission_level(self):
+        """use_enum_values stores strings; level_for_class must coerce back."""
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        level = SqlStatementRules().level_for_class("read")
+        assert isinstance(level, PermissionLevel)
+
+    def test_level_for_unmapped_class_falls_to_unknown(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        rules = SqlStatementRules(unknown=PermissionLevel.DENY)
+        assert rules.level_for_class("nonsense") == PermissionLevel.DENY
+
+    def test_from_dict_none_returns_none(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        assert SqlStatementRules.from_dict(None) is None
+
+    def test_from_dict_tracks_explicit_fields_only(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        rules = SqlStatementRules.from_dict({"write": "allow"})
+        assert rules.model_fields_set == {"write"}
+        assert rules.level_for_class("write") == PermissionLevel.ALLOW
+        assert rules.level_for_class("destructive") == PermissionLevel.ASK
+
+    def test_from_dict_empty_dict_has_no_explicit_fields(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        rules = SqlStatementRules.from_dict({})
+        assert isinstance(rules, SqlStatementRules)
+        assert rules.model_fields_set == set()
+
+    def test_from_dict_rejects_non_mapping(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        with pytest.raises(ValueError, match="mapping"):
+            SqlStatementRules.from_dict(["read"])
+
+    def test_from_dict_rejects_invalid_level(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        with pytest.raises(ValueError):
+            SqlStatementRules.from_dict({"destructive": "yolo"})
+
+    def test_merge_with_override_if_set(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        base = SqlStatementRules(write=PermissionLevel.ALLOW)
+        override = SqlStatementRules.from_dict({"destructive": "deny"})
+        merged = base.merge_with(override)
+        # Explicit override field wins; unset override fields keep base values.
+        assert merged.level_for_class("destructive") == PermissionLevel.DENY
+        assert merged.level_for_class("write") == PermissionLevel.ALLOW
+        assert merged.level_for_class("read") == PermissionLevel.ALLOW
+
+    def test_merge_with_none_returns_self(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        base = SqlStatementRules(write=PermissionLevel.ALLOW)
+        assert base.merge_with(None) is base
+
+    def test_merge_does_not_mutate_base(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        base = SqlStatementRules()
+        base.merge_with(SqlStatementRules.from_dict({"write": "deny"}))
+        assert base.level_for_class("write") == PermissionLevel.ASK
+
+
+class TestPermissionConfigSqlStatements:
+    """sql_statements carried through PermissionConfig from_dict / merge_with."""
+
+    def test_from_dict_parses_sql_statements(self):
+        config = PermissionConfig.from_dict(
+            {"default": "ask", "sql_statements": {"write": "allow", "destructive": "ask"}}
+        )
+        assert config.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+        assert config.sql_statements.level_for_class("destructive") == PermissionLevel.ASK
+
+    def test_from_dict_without_sql_statements_is_none(self):
+        config = PermissionConfig.from_dict({"default": "ask"})
+        assert config.sql_statements is None
+
+    def test_merge_with_layers_sql_statements(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        base = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            sql_statements=SqlStatementRules(write=PermissionLevel.ALLOW),
+        )
+        override = PermissionConfig.from_dict({"default": "ask", "sql_statements": {"destructive": "deny"}})
+        merged = base.merge_with(override)
+        assert merged.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+        assert merged.sql_statements.level_for_class("destructive") == PermissionLevel.DENY
+
+    def test_merge_with_no_base_takes_override(self):
+        override = PermissionConfig.from_dict({"default": "ask", "sql_statements": {"write": "allow"}})
+        merged = PermissionConfig(default_permission=PermissionLevel.ASK).merge_with(override)
+        assert merged.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+
+    def test_merge_with_override_lacking_sql_statements_keeps_base(self):
+        from datus.tools.permission.permission_config import SqlStatementRules
+
+        base = PermissionConfig(
+            default_permission=PermissionLevel.ASK,
+            sql_statements=SqlStatementRules(write=PermissionLevel.ALLOW),
+        )
+        merged = base.merge_with(PermissionConfig(default_permission=PermissionLevel.ASK))
+        assert merged.sql_statements.level_for_class("write") == PermissionLevel.ALLOW

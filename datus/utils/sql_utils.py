@@ -677,6 +677,59 @@ def parse_sql_type(sql: str, dialect: str) -> SQLType:
     return inferred if inferred else SQLType.UNKNOWN
 
 
+# ``SQLType.DDL`` refinements for the permission layer: statements that
+# destroy data or schema get their own kind so they can be gated separately
+# from benign DDL (COMMENT/GRANT/ANALYZE/...). RENAME maps to ``alter`` — it
+# is the same ALTER-family schema mutation under a different keyword.
+_DDL_KIND_KEYWORDS: Dict[str, str] = {
+    "CREATE": "create",
+    "ALTER": "alter",
+    "DROP": "drop",
+    "TRUNCATE": "truncate",
+    "RENAME": "alter",
+}
+
+
+def parse_sql_statement_kind(sql: str, dialect: str = "") -> str:
+    """Fine-grained statement kind for the permission layer.
+
+    Same as ``parse_sql_type(...).value`` except two refinements the
+    ``execute_sql`` permission gate needs:
+
+    * ``SQLType.DDL`` is split by leading keyword into ``create`` / ``alter``
+      / ``drop`` / ``truncate`` (RENAME counts as ``alter``); everything else
+      (COMMENT/GRANT/REVOKE/ANALYZE/VACUUM/...) stays ``ddl``.
+    * ``REPLACE`` statements (folded into ``SQLType.INSERT`` by
+      ``parse_sql_type``) become ``replace`` — REPLACE INTO deletes matched
+      rows before re-inserting, so it must not inherit INSERT's class.
+
+    Only the first statement is classified (same contract as
+    ``parse_sql_type``); the tool layer's multi-statement rejection is the
+    backstop for trailing statements.
+
+    Returns one of: ``select``, ``metadata``, ``explain``, ``insert``,
+    ``replace``, ``create``, ``ddl``, ``context_set``, ``update``,
+    ``delete``, ``merge``, ``drop``, ``truncate``, ``alter``, ``unknown``.
+    """
+    sql_type = parse_sql_type(sql, dialect)
+    if sql_type not in (SQLType.DDL, SQLType.INSERT, SQLType.CONTENT_SET):
+        return sql_type.value
+
+    first_statement = _first_statement(sql.strip())
+    match = re.match(r"\s*([A-Za-z_]+)", first_statement)
+    keyword = match.group(1).upper() if match else ""
+
+    if sql_type == SQLType.INSERT:
+        return "replace" if keyword == "REPLACE" else SQLType.INSERT.value
+    if sql_type == SQLType.CONTENT_SET:
+        # sqlglot parses dialect-specific statements it cannot model as a
+        # generic Command, which ``parse_sql_type`` folds into CONTENT_SET
+        # (e.g. MySQL ``RENAME TABLE``). A destructive leading keyword must
+        # not ride that fold into the write class.
+        return _DDL_KIND_KEYWORDS.get(keyword, SQLType.CONTENT_SET.value)
+    return _DDL_KIND_KEYWORDS.get(keyword, "ddl")
+
+
 _CONTEXT_CMD_RE = re.compile(r"^\s*(use|set)\b", flags=re.IGNORECASE)
 
 

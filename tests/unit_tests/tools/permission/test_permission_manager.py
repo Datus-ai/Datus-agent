@@ -704,3 +704,71 @@ class TestProjectBashGrants:
         mgr.switch_profile("auto")
         assert mgr.is_plugin_ask_pattern("datus hello config del:*")
         assert not mgr.is_plugin_ask_pattern("datus hello config set:*")
+
+
+class TestProjectSqlGrants:
+    """Exact-match project SQL statement-kind grants for execute_sql."""
+
+    def test_constructor_seeds_and_normalizes_grants(self):
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(
+            global_config=get_profile("normal"),
+            project_sql_allows=["INSERT", "  drop  "],
+        )
+        assert mgr.has_project_sql_grant("insert")
+        assert mgr.has_project_sql_grant("drop")
+        assert mgr.has_project_sql_grant("DROP")  # lookup normalizes too
+        assert not mgr.has_project_sql_grant("truncate")
+        assert not mgr.has_project_sql_grant(None)
+        assert not mgr.has_project_sql_grant("")
+
+    def test_add_project_sql_allow_registers_grant_and_persists(self):
+        from unittest.mock import patch
+
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(global_config=get_profile("normal"))
+        with patch("datus.configuration.project_config.append_project_sql_allow") as mock_append:
+            persisted = mgr.add_project_sql_allow("Delete", project_root="/tmp/proj")
+        assert persisted is True
+        mock_append.assert_called_once_with("delete", "/tmp/proj")
+        assert mgr.has_project_sql_grant("delete")
+
+    def test_add_project_sql_allow_degrades_on_write_failure(self):
+        from unittest.mock import patch
+
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(global_config=get_profile("normal"))
+        with patch(
+            "datus.configuration.project_config.append_project_sql_allow",
+            side_effect=OSError("read-only"),
+        ):
+            persisted = mgr.add_project_sql_allow("drop")
+        assert persisted is False
+        # In-memory grant still applies for the rest of the session.
+        assert mgr.has_project_sql_grant("drop")
+
+    def test_grants_survive_profile_switches(self):
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(
+            global_config=get_profile("normal"),
+            project_sql_allows=["drop"],
+        )
+        mgr.switch_profile("auto")
+        assert mgr.has_project_sql_grant("drop")
+        mgr.switch_profile("dangerous")
+        mgr.switch_profile("normal")
+        assert mgr.has_project_sql_grant("drop")
+
+    def test_switch_profile_rebuilds_sql_statements_from_target_profile(self):
+        from datus.tools.permission.profiles import get_profile
+
+        mgr = PermissionManager(global_config=get_profile("normal"), active_profile="normal")
+        assert mgr.global_config.sql_statements.level_for_class("write") == PermissionLevel.ASK
+        mgr.switch_profile("auto")
+        assert mgr.global_config.sql_statements.level_for_class("write") == PermissionLevel.ALLOW
+        mgr.switch_profile("dangerous")
+        assert mgr.global_config.sql_statements is None
