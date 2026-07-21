@@ -4296,11 +4296,6 @@ format explicitly.</p>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># execution_backend defaults to metricflow and normally does not need</span>
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="c1"># to be configured.</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="nt">osi_engine</span><span class="p">:</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="c1"># Native Rust engine path (datus-semantic-osi-engine). Datus fills</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="c1"># db_config from the active datasource and the semantic model path</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">        </span><span class="c1"># from subject/semantic_models/&lt;datasource&gt;/ automatically.</span>
 </span></code></pre></div>
 <h2 id="selection-rules">Selection Rules<a class="headerlink" href="#selection-rules" title="Permanent link">&para;</a></h2>
 <p><code>AgentConfig.resolve_semantic_adapter</code> resolves the active semantic
@@ -4334,8 +4329,6 @@ Comparison is case-insensitive and trims surrounding whitespace.</p>
 <li>OSI mode authors strict OSI core YAML and stores Datus execution hints in <code>custom_extensions</code>.</li>
 <li>The current OSI execution backend is MetricFlow by default. You normally do not need to set <code>execution_backend</code>.</li>
 <li>Configure <code>services.semantic_layer.osi</code> and mark it <code>default: true</code> to select this path globally when other adapters are also configured. An empty <code>osi: {}</code> entry is selected automatically only when it is the sole semantic adapter, or when the current project pins <code>semantic: osi</code>.</li>
-<li><code>osi_engine</code> (package <code>datus-semantic-osi-engine</code>) executes the same OSI authoring documents natively on the Rust osi-engine — no MetricFlow dependency. Both <code>osi</code> and <code>osi_engine</code> author the OSI format; generation and ask flows treat them identically.</li>
-<li>For OSI-family adapters, <code>query_metrics.time_end</code> is an exclusive upper bound (half-open time range <code>[time_start, time_end)</code>).</li>
 </ul>
 <h2 id="configuring-through-the-cli-services">Configuring through the CLI (<code>/services</code>)<a class="headerlink" href="#configuring-through-the-cli-services" title="Permanent link">&para;</a></h2>
 <p>Run <code>/services semantic</code> inside the Datus REPL (or press <code>Tab</code> from any
