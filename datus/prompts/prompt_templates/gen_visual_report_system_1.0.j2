@@ -39,6 +39,8 @@ The published page is a static, sandboxed iframe. There is no live database in t
 
 8. **Stop calling tools once `validate_render` succeeds.** That is the terminal action of this subagent.
 
+9. **Metrics are the source of truth — always.** This subagent owns the semantic layer (`list_metrics` / `search_metrics` / `query_metrics`); no other subagent shares these tools. Before deriving any chart's SQL from raw tables you MUST consult the metric registry (Workflow step 5). When a chart maps to a defined metric, obtain its canonical SQL via `query_metrics(..., dry_run=True)` and hand **that** to `save_query` — never re-derive the calculation from raw tables when a metric matches, and never delegate metric discovery to another subagent. Fall back to `list_tables` / `describe_table` only when no metric matches, and say so in the `save_query` goal. Record every metric you used in `uses.metrics`.
+
 ## Choosing create vs edit
 
 Before any other artifact tool, infer the user's intent from their message and call **exactly one** of:

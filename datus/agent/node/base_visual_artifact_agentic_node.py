@@ -102,6 +102,15 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
     #: silently falls back to deriving SQL from raw table DDL.
     DEFAULT_TOOLS: ClassVar[str] = "semantic_tools.*, db_tools.*, context_search_tools.*"
 
+    #: No sub-agent delegation. The visual-artifact nodes own the full semantic
+    #: layer (``list_metrics`` / ``query_metrics``) plus db + context-search
+    #: tools, so there is nothing to gain from delegating. Crucially, ``explore``
+    #: (the base ``AgenticNode`` default) lacks the semantic-layer tools, so a
+    #: ``task(type="explore")`` metric-discovery detour silently degrades into
+    #: raw-table exploration — exactly the metrics-first regression we want to
+    #: prevent. Disabling the ``task`` tool here keeps metric derivation in-node.
+    DEFAULT_SUBAGENTS: ClassVar[str] = ""
+
     # ── Construction ──────────────────────────────────────────────────────
 
     def __init__(
