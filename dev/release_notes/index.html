@@ -4109,6 +4109,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#038" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.8
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#037" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4414,6 +4425,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#038" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.8
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#037" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4699,6 +4721,37 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="038">0.3.8<a class="headerlink" href="#038" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>[Experimental] Optional Metadata Full-Text Search</strong> - Set <code>kb.search.mode: fts</code> to use LanceDB 0.34 native FTS with Chinese n-gram indexing for metadata retrieval. Vector search remains the default; FTS validates index compatibility strictly and supports incremental updates. <a href="https://github.com/Datus-ai/Datus-agent/pull/1112">#1112</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1141">#1141</a> <a href="https://docs.datus.ai/0.3/knowledge_base/metadata_fts/">docs</a></li>
+<li><strong>Semantic SQL History Profiler</strong> - <code>gen_semantic_model</code> can use historical SQL and success-story SQL to collect column-usage evidence, data distributions, date spans, join coverage, and common filters for MetricFlow and OSI semantic authoring. The deeper profiling path is enabled for explicit profiling requests and can also be disabled explicitly. <a href="https://github.com/Datus-ai/Datus-agent/pull/1082">#1082</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1108">#1108</a> <a href="https://docs.datus.ai/0.3/subagent/gen_semantic_model/">docs</a></li>
+<li><strong>Project-Level, Spec-Aligned OSI Semantic Layer</strong> - Semantic-model generation, metric generation, AskMetrics, querying, and BI bootstrap now use the project's active semantic adapter. OSI authoring uses the datasource's real SQL dialect, can sync a complete OSI document into the Knowledge Base in one call, and follows structural field roles: only fields with a <code>dimension</code> block are queryable dimensions, while primary and unique keys are transcribed from database constraints surfaced by <code>describe_table</code>. Metric authoring is isolated from semantic-model writes to prevent structural rewrites and concurrent overwrite. Projects without an explicit adapter still default to MetricFlow. <a href="https://github.com/Datus-ai/Datus-agent/pull/1107">#1107</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1120">#1120</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1128">#1128</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1131">#1131</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1148">#1148</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1160">#1160</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1161">#1161</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/41">datus-semantic-adapter#41</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/42">#42</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/43">#43</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/50">#50</a> <a href="https://docs.datus.ai/0.3/configuration/semantic_layer/">semantic-layer docs</a> <a href="https://docs.datus.ai/0.3/adapters/osi_semantic_adapter/">OSI adapter docs</a></li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>First-Class Advanced Time Metrics</strong> - Metric generation now authors cumulative, rolling-window, and fixed period-over-period variants as independent metrics instead of treating them as covered by a base metric. Semantic adapters add required <code>metric_time</code> grouping and return structured validation guidance, while generated OSI metrics receive the same business-domain <code>subject_path</code> behavior as MetricFlow metrics. <a href="https://github.com/Datus-ai/Datus-agent/pull/1104">#1104</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1111">#1111</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1113">#1113</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1124">#1124</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/38">datus-semantic-adapter#38</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/39">#39</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/40">#40</a></li>
+<li><strong>Safer, Observable Bash Tooling</strong> - <code>execute_command</code> is renamed to <code>bash</code> and now supports real shell pipelines, command-level allow/deny/ask rules, project allowlists, per-call timeouts, and process-group cleanup. Long output is archived with a recoverable preview, elapsed time remains visible while commands run, and commands that read stdin no longer hang the TUI. <a href="https://github.com/Datus-ai/Datus-agent/pull/1092">#1092</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1094">#1094</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1103">#1103</a></li>
+<li><strong>Consistent Semantic Artifact Refresh</strong> - MetricFlow and OSI YAML can refresh <code>Observed profile</code> descriptions from stored table semantic profiles. Semantic models, table profiles, vector rows, and metrics are synchronized within the current artifact scope, and metric sync is now upsert-only so unrelated metrics in the same datasource are preserved. <a href="https://github.com/Datus-ai/Datus-agent/pull/1090">#1090</a> <a href="https://docs.datus.ai/0.3/API/knowledge_base/">Knowledge Base API docs</a> <a href="https://docs.datus.ai/0.3/knowledge_base/semantic_model/">semantic-model docs</a></li>
+<li><strong>Inline PEM Content for</strong> <code>ssl_verify</code> - Model configuration can store CA certificate content directly instead of depending on a certificate file inside the runtime container. Native httpx paths use an in-memory <code>SSLContext</code>, while LiteLLM uses automatically cleaned, content-deduplicated temporary CA bundles. <a href="https://github.com/Datus-ai/Datus-agent/pull/1102">#1102</a> <a href="https://docs.datus.ai/0.3/configuration/agent/">docs</a></li>
+<li><strong>Server-Side Web File Tools</strong> - Web sessions under the <code>auto</code> and <code>dangerous</code> profiles run <code>write_file</code>, <code>edit_file</code>, and <code>delete_file</code> on the server, avoiding proxy timeouts when a browser tab is hidden, disconnected, or closed. SSE tool events now expose an explicit <code>proxied</code> state, while VS Code continues to use client-side proxy execution. <a href="https://github.com/Datus-ai/Datus-agent/pull/1123">#1123</a></li>
+<li><strong>Independent English and Chinese Documentation Sites</strong> - English and Chinese docs now build as separate MkDocs sites with independent search indexes, version metadata, and canonical URLs. Chinese pages move to <code>/zh/&lt;version&gt;/</code>, preventing search results from mixing both languages. <a href="https://github.com/Datus-ai/Datus-agent/pull/1152">#1152</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1154">#1154</a> <a href="https://docs.datus.ai/0.3/develop/">docs</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Database-Scoped Semantic Storage</strong> - Semantic models now use full catalog/database/schema/table identities so same-named tables no longer overwrite each other; stale simple-id rows are cleaned up safely during later syncs. <code>datus-agent run --task_db_name</code> also preserves the physical database selected by the caller. <a href="https://github.com/Datus-ai/Datus-agent/pull/1115">#1115</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1127">#1127</a></li>
+<li><strong>Recoverable Agent and Gateway Failures</strong> - LLM stream failures return stable error codes and readable messages, missing required tool arguments produce retryable results instead of terminating the turn, and missing custom <code>gen_sql</code> prompts fall back to the latest built-in template. Slack and Feishu skip startup when credentials are absent, while invalid Slack credentials fail fast instead of reconnecting forever. <a href="https://github.com/Datus-ai/Datus-agent/pull/1116">#1116</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1117">#1117</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1122">#1122</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1134">#1134</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1135">#1135</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1137">#1137</a></li>
+<li><strong>Runtime Dependency Compatibility</strong> - Capped <code>openai</code> below 2.45.0 to avoid an <code>openai-agents==0.7.0</code> Usage-schema failure before every model call, and pinned pandas to 2.1.4 for compatibility with the Snowflake adapter while retaining LanceDB 0.34. <a href="https://github.com/Datus-ai/Datus-agent/pull/1130">#1130</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1136">#1136</a></li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong>Bash Tool Rename</strong> - Custom subagent tool whitelists, MCP/tool calls, and permission rules that reference <code>execute_command</code> must migrate to <code>bash</code>; the permission identifier is <code>bash_tools.bash</code>. <a href="https://github.com/Datus-ai/Datus-agent/pull/1092">#1092</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1094">#1094</a></li>
+<li><strong>Project-Level Semantic Adapter Selection</strong> - OSI and custom semantic-format projects should move adapter selection to project-level semantic configuration. The old node-level semantic-format override no longer determines the authoring path; projects without configuration continue to use MetricFlow. <a href="https://github.com/Datus-ai/Datus-agent/pull/1107">#1107</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1120">#1120</a></li>
+<li><strong>Semantic Adapter Versions</strong> - Datus-agent 0.3.8 requires <code>datus-semantic-core&gt;=0.2.1</code>. Deployments that install the MetricFlow adapter separately should use <code>datus-semantic-metricflow&gt;=0.2.9</code>, and OSI authoring should use <code>datus-semantic-osi&gt;=0.1.2</code> for the matching field-role and constraint behavior. <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/50">datus-semantic-adapter#50</a></li>
+<li><strong>FTS Index Bootstrap</strong> - After setting <code>kb.search.mode: fts</code>, run one overwrite metadata bootstrap to create the FTS index. Existing vector data is not migrated automatically, and empty FTS results do not fall back to vector retrieval. <a href="https://github.com/Datus-ai/Datus-agent/pull/1112">#1112</a></li>
+<li><strong>Web File Permissions</strong> - Under the Web <code>auto</code> profile, writes outside the workspace now require server-side permission confirmation; <code>dangerous</code> behavior is unchanged. <a href="https://github.com/Datus-ai/Datus-agent/pull/1123">#1123</a></li>
+<li><strong>Chinese Documentation URLs</strong> - Chinese documentation moved from <code>/&lt;version&gt;/zh/...</code> to <code>/zh/&lt;version&gt;/...</code>; update external bookmarks and hard-coded links accordingly. <a href="https://github.com/Datus-ai/Datus-agent/pull/1152">#1152</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1154">#1154</a></li>
+</ul>
 <h3 id="037">0.3.7<a class="headerlink" href="#037" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
