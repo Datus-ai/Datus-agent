@@ -5,8 +5,9 @@
 import json
 import os
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -23,17 +24,22 @@ def generation_tools(mock_agent_config):
     with (
         patch("datus.tools.func_tool.generation_tools.MetricRAG") as mock_metric_rag_cls,
         patch("datus.tools.func_tool.generation_tools.SemanticModelRAG") as mock_semantic_rag_cls,
+        patch("datus.tools.func_tool.generation_tools.TableSemanticProfileRAG") as mock_profile_rag_cls,
     ):
         mock_metric_rag = Mock()
         mock_semantic_rag = Mock()
+        mock_profile_rag = Mock()
         mock_metric_rag_cls.return_value = mock_metric_rag
         mock_semantic_rag_cls.return_value = mock_semantic_rag
+        mock_profile_rag_cls.return_value = mock_profile_rag
+        mock_agent_config.project_name = "test-project"
 
         from datus.tools.func_tool.generation_tools import GenerationTools
 
         tool = GenerationTools(agent_config=mock_agent_config)
         tool.metric_rag = mock_metric_rag
         tool.semantic_rag = mock_semantic_rag
+        tool.table_semantic_profile_rag = mock_profile_rag
         return tool
 
 
@@ -43,6 +49,185 @@ class TestAvailableTools:
             mock_trans.side_effect = lambda f: Mock(name=f.__name__)
             tools = generation_tools.available_tools()
         assert len(tools) == 4
+
+    def test_all_tool_names_include_chat_only_sync_tool(self, generation_tools):
+        assert "sync_semantic" in generation_tools.all_tools_name()
+
+    def test_osi_profile_storage_init_failure_is_reported_by_reconcile(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        agent_config = Mock(project_name="test-project")
+        with (
+            patch("datus.tools.func_tool.generation_tools.MetricRAG"),
+            patch("datus.tools.func_tool.generation_tools.SemanticModelRAG"),
+            patch(
+                "datus.tools.func_tool.generation_tools.TableSemanticProfileRAG",
+                side_effect=RuntimeError("profile backend unavailable"),
+            ),
+        ):
+            tools = GenerationTools(agent_config, authoring_format="osi")
+
+        result = tools.reconcile_osi_document_to_db("shop.yml")
+
+        assert result["success"] is False
+        assert "profile backend unavailable" in result["error"]
+
+
+class TestSyncSemantic:
+    def test_validates_and_reconciles_dataset_only_document(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        model_file = tmp_path / "semantic_models" / "shop" / "shop.yml"
+        model_file.parent.mkdir(parents=True)
+        model_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n",
+            encoding="utf-8",
+        )
+        mock_pm = Mock(subject_dir=str(tmp_path))
+        semantic_tools = Mock()
+        semantic_tools.validate_semantic.return_value = FuncToolResult(result={"valid": True})
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch("datus.tools.func_tool.semantic_tools.SemanticTools", return_value=semantic_tools),
+            patch.object(generation_tools, "reconcile_osi_document_to_db", return_value={"success": True}) as sync,
+        ):
+            result = generation_tools.sync_semantic(str(model_file))
+
+        assert result.success == 1
+        semantic_tools.validate_semantic.assert_called_once_with(
+            scope="semantic_model",
+            semantic_model_name="shop",
+        )
+        semantic_tools.query_metrics.assert_not_called()
+        sync.assert_called_once_with(str(model_file), metric_sqls={})
+        assert result.result["source_sha256"]
+
+    def test_validates_and_dry_runs_metrics_before_reconcile(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        model_file = tmp_path / "semantic_models" / "shop" / "shop.yml"
+        model_file.parent.mkdir(parents=True)
+        model_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
+            "      - name: gross_revenue\n",
+            encoding="utf-8",
+        )
+        mock_pm = Mock(subject_dir=str(tmp_path))
+        semantic_tools = Mock()
+        semantic_tools.validate_semantic.return_value = FuncToolResult(result={"valid": True})
+        semantic_tools.query_metrics.side_effect = [
+            FuncToolResult(result={"metadata": {"sql": "SELECT COUNT(*) FROM orders"}}),
+            FuncToolResult(result={"metadata": {"sql": "SELECT SUM(amount) FROM orders"}}),
+        ]
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch("datus.tools.func_tool.semantic_tools.SemanticTools", return_value=semantic_tools),
+            patch.object(generation_tools, "reconcile_osi_document_to_db", return_value={"success": True}) as sync,
+        ):
+            result = generation_tools.sync_semantic(str(model_file))
+
+        assert result.success == 1
+        semantic_tools.validate_semantic.assert_called_once_with(scope="all", semantic_model_name="shop")
+        assert semantic_tools.query_metrics.call_args_list == [
+            call(metrics=["order_count"], dry_run=True),
+            call(metrics=["gross_revenue"], dry_run=True),
+        ]
+        sync.assert_called_once_with(
+            str(model_file),
+            metric_sqls={
+                "order_count": "SELECT COUNT(*) FROM orders",
+                "gross_revenue": "SELECT SUM(amount) FROM orders",
+            },
+        )
+
+    def test_validation_failure_does_not_sync(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        model_file = tmp_path / "semantic_models" / "shop" / "shop.yml"
+        model_file.parent.mkdir(parents=True)
+        model_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    datasets: []\n",
+            encoding="utf-8",
+        )
+        mock_pm = Mock(subject_dir=str(tmp_path))
+        semantic_tools = Mock()
+        semantic_tools.validate_semantic.return_value = FuncToolResult(success=0, error="invalid model")
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch("datus.tools.func_tool.semantic_tools.SemanticTools", return_value=semantic_tools),
+            patch.object(generation_tools, "reconcile_osi_document_to_db") as sync,
+        ):
+            result = generation_tools.sync_semantic(str(model_file))
+
+        assert result.success == 0
+        assert "invalid model" in result.error
+        sync.assert_not_called()
+
+    def test_metric_dry_run_without_compiled_sql_does_not_sync(self, generation_tools, tmp_path):
+        generation_tools.authoring_format = "osi"
+        model_file = tmp_path / "semantic_models" / "shop" / "shop.yml"
+        model_file.parent.mkdir(parents=True)
+        model_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "    metrics:\n"
+            "      - name: order_count\n",
+            encoding="utf-8",
+        )
+        mock_pm = Mock(subject_dir=str(tmp_path))
+        semantic_tools = Mock()
+        semantic_tools.validate_semantic.return_value = FuncToolResult(result={"valid": True})
+        semantic_tools.query_metrics.return_value = FuncToolResult(result={"metadata": {"sql": "   "}})
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch("datus.tools.func_tool.semantic_tools.SemanticTools", return_value=semantic_tools),
+            patch.object(generation_tools, "reconcile_osi_document_to_db") as sync,
+        ):
+            result = generation_tools.sync_semantic(str(model_file))
+
+        assert result.success == 0
+        assert "did not return compiled SQL" in result.error
+        sync.assert_not_called()
+
+    def test_metric_sql_compilation_keeps_supplied_sql_and_compiles_only_missing(self, generation_tools):
+        generation_tools.authoring_format = "osi"
+        runtime_context_provider = Mock(return_value={"database": "task_db", "schema": "task_schema"})
+        generation_tools._runtime_db_context_provider = runtime_context_provider
+        semantic_tools = Mock()
+        semantic_tools.query_metrics.return_value = FuncToolResult(
+            result={"metadata": {"metric_sqls": {"__query_metrics_dry_run__": "SELECT SUM(amount) FROM orders"}}}
+        )
+
+        with patch("datus.tools.func_tool.semantic_tools.SemanticTools", return_value=semantic_tools) as tools_cls:
+            result = generation_tools._compile_osi_metric_sqls(
+                ["order_count", "gross_revenue"],
+                {"order_count": "  SELECT COUNT(*) FROM orders\n"},
+            )
+
+        assert result.success == 1
+        assert result.result["metric_sqls"] == {
+            "order_count": "SELECT COUNT(*) FROM orders",
+            "gross_revenue": "SELECT SUM(amount) FROM orders",
+        }
+        semantic_tools.query_metrics.assert_called_once_with(metrics=["gross_revenue"], dry_run=True)
+        assert tools_cls.call_args.kwargs["runtime_db_context_provider"] is runtime_context_provider
 
 
 class TestCheckSemanticObjectExists:
@@ -237,7 +422,7 @@ class TestEndSemanticModelGeneration:
 
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(generation_tools, "sync_osi_semantic_to_db") as sync_mock,
+            patch.object(generation_tools, "reconcile_osi_document_to_db") as sync_mock,
         ):
             result = generation_tools.end_semantic_model_generation([str(finance_file)])
 
@@ -260,7 +445,7 @@ class TestEndSemanticModelGeneration:
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
             patch.object(
                 generation_tools,
-                "sync_osi_semantic_to_db",
+                "reconcile_osi_document_to_db",
                 return_value={"success": True},
             ) as sync_mock,
         ):
@@ -359,7 +544,7 @@ class TestEndMetricGeneration:
             patch.object(type(generation_tools), "_validate_metric_file_has_blocks") as preflight_mock,
             patch.object(
                 generation_tools,
-                "_sync_osi_metric_to_db",
+                "reconcile_osi_document_to_db",
                 return_value={"success": True, "message": "synced"},
             ) as sync_mock,
         ):
@@ -367,7 +552,7 @@ class TestEndMetricGeneration:
 
         assert result.success == 1
         preflight_mock.assert_not_called()
-        sync_mock.assert_called_once_with(str(metric_file), [], {}, replace_metric_artifact=False)
+        sync_mock.assert_called_once_with(str(metric_file), metric_sqls={})
 
     def test_osi_ignores_semantic_model_files_to_avoid_duplicate_sync(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
@@ -389,7 +574,7 @@ class TestEndMetricGeneration:
             patch.object(type(generation_tools), "_validate_metric_file_has_blocks") as preflight_mock,
             patch.object(
                 generation_tools,
-                "_sync_osi_metric_to_db",
+                "reconcile_osi_document_to_db",
                 return_value={"success": True, "message": "synced"},
             ) as sync_mock,
         ):
@@ -400,12 +585,7 @@ class TestEndMetricGeneration:
 
         assert result.success == 1
         preflight_mock.assert_not_called()
-        sync_mock.assert_called_once_with(
-            str(metric_file),
-            [],
-            {},
-            replace_metric_artifact=False,
-        )
+        sync_mock.assert_called_once_with(str(metric_file), metric_sqls={})
         assert result.result["semantic_model_files"] == []
         assert generation_tools.generation_evidence.semantic_kb_sync_passed is False
 
@@ -776,6 +956,23 @@ class TestSyncMetricToDb:
             "schema_name": "public",
         }
 
+    def test_current_db_parts_accepts_node_runtime_context_override(self):
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        agent_config = SimpleNamespace(
+            current_db_config=lambda: SimpleNamespace(catalog="default_catalog", database="default_db", schema=""),
+            runtime_db_context=lambda: {"database": "stale_db"},
+        )
+
+        assert GenerationTools._current_db_parts(
+            agent_config,
+            {"catalog": "task_catalog", "database": "task_db", "schema": "task_schema"},
+        ) == {
+            "catalog_name": "task_catalog",
+            "database_name": "task_db",
+            "schema_name": "task_schema",
+        }
+
     def test_metric_file_not_found(self, generation_tools):
         result = generation_tools._sync_metric_to_db("/nonexistent/metric.yaml")
         assert result["success"] is False
@@ -1015,7 +1212,7 @@ class TestOsiSync:
         assert metric_obj["yaml_path"] == str(metric_file)
         assert result["metric_names"] == ["order_count"]
 
-    def test_sync_osi_metric_to_db_can_upsert_without_replacing_artifact(self, generation_tools, tmp_path):
+    def test_legacy_incremental_flag_still_reconciles_complete_artifact(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
         )
@@ -1024,6 +1221,9 @@ class TestOsiSync:
             "version: 0.2.0.dev0\n"
             "semantic_model:\n"
             "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
             "    metrics:\n"
             "      - name: order_count\n"
             "        expression:\n"
@@ -1046,18 +1246,27 @@ class TestOsiSync:
             subject_path=None,
             kind=None,
         )
-        doc = SimpleNamespace(datasets=[dataset], metrics=[metric])
+        doc = SimpleNamespace(name="shop", datasets=[dataset], relationships=[], metrics=[metric])
 
-        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+        with (
+            patch.object(generation_tools, "_load_osi_document", return_value=doc),
+            patch.object(
+                generation_tools,
+                "_compile_osi_metric_sqls",
+                return_value=FuncToolResult(result={"metric_sqls": {"order_count": "SELECT 1"}}),
+            ) as compile_sqls,
+        ):
             result = generation_tools._sync_osi_metric_to_db(str(metric_file), replace_metric_artifact=False)
 
         assert result["success"] is True
+        compile_sqls.assert_called_once_with(["order_count"], None)
         generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
-        generation_tools.metric_rag.delete_artifact_rows_except.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.metric_rag.list_artifact_rows.assert_called_once_with(str(metric_file))
         generation_tools.metric_rag.upsert_batch.assert_called_once()
+        assert generation_tools.metric_rag.upsert_batch.call_args.args[0][0]["sql"] == "SELECT 1"
 
-    def test_sync_osi_metric_partial_publish_restores_on_later_failure(self, generation_tools, tmp_path):
+    def test_complete_osi_publish_restores_all_projections_on_later_failure(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
         )
@@ -1066,6 +1275,9 @@ class TestOsiSync:
             "version: 0.2.0.dev0\n"
             "semantic_model:\n"
             "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
             "    metrics:\n"
             "      - name: order_count\n"
             "        expression:\n"
@@ -1088,16 +1300,24 @@ class TestOsiSync:
             subject_path=None,
             kind=None,
         )
-        doc = SimpleNamespace(datasets=[dataset], metrics=[metric])
+        doc = SimpleNamespace(name="shop", datasets=[dataset], relationships=[], metrics=[metric])
+        generation_tools.semantic_rag.list_artifact_rows.return_value = [{"id": "old-table"}]
         generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "old-metric"}]
         generation_tools.metric_rag.create_indices.side_effect = RuntimeError("index failed")
 
         with patch.object(generation_tools, "_load_osi_document", return_value=doc):
-            result = generation_tools._sync_osi_metric_to_db(str(metric_file), replace_metric_artifact=False)
+            result = generation_tools._sync_osi_metric_to_db(
+                str(metric_file),
+                metric_sqls={"order_count": "SELECT 1"},
+                replace_metric_artifact=False,
+            )
 
         assert result["success"] is False
         assert "index failed" in result["error"]
         generation_tools.metric_rag.delete_artifact_rows_except.assert_not_called()
+        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
+            str(metric_file), [{"id": "old-table"}]
+        )
         generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(
             str(metric_file), [{"id": "old-metric"}]
         )
@@ -1191,7 +1411,13 @@ class TestOsiSync:
         )
 
         with patch.object(generation_tools, "_load_osi_document", return_value=doc):
-            result = generation_tools._sync_osi_metric_to_db(str(metric_file))
+            result = generation_tools._sync_osi_metric_to_db(
+                str(metric_file),
+                metric_sqls={
+                    "order_count": "SELECT 1",
+                    "order_count_prev": "SELECT 2",
+                },
+            )
 
         assert result["success"] is True
         metric_objects = generation_tools.metric_rag.upsert_batch.call_args.args[0]
@@ -1206,13 +1432,20 @@ class TestOsiSync:
         assert by_name["order_count_prev"]["dimensions"] == by_name["order_count"]["dimensions"]
         assert by_name["order_count_prev"]["entities"] == ["order_id"]
 
-    def test_sync_osi_metric_to_db_syncs_every_semantic_file(self, generation_tools, tmp_path):
+    def test_legacy_metric_sync_reconciles_the_unified_osi_artifact(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
         )
         metric_file = tmp_path / "orders_metrics.yml"
         metric_file.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
         )
         orders_file = tmp_path / "orders.yml"
         customers_file = tmp_path / "customers.yml"
@@ -1235,7 +1468,7 @@ class TestOsiSync:
             inputs=[],
             measures=[],
         )
-        doc = SimpleNamespace(datasets=[dataset], relationships=[], metrics=[metric])
+        doc = SimpleNamespace(name="shop", datasets=[dataset], relationships=[], metrics=[metric])
 
         with (
             patch.object(generation_tools, "_load_osi_document", return_value=doc),
@@ -1244,14 +1477,18 @@ class TestOsiSync:
             result = generation_tools._sync_osi_metric_to_db(
                 str(metric_file),
                 [str(orders_file), str(customers_file)],
+                metric_sqls={"order_count": "SELECT 1"},
             )
 
         assert result["success"] is True
         assert result["semantic_synced"] is True
-        assert result["semantic_model_files_synced"] == [str(orders_file), str(customers_file)]
-        assert [call.args[0] for call in sync_mock.call_args_list] == [str(orders_file), str(customers_file)]
+        assert result["semantic_model_files_synced"] == [str(metric_file)]
+        sync_mock.assert_not_called()
 
-    def test_sync_osi_metric_to_db_rejects_metric_file_without_metrics(self, generation_tools, tmp_path):
+    def test_complete_sync_clears_metrics_when_document_has_none(self, generation_tools, tmp_path):
+        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
+            catalog="default_catalog", database="shop", schema=""
+        )
         metric_file = tmp_path / "empty_metrics.yml"
         metric_file.write_text(
             "version: 0.2.0.dev0\n"
@@ -1262,10 +1499,51 @@ class TestOsiSync:
             "        source: orders\n"
         )
 
-        result = generation_tools._sync_osi_metric_to_db(str(metric_file))
+        dataset = SimpleNamespace(
+            name="orders",
+            description="",
+            source=SimpleNamespace(table="orders"),
+            primary_key=[],
+            time_dimension=None,
+            dimensions=[],
+        )
+        doc = SimpleNamespace(name="empty", datasets=[dataset], relationships=[], metrics=[])
+        generation_tools._semantic_object_exists_cache[("table", "orders", "")] = FuncToolResult()
+        generation_tools._semantic_table_object_index = {"orders": {"kind": "table"}}
+        nested_dir = tmp_path / "nested"
+        nested_dir.mkdir()
+        noncanonical_path = nested_dir / ".." / metric_file.name
+        canonical_path = str(metric_file.resolve())
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools.reconcile_osi_document_to_db(str(noncanonical_path))
+
+        assert result["success"] is True
+        assert result["semantic_model_files_synced"] == [canonical_path]
+        generation_tools.metric_rag.upsert_batch.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once_with(canonical_path, [])
+        assert generation_tools._semantic_object_exists_cache == {}
+        assert generation_tools._semantic_table_object_index is None
+
+    def test_complete_sync_fails_closed_when_profile_storage_is_unavailable(self, generation_tools, tmp_path):
+        semantic_file = tmp_path / "shop.yml"
+        semantic_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n",
+            encoding="utf-8",
+        )
+        generation_tools.table_semantic_profile_rag = None
+        generation_tools._table_semantic_profile_init_error = "profile backend unavailable"
+
+        result = generation_tools.reconcile_osi_document_to_db(str(semantic_file))
 
         assert result["success"] is False
-        assert "No OSI metrics found in metric file" in result["error"]
+        assert "profile backend unavailable" in result["error"]
+        generation_tools.semantic_rag.upsert_batch.assert_not_called()
         generation_tools.metric_rag.upsert_batch.assert_not_called()
 
     def test_sync_osi_semantic_to_db_upserts_only_current_dataset_columns(self, generation_tools, tmp_path):
@@ -1525,44 +1803,31 @@ class TestOsiSync:
         generation_tools.semantic_rag.restore_artifact_rows.assert_called_once()
         generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once()
 
-    def test_sync_osi_to_db_routes_metric_file_through_metric_sync(self, generation_tools, tmp_path):
-        # A metrics-bearing OSI doc: one pass through _sync_osi_metric_to_db (which
-        # also syncs the referenced datasets); no separate semantic sync call.
+    def test_sync_osi_to_db_always_uses_complete_reconcile(self, generation_tools, tmp_path):
         osi_file = tmp_path / "shop.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
-        with (
-            patch.object(generation_tools, "extract_osi_metric_names", return_value=["order_count"]),
-            patch.object(
-                generation_tools,
-                "_sync_osi_metric_to_db",
-                return_value={"success": True, "metric_artifact_ids": ["metric:a", "metric:b"]},
-            ) as metric_sync,
-            patch.object(generation_tools, "sync_osi_semantic_to_db") as semantic_sync,
-        ):
+        with patch.object(
+            generation_tools,
+            "reconcile_osi_document_to_db",
+            return_value={"success": True, "synced": 5},
+        ) as reconcile:
             result = generation_tools.sync_osi_to_db(str(osi_file))
 
-        metric_sync.assert_called_once_with(metric_file=str(osi_file), semantic_model_file=str(osi_file))
-        semantic_sync.assert_not_called()
+        reconcile.assert_called_once_with(str(osi_file), metric_sqls=None)
         assert result["success"] is True
-        assert result["synced"] == 2
+        assert result["synced"] == 5
 
-    def test_sync_osi_to_db_routes_dataset_only_file_through_semantic_sync(self, generation_tools, tmp_path):
-        # A dataset-only OSI doc (no metrics): syncs just the datasets.
+    def test_sync_osi_to_db_does_not_branch_on_metric_presence(self, generation_tools, tmp_path):
         osi_file = tmp_path / "model.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
-        with (
-            patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
-            patch.object(
-                generation_tools,
-                "sync_osi_semantic_to_db",
-                return_value={"success": True, "semantic_objects": 3},
-            ) as semantic_sync,
-            patch.object(generation_tools, "_sync_osi_metric_to_db") as metric_sync,
-        ):
+        with patch.object(
+            generation_tools,
+            "reconcile_osi_document_to_db",
+            return_value={"success": True, "synced": 3},
+        ) as reconcile:
             result = generation_tools.sync_osi_to_db(str(osi_file))
 
-        semantic_sync.assert_called_once_with(str(osi_file))
-        metric_sync.assert_not_called()
+        reconcile.assert_called_once_with(str(osi_file), metric_sqls=None)
         assert result["success"] is True
         assert result["synced"] == 3
 
@@ -1571,9 +1836,116 @@ class TestOsiSync:
         # error dict rather than propagating out of the public entry.
         osi_file = tmp_path / "shop.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
-        with patch.object(generation_tools, "extract_osi_metric_names", side_effect=RuntimeError("bad yaml")):
+        with patch.object(generation_tools, "extract_osi_dataset_names", side_effect=RuntimeError("bad yaml")):
             result = generation_tools.sync_osi_to_db(str(osi_file))
         assert result == {"success": False, "error": "bad yaml"}
+
+
+class TestOsiReconcileRealStorage:
+    def test_sync_semantic_compiles_metric_sql_into_real_storage(self, real_agent_config):
+        pytest.importorskip("datus_semantic_osi")
+        pytest.importorskip("metricflow")
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        real_agent_config.semantic_layer_configs = {"osi": {"type": "osi", "execution_backend": "metricflow"}}
+
+        model_dir = Path(real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource))
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_file = model_dir / "shop.yml"
+        model_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: satscores\n"
+            "        source: satscores\n"
+            "        primary_key: [cds]\n"
+            "        fields:\n"
+            "          - name: metric_date\n"
+            "            expression:\n"
+            "              dialects:\n"
+            "                - dialect: ANSI_SQL\n"
+            "                  expression: DATE('2020-01-01')\n"
+            "            dimension: {is_time: true}\n"
+            "            custom_extensions:\n"
+            "              - vendor_name: DATUS\n"
+            '                data: \'{"type":"time","time_granularity":"day"}\'\n'
+            "    metrics:\n"
+            "      - name: school_count\n"
+            "        expression:\n"
+            "          dialects:\n"
+            "            - dialect: ANSI_SQL\n"
+            "              expression: COUNT(DISTINCT cds)\n"
+            "        custom_extensions:\n"
+            "          - vendor_name: DATUS\n"
+            '            data: \'{"dataset":"satscores","time_dimension":"metric_date"}\'\n',
+            encoding="utf-8",
+        )
+        tools = GenerationTools(real_agent_config, authoring_format="osi")
+
+        result = tools.sync_semantic(str(model_file))
+
+        assert result.success == 1
+        metric_rows = tools.metric_rag.list_artifact_rows(str(model_file))
+        assert [row["name"] for row in metric_rows] == ["school_count"]
+        assert "COUNT" in metric_rows[0]["sql"].upper()
+
+    def test_removing_metrics_from_yaml_clears_real_metric_storage(self, real_agent_config):
+        osi_profile = pytest.importorskip("datus_semantic_osi.profile")
+        if not hasattr(osi_profile, "load_osi_model"):
+            pytest.skip("installed datus-semantic-osi does not support named model loading")
+
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        model_dir = Path(real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource))
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_file = model_dir / "shop.yml"
+        model_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "        primary_key: [order_id]\n"
+            "    metrics:\n"
+            "      - name: order_count\n"
+            "        expression:\n"
+            "          dialects:\n"
+            "            - dialect: ANSI_SQL\n"
+            "              expression: COUNT(DISTINCT order_id)\n"
+            "        custom_extensions:\n"
+            "          - vendor_name: DATUS\n"
+            '            data: \'{"dataset":"orders"}\'\n',
+            encoding="utf-8",
+        )
+        tools = GenerationTools(real_agent_config, authoring_format="osi")
+
+        first = tools.reconcile_osi_document_to_db(
+            str(model_file),
+            metric_sqls={"order_count": "SELECT COUNT(*) FROM orders"},
+        )
+
+        assert first["success"] is True
+        assert [row["name"] for row in tools.metric_rag.list_artifact_rows(str(model_file))] == ["order_count"]
+
+        model_file.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: shop\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n"
+            "        primary_key: [order_id]\n",
+            encoding="utf-8",
+        )
+
+        second = tools.reconcile_osi_document_to_db(str(model_file))
+
+        assert second["success"] is True
+        assert second["metric_names"] == []
+        assert tools.metric_rag.list_artifact_rows(str(model_file)) == []
+        assert tools.semantic_rag.list_artifact_rows(str(model_file))
 
 
 class TestGenerateSqlSummaryId:

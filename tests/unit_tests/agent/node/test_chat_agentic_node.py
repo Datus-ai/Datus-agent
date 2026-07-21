@@ -179,6 +179,42 @@ class TestChatAgenticNodeToolSetup:
 
         assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
 
+    def test_main_osi_chat_exposes_only_sync_semantic_from_generation_tools(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        with patch("datus.agent.node.semantic_authoring.is_osi_authoring", return_value=True):
+            node = ChatAgenticNode(
+                node_id="test_osi_sync",
+                description="Test Ossie sync tool",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+            )
+
+        tool_names = {tool.name for tool in node.tools}
+        generation_tool_names = set(GenerationTools.all_tools_name())
+        assert tool_names & generation_tool_names == {"sync_semantic"}
+        assert node.tool_registry.get("sync_semantic") == "semantic_tools"
+        assert "sole source of truth" in node._get_system_prompt()
+        assert node.semantic_sync_tools._runtime_db_context_provider == node._semantic_runtime_db_context
+
+    def test_osi_subagent_does_not_expose_sync_semantic(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+        from datus.tools.func_tool.generation_tools import GenerationTools
+
+        with patch("datus.agent.node.semantic_authoring.is_osi_authoring", return_value=True):
+            node = ChatAgenticNode(
+                node_id="test_osi_subagent_sync",
+                description="Test Ossie subagent tool isolation",
+                node_type=NodeType.TYPE_CHAT,
+                agent_config=real_agent_config,
+                is_subagent=True,
+            )
+
+        tool_names = {tool.name for tool in node.tools}
+        assert tool_names.isdisjoint(GenerationTools.all_tools_name())
+        assert node.semantic_sync_tools is None
+
     def test_filesystem_strict_from_agent_config(self, real_agent_config, mock_llm_create):
         """agent_config.filesystem_strict = True propagates into the tool
         and the permission-hook policy. This is how API / gateway bootstraps

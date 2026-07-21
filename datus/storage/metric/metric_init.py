@@ -1090,7 +1090,11 @@ def init_semantic_yaml_metrics(
     agent_config: AgentConfig,
 ) -> tuple[bool, str]:
     """
-    Initialize ONLY metrics from semantic YAML file, skip semantic model objects.
+    Initialize metrics from semantic YAML.
+
+    MetricFlow keeps the legacy metrics-only projection. An Ossie YAML is a
+    unified artifact, so its datasets, profiles, and metrics are reconciled
+    together and removed objects are cleared from storage.
 
     Args:
         yaml_file_path: Path to semantic YAML file
@@ -1105,7 +1109,7 @@ def init_semantic_yaml_metrics(
 
         result = GenerationTools(
             agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI
-        )._sync_osi_metric_to_db(yaml_file_path)
+        ).reconcile_osi_document_to_db(yaml_file_path)
         if result.get("success"):
             return True, result.get("message", "")
         return False, result.get("error", "Unknown error")
