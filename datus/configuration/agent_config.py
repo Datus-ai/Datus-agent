@@ -935,6 +935,15 @@ class AgentConfig:
         # the permission profile. API front-ends override this at runtime
         # (e.g. web gets ``["datus*"]``).
         self._bash_allowed_patterns = _coerce_pattern_list(bash_raw.get("allowed_patterns"))
+        # ``bash.sandbox`` configures the OS-level sandbox (macOS sandbox-exec
+        # / Linux bubblewrap) wrapped around every BashTool command. The parsed
+        # ``SandboxSettings`` object is SHARED with every BashTool instance so
+        # ``/sandbox on|off`` mutating ``enabled`` takes effect immediately.
+        # Lazy import: datus.tools.func_tool pulls in the CLI package, which
+        # imports this module (same cycle-breaking pattern as sql_policy).
+        from datus.tools.func_tool.bash_sandbox import SandboxSettings
+
+        self._bash_sandbox = SandboxSettings.from_dict(bash_raw.get("sandbox"))
         # ``compact`` controls the AgenticNode session summarization /
         # archiving subsystem. Defaults preserve the legacy 90% major-compact
         # threshold while enabling the new rule-based minor compact + on-disk
@@ -1229,6 +1238,17 @@ class AgentConfig:
     @bash_allowed_patterns.setter
     def bash_allowed_patterns(self, value: List[str]) -> None:
         self._bash_allowed_patterns = _coerce_pattern_list(value)
+
+    @property
+    def bash_sandbox(self):
+        """OS-level sandbox settings for the general-purpose ``BashTool``.
+
+        Parsed from ``agent.bash.sandbox``. Returns the mutable
+        ``SandboxSettings`` instance shared with every ``BashTool`` —
+        ``/sandbox on|off`` flips ``enabled`` in place and the tools pick it
+        up on their next call. Default: disabled.
+        """
+        return self._bash_sandbox
 
     @property
     def current_datasource(self):

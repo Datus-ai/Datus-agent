@@ -288,9 +288,9 @@ class ChatTask:
 
 COMPLETED_TASK_TTL = 300  # seconds to keep completed tasks for resume
 
-# Bash whitelist for web clients: plugin CLIs ("datus <plugin> ...") and the
-# datus binaries themselves are the only commands the server-side bash accepts.
-WEB_BASH_ALLOWED_PATTERNS = ["datus*"]
+# Web clients run a FULL server-side bash (all commands allowed), confined by
+# the strict OS sandbox rather than a command whitelist — see ``start_chat``.
+WEB_BASH_ALLOWED_PATTERNS = ["*"]
 
 
 class ChatTaskManager:
@@ -341,21 +341,28 @@ class ChatTaskManager:
         # only — the shared config keeps its default.
         agent_config.config_mutable = False
         # vscode owns its own local shell: the daemon must not offer a
-        # server-side BashTool at all. web has no shell of its own, but plugin
-        # CLIs run through bash ("datus <plugin> ..."), so web keeps a
-        # server-side bash restricted to datus-prefixed commands only —
-        # everything else is rejected at the tool layer regardless of the
-        # permission profile. An agent.yml ``bash.enabled: false`` still wins:
-        # patterns never re-enable a disabled tool. ``project_root`` is
-        # intentionally left untouched — web keeps its configured root, and
-        # the read-only ``AgentConfig.project_root`` property already falls
-        # back to the launch CWD when no root was supplied, so an empty
-        # project_root naturally resolves to the current directory.
+        # server-side BashTool at all. web has no shell of its own; it runs a
+        # FULL server-side bash (all commands allowed) confined by the strict
+        # OS sandbox instead of a command whitelist. Strict gives
+        # kernel-enforced file isolation (workspace + tmp + explicit allowlist
+        # only, ``~/.datus`` blocked) plus a minimized child environment that
+        # hides process-wide secrets — a far stronger boundary than the old
+        # ``datus*``-prefix soft whitelist. Fail-closed: if no OS sandbox
+        # mechanism is available (e.g. a Linux host without bubblewrap) the
+        # tool rejects every command rather than run it unconfined. An
+        # agent.yml ``bash.enabled: false`` still wins: this never re-enables a
+        # disabled tool. ``project_root`` is intentionally left untouched — web
+        # keeps its configured root, and the read-only
+        # ``AgentConfig.project_root`` property already falls back to the launch
+        # CWD when no root was supplied, so an empty project_root naturally
+        # resolves to the current directory.
         effective_source = request.source or self._default_source
         if effective_source == "vscode":
             agent_config.bash_tool_enabled = False
         elif effective_source == "web":
             agent_config.bash_allowed_patterns = WEB_BASH_ALLOWED_PATTERNS
+            agent_config.bash_sandbox.enabled = True
+            agent_config.bash_sandbox.mode = "strict"
         # Stash the resolved source on the cloned config so downstream nodes
         # can adapt prompt-side hints to the front-end (e.g. vscode renders
         # the literal "." for the SQL files root because the IDE owns its own

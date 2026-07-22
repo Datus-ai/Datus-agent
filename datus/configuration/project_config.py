@@ -88,6 +88,7 @@ ALLOWED_KEYS = frozenset(
         "reasoning_effort",
         "bash_allow",
         "sql_allow",
+        "sandbox",
     }
 )
 REASONING_EFFORT_CHOICES = frozenset({"off", "minimal", "low", "medium", "high"})
@@ -149,6 +150,12 @@ class ProjectOverride:
     reasoning_effort: Optional[str] = None
     bash_allow: Optional[list] = None
     sql_allow: Optional[list] = None
+    # ``sandbox`` overrides the bash sandbox for this project. Accepted values:
+    # ``True``/``False`` toggle ``agent.bash.sandbox.enabled`` (mode follows
+    # the global config); the strings ``"strict"``/``"normal"`` enable the
+    # sandbox AND pin the mode. ``False`` is a meaningful value (force-off),
+    # distinct from ``None``.
+    sandbox: Optional[Union[bool, str]] = None
 
     def is_empty(self) -> bool:
         return (
@@ -163,6 +170,7 @@ class ProjectOverride:
             and self.reasoning_effort is None
             and self.bash_allow is None
             and self.sql_allow is None
+            and self.sandbox is None
         )
 
 
@@ -241,6 +249,7 @@ def load_project_override(cwd: Optional[str] = None) -> Optional[ProjectOverride
         reasoning_effort=_parse_reasoning_effort(raw.get("reasoning_effort")),
         bash_allow=_parse_bash_allow(raw.get("bash_allow")),
         sql_allow=_parse_sql_allow(raw.get("sql_allow")),
+        sandbox=_parse_sandbox(raw.get("sandbox")),
     )
 
 
@@ -286,6 +295,30 @@ def _parse_sql_allow(raw: Any) -> Optional[list]:
         else:
             logger.warning(f"Ignoring non-string sql_allow entry: {entry!r}")
     return kinds or None
+
+
+def _parse_sandbox(raw: Any) -> Optional[Union[bool, str]]:
+    """Normalize the ``sandbox:`` field: bool toggle or mode string.
+
+    Booleans (and their common string spellings) toggle ``enabled``;
+    ``"strict"``/``"normal"`` enable the sandbox and pin the mode. Anything
+    else is dropped with a warning so a typo like ``sandbox: strick`` cannot
+    silently change a security posture.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        lowered = raw.strip().lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+        if lowered in ("strict", "normal"):
+            return lowered
+    logger.warning(f"sandbox must be true/false/strict/normal, got {raw!r}. Ignoring.")
+    return None
 
 
 def _parse_optional_string(raw: Any, *, key: str) -> Optional[str]:
@@ -473,6 +506,9 @@ def save_project_override(override: ProjectOverride, cwd: Optional[str] = None) 
             "reasoning_effort": override.reasoning_effort,
             "bash_allow": override.bash_allow,
             "sql_allow": override.sql_allow,
+            # ``sandbox: false`` must round-trip (force-off is meaningful),
+            # which the ``is not None`` filter below preserves.
+            "sandbox": override.sandbox,
         }.items()
         if v is not None
     }

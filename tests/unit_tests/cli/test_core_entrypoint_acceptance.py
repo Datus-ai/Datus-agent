@@ -93,6 +93,7 @@ def _build_core_cli() -> DatusCLI:
     cli.plugin_commands = PluginCommands(cli)
     cli.language_commands = MagicMock()
     cli.effort_commands = MagicMock()
+    cli.sandbox_commands = MagicMock()
     cli.init_commands = InitCommands(cli)
     cli.build_kb_commands = BuildKbCommands(cli)
     cli.datasource_commands = DatasourceCommands(cli)

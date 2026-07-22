@@ -149,6 +149,34 @@ agent:
   #   #   destructive: ask
   #   #   unknown: ask
 
+  # ---------------------------------------------------------------------------
+  # General-purpose bash tool.
+  #   enabled          — master switch; false removes the ``bash`` tool entirely
+  #   allowed_patterns — execution-layer hard whitelist (default ["*"])
+  #   sandbox          — OS-level sandbox wrapped around every command
+  #                      (macOS sandbox-exec / Linux bubblewrap). When enabled,
+  #                      file writes are restricted to the workspace, the
+  #                      session data dir and tmp; file reads to system dirs +
+  #                      the same allowlist. Fail-closed: if no mechanism is
+  #                      available (Windows, Linux without bwrap) commands are
+  #                      rejected. Toggle at runtime with /sandbox on|off.
+  #   sandbox.mode     — "normal" (default) keeps ~/.datus readable and the
+  #                      session data dir writable. "strict" is the
+  #                      multi-tenant tier: workspace + tmp + explicit
+  #                      allowlists ONLY (~/.datus fully blocked) and the
+  #                      child env is reduced to a small allowlist so
+  #                      process-wide secrets never reach commands.
+  #   sandbox.deny_network — cut network access inside the sandbox
+  #                      (bwrap --unshare-net / Seatbelt deny network*).
+  # ---------------------------------------------------------------------------
+  # bash:
+  #   enabled: true
+  #   sandbox:
+  #     enabled: false
+  #     mode: normal          # normal | strict
+  #     allow_read: []        # extra readable dirs (e.g. ~/.gitconfig)
+  #     allow_write: []       # extra writable dirs
+  #     deny_network: false   # true blocks all network inside the sandbox
 
   nodes:
     schema_linking:

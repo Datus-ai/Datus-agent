@@ -100,6 +100,11 @@ SLASH_COMMANDS: tuple[SlashSpec, ...] = (
         "system",
     ),
     SlashSpec(
+        "sandbox",
+        "Toggle the OS-level bash sandbox (status / on / off / strict / normal)",
+        "system",
+    ),
+    SlashSpec(
         "profile",
         "Deprecated: use /permission",
         "system",

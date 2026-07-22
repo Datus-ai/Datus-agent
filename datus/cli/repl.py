@@ -69,6 +69,7 @@ from datus.cli.input_modes import MODE_CHROME, InputMode, next_input_mode
 from datus.cli.language_commands import LanguageCommands
 from datus.cli.metadata_commands import MetadataCommands
 from datus.cli.model_commands import ModelCommands
+from datus.cli.sandbox_commands import SandboxCommands
 from datus.cli.service_commands import ServiceCommands
 from datus.cli.slash_registry import GROUP_ORDER, GROUP_TITLES, iter_visible, lookup
 from datus.cli.status_bar import StatusBarProvider
@@ -285,6 +286,7 @@ class DatusCLI:
         self.plugin_commands = PluginCommands(self)
         self.language_commands = LanguageCommands(self)
         self.effort_commands = EffortCommands(self)
+        self.sandbox_commands = SandboxCommands(self)
         self.init_commands = InitCommands(self)
         self.build_kb_commands = BuildKbCommands(self)
         self.session_summarize_commands = SessionSummarizeCommands(self)
@@ -366,6 +368,7 @@ class DatusCLI:
             "services": self.service_commands.cmd_services,
             "permission": self._cmd_permission,
             "profile": self._cmd_profile,
+            "sandbox": self.sandbox_commands.cmd_sandbox,
         }
 
     @property

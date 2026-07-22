@@ -45,6 +45,22 @@ def test_tables_command(mock_args, capsys):
         assert "Tables in Database" in captured.out
 
 
+@pytest.mark.acceptance
+def test_sandbox_command_status_and_session_toggle(mock_args, capsys):
+    """/sandbox dispatches through the slash handler map: status shows the
+    current state and on/off flip the shared SandboxSettings for the session."""
+    with patch("datus.cli.repl.PromptSession.prompt") as mock_prompt:
+        mock_prompt.side_effect = ["/sandbox", "/sandbox on", "/sandbox status", "/sandbox off", EOFError]
+        cli = DatusCLI(args=mock_args)
+        cli.run()
+        captured = capsys.readouterr()
+        assert "Bash sandbox: off" in captured.out
+        assert "Bash sandbox on (this session only)" in captured.out
+        assert "Bash sandbox: on" in captured.out
+        assert "Bash sandbox off (this session only)" in captured.out
+        assert cli.agent_config.bash_sandbox.enabled is False
+
+
 @pytest.mark.nightly
 @pytest.mark.product_e2e
 def test_chat_command(mock_args, capsys, gen_sql_input: List[Dict[str, Any]]):
