@@ -18,6 +18,7 @@ from datus_db_core import BaseSqlConnector, connector_registry
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
+from datus.schemas.node_models import ExecuteSQLResult
 from datus.storage.kb_retrieval import metadata_fts_enabled
 from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
@@ -872,7 +873,16 @@ class DBFuncTool:
     # reference_template_tools) and the connectors share the vocabulary, but they
     # must not leak into the agent tool surface (VALID_TOOL_METHODS / the saas
     # editor catalog) or the permission registry.
-    _INTERNAL_SQL_METHODS: frozenset = frozenset({"read_query", "execute_write", "execute_ddl", "get_table_ddl"})
+    _INTERNAL_SQL_METHODS: frozenset = frozenset(
+        {
+            "read_query",
+            "execute_read_enforced",
+            "guard_estimated_rows",
+            "execute_write",
+            "execute_ddl",
+            "get_table_ddl",
+        }
+    )
 
     @staticmethod
     def all_tools_name() -> List[str]:
@@ -1503,23 +1513,100 @@ class DBFuncTool:
                 return validation_error
 
             logger.info("read_query", sql_type=sql_type.value, datasource=datasource or "default")
-            effective_datasource = self._resolve_effective_datasource(datasource)
-            sql = self._enforce_sql_policy(
+            result_format = "arrow" if connector.dialect == "snowflake" else "list"
+            result = self.execute_read_enforced(
                 sql,
-                datasource=effective_datasource,
-                dialect=connector.dialect,
+                connector,
+                datasource=datasource,
+                result_format=result_format,
             )
-            validation_error, _ = self._validate_read_sql(sql, connector)
-            if validation_error:
-                return validation_error
-            result = connector.execute_query(sql, result_format="arrow" if connector.dialect == "snowflake" else "list")
             if result.success:
-                data = result.sql_return
-                return FuncToolResult(result=self.compressor.compress(data))
-            else:
-                return FuncToolResult(success=0, error=result.error)
+                return FuncToolResult(result=self.compressor.compress(result.sql_return))
+            return FuncToolResult(success=0, error=result.error)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
+
+    def execute_read_enforced(
+        self,
+        sql: str,
+        connector: BaseSqlConnector,
+        *,
+        datasource: Optional[str] = "",
+        result_format: str = "list",
+    ) -> ExecuteSQLResult:
+        """Run a read-only query through the shared read guardrails.
+
+        Single enforcement path for every read that hits the DB directly: the
+        LLM ``read_query`` path plus the report/dashboard artifact save paths
+        and dashboard view-time re-execution. Rejects multi-statement input and
+        applies the configured SQL policy (row caps / rewrites / denials) before
+        the statement reaches the engine, then returns the connector's raw
+        ``ExecuteSQLResult`` so callers keep control over row post-processing.
+        Without this, artifact query execution bypassed ``_enforce_sql_policy``
+        and could hand the engine an unbounded statement (e.g. a cross-join
+        cartesian product that OOM-killed the DB backend).
+        """
+        validation_error, _ = self._validate_read_sql(sql, connector)
+        if validation_error:
+            return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=sql)
+        effective_datasource = self._resolve_effective_datasource(datasource)
+        try:
+            enforced_sql = self._enforce_sql_policy(sql, datasource=effective_datasource, dialect=connector.dialect)
+        except DatusException as exc:
+            return ExecuteSQLResult(success=False, error=str(exc), sql_query=sql)
+        if enforced_sql != sql:
+            # A policy rewrite (e.g. an injected LIMIT) must still be a single
+            # read-only statement — re-validate so it can't smuggle in DML/DDL.
+            validation_error, _ = self._validate_read_sql(enforced_sql, connector)
+            if validation_error:
+                return ExecuteSQLResult(success=False, error=validation_error.error, sql_query=enforced_sql)
+        return connector.execute_query(enforced_sql, result_format=result_format)
+
+    def guard_estimated_rows(
+        self,
+        sql: str,
+        connector: BaseSqlConnector,
+    ) -> Optional[FuncToolResult]:
+        """Reject a query whose EXPLAIN row estimate exceeds ``MAX_ESTIMATED_ROWS``.
+
+        Runs ``EXPLAIN <sql>`` (planning only — the statement never executes),
+        parses the optimizer's cardinality estimate, and returns a failure
+        ``FuncToolResult`` (with an actionable rewrite message for the LLM) when
+        it blows past the ceiling. Returns ``None`` to let the query proceed.
+
+        Fail-open: EXPLAIN being unsupported / erroring / unparseable all yield
+        ``None`` — the guard only ever blocks on a *confident* oversize estimate,
+        never on its own inability to measure.
+        """
+        from datus.tools.sql_guard import MAX_ESTIMATED_ROWS, build_oversize_message, estimate_rows_from_explain
+
+        # Reject multi-statement / non-read input before it reaches the engine
+        # inside ``EXPLAIN <sql>``. Callers only prefix-check with
+        # ``_looks_like_select``, which passes ``SELECT 1; DROP TABLE t`` — and a
+        # driver that splits statements would run the DROP as part of the EXPLAIN.
+        validation_error, _ = self._validate_read_sql(sql, connector)
+        if validation_error:
+            return validation_error
+
+        try:
+            explain_result = connector.execute_query(f"EXPLAIN {sql}", result_format="list")
+        except Exception as exc:
+            logger.debug("sql_guard EXPLAIN failed; allowing query", error=str(exc), dialect=connector.dialect)
+            return None
+        if not getattr(explain_result, "success", False):
+            return None
+
+        estimated = estimate_rows_from_explain(connector.dialect, explain_result.sql_return or [])
+        if estimated is None or estimated <= MAX_ESTIMATED_ROWS:
+            return None
+
+        logger.warning(
+            "sql_guard rejected oversized query",
+            estimated_rows=estimated,
+            threshold=MAX_ESTIMATED_ROWS,
+            dialect=connector.dialect,
+        )
+        return FuncToolResult(success=0, error=build_oversize_message(estimated, MAX_ESTIMATED_ROWS))
 
     def _resolve_effective_datasource(self, datasource: Optional[str]) -> str:
         effective_datasource = datasource or self._default_datasource

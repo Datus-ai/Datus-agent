@@ -673,8 +673,21 @@ class ReportArtifactTools:
 
         ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
 
+        # Pre-flight EXPLAIN row-count guard: reject a runaway query (e.g. a
+        # cross-join cartesian product) from its optimizer estimate before it
+        # executes and OOMs the DB backend. Fail-open when unmeasurable.
+        oversize = self._db_func_tool.guard_estimated_rows(sql, connector)
+        if oversize is not None:
+            return oversize
+
         try:
-            execute_result = connector.execute_query(sql, result_format="list")
+            # Route through the shared enforced-read path so SQL policy
+            # (row caps / rewrites / denials) and multi-statement rejection
+            # apply here too — a bare connector.execute_query would let an
+            # unbounded statement reach the engine and OOM the DB backend.
+            execute_result = self._db_func_tool.execute_read_enforced(
+                sql, connector, datasource=datasource, result_format="list"
+            )
         except Exception as exc:
             logger.exception("save_query execute_query crashed", extra={"name": name})
             return FuncToolResult(success=0, error=f"Query execution failed: {exc}")

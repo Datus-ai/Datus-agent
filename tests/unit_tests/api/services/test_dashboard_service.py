@@ -104,6 +104,9 @@ def _patch_executor(monkeypatch, *, captured: dict) -> None:
             captured["datasource"] = datasource
             return _FakeConnector()
 
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list"):
+            return connector.execute_query(sql, result_format=result_format)
+
     import datus.tools.func_tool as func_tool_mod
 
     monkeypatch.setattr(func_tool_mod, "DBFuncTool", _FakeDBFuncTool)
@@ -506,6 +509,9 @@ def _patch_failing_executor(monkeypatch, *, exc: Exception | None = None, exec_r
 
         def _get_connector(self, datasource):
             return _Connector()
+
+        def execute_read_enforced(self, sql, connector, *, datasource="", result_format="list"):
+            return connector.execute_query(sql, result_format=result_format)
 
     import datus.tools.func_tool as func_tool_mod
 

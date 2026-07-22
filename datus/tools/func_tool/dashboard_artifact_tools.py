@@ -887,8 +887,19 @@ class DashboardArtifactTools:
 
         ds_label = datasource or getattr(self._db_func_tool, "_default_datasource", "") or "default"
 
+        # Pre-flight EXPLAIN row-count guard on the trial-rendered SQL: reject a
+        # runaway template (e.g. a cross-join cartesian product) from its
+        # optimizer estimate before it executes. Fail-open when unmeasurable.
+        oversize = self._db_func_tool.guard_estimated_rows(rendered_sql, connector)
+        if oversize is not None:
+            return oversize
+
         try:
-            execute_result = connector.execute_query(rendered_sql, result_format="list")
+            # Enforced-read path: apply SQL policy + multi-statement rejection
+            # to the trial render so a runaway template can't OOM the engine.
+            execute_result = self._db_func_tool.execute_read_enforced(
+                rendered_sql, connector, datasource=datasource, result_format="list"
+            )
         except Exception as exc:
             logger.exception("save_query_template trial execute crashed", extra={"name": name})
             return FuncToolResult(success=0, error=f"Trial query execution failed: {exc}")
