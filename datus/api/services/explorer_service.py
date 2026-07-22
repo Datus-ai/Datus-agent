@@ -135,14 +135,16 @@ class ExplorerService:
         )
 
     @staticmethod
-    def _metric_exists_in_source(adapter, metric_name: str, parent_path: List[str]) -> bool:
-        """Whether the metric still reads from the source file (used after a
-        delete error to tell a real write failure from an already-absent metric)."""
-        try:
-            adapter.read_metric_source(metric_name, subject_path=parent_path)
-            return True
-        except Exception:  # noqa: BLE001 - any read failure means "not present"
-            return False
+    def _is_metric_absent_error(exc: Exception) -> bool:
+        """Whether a delete failure means the metric simply isn't in the source
+        file (benign file/KB drift) rather than a real I/O / lock / parse failure.
+
+        Both adapters raise a not-found error whose message contains
+        ``was not found`` (``FileNotFoundError`` for MetricFlow, the OSI error
+        class for OSI). Anything else is a real failure and must not be treated
+        as "already gone", or we would drop the KB row while the file still
+        holds the metric (the file is the source of truth)."""
+        return isinstance(exc, FileNotFoundError) or "was not found" in str(exc)
 
     def _author_metric(
         self,
@@ -203,9 +205,7 @@ class ExplorerService:
         try:
             # Empty parent_path (root-level metric) means "no categorization" —
             # pass None so the adapter does not inject an empty subject tag.
-            mutation = adapter.write_metric_source(
-                name, metric_yaml, subject_path=(parent_path or None), create=create
-            )
+            mutation = adapter.write_metric_source(name, metric_yaml, subject_path=(parent_path or None), create=create)
         except Exception as e:  # noqa: BLE001 - surface adapter write/validation errors
             logger.error(f"Failed to write metric source: {e}")
             return Result[dict](
@@ -1284,18 +1284,19 @@ class ExplorerService:
                     try:
                         await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
                     except Exception as e:  # noqa: BLE001
-                        # A real write failure must fail the request; only an
-                        # already-absent metric (file/KB drift) is benign,
-                        # otherwise the file keeps the metric while the KB row is
-                        # dropped and it "revives" on the next re-index.
-                        if await asyncio.to_thread(self._metric_exists_in_source, adapter, metric_name, parent_path):
+                        # Only a genuine "not found" is a benign fallback to KB
+                        # cleanup (file/KB drift). Real failures (I/O, lock, parse)
+                        # must fail the request, or the file keeps the metric while
+                        # the KB row is dropped and it "revives" on the next
+                        # re-index — breaking the YAML-source-of-truth invariant.
+                        if not self._is_metric_absent_error(e):
                             logger.error(f"Failed to delete metric from source file: {e}")
                             return Result[dict](
                                 success=False,
                                 errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
                                 errorMessage=f"Failed to remove metric from source file: {e}",
                             )
-                        logger.warning(f"Metric already absent from source file, continuing: {e}")
+                        logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
 
                 result = self.metric_rag.delete_metric(parent_path, metric_name)
                 if not result.get("success", False):

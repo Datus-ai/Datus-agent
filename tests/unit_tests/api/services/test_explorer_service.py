@@ -1046,7 +1046,8 @@ class TestExplorerServiceOSIAuthoring:
     )
 
     def _osi_adapter(self, tmp_path):
-        pytest.importorskip("datus_semantic_osi")
+        # datus-semantic-osi is a guaranteed test dependency (dependency-groups
+        # dev in pyproject), so these run in CI rather than silently skipping.
         from datus_semantic_osi.adapter import DatusOSIAdapter
         from datus_semantic_osi.config import DatusOSIConfig
 
@@ -1313,3 +1314,25 @@ class TestExplorerServiceOSIAuthoring:
         )
         assert result.success is False
         assert kb_deleted["called"] is False  # KB row not dropped when file delete failed
+
+    async def test_delete_metric_absent_from_source_still_cleans_kb(self, real_agent_config, tmp_path, monkeypatch):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+
+        # Metric already gone from the source file (file/KB drift): the not-found
+        # error is benign and the stale KB row is still cleaned up.
+        def not_found(*a, **k):
+            raise FileNotFoundError("Metric `x` was not found in ...")
+
+        monkeypatch.setattr(adapter, "delete_metric_source", not_found)
+        kb_deleted = {"called": False}
+        monkeypatch.setattr(
+            svc.metric_rag, "delete_metric", lambda *a, **k: kb_deleted.update(called=True) or {"success": True}
+        )
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["operations", "daily", "daily_order_count"])
+        )
+        assert result.success is True, result.errorMessage
+        assert kb_deleted["called"] is True  # stale KB row cleaned up

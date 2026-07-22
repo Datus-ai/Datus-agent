@@ -202,6 +202,8 @@ ci = [
     "datus-storage-postgresql>=0.1.5",
     "datus-metricflow>=0.2.7",
     "datus-semantic-metricflow>=0.2.11",
+    # Required so the OSI authoring tests run in CI (rather than skipping).
+    "datus-semantic-osi>=0.1.4",
 ]
 
 [tool.coverage.run]
