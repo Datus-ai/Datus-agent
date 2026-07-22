@@ -4486,6 +4486,12 @@
 <td></td>
 </tr>
 <tr>
+<td><code>/sandbox</code></td>
+<td></td>
+<td>Toggle the OS-level bash sandbox (<code>status</code>/<code>on</code>/<code>off</code>/<code>strict</code>/<code>normal</code>, optional <code>--project</code>/<code>--global</code> persistence). When on, bash commands can only write inside the workspace, session data dir and tmp, and only read system dirs plus the allowlist (macOS <code>sandbox-exec</code> / Linux <code>bwrap</code>; fail-closed elsewhere). <code>strict</code> is the multi-tenant tier: workspace + tmp + explicit allowlists only, <code>~/.datus</code> fully blocked, and a minimal child environment that hides process-wide secrets; <code>deny_network: true</code> in <code>agent.bash.sandbox</code> additionally cuts network access</td>
+<td></td>
+</tr>
+<tr>
 <td><code>/profile</code></td>
 <td></td>
 <td>Deprecated alias for <code>/permission</code></td>
