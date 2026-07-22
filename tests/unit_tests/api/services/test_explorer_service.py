@@ -1117,3 +1117,189 @@ class TestExplorerServicePreviewMetric:
         result = await svc.preview_metric(MetricPreviewInput(subject_path=["revenue"]))
         assert result.success is False
         assert "boom" in result.errorMessage
+
+
+@pytest.mark.asyncio
+class TestExplorerServiceOSIAuthoring:
+    """OSI metrics are read/written through the semantic adapter (file source of
+    truth), not reconstructed from / written as MetricFlow YAML."""
+
+    SAMPLE = (
+        "version: 0.2.0.dev0\n"
+        "semantic_model:\n"
+        "  - name: jeff_shop_live\n"
+        "    datasets:\n"
+        "      - name: raw_orders\n"
+        "        source: jeff_shop.raw_orders\n"
+        "        primary_key: [id]\n"
+        "        fields:\n"
+        "          - name: order_total\n"
+        "            expression:\n"
+        "              dialects:\n"
+        "                - dialect: STARROCKS\n"
+        "                  expression: order_total\n"
+        "    metrics:\n"
+        "      - name: daily_order_count\n"
+        "        description: Daily order count.\n"
+        "        expression:\n"
+        "          dialects:\n"
+        "            - dialect: STARROCKS\n"
+        "              expression: COUNT(DISTINCT id)\n"
+        "        custom_extensions:\n"
+        "          - vendor_name: DATUS\n"
+        '            data: \'{"dataset":"raw_orders","subject_path":["operations","daily"]}\'\n'
+    )
+
+    def _osi_adapter(self, tmp_path):
+        pytest.importorskip("datus_semantic_osi")
+        from datus_semantic_osi.adapter import DatusOSIAdapter
+        from datus_semantic_osi.config import DatusOSIConfig
+
+        model_dir = tmp_path / "jeff_shop_live"
+        model_dir.mkdir()
+        (model_dir / "jeff_shop_live.yml").write_text(self.SAMPLE)
+        config = DatusOSIConfig(
+            datasource="ds",
+            semantic_models_path=str(tmp_path),
+            db_config={"type": "starrocks"},
+        )
+        return DatusOSIAdapter(config)
+
+    def _wire(self, svc, monkeypatch, adapter):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            "datus.tools.func_tool.semantic_tools.SemanticTools",
+            lambda *a, **k: SimpleNamespace(adapter=adapter),
+        )
+        monkeypatch.setattr(
+            "datus.agent.node.semantic_authoring.is_osi_authoring",
+            lambda *a, **k: True,
+        )
+        monkeypatch.setattr(svc, "_sync_osi_file_to_kb", lambda file_path: {"success": True})
+
+    async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch):
+        import yaml
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+
+        result = await svc.get_metric(["operations", "daily", "daily_order_count"])
+        assert result.success is True
+        node = yaml.safe_load(result.data.yaml)
+        # OSI shape, not the MetricFlow reconstruction (no type/locked_metadata).
+        assert node["expression"]["dialects"][0]["dialect"] == "STARROCKS"
+        assert "type" not in node and "locked_metadata" not in node
+
+    async def test_get_metric_falls_back_when_authoring_unsupported(self, real_agent_config, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        from datus_semantic_core.authoring import AuthoringNotSupportedError
+
+        class _NoAuthoring:
+            def read_metric_source(self, *a, **k):
+                raise AuthoringNotSupportedError("nope")
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr(
+            "datus.tools.func_tool.semantic_tools.SemanticTools",
+            lambda *a, **k: SimpleNamespace(adapter=_NoAuthoring()),
+        )
+        monkeypatch.setattr(svc.metric_rag, "get_metrics_detail", lambda *a, **k: [])
+
+        result = await svc.get_metric(["missing"])
+        # Fallback path ran and reported not-found from the KB projection.
+        assert result.success is False
+        assert "not found" in result.errorMessage.lower()
+
+    async def test_create_metric_writes_osi_file_and_syncs(self, real_agent_config, tmp_path, monkeypatch):
+        import yaml
+
+        from datus.api.models.explorer_models import EditMetricInput
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        synced = {}
+
+        def fake_sync(file_path):
+            synced["path"] = file_path
+            return {"success": True}
+
+        monkeypatch.setattr(svc, "_sync_osi_file_to_kb", fake_sync)
+
+        new_metric = (
+            "name: gross_revenue\n"
+            "description: revenue\n"
+            "expression:\n"
+            "  dialects:\n"
+            "    - dialect: STARROCKS\n"
+            "      expression: SUM(order_total)\n"
+            "custom_extensions:\n"
+            "  - vendor_name: DATUS\n"
+            '    data: \'{"dataset":"raw_orders"}\'\n'
+        )
+        result = await svc.create_metric(EditMetricInput(subject_path=["revenue"], yaml=new_metric))
+        assert result.success is True, result.errorMessage
+        assert synced.get("path")  # KB re-sync was triggered
+        on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
+        names = [m["name"] for m in on_disk["semantic_model"][0]["metrics"]]
+        assert set(names) == {"daily_order_count", "gross_revenue"}
+
+    async def test_edit_metric_updates_in_place(self, real_agent_config, tmp_path, monkeypatch):
+        import yaml
+
+        from datus.api.models.explorer_models import EditMetricInput
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+
+        edited = (
+            "name: daily_order_count\n"
+            "description: Edited desc.\n"
+            "expression:\n"
+            "  dialects:\n"
+            "    - dialect: STARROCKS\n"
+            "      expression: COUNT(DISTINCT id)\n"
+            "custom_extensions:\n"
+            "  - vendor_name: DATUS\n"
+            '    data: \'{"dataset":"raw_orders"}\'\n'
+        )
+        result = await svc.edit_metric(
+            EditMetricInput(subject_path=["operations", "daily", "daily_order_count"], yaml=edited)
+        )
+        assert result.success is True, result.errorMessage
+        on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
+        model = on_disk["semantic_model"][0]
+        assert model["metrics"][0]["description"] == "Edited desc."
+        # Sibling dataset preserved.
+        assert model["datasets"][0]["name"] == "raw_orders"
+
+    async def test_create_metric_validation_failure_does_not_write(self, real_agent_config, tmp_path, monkeypatch):
+        from datus.api.models.explorer_models import EditMetricInput
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        before = (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text()
+
+        result = await svc.create_metric(EditMetricInput(subject_path=["x"], yaml=":: not yaml ::"))
+        assert result.success is False
+        assert (tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text() == before
+
+    async def test_delete_metric_removes_from_osi_file(self, real_agent_config, tmp_path, monkeypatch):
+        import yaml
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        monkeypatch.setattr(svc.metric_rag, "delete_metric", lambda *a, **k: {"success": True})
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["operations", "daily", "daily_order_count"])
+        )
+        assert result.success is True, result.errorMessage
+        on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
+        assert on_disk["semantic_model"][0]["metrics"] == []
