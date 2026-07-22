@@ -779,7 +779,7 @@ requires-dist = [
     { name = "datus-semantic-core", specifier = ">=0.2.1" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
-    { name = "duckdb", specifier = ">=1.5.2,<2.0.0" },
+    { name = "duckdb", specifier = "==1.5.2" },
     { name = "duckdb-engine", specifier = ">=0.17.0" },
     { name = "fastapi", specifier = ">=0.104.0,<1.0" },
     { name = "fastembed", specifier = "==0.4.2" },
