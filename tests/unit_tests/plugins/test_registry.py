@@ -92,6 +92,43 @@ def test_iter_plugin_entry_points(plugin_env):
     assert {ep.name for ep in registry.iter_plugin_entry_points()} == {"hello", "dagster"}
 
 
+COMMANDS_YAML = (
+    "manifest_version: 1\n"
+    "commands:\n"
+    "  - name: sync\n"
+    "    description: Sync tables\n"
+    "    args:\n"
+    "      - {name: table, required: true}\n"
+    "      - {name: --limit}\n"
+)
+
+
+def test_iter_plugin_manifests_lists_valid(plugin_env):
+    plugin_env("hello", MINIMAL + "description: Hi.\n")
+    plugin_env("dagster", MINIMAL)
+    assert {name for name, _ in registry.iter_plugin_manifests()} == {"hello", "dagster"}
+
+
+def test_iter_plugin_manifests_skips_missing_manifest(plugin_env):
+    plugin_env("hello", MINIMAL)
+    plugin_env("broken", manifest_yaml=None)  # importable, but no datus-plugin.yml
+    assert {name for name, _ in registry.iter_plugin_manifests()} == {"hello"}
+
+
+def test_plugin_commands_parsed(plugin_env):
+    plugin_env("hello", COMMANDS_YAML)
+    cmds = registry.plugin_commands("hello")
+    assert [c.name for c in cmds] == ["sync"]
+    assert cmds[0].args[0].name == "table"
+    assert cmds[0].args[0].required is True
+    assert cmds[0].args[1].name == "--limit"
+
+
+def test_plugin_commands_unknown_returns_empty(plugin_env):
+    plugin_env("hello", MINIMAL)
+    assert registry.plugin_commands("mystery") == []
+
+
 def test_lookup_never_raises_on_entry_points_failure(monkeypatch):
     def boom():
         raise RuntimeError("entry_points exploded")

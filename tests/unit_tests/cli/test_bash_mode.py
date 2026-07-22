@@ -627,3 +627,137 @@ class TestRunSqlGate:
         assert gate.approved is True
         assert gate.sql == "SELECT 1 WHERE x=1"
         node.db_func_tool._enforce_sql_policy.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tests: run_tool_gate (generic permission gate for ``!<tool>``)
+# ---------------------------------------------------------------------------
+
+
+class TestToolShimContract:
+    def test_context_shim_round_trips_through_hook_parser(self):
+        """The generic shim exposes the call args as ``tool_arguments`` exactly
+        as the hook's parser expects."""
+        from datus.cli.bash_mode import _ToolContextShim
+
+        hooks = object.__new__(PermissionHooks)
+        args = hooks._parse_tool_args(_ToolContextShim({"query_text": "foo", "top_n": 3}))
+        assert args == {"query_text": "foo", "top_n": 3}
+
+    def test_tool_stub_exposes_name(self):
+        from datus.cli.bash_mode import _ToolStub
+
+        assert _ToolStub("search_table").name == "search_table"
+
+
+class TestRunToolGate:
+    def test_read_tool_auto_allows_without_prompt(self):
+        """A read/unknown-category tool auto-allows under the normal profile with
+        no prompt (category ``tools`` → ALLOW)."""
+        from datus.cli.bash_mode import run_tool_gate
+
+        gate = run_tool_gate(_sql_cli(), "list_tables", {})
+        assert gate.approved is True
+        assert gate.error is None
+
+    def test_execute_sql_read_auto_allows(self):
+        """Routing is by ``tool.name``: an ``execute_sql`` call with a read
+        statement hits the SQL handler and auto-allows."""
+        from datus.cli.bash_mode import run_tool_gate
+
+        gate = run_tool_gate(_sql_cli(), "execute_sql", {"sql": "SELECT 1"})
+        assert gate.approved is True
+
+    def test_execute_sql_write_ask_approved_via_collector(self):
+        from datus.cli.bash_mode import run_tool_gate
+
+        cli = _sql_cli()
+        with patch("datus.cli.bash_mode._make_input_collector", return_value=lambda a, c: [["y"]]):
+            gate = run_tool_gate(cli, "execute_sql", {"sql": "DELETE FROM t WHERE id=1"})
+        assert gate.approved is True
+
+    def test_execute_sql_write_ask_rejected_blocks(self):
+        from datus.cli.bash_mode import run_tool_gate
+
+        cli = _sql_cli()
+        with patch("datus.cli.bash_mode._make_input_collector", return_value=lambda a, c: [[""]]):
+            gate = run_tool_gate(cli, "execute_sql", {"sql": "DELETE FROM t WHERE id=1"})
+        assert gate.approved is False
+        assert gate.error
+
+    def test_no_permission_config_fails_closed(self):
+        from datus.cli.bash_mode import run_tool_gate
+
+        cli = _sql_cli()
+        cli.agent_config.permissions_config = None
+        gate = run_tool_gate(cli, "list_tables", {})
+        assert gate.approved is False
+        assert gate.error
+
+    def test_hook_construction_failure_fails_closed(self):
+        from datus.cli.bash_mode import run_tool_gate
+
+        cli = _sql_cli()
+        with patch("datus.cli.bash_mode._build_permission_hooks", side_effect=RuntimeError("boom")):
+            gate = run_tool_gate(cli, "list_tables", {})
+        assert gate.approved is False
+        assert gate.error
+
+
+class TestRunManualToolLive:
+    """``run_manual_tool_live`` gates, executes, and packs a ``tool`` payload.
+
+    ``_run_with_live_frame`` (terminal rendering) is bypassed so the gate +
+    execute + payload logic is exercised headlessly.
+    """
+
+    @staticmethod
+    def _bypass_frame():
+        return patch("datus.cli.bash_mode._run_with_live_frame", side_effect=lambda cli, kind, cmd, work: work())
+
+    def test_success_builds_tool_payload_and_dispatches(self):
+        from datus.cli.bash_mode import ToolGateResult, run_manual_tool_live
+
+        cli = _make_cli()
+        invoke = MagicMock(return_value=(True, "3 tables"))
+        with (
+            patch("datus.cli.bash_mode.run_tool_gate", return_value=ToolGateResult(approved=True)),
+            self._bypass_frame(),
+        ):
+            payload, dispatch = run_manual_tool_live(cli, "list_tables", "list_tables", {}, invoke)
+        assert dispatch is True
+        assert payload["kind"] == "tool"
+        assert payload["success"] is True
+        assert payload["output"] == "3 tables"
+        invoke.assert_called_once()
+
+    def test_denied_not_dispatched_and_invoke_not_called(self):
+        from datus.cli.bash_mode import ToolGateResult, run_manual_tool_live
+
+        cli = _make_cli()
+        invoke = MagicMock()
+        with (
+            patch(
+                "datus.cli.bash_mode.run_tool_gate",
+                return_value=ToolGateResult(approved=False, error="PERMISSION_DENIED: nope"),
+            ),
+            self._bypass_frame(),
+        ):
+            payload, dispatch = run_manual_tool_live(cli, "execute_sql", "execute_sql", {"sql": "drop t"}, invoke)
+        assert dispatch is False
+        assert payload["success"] is False
+        invoke.assert_not_called()
+
+    def test_invoke_exception_dispatched_as_failure(self):
+        from datus.cli.bash_mode import ToolGateResult, run_manual_tool_live
+
+        cli = _make_cli()
+        invoke = MagicMock(side_effect=RuntimeError("kaboom"))
+        with (
+            patch("datus.cli.bash_mode.run_tool_gate", return_value=ToolGateResult(approved=True)),
+            self._bypass_frame(),
+        ):
+            payload, dispatch = run_manual_tool_live(cli, "list_tables", "list_tables", {}, invoke)
+        assert dispatch is True
+        assert payload["success"] is False
+        assert "kaboom" in (payload.get("error") or "")

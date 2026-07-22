@@ -28,6 +28,7 @@ from datus.cli.manual_exec import (
     build_sql_error_payload,
     build_sql_message_payload,
     build_sql_payload,
+    build_tool_payload,
     decode_exec_message,
     encode_exec_message,
     exec_preview,
@@ -81,6 +82,28 @@ class TestEncodeDecode:
         assert decoded["success"] is False
         assert decoded["error"] == "syntax error"
         assert decoded["meta"] == "failed"
+
+    def test_tool_round_trip(self):
+        payload = build_tool_payload("search_table foo", True, '[{"table": "t1"}]', None, 0.12)
+        decoded = decode_exec_message(encode_exec_message(payload))
+        assert decoded["kind"] == "tool"
+        assert decoded["command"] == "search_table foo"
+        assert decoded["success"] is True
+        assert decoded["output"] == '[{"table": "t1"}]'
+        assert decoded["meta"] == "ok in 0.12s"
+
+    def test_tool_failure_round_trip(self):
+        payload = build_tool_payload("execute_sql", False, "", "denied", 0.0)
+        decoded = decode_exec_message(encode_exec_message(payload))
+        assert decoded["kind"] == "tool"
+        assert decoded["success"] is False
+        assert decoded["error"] == "denied"
+        assert decoded["meta"] == "failed in 0.00s"
+
+    def test_tool_output_capped(self):
+        payload = build_tool_payload("dump", True, "x" * (MAX_OUTPUT_CHARS + 500), None, 0.01)
+        assert payload["output"].endswith("… [truncated]")
+        assert len(payload["output"]) < MAX_OUTPUT_CHARS + 100
 
     def test_unicode_command_survives(self):
         payload = build_sql_message_payload("SELECT '名前' AS 列", True, "success in 0.01s")
@@ -173,8 +196,25 @@ class TestExecPreview:
         message = encode_exec_message(build_bash_payload("ls -la", True, "", None, 0.01))
         assert exec_preview(message) == "bash> ls -la"
 
+    def test_tool_preview(self):
+        message = encode_exec_message(build_tool_payload("search_table foo", True, "out", None, 0.01))
+        assert exec_preview(message) == "! search_table foo"
+
     def test_plain_message_preview_passthrough(self):
         assert exec_preview("hello world") == "hello world"
+
+    def test_tool_render_shows_command_and_output(self):
+        payload = build_tool_payload("list_tables", True, "t1\nt2", None, 0.02)
+        rendered = _render_text(payload)
+        assert "! list_tables" in rendered
+        assert "t1" in rendered
+        assert "ok in 0.02s" in rendered
+
+    def test_tool_markdown_renders_output_fence(self):
+        message = encode_exec_message(build_tool_payload("list_tables", True, "t1", None, 0.02))
+        md = exec_to_markdown(message)
+        assert md.startswith("`!`")
+        assert "t1" in md
 
 
 # ---------------------------------------------------------------------------

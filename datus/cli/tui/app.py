@@ -61,6 +61,7 @@ from prompt_toolkit.layout.containers import (
 from prompt_toolkit.layout.controls import BufferControl, DummyControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.layout.menus import CompletionsMenuControl
+from prompt_toolkit.layout.processors import AfterInput, ConditionalProcessor
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from prompt_toolkit.styles import Style
@@ -193,6 +194,7 @@ class DatusApp:
         lexer: Optional[Lexer] = None,
         style: Optional[Style] = None,
         placeholder_fn: Optional[Callable[[], str]] = None,
+        param_hint_fn: Optional[Callable[[str], str]] = None,
         input_prompt_fn: Optional[Callable[[], str]] = None,
         input_mode_fn: Optional[Callable[[], str]] = None,
         live_display_state: Optional[LiveDisplayState] = None,
@@ -213,6 +215,9 @@ class DatusApp:
         # pinned above the status bar.
         self._pending_input_provider = pending_input_provider
         self._placeholder_fn = placeholder_fn or (lambda: "")
+        # Given the live input text, returns a dim ``<arg> [--opt]`` hint rendered
+        # after the input while typing a ``!<tool>`` / ``!<plugin>`` command.
+        self._param_hint_fn = param_hint_fn or (lambda text: "")
         self._input_prompt_fn = input_prompt_fn or (lambda: "> ")
         # Returns the REPL's active input mode ("chat" / "sql" / "bash").
         # Drives the mode-coloured prompt label, the separators bracketing
@@ -318,6 +323,17 @@ class DatusApp:
             auto_suggest=None,
             style="class:input-area",
             prompt=self._get_input_prompt,
+            # Dim ``<arg> [--opt]`` hint rendered after a ``!<tool>`` / ``!<plugin>``
+            # command. ``AfterInput`` only paints on the last line, so it never
+            # collides with multi-line chat input; it collapses to nothing when
+            # the hint is empty. Gated so the transformation is skipped entirely
+            # outside ``!`` input.
+            input_processors=[
+                ConditionalProcessor(
+                    AfterInput(self._bang_hint_text, style="class:bang-arg-hint"),
+                    filter=Condition(lambda: self._input_area.text.startswith("!")),
+                )
+            ],
         )
         self._input_area.window.dont_extend_height = to_filter(True)
         self._input_area.buffer.on_text_changed += self._on_buffer_text_changed
@@ -2226,6 +2242,19 @@ class DatusApp:
             text = "> "
         style_class = "class:input-prompt.busy" if self._agent_running.is_set() else "class:input-prompt"
         return FormattedText([(style_class, text)])
+
+    def _bang_hint_text(self) -> str:
+        """Dim argument hint appended after a ``!<tool>`` / ``!<plugin>`` command.
+
+        Delegates to the REPL's ``param_hint_fn`` (``BangCommand.param_hint``),
+        which returns ``""`` while the tool/plugin name is still being typed.
+        Runs on every paint, so it never raises.
+        """
+        try:
+            hint = self._param_hint_fn(self._input_area.text)
+        except Exception:  # pragma: no cover - a hint must never break rendering
+            return ""
+        return f"  {hint}" if hint else ""
 
     def _safe_dispatch(self, text: str) -> Optional[str]:
         try:

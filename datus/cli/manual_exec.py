@@ -53,6 +53,8 @@ MAX_OUTPUT_CHARS = 3000
 _KIND_CHROME = {
     "sql": ("sql> ", "bold red", "red"),
     "bash": ("bash> ", "bold yellow", "yellow"),
+    # ``!<tool>`` manual tool executions — distinct cyan chrome.
+    "tool": ("! ", "bold cyan", "cyan"),
 }
 
 
@@ -90,7 +92,26 @@ class BashExecPayload(BaseModel):
     error: Optional[str] = None
 
 
-_PAYLOAD_MODELS: Dict[str, type[BaseModel]] = {"sql": SqlExecPayload, "bash": BashExecPayload}
+class ToolExecPayload(BaseModel):
+    """Validated shape of a persisted ``!<tool>`` execution record.
+
+    Mirrors the bash payload: ``command`` is the ``<tool> <args>`` invocation and
+    ``output`` is the tool result rendered as text (JSON for structured returns).
+    """
+
+    kind: Literal["tool"]
+    command: str
+    success: bool
+    output: str = ""
+    meta: str = ""
+    error: Optional[str] = None
+
+
+_PAYLOAD_MODELS: Dict[str, type[BaseModel]] = {
+    "sql": SqlExecPayload,
+    "bash": BashExecPayload,
+    "tool": ToolExecPayload,
+}
 
 
 def mode_prompt(kind: str) -> Tuple[str, str]:
@@ -278,6 +299,26 @@ def build_bash_payload(
     meta = f"exit 0 in {exec_time:.2f}s" if success else f"failed in {exec_time:.2f}s"
     payload: Dict[str, Any] = {
         "kind": "bash",
+        "command": command,
+        "success": success,
+        "output": output,
+        "meta": meta,
+    }
+    if error and not success:
+        payload["error"] = error
+    return payload
+
+
+def build_tool_payload(
+    command: str, success: bool, output: str, error: Optional[str], exec_time: float
+) -> Dict[str, Any]:
+    """Build a ``!<tool>`` execution payload (output capped like bash)."""
+    output = output or ""
+    if len(output) > MAX_OUTPUT_CHARS:
+        output = output[:MAX_OUTPUT_CHARS] + "\n… [truncated]"
+    meta = f"ok in {exec_time:.2f}s" if success else f"failed in {exec_time:.2f}s"
+    payload: Dict[str, Any] = {
+        "kind": "tool",
         "command": command,
         "success": success,
         "output": output,

@@ -179,6 +179,9 @@ STATUS_BAR_STYLE: dict[str, str] = {
     "input-prompt": "ansigreen bold",
     "input-prompt.busy": "ansibrightblack",
     "input-prompt.hint": f"italic {STATUS_BAR_FG_HINT}",
+    # Dim ``<arg> [--opt]`` hint rendered after a ``!<tool>`` / ``!<plugin>``
+    # command while typing (see ``BangCommand.param_hint``).
+    "bang-arg-hint": STATUS_BAR_FG_HINT,
     # SQL mode: red ``sql>`` prompt label (bold allowed on prompt labels) and
     # the red SQL-mode hint line pinned under the input.
     "input-prompt.sql": "ansired bold",

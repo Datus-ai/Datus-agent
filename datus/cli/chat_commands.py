@@ -238,6 +238,43 @@ class ChatCommands:
         except Exception:  # noqa: BLE001
             pass
 
+    def ensure_node_for_bang(self) -> Optional["AgenticNode"]:
+        """Return the current chat node, lazily creating a default one if needed.
+
+        The ``!<tool>`` handler enumerates and invokes tools from the live chat
+        node's ``tools`` list, but ``current_node`` is created lazily on the
+        first chat turn. This builds the regular (non-subagent) node up front —
+        the same node the next chat turn would reuse (``_should_create_new_node``
+        returns ``False`` once ``current_node`` is set and no subagent is
+        active) — so a ``!<tool>`` call works before any chat has happened.
+
+        The node is built *fully* on a local reference (base tools via
+        ``setup_tools`` plus the skill/bash/memory/web tools that are otherwise
+        mounted lazily at execution time) before it is published to
+        ``self.current_node``, so ``!`` autocomplete lists the complete tool set
+        and never observes a half-mounted node. Returns ``None`` when node
+        construction fails.
+        """
+        if self.current_node is not None:
+            return self.current_node
+        try:
+            node = self._create_new_node(None)
+            if hasattr(node, "active_database"):
+                node.active_database = getattr(self.cli.cli_context, "current_db_name", "") or ""
+            if hasattr(node, "setup_tools"):
+                node.setup_tools()
+            # Mount the tools that are otherwise injected lazily during a turn
+            # (skill / bash / memory / web) so the ``!`` list is complete.
+            if hasattr(node, "_ensure_lazy_tools_mounted"):
+                node._ensure_lazy_tools_mounted()
+            self.current_subagent_name = None
+            self.current_node = node
+        except Exception as exc:  # noqa: BLE001 - never crash the REPL on a ! call
+            logger.error(f"Failed to create chat node for '!' tool execution: {exc}", exc_info=True)
+            self.current_node = None
+            return None
+        return self.current_node
+
     def create_node_input(
         self,
         user_message: str,

@@ -298,6 +298,7 @@ class TestCommandType:
         assert CommandType.SQL.value == "sql"
         assert CommandType.BASH.value == "bash"
         assert CommandType.SLASH.value == "slash"
+        assert CommandType.BANG.value == "bang"
         assert CommandType.CHAT.value == "chat"
         assert CommandType.EXIT.value == "exit"
         assert CommandType.UNKNOWN.value == "unknown"
@@ -329,23 +330,22 @@ class TestParseCommand:
         assert cmd_type == CommandType.SLASH
         assert cmd == "/exit"
 
-    def test_bang_prefix_runs_sql_one_shot(self, cli):
-        """``!<sql>`` in chat mode runs one-shot SQL (the non-TUI fallback's
-        only route to SQL execution): the ``!`` is stripped and the remainder
-        is returned as the SQL to execute."""
-        cmd_type, cmd, args = cli._parse_command("!SELECT * FROM t")
-        assert cmd_type == CommandType.SQL
+    def test_bang_prefix_dispatches_to_bang_command(self, cli):
+        """``!<tool>`` in chat mode routes to BANG dispatch: the ``!`` is stripped
+        and the remainder becomes the tool/plugin invocation text."""
+        cmd_type, cmd, args = cli._parse_command("!list_tables")
+        assert cmd_type == CommandType.BANG
         assert cmd == ""
-        assert args == "SELECT * FROM t"
+        assert args == "list_tables"
 
     def test_bang_prefix_only_strips_leading_bang(self, cli):
-        cmd_type, _, args = cli._parse_command("!  SHOW TABLES")
-        assert cmd_type == CommandType.SQL
-        assert args == "SHOW TABLES"
+        cmd_type, _, args = cli._parse_command("!  search_table foo")
+        assert cmd_type == CommandType.BANG
+        assert args == "search_table foo"
 
     def test_bang_prefix_ignored_in_bash_mode(self, cli):
         """In bash mode a leading ``!`` belongs to the command (history
-        expansion) and must not trigger the one-shot SQL path."""
+        expansion) and must not trigger the BANG dispatch path."""
         cli.input_mode = InputMode.BASH
         cmd_type, _, args = cli._parse_command("!ls")
         assert cmd_type == CommandType.BASH

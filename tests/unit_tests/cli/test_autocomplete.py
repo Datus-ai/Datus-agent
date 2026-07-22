@@ -20,6 +20,7 @@ from prompt_toolkit.document import Document
 from datus.cli.autocomplete import (
     AtReferenceCompleter,
     AtReferenceParser,
+    BangCompleter,
     CustomPygmentsStyle,
     CustomSqlLexer,
     DynamicAtReferenceCompleter,
@@ -28,6 +29,8 @@ from datus.cli.autocomplete import (
     insert_into_dict,
     insert_into_dict_with_dict,
 )
+from datus.cli.input_modes import InputMode
+from datus.plugins.base import PluginCommand, PluginCommandArg, PluginManifest
 
 # ---------------------------------------------------------------------------
 # SQLCompleter
@@ -956,3 +959,148 @@ class TestAtReferenceCompleterAgent:
         completions = list(completer.get_completions(doc, None))
         texts = {c.text for c in completions}
         assert {"gen_sql", "gen_report"}.issubset(texts)
+
+
+# ---------------------------------------------------------------------------
+# BangCompleter (!<tool> / !<plugin>)
+# ---------------------------------------------------------------------------
+
+
+def _fake_tool(name, *, schema=None, description=""):
+    tool = MagicMock()
+    tool.name = name
+    tool.description = description
+    tool.params_json_schema = schema if schema is not None else {"properties": {}}
+    return tool
+
+
+def _hello_manifest():
+    from pathlib import Path
+
+    return PluginManifest(
+        name="hello",
+        package_dir=Path("."),
+        description="Hello plugin",
+        commands=[
+            PluginCommand(
+                name="sync",
+                description="sync tables",
+                args=[PluginCommandArg("table", required=True), PluginCommandArg("--limit")],
+            ),
+            PluginCommand(name="status", description="show status"),
+        ],
+    )
+
+
+def _airflow_manifest():
+    from pathlib import Path
+
+    return PluginManifest(
+        name="airflow",
+        package_dir=Path("."),
+        description="Airflow plugin",
+        commands=[
+            PluginCommand(
+                name="dags",
+                description="DAG operations",
+                subcommands=[
+                    PluginCommand(
+                        name="trigger",
+                        args=[PluginCommandArg("dag_id", required=True), PluginCommandArg("--conf")],
+                    ),
+                    PluginCommand(name="list"),
+                ],
+            ),
+            PluginCommand(name="version"),
+        ],
+    )
+
+
+class _FakeBang:
+    def __init__(self, tools=None, plugins=None):
+        self._tools = tools or {}
+        self._plugins = plugins or {}
+
+    def tool_map(self, create=False):
+        return self._tools
+
+    def plugin_map(self):
+        return self._plugins
+
+
+def _bang_cli(tools=None, plugins=None, input_mode=InputMode.CHAT):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(input_mode=input_mode, bang_command=_FakeBang(tools, plugins))
+
+
+def _complete(completer, text):
+    doc = Document(text, cursor_position=len(text))
+    return list(completer.get_completions(doc, None))
+
+
+class TestBangCompleter:
+    def test_lists_tools_before_plugins(self):
+        cli = _bang_cli(
+            tools={"list_tables": _fake_tool("list_tables", description="List tables")},
+            plugins={"hello": _hello_manifest()},
+        )
+        comps = _complete(BangCompleter(cli), "!")
+        texts = [c.text for c in comps]
+        assert texts == ["list_tables ", "hello "]
+        metas = [c.display_meta_text for c in comps]
+        assert metas[0].startswith("tool")
+        assert metas[1].startswith("plugin")
+
+    def test_filters_names_by_prefix(self):
+        cli = _bang_cli(
+            tools={"list_tables": _fake_tool("list_tables"), "search_table": _fake_tool("search_table")},
+        )
+        texts = [c.text for c in _complete(BangCompleter(cli), "!sea")]
+        assert texts == ["search_table "]
+
+    def test_tool_flag_completion(self):
+        schema = {"properties": {"query_text": {"type": "string"}, "top_n": {"type": "integer"}}}
+        cli = _bang_cli(tools={"search_table": _fake_tool("search_table", schema=schema)})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!search_table --")]
+        assert "--help" in texts
+        assert "--query_text=" in texts
+        assert "--top_n=" in texts
+
+    def test_plugin_subcommand_completion(self):
+        cli = _bang_cli(plugins={"hello": _hello_manifest()})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!hello ")]
+        assert texts == ["status ", "sync "]  # sorted
+
+    def test_plugin_flag_completion(self):
+        cli = _bang_cli(plugins={"hello": _hello_manifest()})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!hello sync --")]
+        assert texts == ["--limit="]
+
+    def test_plugin_group_lists_subcommands(self):
+        cli = _bang_cli(plugins={"airflow": _airflow_manifest()})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!airflow dags ")]
+        assert texts == ["list ", "trigger "]  # sorted within the group
+
+    def test_plugin_group_filters_subcommands_by_prefix(self):
+        cli = _bang_cli(plugins={"airflow": _airflow_manifest()})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!airflow dags tri")]
+        assert texts == ["trigger "]
+
+    def test_plugin_leaf_flag_completion(self):
+        cli = _bang_cli(plugins={"airflow": _airflow_manifest()})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!airflow dags trigger --")]
+        assert texts == ["--conf="]
+
+    def test_plugin_top_level_lists_groups(self):
+        cli = _bang_cli(plugins={"airflow": _airflow_manifest()})
+        texts = [c.text for c in _complete(BangCompleter(cli), "!airflow ")]
+        assert texts == ["dags ", "version "]
+
+    def test_silent_outside_chat_mode(self):
+        cli = _bang_cli(tools={"list_tables": _fake_tool("list_tables")}, input_mode=InputMode.BASH)
+        assert _complete(BangCompleter(cli), "!li") == []
+
+    def test_silent_without_bang_prefix(self):
+        cli = _bang_cli(tools={"list_tables": _fake_tool("list_tables")})
+        assert _complete(BangCompleter(cli), "list") == []

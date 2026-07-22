@@ -22,16 +22,14 @@ that method does not belong in the CLI allow-list.
 
 from __future__ import annotations
 
-import ast
 import asyncio
-import inspect
 import json
-import shlex
 import threading
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from rich.table import Table
 
+from datus.cli import tool_arg_parser
 from datus.cli._render_utils import build_kv_table, build_row_table
 from datus.cli.cli_styles import TABLE_HEADER_STYLE, print_error, print_info, print_success, print_warning
 from datus.cli.service_client import ServiceClient, ServiceClientRegistry, service_type_label
@@ -557,30 +555,7 @@ class ServiceCommands:
         self.cli.console.print(table)
 
     def _print_schema(self, tool: "FunctionTool", hint: str = "") -> None:
-        schema = tool.params_json_schema or {}
-        props = schema.get("properties") or {}
-        required = set(schema.get("required", []) or [])
-        if hint:
-            print_warning(self.cli.console, hint)
-        table = Table(
-            title=f"{tool.name} — parameters",
-            show_header=True,
-            header_style=TABLE_HEADER_STYLE,
-        )
-        table.add_column("Name")
-        table.add_column("Type")
-        table.add_column("Required")
-        table.add_column("Description")
-        for key, info in props.items():
-            if key == "self" or not isinstance(info, dict):
-                continue
-            table.add_row(
-                key,
-                str(info.get("type", "")),
-                "yes" if key in required else "",
-                info.get("description", "") or "",
-            )
-        self.cli.console.print(table)
+        tool_arg_parser.print_schema(self.cli.console, tool, hint)
 
     # Cap long cell contents (huge nested ``extra.raw`` blobs, SQL texts,
     # etc.) so a single command doesn't push the terminal through many
@@ -851,185 +826,42 @@ class ServiceCommands:
     # Argument parsing
     # ------------------------------------------------------------------ #
 
+    # Argument parsing / schema rendering is shared with the ``!<tool>`` handler
+    # (:mod:`datus.cli.bang_command`) via :mod:`datus.cli.tool_arg_parser`. These
+    # thin delegators keep the historical ``ServiceCommands`` method surface (and
+    # its ``_last_parse_error`` contract) while the logic lives in one place.
+
     @staticmethod
     def _is_help_request(args: str) -> bool:
-        try:
-            tokens = shlex.split(args) if args else []
-        except ValueError:
-            return False
-        return "--help" in tokens or "-h" in tokens
+        return tool_arg_parser.is_help_request(args)
 
     def _parse_args(self, args: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Parse positional + ``--key=value`` arguments against a JSON schema.
 
         Returns a ``{key: coerced_value}`` dict, or ``None`` if the input is
-        malformed (quoting error, extra positional, unknown named flag).
-        When parsing fails in a way that has a specific user-facing hint
-        (e.g. typoed flag name), the hint is stored on
-        ``self._last_parse_error`` so ``_invoke`` can surface it before
-        printing the schema.
+        malformed. On failure, a specific user-facing hint is stored on
+        ``self._last_parse_error`` so ``_invoke`` can surface it before printing
+        the schema.
         """
-        self._last_parse_error = None
-        try:
-            tokens = shlex.split(args) if args else []
-        except ValueError:
-            self._last_parse_error = "Malformed arguments: unmatched quotes."
-            return None
-
-        props = (schema.get("properties") or {}) if isinstance(schema, dict) else {}
-        prop_order = [k for k in props.keys() if k != "self"]
-        valid_named = [k for k in prop_order]
-
-        positional: List[str] = []
-        named: Dict[str, str] = {}
-        for tok in tokens:
-            if tok.startswith("--"):
-                body = tok[2:]
-                if not body:
-                    self._last_parse_error = "Empty flag '--'. Expected '--<name>' or '--<name>=<value>'."
-                    return None
-                key, sep, value = body.partition("=")
-                if not sep:
-                    # Bare ``--flag`` means ``--flag=true`` for boolean fields.
-                    named[key] = "true"
-                else:
-                    named[key] = value
-            else:
-                positional.append(tok)
-
-        parsed: Dict[str, Any] = {}
-        for idx, value in enumerate(positional):
-            if idx >= len(prop_order):
-                self._last_parse_error = (
-                    f"Too many positional arguments. Method accepts {len(prop_order)} (got extra: '{value}')."
-                )
-                return None
-            key = prop_order[idx]
-            parsed[key] = self._coerce(value, props.get(key) or {})
-
-        for key, raw in named.items():
-            if key not in props:
-                # Fail fast — a silently dropped ``--limti=1`` or
-                # ``--serach=...`` is worse than a parse error because the
-                # method executes without the filter the user intended.
-                suggestions = ", ".join(valid_named) if valid_named else "(none)"
-                self._last_parse_error = f"Unknown parameter '--{key}'. Valid parameters: {suggestions}."
-                return None
-            parsed[key] = self._coerce(raw, props.get(key) or {})
-
+        parsed, error = tool_arg_parser.parse_args(args, schema)
+        self._last_parse_error = error
         return parsed
 
     @classmethod
     def _coerce(cls, raw: str, prop_schema: Dict[str, Any]) -> Any:
-        t = cls._primary_type(prop_schema)
-        if t == "integer":
-            try:
-                return int(raw)
-            except ValueError:
-                return raw
-        if t == "number":
-            try:
-                return float(raw)
-            except ValueError:
-                return raw
-        if t == "boolean":
-            return raw.strip().lower() in ("1", "true", "yes", "y")
-        if t == "array":
-            return cls._coerce_collection(raw, expect=list)
-        if t == "object":
-            return cls._coerce_collection(raw, expect=dict)
-        return raw
+        return tool_arg_parser.coerce(raw, prop_schema)
 
     @staticmethod
     def _coerce_collection(raw: str, *, expect: type) -> Any:
-        """Coerce ``raw`` to ``expect`` (``list`` or ``dict``).
-
-        Attempts, in order:
-
-        1. ``json.loads`` — standard JSON form (``["a"]`` / ``{"k": 1}``).
-        2. ``ast.literal_eval`` — Python literal form which tolerates single
-           quotes and ``None`` / ``True``. LLMs and humans frequently emit
-           ``--metrics=['sales']`` or ``--ctx={'k': 'v'}``; JSON rejects both.
-        3. For arrays only: CSV fallback (``a,b,c`` → ``["a", "b", "c"]``).
-           For objects, a parse failure returns the raw string so the tool
-           can surface a clearer type error than a silently mangled value.
-        """
-        stripped = raw.strip()
-        if stripped and stripped[0] in "[{":
-            try:
-                parsed = json.loads(stripped)
-            except json.JSONDecodeError:
-                parsed = None
-            if parsed is None:
-                try:
-                    parsed = ast.literal_eval(stripped)
-                except (SyntaxError, ValueError):
-                    parsed = None
-            if isinstance(parsed, expect):
-                return parsed
-        if expect is list:
-            return [item.strip() for item in raw.split(",") if item.strip()]
-        return raw
+        return tool_arg_parser.coerce_collection(raw, expect=expect)
 
     @staticmethod
     def _primary_type(prop_schema: Dict[str, Any]) -> str:
-        """Return the primary JSON-schema type, flattening ``anyOf`` / ``oneOf``.
-
-        ``Optional[X]`` is represented by the Agents SDK as
-        ``{"anyOf": [{"type": X}, {"type": "null"}]}`` with no top-level
-        ``type``. Naively reading ``schema["type"]`` would yield ``""`` and
-        cause ``_coerce`` to skip its conversion logic, so e.g. an
-        ``Optional[List[str]]`` parameter would receive a raw CSV string
-        instead of a list.
-        """
-        if not isinstance(prop_schema, dict):
-            return ""
-        t = prop_schema.get("type")
-        if isinstance(t, str):
-            return t
-        if isinstance(t, list):
-            for candidate in t:
-                if isinstance(candidate, str) and candidate != "null":
-                    return candidate
-        for key in ("anyOf", "oneOf"):
-            variants = prop_schema.get(key)
-            if not isinstance(variants, list):
-                continue
-            for variant in variants:
-                if not isinstance(variant, dict):
-                    continue
-                vt = variant.get("type")
-                if isinstance(vt, str) and vt != "null":
-                    return vt
-        return ""
+        return tool_arg_parser.primary_type(prop_schema)
 
     @staticmethod
     def _missing_required(method: Optional[Callable], parsed: Dict[str, Any]) -> List[str]:
-        """Return names of parameters that are truly required but not supplied.
-
-        Uses the Python signature of the bound method as the source of truth —
-        Pydantic / the Agents SDK regularly list parameters with
-        ``Optional[...] = None`` defaults in the OpenAI-style ``required``
-        array, but those are semantically optional and we should not block
-        invocation on them.
-        """
-        if method is None or not callable(method):
-            return []
-        try:
-            sig = inspect.signature(method)
-        except (TypeError, ValueError):
-            return []
-        missing: List[str] = []
-        for name, param in sig.parameters.items():
-            if name == "self":
-                continue
-            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                continue
-            if name in parsed:
-                continue
-            if param.default is inspect.Parameter.empty:
-                missing.append(name)
-        return missing
+        return tool_arg_parser.missing_required(method, parsed)
 
     # ------------------------------------------------------------------ #
     # Async plumbing
