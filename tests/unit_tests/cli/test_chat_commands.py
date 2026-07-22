@@ -75,6 +75,14 @@ class MinimalCLI:
     def _print_welcome(self):
         """No-op stand-in for the real banner printer."""
 
+    def _cycle_permission_mode(self):
+        """No-op stand-in for the Ctrl+P permission-cycle shortcut handler.
+
+        ``ChatCommands._streaming_key_callbacks`` binds this as the Ctrl+P
+        mid-stream callback, so the substitute CLI must expose it or every
+        streaming turn raises ``AttributeError``.
+        """
+
     def run_on_bg_loop(self, coro):
         """Simple synchronous stand-in for ``DatusCLI.run_on_bg_loop``.
 

@@ -11,6 +11,7 @@ following Claude Code and OpenCode patterns.
 
 import fnmatch
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from datus.tools.permission.permission_config import PermissionConfig, PermissionLevel, PermissionRule
@@ -94,6 +95,17 @@ class PermissionManager:
         self.active_profile = active_profile
         self._permission_callback: Optional[Callable[[str, str, Dict[str, Any]], Awaitable[bool]]] = None
 
+        # Serializes mutations of the runtime permission state
+        # (``global_config``, ``_session_approvals``, ``_persistent_rules``,
+        # ``_persistent_bash_allows``) against the reads on the permission-check
+        # path. The Ctrl+P shortcut runs :meth:`switch_profile` on the TUI event
+        # loop (main thread) while ``check_permission`` /
+        # ``request_user_confirmation`` run on the agent's background loop thread,
+        # so these would otherwise race. Reentrant because guarded methods call
+        # one another (e.g. ``switch_profile`` -> ``_install_bash_allow``). Never
+        # held across ``await``.
+        self._state_lock = threading.RLock()
+
         # Cache for session-approved permissions (tool_category.tool_name -> approved)
         self._session_approvals: Dict[str, bool] = {}
 
@@ -174,18 +186,23 @@ class PermissionManager:
         """
         node_override = self.node_overrides.get(node_name)
 
-        # Convert dict to PermissionConfig if needed
-        if node_override is not None and isinstance(node_override, dict):
-            raw = node_override
-            if "default" not in raw and "default_permission" not in raw:
-                dp = self.global_config.default_permission
-                raw = {
-                    **raw,
-                    "default_permission": dp.value if hasattr(dp, "value") else dp,
-                }
-            node_override = PermissionConfig.from_dict(raw)
+        # Hold the lock across the read + merge so a concurrent
+        # :meth:`switch_profile` (Ctrl+P on the TUI thread) can never expose a
+        # half-rebuilt ``global_config`` (e.g. after the rebind but before
+        # persistent safeguard rules are re-injected).
+        with self._state_lock:
+            # Convert dict to PermissionConfig if needed
+            if node_override is not None and isinstance(node_override, dict):
+                raw = node_override
+                if "default" not in raw and "default_permission" not in raw:
+                    dp = self.global_config.default_permission
+                    raw = {
+                        **raw,
+                        "default_permission": dp.value if hasattr(dp, "value") else dp,
+                    }
+                node_override = PermissionConfig.from_dict(raw)
 
-        return self.global_config.merge_with(node_override)
+            return self.global_config.merge_with(node_override)
 
     def check_permission(
         self,
@@ -333,10 +350,15 @@ class PermissionManager:
         Returns:
             True if user approved, False otherwise
         """
-        # Check session cache first
+        # Check session cache first. Single locked ``get`` so a concurrent
+        # ``switch_profile`` clearing ``_session_approvals`` cannot slip between
+        # a membership test and the lookup (which would raise ``KeyError``). The
+        # lock is released before awaiting the callback below.
         cache_key = f"{tool_category}.{tool_name}"
-        if cache_key in self._session_approvals:
-            return self._session_approvals[cache_key]
+        with self._state_lock:
+            cached = self._session_approvals.get(cache_key)
+        if cached is not None:
+            return cached
 
         if not self._permission_callback:
             logger.warning(f"ASK permission for {cache_key} but no callback set, defaulting to deny")
@@ -360,12 +382,14 @@ class PermissionManager:
             tool_name: Name of the tool
         """
         cache_key = f"{tool_category}.{tool_name}"
-        self._session_approvals[cache_key] = True
+        with self._state_lock:
+            self._session_approvals[cache_key] = True
         logger.info(f"Session approval granted for {cache_key}")
 
     def clear_session_approvals(self) -> None:
         """Clear all session approvals (e.g., on session end)."""
-        self._session_approvals.clear()
+        with self._state_lock:
+            self._session_approvals.clear()
 
     def add_persistent_rule(self, rule: PermissionRule) -> None:
         """Register a rule that must survive future ``switch_profile`` calls.
@@ -374,19 +398,21 @@ class PermissionManager:
         Without this, a runtime ``/profile dangerous`` rebuild of
         ``global_config`` would silently drop the injected rule.
         """
-        self._persistent_rules.append(rule)
-        # Also install immediately so the current session picks it up.
-        if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
-            self.global_config.rules.insert(0, rule)
+        with self._state_lock:
+            self._persistent_rules.append(rule)
+            # Also install immediately so the current session picks it up.
+            if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
+                self.global_config.rules.insert(0, rule)
 
     def _install_bash_allow(self, pattern: str) -> None:
         """Add a bash allow pattern to the live ``global_config`` in place."""
         from datus.tools.permission.bash_rules import BashCommandRules
 
-        if self.global_config.bash_commands is None:
-            self.global_config.bash_commands = BashCommandRules(allow=[pattern])
-        elif pattern not in self.global_config.bash_commands.allow:
-            self.global_config.bash_commands.allow.append(pattern)
+        with self._state_lock:
+            if self.global_config.bash_commands is None:
+                self.global_config.bash_commands = BashCommandRules(allow=[pattern])
+            elif pattern not in self.global_config.bash_commands.allow:
+                self.global_config.bash_commands.allow.append(pattern)
 
     def add_project_bash_allow(self, pattern: str, project_root: Optional[str] = None) -> bool:
         """Grant a bash command prefix at project scope ("allow (project)").
@@ -403,10 +429,11 @@ class PermissionManager:
         write failed (read-only checkout, etc.) — the in-memory grant still
         applies, so callers may degrade to a session-level approval message.
         """
-        self._install_bash_allow(pattern)
-        if pattern not in self._persistent_bash_allows:
-            self._persistent_bash_allows.append(pattern)
-        self._project_bash_grants.add(pattern)
+        with self._state_lock:
+            self._install_bash_allow(pattern)
+            if pattern not in self._persistent_bash_allows:
+                self._persistent_bash_allows.append(pattern)
+            self._project_bash_grants.add(pattern)
 
         try:
             from datus.configuration.project_config import append_project_bash_allow
@@ -508,40 +535,46 @@ class PermissionManager:
                 code=ErrorCode.COMMON_CONFIG_ERROR,
                 message_args={"config_error": str(exc)},
             ) from exc
-        # Copy before merging/mutating — ``get_profile`` returns shared
-        # module-level configs and ``merge_with`` without overrides returns
-        # the same instance, so mutating ``global_config.rules`` below would
-        # corrupt the singleton.
-        base_copy = self._copy_config(base)
-        # Re-apply plugin-declared bash rules for the new profile BEFORE user
-        # overrides — a rebuild starts from the bare profile singleton, which
-        # never carries them. Order matters: ``build_effective_config`` (startup)
-        # layers plugin rules into the profile base and only then merges user
-        # rules, so merging in the same order here keeps runtime ``/profile``
-        # switches identical to startup — same-kind ask patterns then bucket and
-        # match project grants the same way. Same ``bash_commands is not None``
-        # guard: ``dangerous`` intentionally has no command-level ruleset and
-        # stays fully open.
-        plugin_rules = self._plugin_bash_rules.get(profile_name)
-        if plugin_rules is not None and base_copy.bash_commands is not None:
-            base_copy.bash_commands = base_copy.bash_commands.merge_with(plugin_rules)
-        self.global_config = base_copy.merge_with(user_overrides) if user_overrides else base_copy
-        # Re-inject persistent rules at the front so last-match-wins still
-        # lets explicit YAML rules override them, while bare profile defaults
-        # don't clobber their safety posture.
-        for rule in self._persistent_rules:
-            if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
-                self.global_config.rules.insert(0, rule)
-        # Re-apply project-scope bash allows granted earlier this session —
-        # but only when the rebuilt config already carries a command-level
-        # ruleset. Installing one where the profile intentionally left
-        # ``bash_commands`` unset (``dangerous``) would flip its documented
-        # zero-friction bash posture and start force-ASKing wrapper commands.
-        if self.global_config.bash_commands is not None:
-            for pattern in self._persistent_bash_allows:
-                self._install_bash_allow(pattern)
-        self.active_profile = profile_name
-        self._session_approvals.clear()
+        # Hold the lock across the whole rebuild so the permission-check path
+        # (``get_effective_config`` / ``request_user_confirmation`` on the agent
+        # background thread) never observes a partially-applied switch: the
+        # ``global_config`` rebind, persistent-rule re-injection, bash-allow
+        # replay, profile rename and approval clear all publish atomically.
+        with self._state_lock:
+            # Copy before merging/mutating — ``get_profile`` returns shared
+            # module-level configs and ``merge_with`` without overrides returns
+            # the same instance, so mutating ``global_config.rules`` below would
+            # corrupt the singleton.
+            base_copy = self._copy_config(base)
+            # Re-apply plugin-declared bash rules for the new profile BEFORE user
+            # overrides — a rebuild starts from the bare profile singleton, which
+            # never carries them. Order matters: ``build_effective_config`` (startup)
+            # layers plugin rules into the profile base and only then merges user
+            # rules, so merging in the same order here keeps runtime ``/profile``
+            # switches identical to startup — same-kind ask patterns then bucket and
+            # match project grants the same way. Same ``bash_commands is not None``
+            # guard: ``dangerous`` intentionally has no command-level ruleset and
+            # stays fully open.
+            plugin_rules = self._plugin_bash_rules.get(profile_name)
+            if plugin_rules is not None and base_copy.bash_commands is not None:
+                base_copy.bash_commands = base_copy.bash_commands.merge_with(plugin_rules)
+            self.global_config = base_copy.merge_with(user_overrides) if user_overrides else base_copy
+            # Re-inject persistent rules at the front so last-match-wins still
+            # lets explicit YAML rules override them, while bare profile defaults
+            # don't clobber their safety posture.
+            for rule in self._persistent_rules:
+                if not any(r.tool == rule.tool and r.pattern == rule.pattern for r in self.global_config.rules):
+                    self.global_config.rules.insert(0, rule)
+            # Re-apply project-scope bash allows granted earlier this session —
+            # but only when the rebuilt config already carries a command-level
+            # ruleset. Installing one where the profile intentionally left
+            # ``bash_commands`` unset (``dangerous``) would flip its documented
+            # zero-friction bash posture and start force-ASKing wrapper commands.
+            if self.global_config.bash_commands is not None:
+                for pattern in self._persistent_bash_allows:
+                    self._install_bash_allow(pattern)
+            self.active_profile = profile_name
+            self._session_approvals.clear()
         logger.info(
             f"Profile switched to '{profile_name}': "
             f"{len(self.global_config.rules)} effective rules, "

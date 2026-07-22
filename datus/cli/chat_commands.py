@@ -14,7 +14,7 @@ import platform
 import re
 import subprocess
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -134,7 +134,7 @@ class ChatCommands:
         # when each turn completes so a stale reference never re-renders.
         self._current_incremental_actions: Optional[List[ActionHistory]] = None
 
-    def _streaming_key_callbacks(self, streaming_ctx) -> dict[bytes, Any]:
+    def _streaming_key_callbacks(self, streaming_ctx) -> dict[bytes, Callable[[], None]]:
         """Return shortcuts handled by the legacy mid-stream stdin listener."""
         return {
             b"\x0f": streaming_ctx.toggle_verbose,
