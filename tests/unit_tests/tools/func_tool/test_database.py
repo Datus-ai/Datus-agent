@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.tools.func_tool.database import DBFuncTool
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class TestDBFuncToolCompressorModelName:
@@ -1831,3 +1831,183 @@ class TestDBFuncToolExecuteSql:
         assert "read_query" not in tool_names
         assert "execute_ddl" not in tool_names
         assert "execute_write" not in tool_names
+
+
+class TestDBFuncToolExecuteReadEnforced:
+    """execute_read_enforced: the single policy-enforced raw-read path shared by
+    read_query and the report/dashboard artifact query executors. It must reject
+    multi-statement / non-read SQL and apply the SQL policy before the statement
+    reaches the engine — the guard the artifact save paths previously bypassed."""
+
+    def _make_tool(self, connector, agent_config=None):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector, agent_config=agent_config)
+
+    def _connector(self):
+        connector = Mock()
+        connector.dialect = "sqlite"
+        connector.get_databases.return_value = []
+        exec_result = Mock()
+        exec_result.success = True
+        exec_result.sql_return = [{"n": 1}]
+        connector.execute_query.return_value = exec_result
+        return connector
+
+    def test_readonly_select_executes_and_returns_raw_result(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+
+        result = tool.execute_read_enforced("SELECT 1 AS n", connector)
+
+        assert result.success is True
+        connector.execute_query.assert_called_once()
+        args, kwargs = connector.execute_query.call_args
+        assert args[0] == "SELECT 1 AS n"
+        assert kwargs["result_format"] == "list"
+
+    def test_multi_statement_rejected_without_touching_connector(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+
+        result = tool.execute_read_enforced("SELECT 1; DROP TABLE t", connector)
+
+        assert result.success is False
+        assert "Multi-statement" in result.error
+        connector.execute_query.assert_not_called()
+
+    def test_non_read_statement_rejected(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+
+        result = tool.execute_read_enforced("INSERT INTO t VALUES (1)", connector)
+
+        assert result.success is False
+        connector.execute_query.assert_not_called()
+
+    def test_policy_rewrite_is_executed_verbatim(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+
+        # A policy that injects a row cap; the rewrite is still a single
+        # read-only statement, so it must reach the connector verbatim.
+        with patch.object(tool, "_enforce_sql_policy", return_value="SELECT 1 AS n LIMIT 100"):
+            result = tool.execute_read_enforced("SELECT 1 AS n", connector)
+
+        assert result.success is True
+        assert connector.execute_query.call_args[0][0] == "SELECT 1 AS n LIMIT 100"
+
+    def test_policy_denial_surfaces_as_failure_without_executing(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+
+        with patch.object(
+            tool,
+            "_enforce_sql_policy",
+            side_effect=DatusException(ErrorCode.TOOL_INVALID_INPUT, message="denied by policy"),
+        ):
+            result = tool.execute_read_enforced("SELECT 1 AS n", connector)
+
+        assert result.success is False
+        assert "denied by policy" in result.error
+        connector.execute_query.assert_not_called()
+
+    def test_policy_rewrite_to_non_read_is_rejected(self):
+        connector = self._connector()
+        tool = self._make_tool(connector)
+
+        # A buggy/hostile policy rewrite that turns a read into a mutation must
+        # be caught by the post-rewrite re-validation, not forwarded to the DB.
+        with patch.object(tool, "_enforce_sql_policy", return_value="DROP TABLE t"):
+            result = tool.execute_read_enforced("SELECT 1 AS n", connector)
+
+        assert result.success is False
+        connector.execute_query.assert_not_called()
+
+
+class TestDBFuncToolGuardEstimatedRows:
+    """guard_estimated_rows: EXPLAIN-based pre-flight row-count guard. Blocks a
+    query whose optimizer estimate exceeds the ceiling before it executes;
+    fail-open on anything it can't measure."""
+
+    def _make_tool(self, connector):
+        with (
+            patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+            patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+        ):
+            mock_rag.return_value.schema_store.table_size.return_value = 0
+            mock_sem.return_value.get_size.return_value = 0
+            return DBFuncTool(connector)
+
+    def _connector_with_explain(self, explain_rows, dialect="starrocks", success=True):
+        connector = Mock()
+        connector.dialect = dialect
+        connector.get_databases.return_value = []
+        explain_result = Mock()
+        explain_result.success = success
+        explain_result.sql_return = explain_rows
+        connector.execute_query.return_value = explain_result
+        return connector
+
+    def test_oversize_estimate_is_rejected_with_actionable_message(self):
+        connector = self._connector_with_explain([{"plan": "CROSS JOIN cardinality: 9006993124"}])
+        tool = self._make_tool(connector)
+
+        result = tool.guard_estimated_rows("SELECT * FROM a, b", connector)
+
+        assert result.success == 0
+        assert "9,006,993,124" in result.error
+        # EXPLAIN must be planning-only — never the bare statement.
+        assert connector.execute_query.call_args[0][0].startswith("EXPLAIN ")
+
+    def test_multi_statement_rejected_before_explain_runs(self):
+        # A driver that splits statements would run the DROP as part of
+        # ``EXPLAIN SELECT 1; DROP TABLE t`` — reject before EXPLAIN is issued.
+        connector = self._connector_with_explain([{"plan": "cardinality: 10"}])
+        tool = self._make_tool(connector)
+
+        result = tool.guard_estimated_rows("SELECT 1; DROP TABLE t", connector)
+
+        assert result.success == 0
+        connector.execute_query.assert_not_called()
+
+    def test_estimate_under_ceiling_allows_query(self):
+        connector = self._connector_with_explain([{"plan": "cardinality: 42"}])
+        tool = self._make_tool(connector)
+
+        assert tool.guard_estimated_rows("SELECT 1", connector) is None
+
+    def test_boundary_around_the_ceiling(self):
+        from datus.tools.sql_guard import MAX_ESTIMATED_ROWS
+
+        # At the ceiling → allowed; one row over → rejected.
+        at_ceiling = self._connector_with_explain([{"plan": f"cardinality: {MAX_ESTIMATED_ROWS}"}])
+        assert self._make_tool(at_ceiling).guard_estimated_rows("SELECT 1", at_ceiling) is None
+
+        over = self._connector_with_explain([{"plan": f"cardinality: {MAX_ESTIMATED_ROWS + 1}"}])
+        assert self._make_tool(over).guard_estimated_rows("SELECT 1", over).success == 0
+
+    def test_explain_raising_fails_open(self):
+        connector = Mock()
+        connector.dialect = "starrocks"
+        connector.get_databases.return_value = []
+        connector.execute_query.side_effect = RuntimeError("EXPLAIN unsupported")
+        tool = self._make_tool(connector)
+
+        assert tool.guard_estimated_rows("SELECT 1", connector) is None
+
+    def test_explain_unsuccessful_fails_open(self):
+        connector = self._connector_with_explain([], success=False)
+        tool = self._make_tool(connector)
+
+        assert tool.guard_estimated_rows("SELECT 1", connector) is None
+
+    def test_unparseable_dialect_fails_open(self):
+        connector = self._connector_with_explain([{"detail": "SCAN t"}], dialect="sqlite")
+        tool = self._make_tool(connector)
+
+        assert tool.guard_estimated_rows("SELECT 1", connector) is None

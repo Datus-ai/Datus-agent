@@ -509,7 +509,16 @@ class DashboardService:
             )
 
         try:
-            exec_result = await asyncio.to_thread(connector.execute_query, rendered_sql, result_format="list")
+            # Enforced-read path (SQL policy + multi-statement rejection). View-time
+            # re-execution runs with live user params on every dashboard open, so an
+            # unbounded rendered statement here is the highest-blast-radius surface.
+            exec_result = await asyncio.to_thread(
+                db_tool.execute_read_enforced,
+                rendered_sql,
+                connector,
+                datasource=meta.datasource or "",
+                result_format="list",
+            )
         except Exception as exc:
             logger.exception("Query execution crashed for %s/%s: %s", dashboard_slug, query_slug, exc)
             return Result(
