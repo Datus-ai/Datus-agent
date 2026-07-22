@@ -89,6 +89,7 @@ class ErrorCode(Enum):
     # Tool errors
     TOOL_EXECUTION_FAILED = ("400001", "Tool execution failed")
     TOOL_INVALID_INPUT = ("400002", "Invalid tool input")
+    BASH_SANDBOX_UNAVAILABLE = ("400003", "OS sandbox unavailable")
 
     # Validation errors (ValidationHook for table-producing subagents)
     VALIDATION_BLOCKING_FAILURE = (

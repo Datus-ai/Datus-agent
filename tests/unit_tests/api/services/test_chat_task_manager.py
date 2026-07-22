@@ -2132,7 +2132,9 @@ class TestStartChatRemoteSourceHardening:
         assert cfg.bash_allowed_patterns == ["*"]
 
     @pytest.mark.asyncio
-    async def test_default_source_web_applies_strict_sandbox_without_request_source(self, real_agent_config, monkeypatch):
+    async def test_default_source_web_applies_strict_sandbox_without_request_source(
+        self, real_agent_config, monkeypatch
+    ):
         """A daemon launched with --source web applies the full-bash +
         strict-sandbox policy to every request that does not override source."""
         from datus.api.models.cli_models import StreamChatInput

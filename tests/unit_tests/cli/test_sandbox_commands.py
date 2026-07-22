@@ -21,8 +21,6 @@ from datus.cli.sandbox_commands import SandboxCommands
 from datus.configuration.project_config import ProjectOverride
 from datus.tools.func_tool.bash_sandbox import SandboxSettings
 
-pytestmark = pytest.mark.ci
-
 _PATCH_LOAD = "datus.cli.sandbox_commands.load_project_override"
 _PATCH_SAVE = "datus.cli.sandbox_commands.save_project_override"
 _PATCH_MECH = "datus.cli.sandbox_commands.bash_sandbox.detect_mechanism"

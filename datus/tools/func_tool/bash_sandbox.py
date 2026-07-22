@@ -16,7 +16,8 @@ sandbox that restricts filesystem access to an allowlist of directories:
   directories are bind-mounted (system dirs read-only, workspace/tmp
   writable); everything else simply does not exist inside the sandbox.
 
-This module is intentionally stdlib-only so ``datus.configuration`` can import
+This module depends only on the stdlib plus leaf ``datus.utils`` helpers
+(``loggings``, ``exceptions``), so ``datus.configuration`` can import
 :class:`SandboxSettings` without any dependency cycle. The permission layer
 (``PermissionHooks`` / ``bash_rules``) is unaffected — the sandbox is a second,
 kernel-level line of defense at the execution layer.
@@ -36,6 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -138,8 +140,11 @@ _LINUX_SYSTEM_READ_DIRS = (
 _BWRAP_TMPFS_DIRS = ("/tmp", "/var/tmp")
 
 
-class SandboxUnavailableError(RuntimeError):
+class SandboxUnavailableError(DatusException):
     """Raised when wrapping is requested but no OS sandbox mechanism works."""
+
+    def __init__(self, message: str):
+        super().__init__(ErrorCode.BASH_SANDBOX_UNAVAILABLE, message=message)
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
