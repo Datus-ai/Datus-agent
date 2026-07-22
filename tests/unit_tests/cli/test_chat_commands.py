@@ -203,6 +203,17 @@ class TestChatCommandsInit:
         assert cmds.chat_history == []
         assert cmds.last_actions == []
 
+    def test_streaming_ctrl_p_cycles_permission_mode(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        cmds.cli._cycle_permission_mode = MagicMock()
+        streaming_ctx = MagicMock()
+
+        callbacks = cmds._streaming_key_callbacks(streaming_ctx)
+        callbacks[b"\x10"]()
+
+        cmds.cli._cycle_permission_mode.assert_called_once_with()
+        assert callbacks[b"\x0f"] == streaming_ctx.toggle_verbose
+
 
 # ===========================================================================
 # TestAgentDispatchHint
