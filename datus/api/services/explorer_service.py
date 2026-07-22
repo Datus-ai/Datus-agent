@@ -119,6 +119,16 @@ class ExplorerService:
 
         return GenerationTools(self.agent_config).sync_osi_to_db(file_path)
 
+    @staticmethod
+    def _osi_metric_exists(adapter, metric_name: str, parent_path: List[str]) -> bool:
+        """Whether the metric still reads from the source file (used after a
+        delete error to tell a real write failure from an already-absent metric)."""
+        try:
+            adapter.read_metric_source(metric_name, subject_path=parent_path)
+            return True
+        except Exception:  # noqa: BLE001 - any read failure means "not present"
+            return False
+
     def _author_osi_metric(
         self,
         parent_path: List[str],
@@ -130,8 +140,13 @@ class ExplorerService:
         """Validate + write an OSI metric to its source file, then re-index the KB.
 
         The OSI adapter owns file placement and structure; this method handles
-        the app-level orchestration (name resolution, validation gate, KB
-        re-sync, and rollback when the KB sync fails).
+        the app-level orchestration: name resolution, validation gate, KB
+        re-sync, and rollback so the file (source of truth) and the KB never
+        drift. On KB-sync failure a create is deleted and an edit is restored to
+        its previous content.
+
+        Runs synchronously (file I/O + KB embedding); callers off the event loop
+        should invoke it via ``asyncio.to_thread``.
         """
         from datus.api.models.config_models import ErrorCode
 
@@ -161,6 +176,15 @@ class ExplorerService:
                 errorMessage=f"YAML validation failed: {messages}",
             )
 
+        # Capture the current content so an edit can be rolled back if the KB
+        # re-sync fails (a create rolls back by deleting).
+        previous_source = None
+        if not create:
+            try:
+                previous_source = adapter.read_metric_source(name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001 - restore is best-effort
+                logger.warning(f"Could not snapshot OSI metric before edit; rollback disabled: {e}")
+
         try:
             mutation = adapter.write_metric_source(name, metric_yaml, subject_path=parent_path, create=create)
         except Exception as e:  # noqa: BLE001 - surface adapter write errors to the caller
@@ -171,23 +195,30 @@ class ExplorerService:
                 errorMessage=str(e),
             )
 
-        # Re-index the changed file into the KB. On failure roll back a newly
-        # created metric so the file and KB do not drift.
+        # Re-index the changed file into the KB. On failure, undo the write so
+        # the file and the KB stay consistent.
         sync_result = self._sync_osi_file_to_kb(mutation.file_path)
         if not sync_result.get("success", False):
-            if create:
-                try:
-                    adapter.delete_metric_source(name, subject_path=parent_path)
-                except Exception as rollback_error:  # noqa: BLE001
-                    logger.error(f"Rollback of created OSI metric failed: {rollback_error}")
+            self._rollback_osi_write(adapter, name, parent_path, create, previous_source)
             return Result[dict](
                 success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
                 errorMessage=sync_result.get("error", "Failed to sync metric to Knowledge Base"),
             )
 
         logger.info(f"Successfully {'created' if create else 'edited'} OSI metric: {name}")
         return Result[dict](success=True, data={})
+
+    @staticmethod
+    def _rollback_osi_write(adapter, name, parent_path, create, previous_source) -> None:
+        """Undo a metric write after a failed KB re-sync."""
+        try:
+            if create:
+                adapter.delete_metric_source(name, subject_path=parent_path)
+            elif previous_source is not None:
+                adapter.write_metric_source(name, previous_source.text, subject_path=parent_path, create=False)
+        except Exception as rollback_error:  # noqa: BLE001
+            logger.error(f"Rollback of OSI metric '{name}' failed; file and KB may be inconsistent: {rollback_error}")
 
     def _semantic_runtime_db_context(self, request=None) -> dict:
         """Build runtime DB context for semantic adapter API calls."""
@@ -704,15 +735,27 @@ class ExplorerService:
             parent_path = subject_path[:-1] if len(subject_path) > 1 else []
             metric_name = subject_path[-1]
 
+            # The KB row remains the access-control gate: it enforces the full
+            # subject_path match and sub-agent scoping. Only its *content* is
+            # untrustworthy (a lossy, MetricFlow-shaped reconstruction), so we
+            # use it for existence/scoping and the file for the returned YAML.
+            metrics_detail = self.metric_rag.get_metrics_detail(parent_path, metric_name)
+            if not metrics_detail:
+                return Result[MetricInfo](
+                    success=False,
+                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                    errorMessage=f"Metric not found: {metric_name}",
+                )
+
             # Source of truth is the YAML file: read it back through the semantic
             # adapter so the returned YAML is in the metric's native format (OSI
-            # or MetricFlow), not a lossy reconstruction from the KB projection.
+            # or MetricFlow) rather than the KB reconstruction.
             adapter = self._semantic_adapter()
             if adapter is not None:
                 from datus_semantic_core.authoring import AuthoringNotSupportedError
 
                 try:
-                    source = adapter.read_metric_source(metric_name, subject_path=parent_path)
+                    source = await asyncio.to_thread(adapter.read_metric_source, metric_name, subject_path=parent_path)
                     return Result[MetricInfo](
                         success=True,
                         data=MetricInfo(name=metric_name, yaml=source.text),
@@ -723,15 +766,6 @@ class ExplorerService:
                     logger.warning(f"Adapter read_metric_source failed, using KB fallback: {e}")
 
             # Fallback: reconstruct MetricFlow-shaped YAML from the KB projection.
-            metrics_detail = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-
-            if not metrics_detail:
-                return Result[MetricInfo](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Metric not found: {metric_name}",
-                )
-
             metric_data = metrics_detail[0]
             yaml_dict = self._metric_db_to_yaml(metric_data)
             metric_yaml = yaml.dump(
@@ -1095,7 +1129,7 @@ class ExplorerService:
             # files: author them through the adapter (source of truth), then
             # re-index the changed file into the KB.
             if self._is_osi_authoring():
-                return self._author_osi_metric(parent_path, request.yaml, create=True)
+                return await asyncio.to_thread(self._author_osi_metric, parent_path, request.yaml, create=True)
 
             # Step 1: Parse YAML to extract metric name (only one document allowed)
             try:
@@ -1252,7 +1286,13 @@ class ExplorerService:
             # OSI: update the metric in place inside its semantic_model file via
             # the adapter, preserving datasets and sibling metrics.
             if self._is_osi_authoring():
-                return self._author_osi_metric(parent_path, request.yaml, create=False, metric_name=metric_name)
+                return await asyncio.to_thread(
+                    self._author_osi_metric,
+                    parent_path,
+                    request.yaml,
+                    create=False,
+                    metric_name=metric_name,
+                )
 
             # Step 1: Check if metric exists
             existing_metrics = self.metric_rag.get_metrics_detail(parent_path, metric_name)
@@ -1524,9 +1564,20 @@ class ExplorerService:
                     adapter = self._semantic_adapter()
                     if adapter is not None:
                         try:
-                            adapter.delete_metric_source(metric_name, subject_path=parent_path)
-                        except Exception as e:  # noqa: BLE001 - continue to KB cleanup
-                            logger.warning(f"Adapter delete_metric_source failed: {e}")
+                            await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+                        except Exception as e:  # noqa: BLE001
+                            # A real write failure must fail the request; only an
+                            # already-absent metric (file/KB drift) is benign,
+                            # otherwise the file keeps the metric while the KB row
+                            # is dropped and it "revives" on the next re-index.
+                            if await asyncio.to_thread(self._osi_metric_exists, adapter, metric_name, parent_path):
+                                logger.error(f"Failed to delete OSI metric from source file: {e}")
+                                return Result[dict](
+                                    success=False,
+                                    errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                                    errorMessage=f"Failed to remove metric from source file: {e}",
+                                )
+                            logger.warning(f"OSI metric already absent from source file, continuing: {e}")
 
                 result = self.metric_rag.delete_metric(parent_path, metric_name)
                 if not result.get("success", False):

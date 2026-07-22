@@ -1177,6 +1177,9 @@ class TestExplorerServiceOSIAuthoring:
             lambda *a, **k: True,
         )
         monkeypatch.setattr(svc, "_sync_osi_file_to_kb", lambda file_path: {"success": True})
+        # get_metric still gates on the KB row for scope/access control; the row
+        # content is irrelevant since the adapter supplies the returned YAML.
+        monkeypatch.setattr(svc.metric_rag, "get_metrics_detail", lambda parent, name, *a, **k: [{"name": name}])
 
     async def test_get_metric_returns_osi_native_yaml(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
@@ -1195,6 +1198,7 @@ class TestExplorerServiceOSIAuthoring:
     async def test_get_metric_falls_back_when_authoring_unsupported(self, real_agent_config, tmp_path, monkeypatch):
         from types import SimpleNamespace
 
+        import yaml
         from datus_semantic_core.authoring import AuthoringNotSupportedError
 
         class _NoAuthoring:
@@ -1206,12 +1210,43 @@ class TestExplorerServiceOSIAuthoring:
             "datus.tools.func_tool.semantic_tools.SemanticTools",
             lambda *a, **k: SimpleNamespace(adapter=_NoAuthoring()),
         )
+        # KB row exists (gate passes); adapter has no file source, so the
+        # response is reconstructed from the KB projection.
+        monkeypatch.setattr(
+            svc.metric_rag,
+            "get_metrics_detail",
+            lambda parent, name, *a, **k: [{"name": name, "metric_type": "simple", "base_measures": ["revenue"]}],
+        )
+
+        result = await svc.get_metric(["revenue", "daily_revenue"])
+        assert result.success is True
+        assert yaml.safe_load(result.data.yaml)["metric"]["name"] == "daily_revenue"
+
+    async def test_get_metric_not_found_when_kb_row_missing(self, real_agent_config, tmp_path, monkeypatch):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        # KB gate enforces scope: no row -> not found, even though the file has it.
         monkeypatch.setattr(svc.metric_rag, "get_metrics_detail", lambda *a, **k: [])
 
-        result = await svc.get_metric(["missing"])
-        # Fallback path ran and reported not-found from the KB projection.
+        result = await svc.get_metric(["wrong", "path", "daily_order_count"])
         assert result.success is False
         assert "not found" in result.errorMessage.lower()
+
+    async def test_create_metric_adapter_unavailable_fails(self, real_agent_config, monkeypatch):
+        from types import SimpleNamespace
+
+        from datus.api.models.explorer_models import EditMetricInput
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        monkeypatch.setattr("datus.agent.node.semantic_authoring.is_osi_authoring", lambda *a, **k: True)
+        monkeypatch.setattr(
+            "datus.tools.func_tool.semantic_tools.SemanticTools",
+            lambda *a, **k: SimpleNamespace(adapter=None),
+        )
+        result = await svc.create_metric(EditMetricInput(subject_path=["x"], yaml="name: m\ntype: aggregate\n"))
+        assert result.success is False
+        assert "adapter is not available" in result.errorMessage
 
     async def test_create_metric_writes_osi_file_and_syncs(self, real_agent_config, tmp_path, monkeypatch):
         import yaml
@@ -1303,3 +1338,83 @@ class TestExplorerServiceOSIAuthoring:
         assert result.success is True, result.errorMessage
         on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
         assert on_disk["semantic_model"][0]["metrics"] == []
+
+    async def test_create_metric_rolls_back_on_kb_sync_failure(self, real_agent_config, tmp_path, monkeypatch):
+        import yaml
+
+        from datus.api.models.explorer_models import EditMetricInput
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        # KB re-sync fails -> the newly created metric must be removed again.
+        monkeypatch.setattr(svc, "_sync_osi_file_to_kb", lambda file_path: {"success": False, "error": "boom"})
+
+        new_metric = (
+            "name: gross_revenue\n"
+            "description: revenue\n"
+            "expression:\n"
+            "  dialects:\n"
+            "    - dialect: STARROCKS\n"
+            "      expression: SUM(order_total)\n"
+            "custom_extensions:\n"
+            "  - vendor_name: DATUS\n"
+            '    data: \'{"dataset":"raw_orders"}\'\n'
+        )
+        result = await svc.create_metric(EditMetricInput(subject_path=["revenue"], yaml=new_metric))
+        assert result.success is False
+        assert "boom" in result.errorMessage
+        on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
+        names = [m["name"] for m in on_disk["semantic_model"][0]["metrics"]]
+        assert "gross_revenue" not in names  # rolled back
+
+    async def test_edit_metric_restores_previous_on_kb_sync_failure(self, real_agent_config, tmp_path, monkeypatch):
+        import yaml
+
+        from datus.api.models.explorer_models import EditMetricInput
+
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+        monkeypatch.setattr(svc, "_sync_osi_file_to_kb", lambda file_path: {"success": False, "error": "boom"})
+
+        edited = (
+            "name: daily_order_count\n"
+            "description: EDITED\n"
+            "expression:\n"
+            "  dialects:\n"
+            "    - dialect: STARROCKS\n"
+            "      expression: COUNT(DISTINCT id)\n"
+            "custom_extensions:\n"
+            "  - vendor_name: DATUS\n"
+            '    data: \'{"dataset":"raw_orders"}\'\n'
+        )
+        result = await svc.edit_metric(
+            EditMetricInput(subject_path=["operations", "daily", "daily_order_count"], yaml=edited)
+        )
+        assert result.success is False
+        on_disk = yaml.safe_load((tmp_path / "jeff_shop_live" / "jeff_shop_live.yml").read_text())
+        # Edit was reverted to the original description.
+        assert on_disk["semantic_model"][0]["metrics"][0]["description"] == "Daily order count."
+
+    async def test_delete_metric_real_write_failure_fails(self, real_agent_config, tmp_path, monkeypatch):
+        adapter = self._osi_adapter(tmp_path)
+        svc = ExplorerService(agent_config=real_agent_config)
+        self._wire(svc, monkeypatch, adapter)
+
+        # Simulate a real write failure: delete raises but the metric is still
+        # present in the file -> the request must fail (not silently drop the KB).
+        def boom(*a, **k):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(adapter, "delete_metric_source", boom)
+        kb_deleted = {"called": False}
+        monkeypatch.setattr(
+            svc.metric_rag, "delete_metric", lambda *a, **k: kb_deleted.update(called=True) or {"success": True}
+        )
+
+        result = await svc.delete_subject(
+            DeleteSubjectInput(type=SubjectNodeType.METRIC, subject_path=["operations", "daily", "daily_order_count"])
+        )
+        assert result.success is False
+        assert kb_deleted["called"] is False  # KB row not dropped when file delete failed
