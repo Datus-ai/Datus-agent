@@ -21,6 +21,7 @@ from pygments.styles.default import DefaultStyle
 from pygments.token import Token
 
 from datus.cli.cli_styles import AUTOCOMPLETE_TOKEN_COLORS
+from datus.cli.input_modes import InputMode
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.node_models import Metric, ReferenceSql, TableSchema
 from datus.tools.db_tools import connector_registry
@@ -1484,6 +1485,171 @@ class ServiceCommandCompleter(Completer):
                 text,
                 start_position=-len(last),
                 display=display,
+                style="class:keyword",
+            )
+
+
+class BangCompleter(Completer):
+    """Completer for ``!<tool>`` / ``!<plugin>`` commands.
+
+    Fires only when the current line starts with ``!`` and the input bar is in
+    CHAT mode (in SQL/bash mode a leading ``!`` is part of the statement, so the
+    completer stays silent). Composes with the other completers under
+    ``merge_completers`` because non-``!`` input yields nothing.
+
+    Three tiers:
+
+    1. ``!<partial>`` — tool names (listed first, per the tool-before-plugin
+       dispatch order) then plugin names, each tagged in ``display_meta``.
+    2. ``!<tool> --<partial>`` — the tool's ``params_json_schema`` flags plus
+       ``--help``.
+    3. ``!<plugin> <partial>`` — the plugin's declared subcommands;
+       ``!<plugin> <cmd> --<partial>`` — that subcommand's declared flags.
+    """
+
+    def __init__(self, cli: Any):
+        # Loose reference so we reach the lazily-built ``cli.bang_command``
+        # (tool/plugin enumeration) without pinning it at construction time.
+        self.cli = cli
+
+    def get_completions(self, document: Document, complete_event=None) -> Iterable[Completion]:
+        if getattr(self.cli, "input_mode", InputMode.CHAT) is not InputMode.CHAT:
+            return
+        line = document.current_line_before_cursor
+        stripped = line.lstrip()
+        if not stripped.startswith("!"):
+            return
+        bang = getattr(self.cli, "bang_command", None)
+        if bang is None:
+            return
+
+        body = stripped[1:]
+        if " " not in body:
+            yield from self._complete_names(body, bang)
+            return
+
+        first, _, rest = body.partition(" ")
+        tools = bang.tool_map(create=False)
+        if first in tools:
+            yield from self._complete_tool_args(tools[first], rest)
+            return
+        plugins = bang.plugin_map()
+        if first in plugins:
+            yield from self._complete_plugin_args(plugins[first], rest)
+
+    # ------------------------------------------------------------------ #
+    # Tier 1: tool + plugin names
+    # ------------------------------------------------------------------ #
+
+    def _complete_names(self, body: str, bang: Any) -> Iterable[Completion]:
+        typed = body.lower()
+        tools = bang.tool_map(create=False)
+        for name in sorted(tools):
+            if typed and not name.lower().startswith(typed):
+                continue
+            desc = (getattr(tools[name], "description", "") or "").strip().split("\n", 1)[0]
+            yield Completion(
+                f"{name} ",
+                start_position=-len(body),
+                display=f"!{name}",
+                display_meta=(f"tool · {desc}" if desc else "tool")[:60],
+                style="class:keyword",
+            )
+        plugins = bang.plugin_map()
+        for name in sorted(plugins):
+            if typed and not name.lower().startswith(typed):
+                continue
+            desc = plugins[name].description or ""
+            yield Completion(
+                f"{name} ",
+                start_position=-len(body),
+                display=f"!{name}",
+                display_meta=(f"plugin · {desc}" if desc else "plugin")[:60],
+                style="class:keyword",
+            )
+
+    # ------------------------------------------------------------------ #
+    # Tier 2: tool --flag completions
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _complete_tool_args(tool: Any, rest: str) -> Iterable[Completion]:
+        tokens = rest.split(" ")
+        last = tokens[-1] if tokens else ""
+        if not last.startswith("--"):
+            return
+        if "=" in last[2:]:
+            # Cursor is past the ``=``; value-level completion is out of scope.
+            return
+        props = (tool.params_json_schema or {}).get("properties") or {}
+        suggestions: List[Tuple[str, str]] = [("--help", "show parameter schema")]
+        for pname, pinfo in props.items():
+            if pname == "self":
+                continue
+            desc = pinfo.get("description", "") or "" if isinstance(pinfo, dict) else ""
+            suggestions.append((f"--{pname}=", desc))
+        for text, desc in suggestions:
+            if not text.startswith(last):
+                continue
+            display = f"{text}  {desc[:50]}" if desc else text
+            yield Completion(text, start_position=-len(last), display=display, style="class:keyword")
+
+    # ------------------------------------------------------------------ #
+    # Tier 3: plugin subcommand + --flag completions
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _complete_plugin_args(manifest: Any, rest: str) -> Iterable[Completion]:
+        commands = list(manifest.commands)
+        if not commands:
+            return
+        tokens = rest.split(" ")
+        # Walk the settled tokens (everything but the one under the cursor) down
+        # the command tree, descending into a matching subcommand at each level.
+        # ``node`` is the deepest matched command; ``level`` is the subcommands
+        # still selectable there. A settled token that names no subcommand is a
+        # positional value — descent stops (its args belong to ``node``).
+        node = None
+        level = commands
+        settled = tokens[:-1]
+        idx = 0
+        while idx < len(settled):
+            child = next((c for c in level if c.name == settled[idx]), None)
+            if child is None:
+                break
+            node, level = child, child.subcommands
+            idx += 1
+        matched_all = idx == len(settled)
+        last = tokens[-1]
+
+        if last.startswith("--"):
+            # Flag completion for the settled command (needs a matched leaf).
+            if node is None or "=" in last[2:]:
+                return
+            for arg in node.args:
+                if not arg.name.startswith("--"):
+                    continue
+                text = f"{arg.name}="
+                if not text.startswith(last):
+                    continue
+                desc = arg.description or ""
+                display = f"{text}  {desc[:50]}" if desc else text
+                yield Completion(text, start_position=-len(last), display=display, style="class:keyword")
+            return
+
+        # Subcommand-name completion at the current level — only while every
+        # settled token matched a subcommand (no positional value typed yet).
+        if not matched_all:
+            return
+        for command in sorted(level, key=lambda c: c.name):
+            if last and not command.name.startswith(last):
+                continue
+            desc = command.description or ""
+            yield Completion(
+                f"{command.name} ",
+                start_position=-len(last),
+                display=command.name,
+                display_meta=desc[:50],
                 style="class:keyword",
             )
 

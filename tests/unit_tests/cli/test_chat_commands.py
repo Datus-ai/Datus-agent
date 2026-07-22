@@ -4185,7 +4185,44 @@ class TestExecMessageBypass:
         monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda subagent_name=None: False)
         monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda subagent_name=None: False)
         chat_cmd.current_node = node
-        monkeypatch.setattr(chat_cmd, "create_node_input", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
+        monkeypatch.setattr(chat_cmd, "create_node_input", MagicMock(side_effect=RuntimeError("stop")))
 
         chat_cmd._execute_chat("what is @revenue", interactive=True)
         chat_cmd.cli.at_completer.parse_at_context.assert_called_once_with("what is @revenue")
+
+
+class TestEnsureNodeForBang:
+    """Lazy chat-node creation for the ``!<tool>`` handler."""
+
+    def test_creates_and_fully_mounts_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        assert cmds.current_node is None
+        fake_node = MagicMock()
+        with patch.object(cmds, "_create_new_node", return_value=fake_node):
+            node = cmds.ensure_node_for_bang()
+        assert node is fake_node
+        assert cmds.current_node is fake_node
+        assert cmds.current_subagent_name is None
+        # Base tools + the lazily-injected skill/bash/memory/web tools are mounted
+        # so the ``!`` list is complete.
+        fake_node.setup_tools.assert_called_once()
+        fake_node._ensure_lazy_tools_mounted.assert_called_once()
+
+    def test_creates_real_regular_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        node = cmds.ensure_node_for_bang()
+        # A regular (non-subagent) chat node is created and cached.
+        assert node.id == "chat_cli"
+        assert cmds.current_node is node
+
+    def test_reuses_existing_node(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        first = cmds._create_new_node()
+        cmds.current_node = first
+        assert cmds.ensure_node_for_bang() is first
+
+    def test_returns_none_on_construction_failure(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        with patch.object(cmds, "_create_new_node", side_effect=RuntimeError("boom")):
+            assert cmds.ensure_node_for_bang() is None
+        assert cmds.current_node is None

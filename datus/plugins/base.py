@@ -131,6 +131,42 @@ Only ``manifest_version`` is required — every other key is optional::
     # ``type: string`` with ``pattern``/``enum``; values containing
     # ``${ENV_VAR}`` placeholders are exempt from value-level validation.
 
+    commands:
+      - name: sync
+        description: "Sync tables from the source"
+        args:
+          - name: table
+            required: true
+            description: "table name"
+          - name: --limit
+            description: "max rows"
+      - name: dags                     # a command GROUP with nested subcommands
+        description: "DAG operations"
+        subcommands:
+          - name: trigger
+            description: "Trigger a DAG run"
+            args:
+              - name: dag_id
+                required: true
+              - name: --conf
+                description: "run configuration JSON"
+          - name: list
+            description: "List DAGs"
+    # Optional catalogue of the CLI subcommands the plugin's ``cli`` function
+    # accepts, used purely as DESCRIPTIVE metadata: the interactive REPL's
+    # ``!<plugin> ...`` completer lists these commands (drilling into nested
+    # subcommands token by token) and hints their argument names, and ``datus
+    # plugin info`` prints them. datus never parses plugin arguments on the
+    # plugin's behalf — the ``cli`` function still owns its own argument parsing,
+    # so keep this list in sync with what it accepts. Each entry has a ``name``
+    # (the command token) and an optional ``description``, ``args`` list, and
+    # nested ``subcommands`` list (same shape, for command groups like
+    # ``dags trigger``). Each arg has a ``name`` (positional like ``table`` or a
+    # flag like ``--limit``), optional ``required`` (bool, default false) and
+    # ``description``. A malformed command / arg / subcommand entry is warned
+    # about and dropped individually; nesting deeper than a few levels is
+    # rejected defensively.
+
 The whole plugin system is gated by ``agent.plugins_enabled`` (default
 ``true``) and by the project's ``plugins:`` whitelist in
 ``./.datus/config.yml``. Manifest parsing is defensive: a malformed section is
@@ -169,8 +205,40 @@ _MANIFEST_KEYS = frozenset(
         "system_prompt",
         "skills",
         "config_schema",
+        "commands",
     }
 )
+
+
+@dataclass(frozen=True)
+class PluginCommandArg:
+    """One declared argument of a :class:`PluginCommand` (descriptive only).
+
+    ``name`` is either a positional token (``table``) or a flag (``--limit``).
+    The plugin's own ``cli`` function still parses arguments; this metadata only
+    powers the ``!<plugin>`` completer, argument-name hints and ``datus plugin
+    info``.
+    """
+
+    name: str
+    required: bool = False
+    description: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PluginCommand:
+    """One CLI command a plugin's ``cli`` function accepts (descriptive).
+
+    ``subcommands`` models command groups (``dags`` → ``dags trigger``): the
+    ``!<plugin>`` completer and argument-name hint walk the token path one level
+    at a time, offering the subcommand menu until a leaf is reached, then that
+    leaf's ``args``. A command may carry both ``args`` and ``subcommands``.
+    """
+
+    name: str
+    description: Optional[str] = None
+    args: List[PluginCommandArg] = field(default_factory=list)
+    subcommands: List["PluginCommand"] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -192,6 +260,7 @@ class PluginManifest:
     system_prompt: Optional[str] = None
     skills: Optional[str] = None
     config_schema: Optional[Dict[str, Any]] = None
+    commands: List[PluginCommand] = field(default_factory=list)
 
 
 def parse_code_ref(ref: Any) -> Optional[Tuple[str, str]]:
@@ -284,6 +353,106 @@ def _parse_tool_transformers(data: Dict[str, Any], name: str) -> Dict[str, List[
     return normalized
 
 
+def _parse_command_args(raw_args: Any, name: str, command_name: str) -> List[PluginCommandArg]:
+    """Normalize a command's ``args`` list; drop malformed entries individually."""
+    if raw_args is None:
+        return []
+    if not isinstance(raw_args, list):
+        logger.warning("Plugin %r command %r `args` must be a list, got %r; ignoring.", name, command_name, raw_args)
+        return []
+    parsed: List[PluginCommandArg] = []
+    for entry in raw_args:
+        if not isinstance(entry, dict):
+            logger.warning("Plugin %r command %r has a non-mapping arg %r; skipping it.", name, command_name, entry)
+            continue
+        arg_name = entry.get("name")
+        if not isinstance(arg_name, str) or not arg_name.strip():
+            logger.warning(
+                "Plugin %r command %r has an arg without a valid `name` (%r); skipping it.",
+                name,
+                command_name,
+                arg_name,
+            )
+            continue
+        description = entry.get("description")
+        if description is not None and not isinstance(description, str):
+            description = None
+        parsed.append(
+            PluginCommandArg(
+                name=arg_name.strip(),
+                required=bool(entry.get("required", False)),
+                description=description.strip() if isinstance(description, str) and description.strip() else None,
+            )
+        )
+    return parsed
+
+
+# Guard against pathological / cyclic-looking manifests: real CLI trees are two
+# or three levels deep (``glue catalog create-table``), so stop recursing well
+# before anything absurd and drop deeper subcommands with a warning.
+_MAX_COMMAND_DEPTH = 6
+
+
+def _parse_command_entry(entry: Any, name: str, path: str, depth: int) -> Optional[PluginCommand]:
+    """Normalize one ``commands`` / ``subcommands`` entry (recursively).
+
+    ``path`` is the space-joined command prefix (e.g. ``"dags"``) used only for
+    log context; ``depth`` bounds recursion. Returns ``None`` for a malformed
+    entry so the caller can drop it while keeping its siblings.
+    """
+    if not isinstance(entry, dict):
+        logger.warning("Plugin %r manifest command %r is not a mapping; skipping it.", name, entry)
+        return None
+    command_name = entry.get("name")
+    if not isinstance(command_name, str) or not command_name.strip():
+        logger.warning("Plugin %r manifest has a command without a valid `name` (%r); skipping it.", name, entry)
+        return None
+    command_name = command_name.strip()
+    full_path = f"{path} {command_name}".strip()
+    description = entry.get("description")
+    description = description.strip() if isinstance(description, str) and description.strip() else None
+    subcommands = _parse_command_list(entry.get("subcommands"), name, full_path, depth + 1)
+    return PluginCommand(
+        name=command_name,
+        description=description,
+        args=_parse_command_args(entry.get("args"), name, full_path),
+        subcommands=subcommands,
+    )
+
+
+def _parse_command_list(raw: Any, name: str, path: str, depth: int) -> List[PluginCommand]:
+    """Normalize a list of command entries at ``path`` / ``depth``.
+
+    Invalid entries are warned about and dropped individually so one bad entry
+    never discards its siblings.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        label = f"command {path!r} `subcommands`" if path else "manifest `commands`"
+        logger.warning("Plugin %r %s must be a list, got %r; ignoring.", name, label, raw)
+        return []
+    if depth > _MAX_COMMAND_DEPTH:
+        logger.warning("Plugin %r command %r nests deeper than %d levels; dropping.", name, path, _MAX_COMMAND_DEPTH)
+        return []
+    parsed: List[PluginCommand] = []
+    for entry in raw:
+        command = _parse_command_entry(entry, name, path, depth)
+        if command is not None:
+            parsed.append(command)
+    return parsed
+
+
+def _parse_commands(data: Dict[str, Any], name: str) -> List[PluginCommand]:
+    """Normalize ``commands`` into a list of :class:`PluginCommand`.
+
+    Descriptive metadata only (see the module docstring). Command groups nest via
+    each entry's ``subcommands`` list; invalid commands / args / subcommands are
+    warned about and dropped individually.
+    """
+    return _parse_command_list(data.get("commands"), name, "", 1)
+
+
 def _parse_permissions(data: Dict[str, Any], name: str) -> Dict[str, Any]:
     """Shape-check ``permissions`` (must be a mapping); detail validation is
     deferred to ``collect_plugin_cli_permissions``."""
@@ -354,6 +523,7 @@ def parse_manifest(data: Any, name: str, package_dir: Path) -> Optional[PluginMa
         system_prompt=_parse_rel_path(data, "system_prompt", name),
         skills=_parse_rel_path(data, "skills", name),
         config_schema=_parse_config_schema(data, name),
+        commands=_parse_commands(data, name),
     )
 
 

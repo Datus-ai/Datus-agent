@@ -7,8 +7,11 @@
 from pathlib import Path
 
 from datus.plugins.base import (
+    _MAX_COMMAND_DEPTH,
     MANIFEST_FILENAME,
     MANIFEST_VERSION,
+    PluginCommand,
+    PluginCommandArg,
     PluginManifest,
     parse_code_ref,
     parse_manifest,
@@ -187,6 +190,172 @@ def test_parse_manifest_invalid_config_schema_dropped(caplog):
 def test_parse_manifest_non_dict_config_schema_dropped():
     manifest = parse_manifest({"manifest_version": 1, "config_schema": ["a"]}, "hello", PKG)
     assert manifest.config_schema is None
+
+
+# ---------------------------------------------------------------------------
+# parse_manifest — commands (descriptive CLI catalogue)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_manifest_commands_full():
+    data = {
+        "manifest_version": 1,
+        "commands": [
+            {
+                "name": "sync",
+                "description": "Sync tables",
+                "args": [
+                    {"name": "table", "required": True, "description": "table name"},
+                    {"name": "--limit", "description": "max rows"},
+                ],
+            },
+            {"name": "status"},
+        ],
+    }
+    manifest = parse_manifest(data, "hello", PKG)
+    assert manifest.commands == [
+        PluginCommand(
+            name="sync",
+            description="Sync tables",
+            args=[
+                PluginCommandArg(name="table", required=True, description="table name"),
+                PluginCommandArg(name="--limit", required=False, description="max rows"),
+            ],
+        ),
+        PluginCommand(name="status", description=None, args=[]),
+    ]
+
+
+def test_parse_manifest_commands_default_empty():
+    manifest = parse_manifest({"manifest_version": 1}, "hello", PKG)
+    assert manifest.commands == []
+
+
+def test_parse_manifest_commands_non_list_dropped(caplog):
+    with caplog.at_level("WARNING"):
+        manifest = parse_manifest({"manifest_version": 1, "commands": "sync"}, "hello", PKG)
+    assert manifest.commands == []
+
+
+def test_parse_manifest_commands_bad_entries_salvaged(caplog):
+    """A command without a valid name, and a malformed arg, are dropped
+    individually while the rest survives."""
+    data = {
+        "manifest_version": 1,
+        "commands": [
+            "not-a-dict",
+            {"description": "no name here"},
+            {
+                "name": "sync",
+                "args": [
+                    "not-a-dict",
+                    {"required": True},  # arg without name
+                    {"name": "table", "required": True},
+                ],
+            },
+        ],
+    }
+    with caplog.at_level("WARNING"):
+        manifest = parse_manifest(data, "hello", PKG)
+    assert manifest.commands == [
+        PluginCommand(name="sync", description=None, args=[PluginCommandArg(name="table", required=True)])
+    ]
+
+
+def test_parse_manifest_commands_non_list_args_dropped(caplog):
+    with caplog.at_level("WARNING"):
+        manifest = parse_manifest(
+            {"manifest_version": 1, "commands": [{"name": "sync", "args": "table"}]}, "hello", PKG
+        )
+    assert manifest.commands == [PluginCommand(name="sync")]
+
+
+def test_parse_manifest_commands_nested_subcommands():
+    """A command group nests subcommands (each with its own args) recursively."""
+    data = {
+        "manifest_version": 1,
+        "commands": [
+            {
+                "name": "dags",
+                "description": "DAG operations",
+                "subcommands": [
+                    {
+                        "name": "trigger",
+                        "args": [
+                            {"name": "dag_id", "required": True},
+                            {"name": "--conf", "description": "run config"},
+                        ],
+                    },
+                    {"name": "list"},
+                ],
+            }
+        ],
+    }
+    manifest = parse_manifest(data, "airflow", PKG)
+    assert manifest.commands == [
+        PluginCommand(
+            name="dags",
+            description="DAG operations",
+            args=[],
+            subcommands=[
+                PluginCommand(
+                    name="trigger",
+                    args=[
+                        PluginCommandArg(name="dag_id", required=True),
+                        PluginCommandArg(name="--conf", description="run config"),
+                    ],
+                ),
+                PluginCommand(name="list"),
+            ],
+        )
+    ]
+
+
+def test_parse_manifest_subcommands_bad_entries_salvaged(caplog):
+    """Malformed subcommand entries are dropped individually, siblings survive."""
+    data = {
+        "manifest_version": 1,
+        "commands": [
+            {
+                "name": "dags",
+                "subcommands": [
+                    "not-a-dict",
+                    {"description": "no name"},
+                    {"name": "list"},
+                ],
+            }
+        ],
+    }
+    with caplog.at_level("WARNING"):
+        manifest = parse_manifest(data, "airflow", PKG)
+    assert manifest.commands == [PluginCommand(name="dags", subcommands=[PluginCommand(name="list")])]
+
+
+def test_parse_manifest_subcommands_non_list_dropped(caplog):
+    with caplog.at_level("WARNING"):
+        manifest = parse_manifest(
+            {"manifest_version": 1, "commands": [{"name": "dags", "subcommands": "list"}]}, "airflow", PKG
+        )
+    assert manifest.commands == [PluginCommand(name="dags", subcommands=[])]
+
+
+def test_parse_manifest_subcommands_depth_capped(caplog):
+    """Nesting deeper than the recursion cap is dropped rather than parsed forever."""
+    # Build commands nested one level beyond the cap.
+    entry: dict = {"name": "leaf"}
+    for level in range(_MAX_COMMAND_DEPTH + 1):
+        entry = {"name": f"g{level}", "subcommands": [entry]}
+    with caplog.at_level("WARNING"):
+        manifest = parse_manifest({"manifest_version": 1, "commands": [entry]}, "deep", PKG)
+
+    # Walk down; the chain is truncated at the cap (deepest kept level has no subcommands).
+    node = manifest.commands[0]
+    depth = 1
+    while node.subcommands:
+        node = node.subcommands[0]
+        depth += 1
+    assert depth == _MAX_COMMAND_DEPTH
+    assert any("deeper than" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

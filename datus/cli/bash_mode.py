@@ -70,6 +70,25 @@ class _SqlToolStub:
     name = "execute_sql"
 
 
+class _ToolContextShim:
+    """Generic context shim for the ``!<tool>`` permission gate.
+
+    ``PermissionHooks.on_tool_start`` reads only ``context.tool_arguments`` (a
+    JSON string of the call arguments), so a manual tool invocation gets the same
+    category / SQL-class / bash-command gating an LLM-driven call would.
+    """
+
+    def __init__(self, args: Dict[str, Any]) -> None:
+        self.tool_arguments = json.dumps(args)
+
+
+class _ToolStub:
+    """Generic ``Tool`` stand-in: ``on_tool_start`` reads only ``.name``."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
 async def _apply_plugin_transformers(
     cli: "DatusCLI", tool_name: str, category: str, args: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -118,6 +137,13 @@ class SqlGateResult(BaseModel):
     transformer/policy-rewritten) statement to execute."""
 
     sql: str
+    approved: bool = False
+    error: Optional[str] = None
+
+
+class ToolGateResult(BaseModel):
+    """Outcome of the generic ``!<tool>`` permission gate."""
+
     approved: bool = False
     error: Optional[str] = None
 
@@ -498,6 +524,82 @@ def run_sql_gate(cli: "DatusCLI", sql: str) -> SqlGateResult:
     return result
 
 
+# ── Generic tool permission gate (``!<tool> [args...]``) ───────────────────
+
+
+async def _tool_gate_stream(
+    result: ToolGateResult,
+    hooks: "PermissionHooks",
+    tool_name: str,
+    args: Dict[str, Any],
+) -> AsyncGenerator[ActionHistory, None]:
+    """Run the permission gate for a manual ``!<tool>`` call.
+
+    Fires the same ``on_tool_start`` gate an LLM-driven call gets — the hook only
+    reads ``tool.name`` + ``context.tool_arguments``, so read tools auto-allow and
+    write/``execute_sql``/``bash`` calls hit their fine-grained confirmation. Sets
+    ``result.approved``; yields nothing (the tool executes + renders in the
+    caller). Plugin transformers are NOT applied here: unlike the SQL/bash gates
+    (which bypass the ``FunctionTool`` wrapper), ``!<tool>`` invokes the real
+    ``FunctionTool.on_invoke_tool``, which already runs any transformer middleware.
+    """
+    from datus.tools.permission.permission_hooks import PermissionDeniedException
+
+    try:
+        await hooks.on_tool_start(_ToolContextShim(args), None, _ToolStub(tool_name))
+        result.approved = True
+    except PermissionDeniedException as exc:
+        result.error = str(exc)
+    except InteractionCancelled:
+        result.error = "Permission prompt cancelled"
+    except Exception as exc:
+        logger.error(f"Tool permission gate failed for '{tool_name}': {exc}", exc_info=True)
+        result.error = str(exc)
+
+    return
+    yield  # pragma: no cover - unreachable, marks the function as a generator
+
+
+def run_tool_gate(cli: "DatusCLI", tool_name: str, args: Dict[str, Any]) -> ToolGateResult:
+    """Gate a manual ``!<tool>`` invocation through the same hooks an LLM call uses.
+
+    Returns a :class:`ToolGateResult` with ``approved`` set. Read-only tools
+    auto-allow with no prompt; write / ``execute_sql`` / ``bash`` tools prompt via
+    the embedded wizard. Fails closed (``approved=False`` with an actionable
+    error) when no permission config is loaded or the hook pipeline cannot be
+    built, matching the SQL/bash gates' posture.
+    """
+    result = ToolGateResult()
+    if getattr(cli.agent_config, "permissions_config", None) is None:
+        result.error = "Tool execution unavailable: no permission configuration loaded"
+        return result
+
+    try:
+        broker = InteractionBroker()
+        hooks = _build_permission_hooks(cli, broker)
+    except Exception as exc:
+        logger.error(f"Failed to prepare tool gate: {exc}", exc_info=True)
+        result.error = f"Tool gate unavailable: {exc}"
+        return result
+
+    collector = _make_input_collector(cli)
+
+    async def _drive() -> None:
+        broker.reset_queue()
+        async for action in merge_interaction_stream(_tool_gate_stream(result, hooks, tool_name, args), broker):
+            if action.role == ActionRole.INTERACTION and action.status == ActionStatus.PROCESSING:
+                answers = await asyncio.to_thread(collector, action, cli.console)
+                await broker.submit(action.action_id, answers)
+
+    try:
+        asyncio.run(_drive())
+    except Exception as exc:
+        logger.error(f"Tool gate failed for '{tool_name}': {exc}", exc_info=True)
+        if result.error is None:
+            result.error = str(exc)
+    return result
+
+
 # ── Live execution frame (blinking ``running`` → result block) ─────────────
 
 
@@ -607,3 +709,39 @@ def run_manual_sql_live(cli: "DatusCLI", command: str, execute_fn: Callable[[str
         return payload, True
 
     return _run_with_live_frame(cli, "sql", command, _work)
+
+
+def run_manual_tool_live(
+    cli: "DatusCLI",
+    tool_name: str,
+    command: str,
+    args: Dict[str, Any],
+    invoke_fn: Callable[[], tuple],
+) -> tuple:
+    """Run a ``!<tool>`` call with a live frame; return ``(payload, dispatch)``.
+
+    Reuses :func:`run_tool_gate` for the permission gate (identical to an LLM
+    ``on_tool_start``), then calls ``invoke_fn`` — a ``() -> (success, output)``
+    closure that performs ``on_invoke_tool`` and renders the result to text.
+    Denials render their reason and are not dispatched; a successful or
+    tool-failed execution (and an unexpected invocation error) is packed into a
+    ``tool`` payload and dispatched to the model so the run enters the
+    conversation and triggers a reply.
+    """
+    from datus.cli.manual_exec import build_tool_payload
+
+    def _work():
+        gate = run_tool_gate(cli, tool_name, args)
+        if not gate.approved:
+            denial = _trim_denial(gate.error or f"Tool '{tool_name}' not permitted")
+            return build_tool_payload(command, False, "", denial, 0.0), False
+        start = time.monotonic()
+        try:
+            success, output = invoke_fn()
+        except Exception as exc:  # noqa: BLE001 - surface the failure to the model
+            logger.exception("Manual tool invocation failed for '%s'", tool_name)
+            return build_tool_payload(command, False, "", str(exc), time.monotonic() - start), True
+        duration = time.monotonic() - start
+        return build_tool_payload(command, success, output, None if success else output, duration), True
+
+    return _run_with_live_frame(cli, "tool", command, _work)

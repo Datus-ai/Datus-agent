@@ -45,6 +45,7 @@ from datus.cli._cli_utils import prompt_input
 from datus.cli.agent_commands import AgentCommands
 from datus.cli.autocomplete import (
     AtReferenceCompleter,
+    BangCompleter,
     CustomPygmentsStyle,
     CustomSqlLexer,
     ServiceCommandCompleter,
@@ -104,9 +105,10 @@ _BANNER_MIN_WIDTH = 60
 class CommandType(Enum):
     """Type of command entered by the user."""
 
-    SQL = "sql"  # Regular SQL statement (SQL mode, or ``!<sql>`` in the non-TUI fallback)
+    SQL = "sql"  # Regular SQL statement (SQL mode)
     BASH = "bash"  # shell command (bash mode), run through the permission-gated bash tool
     SLASH = "slash"  # /command (session / metadata / context / agent / system)
+    BANG = "bang"  # ``!<tool>`` / ``!<plugin>`` — run a tool or plugin CLI directly
     CHAT = "chat"  # bare text routed to the default agent
     EXIT = "exit"  # exit/quit command
     UNKNOWN = "unknown"  # unrecognized /command or renamed legacy prefix
@@ -290,8 +292,10 @@ class DatusCLI:
         self.session_summarize_commands = SessionSummarizeCommands(self)
         self.memory_organize_commands = MemoryOrganizeCommands(self)
         self.service_commands = ServiceCommands(self)
+        from datus.cli.bang_command import BangCommand
         from datus.cli.datasource_commands import DatasourceCommands
 
+        self.bang_command = BangCommand(self)
         self.datasource_commands = DatasourceCommands(self)
 
         from datus.cli.background_sync import BackgroundSchemaSyncManager
@@ -739,6 +743,9 @@ class DatusCLI:
             # are queued for the next LLM turn (via the OpenAI Agents SDK
             # ``call_model_input_filter`` hook) instead of being dropped.
             pending_input_provider=self._active_pending_input_queue,
+            # Dim ``<arg> [--opt]`` hint rendered after the input while typing a
+            # ``!<tool>`` / ``!<plugin>`` command (see ``BangCommand.param_hint``).
+            param_hint_fn=self._bang_param_hint,
         )
 
         # Now that the Application exists, wire the buffer's ``on_change``
@@ -908,8 +915,8 @@ class DatusCLI:
         self.session = PromptSession(
             history=self.history,
             auto_suggest=AutoSuggestFromHistory(),
-            # No SQL highlighting in the non-TUI fallback — SQL runs via the
-            # ``!<sql>`` one-shot prefix, and plain input is model chat.
+            # No SQL highlighting in the non-TUI fallback — plain input is model
+            # chat, ``!<tool>`` runs a tool/plugin, and ``/`` runs a command.
             lexer=None,
             completer=self.create_combined_completer(),
             multiline=True,
@@ -938,12 +945,14 @@ class DatusCLI:
             visibility_provider=self._visible_subagents_for_default,
         )  # Router for @Table / @Metrics / @Sql / @Agent inline references
         self.slash_completer = SlashCommandCompleter()
+        self.bang_completer = BangCompleter(self)
 
         # Use merge_completers to combine completers
         from prompt_toolkit.completion import merge_completers
 
         return merge_completers(
             [
+                self.bang_completer,  # !<tool> / !<plugin> completer (bound to the ! prefix)
                 self.service_completer,  # .<service>.<method> dispatcher completer (highest priority)
                 self.slash_completer,  # Top-level slash commands
                 self.at_completer,  # @Table / @Metrics / @Sql inline references
@@ -995,6 +1004,8 @@ class DatusCLI:
                 self._execute_sql_mode(args)
             elif cmd_type == CommandType.BASH:
                 self._execute_bash_mode(args)
+            elif cmd_type == CommandType.BANG:
+                self._execute_bang_command(args)
             elif cmd_type == CommandType.SLASH:
                 slash_result = self._execute_slash_command(cmd, args)
                 # ``/rewind`` sets ``_prefill_input`` from inside the handler.
@@ -1201,6 +1212,7 @@ class DatusCLI:
             self._pre_load_storage()
             self._workflow_runner = self._create_workflow_runner()
             self._maybe_schedule_startup_sync()
+            self._warm_bang_node()
             # self.console.print("[dim]Agent initialized successfully in background[/]")
         except Exception as e:
             self.console.print(f"[red]Error:[/]Failed to initialize agent in background: {str(e)}")
@@ -1232,6 +1244,22 @@ class DatusCLI:
                 self.startup_warnings.append(warning)
                 logger.warning("REPL context autocomplete preload failed: %s", warning)
                 print_warning(self.console, warning)
+
+    def _warm_bang_node(self) -> None:
+        """Eagerly build the default chat node during background init so ``!``
+        autocomplete can list the agent's tools before the first chat turn.
+
+        ``current_node`` is otherwise created lazily on the first chat, leaving
+        the ``!<tool>`` completer (which reads the live node's tools without
+        forcing creation, to stay non-blocking) with nothing to show until then.
+        Warming here mounts the full tool set on the same node the first chat
+        reuses. Best-effort — a failure only degrades the ``!`` list, so it must
+        never break agent init.
+        """
+        try:
+            self.chat_commands.ensure_node_for_bang()
+        except Exception as exc:  # noqa: BLE001 - warming is best-effort
+            logger.debug("Bang-node warm skipped: %s", exc)
 
     def _maybe_schedule_startup_sync(self) -> None:
         """Kick off a one-shot background metadata sync for the default
@@ -1621,6 +1649,7 @@ class DatusCLI:
             Tuple ``(command_type, command, arguments)``:
 
             * ``SQL``    — ``command`` empty, ``arguments`` is the raw SQL
+            * ``BANG``   — ``command`` empty, ``arguments`` is the text after ``!``
             * ``SLASH``  — ``command`` is the canonical ``"/name"`` (aliases resolved)
             * ``CHAT``   — ``command`` is the default agent, ``arguments`` is the message
             * ``EXIT``   — both empty
@@ -1630,27 +1659,23 @@ class DatusCLI:
         text = text.strip()
         bash_mode = self.input_mode is InputMode.BASH
 
-        # Trailing ``;`` is only normalized on the SQL paths (SQL mode and the
-        # ``!<sql>`` chat prefix), where it is a redundant statement terminator.
-        # Chat keeps it (``Explain this;`` must reach the model verbatim) and
-        # bash keeps it (a trailing ``;`` is legal shell syntax).
+        # Trailing ``;`` is only normalized on the SQL path (SQL mode), where it
+        # is a redundant statement terminator. Chat keeps it (``Explain this;``
+        # must reach the model verbatim) and bash keeps it (a trailing ``;`` is
+        # legal shell syntax).
 
         # Exit: bare ``exit`` / ``quit`` still work; ``/exit`` and ``/quit`` flow
         # through the SLASH branch via the registry's alias map.
         if text.lower() in ("exit", "quit"):
             return CommandType.EXIT, "", ""
 
-        # ``!`` prefix, chat mode only. In the TUI ``!<sql>`` typed in chat
-        # mode runs the remainder as a one-shot SQL statement, and the non-TUI
-        # PromptSession fallback (which has no mode cycling) relies on it as
-        # its only route to SQL execution. In SQL/bash mode a leading ``!`` is
-        # part of the statement (e.g. bash history expansion), so the prefix
-        # is not interpreted there.
+        # ``!`` prefix, chat mode only: run one of the agent's tools directly
+        # (``!list_tables``) or an installed plugin's CLI (``!hello sync``),
+        # dispatched by :class:`datus.cli.bang_command.BangCommand` (tools match
+        # first). In SQL/bash mode a leading ``!`` is part of the statement
+        # (e.g. bash history expansion), so the prefix is not interpreted there.
         if text.startswith("!") and self.input_mode is InputMode.CHAT:
-            sql = text[1:].strip()
-            if sql.endswith(";"):
-                sql = sql[:-1].strip()
-            return CommandType.SQL, "", sql
+            return CommandType.BANG, "", text[1:].strip()
 
         # Slash commands (/prefix). ``/<agent> <msg>`` was removed — agent
         # selection is now exclusively handled by ``/agent``. Unknown tokens
@@ -1702,8 +1727,7 @@ class DatusCLI:
             return CommandType.BASH, "", text
 
         # Default: route free-form text to the model. SQL is never auto-detected
-        # — the user opts into execution explicitly via SQL mode (or ``!<sql>``
-        # in the non-TUI fallback).
+        # — the user opts into execution explicitly via SQL mode.
         return CommandType.CHAT, self.default_agent, text.strip()
 
     def _execute_sql_mode(self, sql: str) -> None:
@@ -1888,6 +1912,26 @@ class DatusCLI:
         payload, dispatch = run_manual_bash_live(self, command)
         if dispatch and payload is not None:
             self._send_exec_turn(payload)
+
+    def _execute_bang_command(self, text: str) -> None:
+        """Run a ``!<tool>`` / ``!<plugin>`` command via :class:`BangCommand`.
+
+        Tools are gated + invoked directly and rendered locally; plugins run in a
+        ``datus <plugin> ...`` subprocess. Neither is fed back to the model.
+        """
+        self.bang_command.dispatch(text)
+
+    def _bang_param_hint(self, text: str) -> str:
+        """Argument-name hint for the live input, consumed by the TUI's
+        ``AfterInput`` processor. ``""`` while typing the tool/plugin name.
+
+        Late-bound wrapper so ``self.bang_command`` need not exist when the app
+        is constructed.
+        """
+        bang = getattr(self, "bang_command", None)
+        if bang is None:
+            return ""
+        return bang.param_hint(text)
 
     # ── manual-execution chat turn ────────────────────────────────────────
 

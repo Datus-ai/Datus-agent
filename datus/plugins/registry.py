@@ -26,7 +26,13 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
-from datus.plugins.base import MANIFEST_FILENAME, PluginManifest, parse_code_ref, read_manifest_file
+from datus.plugins.base import (
+    MANIFEST_FILENAME,
+    PluginCommand,
+    PluginManifest,
+    parse_code_ref,
+    read_manifest_file,
+)
 from datus.plugins.prompt import render_plugin_prompt
 from datus.utils.loggings import get_logger
 
@@ -665,6 +671,33 @@ def plugin_config_schema(name: str) -> List[Dict[str, Any]]:
     required = manifest.config_schema.get("required")
     required_names = {entry for entry in required if isinstance(entry, str)} if isinstance(required, list) else set()
     return _flatten_schema_properties(name, properties, required_names)
+
+
+def iter_plugin_manifests() -> List[Tuple[str, PluginManifest]]:
+    """Return ``(name, manifest)`` for every installed plugin with a valid manifest.
+
+    Skips entry points whose name is missing or whose manifest was rejected
+    during loading. Backed by the process-level manifest cache, so callers such
+    as the ``!<plugin>`` completer can enumerate plugins cheaply. Never raises.
+    """
+    out: List[Tuple[str, PluginManifest]] = []
+    for name, manifest in _loaded_manifests():
+        if isinstance(name, str) and name and manifest is not None:
+            out.append((name, manifest))
+    return out
+
+
+def plugin_commands(name: str) -> List[PluginCommand]:
+    """Return the declarative CLI ``commands`` from plugin ``name``'s manifest.
+
+    Descriptive metadata used by the ``!<plugin>`` completer / argument hints and
+    ``datus plugin info`` — never used to parse the plugin's arguments. Returns an
+    empty list when the plugin is unknown or declares no commands. Never raises.
+    """
+    manifest = load_plugin_manifest(name)
+    if manifest is None:
+        return []
+    return list(manifest.commands)
 
 
 def plugin_validate_profile(name: str, profile: Dict[str, Any]) -> List[str]:
