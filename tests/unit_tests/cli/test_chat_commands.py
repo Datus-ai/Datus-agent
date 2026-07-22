@@ -75,6 +75,14 @@ class MinimalCLI:
     def _print_welcome(self):
         """No-op stand-in for the real banner printer."""
 
+    def _cycle_permission_mode(self):
+        """No-op stand-in for the Ctrl+P permission-cycle shortcut handler.
+
+        ``ChatCommands._streaming_key_callbacks`` binds this as the Ctrl+P
+        mid-stream callback, so the substitute CLI must expose it or every
+        streaming turn raises ``AttributeError``.
+        """
+
     def run_on_bg_loop(self, coro):
         """Simple synchronous stand-in for ``DatusCLI.run_on_bg_loop``.
 
@@ -202,6 +210,17 @@ class TestChatCommandsInit:
         assert cmds.current_subagent_name is None
         assert cmds.chat_history == []
         assert cmds.last_actions == []
+
+    def test_streaming_ctrl_p_cycles_permission_mode(self, real_agent_config, mock_llm_create):
+        cmds = _make_chat_commands(real_agent_config)
+        cmds.cli._cycle_permission_mode = MagicMock()
+        streaming_ctx = MagicMock()
+
+        callbacks = cmds._streaming_key_callbacks(streaming_ctx)
+        callbacks[b"\x10"]()
+
+        cmds.cli._cycle_permission_mode.assert_called_once_with()
+        assert callbacks[b"\x0f"] == streaming_ctx.toggle_verbose
 
 
 # ===========================================================================

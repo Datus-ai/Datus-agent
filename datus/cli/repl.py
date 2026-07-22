@@ -388,6 +388,12 @@ class DatusCLI:
         """Create custom key bindings for the REPL."""
         kb = KeyBindings()
 
+        @kb.add("c-p")
+        def _(event):
+            """Ctrl+P: cycle the active permission profile."""
+            self._cycle_permission_mode()
+            event.app.invalidate()
+
         @kb.add("tab")
         def _(event):
             """Tab confirms the highlighted completion (arrow keys navigate)."""
@@ -802,6 +808,17 @@ class DatusCLI:
             already reflects the state, so a single ``invalidate`` suffices.
             """
             self.plan_mode_active = not self.plan_mode_active
+            event.app.invalidate()
+
+        @self.tui_app.key_bindings.add("c-p", eager=True)
+        def _c_p(event):  # noqa: ANN001
+            """Ctrl+P: cycle normal → auto → dangerous → normal.
+
+            The persistent TUI continues receiving input while an agent turn
+            is running, so the new profile takes effect for subsequent tool
+            permission checks without interrupting the conversation.
+            """
+            self._cycle_permission_mode()
             event.app.invalidate()
 
         @self.tui_app.key_bindings.add("c-o")
@@ -2090,14 +2107,41 @@ class DatusCLI:
         ``dangerous`` triggers a second confirmation every session
         transition per spec decision #5.
         """
-        from datus.tools.permission.permission_config import PermissionConfig
-        from datus.tools.permission.profiles import PROFILE_NAMES, build_effective_config, get_profile
-
         current = getattr(self.agent_config, "active_profile_name", self.active_profile)
         choice = self._run_profile_picker(current, notice=notice)
 
         if choice is None:
             return
+
+        DatusCLI._switch_permission_profile(self, choice, confirm_dangerous=True, announce=True)
+
+    def _cycle_permission_mode(self) -> None:
+        """Advance the permission profile without opening a modal picker.
+
+        This is the Ctrl+P shortcut path.  Reaching ``dangerous`` requires a
+        deliberate key press from ``auto``; keeping it modal-free is what
+        allows the shortcut to work while a conversation is running.
+        """
+        from datus.tools.permission.profiles import PROFILE_NAMES
+
+        current = getattr(self.agent_config, "active_profile_name", self.active_profile)
+        try:
+            next_index = (PROFILE_NAMES.index(current) + 1) % len(PROFILE_NAMES)
+        except ValueError:
+            next_index = 0
+        DatusCLI._switch_permission_profile(
+            self,
+            PROFILE_NAMES[next_index],
+            confirm_dangerous=False,
+            announce=False,
+        )
+
+    def _switch_permission_profile(self, choice: str, *, confirm_dangerous: bool, announce: bool) -> None:
+        """Apply *choice* to config and the live node's permission manager."""
+        from datus.tools.permission.permission_config import PermissionConfig
+        from datus.tools.permission.profiles import PROFILE_NAMES, build_effective_config, get_profile
+
+        current = getattr(self.agent_config, "active_profile_name", self.active_profile)
 
         if choice not in PROFILE_NAMES:
             print_error(self.console, f"Unknown profile: {choice}")
@@ -2108,7 +2152,7 @@ class DatusCLI:
             return
 
         # Dangerous second confirmation — every session transition re-confirms.
-        if choice == "dangerous":
+        if choice == "dangerous" and confirm_dangerous:
             confirmed = self._run_dangerous_confirm()
             if not confirmed:
                 print_warning(self.console, "Dangerous mode cancelled.")
@@ -2178,8 +2222,9 @@ class DatusCLI:
         # not take effect for manual runs). Node-owned managers are switched
         # in place above.
         self._cli_bash_permission_manager = None
-        print_success(self.console, f"Profile switched: {current} → {choice}")
-        print_info(self.console, f"Session approvals cleared (was: {prior_approvals})")
+        if announce:
+            print_success(self.console, f"Profile switched: {current} → {choice}")
+            print_info(self.console, f"Session approvals cleared (was: {prior_approvals})")
 
     def catalogs_callback(self, selected_path: str = "", selected_data: Optional[Dict[str, Any]] = None):
         if not selected_path:

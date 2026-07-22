@@ -14,7 +14,7 @@ import platform
 import re
 import subprocess
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, Tuple
 
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -133,6 +133,13 @@ class ChatCommands:
         # streamed since the last finished turn. ``None`` while idle; reset
         # when each turn completes so a stale reference never re-renders.
         self._current_incremental_actions: Optional[List[ActionHistory]] = None
+
+    def _streaming_key_callbacks(self, streaming_ctx) -> dict[bytes, Callable[[], None]]:
+        """Return shortcuts handled by the legacy mid-stream stdin listener."""
+        return {
+            b"\x0f": streaming_ctx.toggle_verbose,
+            b"\x10": self.cli._cycle_permission_mode,
+        }
 
     def update_chat_node_tools(self):
         """Update current node tools when datasource/database changes."""
@@ -681,7 +688,7 @@ class ChatCommands:
                 # In TUI mode the persistent prompt_toolkit Application owns
                 # stdin, so the termios-based ``interrupt_on_escape`` listener
                 # would fight the main input loop. Skip it and rely on
-                # dedicated ESC / Ctrl+O key bindings registered on the TUI
+                # dedicated ESC / Ctrl+O / Ctrl+P key bindings registered on the TUI
                 # (see ``DatusCLI._init_tui_app``), which consult this
                 # streaming_ctx and the node's interrupt_controller directly.
                 if getattr(self.cli, "_use_tui", False):
@@ -689,10 +696,10 @@ class ChatCommands:
                 else:
                     esc_cm = interrupt_on_escape(
                         current_node.interrupt_controller,
-                        key_callbacks={b"\x0f": streaming_ctx.toggle_verbose},
+                        key_callbacks=self._streaming_key_callbacks(streaming_ctx),
                     )
 
-                # Publish the streaming context so the TUI Ctrl+O / ESC
+                # Publish the streaming context so the TUI Ctrl+O / Ctrl+P / ESC
                 # bindings can locate it while the agent runs.
                 self.current_streaming_ctx = streaming_ctx
                 try:

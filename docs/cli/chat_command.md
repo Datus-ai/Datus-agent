@@ -64,6 +64,10 @@ After an interrupt, the session remains intact — you can continue typing new i
 
 Press **Ctrl+O** while the agent is running to toggle the trace display mode between **compact** (progress only) and **verbose** (full step details). This lets you control how much detail you see during execution without interrupting the agent.
 
+### Switch Permission Mode
+
+Press **Ctrl+P** to cycle the permission mode through **normal → auto → dangerous → normal**. The shortcut remains active while the agent is running, and the new mode applies to subsequent tool permission checks in the current conversation.
+
 ### Mid-run Message Insertion
 
 While the agent is running, you don't have to wait for it to finish before adding more context. Type into the input box and press **Enter** — the text is queued and delivered to the model right before its next LLM turn, so it influences the run already in progress rather than starting a new one.
