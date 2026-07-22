@@ -285,6 +285,12 @@ class MetricStorage(BaseSubjectEmbeddingStore):
             if existing_name not in names:
                 continue
             incoming = next(metric for metric in metrics if normalize_metric_name(metric.get("name")) == existing_name)
+            # Same id == same metric identity (ids are name-derived): a re-sync
+            # legitimately overwrites it in place — including a changed
+            # definition — since the YAML file is the source of truth. Only a
+            # *different* id sharing the name is a genuine identity collision.
+            if existing.get("id") == incoming.get("id"):
+                continue
             conflict_field = metric_definition_conflict(existing, incoming)
             if conflict_field:
                 raise ValueError(
@@ -292,7 +298,7 @@ class MetricStorage(BaseSubjectEmbeddingStore):
                     f"existing metric id '{existing.get('id')}' has a different '{conflict_field}'. "
                     "Choose a more specific metric name or update the existing metric explicitly."
                 )
-            if existing.get("id") and existing.get("id") != incoming.get("id"):
+            if existing.get("id"):
                 stale_duplicate_ids.append(str(existing["id"]))
 
         return stale_duplicate_ids

@@ -78,6 +78,187 @@ class ExplorerService:
                 message_args={"error_message": "No datasource is selected; select a datasource first"},
             )
 
+    def _is_osi_authoring(self) -> bool:
+        """Whether the active semantic adapter authors OSI (vs MetricFlow)."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        return bool(is_osi_authoring(self.agent_config))
+
+    def _semantic_adapter(self):
+        """Resolve the configured semantic adapter, or None if unavailable.
+
+        The adapter reads/writes the YAML source of truth (the authoring
+        surface is a backend-only API, not an agent/LLM tool).
+        """
+        from datus.tools.func_tool.semantic_tools import SemanticTools
+
+        try:
+            return SemanticTools(self.agent_config).adapter
+        except Exception as e:  # noqa: BLE001 - adapter is optional; fall back to KB
+            logger.warning(f"Semantic adapter unavailable: {e}")
+            return None
+
+    @staticmethod
+    def _metric_name_from_yaml(yaml_text: str) -> Optional[str]:
+        """Extract the metric name from OSI (top-level) or MetricFlow ({metric:}) YAML."""
+        import yaml
+
+        try:
+            doc = yaml.safe_load(yaml_text)
+        except yaml.YAMLError:
+            return None
+        if not isinstance(doc, dict):
+            return None
+        if isinstance(doc.get("metric"), dict):
+            return doc["metric"].get("name")
+        return doc.get("name")
+
+    def _sync_file_to_kb(self, is_osi: bool, file_path: str) -> dict:
+        """Re-index a semantic source file into the Knowledge Base.
+
+        The authoring adapter only writes the YAML file; the KB is a derived
+        index that must be re-synced through the format's own entry point —
+        the OSI vectorizer or the MetricFlow GenerationHooks sync.
+        """
+        if is_osi:
+            from datus.tools.func_tool.generation_tools import GenerationTools
+
+            return GenerationTools(self.agent_config).sync_osi_to_db(file_path)
+
+        from datus.cli.generation_hooks import GenerationHooks
+
+        return GenerationHooks._sync_semantic_to_db(
+            file_path,
+            self.agent_config,
+            include_semantic_objects=False,
+            include_metrics=True,
+        )
+
+    @staticmethod
+    def _is_metric_absent_error(exc: Exception) -> bool:
+        """Whether a delete failure means the metric simply isn't in the source
+        file (benign file/KB drift) rather than a real I/O / lock / parse failure.
+
+        Both adapters raise a not-found error whose message contains
+        ``was not found`` (``FileNotFoundError`` for MetricFlow, the OSI error
+        class for OSI). Anything else is a real failure and must not be treated
+        as "already gone", or we would drop the KB row while the file still
+        holds the metric (the file is the source of truth)."""
+        return isinstance(exc, FileNotFoundError) or "was not found" in str(exc)
+
+    def _author_metric(
+        self,
+        parent_path: List[str],
+        metric_yaml: str,
+        *,
+        create: bool,
+        metric_name: Optional[str] = None,
+    ) -> "Result[dict]":
+        """Validate + write a metric to its source file, then re-index the KB.
+
+        Format-agnostic orchestration shared by create/edit for OSI and
+        MetricFlow: the adapter owns file placement/structure (source of truth),
+        this method handles name resolution, the validation gate, the
+        format-aware KB re-sync, and rollback so the file and the KB never drift
+        (a failed create is deleted, a failed edit is restored).
+
+        Validation depth is format-specific: OSI is fully validated inside the
+        adapter write (jsonschema + profile parse, before persisting), while
+        MetricFlow is validated with the real MetricFlow model validator on the
+        written file, rolling back if it fails.
+
+        Runs synchronously (file I/O + KB embedding); callers off the event loop
+        should invoke it via ``asyncio.to_thread``.
+        """
+        from datus.api.models.config_models import ErrorCode
+
+        adapter = self._semantic_adapter()
+        if adapter is None:
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                errorMessage="Semantic adapter is not available; cannot author this metric.",
+            )
+
+        name = metric_name or self._metric_name_from_yaml(metric_yaml)
+        if not name:
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.INVALID_PARAMETERS,
+                errorMessage="No metric name found in YAML content.",
+            )
+
+        is_osi = self._is_osi_authoring()
+
+        # Snapshot current content so an edit can be rolled back on later failure
+        # (a create rolls back by deleting).
+        previous_source = None
+        if not create:
+            try:
+                previous_source = adapter.read_metric_source(name, subject_path=parent_path)
+            except Exception as e:  # noqa: BLE001 - restore is best-effort
+                logger.warning(f"Could not snapshot metric before edit; rollback disabled: {e}")
+
+        # Write the file. OSI validates fully inside write (raises before
+        # persisting); MetricFlow does a light structural check here and the
+        # real model validation runs on the written file below.
+        try:
+            # Empty parent_path (root-level metric) means "no categorization" —
+            # pass None so the adapter does not inject an empty subject tag.
+            mutation = adapter.write_metric_source(name, metric_yaml, subject_path=(parent_path or None), create=create)
+        except Exception as e:  # noqa: BLE001 - surface adapter write/validation errors
+            logger.error(f"Failed to write metric source: {e}")
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.INVALID_PARAMETERS,
+                errorMessage=str(e),
+            )
+
+        # MetricFlow: run the real (model-level) validation on the written file
+        # and roll back if it fails, preserving the legacy validation strength.
+        if not is_osi:
+            try:
+                with open(mutation.file_path, encoding="utf-8") as f:
+                    written = f.read()
+            except OSError as e:
+                written = None
+                logger.warning(f"Could not re-read written metric file for validation: {e}")
+            if written is not None:
+                is_valid, error_messages = self._validate_metric_yaml(written, mutation.file_path)
+                if not is_valid:
+                    self._rollback_metric_write(adapter, name, parent_path, create, previous_source)
+                    return Result[dict](
+                        success=False,
+                        errorCode=ErrorCode.INVALID_PARAMETERS,
+                        errorMessage=f"YAML validation failed: {'; '.join(error_messages)}",
+                    )
+
+        # Re-index the changed file into the KB. On failure, undo the write so
+        # the file and the KB stay consistent.
+        sync_result = self._sync_file_to_kb(is_osi, mutation.file_path)
+        if not sync_result.get("success", False):
+            self._rollback_metric_write(adapter, name, parent_path, create, previous_source)
+            return Result[dict](
+                success=False,
+                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                errorMessage=sync_result.get("error", "Failed to sync metric to Knowledge Base"),
+            )
+
+        logger.info(f"Successfully {'created' if create else 'edited'} metric: {name}")
+        return Result[dict](success=True, data={})
+
+    @staticmethod
+    def _rollback_metric_write(adapter, name, parent_path, create, previous_source) -> None:
+        """Undo a metric write after a failed validation or KB re-sync."""
+        try:
+            if create:
+                adapter.delete_metric_source(name, subject_path=parent_path)
+            elif previous_source is not None:
+                # Restore the exact prior content; subject_path=None so no tag is re-injected.
+                adapter.write_metric_source(name, previous_source.text, subject_path=None, create=False)
+        except Exception as rollback_error:  # noqa: BLE001
+            logger.error(f"Rollback of metric '{name}' failed; file and KB may be inconsistent: {rollback_error}")
+
     def _semantic_runtime_db_context(self, request=None) -> dict:
         """Build runtime DB context for semantic adapter API calls."""
         context = {}
@@ -157,99 +338,6 @@ class ExplorerService:
 
         except Exception as e:
             return "", f"Failed to get semantic file path: {str(e)}"
-
-    def _update_metric_in_yaml_docs(
-        self,
-        yaml_documents: list,
-        metric_name: str,
-        new_metric_data: dict,
-    ) -> tuple:
-        """Update metric in YAML documents list.
-
-        Args:
-            yaml_documents: List of YAML documents
-            metric_name: Name of the metric to update
-            new_metric_data: New metric data
-
-        Returns:
-            tuple: (updated_documents, error_message)
-                If successful, error_message is None
-                If failed, returns original documents
-        """
-        metric_found = False
-
-        for idx, doc in enumerate(yaml_documents):
-            if not doc:
-                continue
-
-            metric = doc.get("metric", {})
-            if metric.get("name") == metric_name:
-                # Update this document with new metric data
-                yaml_documents[idx] = {"metric": new_metric_data}
-                metric_found = True
-                break
-
-        if not metric_found:
-            return yaml_documents, f"Metric '{metric_name}' not found in YAML file"
-
-        return yaml_documents, None
-
-    def _write_yaml_atomic(
-        self,
-        file_path: str,
-        documents: list,
-    ) -> Optional[str]:
-        """Write YAML documents atomically.
-
-        Args:
-            file_path: Path to the YAML file
-            documents: List of YAML documents to write
-
-        Returns:
-            error_message if failed, None if successful
-        """
-        import shutil
-        import tempfile
-
-        import yaml
-
-        temp_file = None
-        try:
-            # Create temp file in same directory as target file
-            temp_file = tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                delete=False,
-                dir=os.path.dirname(file_path),
-                suffix=".tmp",
-            )
-
-            # Write all documents with explicit document separators
-            yaml.dump_all(
-                documents,
-                temp_file,
-                default_flow_style=False,
-                allow_unicode=True,
-                sort_keys=False,
-                explicit_start=True,  # Adds "---" separator
-            )
-
-            temp_file.close()
-
-            # Atomic rename (overwrites original file)
-            shutil.move(temp_file.name, file_path)
-
-            return None  # Success
-
-        except Exception as e:
-            # Clean up temp file on error
-            if temp_file and os.path.exists(temp_file.name):
-                try:
-                    os.unlink(temp_file.name)
-                except Exception:
-                    pass
-
-            return f"Failed to write YAML file: {str(e)}"
 
     async def get_subject_list(self) -> Result[SubjectListData]:
         """Get nested subject tree structure.
@@ -593,9 +681,11 @@ class ExplorerService:
             parent_path = subject_path[:-1] if len(subject_path) > 1 else []
             metric_name = subject_path[-1]
 
-            # Get metric from LanceDB
+            # The KB row remains the access-control gate: it enforces the full
+            # subject_path match and sub-agent scoping. Only its *content* is
+            # untrustworthy (a lossy, MetricFlow-shaped reconstruction), so we
+            # use it for existence/scoping and the file for the returned YAML.
             metrics_detail = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-
             if not metrics_detail:
                 return Result[MetricInfo](
                     success=False,
@@ -603,11 +693,27 @@ class ExplorerService:
                     errorMessage=f"Metric not found: {metric_name}",
                 )
 
-            # Convert DB object to YAML format
+            # Source of truth is the YAML file: read it back through the semantic
+            # adapter so the returned YAML is in the metric's native format (OSI
+            # or MetricFlow) rather than the KB reconstruction.
+            adapter = self._semantic_adapter()
+            if adapter is not None:
+                from datus_semantic_core.authoring import AuthoringNotSupportedError
+
+                try:
+                    source = await asyncio.to_thread(adapter.read_metric_source, metric_name, subject_path=parent_path)
+                    return Result[MetricInfo](
+                        success=True,
+                        data=MetricInfo(name=metric_name, yaml=source.text),
+                    )
+                except AuthoringNotSupportedError:
+                    pass  # adapter has no file source; fall back to KB reconstruction
+                except Exception as e:  # noqa: BLE001 - fall back on any read failure
+                    logger.warning(f"Adapter read_metric_source failed, using KB fallback: {e}")
+
+            # Fallback: reconstruct MetricFlow-shaped YAML from the KB projection.
             metric_data = metrics_detail[0]
             yaml_dict = self._metric_db_to_yaml(metric_data)
-
-            # Convert to YAML string
             metric_yaml = yaml.dump(
                 yaml_dict,
                 default_flow_style=False,
@@ -617,10 +723,7 @@ class ExplorerService:
 
             return Result[MetricInfo](
                 success=True,
-                data=MetricInfo(
-                    name=metric_name,
-                    yaml=metric_yaml,
-                ),
+                data=MetricInfo(name=metric_name, yaml=metric_yaml),
             )
 
         except Exception as e:
@@ -958,125 +1061,15 @@ class ExplorerService:
         """
         try:
             self._require_datasource()
-            import yaml
-
-            from datus.api.models.config_models import ErrorCode
-            from datus.cli.generation_hooks import GenerationHooks
 
             logger.info(f"Creating metric at parent path: {request.subject_path}")
 
-            # subject_path is the parent directory
+            # subject_path is the parent directory; the metric name is taken from
+            # the YAML. Both OSI and MetricFlow author through the adapter (the
+            # YAML file is the source of truth), then the changed file is
+            # re-indexed into the KB.
             parent_path = request.subject_path if request.subject_path else []
-
-            # Step 1: Parse YAML to extract metric name (only one document allowed)
-            try:
-                doc = yaml.safe_load(request.yaml)
-            except yaml.YAMLError as e:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"Invalid YAML format: {str(e)}",
-                )
-
-            if not doc or "metric" not in doc:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="No metric document found in YAML content",
-                )
-
-            metric_name = doc.get("metric", {}).get("name")
-            if not metric_name:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="No metric name found in YAML content. Ensure 'metric.name' is defined.",
-                )
-
-            # Step 1.5: Override subject_tree tag with request.subject_path if present
-            if parent_path:
-                metric_data = doc.get("metric", {})
-                locked_metadata = metric_data.get("locked_metadata", {})
-                tags = locked_metadata.get("tags", [])
-
-                # Check if there's a subject_tree tag and override it
-                new_subject_tree_value = f"subject_tree: {'/'.join(parent_path)}"
-                has_subject_tree = False
-                for i, tag in enumerate(tags):
-                    if isinstance(tag, str) and tag.startswith("subject_tree:"):
-                        tags[i] = new_subject_tree_value
-                        has_subject_tree = True
-                        break
-
-                # If subject_tree tag exists, update the document
-                if has_subject_tree:
-                    locked_metadata["tags"] = tags
-                    metric_data["locked_metadata"] = locked_metadata
-                    doc["metric"] = metric_data
-                    # Update request.yaml with modified content
-                    request.yaml = yaml.dump(
-                        doc,
-                        default_flow_style=False,
-                        allow_unicode=True,
-                        sort_keys=False,
-                    )
-
-            # Step 2: Check if metric already exists in database
-
-            existing_metrics = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-            if existing_metrics:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"Metric '{metric_name}' already exists at path: {'/'.join(parent_path)}",
-                )
-
-            # Step 3: Determine file path. Use the agent_config's own path_manager so
-            # the project_root/subject anchoring propagates to derived paths.
-            semantic_dir = self.agent_config.path_manager.semantic_model_path(self.agent_config.current_datasource)
-            file_path = os.path.join(str(semantic_dir), "metrics", f"{metric_name}.yml")
-
-            # Step 4: Check for file conflict
-            if os.path.exists(file_path):
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"File already exists: {file_path}",
-                )
-
-            # Step 4: Validate YAML
-            is_valid, error_messages = self._validate_metric_yaml(request.yaml, file_path)
-            if not is_valid:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"YAML validation failed: {'; '.join(error_messages)}",
-                )
-
-            # Step 5: Write YAML file
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(request.yaml)
-
-            # Step 6: Sync to database
-            sync_result = GenerationHooks._sync_semantic_to_db(
-                file_path=file_path,
-                agent_config=self.agent_config,
-                include_semantic_objects=False,
-                include_metrics=True,
-            )
-
-            if not sync_result.get("success", False):
-                # Rollback: delete the file if sync failed
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=sync_result.get("error", "Failed to sync metric to database"),
-                )
-
-            logger.info(f"Successfully created metric: {metric_name}")
-            return Result[dict](success=True, data={})
+            return await asyncio.to_thread(self._author_metric, parent_path, request.yaml, create=True)
 
         except Exception as e:
             logger.error(f"Failed to create metric: {e}")
@@ -1102,10 +1095,8 @@ class ExplorerService:
         """
         try:
             self._require_datasource()
-            import yaml
 
             from datus.api.models.config_models import ErrorCode
-            from datus.cli.generation_hooks import GenerationHooks
 
             logger.info(f"Editing metric at path: {request.subject_path}")
 
@@ -1116,117 +1107,18 @@ class ExplorerService:
                     errorMessage="Subject path cannot be empty",
                 )
 
-            # Extract parent path and metric name
+            # Extract parent path and metric name, then author in place through
+            # the adapter (source of truth). Both OSI and MetricFlow update the
+            # metric inside its file, preserving datasets and sibling metrics.
             parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
             metric_name = request.subject_path[-1]
-
-            # Step 1: Check if metric exists
-            existing_metrics = self.metric_rag.get_metrics_detail(parent_path, metric_name)
-            if not existing_metrics:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Metric not found: {metric_name}",
-                )
-
-            # Step 2: Get yaml_path from metric data
-            metric_data = existing_metrics[0]
-            yaml_path = metric_data.get("yaml_path", "")
-
-            if not yaml_path:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Metric '{metric_name}' has no yaml_path",
-                )
-
-            if not os.path.exists(yaml_path):
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"YAML file not found: {yaml_path}",
-                )
-
-            # Step 3: Read existing YAML file as multi-document
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                original_content = f.read()
-
-            yaml_documents = list(yaml.safe_load_all(original_content))
-
-            # Step 4: Parse the new metric YAML from request (only one document allowed)
-            try:
-                new_doc = yaml.safe_load(request.yaml)
-            except yaml.YAMLError as e:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"Invalid YAML format: {str(e)}",
-                )
-
-            if not new_doc or "metric" not in new_doc:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage="No metric document found in YAML content",
-                )
-
-            # Step 5: Update only the specific metric document in the existing YAML
-            new_metric_data = new_doc.get("metric")
-            updated_documents, error_msg = self._update_metric_in_yaml_docs(
-                yaml_documents, metric_name, new_metric_data
+            return await asyncio.to_thread(
+                self._author_metric,
+                parent_path,
+                request.yaml,
+                create=False,
+                metric_name=metric_name,
             )
-
-            if error_msg:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=error_msg,
-                )
-
-            # Step 6: Write updated documents atomically
-            write_error = self._write_yaml_atomic(yaml_path, updated_documents)
-            if write_error:
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=write_error,
-                )
-
-            # Step 7: Validate the updated file
-            with open(yaml_path, "r", encoding="utf-8") as f:
-                updated_content = f.read()
-
-            is_valid, error_messages = self._validate_metric_yaml(updated_content, yaml_path)
-            if not is_valid:
-                # Rollback: restore original content if validation failed
-                with open(yaml_path, "w", encoding="utf-8") as f:
-                    f.write(original_content)
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.INVALID_PARAMETERS,
-                    errorMessage=f"YAML validation failed: {'; '.join(error_messages)}",
-                )
-
-            # Step 8: Sync to database
-            sync_result = GenerationHooks._sync_semantic_to_db(
-                file_path=yaml_path,
-                agent_config=self.agent_config,
-                include_semantic_objects=False,
-                include_metrics=True,
-            )
-
-            if not sync_result.get("success", False):
-                # Rollback: restore original content if sync failed
-                with open(yaml_path, "w", encoding="utf-8") as f:
-                    f.write(original_content)
-                return Result[dict](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=sync_result.get("error", "Failed to sync metric to database"),
-                )
-
-            logger.info(f"Successfully edited metric: {metric_name}")
-            return Result[dict](success=True, data={})
 
         except Exception as e:
             logger.error(f"Failed to edit metric: {e}")
@@ -1382,6 +1274,29 @@ class ExplorerService:
 
                 parent_path = request.subject_path[:-1] if len(request.subject_path) > 1 else []
                 metric_name = request.subject_path[-1]
+
+                # Remove the metric from its source file first (the file is the
+                # source of truth), then drop the KB row below. The adapter owns
+                # the format-correct file edit; metric_rag.delete_metric's own
+                # file handling is then a no-op since the metric is already gone.
+                adapter = self._semantic_adapter()
+                if adapter is not None:
+                    try:
+                        await asyncio.to_thread(adapter.delete_metric_source, metric_name, subject_path=parent_path)
+                    except Exception as e:  # noqa: BLE001
+                        # Only a genuine "not found" is a benign fallback to KB
+                        # cleanup (file/KB drift). Real failures (I/O, lock, parse)
+                        # must fail the request, or the file keeps the metric while
+                        # the KB row is dropped and it "revives" on the next
+                        # re-index — breaking the YAML-source-of-truth invariant.
+                        if not self._is_metric_absent_error(e):
+                            logger.error(f"Failed to delete metric from source file: {e}")
+                            return Result[dict](
+                                success=False,
+                                errorCode=ErrorCode.TOOL_EXECUTION_ERROR,
+                                errorMessage=f"Failed to remove metric from source file: {e}",
+                            )
+                        logger.warning(f"Metric already absent from source file, continuing to KB cleanup: {e}")
 
                 result = self.metric_rag.delete_metric(parent_path, metric_name)
                 if not result.get("success", False):

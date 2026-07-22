@@ -164,6 +164,54 @@ class TestBatchUpsertMetricsValidation:
         with pytest.raises(ValueError, match="subject_path is required"):
             metric_storage.batch_upsert_metrics([bad_metric])
 
+    def test_resync_overwrites_same_metric_with_changed_semantic_model(self, metric_storage: MetricStorage):
+        """Re-syncing a metric whose owning model was renamed must overwrite the
+        existing row (same name == same id), not raise a name-conflict.
+
+        Metric ids are name-derived, so a same-name write is the same identity;
+        the YAML file is the source of truth on re-sync. Regression for an OSI
+        metric edit failing with 'existing metric id ... has a different
+        semantic_model_name'."""
+        metric = _make_metric(1)
+        metric["name"] = "gross_revenue"
+        metric["semantic_model_name"] = "old_model"
+        metric_storage.batch_store_metrics([metric])
+
+        renamed = _make_metric(1)
+        renamed["name"] = "gross_revenue"
+        renamed["semantic_model_name"] = "new_model"
+        renamed["description"] = "edited description"
+
+        # Must not raise despite the changed semantic_model_name.
+        metric_storage.batch_upsert_metrics([renamed])
+
+        rows = metric_storage.search_all_metrics(subject_path=["Finance", "Revenue", "gross_revenue"])
+        assert len(rows) == 1
+        assert rows[0]["semantic_model_name"] == "new_model"
+        assert rows[0]["description"] == "edited description"
+
+    def test_upsert_still_raises_for_distinct_id_name_collision(self, metric_storage: MetricStorage):
+        """A same-name row with a *different* id and a conflicting definition is
+        a genuine identity collision and must still be rejected."""
+        from datus.storage.metric.store import build_metric_id
+
+        existing = _make_metric(1)
+        existing["name"] = "gross_revenue"
+        existing["semantic_model_name"] = "model_a"
+        metric_storage.batch_store_metrics([existing])
+
+        # Force a legacy-style differing id for the same name to exercise the guard.
+        real_build = build_metric_id
+        with __import__("unittest").mock.patch(
+            "datus.storage.metric.store.build_metric_id",
+            side_effect=lambda subject_path, name: real_build(subject_path, name) + ":legacy",
+        ):
+            incoming = _make_metric(1)
+            incoming["name"] = "gross_revenue"
+            incoming["semantic_model_name"] = "model_b"
+            with pytest.raises(ValueError, match="Metric name conflict within datasource"):
+                metric_storage.batch_upsert_metrics([incoming])
+
 
 # ---------------------------------------------------------------------------
 # YAML deletion logic in delete_metric
