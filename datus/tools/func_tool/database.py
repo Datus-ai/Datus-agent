@@ -858,16 +858,34 @@ class DBFuncTool:
                 out_of_scope.append(name)
         return out_of_scope
 
+    # Public methods that belong to the tool-plumbing framework rather than the
+    # agent-facing tool surface. ``to_function_tool`` converts a bound method into
+    # a Tool; ``available_tools`` assembles the runtime list. Neither is a tool
+    # itself. Mirrors ``FilesystemFuncTool._BASE_TOOL_FRAMEWORK_METHODS``.
+    _FRAMEWORK_METHODS: frozenset = frozenset({"available_tools", "to_function_tool"})
+
+    # Internal statement-dispatch targets of the unified ``execute_sql`` entry
+    # point. ``execute_sql`` detects the statement type and routes to these by
+    # hand (SELECT -> read_query, DML -> execute_write, DDL/other -> execute_ddl),
+    # so they are never @mcp_tool()-decorated and never mounted as tools. They
+    # stay public because callers across modules (semantic_discovery_tools,
+    # reference_template_tools) and the connectors share the vocabulary, but they
+    # must not leak into the agent tool surface (VALID_TOOL_METHODS / the saas
+    # editor catalog) or the permission registry.
+    _INTERNAL_SQL_METHODS: frozenset = frozenset({"read_query", "execute_write", "execute_ddl", "get_table_ddl"})
+
     @staticmethod
     def all_tools_name() -> List[str]:
+        # Agent-facing tool surface: every public tool method, including the ones
+        # gen_job mounts directly (``transfer_query_result``, migration wrappers)
+        # that never carry an @mcp_tool() decorator. Framework plumbing and the
+        # internal execute_sql dispatch helpers are filtered out. Feeds both
+        # VALID_TOOL_METHODS and the permission registry
+        # (AgenticNode._populate_tool_registry).
         from datus.utils.class_utils import get_public_instance_methods
 
-        result = []
-        for name in get_public_instance_methods(DBFuncTool).keys():
-            if name == "available_tools":
-                continue
-            result.append(name)
-        return result
+        excluded = DBFuncTool._FRAMEWORK_METHODS | DBFuncTool._INTERNAL_SQL_METHODS
+        return [name for name in get_public_instance_methods(DBFuncTool).keys() if name not in excluded]
 
     @staticmethod
     def _dialect_name(value: Any) -> str:
