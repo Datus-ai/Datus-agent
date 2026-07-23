@@ -22,6 +22,7 @@ from datus.api.models.table_models import (
     GetTableDetailData,
     GetTablesColumnsData,
     SemanticModelInput,
+    TableColumnBrief,
     TableColumns,
     TableDetailData,
     ValidateSemanticModelData,
@@ -496,7 +497,11 @@ class DatasourceService:
         for full_path in tables:
             detail = self.get_table_schema(full_path)
             if detail.success and detail.data is not None:
-                results.append(TableColumns(table=full_path, columns=detail.data.table.columns))
+                columns = [
+                    TableColumnBrief(name=c.name, type=c.type, nullable=c.nullable, pk=c.pk)
+                    for c in detail.data.table.columns
+                ]
+                results.append(TableColumns(table=full_path, columns=columns))
         return Result(success=True, data=GetTablesColumnsData(tables=results))
 
     def _get_semantic_model(

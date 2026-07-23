@@ -59,11 +59,20 @@ class GetTablesColumnsInput(BaseModel):
     )
 
 
+class TableColumnBrief(BaseModel):
+    """Slim column shape for autocomplete — no default_value (unused there)."""
+
+    name: str = Field(..., description="Column name")
+    type: str = Field(..., description="Column data type")
+    nullable: bool = Field(..., description="Whether column is nullable")
+    pk: bool = Field(default=False, description="Whether column is primary key")
+
+
 class TableColumns(BaseModel):
     """Columns for a single table."""
 
     table: str = Field(..., description="Full table name as requested")
-    columns: list[ColumnInfo] = Field(..., description="Column information")
+    columns: list[TableColumnBrief] = Field(..., description="Column information")
 
 
 class GetTablesColumnsData(BaseModel):

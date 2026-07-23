@@ -495,7 +495,10 @@ class TestGetTablesColumns:
         result = svc.get_tables_columns(["schools"])
         assert result.success is True
         assert [t.table for t in result.data.tables] == ["schools"]
-        assert result.data.tables[0].columns[0].name != ""
+        col = result.data.tables[0].columns[0]
+        assert col.name != "" and col.type != ""
+        # Slim shape: no default_value in the prefetch payload.
+        assert not hasattr(col, "default_value")
 
     def test_omits_unresolved_tables(self, real_agent_config):
         """A bad name is skipped rather than failing the whole batch."""

@@ -10,9 +10,9 @@ import pytest
 
 from datus.api.models.base_models import Result
 from datus.api.models.table_models import (
-    ColumnInfo,
     GetTablesColumnsData,
     GetTablesColumnsInput,
+    TableColumnBrief,
     TableColumns,
 )
 from datus.api.routes.table_routes import get_table_detail, get_tables_columns
@@ -35,7 +35,12 @@ class TestGetTablesColumns:
     async def test_delegates_to_service_with_tables(self):
         svc = MagicMock()
         data = GetTablesColumnsData(
-            tables=[TableColumns(table="db.public.orders", columns=[ColumnInfo(name="id", type="INT", nullable=False)])]
+            tables=[
+                TableColumns(
+                    table="db.public.orders",
+                    columns=[TableColumnBrief(name="id", type="INT", nullable=False)],
+                )
+            ]
         )
         svc.datasource.get_tables_columns.return_value = Result(success=True, data=data)
 
