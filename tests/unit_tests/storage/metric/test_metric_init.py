@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.storage.metric.metric_init import (
     BIZ_NAME,
     DEFAULT_METRICS_BATCH_SIZE,
@@ -18,10 +19,16 @@ from datus.storage.metric.metric_init import (
     _extract_metric_artifact_ids,
     _generate_metrics_batch,
     _source_provenance_from_row,
+    _source_query_from_row,
     _sync_metric_provenance,
     _unique_metric_catalog_by_name,
     init_semantic_yaml_metrics,
 )
+
+
+def _source_query(sql: str, name: str = "sql_1", question: str = "") -> SourceQueryEvidence:
+    return SourceQueryEvidence(source_sql_name=name, sql=sql, question=question)
+
 
 # ---------------------------------------------------------------------------
 # _action_status_value
@@ -636,7 +643,12 @@ class TestEnsureSemanticModelsForMetrics:
         async def fake_init(agent_config, success_story, emit=None, build_mode="overwrite", action_callback=None):
             target_path.parent.mkdir(parents=True)
             target_path.write_text(
-                "version: 0.2.0.dev0\nsemantic_model:\n  - name: orders_analytics\n",
+                "version: 0.2.0.dev0\n"
+                "semantic_model:\n"
+                "  - name: orders_analytics\n"
+                "    datasets:\n"
+                "      - name: orders\n"
+                "        source: orders\n",
                 encoding="utf-8",
             )
             captured["build_mode"] = build_mode
@@ -648,31 +660,79 @@ class TestEnsureSemanticModelsForMetrics:
                 "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
                 side_effect=fake_init,
             ) as init_mock,
-            patch(
-                "datus.storage.metric.metric_init.extract_tables_from_sql_list",
-                return_value=["orders"],
-            ) as extract_mock,
             patch("datus.storage.metric.metric_init.ensure_semantic_models_exist") as ensure_mock,
         ):
-            ok, error, created = await _ensure_semantic_models_for_metrics(
+            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
-                [{"sql": "SELECT COUNT(*) FROM orders", "question": "How many orders?"}],
-                ["SELECT COUNT(*) FROM orders"],
+                [_source_query("SELECT COUNT(*) FROM orders", question="How many orders?")],
                 action_callback=action_callback,
             )
 
         assert ok is True
         assert error == ""
         assert created == [target_file]
+        assert model_name == "orders_analytics"
         init_mock.assert_called_once()
-        extract_mock.assert_called_once()
         ensure_mock.assert_not_called()
         assert captured["build_mode"] == "incremental"
         assert captured["action_callback"] is action_callback
 
     @pytest.mark.asyncio
-    async def test_osi_reuses_separate_models_for_independent_queries(self, tmp_path):
+    async def test_osi_accepts_generated_query_backed_model_for_join_source(self, tmp_path):
+        from unittest.mock import patch
+
+        target_file = "subject/semantic_models/warehouse/account_analytics.yml"
+        target_path = tmp_path / target_file
+        query_source = (
+            "SELECT a.suserid, c.city_level "
+            "FROM ac_manage.dim_mgamejp_account_allinfo_nf AS a "
+            "JOIN ac_manage.dim_uf_player_gameinfo_mf AS c ON a.suserid = c.userid"
+        )
+        config = SimpleNamespace(
+            project_root=str(tmp_path),
+            current_datasource="warehouse",
+            current_db_config=lambda: SimpleNamespace(type="starrocks"),
+            resolve_semantic_adapter=lambda requested=None: "osi",
+        )
+
+        async def fake_init(agent_config, success_story, emit=None, build_mode="overwrite", action_callback=None):
+            target_path.parent.mkdir(parents=True)
+            target_path.write_text(
+                "version: 0.2.0.dev0\n"
+                "semantic_model:\n"
+                "  - name: account_analytics\n"
+                "    datasets:\n"
+                "      - name: account_player_gameinfo\n"
+                "        source: |\n"
+                "          SELECT a.suserid, c.city_level\n"
+                "          FROM ac_manage.dim_mgamejp_account_allinfo_nf AS a\n"
+                "          JOIN ac_manage.dim_uf_player_gameinfo_mf AS c ON a.suserid = c.userid\n"
+                "        custom_extensions:\n"
+                "          - vendor_name: DATUS\n"
+                '            data: \'{"source_type":"query"}\'\n',
+                encoding="utf-8",
+            )
+            return True, ""
+
+        with patch(
+            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
+            side_effect=fake_init,
+        ) as init_mock:
+            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
+                config,
+                "success_story.csv",
+                [_source_query(query_source, "sql_9")],
+            )
+
+        assert ok is True
+        assert error == ""
+        assert created == [target_file]
+        assert model_name == "account_analytics"
+        init_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_osi_rejects_success_story_split_across_models(self, tmp_path):
         from unittest.mock import patch
 
         model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
@@ -700,37 +760,26 @@ class TestEnsureSemanticModelsForMetrics:
             current_datasource="warehouse",
             resolve_semantic_adapter=lambda requested=None: "osi",
         )
-        sql_list = [
-            "SELECT COUNT(*) FROM analytics.fact_orders",
-            "SELECT SUM(amount) FROM finance.fact_payments",
+        source_queries = [
+            _source_query("SELECT COUNT(*) FROM analytics.fact_orders", "sql_1"),
+            _source_query("SELECT SUM(amount) FROM finance.fact_payments", "sql_2"),
         ]
-
-        def extract_tables(sqls, _config):
-            sql = sqls[0]
-            if "fact_orders" in sql:
-                return ["analytics.fact_orders"]
-            return ["finance.fact_payments"]
 
         with (
             patch(
                 "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async"
             ) as init_mock,
-            patch(
-                "datus.storage.metric.metric_init.extract_tables_from_sql_list",
-                side_effect=extract_tables,
-            ) as extract_mock,
         ):
-            ok, error, created = await _ensure_semantic_models_for_metrics(
+            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
-                [{"sql": sql, "question": sql} for sql in sql_list],
-                sql_list,
+                source_queries,
             )
 
-        assert ok is True
-        assert error == ""
+        assert ok is False
+        assert "exactly one semantic model" in error
         assert created == []
-        assert extract_mock.call_count == 2
+        assert model_name is None
         init_mock.assert_not_called()
 
     @pytest.mark.asyncio
@@ -759,16 +808,16 @@ class TestEnsureSemanticModelsForMetrics:
             ),
             patch("datus.storage.metric.metric_init.ensure_semantic_models_exist", side_effect=fake_ensure),
         ):
-            ok, error, created = await _ensure_semantic_models_for_metrics(
+            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
-                records,
-                sql_list,
+                [_source_query(sql_list[0], question=records[0]["question"])],
             )
 
         assert ok is True
         assert error == ""
         assert created == ["customers", "orders"]
+        assert model_name is None
 
 
 # ---------------------------------------------------------------------------
@@ -778,6 +827,24 @@ class TestEnsureSemanticModelsForMetrics:
 
 @pytest.mark.ci
 class TestMetricProvenanceHelpers:
+    def test_source_query_from_row_keeps_sql_and_source_identity_without_context_ids(self):
+        result = _source_query_from_row(
+            {
+                "question": "Revenue?",
+                "sql": "SELECT SUM(amount) FROM orders",
+                "external_knowledge": "amount excludes tax",
+            },
+            2,
+            "/tmp/orders.csv",
+        )
+
+        assert result is not None
+        assert result.source_sql_name == "sql_3"
+        assert result.sql == "SELECT SUM(amount) FROM orders"
+        assert result.source_id == "orders.csv:2"
+        assert result.external_knowledge == "amount excludes tax"
+        assert result.source_context_ids == []
+
     def test_source_provenance_from_row_reads_context_columns(self):
         row = {
             "source_context_id": "metric:seed:7; metric:task:21",
@@ -920,18 +987,22 @@ class TestGenerateMetricsBatch:
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
         ):
             ok, err, result = await _generate_metrics_batch(
-                ["Query 1:\nQuestion: rev?\nSQL:\nSELECT 1"],
+                [_source_query("SELECT 1", question="rev?")],
                 0,
                 mock_config,
                 None,
                 None,
                 BatchEventHelper("test", None),
                 None,
+                semantic_model_name="orders_analytics",
             )
 
         assert ok is True
         assert err == ""
         assert result == {"metrics": ["revenue"]}
+        assert mock_node.input.semantic_model_name == "orders_analytics"
+        assert mock_node.input.source_queries[0].sql == "SELECT 1"
+        assert "Analyze the following SQL queries" in mock_node.input.user_message
 
     @pytest.mark.asyncio
     async def test_success_captures_synced_metric_artifact_ids(self):
@@ -969,7 +1040,7 @@ class TestGenerateMetricsBatch:
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
         ):
             ok, err, result = await _generate_metrics_batch(
-                ["Query 1:\nQuestion: rev?\nSQL:\nSELECT 1"],
+                [_source_query("SELECT 1", question="rev?")],
                 0,
                 mock_config,
                 None,
@@ -1011,7 +1082,7 @@ class TestGenerateMetricsBatch:
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
         ):
             ok, err, result = await _generate_metrics_batch(
-                ["Query 1:\nQuestion: q?\nSQL:\nSELECT 1"],
+                [_source_query("SELECT 1", question="q?")],
                 0,
                 mock_config,
                 None,
@@ -1053,7 +1124,7 @@ class TestGenerateMetricsBatch:
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
         ):
             ok, err, result = await _generate_metrics_batch(
-                ["Query 1:\nQuestion: q?\nSQL:\nSELECT 1"],
+                [_source_query("SELECT 1", question="q?")],
                 0,
                 mock_config,
                 None,
@@ -1090,7 +1161,7 @@ class TestGenerateMetricsBatch:
             patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
         ):
             ok, err, result = await _generate_metrics_batch(
-                ["Query 1:\nQuestion: q?\nSQL:\nSELECT 1"],
+                [_source_query("SELECT 1", question="q?")],
                 0,
                 mock_config,
                 None,
@@ -1182,6 +1253,59 @@ class TestBatchSplitting:
         assert ok is True
         assert err == ""
         assert len(result["metrics"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_all_batches_reuse_file_level_semantic_model(self):
+        from unittest.mock import AsyncMock, patch
+
+        import pandas as pd
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.metric.metric_init import init_success_story_metrics_async
+
+        captured_inputs = []
+
+        class CapturingNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, _ahm):
+                captured_inputs.append(self.input)
+                action = MagicMock()
+                action.status = ActionStatus.SUCCESS
+                action.action_type = "gen_metrics_response"
+                action.output = {"metrics": ["revenue"]}
+                action.messages = "ok"
+                yield action
+
+        mock_config = MagicMock()
+        mock_config.project_name = "test"
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+        ensure = AsyncMock(return_value=(True, "", [], "orders_analytics"))
+        rows = [{"question": f"q{i}", "sql": f"SELECT SUM(amount) FROM orders WHERE id = {i}"} for i in range(3)]
+
+        with (
+            patch("datus.storage.metric.store.MetricRAG", MagicMock()),
+            patch("datus.storage.metric.metric_init._ensure_semantic_models_for_metrics", ensure),
+            patch("datus.storage.metric.metric_init._build_candidate_plan", return_value={"available": False}),
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", CapturingNode),
+            patch("datus.storage.metric.metric_init.pd.read_csv", return_value=pd.DataFrame(rows)),
+        ):
+            ok, err, _result = await init_success_story_metrics_async(
+                agent_config=mock_config,
+                success_story="orders.csv",
+                batch_size=2,
+            )
+
+        assert ok is True
+        assert err == ""
+        assert ensure.await_count == 1
+        assert len(ensure.await_args.args[2]) == 3
+        assert [len(node_input.source_queries) for node_input in captured_inputs] == [2, 1]
+        assert {node_input.semantic_model_name for node_input in captured_inputs} == {"orders_analytics"}
 
     @pytest.mark.asyncio
     async def test_partial_batch_failure_continues(self):

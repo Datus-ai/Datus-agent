@@ -60,6 +60,27 @@ def extract_metric_queryability_contracts(text: Optional[str]) -> List[Dict[str,
     return contracts
 
 
+def extract_metric_queryability_contracts_from_sources(
+    source_queries: Iterable[Any],
+) -> List[Dict[str, Any]]:
+    """Build contracts directly from structured source SQL."""
+    contracts: List[Dict[str, Any]] = []
+    for index, source_query in enumerate(source_queries, 1):
+        if isinstance(source_query, dict):
+            source_name = source_query.get("source_sql_name")
+            sql = source_query.get("sql")
+        else:
+            source_name = getattr(source_query, "source_sql_name", None)
+            sql = getattr(source_query, "sql", None)
+        contract = _contract_from_sql(
+            str(sql or ""),
+            source=str(source_name or f"sql_{index}"),
+        )
+        if contract:
+            contracts.append(contract)
+    return contracts
+
+
 def summarize_queryability_contracts(contracts: Iterable[Dict[str, Any]]) -> str:
     parts = []
     for contract in contracts:
