@@ -1954,6 +1954,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        托管 API 的运行时配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#which-profile-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4357,6 +4368,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        托管 API 的运行时配置
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#which-profile-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4585,6 +4607,22 @@ OS/Python 匹配的机器上构建。</p>
 下一次 <code>datus &lt;plugin&gt;</code> 调用即刻生效,无需重启。</p>
 <p>有些插件自带 <code>&lt;name&gt;-setup</code> skill,可以替你写好这段配置——见
 <a href="#agent">与 agent 配合使用</a>。</p>
+<h3 id="api">托管 API 的运行时配置<a class="headerlink" href="#api" title="Permanent link">&para;</a></h3>
+<p>在多租户 <code>datus-api</code> 部署中,<code>AuthProvider</code> 可以为每个请求直接提供内存中的
+<code>AgentConfig</code>,无需写入 <code>agent.yml</code>。当该配置只读(<code>config_mutable: false</code>),且
+agent 通过 Bash 执行 <code>datus &lt;name&gt; ...</code> 时,Datus 会在 API 进程内解析选中的
+plugin 路径与 profile,再通过带版本的环境变量把这份快照只传给目标 plugin
+子进程。plugin 仍通过常规的 <code>main(argv, profile)</code> 的 <code>profile</code> 参数取得解析后的
+字典,无需自行读取该环境变量。</p>
+<p>plugin skill 发现遵循相同规则:<code>plugins_enabled</code>、激活 plugin 白名单、
+<code>plugin_paths</code> 和 <code>skills</code> 目录均以当前请求的 <code>AgentConfig</code> 为准,不会回退到其他
+租户已加载的配置或 <code>./.datus/config.yml</code>。只有拿不到 <code>AgentConfig</code> 的独立 CLI
+skill 命令才保留本地项目配置文件行为。</p>
+<p>此桥接允许一次直接的 plugin 调用,也允许它作为普通 <code>|</code> 管道中的一个 stage。
+若命令包含多个 <code>datus</code> 调用,或使用 <code>&amp;&amp;</code>、<code>;</code>、重定向、命令替换、<code>|&amp;</code> 等 shell
+控制形式,则会 fail closed。<code>--profile</code> 仍受支持,并针对当前请求的 <code>AgentConfig</code>
+解析;<code>--config</code> 会被拒绝,因为 AuthProvider 提供的配置是权威来源。编码后的运行时
+快照上限为 64 KiB。管道中的其他 stage 不会继承它,父进程环境也不会被修改。</p>
 <h3 id="which-profile-runs">哪个 profile 生效<a class="headerlink" href="#which-profile-runs" title="Permanent link">&para;</a></h3>
 <p>执行 <code>datus &lt;name&gt; ...</code> 时,激活 profile 按以下顺序解析:</p>
 <ol>

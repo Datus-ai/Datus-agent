@@ -4853,6 +4853,11 @@ profile,或在完全未配置时给一个空字典。完整解析顺序见
 Datus 全局参数消费;从第一个命令 token 起的一切都属于 plugin。因此
 <code>datus hello greet --profile staging</code> 会原样传入
 <code>["greet", "--profile", "staging"]</code>——你的子命令可以自由定义自己的 <code>--profile</code>。</p>
+<p>在只读的多租户 API 会话中,Datus 可能从当前请求的内存 <code>AgentConfig</code> 取得
+profile,并通过仅对子进程生效的环境变量完成桥接。该传输由宿主管理:plugin 应继续
+使用传入的 <code>profile</code> 参数,也允许从这个字典读取自己的配置;不要依赖内部环境变量。
+此模式支持 <code>--profile</code>,但会拒绝 <code>--config</code>,也会拒绝普通 <code>|</code> 管道以外的复合
+shell 形式。</p>
 <p>返回整数退出码(<code>None</code> 视为 <code>0</code>)。建议的约定:</p>
 <table>
 <thead>
@@ -5052,6 +5057,9 @@ Skills 系统使用的 <a href="https://agentskills.io">agentskills.io</a> 规�
 </span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>Run <span class="sb">`datus hello &lt;name&gt;`</span> to greet someone. ...
 </span></code></pre></div>
 <p>完整 frontmatter 字段参考见 <a href="../../skills/introduction/">Skills</a> 文档。</p>
+<p>在多租户 API 部署中,skill 发现由当前请求的 <code>AgentConfig</code> 限定
+(<code>plugins_enabled</code>、激活 plugin、<code>plugin_paths</code> 和 <code>skills</code>),plugin skill 不依赖
+本地 <code>./.datus/config.yml</code>。</p>
 <p>确保 skill 文件被打进 wheel(它们是数据,不是 Python 代码)。Hatchling 默认打包
 包目录下所有文件,除非文件被 VCS 忽略(那样需要在
 <code>[tool.hatch.build.targets.wheel] artifacts</code> 列出);setuptools 必须显式声明:</p>
