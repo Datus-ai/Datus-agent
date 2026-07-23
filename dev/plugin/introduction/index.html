@@ -1954,6 +1954,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#managed-api-runtime-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed API runtime configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#which-profile-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4357,6 +4368,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#managed-api-runtime-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed API runtime configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#which-profile-runs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4603,6 +4625,28 @@ always use them for secrets instead of literal values. Config edits take
 effect on the next <code>datus &lt;plugin&gt;</code> invocation; no restart is needed.</p>
 <p>Some plugins ship a <code>&lt;name&gt;-setup</code> skill that writes this configuration for
 you — see <a href="#using-a-plugin-with-the-agent">Using a plugin with the agent</a>.</p>
+<h3 id="managed-api-runtime-configuration">Managed API runtime configuration<a class="headerlink" href="#managed-api-runtime-configuration" title="Permanent link">&para;</a></h3>
+<p>In a multi-tenant <code>datus-api</code> deployment, an <code>AuthProvider</code> can supply a
+request-scoped <code>AgentConfig</code> without writing <code>agent.yml</code>. When that config is
+read-only (<code>config_mutable: false</code>) and the agent runs <code>datus &lt;name&gt; ...</code>
+through Bash, Datus resolves the selected plugin path and profile in the API
+process and passes that snapshot to only the plugin subprocess through a
+versioned environment value. The plugin still receives the resolved dict as
+the normal <code>profile</code> argument to <code>main(argv, profile)</code>; plugin code does not
+need to read the environment variable.</p>
+<p>Plugin skill discovery follows the same rule: <code>plugins_enabled</code>, the active
+plugin whitelist, <code>plugin_paths</code>, and <code>skills</code> directories are resolved from
+that request's <code>AgentConfig</code>. It does not fall back to another tenant's loaded
+configuration or to <code>./.datus/config.yml</code>. Standalone CLI skill commands that
+do not hold an <code>AgentConfig</code> keep the local project-file behavior.</p>
+<p>This bridge accepts one direct plugin invocation, optionally as one stage of a
+plain <code>|</code> pipeline. It deliberately fails closed for multiple <code>datus</code>
+invocations and for shell control forms such as <code>&amp;&amp;</code>, <code>;</code>, redirection, command
+substitution, and <code>|&amp;</code>. <code>--profile</code> remains supported and is resolved against
+the request's <code>AgentConfig</code>; <code>--config</code> is rejected because the AuthProvider
+configuration is authoritative. The encoded runtime snapshot is capped at
+64 KiB. Sibling pipeline stages do not inherit it, and the parent process
+environment is never modified.</p>
 <h3 id="which-profile-runs">Which profile runs<a class="headerlink" href="#which-profile-runs" title="Permanent link">&para;</a></h3>
 <p>When you run <code>datus &lt;name&gt; ...</code>, the active profile is resolved in this order:</p>
 <ol>

@@ -4877,6 +4877,13 @@ are consumed as Datus globals; from the first command token onward everything
 belongs to the plugin. <code>datus hello greet --profile staging</code> therefore passes
 <code>["greet", "--profile", "staging"]</code> through untouched — your subcommands are
 free to define their own <code>--profile</code> option.</p>
+<p>In a read-only multi-tenant API session, Datus may obtain the profile from the
+request's in-memory <code>AgentConfig</code> and bridge it through a subprocess-scoped
+environment value. This transport is host-owned: your plugin should continue
+to use the supplied <code>profile</code> argument and may read its own values from that
+dict. Do not depend on the internal environment value. In this mode
+<code>--profile</code> works, while <code>--config</code> and compound shell forms other than a plain
+<code>|</code> pipeline are rejected.</p>
 <p>Return an integer exit code (<code>None</code> means <code>0</code>). Suggested conventions:</p>
 <table>
 <thead>
@@ -5082,6 +5089,9 @@ the Skills system):</p>
 </span></code></pre></div>
 <p>See the <a href="../../skills/introduction/">Skills</a> docs for the full frontmatter
 field reference.</p>
+<p>In a multi-tenant API deployment, discovery is scoped by the request's
+<code>AgentConfig</code> (<code>plugins_enabled</code>, active plugins, <code>plugin_paths</code>, and
+<code>skills</code>); plugin skills do not depend on a local <code>./.datus/config.yml</code>.</p>
 <p>Make sure the skill files are included in the wheel (they are data, not
 Python). Hatchling packages every file under the package directory by default,
 so nothing extra is needed unless the files are VCS-ignored (then list them
