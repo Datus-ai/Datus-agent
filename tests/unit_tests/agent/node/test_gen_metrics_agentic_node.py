@@ -161,7 +161,8 @@ class TestGenMetricsAgenticNodeInit:
         registry = node.tool_registry.to_dict()
         assert registry.get("end_metric_generation") == "semantic_tools"
         assert registry.get("check_semantic_object_exists") == "semantic_tools"
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
+        assert "read_query" not in registry
         assert registry.get("write_file") == "filesystem_tools"
 
 

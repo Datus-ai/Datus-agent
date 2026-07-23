@@ -147,7 +147,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --locked
+          uv sync --locked --group ci
           # No --upgrade: keep the locked framework packages; adapters only add
           # their own missing deps instead of bumping fastapi/starlette/etc.
           uv pip install --no-cache-dir \
