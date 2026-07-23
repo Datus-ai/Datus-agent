@@ -16,7 +16,7 @@ from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEvent, BatchStage
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
@@ -113,23 +113,25 @@ async def init_success_story_semantic_model_async(
         logger.error(error_msg)
         return False, error_msg
 
-    # Collect all SQL queries and questions
-    all_sqls = df["sql"].tolist()
-    all_questions = df["question"].tolist()
-
-    # Validate data alignment
-    if len(all_sqls) != len(all_questions):
-        error_msg = (
-            f"Success story CSV '{csv_path}' has mismatched column lengths: "
-            f"sql={len(all_sqls)}, question={len(all_questions)}"
+    source_queries: list[SourceQueryEvidence] = []
+    for idx, row in df.iterrows():
+        sql = _success_story_cell(row, "sql")
+        if not sql:
+            continue
+        source_queries.append(
+            SourceQueryEvidence(
+                source_sql_name=f"sql_{idx + 1}",
+                sql=sql,
+                question=_success_story_cell(row, "question"),
+                external_knowledge=_success_story_cell(row, "external_knowledge"),
+            )
         )
-        logger.error(error_msg)
-        return False, error_msg
 
-    if len(all_sqls) == 0:
-        error_msg = f"Success story CSV '{csv_path}' contains no data rows"
+    if not source_queries:
+        error_msg = f"Success story CSV '{csv_path}' contains no SQL rows"
         logger.error(error_msg)
         return False, error_msg
+    all_sqls = [source.sql for source in source_queries]
 
     if build_mode not in _VALID_BUILD_MODES:
         error_msg = (
@@ -203,10 +205,11 @@ async def init_success_story_semantic_model_async(
 
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"
-    for idx, (sql, question) in enumerate(zip(all_sqls, all_questions), 1):
-        context_message += f"Query {idx}:\n"
-        context_message += f"Question: {question}\n"
-        context_message += f"SQL:\n{sql}\n\n"
+    for source in source_queries:
+        query_number = source.source_sql_name.removeprefix("sql_")
+        context_message += f"Query {query_number}:\n"
+        context_message += f"Question: {source.question}\n"
+        context_message += f"SQL:\n{source.sql}\n\n"
 
     current_db_config = agent_config.current_db_config()
     runtime_db_context_getter = getattr(agent_config, "runtime_db_context", None)
@@ -225,6 +228,7 @@ async def init_success_story_semantic_model_async(
 
     semantic_input = SemanticNodeInput(
         user_message=context_message,
+        source_queries=source_queries,
         catalog=runtime_db_context.get("catalog")
         or runtime_db_context.get("catalog_name")
         or current_db_config.catalog,

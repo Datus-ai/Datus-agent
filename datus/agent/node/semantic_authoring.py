@@ -24,6 +24,7 @@ into the prompt at render time (see ``required_authoring_skills``).
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import weakref
 from contextlib import asynccontextmanager
@@ -265,6 +266,37 @@ def _model_covers_table(model: Dict[str, Any], table: Any) -> bool:
     return any(_table_references_match(table, reference) for reference in references)
 
 
+def _is_query_backed_dataset(dataset: Dict[str, Any]) -> bool:
+    extensions = dataset.get("custom_extensions") or []
+    if isinstance(extensions, dict):
+        extensions = [extensions]
+    for extension in extensions:
+        if not isinstance(extension, dict):
+            continue
+        vendor_name = str(extension.get("vendor_name") or "").strip()
+        if vendor_name and vendor_name.upper() != "DATUS":
+            continue
+        data = extension.get("data")
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(data, dict) and str(data.get("source_type") or "").strip().lower() == "query":
+            return True
+    return False
+
+
+def _dataset_table_references(agent_config: Any, dataset: Dict[str, Any], dataset_source: str) -> list[str]:
+    if not dataset_source or not _is_query_backed_dataset(dataset):
+        return [dataset_source] if dataset_source else []
+    references, _source_names, parse_errors = _source_query_table_references(
+        agent_config,
+        [{"source_sql_name": str(dataset.get("name") or "query_backed_dataset"), "sql": dataset_source}],
+    )
+    return references if not parse_errors else [dataset_source]
+
+
 def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any]]:
     """Discover Ossie semantic models already authored for the active datasource.
 
@@ -308,9 +340,13 @@ def discover_osi_semantic_models(agent_config: Any = None) -> list[Dict[str, Any
                 if dataset_source:
                     dataset_sources.append(dataset_source)
                     table_lookup_names.update(_table_lookup_names(dataset_source))
-                table_reference = dataset_source or dataset_name
-                if table_reference and table_reference not in table_references:
-                    table_references.append(table_reference)
+                dataset_references = _dataset_table_references(agent_config, dataset, dataset_source)
+                if not dataset_references and dataset_name:
+                    dataset_references = [dataset_name]
+                for table_reference in dataset_references:
+                    table_lookup_names.update(_table_lookup_names(table_reference))
+                    if table_reference not in table_references:
+                        table_references.append(table_reference)
             discovered.append(
                 {
                     "semantic_model_name": model_name,
@@ -344,6 +380,70 @@ def _dedupe_table_references(values: Iterable[Any]) -> list[str]:
             seen.add(key)
             references.append(text)
     return references
+
+
+def _source_query_value(source_query: Any, field_name: str) -> Any:
+    if isinstance(source_query, dict):
+        return source_query.get(field_name)
+    return getattr(source_query, field_name, None)
+
+
+def _source_query_dialect(agent_config: Any) -> str:
+    try:
+        db_config = agent_config.current_db_config()
+    except Exception:
+        db_config = None
+    candidates = (
+        getattr(db_config, "type", ""),
+        getattr(db_config, "db_type", ""),
+        getattr(db_config, "dialect", ""),
+        getattr(agent_config, "db_type", ""),
+    )
+    for candidate in candidates:
+        value = getattr(candidate, "value", candidate)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return "snowflake"
+
+
+def _source_query_parse_dialects(primary_dialect: str) -> list[Optional[str]]:
+    candidates: list[Optional[str]] = [primary_dialect]
+    if primary_dialect.strip().lower() == "starrocks":
+        candidates.append("mysql")
+    candidates.append(None)
+    return list(dict.fromkeys(candidates))
+
+
+def _source_query_table_references(
+    agent_config: Any,
+    source_queries: Iterable[Any],
+) -> tuple[list[str], list[str], list[dict[str, str]]]:
+    """Parse authoritative source SQL without consulting its rendered prompt."""
+    from datus.utils.sql_utils import extract_table_names_strict
+
+    references: list[str] = []
+    source_names: list[str] = []
+    parse_errors: list[dict[str, str]] = []
+    dialects = _source_query_parse_dialects(_source_query_dialect(agent_config))
+
+    for index, source_query in enumerate(source_queries, 1):
+        source_name = str(_source_query_value(source_query, "source_sql_name") or f"sql_{index}").strip()
+        sql = str(_source_query_value(source_query, "sql") or "").strip()
+        source_names.append(source_name)
+        if not sql:
+            parse_errors.append({"source_sql_name": source_name, "error": "source SQL is empty"})
+            continue
+        first_error: Optional[Exception] = None
+        for dialect in dialects:
+            try:
+                references.extend(extract_table_names_strict(sql, dialect=dialect, ignore_empty=True))
+                break
+            except Exception as exc:
+                first_error = first_error or exc
+        else:
+            parse_errors.append({"source_sql_name": source_name, "error": str(first_error)})
+
+    return _dedupe_table_references(references), source_names, parse_errors
 
 
 def _metric_request_table_references(
@@ -415,6 +515,9 @@ def _existing_model_resolution(
     reason: str,
     requested_name: str = "",
     referenced_tables: Optional[Iterable[str]] = None,
+    evidence_source: str = "",
+    source_sql_names: Optional[Iterable[str]] = None,
+    parse_errors: Optional[Iterable[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "status": status,
@@ -427,6 +530,12 @@ def _existing_model_resolution(
         result["requested_name"] = requested_name
     if referenced_tables:
         result["referenced_tables"] = list(referenced_tables)
+    if evidence_source:
+        result["evidence_source"] = evidence_source
+    if source_sql_names:
+        result["source_sql_names"] = list(source_sql_names)
+    if parse_errors:
+        result["parse_errors"] = list(parse_errors)
     return result
 
 
@@ -443,6 +552,22 @@ def resolve_existing_osi_semantic_model(
     then a unique model covering every referenced dataset. A single model is a
     safe datasource default; otherwise ambiguity is returned to the caller.
     """
+    source_queries = getattr(user_input, "source_queries", None) or []
+    source_tables: list[str] = []
+    source_sql_names: list[str] = []
+    evidence_source = ""
+    if source_queries:
+        source_tables, source_sql_names, parse_errors = _source_query_table_references(agent_config, source_queries)
+        if parse_errors:
+            return _existing_model_resolution(
+                "invalid",
+                reason="one or more structured source queries could not be parsed",
+                evidence_source="source_queries",
+                source_sql_names=source_sql_names,
+                parse_errors=parse_errors,
+            )
+        evidence_source = "source_queries"
+
     models = discover_osi_semantic_models(agent_config)
     requested_name = _requested_semantic_model_name(user_input, request_text)
     if requested_name:
@@ -456,6 +581,9 @@ def resolve_existing_osi_semantic_model(
                 candidates=target.get("candidates"),
                 requested_name=requested_name,
                 reason=target.get("reason") or "the explicit model name is ambiguous",
+                referenced_tables=source_tables,
+                evidence_source=evidence_source,
+                source_sql_names=source_sql_names,
             )
         if target.get("exists"):
             return _existing_model_resolution(
@@ -464,19 +592,30 @@ def resolve_existing_osi_semantic_model(
                 candidates=[target],
                 requested_name=requested_name,
                 reason="explicit semantic model name",
+                referenced_tables=source_tables,
+                evidence_source=evidence_source,
+                source_sql_names=source_sql_names,
             )
         return _existing_model_resolution(
             "missing",
             requested_name=requested_name,
             reason="the explicitly requested semantic model does not exist",
+            referenced_tables=source_tables,
+            evidence_source=evidence_source,
+            source_sql_names=source_sql_names,
         )
 
-    tables = _dedupe_table_references(
-        [
-            *_metric_request_table_references(user_input, request_text, models),
-            *(referenced_tables or []),
-        ]
-    )
+    if source_queries:
+        tables = _dedupe_table_references([*source_tables, *(referenced_tables or [])])
+    else:
+        tables = _dedupe_table_references(
+            [
+                *_metric_request_table_references(user_input, request_text, models),
+                *(referenced_tables or []),
+            ]
+        )
+        evidence_source = "legacy_request"
+
     if tables:
         matches = [model for model in models if all(_model_covers_table(model, table) for table in tables)]
         if len(matches) == 1:
@@ -486,6 +625,8 @@ def resolve_existing_osi_semantic_model(
                 candidates=matches,
                 referenced_tables=tables,
                 reason="referenced datasets uniquely identify the semantic model",
+                evidence_source=evidence_source,
+                source_sql_names=source_sql_names,
             )
         if len(matches) > 1:
             return _existing_model_resolution(
@@ -493,6 +634,8 @@ def resolve_existing_osi_semantic_model(
                 candidates=matches,
                 referenced_tables=tables,
                 reason="referenced datasets occur in multiple semantic models",
+                evidence_source=evidence_source,
+                source_sql_names=source_sql_names,
             )
         partial_matches = [model for model in models if any(_model_covers_table(model, table) for table in tables)]
         if len(partial_matches) > 1:
@@ -501,12 +644,16 @@ def resolve_existing_osi_semantic_model(
                 candidates=partial_matches,
                 referenced_tables=tables,
                 reason="referenced datasets are split across multiple semantic models",
+                evidence_source=evidence_source,
+                source_sql_names=source_sql_names,
             )
         return _existing_model_resolution(
             "missing",
             candidates=partial_matches,
             referenced_tables=tables,
             reason="no semantic model contains all referenced datasets",
+            evidence_source=evidence_source,
+            source_sql_names=source_sql_names,
         )
 
     if len(models) == 1:
@@ -515,14 +662,23 @@ def resolve_existing_osi_semantic_model(
             selected=models[0],
             candidates=models,
             reason="only one semantic model exists for the datasource",
+            evidence_source=evidence_source,
+            source_sql_names=source_sql_names,
         )
     if len(models) > 1:
         return _existing_model_resolution(
             "ambiguous",
             candidates=models,
             reason="multiple semantic models exist and the request does not identify a dataset",
+            evidence_source=evidence_source,
+            source_sql_names=source_sql_names,
         )
-    return _existing_model_resolution("missing", reason="no semantic model exists for the datasource")
+    return _existing_model_resolution(
+        "missing",
+        reason="no semantic model exists for the datasource",
+        evidence_source=evidence_source,
+        source_sql_names=source_sql_names,
+    )
 
 
 def _new_osi_semantic_model_name(business_domain: str, fact_tables: Iterable[str]) -> tuple[str, str]:

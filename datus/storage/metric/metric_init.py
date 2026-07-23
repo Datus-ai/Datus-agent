@@ -14,8 +14,8 @@ from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_OSI,
     discover_osi_semantic_models,
-    osi_semantic_models_cover_tables,
     resolve_authoring_format,
+    resolve_existing_osi_semantic_model,
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
@@ -25,7 +25,7 @@ from datus.schemas.action_history import (
     ActionStatus,
 )
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
 from datus.storage.knowledge_provenance import (
     METRIC_ARTIFACT_TYPE,
     KnowledgeProvenanceStore,
@@ -108,6 +108,36 @@ def _source_provenance_from_row(row: Any, row_index: int, success_story: str) ->
         "source_type": source_type,
         "source_context_ids": context_ids,
         "source_metadata": metadata,
+    }
+
+
+def _source_query_from_row(row: Any, row_index: int, success_story: str) -> Optional[SourceQueryEvidence]:
+    sql = _clean_cell(row.get("sql"))
+    if not sql:
+        return None
+    provenance = _source_provenance_from_row(row, row_index, success_story) or {}
+    return SourceQueryEvidence(
+        source_sql_name=f"sql_{row_index + 1}",
+        sql=sql,
+        question=_clean_cell(row.get("question")),
+        external_knowledge=_clean_cell(row.get("external_knowledge")),
+        source_id=provenance.get("source_id")
+        or _clean_cell(row.get("source_id"))
+        or f"{Path(success_story).name}:{row_index}",
+        source_type=provenance.get("source_type") or _clean_cell(row.get("source_type")) or "success_story",
+        source_context_ids=provenance.get("source_context_ids", []),
+        source_metadata=provenance.get("source_metadata") or _parse_source_metadata(row.get("source_metadata")),
+    )
+
+
+def _source_provenance_from_query(source_query: SourceQueryEvidence) -> Optional[dict[str, Any]]:
+    if not source_query.source_context_ids:
+        return None
+    return {
+        "source_id": source_query.source_id,
+        "source_type": source_query.source_type,
+        "source_context_ids": list(source_query.source_context_ids),
+        "source_metadata": dict(source_query.source_metadata),
     }
 
 
@@ -245,31 +275,58 @@ def _metrics_authoring_format(agent_config: AgentConfig) -> str:
     return resolve_authoring_format(agent_config)
 
 
+def _success_story_model_resolution_error(resolution: dict[str, Any]) -> str:
+    status = resolution.get("status")
+    if status == "invalid":
+        errors = "; ".join(
+            f"{item.get('source_sql_name')}: {item.get('error')}" for item in resolution.get("parse_errors") or []
+        )
+        return f"Invalid success-story source SQL: {errors or resolution.get('reason')}"
+    if status == "ambiguous":
+        candidates = ", ".join(
+            str(model.get("semantic_model_name") or model.get("semantic_model_file") or "")
+            for model in resolution.get("candidates") or []
+        )
+        return (
+            "A success-story CSV must resolve to exactly one semantic model; "
+            f"the referenced tables span or match multiple models: {candidates or 'unknown'}"
+        )
+    tables = ", ".join(resolution.get("referenced_tables") or [])
+    return "No single semantic model covers all tables referenced by the success-story CSV" + (
+        f": {tables}" if tables else ""
+    )
+
+
 async def _ensure_semantic_models_for_metrics(
     agent_config: AgentConfig,
     success_story: str,
-    success_story_records: list[dict[str, Any]],
-    sql_list: list[str],
+    source_queries: list[SourceQueryEvidence],
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
-) -> tuple[bool, str, list[str]]:
+) -> tuple[bool, str, list[str], Optional[str]]:
+    success_story_records = [{"sql": source.sql, "question": source.question} for source in source_queries]
+    sql_list = [source.sql for source in source_queries]
+
     if _metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI:
         from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
 
         before_models = discover_osi_semantic_models(agent_config)
-        requested_table_groups = [extract_tables_from_sql_list([sql], agent_config) for sql in sql_list]
-        requested_tables = list(dict.fromkeys(table for table_group in requested_table_groups for table in table_group))
-        existing_models_cover_request = not requested_tables or all(
-            not table_group or osi_semantic_models_cover_tables(agent_config, table_group)
-            for table_group in requested_table_groups
+        source_input = SemanticNodeInput(user_message="", source_queries=source_queries)
+        resolution = resolve_existing_osi_semantic_model(
+            agent_config,
+            user_input=source_input,
         )
-        if before_models and existing_models_cover_request:
+        if resolution["status"] == "found":
+            selected = resolution["selected"]
             logger.info(
-                "Reusing %d existing OSI semantic model file(s) for metric bootstrap",
-                len(before_models),
+                "Reusing OSI semantic model '%s' for all %d success-story source queries",
+                selected["semantic_model_name"],
+                len(source_queries),
             )
-            return True, "", []
+            return True, "", [], selected["semantic_model_name"]
+        if resolution["status"] in {"ambiguous", "invalid"}:
+            return False, _success_story_model_resolution_error(resolution), [], None
 
-        logger.info("Generating OSI semantic model(s) for metric bootstrap")
+        logger.info("Generating one OSI semantic model target for the success-story CSV")
         success, error = await init_success_story_semantic_model_async(
             agent_config,
             success_story,
@@ -278,19 +335,31 @@ async def _ensure_semantic_models_for_metrics(
             action_callback=action_callback,
         )
         if not success:
-            return False, error, []
+            return False, error, [], None
         after_models = discover_osi_semantic_models(agent_config)
         if not after_models:
-            return False, "OSI semantic model generation did not create a model file", []
+            return False, "OSI semantic model generation did not create a model file", [], None
+        post_resolution = resolve_existing_osi_semantic_model(
+            agent_config,
+            user_input=source_input,
+        )
+        if post_resolution["status"] != "found":
+            return False, _success_story_model_resolution_error(post_resolution), [], None
         before_files = {model["semantic_model_file"] for model in before_models}
         created_files = sorted(
             model["semantic_model_file"] for model in after_models if model["semantic_model_file"] not in before_files
         )
-        return True, "", created_files
+        selected = post_resolution["selected"]
+        logger.info(
+            "Resolved all %d success-story source queries to OSI semantic model '%s'",
+            len(source_queries),
+            selected["semantic_model_name"],
+        )
+        return True, "", created_files, selected["semantic_model_name"]
 
     all_tables = extract_tables_from_sql_list(sql_list, agent_config)
     if not all_tables:
-        return True, "", []
+        return True, "", [], None
 
     logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
     sql_evidence_by_table = extract_table_sql_evidence(success_story_records, agent_config)
@@ -307,7 +376,7 @@ async def _ensure_semantic_models_for_metrics(
     if error:
         logger.warning(f"Semantic model generation had partial failures: {error}")
 
-    return success, error, created_tables
+    return success, error, created_tables, None
 
 
 def _build_existing_metric_catalog(agent_config: AgentConfig) -> list[dict[str, Any]]:
@@ -619,7 +688,7 @@ def _unique_metric_catalog_by_name(
 
 
 async def _generate_metrics_batch(
-    batch_queries: list[str],
+    batch_sources: list[SourceQueryEvidence],
     batch_idx: int,
     agent_config: AgentConfig,
     subject_tree: Optional[list],
@@ -628,10 +697,18 @@ async def _generate_metrics_batch(
     action_callback: Optional[Callable[["ActionHistory"], None]],
     candidate_plan_json: Optional[str] = None,
     existing_metric_catalog_json: Optional[str] = None,
+    semantic_model_name: Optional[str] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """Process a single batch of SQL queries for metrics extraction."""
+    rendered_queries = []
+    for source in batch_sources:
+        query_number = source.source_sql_name.removeprefix("sql_")
+        rendered = f"Query {query_number}:\nQuestion: {source.question}\nSQL:\n{source.sql}"
+        if source.external_knowledge:
+            rendered += f"\nExternal Knowledge:\n{source.external_knowledge}"
+        rendered_queries.append(rendered)
     batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(
-        batch_queries
+        rendered_queries
     )
 
     if existing_metric_catalog_json:
@@ -666,6 +743,8 @@ async def _generate_metrics_batch(
 
     metrics_input = SemanticNodeInput(
         user_message=batch_message,
+        source_queries=batch_sources,
+        semantic_model_name=semantic_model_name,
         catalog=runtime_db_context.get("catalog")
         or runtime_db_context.get("catalog_name")
         or current_db_config.catalog,
@@ -784,6 +863,43 @@ async def init_success_story_metrics_async(
         )
         return True, "", {"checked": True, "metrics_count": metric_rag.get_metrics_size()}
 
+    df = pd.read_csv(success_story)
+
+    # Emit task started
+    event_helper.task_started(total_items=len(df), success_story=success_story)
+
+    missing_columns = [column for column in ("question", "sql") if column not in df.columns]
+    if missing_columns:
+        error_msg = f"Success story CSV is missing required columns: {missing_columns}"
+        logger.error(error_msg)
+        event_helper.task_failed(error=error_msg)
+        return False, error_msg, None
+
+    source_queries: list[SourceQueryEvidence] = []
+    for idx, row in df.iterrows():
+        source_query = _source_query_from_row(row, idx, success_story)
+        if source_query is not None:
+            source_queries.append(source_query)
+    if not source_queries:
+        error_msg = "Success story CSV contains no SQL rows"
+        logger.error(error_msg)
+        event_helper.task_failed(error=error_msg)
+        return False, error_msg, None
+
+    # Step 0: Resolve one semantic model for the entire CSV before metric batching.
+    success, error, _created_semantic_models, semantic_model_name = await _ensure_semantic_models_for_metrics(
+        agent_config,
+        success_story,
+        source_queries,
+        action_callback=action_callback,
+    )
+
+    if not success:
+        error_msg = f"Failed to create semantic models: {error}"
+        logger.error(error_msg)
+        event_helper.task_failed(error=error_msg)
+        return False, error_msg, None
+
     if build_mode == "overwrite":
         from datus.storage.metric.store import MetricRAG
 
@@ -797,36 +913,9 @@ async def init_success_story_metrics_async(
         if cleared_provenance:
             logger.info("Cleared %d stale metric provenance row(s)", cleared_provenance)
 
-    df = pd.read_csv(success_story)
-
-    # Emit task started
-    event_helper.task_started(total_items=len(df), success_story=success_story)
-
-    # Step 0: Check and create missing semantic models
-    success_story_records = []
-    sql_entries: list[dict[str, Any]] = []
-    for idx, row in df.iterrows():
-        sql = row.get("sql")
-        if not sql:
-            continue
-        question = row.get("question")
-        success_story_records.append({"sql": sql, "question": question})
-        sql_entries.append({"name": f"sql_{idx + 1}", "sql": sql, "question": question})
-    sql_list = [record["sql"] for record in success_story_records]
-    success, error, _created_semantic_models = await _ensure_semantic_models_for_metrics(
-        agent_config,
-        success_story,
-        success_story_records,
-        sql_list,
-        action_callback=action_callback,
-    )
-
-    if not success:
-        error_msg = f"Failed to create semantic models: {error}"
-        logger.error(error_msg)
-        event_helper.task_failed(error=error_msg)
-        return False, error_msg, None
-
+    sql_entries = [
+        {"name": source.source_sql_name, "sql": source.sql, "question": source.question} for source in source_queries
+    ]
     existing_metric_catalog = _build_existing_metric_catalog(agent_config)
     existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
     candidate_plan = _build_candidate_plan(sql_entries, existing_metric_catalog_json, agent_config)
@@ -836,26 +925,13 @@ async def init_success_story_metrics_async(
         candidate_plan.get("available"),
     )
 
-    # Build query records for all rows. Optional source-context columns are only
-    # used by benchmark provenance mode and do not affect normal bootstrap data.
-    all_query_records: list[dict[str, Any]] = []
-    for idx, row in df.iterrows():
-        sql = row["sql"]
-        question = row["question"]
-        all_query_records.append(
-            {
-                "source_sql_name": f"sql_{idx + 1}",
-                "query": f"Query {idx + 1}:\nQuestion: {question}\nSQL:\n{sql}",
-                "source": _source_provenance_from_row(row, idx, success_story),
-            }
-        )
-
     # Split into batches
-    batches = [all_query_records[i : i + batch_size] for i in range(0, len(all_query_records), batch_size)]
+    batches = [source_queries[i : i + batch_size] for i in range(0, len(source_queries), batch_size)]
     total_batches = len(batches)
 
     logger.info(
-        f"Processing {len(df)} SQL queries in {total_batches} batch(es) (batch_size={batch_size}) for metrics extraction"
+        f"Processing {len(source_queries)} SQL queries in {total_batches} batch(es) "
+        f"(batch_size={batch_size}) for metrics extraction"
     )
 
     event_helper.task_processing(total_items=total_batches)
@@ -867,13 +943,14 @@ async def init_success_story_metrics_async(
     skipped_batches = 0
 
     for batch_idx, batch_records in enumerate(batches):
-        batch_queries = [record["query"] for record in batch_records]
-        batch_sources = {record["source_sql_name"] for record in batch_records}
+        batch_sources = {record.source_sql_name for record in batch_records}
         batch_candidate_plan = _candidate_plan_for_sources(candidate_plan, batch_sources)
         batch_candidate_plan_json = _json_dump_compact(batch_candidate_plan) if batch_candidate_plan else ""
-        source_entries = [record["source"] for record in batch_records if record.get("source")]
+        source_entries = [
+            source for record in batch_records if (source := _source_provenance_from_query(record)) is not None
+        ]
 
-        logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_queries)} queries)")
+        logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_records)} queries)")
 
         metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
 
@@ -969,7 +1046,7 @@ async def init_success_story_metrics_async(
             continue
 
         success, error, batch_result = await _generate_metrics_batch(
-            batch_queries,
+            batch_records,
             batch_idx,
             agent_config,
             subject_tree,
@@ -978,6 +1055,7 @@ async def init_success_story_metrics_async(
             action_callback,
             candidate_plan_json=batch_candidate_plan_json,
             existing_metric_catalog_json=existing_metric_catalog_json,
+            semantic_model_name=semantic_model_name,
         )
 
         if success and batch_result is not None:
