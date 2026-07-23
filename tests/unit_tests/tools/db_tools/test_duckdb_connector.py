@@ -55,6 +55,24 @@ def test_database_name_visible_across_threads(tmp_path):
         connector.close()
 
 
+def test_in_memory_default_database_is_empty():
+    """In-memory DuckDB must not derive a bogus ``:memory:`` database name.
+
+    ``file_stem_from_uri(":memory:")`` yields ``":memory:"`` (no file stem to
+    strip), but DuckDB names the in-memory database ``memory``. Pinning the
+    connector to ``":memory:"`` made every metadata query filter on a name that
+    matches no database, so ``catalog/list`` returned an empty list. Leaving the
+    default empty lets listing fall back to enumerating all attached databases.
+    """
+    connector = DuckdbConnector(DuckDBConfig(db_path=":memory:"))
+    try:
+        assert connector.database_name == ""
+        # get_databases() must surface the real in-memory database name.
+        assert "memory" in connector.get_databases()
+    finally:
+        connector.close()
+
+
 def test_coexist_with_sqlalchemy_duckdb_engine(db_path):
     """Regression: a second connection via SQLAlchemy+duckdb_engine on the same
     file in the same process must succeed. Pre-fix, DuckDB rejected it with

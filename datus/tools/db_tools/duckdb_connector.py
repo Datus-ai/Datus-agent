@@ -97,6 +97,12 @@ class DuckdbConnector(BaseSqlConnector, SchemaNamespaceMixin, MigrationTargetMix
         # ``SQLiteConnector.__init__`` for the full rationale.
         if config.database_name:
             self._default_database = config.database_name
+        elif self.db_path == ":memory:":
+            # In-memory DuckDB has no file stem, and DuckDB names the database
+            # ``memory`` (not ``:memory:``). Leave the default empty so metadata
+            # listing falls back to enumerating every attached database — the
+            # ``memory`` db plus any ATTACHed iceberg REST catalog (e.g. ``lake``).
+            self._default_database = ""
         else:
             from datus.configuration.agent_config import file_stem_from_uri
 
