@@ -145,6 +145,12 @@ versioned environment value. The plugin still receives the resolved dict as
 the normal `profile` argument to `main(argv, profile)`; plugin code does not
 need to read the environment variable.
 
+Plugin skill discovery follows the same rule: `plugins_enabled`, the active
+plugin whitelist, `plugin_paths`, and `skills` directories are resolved from
+that request's `AgentConfig`. It does not fall back to another tenant's loaded
+configuration or to `./.datus/config.yml`. Standalone CLI skill commands that
+do not hold an `AgentConfig` keep the local project-file behavior.
+
 This bridge accepts one direct plugin invocation, optionally as one stage of a
 plain `|` pipeline. It deliberately fails closed for multiple `datus`
 invocations and for shell control forms such as `&&`, `;`, redirection, command

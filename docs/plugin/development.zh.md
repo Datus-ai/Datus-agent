@@ -432,6 +432,10 @@ Run `datus hello <name>` to greet someone. ...
 
 完整 frontmatter 字段参考见 [Skills](../skills/introduction.zh.md) 文档。
 
+在多租户 API 部署中,skill 发现由当前请求的 `AgentConfig` 限定
+(`plugins_enabled`、激活 plugin、`plugin_paths` 和 `skills`),plugin skill 不依赖
+本地 `./.datus/config.yml`。
+
 确保 skill 文件被打进 wheel(它们是数据,不是 Python 代码)。Hatchling 默认打包
 包目录下所有文件,除非文件被 VCS 忽略(那样需要在
 `[tool.hatch.build.targets.wheel] artifacts` 列出);setuptools 必须显式声明:

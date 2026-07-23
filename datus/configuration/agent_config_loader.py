@@ -521,22 +521,6 @@ def load_agent_config(reload: bool = False, create_if_missing: bool = False, **k
     except Exception as e:
         logger.warning(f"Failed to initialize tracing: {e}")
 
-    # Append this project's enabled plugin directories (~/.datus/plugins/<name>/
-    # unioned with ``agent.plugin_paths`` mounts) to sys.path so their
-    # ``datus.plugins`` entry points are discovered before skills / prompt
-    # sections / permissions / tool transformers are collected.
-    # Path-only injection — the plugin package is imported lazily on use.
-    try:
-        from datus.plugins import store
-
-        store.activate(
-            agent_config.active_plugin_names(),
-            plugins_enabled=getattr(agent_config, "plugins_enabled", True),
-            extra_paths=getattr(agent_config, "plugin_paths", None),
-        )
-    except Exception as e:  # noqa: BLE001 - a bad plugin dir must never block config load
-        logger.debug("plugin sys.path activation failed: %s", e)
-
     return agent_config
 
 

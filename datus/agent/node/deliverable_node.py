@@ -220,10 +220,9 @@ class DeliverableAgenticNode(AgenticNode):
             if registry is None:
                 # Create a default registry so the hook can still dispatch
                 # validators declared in the standard skill directories.
-                from datus.tools.skill_tools.skill_config import SkillConfig
                 from datus.tools.skill_tools.skill_registry import SkillRegistry
 
-                registry = SkillRegistry(config=SkillConfig())
+                registry = SkillRegistry(agent_config=self.agent_config)
             validation_cfg = getattr(self.agent_config, "validation_config", None)
             enabled = bool(getattr(validation_cfg, "skill_validators_enabled", True)) if validation_cfg else True
 

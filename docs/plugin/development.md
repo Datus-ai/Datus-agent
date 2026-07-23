@@ -464,6 +464,10 @@ Run `datus hello <name>` to greet someone. ...
 See the [Skills](../skills/introduction.md) docs for the full frontmatter
 field reference.
 
+In a multi-tenant API deployment, discovery is scoped by the request's
+`AgentConfig` (`plugins_enabled`, active plugins, `plugin_paths`, and
+`skills`); plugin skills do not depend on a local `./.datus/config.yml`.
+
 Make sure the skill files are included in the wheel (they are data, not
 Python). Hatchling packages every file under the package directory by default,
 so nothing extra is needed unless the files are VCS-ignored (then list them

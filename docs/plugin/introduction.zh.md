@@ -125,6 +125,11 @@ plugin 路径与 profile,再通过带版本的环境变量把这份快照只传�
 子进程。plugin 仍通过常规的 `main(argv, profile)` 的 `profile` 参数取得解析后的
 字典,无需自行读取该环境变量。
 
+plugin skill 发现遵循相同规则:`plugins_enabled`、激活 plugin 白名单、
+`plugin_paths` 和 `skills` 目录均以当前请求的 `AgentConfig` 为准,不会回退到其他
+租户已加载的配置或 `./.datus/config.yml`。只有拿不到 `AgentConfig` 的独立 CLI
+skill 命令才保留本地项目配置文件行为。
+
 此桥接允许一次直接的 plugin 调用,也允许它作为普通 `|` 管道中的一个 stage。
 若命令包含多个 `datus` 调用,或使用 `&&`、`;`、重定向、命令替换、`|&` 等 shell
 控制形式,则会 fail closed。`--profile` 仍受支持,并针对当前请求的 `AgentConfig`

@@ -80,16 +80,20 @@ def _entry_point_skill_directories() -> List[str]:
     return found
 
 
-def _plugins_system_enabled() -> bool:
+def _plugins_system_enabled(agent_config: Optional[Any] = None) -> bool:
     """Whether the datus-plugin system is enabled in the loaded agent config.
 
     ``agent.plugins_enabled: false`` is the master switch that disables all
-    plugin functionality, including plugin-bundled skills. This reads the
-    already-loaded ``ConfigurationManager`` singleton (never triggers a config
-    load) because ``SkillConfig`` may be constructed without an ``AgentConfig``
-    in reach (default factory, ``skill_cli``). Defaults to enabled when no
-    config has been loaded yet (e.g. unit tests building SkillConfig directly).
+    plugin functionality, including plugin-bundled skills. When an
+    ``AgentConfig`` is supplied it is authoritative; this is required by
+    multi-tenant API deployments where the request config comes from an
+    AuthProvider and no local config file exists. Legacy callers without an
+    ``AgentConfig`` fall back to the already-loaded ``ConfigurationManager``
+    singleton (and never trigger a config load).
     """
+    if agent_config is not None:
+        return bool(getattr(agent_config, "plugins_enabled", True))
+
     try:
         from datus.configuration import agent_config_loader
 
@@ -107,35 +111,40 @@ def _plugins_system_enabled() -> bool:
     return _coerce_bool(value, True)
 
 
-def _plugin_skill_directories() -> List[str]:
+def _plugin_skill_directories(agent_config: Optional[Any] = None) -> List[str]:
     """Skill directories contributed by ``datus.plugins`` packages.
 
     Delegates to :func:`datus.plugins.registry.plugin_skill_directories` (lazy
     import to avoid an import cycle). Returns an empty list when the plugin
-    system is disabled (``agent.plugins_enabled: false``). Only *active*
-    plugins for the current project contribute — the project's ``plugins:``
-    whitelist in ``./.datus/config.yml`` (resolved via
-    :func:`datus.plugins.activation.active_names_for_cwd`) gates discovery so a
-    deactivated plugin's skills are not surfaced. Any failure resolves to an
-    empty list so skill discovery never blocks startup.
+    system is disabled (``agent.plugins_enabled: false``). When
+    ``agent_config`` is supplied, its active-plugin whitelist is used directly;
+    otherwise the legacy CWD-level ``./.datus/config.yml`` lookup is retained
+    for standalone CLI callers. Any failure resolves to an empty list so skill
+    discovery never blocks startup.
     """
-    if not _plugins_system_enabled():
+    if not _plugins_system_enabled(agent_config):
         return []
     try:
-        from datus.plugins.activation import active_names_for_cwd
         from datus.plugins.registry import plugin_skill_directories
 
-        return plugin_skill_directories(active_names=active_names_for_cwd())
+        if agent_config is not None:
+            getter = getattr(agent_config, "active_plugin_names", None)
+            active_names = getter() if callable(getter) else None
+        else:
+            from datus.plugins.activation import active_names_for_cwd
+
+            active_names = active_names_for_cwd()
+        return plugin_skill_directories(active_names=active_names)
     except Exception as exc:  # noqa: BLE001 - defensive: never break discovery
         logger.debug("plugin skill-directory discovery failed: %s", exc)
         return []
 
 
-def _adapter_skill_directories() -> List[str]:
+def _adapter_skill_directories(agent_config: Optional[Any] = None) -> List[str]:
     """Directories contributed by plugins (``datus.plugins``) then legacy
     adapters (``datus.skills``), de-duplicated with plugins taking precedence."""
     dirs: List[str] = []
-    for ep_dir in _plugin_skill_directories():
+    for ep_dir in _plugin_skill_directories(agent_config):
         if not _contains_directory(dirs, ep_dir):
             dirs.append(ep_dir)
     for ep_dir in _entry_point_skill_directories():
@@ -144,7 +153,7 @@ def _adapter_skill_directories() -> List[str]:
     return dirs
 
 
-def _default_skill_directories() -> List[str]:
+def _default_skill_directories(agent_config: Optional[Any] = None) -> List[str]:
     """Default scan order: project → user → plugin/adapter entry points → packaged built-ins.
 
     The first two entries match the documented user-facing locations and always
@@ -154,7 +163,7 @@ def _default_skill_directories() -> List[str]:
     built-in, but never a user override. The packaged directory is appended last.
     """
     dirs: List[str] = ["./.datus/skills", "~/.datus/skills"]
-    for ep_dir in _adapter_skill_directories():
+    for ep_dir in _adapter_skill_directories(agent_config):
         if not _contains_directory(dirs, ep_dir):
             dirs.append(ep_dir)
     builtin = _builtin_skills_dir()
@@ -218,17 +227,19 @@ class SkillConfig(BaseModel):
     install_dir: str = Field(default="~/.datus/skills", description="Directory for marketplace-installed skills")
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SkillConfig":
+    def from_dict(cls, data: Dict[str, Any], *, agent_config: Optional[Any] = None) -> "SkillConfig":
         """Create SkillConfig from dictionary (agent.yml format).
 
         Args:
             data: Dictionary with skills configuration
+            agent_config: Optional request-scoped AgentConfig. When supplied,
+                plugin skill discovery uses this instance's activation state
+                rather than process-global/CWD configuration.
 
         Returns:
             SkillConfig instance
         """
-        if not data:
-            return cls()
+        data = data or {}
 
         # Always append plugin/adapter-contributed (entry-point) and packaged
         # built-in directories to whatever the user listed so a deployer can
@@ -236,10 +247,10 @@ class SkillConfig(BaseModel):
         # ``init``, ``hello``) by overriding ``skills.directories`` in agent.yml.
         directories = data.get("directories")
         if directories is None:
-            directories = _default_skill_directories()
+            directories = _default_skill_directories(agent_config)
         else:
             directories = list(directories)
-            for ep_dir in _adapter_skill_directories():
+            for ep_dir in _adapter_skill_directories(agent_config):
                 if not _contains_directory(directories, ep_dir):
                     directories.append(ep_dir)
             builtin = _builtin_skills_dir()

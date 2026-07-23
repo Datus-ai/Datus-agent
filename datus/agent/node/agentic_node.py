@@ -2296,6 +2296,7 @@ class AgenticNode(Node):
                 config=skills_config,
                 permission_manager=self.permission_manager,
                 config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
             )
             logger.debug(
                 f"Skill manager initialized for node '{self.get_node_name()}' "
@@ -2342,6 +2343,7 @@ class AgenticNode(Node):
                 self.skill_manager = SkillManager(
                     permission_manager=self.permission_manager,
                     config_mutable=self._resolve_config_mutable(),
+                    agent_config=self.agent_config,
                 )
                 logger.info(
                     f"Created default SkillManager for node '{self.get_node_name()}' "
@@ -2398,6 +2400,7 @@ class AgenticNode(Node):
             self.skill_manager = SkillManager(
                 permission_manager=self.permission_manager,
                 config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
             )
 
         from xml.sax.saxutils import quoteattr as xml_quoteattr
