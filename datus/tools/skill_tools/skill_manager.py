@@ -20,6 +20,7 @@ from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
 from datus.tools.skill_tools.skill_registry import SkillRegistry
 
 if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
     from datus.tools.permission.permission_manager import PermissionManager
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ class SkillManager:
         permission_manager: Optional["PermissionManager"] = None,
         registry: Optional[SkillRegistry] = None,
         config_mutable: bool = True,
+        agent_config: Optional["AgentConfig"] = None,
     ):
         """Initialize the skill manager.
 
@@ -67,10 +69,13 @@ class SkillManager:
                 this deployment. When False (chat API / gateway), skills
                 declaring ``requires_mutable_config: true`` are hidden from
                 listings and refused on load.
+            agent_config: Optional request-scoped AgentConfig used when
+                ``config`` is omitted. This keeps plugin skill discovery
+                tenant-local instead of consulting CWD configuration.
         """
-        self.config = config or SkillConfig()
+        self.config = config or SkillConfig.from_dict({}, agent_config=agent_config)
         self.permission_manager = permission_manager
-        self.registry = registry or SkillRegistry(config=self.config)
+        self.registry = registry or SkillRegistry(config=self.config, agent_config=agent_config)
         self.config_mutable = bool(config_mutable)
 
         # Scan directories on initialization

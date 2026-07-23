@@ -13,11 +13,14 @@ import logging
 import re
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import yaml
 
 from datus.tools.skill_tools.skill_config import SkillConfig, SkillMetadata
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +55,21 @@ class SkillRegistry:
         content = registry.load_skill_content("sql-optimization")
     """
 
-    def __init__(self, config: Optional[SkillConfig] = None, directories: Optional[List[str]] = None):
+    def __init__(
+        self,
+        config: Optional[SkillConfig] = None,
+        directories: Optional[List[str]] = None,
+        agent_config: Optional["AgentConfig"] = None,
+    ):
         """Initialize the skill registry.
 
         Args:
             config: SkillConfig with directories and settings
             directories: Override directories (for testing)
+            agent_config: Optional request-scoped AgentConfig used to build
+                defaults without consulting CWD/project configuration.
         """
-        self.config = config or SkillConfig()
+        self.config = config or SkillConfig.from_dict({}, agent_config=agent_config)
         self._directories = directories or self.config.directories
         self._skills: Dict[str, SkillMetadata] = {}
         self._scanned = False

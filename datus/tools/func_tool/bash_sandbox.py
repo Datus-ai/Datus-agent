@@ -260,6 +260,7 @@ def build_policy(
     workspace_root: Path,
     dynamic_write_dirs: Sequence[Any] = (),
     extra_read_dirs: Sequence[str] = (),
+    runtime_read_dirs: Sequence[str] = (),
 ) -> SandboxPolicy:
     """Merge defaults, configuration and per-call dirs into a resolved policy.
 
@@ -270,11 +271,16 @@ def build_policy(
     Readable: the python interpreter prefixes (the ``python`` shim in
     ``BashTool._shell_prefix`` points at ``sys.executable``, whose venv often
     lives outside the workspace), caller-injected ``extra_read_dirs`` (datus
-    home, so skills/templates stay usable) and ``settings.allow_read``.
+    home, so skills/templates stay usable), validated per-invocation
+    ``runtime_read_dirs`` and ``settings.allow_read``.
 
     Strict mode ignores the caller-injected ``dynamic_write_dirs`` and
     ``extra_read_dirs`` entirely — in a multi-tenant deployment those point
     into the shared ``~/.datus`` tree, which strict tenants must not touch.
+    ``runtime_read_dirs`` survive strict mode because they are narrow,
+    invocation-scoped capabilities (for example the exact plugin directory
+    whose metadata name matched the command). Callers MUST validate them
+    before passing them here; raw user paths never belong in this parameter.
     Filtering here (rather than at each call site) makes the guarantee hold
     no matter who constructs the tool. Oversized-output archiving keeps
     working: the redirect file is opened by the parent process and inherited
@@ -297,7 +303,9 @@ def build_policy(
     )
     readable = [
         root
-        for root in _normalize_roots([sys.prefix, sys.base_prefix, *extra_read_dirs, *settings.allow_read])
+        for root in _normalize_roots(
+            [sys.prefix, sys.base_prefix, *extra_read_dirs, *runtime_read_dirs, *settings.allow_read]
+        )
         if root not in writable
     ]
     return SandboxPolicy(

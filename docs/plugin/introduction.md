@@ -134,6 +134,32 @@ effect on the next `datus <plugin>` invocation; no restart is needed.
 Some plugins ship a `<name>-setup` skill that writes this configuration for
 you — see [Using a plugin with the agent](#using-a-plugin-with-the-agent).
 
+### Managed API runtime configuration
+
+In a multi-tenant `datus-api` deployment, an `AuthProvider` can supply a
+request-scoped `AgentConfig` without writing `agent.yml`. When that config is
+read-only (`config_mutable: false`) and the agent runs `datus <name> ...`
+through Bash, Datus resolves the selected plugin path and profile in the API
+process and passes that snapshot to only the plugin subprocess through a
+versioned environment value. The plugin still receives the resolved dict as
+the normal `profile` argument to `main(argv, profile)`; plugin code does not
+need to read the environment variable.
+
+Plugin skill discovery follows the same rule: `plugins_enabled`, the active
+plugin whitelist, `plugin_paths`, and `skills` directories are resolved from
+that request's `AgentConfig`. It does not fall back to another tenant's loaded
+configuration or to `./.datus/config.yml`. Standalone CLI skill commands that
+do not hold an `AgentConfig` keep the local project-file behavior.
+
+This bridge accepts one direct plugin invocation, optionally as one stage of a
+plain `|` pipeline. It deliberately fails closed for multiple `datus`
+invocations and for shell control forms such as `&&`, `;`, redirection, command
+substitution, and `|&`. `--profile` remains supported and is resolved against
+the request's `AgentConfig`; `--config` is rejected because the AuthProvider
+configuration is authoritative. The encoded runtime snapshot is capped at
+64 KiB. Sibling pipeline stages do not inherit it, and the parent process
+environment is never modified.
+
 ### Which profile runs
 
 When you run `datus <name> ...`, the active profile is resolved in this order:

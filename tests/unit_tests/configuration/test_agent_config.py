@@ -2964,6 +2964,24 @@ class TestPluginPathsConfig:
         assert cfg.plugin_paths == []
         assert "plugin_paths must be a list" in caplog.text
 
+    def test_activates_request_plugin_paths_during_construction(self, tmp_path, monkeypatch):
+        """Direct AuthProvider construction must not depend on the YAML loader."""
+        calls = []
+
+        def activate(active_names, plugins_enabled=True, extra_paths=None):
+            calls.append((active_names, plugins_enabled, extra_paths))
+            return []
+
+        monkeypatch.setattr("datus.plugins.store.activate", activate)
+
+        self._make(
+            tmp_path,
+            plugin_paths=[" /srv/tenant/plugin "],
+            active_plugins={"tenant-plugin": {"enabled": True}},
+        )
+
+        assert calls == [({"tenant-plugin"}, True, ["/srv/tenant/plugin"])]
+
 
 class TestPromptManagerAttribute:
     """``AgentConfig.prompt_manager`` — the runtime prompt-template override.

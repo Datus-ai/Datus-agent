@@ -10,6 +10,7 @@ from typing import Any, Optional
 from datus.cli import main as cli_main
 from datus.cli.main import _dispatch_plugin_command, _split_plugin_globals
 from datus.plugins.base import PluginManifest
+from datus.plugins.runtime_context import RUNTIME_CONTEXT_ENV, PluginRuntimeContext
 
 # ── _split_plugin_globals ────────────────────────────────────────────────────
 
@@ -289,3 +290,80 @@ def test_dispatch_cli_bool_rc_maps_to_exit_semantics(monkeypatch):
     assert _dispatch_plugin_command(["hello", "version"]) == 0
     _patch_dispatch(monkeypatch, profile_dict={}, cli_func=_StubCli(rc=False))
     assert _dispatch_plugin_command(["hello", "version"]) == 1
+
+
+# ── managed runtime context ──────────────────────────────────────────────────
+
+
+def test_runtime_context_bypasses_file_loader(monkeypatch):
+    load_calls = []
+    stub_cfg = _patch_dispatch(monkeypatch, profile_dict={"from": "file"}, load_calls=load_calls)
+    runtime_profile = {"name": "tenant-a", "token": "secret-a"}
+    monkeypatch.setenv(
+        RUNTIME_CONTEXT_ENV,
+        PluginRuntimeContext(plugin_name="hello", profile=runtime_profile).encode(),
+    )
+
+    rc = _dispatch_plugin_command(["hello", "--profile", "tenant-a", "version"])
+
+    assert rc == 7
+    assert load_calls == []
+    assert stub_cfg.requested == {}
+    assert _StubCli.last["profile"] == runtime_profile
+    assert _StubCli.last["argv"] == ["version"]
+
+
+def test_runtime_context_rejects_config_override(monkeypatch, capsys):
+    _patch_dispatch(monkeypatch, profile_dict={})
+    monkeypatch.setenv(
+        RUNTIME_CONTEXT_ENV,
+        PluginRuntimeContext(plugin_name="hello", profile={}).encode(),
+    )
+
+    assert _dispatch_plugin_command(["hello", "--config", "/tmp/other.yml", "version"]) == 3
+    assert "--config" in " ".join(capsys.readouterr().err.split())
+
+
+def test_runtime_context_rejects_config_flag_without_value(monkeypatch, capsys):
+    _patch_dispatch(monkeypatch, profile_dict={})
+    monkeypatch.setenv(
+        RUNTIME_CONTEXT_ENV,
+        PluginRuntimeContext(plugin_name="hello", profile={}).encode(),
+    )
+
+    assert _dispatch_plugin_command(["hello", "--config"]) == 3
+    assert "--config" in " ".join(capsys.readouterr().err.split())
+
+
+def test_runtime_context_mismatch_fails_closed(monkeypatch, capsys):
+    load_calls = []
+    _patch_dispatch(monkeypatch, profile_dict={}, load_calls=load_calls)
+    monkeypatch.setenv(
+        RUNTIME_CONTEXT_ENV,
+        PluginRuntimeContext(plugin_name="other", profile={}).encode(),
+    )
+
+    assert _dispatch_plugin_command(["hello", "version"]) == 3
+    assert load_calls == []
+    assert "not `hello`" in " ".join(capsys.readouterr().err.split())
+
+
+def test_runtime_context_missing_plugin_does_not_fall_through(monkeypatch, capsys):
+    monkeypatch.setattr("datus.plugins.registry.plugin_entry_point_exists", lambda name: False)
+    monkeypatch.setattr("datus.plugins.store.activate_paths", lambda paths: [])
+    monkeypatch.setenv(
+        RUNTIME_CONTEXT_ENV,
+        PluginRuntimeContext(plugin_name="hello", profile={}).encode(),
+    )
+
+    assert _dispatch_plugin_command(["hello", "version"]) == 3
+    assert "not installed or discoverable" in " ".join(capsys.readouterr().err.split())
+
+
+def test_malformed_runtime_context_does_not_load_file(monkeypatch):
+    load_calls = []
+    _patch_dispatch(monkeypatch, profile_dict={}, load_calls=load_calls)
+    monkeypatch.setenv(RUNTIME_CONTEXT_ENV, "v1.not-base64!")
+
+    assert _dispatch_plugin_command(["hello", "version"]) == 3
+    assert load_calls == []
