@@ -344,10 +344,10 @@ class TestPluginSkillDirectories:
             def active_plugin_names(self):
                 raise AssertionError("disabled plugins must not be enumerated")
 
-        monkeypatch.setattr(
-            "datus.plugins.registry.plugin_skill_directories",
-            lambda **_kwargs: (_ for _ in ()).throw(AssertionError("disabled plugins must not be discovered")),
-        )
+        def fail_plugin_discovery(**_kwargs):
+            raise AssertionError("disabled plugins must not be discovered")
+
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", fail_plugin_discovery)
         _patch_entry_points(monkeypatch, [])
 
         config = SkillConfig.from_dict({}, agent_config=RuntimeConfig())

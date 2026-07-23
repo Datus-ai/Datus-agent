@@ -71,7 +71,7 @@ def test_prepare_plain_command_resolves_explicit_profile(monkeypatch, tmp_path):
         config,
     )
 
-    assert prepared is not None
+    assert isinstance(prepared, runtime_context.PreparedPluginInvocation)
     assert config.requested == ("hello", "staging")
     assert prepared.sandbox_read_dirs == [str(plugin_dir)]
     decoded = runtime_context.PluginRuntimeContext.decode(
@@ -93,7 +93,7 @@ def test_prepare_pipeline_injects_only_datus_segment(monkeypatch, tmp_path):
         _Config(),
     )
 
-    assert prepared is not None
+    assert isinstance(prepared, runtime_context.PreparedPluginInvocation)
     segments = prepared.command.split(" | ")
     assert runtime_context.RUNTIME_CONTEXT_ENV in segments[1]
     assert runtime_context.RUNTIME_CONTEXT_ENV not in segments[2]
@@ -183,7 +183,7 @@ def test_bash_provider_does_not_mutate_parent_environment(monkeypatch, tmp_path)
 
     def provider(command):
         prepared = runtime_context.prepare_plugin_invocation(command, _Config())
-        assert prepared is not None
+        assert isinstance(prepared, runtime_context.PreparedPluginInvocation)
         return BashExecutionContext(prepared.command, prepared.env, prepared.sandbox_read_dirs)
 
     tool = BashTool(
@@ -228,7 +228,7 @@ def test_concurrent_tenants_keep_profiles_isolated_on_redirect_path(monkeypatch,
 
         def provider(command):
             prepared = runtime_context.prepare_plugin_invocation(command, config)
-            assert prepared is not None
+            assert isinstance(prepared, runtime_context.PreparedPluginInvocation)
             return BashExecutionContext(prepared.command, prepared.env, prepared.sandbox_read_dirs)
 
         tool = BashTool(

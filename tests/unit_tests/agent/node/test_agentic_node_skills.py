@@ -1159,8 +1159,10 @@ class TestBashToolToggle:
             agent_config=mock_agent_config,
         )
 
-        assert node.bash_tool is not None
-        assert node.bash_tool.execution_context_provider is not None
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
+        assert node.bash_tool.execution_context_provider.__name__ == "_managed_plugin_context"
 
     def test_mutable_local_config_does_not_wire_runtime_provider(self, mock_agent_config):
         self._wire_permissions(mock_agent_config)
@@ -1173,7 +1175,9 @@ class TestBashToolToggle:
             agent_config=mock_agent_config,
         )
 
-        assert node.bash_tool is not None
+        from datus.tools.func_tool.bash_tool import BashTool
+
+        assert isinstance(node.bash_tool, BashTool)
         assert node.bash_tool.execution_context_provider is None
 
 
