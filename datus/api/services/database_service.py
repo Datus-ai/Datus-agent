@@ -19,7 +19,9 @@ from datus.api.models.table_models import (
     ColumnInfo,
     GetSemanticModelData,
     GetTableDetailData,
+    GetTablesColumnsData,
     SemanticModelInput,
+    TableColumns,
     TableDetailData,
     ValidateSemanticModelData,
 )
@@ -55,6 +57,9 @@ class DatasourceService:
 
         self.current_db_connector = None
         self.current_db_name = None
+        # In-memory column cache keyed by resolved table identity, so repeated
+        # table/detail + autocomplete prefetch requests don't re-hit the source.
+        self._columns_cache: dict[str, List[ColumnInfo]] = {}
         self._initialize_connection()
 
     def _ensure_semantic_rag(self) -> SemanticModelRAG:
@@ -389,6 +394,14 @@ class DatasourceService:
                 schema_name = name_parts["schema_name"] or getattr(self.current_db_connector, "schema_name", "")
                 table_name = name_parts["table_name"]
 
+                cache_key = f"{catalog_name}.{database_name}.{schema_name}.{table_name}"
+                cached = self._columns_cache.get(cache_key)
+                if cached is not None:
+                    return Result(
+                        success=True,
+                        data=GetTableDetailData(table=TableDetailData(name=table_name, columns=cached, indexes=[])),
+                    )
+
                 schema_info = self.current_db_connector.get_schema(
                     catalog_name=catalog_name,
                     database_name=database_name,
@@ -428,6 +441,7 @@ class DatasourceService:
                     # Handle other schema formats
                     columns = []
 
+                self._columns_cache[cache_key] = columns
                 data = GetTableDetailData(table=TableDetailData(name=table_name, columns=columns, indexes=[]))
 
                 return Result(success=True, data=data)
@@ -446,6 +460,19 @@ class DatasourceService:
                 errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
                 errorMessage=str(e),
             )
+
+    def get_tables_columns(self, tables: List[str]) -> Result[GetTablesColumnsData]:
+        """Batch-fetch columns for multiple tables (autocomplete prefetch).
+
+        Reuses get_table_schema (and its column cache) per table. Tables that
+        fail to resolve are omitted rather than failing the whole batch.
+        """
+        results: List[TableColumns] = []
+        for full_path in tables:
+            detail = self.get_table_schema(full_path)
+            if detail.success and detail.data is not None:
+                results.append(TableColumns(table=full_path, columns=detail.data.table.columns))
+        return Result(success=True, data=GetTablesColumnsData(tables=results))
 
     def _get_semantic_model(
         self,

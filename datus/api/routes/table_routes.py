@@ -11,6 +11,8 @@ from datus.api.models.base_models import Result
 from datus.api.models.table_models import (
     GetSemanticModelData,
     GetTableDetailData,
+    GetTablesColumnsData,
+    GetTablesColumnsInput,
     SemanticModelInput,
     ValidateSemanticModelData,
 )
@@ -36,6 +38,21 @@ async def get_table_detail(
 ) -> Result[GetTableDetailData]:
     """Get table detail."""
     return await asyncio.to_thread(svc.datasource.get_table_schema, table)
+
+
+@router.post(
+    "/table/columns",
+    response_model=Result[GetTablesColumnsData],
+    summary="Get Columns For Multiple Tables",
+    description="Batch-fetch column metadata for a list of tables (autocomplete prefetch). "
+    "Results are cached in memory; tables that fail to resolve are omitted.",
+)
+async def get_tables_columns(
+    request: GetTablesColumnsInput,
+    svc: ServiceDep,
+) -> Result[GetTablesColumnsData]:
+    """Batch table columns."""
+    return await asyncio.to_thread(svc.datasource.get_tables_columns, request.tables)
 
 
 # ========== SemanticModel Endpoints ==========
