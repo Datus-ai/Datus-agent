@@ -472,3 +472,56 @@ class TestGetTableSchema:
         svc = DatasourceService(agent_config=real_agent_config)
         result = svc.get_table_schema("totally_fake_table_xyz")
         assert result.success is False
+
+    def test_get_table_schema_caches_columns(self, real_agent_config):
+        """Second lookup is served from cache without re-hitting the connector."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        first = svc.get_table_schema("schools")
+        second = svc.get_table_schema("schools")
+
+        assert first.success is True and second.success is True
+        assert [c.name for c in second.data.table.columns] == [c.name for c in first.data.table.columns]
+        assert spy.call_count == 1
+
+
+class TestGetTablesColumns:
+    """Tests for the batch get_tables_columns (autocomplete prefetch)."""
+
+    def test_returns_columns_for_known_tables(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_tables_columns(["schools"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+        col = result.data.tables[0].columns[0]
+        assert col.name != "" and col.type != ""
+        # Slim shape: no default_value in the prefetch payload.
+        assert not hasattr(col, "default_value")
+
+    def test_omits_unresolved_tables(self, real_agent_config):
+        """A bad name is skipped rather than failing the whole batch."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        result = svc.get_tables_columns(["schools", "totally_fake_table_xyz"])
+        assert result.success is True
+        assert [t.table for t in result.data.tables] == ["schools"]
+
+    def test_populates_shared_cache(self, real_agent_config):
+        """Columns fetched by the batch are reused by a later single-table detail."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        spy = MagicMock(wraps=svc.current_db_connector.get_schema)
+        svc.current_db_connector.get_schema = spy
+
+        svc.get_tables_columns(["schools"])
+        detail = svc.get_table_schema("schools")
+
+        assert detail.success is True
+        assert spy.call_count == 1
+
+    def test_over_limit_returns_validation_error(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.agent_config.api_config = {"max_prefetch_tables": 1}
+        result = svc.get_tables_columns(["schools", "frpm"])
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
