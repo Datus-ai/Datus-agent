@@ -133,7 +133,8 @@ class TestGenVisualReportInit:
         for name in ("read_file", "write_file", "edit_file", "delete_file"):
             assert registry.get(name) == "filesystem_tools"
         # db_tools and semantic_tools also surface under their own categories.
-        assert registry.get("read_query") == "db_tools"
+        assert registry.get("execute_sql") == "db_tools"
+        assert "read_query" not in registry
         assert "semantic_tools" in registry.values()
 
     def test_metric_discovery_tools_exposed_when_metrics_present(self, real_agent_config, mock_llm_create, monkeypatch):
