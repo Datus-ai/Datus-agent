@@ -53,7 +53,7 @@ class GetTableDetailData(BaseModel):
 class GetTablesColumnsInput(BaseModel):
     """Batch table-columns input (autocomplete prefetch)."""
 
-    tables: List[str] = Field(
+    tables: list[str] = Field(
         ...,
         description="Full table names, e.g. ['db.schema.orders', 'db.schema.users']",
     )
@@ -63,13 +63,13 @@ class TableColumns(BaseModel):
     """Columns for a single table."""
 
     table: str = Field(..., description="Full table name as requested")
-    columns: List[ColumnInfo] = Field(..., description="Column information")
+    columns: list[ColumnInfo] = Field(..., description="Column information")
 
 
 class GetTablesColumnsData(BaseModel):
     """Batch table-columns result. Tables that fail to resolve are omitted."""
 
-    tables: List[TableColumns] = Field(..., description="Per-table columns")
+    tables: list[TableColumns] = Field(..., description="Per-table columns")
 
 
 # ========== SemanticModel Models ==========

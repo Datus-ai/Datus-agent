@@ -4,6 +4,7 @@ Service for handling Database Management operations.
 
 import os
 import tempfile
+import threading
 from typing import List, Optional
 
 from datus_db_core import BaseSqlConnector
@@ -37,6 +38,9 @@ from datus.utils.time_utils import now_utc_iso
 logger = get_logger(__name__)
 # Database types that do NOT support schema switching
 _NO_SCHEMA_TYPES = {"sqlite", "duckdb", "mysql"}
+# Default cap on tables per /table/columns batch; override with
+# ``api.max_prefetch_tables`` in agent.yml.
+_DEFAULT_MAX_PREFETCH_TABLES = 500
 
 
 class DatasourceService:
@@ -59,7 +63,10 @@ class DatasourceService:
         self.current_db_name = None
         # In-memory column cache keyed by resolved table identity, so repeated
         # table/detail + autocomplete prefetch requests don't re-hit the source.
-        self._columns_cache: dict[str, List[ColumnInfo]] = {}
+        # The lock serializes the not-thread-safe connector across concurrent
+        # asyncio.to_thread detail/batch requests.
+        self._columns_cache: dict[str, list[ColumnInfo]] = {}
+        self._schema_lock = threading.Lock()
         self._initialize_connection()
 
     def _ensure_semantic_rag(self) -> SemanticModelRAG:
@@ -395,56 +402,63 @@ class DatasourceService:
                 table_name = name_parts["table_name"]
 
                 cache_key = f"{catalog_name}.{database_name}.{schema_name}.{table_name}"
-                cached = self._columns_cache.get(cache_key)
-                if cached is not None:
+
+                def _detail(cols: list[ColumnInfo]) -> Result[GetTableDetailData]:
                     return Result(
                         success=True,
-                        data=GetTableDetailData(table=TableDetailData(name=table_name, columns=cached, indexes=[])),
+                        data=GetTableDetailData(table=TableDetailData(name=table_name, columns=cols, indexes=[])),
                     )
 
-                schema_info = self.current_db_connector.get_schema(
-                    catalog_name=catalog_name,
-                    database_name=database_name,
-                    schema_name=schema_name,
-                    table_name=table_name,
-                )
-                if not schema_info:
-                    return Result(
-                        success=False,
-                        errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                        errorMessage=f"Table '{table_name}' not found or schema not available",
+                cached = self._columns_cache.get(cache_key)
+                if cached is not None:
+                    return _detail(cached)
+
+                # Serialize the not-thread-safe connector; re-check the cache
+                # inside the lock (double-checked) so each table is fetched once
+                # even under concurrent detail/batch requests.
+                with self._schema_lock:
+                    cached = self._columns_cache.get(cache_key)
+                    if cached is not None:
+                        return _detail(cached)
+
+                    schema_info = self.current_db_connector.get_schema(
+                        catalog_name=catalog_name,
+                        database_name=database_name,
+                        schema_name=schema_name,
+                        table_name=table_name,
                     )
+                    if not schema_info:
+                        return Result(
+                            success=False,
+                            errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
+                            errorMessage=f"Table '{table_name}' not found or schema not available",
+                        )
 
-                # Convert schema info to ColumnInfo objects
-                columns = []
-                if isinstance(schema_info, list):
-                    for _i, col in enumerate(schema_info):
-                        if isinstance(col, dict):
-                            column_info = ColumnInfo(
-                                name=col.get("name", ""),
-                                type=col.get("type", ""),
-                                nullable=col.get("notnull", 1) == 0,  # SQLite style: notnull=0 means nullable
-                                default_value=col.get("dflt_value"),
-                                pk=col.get("pk", 0) == 1,
-                            )
-                        else:
-                            # Handle string or other formats
-                            column_info = ColumnInfo(
-                                name=str(col),
-                                type="TEXT",
-                                nullable=True,
-                                default_value=None,
-                                pk=False,
-                            )
-                        columns.append(column_info)
-                else:
-                    # Handle other schema formats
-                    columns = []
+                    # Convert schema info to ColumnInfo objects
+                    columns: list[ColumnInfo] = []
+                    if isinstance(schema_info, list):
+                        for _i, col in enumerate(schema_info):
+                            if isinstance(col, dict):
+                                column_info = ColumnInfo(
+                                    name=col.get("name", ""),
+                                    type=col.get("type", ""),
+                                    nullable=col.get("notnull", 1) == 0,  # SQLite style: notnull=0 means nullable
+                                    default_value=col.get("dflt_value"),
+                                    pk=col.get("pk", 0) == 1,
+                                )
+                            else:
+                                # Handle string or other formats
+                                column_info = ColumnInfo(
+                                    name=str(col),
+                                    type="TEXT",
+                                    nullable=True,
+                                    default_value=None,
+                                    pk=False,
+                                )
+                            columns.append(column_info)
 
-                self._columns_cache[cache_key] = columns
-                data = GetTableDetailData(table=TableDetailData(name=table_name, columns=columns, indexes=[]))
-
-                return Result(success=True, data=data)
+                    self._columns_cache[cache_key] = columns
+                    return _detail(columns)
 
             except Exception as e:
                 return Result(
@@ -461,13 +475,24 @@ class DatasourceService:
                 errorMessage=str(e),
             )
 
-    def get_tables_columns(self, tables: List[str]) -> Result[GetTablesColumnsData]:
+    def get_tables_columns(self, tables: list[str]) -> Result[GetTablesColumnsData]:
         """Batch-fetch columns for multiple tables (autocomplete prefetch).
 
         Reuses get_table_schema (and its column cache) per table. Tables that
-        fail to resolve are omitted rather than failing the whole batch.
+        fail to resolve are omitted rather than failing the whole batch. The
+        request is capped at ``api.max_prefetch_tables`` (agent.yml) to bound
+        per-request datasource work.
         """
-        results: List[TableColumns] = []
+        api_config = getattr(self.agent_config, "api_config", {}) or {}
+        max_tables = int(api_config.get("max_prefetch_tables", _DEFAULT_MAX_PREFETCH_TABLES))
+        if len(tables) > max_tables:
+            return Result(
+                success=False,
+                errorCode=ErrorCode.INVALID_PARAMETERS,
+                errorMessage=f"Too many tables requested ({len(tables)}); max is {max_tables}",
+            )
+
+        results: list[TableColumns] = []
         for full_path in tables:
             detail = self.get_table_schema(full_path)
             if detail.success and detail.data is not None:
