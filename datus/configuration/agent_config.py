@@ -982,6 +982,22 @@ class AgentConfig:
             if isinstance(raw_plugin_paths, list)
             else []
         )
+        # Make managed-store and ``agent.plugin_paths`` plugins discoverable
+        # before permissions and skills are initialized below. This must happen
+        # inside AgentConfig construction rather than only in
+        # ``load_agent_config``: multi-tenant AuthProviders construct
+        # request-scoped AgentConfig instances directly and may have no local
+        # configuration file at all.
+        try:
+            from datus.plugins import store
+
+            store.activate(
+                self.active_plugin_names(),
+                plugins_enabled=self.plugins_enabled,
+                extra_paths=self.plugin_paths,
+            )
+        except Exception as e:  # noqa: BLE001 - a bad plugin dir must never block config construction
+            logger.debug("plugin sys.path activation failed: %s", e)
         # Plugin config: plugin name -> profile name -> profile config dict.
         # Populated from ``agent.plugins`` by ``init_plugin_services``.
         self.plugin_services: Dict[str, Dict[str, Dict[str, Any]]] = {}
@@ -1456,7 +1472,7 @@ class AgentConfig:
         try:
             from datus.tools.skill_tools.skill_config import SkillConfig
 
-            return SkillConfig.from_dict(skills_raw)
+            return SkillConfig.from_dict(skills_raw, agent_config=self)
         except Exception as e:
             logger.warning(f"Failed to initialize skills config: {e}")
             return None

@@ -31,6 +31,34 @@ def skill_dir(tmp_path):
 
 
 class TestSkillRegistryScanAndAccess:
+    def test_default_registry_uses_request_agent_config(self, skill_dir, monkeypatch):
+        """A registry without explicit SkillConfig still stays tenant-scoped."""
+
+        class RuntimeConfig:
+            plugins_enabled = True
+
+            @staticmethod
+            def active_plugin_names():
+                return {"tenant-plugin"}
+
+        seen = []
+
+        def plugin_dirs(*, active_names):
+            seen.append(active_names)
+            return [str(skill_dir)]
+
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", plugin_dirs)
+        monkeypatch.setattr(
+            "datus.plugins.activation.active_names_for_cwd",
+            lambda: (_ for _ in ()).throw(AssertionError("CWD config must not be read")),
+        )
+
+        registry = SkillRegistry(agent_config=RuntimeConfig())
+        registry.scan_directories()
+
+        assert registry.skill_exists("test-skill")
+        assert seen == [{"tenant-plugin"}]
+
     def test_scan_discovers_skills(self, skill_dir):
         config = SkillConfig(directories=[str(skill_dir)])
         registry = SkillRegistry(config=config)

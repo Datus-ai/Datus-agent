@@ -298,6 +298,62 @@ class TestPluginSkillDirectories:
         dirs = _default_skill_directories()
         assert dirs[:2] == ["./.datus/skills", "~/.datus/skills"]
 
+    def test_request_agent_config_is_authoritative(self, monkeypatch, tmp_path):
+        """AuthProvider config must win over process/CWD plugin activation."""
+        tenant_a_dir = tmp_path / "tenant-a-skills"
+        tenant_b_dir = tmp_path / "tenant-b-skills"
+        tenant_a_dir.mkdir()
+        tenant_b_dir.mkdir()
+        calls = []
+
+        def plugin_dirs(*, active_names):
+            calls.append(active_names)
+            return [str(tenant_a_dir)] if active_names == {"tenant-a"} else [str(tenant_b_dir)]
+
+        class RuntimeConfig:
+            plugins_enabled = True
+
+            def __init__(self, active_names):
+                self._active_names = active_names
+
+            def active_plugin_names(self):
+                return self._active_names
+
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", plugin_dirs)
+        monkeypatch.setattr(
+            "datus.plugins.activation.active_names_for_cwd",
+            lambda: (_ for _ in ()).throw(AssertionError("CWD config must not be read")),
+        )
+        _patch_entry_points(monkeypatch, [])
+
+        tenant_a = SkillConfig.from_dict({}, agent_config=RuntimeConfig({"tenant-a"}))
+        tenant_b = SkillConfig.from_dict({}, agent_config=RuntimeConfig({"tenant-b"}))
+
+        assert str(tenant_a_dir) in tenant_a.directories
+        assert str(tenant_b_dir) not in tenant_a.directories
+        assert str(tenant_b_dir) in tenant_b.directories
+        assert str(tenant_a_dir) not in tenant_b.directories
+        assert calls == [{"tenant-a"}, {"tenant-b"}]
+
+    def test_request_agent_config_master_switch_is_authoritative(self, monkeypatch):
+        """A tenant-level master switch must not fall back to global config."""
+
+        class RuntimeConfig:
+            plugins_enabled = False
+
+            def active_plugin_names(self):
+                raise AssertionError("disabled plugins must not be enumerated")
+
+        def fail_plugin_discovery(**_kwargs):
+            raise AssertionError("disabled plugins must not be discovered")
+
+        monkeypatch.setattr("datus.plugins.registry.plugin_skill_directories", fail_plugin_discovery)
+        _patch_entry_points(monkeypatch, [])
+
+        config = SkillConfig.from_dict({}, agent_config=RuntimeConfig())
+
+        assert config.directories[:2] == ["./.datus/skills", "~/.datus/skills"]
+
 
 class _FakeManager:
     def __init__(self, data):

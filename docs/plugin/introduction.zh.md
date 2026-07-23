@@ -116,6 +116,26 @@ Datus 按以下顺序解析 config 文件:显式 `--config` → `./conf/agent.ym
 有些插件自带 `<name>-setup` skill,可以替你写好这段配置——见
 [与 agent 配合使用](#agent)。
 
+### 托管 API 的运行时配置
+
+在多租户 `datus-api` 部署中,`AuthProvider` 可以为每个请求直接提供内存中的
+`AgentConfig`,无需写入 `agent.yml`。当该配置只读(`config_mutable: false`),且
+agent 通过 Bash 执行 `datus <name> ...` 时,Datus 会在 API 进程内解析选中的
+plugin 路径与 profile,再通过带版本的环境变量把这份快照只传给目标 plugin
+子进程。plugin 仍通过常规的 `main(argv, profile)` 的 `profile` 参数取得解析后的
+字典,无需自行读取该环境变量。
+
+plugin skill 发现遵循相同规则:`plugins_enabled`、激活 plugin 白名单、
+`plugin_paths` 和 `skills` 目录均以当前请求的 `AgentConfig` 为准,不会回退到其他
+租户已加载的配置或 `./.datus/config.yml`。只有拿不到 `AgentConfig` 的独立 CLI
+skill 命令才保留本地项目配置文件行为。
+
+此桥接允许一次直接的 plugin 调用,也允许它作为普通 `|` 管道中的一个 stage。
+若命令包含多个 `datus` 调用,或使用 `&&`、`;`、重定向、命令替换、`|&` 等 shell
+控制形式,则会 fail closed。`--profile` 仍受支持,并针对当前请求的 `AgentConfig`
+解析;`--config` 会被拒绝,因为 AuthProvider 提供的配置是权威来源。编码后的运行时
+快照上限为 64 KiB。管道中的其他 stage 不会继承它,父进程环境也不会被修改。
+
 ### 哪个 profile 生效 {#which-profile-runs}
 
 执行 `datus <name> ...` 时,激活 profile 按以下顺序解析:

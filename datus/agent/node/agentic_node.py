@@ -2296,6 +2296,7 @@ class AgenticNode(Node):
                 config=skills_config,
                 permission_manager=self.permission_manager,
                 config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
             )
             logger.debug(
                 f"Skill manager initialized for node '{self.get_node_name()}' "
@@ -2342,6 +2343,7 @@ class AgenticNode(Node):
                 self.skill_manager = SkillManager(
                     permission_manager=self.permission_manager,
                     config_mutable=self._resolve_config_mutable(),
+                    agent_config=self.agent_config,
                 )
                 logger.info(
                     f"Created default SkillManager for node '{self.get_node_name()}' "
@@ -2398,6 +2400,7 @@ class AgenticNode(Node):
             self.skill_manager = SkillManager(
                 permission_manager=self.permission_manager,
                 config_mutable=self._resolve_config_mutable(),
+                agent_config=self.agent_config,
             )
 
         from xml.sax.saxutils import quoteattr as xml_quoteattr
@@ -2578,7 +2581,7 @@ class AgenticNode(Node):
         if not isinstance(allowed_patterns, list) or not allowed_patterns:
             allowed_patterns = ["*"]
         try:
-            from datus.tools.func_tool.bash_tool import BashTool
+            from datus.tools.func_tool.bash_tool import BashExecutionContext, BashTool
 
             # Datus home stays readable inside the sandbox: skills, templates
             # and plugins live there and are read/executed via bash.
@@ -2589,6 +2592,22 @@ class AgenticNode(Node):
                 sandbox_read_dirs.append(str(get_path_manager(agent_config=self.agent_config).datus_home))
             except Exception as exc:
                 logger.debug("Failed to resolve datus home for sandbox read dirs: %s", exc)
+
+            execution_context_provider = None
+            if not getattr(self.agent_config, "config_mutable", True):
+                from datus.plugins.runtime_context import prepare_plugin_invocation
+
+                def _managed_plugin_context(command: str):
+                    prepared = prepare_plugin_invocation(command, self.agent_config)
+                    if prepared is None:
+                        return None
+                    return BashExecutionContext(
+                        command=prepared.command,
+                        env=prepared.env,
+                        sandbox_read_dirs=prepared.sandbox_read_dirs,
+                    )
+
+                execution_context_provider = _managed_plugin_context
 
             self.bash_tool = BashTool(
                 workspace_root=self._resolve_workspace_root(),
@@ -2603,6 +2622,7 @@ class AgenticNode(Node):
                 # the AgentConfig object and this tool sees it next call.
                 sandbox_settings=getattr(self.agent_config, "bash_sandbox", None),
                 sandbox_read_dirs=sandbox_read_dirs,
+                execution_context_provider=execution_context_provider,
             )
             logger.debug(f"Setup bash tool with workspace: {self.bash_tool.workspace_root}")
         except Exception as e:
