@@ -9,12 +9,25 @@ This module defines the input and output models for the SemanticAgenticNode,
 providing structured validation for semantic model generation interactions.
 """
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from datus.schemas.at_context import AtContextInput
 from datus.schemas.base import BaseResult
+
+
+class SourceQueryEvidence(BaseModel):
+    """Structured success-story SQL carried independently from the LLM prompt."""
+
+    source_sql_name: str = Field(..., description="Stable source-query name, for example sql_1")
+    sql: str = Field(..., description="Original SQL from the success-story row")
+    question: str = Field(default="", description="Business question associated with the SQL")
+    external_knowledge: str = Field(default="", description="Optional row-scoped business evidence")
+    source_id: str = Field(default="", description="Optional provenance source identifier")
+    source_type: str = Field(default="success_story", description="Optional provenance source type")
+    source_context_ids: List[str] = Field(default_factory=list, description="Optional provenance context IDs")
+    source_metadata: Dict[str, Any] = Field(default_factory=dict, description="Optional provenance metadata")
 
 
 class SemanticNodeInput(AtContextInput):
@@ -41,6 +54,13 @@ class SemanticNodeInput(AtContextInput):
     dimension_tables: Optional[list[str]] = Field(
         default=None,
         description="Dimension tables used by the model; recorded for context but excluded from model naming",
+    )
+    source_queries: List[SourceQueryEvidence] = Field(
+        default_factory=list,
+        description=(
+            "Original success-story SQL queries used as authoritative programmatic evidence. "
+            "Unlike reference_sql, these queries are not @Sql context."
+        ),
     )
     max_turns: Optional[int] = Field(default=None, description="Maximum conversation turns; None uses node config")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")

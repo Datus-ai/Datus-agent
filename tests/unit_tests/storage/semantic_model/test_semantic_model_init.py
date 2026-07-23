@@ -1025,12 +1025,14 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
         mock_db_config.database = "db"
         mock_db_config.schema = "public"
         mock_config.current_db_config.return_value = mock_db_config
+        captured_inputs = []
 
         class MockSemanticNode:
             def __init__(self, *args, **kwargs):
                 self.input = None
 
             async def execute_stream(self, action_history_manager):
+                captured_inputs.append(self.input)
                 action = SimpleNamespace(
                     status=ActionStatus.SUCCESS,
                     action_type="gen_semantic_model_response",
@@ -1048,6 +1050,8 @@ class TestInitSuccessStorySemanticModelAsyncLLMPath:
 
         assert success is True
         assert error == ""
+        assert captured_inputs[0].source_queries[0].source_sql_name == "sql_1"
+        assert captured_inputs[0].source_queries[0].sql == "SELECT 1"
 
     @pytest.mark.asyncio
     async def test_success_path_emits_events(self, tmp_path, monkeypatch):

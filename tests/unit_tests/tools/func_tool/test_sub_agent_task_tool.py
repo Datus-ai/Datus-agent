@@ -852,6 +852,28 @@ class TestTaskExecution:
         execute_node.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_osi_gen_metrics_rejects_invalid_structured_source_sql(self, task_tool, tmp_path):
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+
+        task_tool.agent_config.resolve_semantic_adapter.return_value = "osi"
+        task_tool.agent_config.current_datasource = "test_db"
+        task_tool.agent_config.path_manager = SimpleNamespace(project_root=tmp_path)
+        parent = MagicMock()
+        parent.input = SemanticNodeInput(
+            user_message="SQL:\nSELECT COUNT(*) FROM main.orders",
+            source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql="SELECT * FROM")],
+        )
+        task_tool.set_parent_node(parent)
+
+        with patch.object(task_tool, "_execute_node") as execute_node:
+            result = await task_tool.task(type="gen_metrics", prompt="Generate order metrics")
+
+        assert result.success == 0
+        assert result.result["code"] == "semantic_model_source_sql_invalid"
+        assert result.result["parse_errors"][0]["source_sql_name"] == "sql_9"
+        execute_node.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_semantic_authoring_tasks_are_serialized_across_tool_instances(
         self, task_tool, monkeypatch, tmp_path
     ):
@@ -1732,6 +1754,26 @@ class TestBuildNodeInputBuiltIn:
         assert isinstance(result, SemanticNodeInput)
         assert result.user_message == "orders table"
         assert result.database is None
+
+    def test_semantic_model_node_inherits_source_queries_separately_from_reference_sql(self, task_tool):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.schemas.node_models import ReferenceSql
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+
+        parent = MagicMock()
+        parent.input = SemanticNodeInput(
+            user_message="Generate metrics",
+            source_queries=[SourceQueryEvidence(source_sql_name="sql_1", sql="SELECT COUNT(*) FROM sales.orders")],
+            reference_sql=[ReferenceSql(name="example", sql="SELECT SUM(amount) FROM finance.payments")],
+        )
+        task_tool.set_parent_node(parent)
+
+        mock_node = Mock(spec=GenSemanticModelAgenticNode)
+        result = task_tool._build_node_input(mock_node, "Create the prerequisite model")
+
+        assert result.source_queries == parent.input.source_queries
+        assert result.reference_sql == parent.input.reference_sql
+        assert result.source_queries[0].sql != result.reference_sql[0].sql
 
     def test_metrics_node_input(self, task_tool):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

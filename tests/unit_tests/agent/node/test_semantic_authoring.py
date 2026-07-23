@@ -9,6 +9,7 @@ import yaml
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_METRICFLOW,
     AUTHORING_FORMAT_OSI,
+    _source_query_dialect,
     default_optional_skills,
     default_osi_semantic_model_file,
     default_osi_semantic_model_name,
@@ -20,6 +21,9 @@ from datus.agent.node.semantic_authoring import (
     resolve_osi_semantic_model_target,
     resolve_semantic_adapter_type,
 )
+from datus.configuration.agent_config import DbConfig
+from datus.schemas.node_models import ReferenceSql
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
@@ -315,6 +319,203 @@ def test_existing_osi_metric_target_rejects_tables_split_across_models(tmp_path)
 
     assert resolution["status"] == "ambiguous"
     assert resolution["reason"] == "referenced datasets are split across multiple semantic models"
+
+
+def test_existing_osi_metric_target_uses_structured_source_sql_instead_of_batch_prompt(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "campaign.yml",
+        "campaign_management",
+        [{"name": "campaign", "source": "analytics.campaign"}],
+    )
+    user_input = SemanticNodeInput(
+        user_message=(
+            "Analyze the following SQL queries and extract core metrics:\n\n"
+            "Query 2:\nQuestion: campaign count\nSQL:\nSELECT COUNT(*) FROM analytics.campaign"
+        ),
+        source_queries=[
+            SourceQueryEvidence(
+                source_sql_name="sql_2",
+                question="campaign count",
+                sql="SELECT COUNT(*) FROM analytics.campaign",
+            )
+        ],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(
+        config,
+        user_input=user_input,
+        request_text=user_input.user_message,
+    )
+
+    assert resolution["status"] == "found"
+    assert resolution["selected"]["semantic_model_name"] == "campaign_management"
+    assert resolution["referenced_tables"] == ["analytics.campaign"]
+    assert resolution["evidence_source"] == "source_queries"
+    assert resolution["source_sql_names"] == ["sql_2"]
+
+
+def test_structured_source_sql_does_not_change_reference_sql_context(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "orders.yml",
+        "orders",
+        [{"name": "orders", "source": "sales.orders"}],
+    )
+    _write_osi_model(
+        tmp_path,
+        "payments.yml",
+        "payments",
+        [{"name": "payments", "source": "finance.payments"}],
+    )
+    user_input = SemanticNodeInput(
+        user_message="Generate order metrics",
+        source_queries=[SourceQueryEvidence(source_sql_name="sql_1", sql="SELECT COUNT(*) FROM sales.orders")],
+        reference_sql=[ReferenceSql(name="payment_example", sql="SELECT SUM(amount) FROM finance.payments")],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
+
+    assert resolution["status"] == "found"
+    assert resolution["selected"]["semantic_model_name"] == "orders"
+    assert resolution["referenced_tables"] == ["sales.orders"]
+    assert user_input.reference_sql[0].name == "payment_example"
+
+
+def test_reference_sql_still_resolves_model_without_structured_sources(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "payments.yml",
+        "payments",
+        [{"name": "payments", "source": "finance.payments"}],
+    )
+    user_input = SemanticNodeInput(
+        user_message="Generate payment metrics",
+        reference_sql=[ReferenceSql(name="payment_example", sql="SELECT SUM(amount) FROM finance.payments")],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
+
+    assert resolution["status"] == "found"
+    assert resolution["selected"]["semantic_model_name"] == "payments"
+    assert resolution["evidence_source"] == "legacy_request"
+
+
+def test_invalid_structured_source_sql_does_not_fallback_to_prompt(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "orders.yml",
+        "orders",
+        [{"name": "orders", "source": "sales.orders"}],
+    )
+    user_input = SemanticNodeInput(
+        user_message="SQL:\nSELECT COUNT(*) FROM sales.orders",
+        source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql="SELECT * FROM")],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(
+        config,
+        user_input=user_input,
+        request_text=user_input.user_message,
+    )
+
+    assert resolution["status"] == "invalid"
+    assert resolution["evidence_source"] == "source_queries"
+    assert resolution["parse_errors"][0]["source_sql_name"] == "sql_9"
+
+
+def test_invalid_structured_source_sql_is_rejected_before_explicit_model_selection(tmp_path):
+    config = _osi_config(tmp_path)
+    _write_osi_model(
+        tmp_path,
+        "orders.yml",
+        "orders",
+        [{"name": "orders", "source": "sales.orders"}],
+    )
+    user_input = SemanticNodeInput(
+        user_message="Generate order metrics",
+        semantic_model_name="orders",
+        source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql="SELECT * FROM")],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
+
+    assert resolution["status"] == "invalid"
+    assert resolution["parse_errors"][0]["source_sql_name"] == "sql_9"
+
+
+def test_structured_source_sql_uses_mysql_fallback_for_starrocks_datetime_cast(tmp_path):
+    config = _osi_config(tmp_path)
+    config.current_db_config = lambda: DbConfig(type="starrocks")
+    _write_osi_model(
+        tmp_path,
+        "campaign.yml",
+        "campaign_management",
+        [{"name": "activities", "source": "v_udata_ac_info"}],
+    )
+    user_input = SemanticNodeInput(
+        user_message="Analyze the following SQL queries",
+        source_queries=[
+            SourceQueryEvidence(
+                source_sql_name="sql_13",
+                sql=(
+                    "SELECT CAST(start_time AS DATETIME) AS start_at, COUNT(*) "
+                    "FROM v_udata_ac_info GROUP BY CAST(start_time AS DATETIME)"
+                ),
+            )
+        ],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
+
+    assert _source_query_dialect(config) == "starrocks"
+    assert resolution["status"] == "found"
+    assert resolution["selected"]["semantic_model_name"] == "campaign_management"
+    assert resolution["referenced_tables"] == ["v_udata_ac_info"]
+
+
+def test_existing_osi_metric_target_indexes_query_backed_dataset_source_tables(tmp_path):
+    config = _osi_config(tmp_path)
+    config.current_db_config = lambda: DbConfig(type="starrocks")
+    query_source = (
+        "SELECT a.suserid, c.city_level "
+        "FROM ac_manage.dim_mgamejp_account_allinfo_nf AS a "
+        "JOIN ac_manage.dim_uf_player_gameinfo_mf AS c ON a.suserid = c.userid"
+    )
+    _write_osi_model(
+        tmp_path,
+        "account.yml",
+        "account_analytics",
+        [
+            {
+                "name": "account_player_gameinfo",
+                "source": query_source,
+                "custom_extensions": [
+                    {
+                        "vendor_name": "DATUS",
+                        "data": '{"source_type":"query"}',
+                    }
+                ],
+            }
+        ],
+    )
+    user_input = SemanticNodeInput(
+        user_message="Analyze the following SQL queries",
+        source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql=query_source)],
+    )
+
+    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
+
+    assert resolution["status"] == "found"
+    assert resolution["selected"]["semantic_model_name"] == "account_analytics"
+    assert set(resolution["referenced_tables"]) == {
+        "ac_manage.dim_mgamejp_account_allinfo_nf",
+        "ac_manage.dim_uf_player_gameinfo_mf",
+    }
 
 
 def test_osi_target_creates_a_different_file_for_an_unrelated_fact(tmp_path):

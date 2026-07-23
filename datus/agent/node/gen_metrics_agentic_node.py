@@ -23,6 +23,7 @@ from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.func_tool.metric_queryability import (
     extract_metric_queryability_contracts,
+    extract_metric_queryability_contracts_from_sources,
     summarize_queryability_contracts,
 )
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -190,6 +191,8 @@ class GenMetricsAgenticNode(AgenticNode):
             return
         if resolution["status"] == "ambiguous":
             self._raise_osi_semantic_model_selection_error(resolution)
+        if resolution["status"] == "invalid":
+            self._raise_osi_source_query_error(resolution)
         if self._is_subagent:
             raise DatusException(
                 ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
@@ -231,6 +234,8 @@ class GenMetricsAgenticNode(AgenticNode):
         if selected is None:
             if post_resolution["status"] == "ambiguous":
                 self._raise_osi_semantic_model_selection_error(post_resolution)
+            if post_resolution["status"] == "invalid":
+                self._raise_osi_source_query_error(post_resolution)
             raise DatusException(
                 ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
                 message_args={
@@ -260,6 +265,16 @@ class GenMetricsAgenticNode(AgenticNode):
                     "Specify semantic_model_name or reference a dataset from the intended model."
                 )
             },
+        )
+
+    @staticmethod
+    def _raise_osi_source_query_error(resolution: Dict[str, Any]) -> None:
+        errors = "; ".join(
+            f"{item.get('source_sql_name')}: {item.get('error')}" for item in resolution.get("parse_errors") or []
+        )
+        raise DatusException(
+            ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
+            message_args={"error_message": f"invalid structured source SQL: {errors or resolution.get('reason')}"},
         )
 
     def _ensure_bash_tool_in_tools(self) -> None:
@@ -635,7 +650,12 @@ class GenMetricsAgenticNode(AgenticNode):
         if not user_input:
             return
         user_message = getattr(user_input, "user_message", "") or ""
-        contracts = extract_metric_queryability_contracts(user_message)
+        source_queries = getattr(user_input, "source_queries", None) or []
+        contracts = (
+            extract_metric_queryability_contracts_from_sources(source_queries)
+            if source_queries
+            else extract_metric_queryability_contracts(user_message)
+        )
         candidate_plan = self._extract_precomputed_candidate_plan(user_message)
         metric_aliases = self._metric_aliases_from_candidate_plan(candidate_plan)
         blocked_sources = self._blocked_queryability_sources_from_candidate_plan(candidate_plan)

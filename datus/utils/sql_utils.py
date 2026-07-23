@@ -121,6 +121,20 @@ def extract_table_names(sql, dialect="snowflake", ignore_empty=False) -> List[st
     except Exception as e:
         logger.warning(f"Error parsing SQL {sql}, error: {e}")
         return []
+    return _table_names_from_expression(parsed, dialect=dialect, ignore_empty=ignore_empty)
+
+
+def extract_table_names_strict(sql, dialect="snowflake", ignore_empty=False) -> List[str]:
+    """Extract table names and raise when sqlglot cannot parse the SQL."""
+    read_dialect = parse_read_dialect(dialect)
+    parsed = sqlglot.parse_one(sql, read=read_dialect, error_level=sqlglot.ErrorLevel.RAISE)
+    if parsed is None:
+        raise ValueError("SQL parser returned no expression")
+    return _table_names_from_expression(parsed, dialect=dialect, ignore_empty=ignore_empty)
+
+
+def _table_names_from_expression(parsed, *, dialect: str, ignore_empty: bool) -> List[str]:
+    """Collect physical table names from an already parsed sqlglot expression."""
     table_names = []
 
     # Get all CTE names

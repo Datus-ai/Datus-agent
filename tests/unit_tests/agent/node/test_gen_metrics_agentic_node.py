@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
@@ -270,7 +270,18 @@ class TestGenMetricsAgenticNodeExecution:
             encoding="utf-8",
         )
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
-        node.input = SemanticNodeInput(user_message="Generate revenue metrics from orders")
+        node.input = SemanticNodeInput(
+            user_message=(
+                "Analyze the following SQL queries and extract core metrics:\n"
+                "Query 1:\nSQL:\nSELECT SUM(amount) FROM commerce.orders"
+            ),
+            source_queries=[
+                SourceQueryEvidence(
+                    source_sql_name="sql_1",
+                    sql="SELECT SUM(amount) FROM commerce.orders",
+                )
+            ],
+        )
         node.sub_agent_task_tool.task = AsyncMock()
         ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
 
@@ -283,6 +294,29 @@ class TestGenMetricsAgenticNodeExecution:
         enhanced = node._build_enhanced_message(node.input)
         assert "sales" in enhanced
         assert "ops.yml" in enhanced
+
+    @pytest.mark.asyncio
+    async def test_direct_osi_metrics_rejects_invalid_structured_source_before_bootstrap(
+        self, real_agent_config, mock_llm_create
+    ):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(
+            user_message="SQL:\nSELECT COUNT(*) FROM commerce.orders",
+            source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql="SELECT * FROM")],
+        )
+        node.sub_agent_task_tool.task = AsyncMock()
+
+        actions = [action async for action in node.execute_stream(ActionHistoryManager())]
+
+        node.sub_agent_task_tool.task.assert_not_awaited()
+        assert actions[-1].action_type == "error"
+        assert actions[-1].status == ActionStatus.FAILED
+        assert "invalid structured source SQL" in str(actions[-1].output)
+        assert "sql_9" in str(actions[-1].output)
+        assert mock_llm_create.call_history == []
 
     @pytest.mark.asyncio
     async def test_osi_target_is_request_scoped_when_session_switches_models(self, real_agent_config, mock_llm_create):

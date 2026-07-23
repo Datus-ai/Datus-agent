@@ -4,7 +4,11 @@
 
 """Unit tests for metric queryability contract helpers."""
 
-from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
+from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
+from datus.tools.func_tool.metric_queryability import (
+    extract_metric_queryability_contracts_from_sources,
+    summarize_queryability_contracts,
+)
 
 
 class TestSummarizeQueryabilityContracts:
@@ -38,3 +42,20 @@ class TestSummarizeQueryabilityContracts:
     def test_without_time_hints_has_no_grain_guidance(self):
         contracts = [{"source": "sql_1", "dimension_hints": ["region"], "metric_hints": ["orders"]}]
         assert "time_granularity" not in summarize_queryability_contracts(contracts)
+
+
+class TestExtractMetricQueryabilityContractsFromSources:
+    def test_preserves_structured_source_name(self):
+        contracts = extract_metric_queryability_contracts_from_sources(
+            [
+                SourceQueryEvidence(
+                    source_sql_name="sql_9",
+                    sql="SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region",
+                )
+            ]
+        )
+
+        assert len(contracts) == 1
+        assert contracts[0]["source"] == "sql_9"
+        assert contracts[0]["dimension_hints"] == ["region"]
+        assert contracts[0]["metric_hints"] == ["revenue"]

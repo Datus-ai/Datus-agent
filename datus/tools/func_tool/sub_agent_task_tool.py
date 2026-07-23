@@ -413,6 +413,18 @@ class SubAgentTaskTool:
                     "retry_subagent": "gen_metrics",
                 },
             )
+        if resolution["status"] == "invalid":
+            parse_errors = resolution.get("parse_errors") or []
+            details = "; ".join(f"{item.get('source_sql_name')}: {item.get('error')}" for item in parse_errors)
+            return FuncToolResult(
+                success=0,
+                error=f"Invalid structured source SQL: {details or resolution.get('reason')}",
+                result={
+                    "code": "semantic_model_source_sql_invalid",
+                    "parse_errors": parse_errors,
+                    "retry_subagent": "gen_metrics",
+                },
+            )
 
         target_dir = osi_semantic_model_directory(self.agent_config)
 
@@ -1098,7 +1110,7 @@ class SubAgentTaskTool:
         """
         node_input = self._build_typed_subagent_input(node, prompt, db_ctx=db_ctx)
         at_ctx = self._parent_at_context()
-        return apply_at_context(
+        node_input = apply_at_context(
             node_input,
             schemas=at_ctx.get("schemas"),
             metrics=at_ctx.get("metrics"),
@@ -1106,6 +1118,17 @@ class SubAgentTaskTool:
             external_knowledge=at_ctx.get("external_knowledge"),
             context_hints=at_ctx.get("context_hints"),
         )
+        self._inherit_semantic_source_queries(node_input)
+        return node_input
+
+    def _inherit_semantic_source_queries(self, node_input: Any) -> None:
+        """Forward bootstrap SQL only between semantic nodes, outside @-context."""
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+
+        parent_input = getattr(self._parent_node, "input", None)
+        if not isinstance(parent_input, SemanticNodeInput) or not isinstance(node_input, SemanticNodeInput):
+            return
+        node_input.source_queries = list(parent_input.source_queries)
 
     def _parent_at_context(self) -> Dict[str, Any]:
         """Resolved @-context (schemas/metrics/reference_sql/knowledge) the parent carries.
