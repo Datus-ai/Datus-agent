@@ -636,33 +636,9 @@ def _split_plugin_globals(args: "list[str]") -> "tuple[str | None, str | None, l
     (``bash_rules._normalize_datus_plugin_argv``) so plugin-declared rules
     match profile-qualified invocations — keep the two in sync.
     """
-    profile: "str | None" = None
-    config: "str | None" = None
-    i = 0
-    n = len(args)
-    while i < n:
-        tok = args[i]
-        if tok in ("--profile", "--config"):
-            if i + 1 >= n:
-                # Missing value — hand the token back to the plugin unchanged.
-                break
-            value = args[i + 1]
-            if tok == "--profile":
-                profile = value
-            else:
-                config = value
-            i += 2
-            continue
-        if tok.startswith("--profile="):
-            profile = tok.split("=", 1)[1]
-            i += 1
-            continue
-        if tok.startswith("--config="):
-            config = tok.split("=", 1)[1]
-            i += 1
-            continue
-        break
-    return profile, config, args[i:]
+    from datus.plugins.runtime_context import split_plugin_globals
+
+    return split_plugin_globals(args)
 
 
 def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
@@ -694,6 +670,19 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
     err_console = Console(stderr=True)
 
     profile_name, config_path, rest = _split_plugin_globals(argv[1:])
+    runtime_context = None
+    try:
+        from datus.plugins.runtime_context import has_plugin_config_global, load_runtime_context_from_env
+
+        runtime_context = load_runtime_context_from_env(expected_plugin=name)
+        if runtime_context is not None and has_plugin_config_global(argv[1:]):
+            raise ValueError(
+                "`--config` is unavailable for managed plugin commands; the AuthProvider AgentConfig is authoritative"
+            )
+    except Exception as exc:  # noqa: BLE001 - malformed runtime data must fail closed
+        logger.error("Failed to decode runtime config for plugin '%s': %s", name, exc)
+        print_error(err_console, f"datus {name}: {exc}")
+        return 3
 
     # A managed plugin lives in its own ``~/.datus/plugins/{name}/`` directory;
     # append it to ``sys.path`` so the entry-point probe can see it. Plugins
@@ -703,7 +692,12 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
     # manifest never executes plugin code, and the ``cli`` ref is imported only
     # after every gate below has passed), so the ``plugins_enabled`` master
     # switch is still honoured before any third-party module-level code runs.
-    if store.plugin_dir(name).is_dir():
+    if runtime_context is not None and runtime_context.plugin_path:
+        store.activate_paths([runtime_context.plugin_path])
+    elif runtime_context is not None:
+        # A site-packages plugin is already visible to this interpreter.
+        pass
+    elif store.plugin_dir(name).is_dir():
         store.activate_name(name)
     else:
         from datus.configuration.agent_config_loader import get_plugin_paths
@@ -714,28 +708,32 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
     # must not even be imported, so the master switch is checked before
     # ``resolve_code_ref`` runs the plugin's module-level code.
     if not plugin_entry_point_exists(name):
+        if runtime_context is not None:
+            print_error(err_console, f"datus {name}: runtime plugin `{name}` is not installed or discoverable")
+            return 3
         return None
 
     try:
-        from datus.configuration.agent_config_loader import load_agent_config
+        if runtime_context is not None:
+            profile = runtime_context.profile
+        else:
+            from datus.configuration.agent_config_loader import load_agent_config
 
-        kwargs = {"config": config_path} if config_path else {}
-        agent_config = load_agent_config(**kwargs)
-        if not getattr(agent_config, "plugins_enabled", True):
-            print_error(err_console, f"datus {name}: plugins are disabled (`agent.plugins_enabled: false`)")
-            return 3
-        # Respect per-project activation: a plugin the project's ``plugins:``
-        # whitelist does not enable is inactive, so its own CLI is refused (the
-        # ``datus plugin ...`` management commands remain available to re-enable
-        # it).
-        if hasattr(agent_config, "plugin_active") and not agent_config.plugin_active(name):
-            print_error(
-                err_console,
-                f"datus {name}: plugin `{name}` is not active for this project. "
-                f"Enable it with `datus plugin enable {name}` or via `/plugins`.",
-            )
-            return 3
-        profile = agent_config.get_plugin_profile(name, profile_name)
+            kwargs = {"config": config_path} if config_path else {}
+            agent_config = load_agent_config(**kwargs)
+            if not getattr(agent_config, "plugins_enabled", True):
+                print_error(err_console, f"datus {name}: plugins are disabled (`agent.plugins_enabled: false`)")
+                return 3
+            # Respect per-project activation: a plugin the project's
+            # ``plugins:`` whitelist does not enable is inactive.
+            if hasattr(agent_config, "plugin_active") and not agent_config.plugin_active(name):
+                print_error(
+                    err_console,
+                    f"datus {name}: plugin `{name}` is not active for this project. "
+                    f"Enable it with `datus plugin enable {name}` or via `/plugins`.",
+                )
+                return 3
+            profile = agent_config.get_plugin_profile(name, profile_name)
     except Exception as exc:  # noqa: BLE001 - surface a clean error, do not crash
         logger.error("Failed to resolve config for plugin '%s': %s", name, exc)
         print_error(err_console, f"datus {name}: {exc}")
@@ -743,6 +741,9 @@ def _dispatch_plugin_command(argv: "list[str]") -> "int | None":
 
     manifest = load_plugin_manifest(name)
     if manifest is None:
+        if runtime_context is not None:
+            print_error(err_console, f"datus {name}: runtime plugin `{name}` has no valid manifest")
+            return 3
         # Entry point exists but the manifest is missing/rejected (already
         # warned about); fall through so a same-named ``datus.cli_commands``
         # handler still gets its chance.

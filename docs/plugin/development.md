@@ -239,6 +239,14 @@ belongs to the plugin. `datus hello greet --profile staging` therefore passes
 `["greet", "--profile", "staging"]` through untouched — your subcommands are
 free to define their own `--profile` option.
 
+In a read-only multi-tenant API session, Datus may obtain the profile from the
+request's in-memory `AgentConfig` and bridge it through a subprocess-scoped
+environment value. This transport is host-owned: your plugin should continue
+to use the supplied `profile` argument and may read its own values from that
+dict. Do not depend on the internal environment value. In this mode
+`--profile` works, while `--config` and compound shell forms other than a plain
+`|` pipeline are rejected.
+
 Return an integer exit code (`None` means `0`). Suggested conventions:
 
 | Code | Meaning |

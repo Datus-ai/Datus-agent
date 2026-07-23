@@ -215,6 +215,12 @@ Datus 全局参数消费;从第一个命令 token 起的一切都属于 plugin�
 `datus hello greet --profile staging` 会原样传入
 `["greet", "--profile", "staging"]`——你的子命令可以自由定义自己的 `--profile`。
 
+在只读的多租户 API 会话中,Datus 可能从当前请求的内存 `AgentConfig` 取得
+profile,并通过仅对子进程生效的环境变量完成桥接。该传输由宿主管理:plugin 应继续
+使用传入的 `profile` 参数,也允许从这个字典读取自己的配置;不要依赖内部环境变量。
+此模式支持 `--profile`,但会拒绝 `--config`,也会拒绝普通 `|` 管道以外的复合
+shell 形式。
+
 返回整数退出码(`None` 视为 `0`)。建议的约定:
 
 | 退出码 | 含义 |

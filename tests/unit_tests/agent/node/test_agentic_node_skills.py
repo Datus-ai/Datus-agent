@@ -1147,6 +1147,35 @@ class TestBashToolToggle:
         assert isinstance(node.bash_tool, BashTool)
         assert node.bash_tool.allowed_patterns == ["*"]
 
+    def test_read_only_managed_config_wires_plugin_runtime_provider(self, mock_agent_config):
+        """Only managed/read-only AgentConfig instances bridge plugin CLI config."""
+        self._wire_permissions(mock_agent_config)
+        mock_agent_config.config_mutable = False
+
+        node = MinimalAgenticNode(
+            node_id="bash_managed_plugin_context",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert node.bash_tool is not None
+        assert node.bash_tool.execution_context_provider is not None
+
+    def test_mutable_local_config_does_not_wire_runtime_provider(self, mock_agent_config):
+        self._wire_permissions(mock_agent_config)
+        mock_agent_config.config_mutable = True
+
+        node = MinimalAgenticNode(
+            node_id="bash_local_plugin_context",
+            description="Test node",
+            node_type="chat",
+            agent_config=mock_agent_config,
+        )
+
+        assert node.bash_tool is not None
+        assert node.bash_tool.execution_context_provider is None
+
 
 class TestRequiredSkillsInjection:
     """``REQUIRED_SKILLS`` host-injection primitive (``_inject_required_skills``)."""

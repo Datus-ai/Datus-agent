@@ -248,6 +248,16 @@ class TestBuildPolicyStrict:
         assert str(shared_read.resolve()) in policy.readable_roots
         assert str(shared_write.resolve()) in policy.writable_roots
 
+    def test_validated_runtime_read_dirs_survive_strict(self, tmp_path, workspace):
+        plugin_dir = tmp_path / "tenant_plugin"
+        plugin_dir.mkdir()
+        policy = build_policy(
+            SandboxSettings(mode=bash_sandbox.MODE_STRICT),
+            workspace,
+            runtime_read_dirs=[str(plugin_dir)],
+        )
+        assert str(plugin_dir.resolve()) in policy.readable_roots
+
     def test_workspace_tmp_and_python_env_survive(self, workspace):
         policy = build_policy(SandboxSettings(mode=bash_sandbox.MODE_STRICT), workspace)
         assert str(workspace.resolve()) in policy.writable_roots

@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -48,6 +49,20 @@ MAX_OUTPUT_SIZE = 50000
 BASH_ARCHIVE_THRESHOLD = 8000
 # Single-line preview length carried inline in the archive marker.
 BASH_ARCHIVE_PREVIEW_CHARS = 1000
+
+
+@dataclass(frozen=True)
+class BashExecutionContext:
+    """Per-invocation subprocess overrides produced after permission checks.
+
+    ``command`` is the internal command actually handed to Bash; callers and
+    logs continue to use the original command.  ``env`` is merged only into
+    this child process, never into process-global ``os.environ``.
+    """
+
+    command: str
+    env: Dict[str, str]
+    sandbox_read_dirs: List[str]
 
 
 class BashTool:
@@ -97,6 +112,7 @@ class BashTool:
         output_dir_provider: Optional[Callable[[], Optional[Path]]] = None,
         sandbox_settings: Optional[bash_sandbox.SandboxSettings] = None,
         sandbox_read_dirs: Optional[List[str]] = None,
+        execution_context_provider: Optional[Callable[[str], Optional[BashExecutionContext]]] = None,
     ):
         """Initialize the bash tool.
 
@@ -124,6 +140,10 @@ class BashTool:
             sandbox_read_dirs: Extra read-only roots for the sandbox policy
                 beyond the built-in defaults (e.g. the datus home so skills
                 and templates stay readable).
+            execution_context_provider: Optional request-scoped callback run
+                after the original command passes pattern/permission checks.
+                It may return an internal command, child-only environment
+                values and validated per-call sandbox read roots.
         """
         self.workspace_root = Path(workspace_root).resolve()
         self.allowed_patterns = list(allowed_patterns) if allowed_patterns else []
@@ -133,6 +153,7 @@ class BashTool:
         self._output_dir_provider = output_dir_provider
         self.sandbox_settings = sandbox_settings
         self.sandbox_read_dirs = list(sandbox_read_dirs) if sandbox_read_dirs else []
+        self.execution_context_provider = execution_context_provider
         # Monotonic per-instance counter zero-padded into archive filenames so a
         # directory listing sorts in command-invocation order. Paired with a
         # per-instance random token so a recreated/resumed BashTool (which
@@ -209,10 +230,23 @@ class BashTool:
                 ),
             )
 
+        execution_context: Optional[BashExecutionContext] = None
+        if self.execution_context_provider is not None:
+            try:
+                execution_context = self.execution_context_provider(command)
+            except ValueError as exc:
+                return FuncToolResult(success=0, error=str(exc))
+            except Exception as exc:  # pragma: no cover - defensive provider boundary
+                logger.error("Failed to prepare command runtime context (identity=%s): %s", self.identity, exc)
+                return FuncToolResult(success=0, error="Failed to prepare command runtime context")
+
         effective_timeout = self._resolve_timeout(timeout)
+        spawn_command = execution_context.command if execution_context is not None else command
+        invocation_env = execution_context.env if execution_context is not None else None
+        runtime_read_dirs = execution_context.sandbox_read_dirs if execution_context is not None else []
 
         try:
-            argv = self._build_spawn_argv(command)
+            argv = self._build_spawn_argv(spawn_command)
         except ValueError as e:
             return FuncToolResult(success=0, error=f"Invalid command syntax: {e}")
 
@@ -224,6 +258,7 @@ class BashTool:
                 workspace_root=self.workspace_root,
                 dynamic_write_dirs=[output_dir] if output_dir else [],
                 extra_read_dirs=self.sandbox_read_dirs,
+                runtime_read_dirs=runtime_read_dirs,
             )
             try:
                 argv = bash_sandbox.wrap_argv(argv, policy)
@@ -235,8 +270,14 @@ class BashTool:
                 # a huge output never buffers in memory; decide by file size
                 # afterwards. Timeout is handled inside so the partial file is
                 # still surfaced.
-                return self._execute_with_redirect(argv, command, output_dir, effective_timeout)
-            return self._execute_in_memory(argv, effective_timeout)
+                return self._execute_with_redirect(
+                    argv,
+                    command,
+                    output_dir,
+                    effective_timeout,
+                    invocation_env=invocation_env,
+                )
+            return self._execute_in_memory(argv, effective_timeout, invocation_env=invocation_env)
         except subprocess.TimeoutExpired:
             logger.error("Command timed out (identity=%s): %s", self.identity, command)
             return FuncToolResult(success=0, error=f"Command timed out after {effective_timeout} seconds")
@@ -329,7 +370,14 @@ class BashTool:
             return None
         return path
 
-    def _execute_with_redirect(self, argv: List[str], command: str, output_dir: Path, timeout: int) -> FuncToolResult:
+    def _execute_with_redirect(
+        self,
+        argv: List[str],
+        command: str,
+        output_dir: Path,
+        timeout: int,
+        invocation_env: Optional[Dict[str, str]] = None,
+    ) -> FuncToolResult:
         """Run the command with stdout/stderr redirected to a file on disk.
 
         stderr is merged into the stdout file (``stderr=STDOUT``) so interleaved
@@ -356,7 +404,7 @@ class BashTool:
                 stdout=fh,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
-                env=self._get_safe_env(),
+                env=self._get_safe_env(invocation_env),
                 # New session/process group so a timeout can kill the whole
                 # pipeline (all stages), not just the bash launcher.
                 start_new_session=(os.name == "posix"),
@@ -421,7 +469,12 @@ class BashTool:
         except OSError:  # pragma: no cover - best effort cleanup
             pass
 
-    def _execute_in_memory(self, argv: List[str], timeout: int) -> FuncToolResult:
+    def _execute_in_memory(
+        self,
+        argv: List[str],
+        timeout: int,
+        invocation_env: Optional[Dict[str, str]] = None,
+    ) -> FuncToolResult:
         """Fallback path (no offload dir): capture output in memory + truncate."""
         proc = subprocess.Popen(
             argv,
@@ -430,7 +483,7 @@ class BashTool:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=self._get_safe_env(),
+            env=self._get_safe_env(invocation_env),
             # Detach the child from the agent's stdin. Without this the child
             # inherits datus's terminal stdin and any command that reads it
             # (``cat``, ``read``, ``python`` awaiting input, an interactive
@@ -576,7 +629,7 @@ class BashTool:
     def _sandbox_active(self) -> bool:
         return self.sandbox_settings is not None and self.sandbox_settings.enabled
 
-    def _get_safe_env(self) -> dict:
+    def _get_safe_env(self, invocation_env: Optional[Dict[str, str]] = None) -> dict:
         """Build the environment for command execution.
 
         Starts from ``os.environ`` and overlays ``self.extra_env`` so callers
@@ -595,6 +648,8 @@ class BashTool:
             env = os.environ.copy()
         if self.extra_env:
             env.update(self.extra_env)
+        if invocation_env:
+            env.update(invocation_env)
         return env
 
     def available_tools(self) -> List[Tool]:
