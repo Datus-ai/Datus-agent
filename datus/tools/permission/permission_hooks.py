@@ -267,6 +267,7 @@ class PermissionHooks(AgentHooks):
         non_interactive: bool = False,
         proxied_tool_names: Optional[Set[str]] = None,
         project_root: Optional[str] = None,
+        config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
     ):
         """Initialize the permission hooks.
@@ -305,6 +306,11 @@ class PermissionHooks(AgentHooks):
                 file auto-allows instead of prompting. ``None`` falls back to the
                 current working directory. Also used as the write target for
                 project-level bash allow grants (``.datus/config.yml``).
+            config_mutable: Whether project configuration may be persisted.
+                When ``False`` (for example, the multi-tenant API), permission
+                prompts omit the project-level choice while retaining once and
+                session approvals. Existing project grants supplied through
+                ``AgentConfig`` still apply.
             bash_classifier: Optional LLM classifier for bash commands (reserved
                 seam, see ``bash_classifier.py``). Consulted only when the
                 static bash rules yield ASK with ``safety_forced=False``; a
@@ -319,6 +325,7 @@ class PermissionHooks(AgentHooks):
         self.non_interactive = non_interactive
         self.proxied_tool_names = proxied_tool_names
         self.project_root = project_root
+        self.config_mutable = bool(config_mutable)
         self.bash_classifier = bash_classifier
 
     # Plan-mode tooling is always allowed regardless of permission profile:
@@ -864,7 +871,7 @@ class PermissionHooks(AgentHooks):
             # opted into project-scope grants for destructive statements too —
             # but never for ``unknown``: persisting a grant that auto-allows
             # every future unparseable statement would be a blank cheque.
-            offer_project = kind != SQLType.UNKNOWN.value
+            offer_project = self.config_mutable and kind != SQLType.UNKNOWN.value
             choice = await self._request_sql_confirmation(sql, kind, sql_class, offer_project=offer_project)
             if choice == "y":
                 logger.info("User approved execute_sql (%s, once)", kind)
@@ -1149,11 +1156,15 @@ class PermissionHooks(AgentHooks):
             # relax per project). Never for safety-ceiling asks, and not for
             # user-authored ask rules — the user's own posture lives in their
             # agent.yml, not behind a one-keypress override.
-            offer_project = not decision.safety_forced and (
-                decision.source == BashDecisionSource.DEFAULT
-                or (
-                    decision.source == BashDecisionSource.ASK_RULE
-                    and self.permission_manager.is_plugin_ask_pattern(decision.matched_pattern)
+            offer_project = (
+                self.config_mutable
+                and not decision.safety_forced
+                and (
+                    decision.source == BashDecisionSource.DEFAULT
+                    or (
+                        decision.source == BashDecisionSource.ASK_RULE
+                        and self.permission_manager.is_plugin_ask_pattern(decision.matched_pattern)
+                    )
                 )
             )
             choice = await self._request_bash_confirmation(command, decision, offer_project=offer_project)

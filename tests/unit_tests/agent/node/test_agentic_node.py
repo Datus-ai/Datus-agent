@@ -1807,6 +1807,16 @@ class TestEnsurePermissionHooksProxyWiring:
         kwargs = ph_cls.call_args.kwargs
         assert kwargs["proxied_tool_names"] == set()
 
+    def test_passes_config_mutable_from_agent_config(self):
+        """Multi-tenant API nodes suppress project-level permission choices."""
+        node = self._prepare_node(set())
+        node.agent_config = SimpleNamespace(config_mutable=False)
+
+        with patch("datus.tools.permission.permission_hooks.PermissionHooks") as ph_cls:
+            node._ensure_permission_hooks()
+
+        assert ph_cls.call_args.kwargs["config_mutable"] is False
+
 
 # ---------------------------------------------------------------------------
 # _ensure_tool_transformers (plugin tool argument middleware wiring)

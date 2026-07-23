@@ -1789,6 +1789,7 @@ class TestExecuteSqlClassRules:
         non_interactive=False,
         project_root=None,
         project_sql_allows=None,
+        config_mutable=True,
     ):
         registry = ToolRegistry()
         tool_mock = MagicMock()
@@ -1802,6 +1803,7 @@ class TestExecuteSqlClassRules:
             tool_registry=registry,
             non_interactive=non_interactive,
             project_root=project_root,
+            config_mutable=config_mutable,
         )
 
     @staticmethod
@@ -1992,6 +1994,16 @@ class TestExecuteSqlClassRules:
 
         event = mock_broker.request.await_args.args[0][0]
         assert event.choices["p"] == "Allow 'drop' (project)"
+
+    @pytest.mark.asyncio
+    async def test_project_choice_not_offered_when_config_is_immutable(self, mock_broker):
+        hooks = self._make_hooks(mock_broker, self._auto_config(), config_mutable=False)
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("DROP TABLE t"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert set(event.choices) == {"y", "a", "n"}
 
     @pytest.mark.asyncio
     async def test_rejection_raises(self, mock_broker):
@@ -2199,6 +2211,7 @@ class TestBashCommandPermission:
         rules=None,
         non_interactive=False,
         project_root=None,
+        config_mutable=True,
         bash_classifier=None,
         default=PermissionLevel.ASK,
     ):
@@ -2223,6 +2236,7 @@ class TestBashCommandPermission:
             tool_registry=registry,
             non_interactive=non_interactive,
             project_root=project_root,
+            config_mutable=config_mutable,
             bash_classifier=bash_classifier,
         )
         return hooks, manager
@@ -2374,6 +2388,20 @@ class TestBashCommandPermission:
 
         event = mock_broker.request.await_args.args[0][0]
         assert "p" in event.choices
+
+    @pytest.mark.asyncio
+    async def test_unmatched_command_omits_project_choice_when_config_is_immutable(self, mock_broker):
+        hooks, _ = self._make_hooks(
+            mock_broker,
+            bash_commands={"allow": ["git log:*"]},
+            config_mutable=False,
+        )
+        mock_broker.request = AsyncMock(return_value=[["y"]])
+
+        await hooks.on_tool_start(self._ctx("cargo build"), MagicMock(), self._tool())
+
+        event = mock_broker.request.await_args.args[0][0]
+        assert set(event.choices) == {"y", "a", "n"}
 
     @pytest.mark.asyncio
     async def test_classifier_high_confidence_allow_skips_prompt(self, mock_broker):
