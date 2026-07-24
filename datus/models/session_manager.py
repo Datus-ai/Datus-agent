@@ -10,6 +10,7 @@ import os
 import re
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -31,6 +32,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_CHAT_AGENT = "chat"
+
+
+@dataclass(frozen=True)
+class SessionTurnCheckpoint:
+    """Durable session boundary captured immediately before a new turn."""
+
+    max_message_id: int = 0
+    max_sequence_number: int = 0
+    max_user_turn_number: int = 0
 
 
 def extract_agent_from_session_id(session_id: str) -> str:
@@ -175,6 +185,113 @@ class SessionManager:
         # Clearing history is a session rebuild: drop the frozen system prompt
         # so the next turn re-bakes it instead of replaying pre-clear context.
         self.delete_system_prompt_snapshot(session_id)
+
+    def checkpoint_turn(self, session_id: str) -> Optional[SessionTurnCheckpoint]:
+        """Capture the SQLite boundary before dispatching a model turn.
+
+        The database can legitimately not exist yet for a brand-new node; in
+        that case the empty checkpoint still identifies everything written by
+        the upcoming turn.
+        """
+        self._validate_session_id(session_id)
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return SessionTurnCheckpoint()
+
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                max_message_id = 0
+                max_sequence_number = 0
+                max_user_turn_number = 0
+                if self._table_exists(conn, "agent_messages"):
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(id), 0) FROM agent_messages WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                    max_message_id = int(row[0] or 0) if row else 0
+                if self._table_exists(conn, "message_structure"):
+                    row = conn.execute(
+                        "SELECT COALESCE(MAX(sequence_number), 0), "
+                        "COALESCE(MAX(user_turn_number), 0) "
+                        "FROM message_structure WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                    if row:
+                        max_sequence_number = int(row[0] or 0)
+                        max_user_turn_number = int(row[1] or 0)
+                return SessionTurnCheckpoint(
+                    max_message_id=max_message_id,
+                    max_sequence_number=max_sequence_number,
+                    max_user_turn_number=max_user_turn_number,
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Failed to checkpoint session %s before turn: %s", session_id, exc)
+            # Never substitute an empty boundary for a failed read: doing so
+            # could make a later rollback delete pre-existing history.
+            return None
+
+    def rollback_turn(self, session_id: str, checkpoint: Optional[SessionTurnCheckpoint]) -> None:
+        """Atomically remove everything persisted after *checkpoint*.
+
+        ``AdvancedSQLiteSession.pop_item`` only removes ``agent_messages`` and
+        leaves orphaned ``message_structure`` metadata. This repository-owned
+        rollback deletes both sides, along with usage rows for the cancelled
+        turn, so the next model call observes the exact pre-turn session.
+        """
+        self._validate_session_id(session_id)
+        if checkpoint is None:
+            logger.warning("Skipping unanswered-turn rollback for %s: no safe checkpoint", session_id)
+            return
+        db_path = os.path.join(self.session_dir, f"{session_id}.db")
+        if not os.path.exists(db_path):
+            return
+
+        try:
+            with sqlite3.connect(db_path, timeout=5.0) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                if self._table_exists(conn, "message_structure"):
+                    conn.execute(
+                        "DELETE FROM message_structure "
+                        "WHERE session_id = ? AND "
+                        "(sequence_number > ? OR message_id IN ("
+                        "SELECT id FROM agent_messages WHERE session_id = ? AND id > ?"
+                        "))",
+                        (
+                            session_id,
+                            checkpoint.max_sequence_number,
+                            session_id,
+                            checkpoint.max_message_id,
+                        ),
+                    )
+                if self._table_exists(conn, "agent_messages"):
+                    conn.execute(
+                        "DELETE FROM agent_messages WHERE session_id = ? AND id > ?",
+                        (session_id, checkpoint.max_message_id),
+                    )
+                if self._table_exists(conn, "turn_usage"):
+                    conn.execute(
+                        "DELETE FROM turn_usage WHERE session_id = ? AND user_turn_number > ?",
+                        (session_id, checkpoint.max_user_turn_number),
+                    )
+                if self._table_exists(conn, "user_message_context"):
+                    conn.execute(
+                        "DELETE FROM user_message_context "
+                        "WHERE session_id = ? AND user_turn_number > ?",
+                        (session_id, checkpoint.max_user_turn_number),
+                    )
+                if self._table_exists(conn, "running_turn_usage"):
+                    conn.execute("DELETE FROM running_turn_usage WHERE session_id = ?", (session_id,))
+                conn.commit()
+        except sqlite3.Error as exc:
+            logger.warning("Failed to roll back unanswered turn for session %s: %s", session_id, exc)
+
+    @staticmethod
+    def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
 
     # ------------------------------------------------------------------
     # System-prompt snapshot persistence

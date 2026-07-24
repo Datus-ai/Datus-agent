@@ -298,6 +298,8 @@ class DatusApp:
         self._search_buffer = Buffer(multiline=False, on_text_changed=self._on_search_text_changed)
 
         self._agent_running = threading.Event()
+        self._dispatch_state_lock = threading.Lock()
+        self._input_restore_after_dispatch: Optional[str] = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="datus-tui-worker")
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._exit_code: int = 0
@@ -599,6 +601,11 @@ class DatusApp:
             mouse_support=self._mouse_support_enabled,
             erase_when_done=False,
         )
+        # prompt_toolkit defaults to waiting 500 ms before deciding that a
+        # lone ESC byte is not the prefix of an arrow/function-key sequence.
+        # Keep a tiny sequencing window, but make standalone ESC cancellation
+        # perceptually as immediate as Ctrl+C.
+        self._app.ttimeoutlen = 0.01
 
         # Live state now drives the streaming tail inside the scrollable
         # output pane (via ``TUIOutputBuffer.tokens()``) — its invalidate
@@ -1775,12 +1782,8 @@ class DatusApp:
 
     def set_input_text(self, text: str) -> None:
         """Prefill the input buffer (e.g. for ``.rewind``). Thread-safe."""
-        buffer = self._input_area.buffer
-        document_cls = buffer.document.__class__
-
         def _apply() -> None:
-            buffer.document = document_cls(text)
-            self._app.invalidate()
+            self._set_input_text_now(text)
 
         if self._loop is None:
             # Application has not started yet — direct mutation is safe because
@@ -1792,6 +1795,26 @@ class DatusApp:
         except RuntimeError:
             # Loop already closed; the buffer won't be observed anyway.
             pass
+
+    def restore_input_after_dispatch(self, text: str) -> None:
+        """Restore cancelled input only after the worker releases run state.
+
+        Showing the text while ``_agent_running`` is still set makes an
+        immediate Enter route it into the pending-input queue. Deferring the
+        mutation until ``_on_dispatch_done`` makes restoration and the idle
+        transition atomic from the prompt loop's point of view.
+        """
+        with self._dispatch_state_lock:
+            if self._agent_running.is_set():
+                self._input_restore_after_dispatch = text
+                return
+        self.set_input_text(text)
+
+    def _set_input_text_now(self, text: str) -> None:
+        buffer = self._input_area.buffer
+        document_cls = buffer.document.__class__
+        buffer.document = document_cls(text)
+        self._app.invalidate()
 
     def invalidate(self) -> None:
         """Trigger a redraw from any thread."""
@@ -2059,16 +2082,21 @@ class DatusApp:
         the input was rejected because the agent is already running or the
         text is blank).
         """
-        if self._agent_running.is_set():
-            return None
         if not text.strip():
             return None
+        with self._dispatch_state_lock:
+            if self._agent_running.is_set():
+                return None
+            self._agent_running.set()
         if self._loop is None:
             # Application has not started yet — run synchronously.
-            self._safe_dispatch(text)
+            try:
+                self._safe_dispatch(text)
+            finally:
+                with self._dispatch_state_lock:
+                    self._agent_running.clear()
             return None
 
-        self._agent_running.set()
         self._app.invalidate()
         # Snapshot ContextVars on the prompt_toolkit loop thread so the worker
         # sees bindings (e.g. ``set_current_path_manager``) set during startup.
@@ -2266,8 +2294,18 @@ class DatusApp:
             return None
 
     def _on_dispatch_done(self, future: Future) -> None:
-        self._agent_running.clear()
-        self.invalidate()
+        with self._dispatch_state_lock:
+            self._agent_running.clear()
+            restored_input = self._input_restore_after_dispatch
+            self._input_restore_after_dispatch = None
+        # This callback runs on the prompt_toolkit event-loop thread. Apply
+        # the document before returning to input processing, so the first
+        # Enter after cancellation submits normally instead of seeing a
+        # transient busy state or an empty buffer.
+        if restored_input is not None:
+            self._set_input_text_now(restored_input)
+        else:
+            self.invalidate()
         try:
             result = future.result()
         except BaseException:  # pragma: no cover - already logged

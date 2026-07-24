@@ -1894,6 +1894,38 @@ class TestStreamingMarkdown:
         ctx._finalize_markdown_stream()
         assert ctx.has_streamed_response is False
 
+    def test_model_response_started_is_latched_independently_of_rendering(self):
+        ctx, _live_state, _buf = self._make_ctx()
+        ctx.set_editable_user_message("original question")
+
+        assert ctx.has_model_response_started is False
+        assert ctx.editable_user_message == "original question"
+
+        ctx.mark_model_response_started()
+
+        assert ctx.has_model_response_started is True
+        assert ctx.has_streamed_response is False
+
+    def test_interrupted_notice_prints_after_context_exit(self):
+        ctx, _live_state, buf = self._make_ctx()
+
+        with ctx:
+            ctx.request_interrupted_notice()
+            assert "Interrupted" not in buf.getvalue()
+
+        assert "Interrupted" in buf.getvalue()
+        assert ctx.interrupt_requested is True
+
+    def test_unanswered_rollback_request_is_latched_for_chat_cleanup(self):
+        ctx, _live_state, _buf = self._make_ctx()
+
+        with ctx:
+            assert ctx.unanswered_rollback_requested is False
+            assert ctx.interrupt_requested is False
+            ctx.request_unanswered_rollback()
+            assert ctx.unanswered_rollback_requested is True
+            assert ctx.interrupt_requested is True
+
 
 @pytest.mark.ci
 class TestCompactRendering:

@@ -22,7 +22,7 @@ from rich.text import Text
 
 from datus.cli._render_utils import format_io_tokens
 from datus.cli.cli_styles import ACTION_ROLE_COLOR_NAMES, CODE_THEME, render_user_scrollback_text
-from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import INTERRUPTED_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -760,6 +760,12 @@ class ActionRenderer:
 
     def render_main_action(self, action: ActionHistory, verbose: bool) -> List[RenderableType]:
         """Render a depth=0 completed action directly as Rich objects."""
+        # In-memory replay marker added when a response-started turn is
+        # interrupted.  It is deliberately not persisted as a model action,
+        # but must survive Ctrl+O/sidebar full-screen transcript rebuilds.
+        if action.action_type == INTERRUPTED_ACTION_TYPE:
+            return [Text.from_markup("[yellow]Interrupted[/yellow]")]
+
         # Manual SQL/bash execution (input-bar sql>/bash> mode): render the
         # terminal frame as the styled execution block.
         if action.action_type == "manual_exec":

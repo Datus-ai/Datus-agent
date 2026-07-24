@@ -226,6 +226,71 @@ class TestSessionManagerExecution:
         session_via_get = sm.get_session("alias-test")
         assert session_via_create is session_via_get
 
+    def test_rollback_turn_removes_messages_structure_and_usage_after_checkpoint(self, sm):
+        import asyncio
+
+        session_id = "rollback-unanswered"
+        session = sm.get_session(session_id)
+        asyncio.run(
+            session.add_items(
+                [
+                    {"role": "user", "content": "kept question"},
+                    {"role": "assistant", "content": "kept answer"},
+                ]
+            )
+        )
+        checkpoint = sm.checkpoint_turn(session_id)
+
+        asyncio.run(session.add_items([{"role": "user", "content": "cancelled question"}]))
+        db_path = os.path.join(sm.session_dir, f"{session_id}.db")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO turn_usage "
+                "(session_id, branch_id, user_turn_number, total_tokens) VALUES (?, 'main', 2, 99)",
+                (session_id,),
+            )
+            conn.execute(SessionManager._RUNNING_TURN_USAGE_DDL)
+            conn.execute(
+                "INSERT INTO running_turn_usage "
+                "(session_id, user_turn_number, cumulative_json, context_length) "
+                "VALUES (?, 2, '{}', 1000)",
+                (session_id,),
+            )
+            conn.execute(SessionManager._USER_MESSAGE_CONTEXT_DDL)
+            conn.execute(
+                "INSERT INTO user_message_context "
+                "(session_id, user_turn_number, context_json) VALUES (?, 2, '{}')",
+                (session_id,),
+            )
+            conn.commit()
+
+        sm.rollback_turn(session_id, checkpoint)
+
+        assert asyncio.run(session.get_items()) == [
+            {"role": "user", "content": "kept question"},
+            {"role": "assistant", "content": "kept answer"},
+        ]
+        with sqlite3.connect(db_path) as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,)
+            ).fetchone()[0] == 2
+            assert conn.execute(
+                "SELECT COUNT(*) FROM message_structure WHERE session_id = ?", (session_id,)
+            ).fetchone()[0] == 2
+            assert conn.execute(
+                "SELECT COUNT(*) FROM message_structure s "
+                "LEFT JOIN agent_messages m ON m.id = s.message_id WHERE m.id IS NULL"
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (session_id,)
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM running_turn_usage WHERE session_id = ?", (session_id,)
+            ).fetchone()[0] == 0
+            assert conn.execute(
+                "SELECT COUNT(*) FROM user_message_context WHERE session_id = ?", (session_id,)
+            ).fetchone()[0] == 0
+
     # -- clear_session --
 
     def test_clear_session_removes_messages(self, sm):

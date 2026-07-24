@@ -49,6 +49,19 @@ def test_partial_line_is_buffered_until_newline_arrives():
     assert _flatten_text(buf.tokens()) == "partial continued"
 
 
+def test_checkpoint_rollback_removes_cancelled_turn_output():
+    buf = TUIOutputBuffer()
+    buf.write("previous answer\n")
+    checkpoint = buf.checkpoint()
+
+    buf.write("cancelled user message\n")
+    buf.write("partial model")
+    buf.rollback(checkpoint)
+
+    assert _flatten_text(buf.tokens()) == "previous answer"
+    assert buf.line_count() == 1
+
+
 def test_ansi_color_codes_are_preserved_in_tokens():
     buf = TUIOutputBuffer()
     buf.write("\x1b[31mred\x1b[0m\n")

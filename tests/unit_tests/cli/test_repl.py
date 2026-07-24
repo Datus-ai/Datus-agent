@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
+from datus.cli.execution_state import ExecutionInterrupted, InterruptController
 from datus.cli.input_modes import InputMode
 from datus.cli.repl import CommandType, DatusCLI
 
@@ -1556,3 +1557,145 @@ class TestRunOnBgLoop:
         except concurrent.futures.CancelledError:
             pass
         assert stopped_cleanly.wait(timeout=1.0)
+
+    def test_interrupt_controller_cancels_parked_bg_task(self, bg_cli):
+        """Interrupt wakes a coroutine parked in an API-like await."""
+        import asyncio
+        import threading
+
+        controller = InterruptController()
+        started = threading.Event()
+        cancelled = threading.Event()
+        finished = threading.Event()
+        raised = {}
+
+        async def waiting_for_api():
+            started.set()
+            try:
+                await asyncio.sleep(30.0)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        def run():
+            try:
+                bg_cli.run_on_bg_loop(waiting_for_api(), interrupt_controller=controller)
+            except BaseException as exc:
+                raised["exception"] = exc
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        assert started.wait(timeout=1.0)
+
+        controller.interrupt()
+
+        assert cancelled.wait(timeout=1.0)
+        assert finished.wait(timeout=1.0)
+        worker.join(timeout=1.0)
+        assert isinstance(raised.get("exception"), ExecutionInterrupted)
+        assert controller.is_interrupted is False
+
+        async def next_turn():
+            return "submitted"
+
+        # Reusing the node/controller must not immediately cancel the first
+        # submission after ESC.
+        assert bg_cli.run_on_bg_loop(next_turn(), interrupt_controller=controller) == "submitted"
+
+    def test_external_task_cancel_is_not_user_interrupt(self, bg_cli):
+        """Cancellation without an interrupt flag remains CancelledError."""
+        import asyncio
+        import concurrent.futures
+        import threading
+
+        controller = InterruptController()
+        started = threading.Event()
+        task_holder = {}
+
+        async def externally_cancelled():
+            task_holder["task"] = asyncio.current_task()
+            started.set()
+            await asyncio.sleep(30.0)
+
+        def cancel_from_loop():
+            task_holder["task"].cancel()
+
+        with pytest.raises(concurrent.futures.CancelledError):
+            worker = threading.Thread(
+                target=lambda: (
+                    started.wait(timeout=1.0),
+                    bg_cli._bg_loop.call_soon_threadsafe(cancel_from_loop),
+                )
+            )
+            worker.start()
+            try:
+                bg_cli.run_on_bg_loop(externally_cancelled(), interrupt_controller=controller)
+            finally:
+                worker.join(timeout=1.0)
+
+    def test_early_interrupt_survives_node_controller_reset(self, bg_cli):
+        """A startup reset cannot make a requested cancel look external."""
+        import asyncio
+
+        controller = InterruptController()
+
+        async def interrupt_then_reset():
+            controller.interrupt()
+            # Mirrors execute_stream_with_interactions resetting the reusable
+            # controller at the beginning of a turn.
+            controller.reset()
+            await asyncio.sleep(30.0)
+
+        with pytest.raises(ExecutionInterrupted):
+            bg_cli.run_on_bg_loop(interrupt_then_reset(), interrupt_controller=controller)
+
+
+class TestInterruptAgent:
+    @staticmethod
+    def _setup(cli, *, response_started: bool):
+        controller = MagicMock()
+        node = SimpleNamespace(interrupt_controller=controller)
+        streaming_ctx = SimpleNamespace(
+            has_model_response_started=response_started,
+            editable_user_message="question to edit",
+            request_interrupted_notice=MagicMock(),
+            request_unanswered_rollback=MagicMock(),
+        )
+        cli.chat_commands = SimpleNamespace(
+            current_node=node,
+            current_streaming_ctx=streaming_ctx,
+        )
+        cli.tui_app = MagicMock()
+        return controller
+
+    def test_escape_restores_input_before_first_model_response(self, cli):
+        controller = self._setup(cli, response_started=False)
+
+        cli._interrupt_agent(restore_unanswered_input=True)
+
+        controller.interrupt.assert_called_once_with()
+        cli.tui_app.restore_input_after_dispatch.assert_called_once_with("question to edit")
+        cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_called_once_with()
+        cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_not_called()
+
+    def test_escape_only_cancels_after_model_response_started(self, cli):
+        controller = self._setup(cli, response_started=True)
+
+        cli._interrupt_agent(restore_unanswered_input=True)
+
+        controller.interrupt.assert_called_once_with()
+        cli.tui_app.restore_input_after_dispatch.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_called_once_with()
+
+    def test_ctrl_c_never_restores_input(self, cli):
+        controller = self._setup(cli, response_started=False)
+
+        cli._interrupt_agent()
+
+        controller.interrupt.assert_called_once_with()
+        cli.tui_app.restore_input_after_dispatch.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_unanswered_rollback.assert_not_called()
+        cli.chat_commands.current_streaming_ctx.request_interrupted_notice.assert_not_called()

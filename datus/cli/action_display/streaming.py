@@ -24,7 +24,13 @@ from datus.cli.action_display.renderers import (
     parse_task_tool_input,
     render_assistant_response_markdown,
 )
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    INTERRUPTED_ACTION_TYPE,
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionRole,
+    ActionStatus,
+)
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -123,6 +129,28 @@ class InlineStreamingContext:
         self.display = display_instance
         self._history_turns: List[Tuple[str, List[ActionHistory]]] = history_turns or []
         self._current_user_message = current_user_message
+        # Input text restored by ESC when the turn is cancelled before the
+        # model produces anything.  It normally matches
+        # ``_current_user_message`` but callers may replace it with the
+        # pre-transformation text (for example before an @Agent dispatch hint
+        # is appended).
+        self._editable_user_message = current_user_message
+        # Set by the action producer as soon as it observes the first
+        # assistant/tool/interaction event.  This deliberately does not wait
+        # for the refresh thread to paint a delta.
+        self._model_response_started = threading.Event()
+        # Latched by ESC when it wins the race before the first response
+        # event. The chat layer consumes this after async cancellation has
+        # fully unwound, then rolls the entire user turn back.
+        self._unanswered_rollback_requested = threading.Event()
+        # Generic cancellation latch. Unlike the notice event, this remains
+        # set after ``__exit__`` so the chat layer can skip final-response
+        # rendering even after the visible notice has been flushed.
+        self._interrupt_requested = threading.Event()
+        # ESC requests this only when response output has already started.
+        # ``__exit__`` prints the notice after draining the partial response,
+        # preserving the natural output order.
+        self._interrupted_notice_requested = threading.Event()
         self._sync_mode = sync_mode
         self._processed_index = 0
         self._tick = 0
@@ -216,6 +244,44 @@ class InlineStreamingContext:
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the asyncio event loop for broker.submit calls from daemon thread."""
         self._event_loop = loop
+
+    def set_editable_user_message(self, message: str) -> None:
+        """Set the original input text that ESC may restore for editing."""
+        self._editable_user_message = message
+
+    @property
+    def editable_user_message(self) -> str:
+        """Original user input suitable for restoring into the input buffer."""
+        return self._editable_user_message
+
+    def mark_model_response_started(self) -> None:
+        """Latch that the model has produced an observable response event."""
+        self._model_response_started.set()
+
+    @property
+    def has_model_response_started(self) -> bool:
+        """Whether any model response event has arrived for this turn."""
+        return self._model_response_started.is_set()
+
+    def request_interrupted_notice(self) -> None:
+        """Request an ``Interrupted`` line after partial output is drained."""
+        self._interrupt_requested.set()
+        self._interrupted_notice_requested.set()
+
+    def request_unanswered_rollback(self) -> None:
+        """Latch that ESC cancelled this turn before any model response."""
+        self._interrupt_requested.set()
+        self._unanswered_rollback_requested.set()
+
+    @property
+    def unanswered_rollback_requested(self) -> bool:
+        """Whether this turn should be removed and restored into the editor."""
+        return self._unanswered_rollback_requested.is_set()
+
+    @property
+    def interrupt_requested(self) -> bool:
+        """Whether this streaming turn was cancelled by the user."""
+        return self._interrupt_requested.is_set()
 
     def set_input_collector(self, collector: Callable[[ActionHistory, Console], Optional[List[List[str]]]]) -> None:
         """Set the synchronous input collector callback for INTERACTION actions.
@@ -451,6 +517,10 @@ class InlineStreamingContext:
         self._active_message_id = None
         self._stop_event.clear()
         self._paused = False
+        self._model_response_started.clear()
+        self._unanswered_rollback_requested.clear()
+        self._interrupt_requested.clear()
+        self._interrupted_notice_requested.clear()
         # Fresh turn: forget which response we've already finalized so the
         # next stream's first paired completion triggers the full dedupe
         # + reprint cycle again.
@@ -497,6 +567,10 @@ class InlineStreamingContext:
                     self._stream_body_finalized = True
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("Markdown tail flush on exit failed: %s", exc)
+
+        if self._interrupted_notice_requested.is_set():
+            self._interrupted_notice_requested.clear()
+            self._print_to_append_area("[yellow]Interrupted[/yellow]")
 
         # Unregister
         if self.display._current_context is self:
@@ -620,6 +694,12 @@ class InlineStreamingContext:
             if self._history_turns:
 
                 def _render_turn_response(turn_actions: List[ActionHistory]) -> None:
+                    # Interrupted turns contain only a partial trace plus the
+                    # replay marker rendered by ``render_action_history``.
+                    # Never promote their last assistant event to a final
+                    # response during a later live Ctrl+O rebuild.
+                    if any(action.action_type == INTERRUPTED_ACTION_TYPE for action in turn_actions):
+                        return
                     # Prefer the wrapper action (e.g. ``chat_response``) since
                     # ``render_action_history`` already skips it. Fall back to
                     # plain ``response`` for providers that don't emit a
@@ -1527,6 +1607,7 @@ class InlineStreamingContext:
                 delta = raw
         if not delta:
             return
+        self.mark_model_response_started()
         self._markdown_stream_has_streamed = True
         if action.action_id:
             self._markdown_active_stream_ids.add(action.action_id)
