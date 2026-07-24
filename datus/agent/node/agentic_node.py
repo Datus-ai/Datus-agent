@@ -3828,6 +3828,7 @@ class AgenticNode(Node):
                 non_interactive=non_interactive,
                 proxied_tool_names=self.proxied_tool_names,
                 project_root=getattr(self.agent_config, "project_root", None),
+                config_mutable=self._resolve_config_mutable(),
                 bash_classifier=create_bash_classifier(bash_rules, self.agent_config),
             )
             logger.debug(

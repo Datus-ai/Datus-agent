@@ -280,6 +280,7 @@ def _build_permission_hooks(cli: "DatusCLI", broker: InteractionBroker) -> "Perm
         tool_registry=registry,
         non_interactive=False,
         project_root=getattr(cli.agent_config, "project_root", None),
+        config_mutable=bool(getattr(cli.agent_config, "config_mutable", True)),
         bash_classifier=create_bash_classifier(bash_rules, cli.agent_config),
     )
 

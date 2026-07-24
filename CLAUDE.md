@@ -78,6 +78,13 @@ Resolution order: `.datus/config.yml` → `agent.target` in `agent.yml`.
 - **New LLM model (new SDK/auth)**: file in `datus/models/`, inherit `LLMBaseModel` (`base.py`), register in `MODEL_TYPE_MAP`, add to `PROVIDER_MODELS` in `tests/regression/test_regression_llm.py`
 - **New MCP tool**: function in `datus/tools/func_tool/`, register in MCP server tool list
 
+### Permission Configuration Mutability
+
+- `AgentConfig.config_mutable` controls whether permission prompts may offer project-scoped persistence.
+- When `config_mutable=False` (multi-tenant API/gateway configurations supplied through `AgentConfig`), Bash and SQL prompts offer only once/session/deny choices; they must never offer or write project grants to `./.datus/config.yml`.
+- Existing `project_bash_allow` and `project_sql_allow` grants supplied through `AgentConfig` remain effective in read-only configuration mode.
+- CLI flows default to `config_mutable=True` and retain project-scoped persistence.
+
 ## Guardrails
 
 - **No direct DB imports**: use `ConnectorRegistry` / `db_manager_instance`
