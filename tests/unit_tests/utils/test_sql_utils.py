@@ -28,7 +28,13 @@ from datus.utils.sql_utils import (
     strip_sql_comments,
 )
 
-_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = ("_capabilities", "_uri_builders", "_context_resolvers")
+_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = (
+    "_connectors",
+    "_metadata",
+    "_capabilities",
+    "_uri_builders",
+    "_context_resolvers",
+)
 
 
 def _snapshot_connector_registry():
@@ -1063,6 +1069,10 @@ class TestParseReadDialect:
     def test_whitespace_trimmed(self):
         assert parse_read_dialect("  postgres  ") == "postgres"
 
+    def test_adapter_registered_parser_dialect(self):
+        connector_registry.register("flexdb", object, parser_dialect="hive")
+        assert parse_read_dialect("flexdb") == "hive"
+
 
 # ---------------------------------------------------------------------------
 # parse_dialect
@@ -1073,6 +1083,10 @@ class TestParseDialect:
     def test_postgres(self):
         assert parse_dialect("postgres") == "postgres"
         assert parse_dialect("postgresql") == "postgres"
+
+    def test_adapter_registered_parser_dialect(self):
+        connector_registry.register("flexdb", object, parser_dialect="hive")
+        assert parse_dialect("flexdb") == "hive"
 
     def test_tsql(self):
         assert parse_dialect("mssql") == "tsql"
@@ -1454,6 +1468,32 @@ class TestParseTableNamePartsExtended:
         # More parts than expected - takes last N
         result = parse_table_name_parts("extra.catalog.db.schema.table", dialect="snowflake")
         assert result["table_name"] == "table"
+
+    def test_adapter_identifier_parser_handles_flexible_namespaces(self):
+        def parser(identifier):
+            parts = identifier.split(".")
+            return {
+                "catalog_name": "",
+                "database_name": parts[0] if len(parts) > 1 else "",
+                "schema_name": parts[1] if len(parts) == 3 else "",
+                "table_name": parts[-1],
+            }
+
+        connector_registry.register(
+            "flexdb",
+            object,
+            capabilities={"database", "schema"},
+            parser_dialect="hive",
+            identifier_parser=parser,
+        )
+
+        assert parse_table_name_parts("project_a.orders", "flexdb") == {
+            "catalog_name": "",
+            "database_name": "project_a",
+            "schema_name": "",
+            "table_name": "orders",
+        }
+        assert parse_table_name_parts("project_a.analytics.orders", "flexdb")["schema_name"] == "analytics"
 
     def test_unknown_dialect_fallback(self):
         # Unknown dialect falls through to default behavior

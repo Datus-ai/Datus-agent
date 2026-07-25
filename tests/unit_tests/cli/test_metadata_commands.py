@@ -202,16 +202,14 @@ class TestCmdTables:
 class TestCmdSchemas:
     def test_unsupported_dialect(self):
         cli = _make_cli(db_type=DBType.SQLITE)
-        with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
-            mock_reg.support_schema.return_value = False
+        with patch("datus.cli.metadata_commands.supports_namespace", return_value=False):
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
         cli.console.print.assert_called()
 
     def test_empty_schemas(self):
         cli = _make_cli(db_type="snowflake")
-        with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
-            mock_reg.support_schema.return_value = True
+        with patch("datus.cli.metadata_commands.supports_namespace", return_value=True):
             cli.db_connector.get_schemas.return_value = []
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
@@ -220,8 +218,7 @@ class TestCmdSchemas:
 
     def test_with_schemas(self):
         cli = _make_cli(db_type="snowflake")
-        with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
-            mock_reg.support_schema.return_value = True
+        with patch("datus.cli.metadata_commands.supports_namespace", return_value=True):
             cli.db_connector.get_schemas.return_value = ["public", "private"]
             meta = MetadataCommands(cli)
             meta.cmd_schemas("")
@@ -239,24 +236,21 @@ class TestCmdSchemas:
 class TestCmdSwitchSchema:
     def test_unsupported_dialect(self):
         cli = _make_cli(db_type=DBType.SQLITE)
-        with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
-            mock_reg.support_schema.return_value = False
+        with patch("datus.cli.metadata_commands.supports_namespace", return_value=False):
             meta = MetadataCommands(cli)
             meta.cmd_switch_schema("public")
         cli.console.print.assert_called()
 
     def test_empty_name(self):
         cli = _make_cli()
-        with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
-            mock_reg.support_schema.return_value = True
+        with patch("datus.cli.metadata_commands.supports_namespace", return_value=True):
             meta = MetadataCommands(cli)
             meta.cmd_switch_schema("")
         cli.console.print.assert_called()
 
     def test_success(self):
         cli = _make_cli()
-        with patch("datus.cli.metadata_commands.connector_registry") as mock_reg:
-            mock_reg.support_schema.return_value = True
+        with patch("datus.cli.metadata_commands.supports_namespace", return_value=True):
             meta = MetadataCommands(cli)
             meta.cmd_switch_schema("myschema")
         assert cli.cli_context.current_schema == "myschema"

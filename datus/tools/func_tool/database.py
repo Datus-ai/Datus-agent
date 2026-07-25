@@ -14,7 +14,7 @@ from fnmatch import fnmatchcase
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
-from datus_db_core import BaseSqlConnector, connector_registry
+from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
@@ -24,6 +24,7 @@ from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.tools.db_tools.capabilities import get_effective_capabilities, supports_namespace
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
@@ -31,6 +32,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
+from datus.utils.sql_utils import parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -414,12 +416,13 @@ class DBFuncTool:
 
     def _determine_field_order(self) -> Sequence[str]:
         dialect = getattr(self._primary_connector, "dialect", "") or ""
+        capabilities = get_effective_capabilities(self._primary_connector, dialect)
         fields: List[str] = []
-        if connector_registry.support_catalog(dialect):
+        if "catalog" in capabilities:
             fields.append("catalog")
-        if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
+        if "database" in capabilities or dialect == DBType.SQLITE:
             fields.append("database")
-        if connector_registry.support_schema(dialect):
+        if "schema" in capabilities:
             fields.append("schema")
         fields.append("table")
         return fields
@@ -472,22 +475,16 @@ class DBFuncTool:
         token = (token or "").strip()
         if not token:
             return None
-        parts = [self._normalize_identifier_part(part) for part in token.split(".") if part.strip()]
-        if not parts:
+        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        parsed = parse_table_name_parts(token, dialect)
+        if not parsed.get("table_name"):
             return None
-        # Align parts from right to left (table is always rightmost)
-        # e.g., for "public.wb_health_population" with field_order ["database", "schema", "table"]:
-        #   - parts = ["public", "wb_health_population"]
-        #   - align from right: schema="public", table="wb_health_population"
-        # When parts > fields, keep only the rightmost num_fields parts
-        values: Dict[str, str] = {field: "" for field in self._field_order}
-        num_fields = len(self._field_order)
-        trimmed_parts = parts[-num_fields:]
-        start_field_idx = max(0, num_fields - len(trimmed_parts))
-        for i, part in enumerate(trimmed_parts):
-            field_idx = start_field_idx + i
-            if field_idx < num_fields:
-                values[self._field_order[field_idx]] = part
+        values = {
+            "catalog": parsed.get("catalog_name", ""),
+            "database": parsed.get("database_name", ""),
+            "schema": parsed.get("schema_name", ""),
+            "table": parsed.get("table_name", ""),
+        }
         return ScopedTablePattern(raw=token, **values)
 
     def _get_semantic_model(
@@ -741,9 +738,17 @@ class DBFuncTool:
         database_value = self._normalize_identifier_part(database)
         schema_value = self._normalize_identifier_part(schema)
 
-        dialect = self._dialect_for_datasource(datasource)
-        if not connector_registry.support_catalog(dialect):
-            if catalog_value and not database_value and connector_registry.support_database(dialect):
+        try:
+            connector = self._get_connector(datasource)
+        except Exception:
+            connector = self.connector
+        dialect = getattr(connector, "dialect", "") or ""
+        if not supports_namespace("catalog", connector=connector, dialect=dialect):
+            if (
+                catalog_value
+                and not database_value
+                and supports_namespace("database", connector=connector, dialect=dialect)
+            ):
                 database_value = catalog_value
             catalog_value = ""
 
@@ -762,15 +767,16 @@ class DBFuncTool:
             schema=self._default_field_value("schema", schema),
             table=self._normalize_identifier_part(raw_name),
         )
-        parts = [self._normalize_identifier_part(part) for part in raw_name.split(".") if part.strip()]
-        if parts:
-            coordinate.table = parts[-1]
-            idx = len(parts) - 2
-            for field in reversed(self._field_order[:-1]):
-                if idx < 0:
-                    break
-                setattr(coordinate, field, parts[idx])
-                idx -= 1
+        dialect = getattr(self.connector, "dialect", "") or ""
+        parsed = parse_table_name_parts(raw_name, dialect)
+        for field, parsed_field in (
+            ("catalog", "catalog_name"),
+            ("database", "database_name"),
+            ("schema", "schema_name"),
+            ("table", "table_name"),
+        ):
+            if parsed.get(parsed_field):
+                setattr(coordinate, field, self._normalize_identifier_part(parsed[parsed_field]))
         return coordinate
 
     def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
@@ -927,9 +933,19 @@ class DBFuncTool:
                 dialects.add(normalized)
         return dialects
 
+    def _configured_supports(self, namespace: str) -> bool:
+        primary_dialect = self._dialect_name(getattr(self.connector, "dialect", ""))
+        if namespace in get_effective_capabilities(self.connector, primary_dialect):
+            return True
+        return any(
+            namespace in get_effective_capabilities(dialect=dialect)
+            for dialect in self._configured_tool_dialects()
+            if dialect != primary_dialect
+        )
+
     def _excluded_tool_params(self) -> set[str]:
         excluded: set[str] = set()
-        if not any(connector_registry.support_catalog(dialect) for dialect in self._configured_tool_dialects()):
+        if not self._configured_supports("catalog"):
             excluded.add("catalog")
         return excluded
 
@@ -939,17 +955,16 @@ class DBFuncTool:
     def available_tools(self) -> List[Tool]:
         bound_tools = []
         methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]
-        configured_dialects = self._configured_tool_dialects()
 
         if self.has_schema:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.append(self.execute_sql)
 
-        if any(connector_registry.support_database(dialect) for dialect in configured_dialects):
+        if self._configured_supports("database"):
             bound_tools.append(self.to_function_tool(self.list_databases))
 
-        if any(connector_registry.support_schema(dialect) for dialect in configured_dialects):
+        if self._configured_supports("schema"):
             bound_tools.append(self.to_function_tool(self.list_schemas))
 
         for bound_method in methods_to_convert:

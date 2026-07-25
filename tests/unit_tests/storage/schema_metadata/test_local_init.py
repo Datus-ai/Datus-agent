@@ -641,9 +641,8 @@ class TestInitOtherThreeLevelSchema:
                 "datus.storage.schema_metadata.local_init.exists_table_value",
                 return_value=({}, set()),
             ),
-            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+            patch("datus.storage.schema_metadata.local_init.supports_namespace", return_value=False),
         ):
-            mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
                 agent_config,
@@ -677,9 +676,8 @@ class TestInitOtherThreeLevelSchema:
                 "datus.storage.schema_metadata.local_init.exists_table_value",
                 return_value=({}, set()),
             ),
-            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+            patch("datus.storage.schema_metadata.local_init.supports_namespace", return_value=False),
         ):
-            mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
                 agent_config,
@@ -710,9 +708,8 @@ class TestInitOtherThreeLevelSchema:
                 "datus.storage.schema_metadata.local_init.exists_table_value",
                 return_value=({}, set()),
             ),
-            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+            patch("datus.storage.schema_metadata.local_init.supports_namespace", return_value=False),
         ):
-            mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
                 agent_config,
@@ -744,9 +741,8 @@ class TestInitOtherThreeLevelSchema:
                 "datus.storage.schema_metadata.local_init.exists_table_value",
                 return_value=({}, set()),
             ),
-            patch("datus.storage.schema_metadata.local_init.connector_registry") as mock_registry,
+            patch("datus.storage.schema_metadata.local_init.supports_namespace", return_value=False),
         ):
-            mock_registry.support_schema.return_value = False
             init_other_three_level_schema(
                 mock_store,
                 agent_config,

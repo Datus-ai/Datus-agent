@@ -4,6 +4,7 @@
 
 from datus_db_core import AdapterMetadata, BaseSqlConnector, ConnectorRegistry, connector_registry
 
+from .capabilities import get_effective_capabilities, supports_namespace
 from .sqlite_connector import SQLiteConnector
 
 __all__ = [
@@ -13,6 +14,8 @@ __all__ = [
     "connector_registry",
     "ConnectorRegistry",
     "AdapterMetadata",
+    "get_effective_capabilities",
+    "supports_namespace",
 ]
 
 

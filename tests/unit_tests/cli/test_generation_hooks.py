@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from datus_db_core import connector_registry
 
 from datus.cli.generation_hooks import (
     GenerationCancelledException,
@@ -1242,6 +1243,64 @@ class TestSyncSemanticToDbBooleanCoercion:
         assert len(table_rows) >= 1
         assert type(table_rows[0]["create_metric"]) is bool
         assert type(table_rows[0]["is_partition"]) is bool
+
+
+def test_sync_qualified_database_table_clears_stale_schema(agent_config, tmp_path):
+    yaml_file = tmp_path / "orders.yml"
+    yaml_file.write_text(
+        """
+data_source:
+  name: orders
+  sql_table: project_a.orders
+  dimensions:
+    - name: status
+      type: CATEGORICAL
+      expr: status
+""",
+        encoding="utf-8",
+    )
+    db_config = MagicMock()
+    db_config.catalog = ""
+    db_config.database = "project_a"
+    db_config.schema = "stale_schema"
+    agent_config.current_db_config.return_value = db_config
+    agent_config.db_type = "flexdb"
+
+    def parse_identifier(identifier):
+        parts = identifier.split(".")
+        return {
+            "catalog_name": "",
+            "database_name": parts[0] if len(parts) > 1 else "",
+            "schema_name": parts[1] if len(parts) == 3 else "",
+            "table_name": parts[-1],
+        }
+
+    saved_connectors = connector_registry._connectors.copy()
+    saved_metadata = connector_registry._metadata.copy()
+    saved_capabilities = connector_registry._capabilities.copy()
+    mock_semantic_rag = MagicMock()
+    try:
+        connector_registry.register(
+            "flexdb",
+            object,
+            capabilities={"database", "schema"},
+            identifier_parser=parse_identifier,
+        )
+        with (
+            patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.cli.generation_hooks.MetricRAG", return_value=MagicMock()),
+        ):
+            result = GenerationHooks._sync_semantic_to_db(str(yaml_file), agent_config)
+    finally:
+        connector_registry._connectors = saved_connectors
+        connector_registry._metadata = saved_metadata
+        connector_registry._capabilities = saved_capabilities
+
+    assert result["success"], result.get("error")
+    rows = mock_semantic_rag.upsert_batch.call_args.args[0]
+    table_row = next(row for row in rows if row["kind"] == "table")
+    assert table_row["fq_name"] == "project_a.orders"
+    assert table_row["schema_name"] == ""
 
 
 # ---------------------------------------------------------------------------
