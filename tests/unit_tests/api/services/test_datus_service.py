@@ -153,3 +153,63 @@ class TestDatusServiceBehavior:
         svc._task_manager.shutdown = AsyncMock(side_effect=RuntimeError("boom"))
         await svc.shutdown()
         svc._task_manager.shutdown.assert_awaited_once()
+
+
+class TestFingerprintPluginState:
+    """Plugin changes must move the fingerprint so the cached service rebuilds.
+
+    None of this state is a declared ``AgentConfig`` dataclass field, so before
+    the plugin snapshot was folded in, ``DatusServiceCache`` kept serving a
+    ``DatusService`` built from the previous plugin set.
+    """
+
+    def test_plugin_profile_config_change(self, real_agent_config):
+        real_agent_config.init_plugin_services({"hello": {"prod": {"api_base_url": "https://one"}}})
+        before = DatusService.compute_fingerprint(real_agent_config)
+
+        real_agent_config.init_plugin_services({"hello": {"prod": {"api_base_url": "https://two"}}})
+
+        assert DatusService.compute_fingerprint(real_agent_config) != before
+
+    def test_plugin_disabled_for_project(self, real_agent_config):
+        before = DatusService.compute_fingerprint(real_agent_config)
+
+        real_agent_config.set_plugin_activation("hello", enabled=False, persist=False)
+
+        assert DatusService.compute_fingerprint(real_agent_config) != before
+
+    def test_plugins_master_switch_toggle(self, real_agent_config):
+        before = DatusService.compute_fingerprint(real_agent_config)
+
+        real_agent_config.plugins_enabled = False
+
+        assert DatusService.compute_fingerprint(real_agent_config) != before
+
+    def test_active_profile_pin_change(self, real_agent_config):
+        real_agent_config.set_plugin_activation("hello", enabled=True, active_profiles=["staging"], persist=False)
+        before = DatusService.compute_fingerprint(real_agent_config)
+
+        real_agent_config.set_plugin_activation("hello", active_profiles=["prod"], persist=False)
+
+        assert DatusService.compute_fingerprint(real_agent_config) != before
+
+    def test_plugin_paths_change(self, real_agent_config, tmp_path):
+        before = DatusService.compute_fingerprint(real_agent_config)
+
+        real_agent_config.plugin_paths = [str(tmp_path / "mounted-plugin")]
+
+        assert DatusService.compute_fingerprint(real_agent_config) != before
+
+    def test_plugin_snapshot_failure_stays_stable(self, real_agent_config, monkeypatch):
+        """A snapshot that raises degrades to one constant marker, not churn."""
+
+        def boom(self):
+            raise RuntimeError("snapshot exploded")
+
+        monkeypatch.setattr("datus.configuration.agent_config.AgentConfig.plugin_state_signature", boom, raising=True)
+
+        first = DatusService.compute_fingerprint(real_agent_config)
+        second = DatusService.compute_fingerprint(real_agent_config)
+
+        assert first == second
+        assert not first.startswith("id:")

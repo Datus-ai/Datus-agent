@@ -2983,6 +2983,87 @@ class TestPluginPathsConfig:
         assert calls == [({"tenant-plugin"}, True, ["/srv/tenant/plugin"])]
 
 
+class TestPluginStateSignature:
+    """``plugin_state_signature`` — the plugin half of the SaaS config fingerprint.
+
+    ``DatusService.compute_fingerprint`` hashes ``dataclasses.asdict`` plus this
+    snapshot; every plugin input lives in instance attributes that ``asdict``
+    cannot see, so these tests pin that each one reaches the payload.
+    """
+
+    def _make(self, tmp_path, **extra):
+        return AgentConfig(
+            nodes={"test": NodeConfig(model="test-model", input=None)},
+            home=str(tmp_path / "h"),
+            project_root=str(tmp_path),
+            target="mock",
+            models={"mock": {"type": "openai", "api_key": "k", "model": "m"}},
+            skip_init_dirs=True,
+            **extra,
+        )
+
+    def test_reports_config_side_plugin_state(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            plugin_paths=["/srv/tenant/plugin"],
+            plugins={"hello": {"prod": {"api_base_url": "https://prod"}}},
+            active_plugins={"hello": {"enabled": True, "active_profile": ["prod"]}},
+        )
+
+        signature = cfg.plugin_state_signature()
+
+        assert signature["enabled"] is True
+        assert signature["section_present"] is True
+        assert signature["paths"] == ["/srv/tenant/plugin"]
+        assert signature["activation"] == {"hello": {"enabled": True, "active_profile": ["prod"]}}
+        assert signature["profiles"]["hello"]["prod"]["api_base_url"] == "https://prod"
+
+    def test_absent_section_reports_no_whitelist(self, tmp_path):
+        signature = self._make(tmp_path).plugin_state_signature()
+        assert signature["section_present"] is False
+        assert signature["activation"] == {}
+        assert signature["paths"] == []
+
+    def test_unpinned_plugin_keeps_active_profile_none(self, tmp_path):
+        """``None`` (all profiles) must stay distinct from ``[]`` (none pinned)."""
+        cfg = self._make(tmp_path, active_plugins={"hello": {"enabled": True}})
+        assert cfg.plugin_state_signature()["activation"] == {"hello": {"enabled": True, "active_profile": None}}
+
+    def test_master_switch_reported(self, tmp_path):
+        cfg = self._make(tmp_path, plugins_enabled=False)
+        assert cfg.plugin_state_signature()["enabled"] is False
+
+    def test_is_json_serializable(self, tmp_path):
+        """The host hashes it through ``json.dumps`` — no dataclass leaks."""
+        import json
+
+        cfg = self._make(
+            tmp_path,
+            plugin_paths=["/srv/tenant/plugin"],
+            plugins={"hello": {"prod": {"api_base_url": "https://prod"}}},
+            active_plugins={"hello": {"enabled": True, "active_profile": ["prod"]}},
+        )
+
+        assert json.loads(json.dumps(cfg.plugin_state_signature())) == cfg.plugin_state_signature()
+
+    def test_reads_no_filesystem_state(self, tmp_path):
+        """Runs on every API request — it must stay a pure in-memory read.
+
+        A managed-store scan here would cost I/O per request and buy nothing: the
+        rebuild it triggers reuses the same AgentConfig and the process keeps its
+        already-loaded manifests.
+        """
+        from datus.plugins import store
+
+        cfg = self._make(tmp_path, active_plugins={"hello": {"enabled": True}})
+        store.write_meta(cfg.path_manager.plugins_dir / "hello", {"name": "hello", "version": "1.0"})
+        before = cfg.plugin_state_signature()
+
+        store.write_meta(cfg.path_manager.plugins_dir / "hello", {"name": "hello", "version": "2.0"})
+
+        assert cfg.plugin_state_signature() == before
+
+
 class TestPromptManagerAttribute:
     """``AgentConfig.prompt_manager`` — the runtime prompt-template override.
 
