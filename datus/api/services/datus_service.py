@@ -7,11 +7,35 @@ and a project-scoped ChatTaskManager into a single cached instance.
 import dataclasses
 import hashlib
 import json
+from typing import Any
 
 from datus.configuration.agent_config import AgentConfig
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+# Constant marker folded into the fingerprint when the plugin snapshot itself
+# fails. Constant (not an error string) so a failing snapshot keeps producing
+# one stable fingerprint instead of evicting the cached service every request.
+_PLUGIN_STATE_UNAVAILABLE = "unavailable"
+
+
+def _plugin_state(agent_config: AgentConfig) -> Any:
+    """Return the plugin-state snapshot to fold into the config fingerprint.
+
+    Kept outside the ``dataclasses.asdict`` failure path: a config object that
+    predates the accessor contributes ``None`` rather than degrading the whole
+    fingerprint to the ``id:`` fallback (which would defeat content-based
+    caching for hosts that build a fresh AgentConfig per request).
+    """
+    getter = getattr(agent_config, "plugin_state_signature", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter()
+    except Exception as e:
+        logger.warning(f"Failed to snapshot plugin state for AgentConfig fingerprint: {e}")
+        return _PLUGIN_STATE_UNAVAILABLE
 
 
 class DatusService:
@@ -72,10 +96,20 @@ class DatusService:
     def compute_fingerprint(agent_config: AgentConfig) -> str:
         """Compute a stable content-based fingerprint for an AgentConfig.
 
+        Hashes the declared dataclass fields plus
+        ``AgentConfig.plugin_state_signature()`` — the plugin master switch,
+        activation whitelist, ``agent.plugins`` profiles and ``plugin_paths``.
+        None of that is reachable through ``dataclasses.asdict``, so without it
+        a plugin being toggled, re-profiled, re-pinned or remounted would keep
+        serving the cached ``DatusService`` built from the previous state.
+
         Falls back to an id-based string if the config cannot be serialized.
         """
         try:
-            payload = dataclasses.asdict(agent_config)
+            payload = {
+                "config": dataclasses.asdict(agent_config),
+                "plugins": _plugin_state(agent_config),
+            }
             serialized = json.dumps(payload, sort_keys=True, default=str)
             return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
         except Exception as e:

@@ -1681,6 +1681,47 @@ class AgentConfig:
             return []
         return activation.active_profile
 
+    def plugin_state_signature(self) -> Dict[str, Any]:
+        """JSON-serializable snapshot of this config's plugin state.
+
+        ``DatusService.compute_fingerprint`` hashes ``dataclasses.asdict``, which
+        only sees declared fields — every plugin input lives in instance
+        attributes instead (master switch, activation whitelist,
+        ``agent.plugins`` profiles, ``plugin_paths``). Folding this snapshot into
+        the fingerprint is what makes a cached per-project ``DatusService``
+        rebuild on the next request after a plugin is enabled/disabled,
+        re-profiled, re-pinned, or remounted.
+
+        Config-only by design: the installed version in ``~/.datus/plugins`` is
+        deliberately NOT read here. Detecting an out-of-process version swap
+        would cost a filesystem scan on every request and buy nothing — the
+        rebuild reuses the same AgentConfig object, and manifests/entry points
+        stay pinned by ``registry._PLUGIN_CACHE`` and by whatever the process
+        already imported. In-process installs already handle themselves
+        (``plugin_service._refresh`` invalidates those caches); an out-of-process
+        version swap has to reach the host as a new AgentConfig — e.g. a
+        ``plugin_paths`` entry pointing at the new versioned directory, which
+        this snapshot does catch.
+
+        Built by hand rather than promoting the attributes to dataclass fields so
+        ``PluginActivation`` values are flattened and the payload stays stable
+        under ``json.dumps(..., default=str)``.
+        """
+        activation = {
+            name: {
+                "enabled": act.enabled,
+                "active_profile": list(act.active_profile) if act.active_profile is not None else None,
+            }
+            for name, act in getattr(self, "_active_plugins", {}).items()
+        }
+        return {
+            "enabled": bool(getattr(self, "plugins_enabled", True)),
+            "section_present": bool(getattr(self, "_plugins_section_present", False)),
+            "paths": list(getattr(self, "plugin_paths", None) or []),
+            "activation": activation,
+            "profiles": getattr(self, "plugin_services", None) or {},
+        }
+
     def get_plugin_profile(self, plugin: str, profile: Optional[str] = None) -> Dict[str, Any]:
         """Resolve the active profile config dict for ``plugin``.
 

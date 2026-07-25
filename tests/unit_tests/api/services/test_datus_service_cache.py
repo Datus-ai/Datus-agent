@@ -392,3 +392,50 @@ class TestShutdown:
         await cache.shutdown()  # should not raise
         assert len(cache._cache) == 0
         svc_ok.shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestPluginChangeRebuild:
+    """Cross-component: real config + real service + real cache.
+
+    Replays what ``get_datus_service`` does per request — recompute the
+    fingerprint from the live AgentConfig, hand it to the cache — to pin that a
+    plugin change actually swaps the cached instance instead of only moving a
+    hash in isolation.
+    """
+
+    @staticmethod
+    async def _request(cache, agent_config):
+        from datus.api.services.datus_service import DatusService
+
+        async def factory():
+            return DatusService(agent_config=agent_config, project_id="p")
+
+        return await cache.get_or_create(
+            "p", factory, expected_fingerprint=DatusService.compute_fingerprint(agent_config)
+        )
+
+    async def test_plugin_profile_change_rebuilds_on_next_request(self, real_agent_config):
+        cache = DatusServiceCache()
+        try:
+            real_agent_config.init_plugin_services({"hello": {"prod": {"api_base_url": "https://one"}}})
+            first = await self._request(cache, real_agent_config)
+            # Unchanged plugin state must reuse the cached instance.
+            assert await self._request(cache, real_agent_config) is first
+
+            real_agent_config.init_plugin_services({"hello": {"prod": {"api_base_url": "https://two"}}})
+
+            assert await self._request(cache, real_agent_config) is not first
+        finally:
+            await cache.shutdown()
+
+    async def test_plugin_disable_rebuilds_on_next_request(self, real_agent_config):
+        cache = DatusServiceCache()
+        try:
+            first = await self._request(cache, real_agent_config)
+
+            real_agent_config.plugins_enabled = False
+
+            assert await self._request(cache, real_agent_config) is not first
+        finally:
+            await cache.shutdown()
