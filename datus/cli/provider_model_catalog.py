@@ -78,6 +78,7 @@ PROTECTED_PROVIDERS = frozenset(
         "zai_coding",
         "minimax_coding",
         "kimi_coding",
+        "bedrock",
         "claude_subscription",
         "codex",
     }

@@ -128,6 +128,7 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 | `minimax` | `MiniMax-M2.7`、`MiniMax-M2.5` | `minimax` | API Key |
 | `glm` | `glm-5`、`glm-4.7` | `glm` | API Key |
 | `openrouter` | `anthropic/claude-sonnet-4`、`openai/gpt-4o` | `openrouter` | API Key |
+| `bedrock` | Claude Sonnet 5、Nova 2 Lite、GPT-OSS 20B | `bedrock`（Converse） | AWS 凭证链 |
 
 !!! tip "OpenRouter —— 一把 Key，300+ 模型"
     `openrouter` 是统一网关：一个 `OPENROUTER_API_KEY` 即可路由到任意厂商。
@@ -140,6 +141,76 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 |---|---|---|---|
 | `claude_subscription` | `claude` | Claude 订阅 token | 优先自动探测本地订阅凭据，失败时可手动粘贴 `sk-ant-oat01-...` |
 | `codex` | `codex` | OAuth | 读取本地 Codex OAuth 凭据并校验连通性 |
+
+### Amazon Bedrock Converse
+
+Datus 通过模型无关的
+[Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html)
+调用 Bedrock，不会把 AWS Access Key 写入 `agent.yml`，而是使用标准 AWS
+凭证链。本地开发先配置 AWS CLI profile 和 region：
+
+```bash
+aws configure
+aws sts get-caller-identity
+```
+
+AWS SSO profile 也可以使用；启动 Datus 前先执行
+`aws sso login --profile <profile>`。部署环境建议使用 IAM Role。对应用户或
+Role 需要对目标模型或 inference profile 具备 `bedrock:InvokeModel` 和
+`bedrock:InvokeModelWithResponseStream` 权限，并且目标模型已在当前 region
+开通。
+
+使用默认 profile 和 region 时无需写入额外选项：
+
+```yaml
+agent:
+  providers:
+    bedrock:
+      auth_type: aws
+```
+
+如需固定非默认 profile 或 region：
+
+```yaml
+agent:
+  providers:
+    bedrock:
+      auth_type: aws
+      provider_options:
+        aws_profile_name: analytics-dev
+        aws_region_name: us-east-1
+```
+
+这里使用的是 Bedrock model ID 或跨区 inference profile ID，不是厂商直连
+API 中使用的模型名。内置选择器只展示通过 Datus 文本、JSON、SQL 工具调用
+和流式工具调用认证的模型：
+
+| Bedrock ID | 认证结果 |
+|---|---|
+| `us.anthropic.claude-sonnet-5` | 已认证 |
+| `us.amazon.nova-2-lite-v1:0` | 已认证 |
+| `openai.gpt-oss-20b-1:0` | 已认证 |
+| `deepseek.v3.2` | 文本和 JSON 可用；未通过 Datus 工具调用认证 |
+| `google.gemma-3-12b-it` | 文本和 JSON 可用；未通过 Datus 工具调用认证 |
+
+后两个 ID 仍可手动输入，用于非 agentic 推理。评估新模型时需要显式运行
+会产生 AWS 费用的认证套件：
+
+```bash
+AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+  pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
+
+# 同时评估可选的 GPT-OSS、DeepSeek 和 Gemma：
+DATUS_BEDROCK_CERTIFY_OPTIONAL=1 AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+  pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
+```
+
+这些用例不会进入 nightly。Bedrock 费用计入当前 AWS 账号，按所选模型的输入/
+输出 token 价格计算；Agent 工具认证可能发生多轮模型调用。价格以
+[Amazon Bedrock 定价](https://aws.amazon.com/cn/bedrock/pricing/)为准。
+
+本次接入范围仅包含 LLM 推理，不包含 Bedrock Embeddings、向量存储，也不包含
+Bedrock Mantle/Responses。
 
 ### Coding Plan provider
 

@@ -205,6 +205,7 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 | `minimax` | `MiniMax-M2.7`, `MiniMax-M2.5` | `minimax` | API key |
 | `glm` | `glm-5`, `glm-4.7` | `glm` | API key |
 | `openrouter` | `anthropic/claude-sonnet-4`, `openai/gpt-4o` | `openrouter` | API key |
+| `bedrock` | Claude Sonnet 5, Nova 2 Lite, GPT-OSS 20B | `bedrock` (Converse) | AWS credential chain |
 
 !!! tip "OpenRouter — one key, 300+ models"
     `openrouter` is a unified gateway: a single `OPENROUTER_API_KEY` routes to any
@@ -218,6 +219,77 @@ Providers are defined in `conf/providers.yml` and activated by adding credential
 |----------|----------------|------|-------|
 | `claude_subscription` | `claude` | Claude subscription token | The wizard first tries to auto-detect a local subscription credential and otherwise prompts for `sk-ant-oat01-...` |
 | `codex` | `codex` | OAuth | Uses locally available Codex OAuth credentials and verifies connectivity |
+
+### Amazon Bedrock Converse
+
+Datus routes Bedrock requests through the model-agnostic
+[Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html).
+It does not store AWS access keys in `agent.yml`; authentication uses the standard
+AWS credential chain. For local development, configure an AWS CLI profile and region:
+
+```bash
+aws configure
+aws sts get-caller-identity
+```
+
+SSO profiles work as well; run `aws sso login --profile <profile>` before starting
+Datus. Deployed workloads should use an IAM role. The role or user needs
+`bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` for the selected
+model or inference-profile resources, and the model must be enabled in the target
+AWS region.
+
+The default profile and region need no YAML options:
+
+```yaml
+agent:
+  providers:
+    bedrock:
+      auth_type: aws
+```
+
+To pin a non-default profile or region:
+
+```yaml
+agent:
+  providers:
+    bedrock:
+      auth_type: aws
+      provider_options:
+        aws_profile_name: analytics-dev
+        aws_region_name: us-east-1
+```
+
+Use Bedrock model or cross-region inference-profile IDs, not the model names used
+by vendors' direct APIs. The built-in picker contains models that completed the
+Datus text, JSON, SQL-tool, and streaming-tool certification:
+
+| Bedrock ID | Certification |
+|---|---|
+| `us.anthropic.claude-sonnet-5` | Certified |
+| `us.amazon.nova-2-lite-v1:0` | Certified |
+| `openai.gpt-oss-20b-1:0` | Certified |
+| `deepseek.v3.2` | Text and JSON only; not certified for Datus tool use |
+| `google.gemma-3-12b-it` | Text and JSON only; not certified for Datus tool use |
+
+The last two IDs can still be entered manually for non-agentic inference. Run the
+billable certification suite explicitly when evaluating a new model:
+
+```bash
+AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+  pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
+
+# Also evaluate the optional GPT-OSS, DeepSeek, and Gemma entries:
+DATUS_BEDROCK_CERTIFY_OPTIONAL=1 AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+  pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
+```
+
+These tests are intentionally not part of nightly CI. Bedrock usage is billed to
+the AWS account using the selected model's input/output token rates; agent tool
+tests can make multiple model calls. See
+[Amazon Bedrock pricing](https://aws.amazon.com/bedrock/pricing/).
+
+This integration covers LLM inference only. It does not add Bedrock embeddings,
+vector storage, or Bedrock Mantle/Responses support.
 
 ### Coding Plan providers
 

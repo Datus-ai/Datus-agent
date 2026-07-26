@@ -105,6 +105,17 @@ providers:
       - google/gemini-2.5-pro
       - deepseek/deepseek-chat
 
+  # Amazon Bedrock Runtime — authenticated by the standard AWS credential
+  # chain and routed through the model-agnostic Converse API.
+  bedrock:
+    type: bedrock
+    auth_type: aws
+    default_model: us.anthropic.claude-sonnet-5
+    models:
+      - us.anthropic.claude-sonnet-5
+      - us.amazon.nova-2-lite-v1:0
+      - openai.gpt-oss-20b-1:0
+
   # Coding Plan providers (vendor Anthropic-compatible endpoints)
   alibaba_coding:
     type: claude

@@ -256,6 +256,7 @@ class OpenAICompatibleModel(LLMBaseModel):
         self.api_key = self._get_api_key()
         self.base_url = self._get_base_url()
         self.default_headers = dict(self.model_config.default_headers) if self.model_config.default_headers else None
+        self.provider_request_options = self._get_provider_request_options()
 
         # Resolve SSL/TLS verification for this endpoint (e.g. a private gateway CA).
         # When configured, it takes priority over the SSL_VERIFY / SSL_CERT_FILE env
@@ -304,6 +305,7 @@ class OpenAICompatibleModel(LLMBaseModel):
             enable_thinking=model_config.enable_thinking,
             reasoning_effort=model_config.reasoning_effort,
             default_headers=self.default_headers,
+            provider_options=self.provider_request_options,
         )
 
         # Context for tracing ToDo: replace it with Context object
@@ -319,6 +321,25 @@ class OpenAICompatibleModel(LLMBaseModel):
     def _get_base_url(self) -> Optional[str]:
         """Get base URL from config. Override in subclasses if needed."""
         return self.model_config.base_url
+
+    def _get_provider_request_options(self) -> Dict[str, Any]:
+        """Return provider-specific LiteLLM request options.
+
+        The base contract is deliberately empty so arbitrary config cannot
+        overwrite core completion arguments. Providers opt in with a narrow
+        allowlist in their own implementation.
+        """
+        return {}
+
+    def _default_sampling_params(self) -> Dict[str, float]:
+        """Return implicit sampling defaults for the direct completion path."""
+        if hasattr(self, "_uses_completion_tokens_parameter") and self._uses_completion_tokens_parameter():
+            return {}
+        return {"temperature": 0.7, "top_p": 1.0}
+
+    def _json_response_format(self) -> Optional[Dict[str, str]]:
+        """Return the provider-native JSON mode request, when reliable."""
+        return {"type": "json_object"}
 
     def _is_official_openai_api(self) -> bool:
         """Return True only for official OpenAI API endpoints."""
@@ -567,18 +588,8 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         def _generate_operation():
             # Use LiteLLM model name for unified provider support
-            params = {
-                "model": self.litellm_adapter.litellm_model_name,
-                "api_key": self.api_key,
-            }
-
-            # Add base_url if specified
-            if self.base_url:
-                params["api_base"] = self.base_url
-
-            # Add custom headers for Coding Plan endpoints
-            if self.default_headers:
-                params["extra_headers"] = self.default_headers
+            params = self.litellm_adapter.get_completion_kwargs()
+            default_sampling = self._default_sampling_params()
 
             # Anthropic rejects requests carrying BOTH ``temperature`` and
             # ``top_p`` with HTTP 400 / ``invalid_request_error`` (the
@@ -604,9 +615,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             elif self.model_config.temperature is not None:
                 # Use temperature from model config (e.g., kimi-k2.5 requires temperature=1)
                 params["temperature"] = self.model_config.temperature
-            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
-                # Add default temperature only for non-reasoning models
-                params["temperature"] = 0.7
+            elif "temperature" in default_sampling:
+                params["temperature"] = default_sampling["temperature"]
 
             # Add top_p: same priority + same explicit-None contract as
             # temperature above, EXCEPT for Anthropic where we never send it.
@@ -618,9 +628,8 @@ class OpenAICompatibleModel(LLMBaseModel):
             elif self.model_config.top_p is not None:
                 # Use top_p from model config (e.g., kimi-k2.5 requires top_p=0.95)
                 params["top_p"] = self.model_config.top_p
-            elif not hasattr(self, "_uses_completion_tokens_parameter") or not self._uses_completion_tokens_parameter():
-                # Add default top_p only for non-reasoning models
-                params["top_p"] = 1.0
+            elif "top_p" in default_sampling:
+                params["top_p"] = default_sampling["top_p"]
 
             # Resolve max_tokens / max_completion_tokens.
             # Priority: kwargs > model_specs.max_tokens. If neither is set, omit
@@ -739,9 +748,10 @@ class OpenAICompatibleModel(LLMBaseModel):
         Returns:
             Parsed JSON dictionary
         """
-        # Set JSON mode
         json_kwargs = kwargs.copy()
-        json_kwargs["response_format"] = {"type": "json_object"}
+        response_format = self._json_response_format()
+        if response_format is not None:
+            json_kwargs["response_format"] = response_format
 
         # Pass through enable_thinking if provided
         enable_thinking_param = json_kwargs.pop("enable_thinking", None)
@@ -1069,6 +1079,12 @@ class OpenAICompatibleModel(LLMBaseModel):
 
         if self.default_headers:
             model_settings_kwargs["extra_headers"] = self.default_headers
+
+        provider_request_options = getattr(self, "provider_request_options", None)
+        if provider_request_options:
+            existing_extra_args = dict(model_settings_kwargs.get("extra_args") or {})
+            existing_extra_args.update(provider_request_options)
+            model_settings_kwargs["extra_args"] = existing_extra_args
 
         effort = self.litellm_adapter.reasoning_effort_level
         if effort:

@@ -52,6 +52,12 @@ Currently, only Claude uses a separate implementation; all other models inherit 
 - Google Generative AI client integration
 - LiteLLM integration for unified token counting
 
+**`bedrock_model.py`** - Amazon Bedrock models
+- Uses LiteLLM's Bedrock Converse route across model vendors
+- Authenticates through the standard AWS credential chain (profiles or IAM roles)
+- Supports generation, prompt-constrained JSON, tools, and tool streaming
+- Intentionally excludes embeddings and Bedrock Mantle/Responses
+
 ### Utility Modules
 
 **`session_manager.py`** - Multi-turn conversation management

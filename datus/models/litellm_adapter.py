@@ -11,7 +11,7 @@ Provides:
 3. Integration with openai-agents SDK's LitellmModel
 """
 
-from typing import TYPE_CHECKING, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import urlparse
 
 from datus.utils.loggings import get_logger
@@ -138,6 +138,7 @@ class LiteLLMAdapter:
         "openrouter": "openrouter/",  # OpenRouter unified gateway
         "minimax": "openai/",  # MiniMax - OpenAI-compatible API
         "glm": "openai/",  # Zhipu GLM - OpenAI-compatible API
+        "bedrock": "bedrock/converse/",  # Amazon Bedrock unified Converse API
     }
 
     # Provider-specific base URLs (if not using default)
@@ -151,6 +152,7 @@ class LiteLLMAdapter:
         "openrouter": None,  # Use LiteLLM default (https://openrouter.ai/api/v1)
         "minimax": "https://api.minimaxi.com/v1",  # MiniMax OpenAI-compatible endpoint
         "glm": "https://open.bigmodel.cn/api/paas/v4",  # Zhipu GLM OpenAI-compatible endpoint
+        "bedrock": None,  # Boto3 resolves the regional bedrock-runtime endpoint
     }
 
     # Model name prefixes for auto-detection
@@ -199,6 +201,7 @@ class LiteLLMAdapter:
         enable_thinking: bool = False,
         reasoning_effort: Optional[str] = None,
         default_headers: Optional[Dict[str, str]] = None,
+        provider_options: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the LiteLLM adapter.
@@ -212,6 +215,7 @@ class LiteLLMAdapter:
             reasoning_effort: One of off|minimal|low|medium|high. Takes precedence
                 over ``enable_thinking`` when set; ``None`` defers to the bool.
             default_headers: Optional custom HTTP headers (e.g., User-Agent for Coding Plan endpoints)
+            provider_options: Provider-specific request parameters passed to LiteLLM
         """
         # Auto-detect provider from model name if provider is generic
         detected_provider = self._detect_provider_from_model(provider, model, base_url)
@@ -222,6 +226,7 @@ class LiteLLMAdapter:
         self._enable_thinking = enable_thinking
         self._reasoning_effort = reasoning_effort.strip().lower() if isinstance(reasoning_effort, str) else None
         self.default_headers = default_headers
+        self.provider_options = dict(provider_options or {})
         self._litellm_model_name = None
 
     def _detect_provider_from_model(self, provider: str, model: str, base_url: Optional[str] = None) -> str:
@@ -246,7 +251,7 @@ class LiteLLMAdapter:
         """
         # Skip auto-detection for providers that must not be overridden
         # (e.g., openrouter models contain provider/ prefix that would trigger false detection)
-        if provider.lower() == "openrouter":
+        if provider.lower() in {"openrouter", "bedrock"}:
             return provider
 
         model_lower = model.lower()
@@ -313,6 +318,17 @@ class LiteLLMAdapter:
             - openai + custom base_url + Qwen3.5-397B -> openai/Qwen3.5-397B
         """
         prefix = self.MODEL_PREFIX_MAP.get(self.provider, "")
+
+        # Bedrock is the routing platform, not the underlying model vendor.
+        # Force the unified Converse route even for model names such as
+        # ``deepseek.v3.2`` that would otherwise trigger vendor auto-detection.
+        if self.provider == "bedrock":
+            if self.model.startswith("bedrock/converse/"):
+                return self.model
+            if self.model.startswith("bedrock/invoke/"):
+                raise ValueError("BedrockModel supports the Converse route only; use bedrock/converse/<model-id>")
+            model = self.model.removeprefix("bedrock/")
+            return f"bedrock/converse/{model}"
 
         # OpenRouter models always need the openrouter/ prefix,
         # even when model name contains / (e.g., anthropic/claude-sonnet-4)
@@ -485,6 +501,8 @@ class LiteLLMAdapter:
         if self.default_headers:
             kwargs["extra_headers"] = self.default_headers
 
+        kwargs.update(self.provider_options)
+
         return kwargs
 
 
@@ -496,6 +514,7 @@ def create_litellm_adapter(
     enable_thinking: bool = False,
     reasoning_effort: Optional[str] = None,
     default_headers: Optional[Dict[str, str]] = None,
+    provider_options: Optional[Dict[str, Any]] = None,
 ) -> LiteLLMAdapter:
     """
     Factory function to create a LiteLLM adapter.
@@ -509,6 +528,7 @@ def create_litellm_adapter(
         reasoning_effort: One of off|minimal|low|medium|high; takes precedence
             over ``enable_thinking`` when set.
         default_headers: Optional custom HTTP headers
+        provider_options: Provider-specific request parameters
 
     Returns:
         Configured LiteLLMAdapter instance
@@ -521,4 +541,5 @@ def create_litellm_adapter(
         enable_thinking=enable_thinking,
         reasoning_effort=reasoning_effort,
         default_headers=default_headers,
+        provider_options=provider_options,
     )

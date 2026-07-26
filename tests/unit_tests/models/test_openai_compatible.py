@@ -69,6 +69,14 @@ def _make_model(model_config=None):
     mock_litellm_adapter.is_thinking_model = False
     mock_litellm_adapter.reasoning_effort_level = None
     mock_litellm_adapter.get_agents_sdk_model.return_value = MagicMock()
+    completion_kwargs = {"model": "openai/gpt-4"}
+    if model_config.api_key:
+        completion_kwargs["api_key"] = model_config.api_key
+    if model_config.base_url:
+        completion_kwargs["api_base"] = model_config.base_url
+    if model_config.default_headers:
+        completion_kwargs["extra_headers"] = model_config.default_headers
+    mock_litellm_adapter.get_completion_kwargs.return_value = completion_kwargs
 
     with (
         patch("datus.models.openai_compatible.LiteLLMAdapter", return_value=mock_litellm_adapter),
