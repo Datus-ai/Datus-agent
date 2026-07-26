@@ -26,7 +26,8 @@ def test_instance_capabilities_override_registered_maximum():
         assert supports_namespace("database", connector=connector)
         assert not supports_namespace("schema", connector=connector)
     finally:
-        connector_registry._capabilities = saved
+        connector_registry._capabilities.clear()
+        connector_registry._capabilities.update(saved)
 
 
 def test_static_capabilities_remain_fallback_for_existing_adapters():
@@ -35,4 +36,5 @@ def test_static_capabilities_remain_fallback_for_existing_adapters():
         connector_registry.register_handlers("legacydb", capabilities={"database", "schema"})
         assert get_effective_capabilities(dialect="legacydb") == {"database", "schema"}
     finally:
-        connector_registry._capabilities = saved
+        connector_registry._capabilities.clear()
+        connector_registry._capabilities.update(saved)
