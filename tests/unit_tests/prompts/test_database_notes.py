@@ -63,7 +63,13 @@ def test_adapter_notes_reach_both_sql_prompt_builders(monkeypatch):
     assert notes in reasoning_call.kwargs["database_notes"]
 
 
-def test_snowflake_legacy_notes_are_preserved():
+def test_snowflake_legacy_notes_are_preserved(monkeypatch):
+    monkeypatch.setattr(
+        connector_registry,
+        "get_sql_generation_notes",
+        lambda _dialect: None,
+        raising=False,
+    )
     notes = get_database_notes("snowflake")
     assert "double quotes" in notes
     assert "database_name and schema_name" in notes
