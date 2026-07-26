@@ -9,10 +9,10 @@ from datus.tools.db_tools.capabilities import get_effective_capabilities, suppor
 class DynamicConnector:
     dialect = "flexdb"
 
-    def __init__(self, capabilities):
+    def __init__(self, capabilities: set[str]) -> None:
         self.capabilities = capabilities
 
-    def get_effective_capabilities(self):
+    def get_effective_capabilities(self) -> set[str]:
         return self.capabilities
 
 

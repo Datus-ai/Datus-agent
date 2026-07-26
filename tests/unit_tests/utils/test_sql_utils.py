@@ -620,6 +620,24 @@ def test_extract_table_names():
         assert set(extract_table_names(sql_two_part, dialect=dialect, ignore_empty=True)) == {"foo.bar"}
 
 
+def test_extract_table_names_adapter_hook_honors_ignore_empty(monkeypatch):
+    monkeypatch.setattr(
+        connector_registry,
+        "get_parser_dialect",
+        lambda dialect: "hive" if dialect == "flexdb" else None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        connector_registry,
+        "get_identifier_parser",
+        lambda dialect: (lambda identifier: identifier) if dialect == "flexdb" else None,
+        raising=False,
+    )
+
+    assert extract_table_names("SELECT * FROM orders", dialect="flexdb") == ["..orders"]
+    assert extract_table_names("SELECT * FROM orders", dialect="flexdb", ignore_empty=True) == ["orders"]
+
+
 def test_parse_full_tables():
     table_meta = parse_table_name_parts("test.abc", dialect=DBType.DUCKDB)
     assert table_meta["schema_name"] == "test"
@@ -1069,8 +1087,13 @@ class TestParseReadDialect:
     def test_whitespace_trimmed(self):
         assert parse_read_dialect("  postgres  ") == "postgres"
 
-    def test_adapter_registered_parser_dialect(self):
-        connector_registry.register("flexdb", object, parser_dialect="hive")
+    def test_adapter_registered_parser_dialect(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
         assert parse_read_dialect("flexdb") == "hive"
 
 
@@ -1084,8 +1107,13 @@ class TestParseDialect:
         assert parse_dialect("postgres") == "postgres"
         assert parse_dialect("postgresql") == "postgres"
 
-    def test_adapter_registered_parser_dialect(self):
-        connector_registry.register("flexdb", object, parser_dialect="hive")
+    def test_adapter_registered_parser_dialect(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
         assert parse_dialect("flexdb") == "hive"
 
     def test_tsql(self):
@@ -1469,7 +1497,7 @@ class TestParseTableNamePartsExtended:
         result = parse_table_name_parts("extra.catalog.db.schema.table", dialect="snowflake")
         assert result["table_name"] == "table"
 
-    def test_adapter_identifier_parser_handles_flexible_namespaces(self):
+    def test_adapter_identifier_parser_handles_flexible_namespaces(self, monkeypatch):
         def parser(identifier):
             parts = identifier.split(".")
             return {
@@ -1479,12 +1507,18 @@ class TestParseTableNamePartsExtended:
                 "table_name": parts[-1],
             }
 
-        connector_registry.register(
-            "flexdb",
-            object,
-            capabilities={"database", "schema"},
-            parser_dialect="hive",
-            identifier_parser=parser,
+        connector_registry.register_handlers("flexdb", capabilities={"database", "schema"})
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: parser if dialect == "flexdb" else None,
+            raising=False,
         )
 
         assert parse_table_name_parts("project_a.orders", "flexdb") == {
@@ -1494,6 +1528,17 @@ class TestParseTableNamePartsExtended:
             "table_name": "orders",
         }
         assert parse_table_name_parts("project_a.analytics.orders", "flexdb")["schema_name"] == "analytics"
+
+    def test_adapter_identifier_parser_must_return_complete_contract(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: (lambda identifier: {"table_name": identifier}) if dialect == "flexdb" else None,
+            raising=False,
+        )
+
+        with pytest.raises(ValueError, match="must return"):
+            parse_table_name_parts("orders", "flexdb")
 
     def test_unknown_dialect_fallback(self):
         # Unknown dialect falls through to default behavior

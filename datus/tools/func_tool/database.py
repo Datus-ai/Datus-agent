@@ -704,7 +704,12 @@ class DBFuncTool:
         # Strip common quoting characters
         return normalized.strip("`\"'[]")
 
-    def _default_field_value(self, field: str, explicit: Optional[str]) -> str:
+    def _default_field_value(
+        self,
+        field: str,
+        explicit: Optional[str],
+        connector: Optional[BaseSqlConnector] = None,
+    ) -> str:
         if field not in self._field_order:
             return ""
         if explicit:
@@ -716,8 +721,9 @@ class DBFuncTool:
             "schema": "schema_name",
         }
         fallback_attr = fallback_attr_map.get(field)
-        if fallback_attr and hasattr(self.connector, fallback_attr):
-            return self._normalize_identifier_part(getattr(self.connector, fallback_attr))
+        source_connector = connector or self.connector
+        if fallback_attr and hasattr(source_connector, fallback_attr):
+            return self._normalize_identifier_part(getattr(source_connector, fallback_attr))
         return ""
 
     def _dialect_for_datasource(self, datasource: Optional[str] = "") -> str:
@@ -760,14 +766,16 @@ class DBFuncTool:
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema: Optional[str] = "",
+        connector: Optional[BaseSqlConnector] = None,
     ) -> TableCoordinate:
+        routed_connector = connector or self.connector
         coordinate = TableCoordinate(
-            catalog=self._default_field_value("catalog", catalog),
-            database=self._default_field_value("database", database),
-            schema=self._default_field_value("schema", schema),
+            catalog=self._default_field_value("catalog", catalog, routed_connector),
+            database=self._default_field_value("database", database, routed_connector),
+            schema=self._default_field_value("schema", schema, routed_connector),
             table=self._normalize_identifier_part(raw_name),
         )
-        dialect = getattr(self.connector, "dialect", "") or ""
+        dialect = getattr(routed_connector, "dialect", "") or ""
         parsed = parse_table_name_parts(raw_name, dialect)
         for field, parsed_field in (
             ("catalog", "catalog_name"),
@@ -790,6 +798,7 @@ class DBFuncTool:
         catalog: Optional[str],
         database: Optional[str],
         schema: Optional[str],
+        connector: BaseSqlConnector,
     ) -> List[Dict[str, Any]]:
         if not self._scoped_patterns:
             return list(entries)
@@ -801,6 +810,7 @@ class DBFuncTool:
                 catalog=catalog,
                 database=database,
                 schema=schema,
+                connector=connector,
             )
             if self._table_matches_scope(coordinate):
                 filtered.append(entry)
@@ -848,19 +858,20 @@ class DBFuncTool:
             wildcard_allowed = True
         return wildcard_allowed
 
-    def _check_sql_table_scope(self, sql: str) -> List[str]:
+    def _check_sql_table_scope(self, sql: str, connector: Optional[BaseSqlConnector] = None) -> List[str]:
         """Return table names from *sql* that fall outside the scoped context."""
         if not self._scoped_patterns:
             return []
         from datus.utils.sql_utils import extract_table_names
 
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        routed_connector = connector or self._primary_connector
+        dialect = getattr(routed_connector, "dialect", "") or ""
         table_names = extract_table_names(sql, dialect=dialect, ignore_empty=True)
         if not table_names:
             return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
         out_of_scope: List[str] = []
         for name in table_names:
-            coordinate = self._build_table_coordinate(raw_name=name)
+            coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
             if not self._table_matches_scope(coordinate):
                 out_of_scope.append(name)
         return out_of_scope
@@ -1211,7 +1222,7 @@ class DBFuncTool:
                 except Exception as e:
                     logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
-            filtered_result = self._filter_table_entries(result, catalog, database, schema_name)
+            filtered_result = self._filter_table_entries(result, catalog, database, schema_name, connector)
             return FuncToolResult(result=filtered_result)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -1263,11 +1274,13 @@ class DBFuncTool:
                 schema_name,
                 datasource,
             )
+            connector = self._get_connector(datasource, database)
             coordinate = self._build_table_coordinate(
                 raw_name=table_name,
                 catalog=catalog,
                 database=database,
                 schema=schema_name,
+                connector=connector,
             )
 
             if not self._table_matches_scope(coordinate):
@@ -1667,7 +1680,7 @@ class DBFuncTool:
                     sql_type,
                 )
 
-        out_of_scope = self._check_sql_table_scope(sql)
+        out_of_scope = self._check_sql_table_scope(sql, connector)
         if out_of_scope:
             return (
                 FuncToolResult(
@@ -1738,11 +1751,13 @@ class DBFuncTool:
                 schema_name,
                 datasource,
             )
+            connector = self._get_connector(datasource, database)
             coordinate = self._build_table_coordinate(
                 raw_name=table_name,
                 catalog=catalog,
                 database=database,
                 schema=schema_name,
+                connector=connector,
             )
             if not self._table_matches_scope(coordinate):
                 return FuncToolResult(
@@ -1823,7 +1838,7 @@ class DBFuncTool:
                 error="DML statements (INSERT/UPDATE/DELETE) must run through the write path.",
             )
 
-        out_of_scope = self._check_sql_table_scope(cleaned)
+        out_of_scope = self._check_sql_table_scope(cleaned, connector)
         if out_of_scope:
             return FuncToolResult(
                 success=0,
@@ -1936,7 +1951,7 @@ class DBFuncTool:
                     ),
                 )
 
-            out_of_scope = self._check_sql_table_scope(normalized_sql)
+            out_of_scope = self._check_sql_table_scope(normalized_sql, connector)
             if out_of_scope:
                 return FuncToolResult(
                     success=0,

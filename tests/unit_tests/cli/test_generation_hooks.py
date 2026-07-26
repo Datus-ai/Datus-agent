@@ -1245,7 +1245,7 @@ class TestSyncSemanticToDbBooleanCoercion:
         assert type(table_rows[0]["is_partition"]) is bool
 
 
-def test_sync_qualified_database_table_clears_stale_schema(agent_config, tmp_path):
+def test_sync_qualified_database_table_clears_stale_schema(agent_config, tmp_path, monkeypatch):
     yaml_file = tmp_path / "orders.yml"
     yaml_file.write_text(
         """
@@ -1275,16 +1275,16 @@ data_source:
             "table_name": parts[-1],
         }
 
-    saved_connectors = connector_registry._connectors.copy()
-    saved_metadata = connector_registry._metadata.copy()
-    saved_capabilities = connector_registry._capabilities.copy()
+    snapshot_attrs = ("_connectors", "_metadata", "_capabilities", "_uri_builders", "_context_resolvers")
+    snapshots = {attr: getattr(connector_registry, attr).copy() for attr in snapshot_attrs}
     mock_semantic_rag = MagicMock()
     try:
-        connector_registry.register(
-            "flexdb",
-            object,
-            capabilities={"database", "schema"},
-            identifier_parser=parse_identifier,
+        connector_registry.register_handlers("flexdb", capabilities={"database", "schema"})
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: parse_identifier if dialect == "flexdb" else None,
+            raising=False,
         )
         with (
             patch("datus.cli.generation_hooks.SemanticModelRAG", return_value=mock_semantic_rag),
@@ -1292,9 +1292,10 @@ data_source:
         ):
             result = GenerationHooks._sync_semantic_to_db(str(yaml_file), agent_config)
     finally:
-        connector_registry._connectors = saved_connectors
-        connector_registry._metadata = saved_metadata
-        connector_registry._capabilities = saved_capabilities
+        for attr, saved in snapshots.items():
+            live = getattr(connector_registry, attr)
+            live.clear()
+            live.update(saved)
 
     assert result["success"], result.get("error")
     rows = mock_semantic_rag.upsert_batch.call_args.args[0]

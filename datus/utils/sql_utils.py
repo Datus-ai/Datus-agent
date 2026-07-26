@@ -174,7 +174,13 @@ def _table_names_from_expression(parsed, *, dialect: str, ignore_empty: bool) ->
         if table_name.lower() in cte_names:
             continue
         if _registry_hook("get_identifier_parser", dialect):
-            table_names.append(".".join(part for part in (db, schema, table_name) if part))
+            parts = []
+            if not ignore_empty or db:
+                parts.append(db)
+            if not ignore_empty or schema:
+                parts.append(schema)
+            parts.append(table_name)
+            table_names.append(".".join(parts))
             continue
 
         full_name = []
@@ -244,7 +250,13 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     raw_dialect = (dialect or "").strip().lower()
     identifier_parser = _registry_hook("get_identifier_parser", raw_dialect)
     if identifier_parser:
-        return identifier_parser(full_table_name)
+        parsed = identifier_parser(full_table_name)
+        expected_fields = {"catalog_name", "database_name", "schema_name", "table_name"}
+        if not isinstance(parsed, dict) or not expected_fields.issubset(parsed):
+            raise ValueError(
+                "Adapter identifier parser must return catalog_name, database_name, schema_name, and table_name"
+            )
+        return {field: str(parsed[field] or "") for field in expected_fields}
 
     dialect = parse_dialect(raw_dialect)
 

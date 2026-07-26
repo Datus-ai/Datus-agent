@@ -140,7 +140,7 @@ class TestExtractDDLTarget:
             table="CUSTOMER",
         )
 
-    def test_adapter_identifier_parser_controls_two_and_three_part_names(self):
+    def test_adapter_identifier_parser_controls_two_and_three_part_names(self, monkeypatch):
         def parser(identifier):
             parts = identifier.split(".")
             return {
@@ -150,12 +150,18 @@ class TestExtractDDLTarget:
                 "table_name": parts[-1],
             }
 
-        connector_registry.register(
-            "flexdb",
-            object,
-            capabilities={"database", "schema"},
-            parser_dialect="hive",
-            identifier_parser=parser,
+        connector_registry.register_handlers("flexdb", capabilities={"database", "schema"})
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: parser if dialect == "flexdb" else None,
+            raising=False,
         )
 
         two_level = extract_ddl_target(

@@ -474,7 +474,7 @@ class TestGetTableSchema:
                 {
                     "name": "id",
                     "type": "BIGINT",
-                    "nullable": True,
+                    "nullable": False,
                     "default_value": None,
                     "pk": False,
                 }
@@ -484,7 +484,7 @@ class TestGetTableSchema:
         result = svc.get_table_schema("orders")
 
         assert result.success is True
-        assert result.data.table.columns[0].nullable is True
+        assert result.data.table.columns[0].nullable is False
 
     def test_get_table_schema_nonexistent_table(self, real_agent_config):
         """Nonexistent table returns failure."""

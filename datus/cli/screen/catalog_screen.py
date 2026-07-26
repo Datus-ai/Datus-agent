@@ -455,8 +455,8 @@ class CatalogScreen(ContextScreen):
             if self.db_type in (DBType.SQLITE, DBType.DUCKDB):
                 # Built-in single-database connectors: show the known database directly
                 self._add_db_name(tree, self.database_name)
-            elif self._supports("catalog") and not self._supports("schema"):
-                # Catalog-first dialects (e.g. StarRocks): catalog → database → tables
+            elif self._supports("catalog"):
+                # Catalog-first dialects may expose database, schema, or both below the catalog.
                 self._load_catalogs_lazy(tree)
             else:
                 # Standard dialects: database → [schema →] tables
@@ -1237,31 +1237,45 @@ class CatalogScreen(ContextScreen):
         """Clear all caches to free memory."""
         _fetch_schema_with_cache.cache_clear()
 
-    def _load_schemas_for_database(self, db_node: TreeNode) -> None:
-        """Load schemas for a database node."""
-        db_name = str(db_node.label).replace("📁 ", "")
+    def _load_schemas_for_database(self, parent_node: TreeNode) -> None:
+        """Load schemas below a database or directly below a catalog."""
+        node_name = str(parent_node.label).replace("📁 ", "")
+        node_data = parent_node.data or {}
+        if node_data.get("type") == "catalog":
+            catalog_name = str(node_data.get("name") or node_name)
+            db_name = ""
+        else:
+            catalog_name = str(node_data.get("catalog") or "")
+            db_name = str(node_data.get("name") or node_name)
         try:
-            self.db_connector.switch_context(database_name=db_name)
-            schemas = self.db_connector.get_schemas()
+            self.db_connector.switch_context(catalog_name=catalog_name, database_name=db_name)
+            schemas = self.db_connector.get_schemas(catalog_name=catalog_name, database_name=db_name)
 
             if not schemas:
-                db_node.add_leaf("📂 No schemas found", data={"type": "empty"})
+                parent_node.add_leaf("📂 No schemas found", data={"type": "empty"})
                 return
 
             for schema_name in schemas:
-                schema_node = db_node.add(
-                    f"📂 {schema_name}", data={"type": "schema", "name": schema_name, "database": db_name}
+                schema_node = parent_node.add(
+                    f"📂 {schema_name}",
+                    data={
+                        "type": "schema",
+                        "name": schema_name,
+                        "database": db_name,
+                        "catalog": catalog_name,
+                    },
                 )
                 schema_node.add_leaf("⏳ Loading tables...", data={"type": "loading"})
         except DatusException as e:
-            logger.error(f"Failed to load schemas for database {db_name}: {str(e)}")
+            context_name = db_name or catalog_name
+            logger.error(f"Failed to load schemas for {context_name}: {str(e)}")
             if e.code == ErrorCode.DB_EXECUTION_TIMEOUT.code:
-                db_node.add_leaf(
+                parent_node.add_leaf(
                     "⏱️ Timeout loading schemas (press 'r' to retry)",
-                    data={"type": "timeout", "operation": "schemas", "parent": db_name},
+                    data={"type": "timeout", "operation": "schemas", "parent": context_name},
                 )
             else:
-                db_node.add_leaf("❌ Error loading schemas", data={"type": "error"})
+                parent_node.add_leaf("❌ Error loading schemas", data={"type": "error"})
 
     def _load_databases_for_catalog(self, catalog_node: TreeNode) -> None:
         """Load databases for a catalog node."""

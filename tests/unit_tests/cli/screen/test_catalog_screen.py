@@ -1,8 +1,75 @@
 import io
+from unittest.mock import MagicMock
 
+import pytest
 from rich.console import Console
 
 from datus.cli.screen.catalog_screen import CatalogScreen
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        {"catalog", "schema"},
+        {"catalog", "database", "schema"},
+    ],
+)
+def test_catalog_capabilities_always_build_catalog_first_tree(capabilities):
+    screen = object.__new__(CatalogScreen)
+    tree = MagicMock()
+    helper = MagicMock()
+    screen.query_one = MagicMock(side_effect=[tree, helper])
+    screen.db_connector = MagicMock()
+    screen.db_type = "flexdb"
+    screen.database_name = ""
+    screen._supports = lambda namespace: namespace in capabilities
+    screen._load_catalogs_lazy = MagicMock()
+    screen._load_databases_lazy = MagicMock()
+
+    screen._build_catalog_tree()
+
+    screen._load_catalogs_lazy.assert_called_once_with(tree)
+    screen._load_databases_lazy.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("node_data", "expected_catalog", "expected_database"),
+    [
+        ({"type": "catalog", "name": "catalog_a"}, "catalog_a", ""),
+        ({"type": "database", "name": "database_a", "catalog": "catalog_a"}, "catalog_a", "database_a"),
+    ],
+)
+def test_schema_loading_preserves_catalog_and_database_coordinates(
+    node_data,
+    expected_catalog,
+    expected_database,
+):
+    screen = object.__new__(CatalogScreen)
+    screen.db_connector = MagicMock()
+    screen.db_connector.get_schemas.return_value = ["analytics"]
+    parent_node = MagicMock()
+    parent_node.label = node_data["name"]
+    parent_node.data = node_data
+
+    screen._load_schemas_for_database(parent_node)
+
+    screen.db_connector.switch_context.assert_called_once_with(
+        catalog_name=expected_catalog,
+        database_name=expected_database,
+    )
+    screen.db_connector.get_schemas.assert_called_once_with(
+        catalog_name=expected_catalog,
+        database_name=expected_database,
+    )
+    parent_node.add.assert_called_once_with(
+        "📂 analytics",
+        data={
+            "type": "schema",
+            "name": "analytics",
+            "database": expected_database,
+            "catalog": expected_catalog,
+        },
+    )
 
 
 def test_catalog_screen_builds_generic_record_from_table_semantic_profile():
