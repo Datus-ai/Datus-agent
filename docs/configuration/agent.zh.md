@@ -27,12 +27,15 @@ agent:
 
 Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默认值（详见 [Chat API](../API/chat.zh.md)）。CLI 无覆盖参数，直接沿用 yaml 中的默认。
 
-### 模型提供方（models） {#models-configuration}
-为智能体配置可用的 LLM 提供方：
+### 模型配置（自定义条目） {#models-configuration}
 
-**每个提供方条目的必填参数：**
+`agent.models` 用于配置自托管或私有部署的 LLM endpoint。OpenAI、DeepSeek、
+Bedrock 等标准 provider 应配置在 `agent.providers` 中。
 
-- **提供方键名 (`models.<key>`)** —— 逻辑标识符，由 `agent.target` 和节点 `model` 字段引用（可自定义命名）
+**每个自定义条目的必填参数：**
+
+- **条目键名 (`models.<key>`)** —— 逻辑标识符，由
+  `target: {custom: <key>}` 或节点 `model` 字段引用
 - `type`：接口类型（与厂商适配）
 - `base_url`：接口基础地址
 - `api_key`：访问密钥（支持环境变量）
@@ -41,9 +44,8 @@ Chat API 请求可通过请求体中的 `language` 字段按任务覆盖该默�
 
 ```yaml
 agent:
-  target: provider_name
   models:
-    provider_name:
+    my-internal:
       type: provider_type
       base_url: https://api.example.com/v1
       api_key: ${API_KEY_ENV_VAR}
@@ -110,10 +112,12 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 
 ## 支持的提供方
 
-初始化/配置向导中的 provider，最终都会写入 `agent.models`，并通过 `agent.target` 指定默认模型。也就是说：
+Provider 由 `conf/providers.yml` 定义，并通过 `agent.providers` 保存认证信息。
+使用 `/model` 命令配置和切换 provider：
 
-- 你在 `datus-agent configure` 里选择的 provider 名称，就是 `agent.models.<provider>` 的键名
-- 你也可以在后续手动编辑 `agent.yml`，把某个节点单独切换到另一套模型配置
+- Provider 凭证保存在 `agent.yml` 的 `agent.providers.<name>` 下
+- 当前 provider/model 保存在项目的 `.datus/config.yml` 中，由 `/model` 写入
+- 节点级 `model` 覆盖仍可引用 `agent.models` 中的自定义 endpoint
 
 ### 通用 provider
 
@@ -197,11 +201,12 @@ API 中使用的模型名。内置选择器只展示通过 Datus 文本、JSON�
 会产生 AWS 费用的认证套件：
 
 ```bash
-AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+DATUS_BEDROCK_CERTIFY=1 AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
   pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
 
 # 同时评估可选的 GPT-OSS、DeepSeek 和 Gemma：
-DATUS_BEDROCK_CERTIFY_OPTIONAL=1 AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+DATUS_BEDROCK_CERTIFY=1 DATUS_BEDROCK_CERTIFY_OPTIONAL=1 \
+  AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
   pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
 ```
 

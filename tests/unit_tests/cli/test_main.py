@@ -373,6 +373,59 @@ class TestRepairProjectOverrides:
         mock_pick.assert_not_called()
         mock_save.assert_not_called()
 
+    def test_keeps_bedrock_target_with_env_provider_options(self, monkeypatch):
+        """Raw startup repair resolves AWS option env vars before probing boto3."""
+        from datus.configuration.project_config import ProjectOverride, ProjectTarget
+
+        monkeypatch.setenv("DATUS_TEST_AWS_PROFILE", "analytics-dev")
+        monkeypatch.setenv("DATUS_TEST_AWS_REGION", "us-east-1")
+        app = Application()
+        args = SimpleNamespace(config=None)
+        override = ProjectOverride(
+            target=ProjectTarget(
+                provider="bedrock",
+                model="us.anthropic.claude-sonnet-5",
+            )
+        )
+        raw = {
+            "providers": {
+                "bedrock": {
+                    "auth_type": "aws",
+                    "provider_options": {
+                        "aws_profile_name": "${DATUS_TEST_AWS_PROFILE}",
+                        "aws_region_name": "${DATUS_TEST_AWS_REGION}",
+                    },
+                }
+            },
+            "services": {"datasources": {}},
+        }
+        session = MagicMock(region_name=None)
+        session.get_credentials.return_value = MagicMock()
+
+        def session_for_profile(*, profile_name):
+            if profile_name != "analytics-dev":
+                raise RuntimeError("profile was not resolved")
+            return session
+
+        with (
+            patch("datus.configuration.project_config.load_project_override", return_value=override),
+            patch(
+                "datus.configuration.agent_config_loader.configuration_manager",
+                return_value=self._mock_mgr(raw),
+            ),
+            patch(
+                "datus.configuration.agent_config._load_provider_catalog",
+                return_value={"providers": {"bedrock": {"auth_type": "aws"}}},
+            ),
+            patch("boto3.Session", side_effect=session_for_profile) as mock_session,
+            patch("datus.configuration.project_config.save_project_override") as mock_save,
+        ):
+            app._repair_project_overrides(args)
+
+        mock_session.assert_called_once_with(profile_name="analytics-dev")
+        mock_save.assert_not_called()
+        assert override.target.provider == "bedrock"
+
     def test_clears_stale_target_silently(self):
         """Stale target → cleared to None (no prompt), db kept, config saved."""
         from datus.configuration.project_config import ProjectOverride

@@ -506,7 +506,12 @@ class Application:
         """
         import os
 
-        from datus.configuration.agent_config import _aws_provider_available, _load_provider_catalog, resolve_env
+        from datus.configuration.agent_config import (
+            _aws_provider_available,
+            _load_provider_catalog,
+            _resolve_provider_options,
+            resolve_env,
+        )
 
         providers_raw = raw.get("providers") or {}
         user_entry = providers_raw.get(provider) if isinstance(providers_raw, dict) else None
@@ -542,8 +547,11 @@ class Application:
             except Exception:
                 return False
         if auth_type == "aws":
-            provider_options = user_entry.get("provider_options") or {}
-            return _aws_provider_available(provider_options if isinstance(provider_options, dict) else {})
+            provider_options = _resolve_provider_options(
+                user_entry.get("provider_options"),
+                field_name=f"agent.providers.{provider}.provider_options",
+            )
+            return _aws_provider_available(provider_options)
 
         api_key = user_entry.get("api_key")
         if api_key and resolve_env(str(api_key)).strip() and not resolve_env(str(api_key)).startswith("<MISSING:"):

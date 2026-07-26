@@ -275,11 +275,12 @@ The last two IDs can still be entered manually for non-agentic inference. Run th
 billable certification suite explicitly when evaluating a new model:
 
 ```bash
-AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+DATUS_BEDROCK_CERTIFY=1 AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
   pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
 
 # Also evaluate the optional GPT-OSS, DeepSeek, and Gemma entries:
-DATUS_BEDROCK_CERTIFY_OPTIONAL=1 AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
+DATUS_BEDROCK_CERTIFY=1 DATUS_BEDROCK_CERTIFY_OPTIONAL=1 \
+  AWS_PROFILE=default AWS_REGION_NAME=us-east-1 \
   pytest -m bedrock_certification tests/integration/models/test_bedrock_model.py
 ```
 

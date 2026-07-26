@@ -9,7 +9,7 @@ import os
 
 import boto3
 import pytest
-from agents import set_tracing_disabled
+from agents.tracing import DefaultTraceProvider, get_trace_provider, set_trace_provider
 
 from datus.configuration.agent_config import ModelConfig
 from datus.models.bedrock_model import BedrockModel
@@ -17,11 +17,17 @@ from datus.schemas.action_history import ActionHistoryManager
 from datus.tools.func_tool import db_function_tools
 from tests.conftest import load_acceptance_config
 
-set_tracing_disabled(True)
-
-pytestmark = [pytest.mark.integration, pytest.mark.bedrock_certification]
-
+_CERTIFICATION_ENABLED = os.getenv("DATUS_BEDROCK_CERTIFY") == "1"
 _OPTIONAL_MODELS_ENABLED = os.getenv("DATUS_BEDROCK_CERTIFY_OPTIONAL") == "1"
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.bedrock_certification,
+    pytest.mark.skipif(
+        not _CERTIFICATION_ENABLED,
+        reason="set DATUS_BEDROCK_CERTIFY=1 to run billable AWS Bedrock certification",
+    ),
+]
+
 BEDROCK_MODELS = [
     pytest.param("us.anthropic.claude-sonnet-5", id="claude-sonnet-5"),
     pytest.param("us.amazon.nova-2-lite-v1:0", id="nova-2-lite"),
@@ -90,6 +96,19 @@ BEDROCK_TOOL_MODELS = [
         ],
     ),
 ]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def isolated_tracing_provider():
+    """Disable tracing only while the opt-in certification module executes."""
+    previous_provider = get_trace_provider()
+    provider = DefaultTraceProvider()
+    provider.set_disabled(True)
+    set_trace_provider(provider)
+    try:
+        yield
+    finally:
+        set_trace_provider(previous_provider)
 
 
 @pytest.fixture(scope="module")

@@ -634,6 +634,32 @@ class TestLoadModelConfig:
         cfg = load_model_config(data)
         assert cfg.base_url == "https://api.example.com"
 
+    def test_provider_options_resolve_env_and_drop_missing_values(self, monkeypatch):
+        monkeypatch.setenv("AWS_REGION_NAME_TEST", "us-east-1")
+        monkeypatch.delenv("AWS_PROFILE_NAME_TEST", raising=False)
+        cfg = load_model_config(
+            {
+                "type": "bedrock",
+                "model": "us.amazon.nova-2-lite-v1:0",
+                "provider_options": {
+                    "aws_region_name": "${AWS_REGION_NAME_TEST}",
+                    "aws_profile_name": "${AWS_PROFILE_NAME_TEST}",
+                },
+            }
+        )
+        assert cfg.provider_options == {"aws_region_name": "us-east-1"}
+
+    @pytest.mark.parametrize("value", ["profile", [], False])
+    def test_provider_options_reject_non_mapping(self, value):
+        with pytest.raises(DatusException, match="provider_options must be a mapping"):
+            load_model_config(
+                {
+                    "type": "bedrock",
+                    "model": "us.amazon.nova-2-lite-v1:0",
+                    "provider_options": value,
+                }
+            )
+
     def test_to_dict(self):
         cfg = ModelConfig(type="openai", api_key="sk", model="gpt-4")
         d = cfg.to_dict()

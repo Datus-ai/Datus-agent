@@ -3041,6 +3041,55 @@ def _resolve_nested_value(value: Any) -> Any:
     return value
 
 
+_MISSING_PROVIDER_OPTION = object()
+
+
+def _drop_missing_provider_options(value: Any) -> Any:
+    """Remove unresolved ``${ENV_VAR}`` values from provider options.
+
+    Optional AWS options commonly point at environment variables. When one is
+    unset, treating ``<MISSING:...>`` as a literal profile or region prevents
+    boto3 from falling back to its standard credential chain.
+    """
+    if isinstance(value, str) and value.startswith("<MISSING:"):
+        return _MISSING_PROVIDER_OPTION
+    if isinstance(value, dict):
+        resolved = {}
+        for key, item in value.items():
+            cleaned = _drop_missing_provider_options(item)
+            if cleaned is not _MISSING_PROVIDER_OPTION:
+                resolved[key] = cleaned
+        return resolved
+    if isinstance(value, list):
+        resolved = []
+        for item in value:
+            cleaned = _drop_missing_provider_options(item)
+            if cleaned is not _MISSING_PROVIDER_OPTION:
+                resolved.append(cleaned)
+        return resolved
+    if isinstance(value, tuple):
+        resolved = []
+        for item in value:
+            cleaned = _drop_missing_provider_options(item)
+            if cleaned is not _MISSING_PROVIDER_OPTION:
+                resolved.append(cleaned)
+        return tuple(resolved)
+    return value
+
+
+def _resolve_provider_options(raw: Any, *, field_name: str = "provider_options") -> Dict[str, Any]:
+    """Validate, resolve, and normalize a provider-options mapping."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise DatusException(
+            ErrorCode.COMMON_FIELD_INVALID,
+            message=f"{field_name} must be a mapping.",
+        )
+    resolved = _resolve_nested_value(dict(raw))
+    return _drop_missing_provider_options(resolved)
+
+
 def _load_provider_configs(raw: Dict[str, Any]) -> Dict[str, ProviderConfig]:
     """Parse ``agent.providers`` YAML section into :class:`ProviderConfig` map."""
     out: Dict[str, ProviderConfig] = {}
@@ -3056,17 +3105,14 @@ def _load_provider_configs(raw: Dict[str, Any]) -> Dict[str, ProviderConfig]:
             )
         api_key_raw = cfg.get("api_key")
         base_url_raw = cfg.get("base_url")
-        provider_options_raw = cfg.get("provider_options") or {}
-        if not isinstance(provider_options_raw, dict):
-            raise DatusException(
-                ErrorCode.COMMON_FIELD_INVALID,
-                message=f"agent.providers.{name}.provider_options must be a mapping.",
-            )
         out[name] = ProviderConfig(
             api_key=str(api_key_raw) if api_key_raw is not None else None,
             base_url=str(base_url_raw) if base_url_raw is not None else None,
             auth_type=str(cfg.get("auth_type", "api_key")),
-            provider_options=_resolve_nested_value(provider_options_raw),
+            provider_options=_resolve_provider_options(
+                cfg.get("provider_options"),
+                field_name=f"agent.providers.{name}.provider_options",
+            ),
         )
     return out
 
@@ -3199,7 +3245,7 @@ def load_model_config(data: dict) -> ModelConfig:
         top_p=float(top_p) if top_p is not None else None,
         auth_type=data.get("auth_type", "api_key"),
         use_native_api=data.get("use_native_api", False),
-        provider_options=_resolve_nested_value(data.get("provider_options") or {}),
+        provider_options=_resolve_provider_options(data.get("provider_options")),
         ssl_verify=_load_ssl_verify(data),
     )
 
