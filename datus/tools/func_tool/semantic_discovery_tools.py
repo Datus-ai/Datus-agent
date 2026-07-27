@@ -75,15 +75,18 @@ class SemanticDiscoveryTools:
         """Get all available semantic discovery tools."""
         from datus.tools.func_tool import trans_to_function_tool
 
-        methods_to_convert = [self.analyze_metric_candidates_from_history]
+        methods_to_convert = []
         if self.db_tool is not None:
-            methods_to_convert[0:0] = [
-                self.analyze_table_relationships,
-                self.get_multiple_tables_ddl,
-                self.analyze_column_usage_patterns,
-            ]
-        if self.enable_semantic_model_profiler:
-            methods_to_convert.insert(3, self.profile_semantic_model_evidence)
+            methods_to_convert.extend(
+                [
+                    self.analyze_table_relationships,
+                    self.get_multiple_tables_ddl,
+                    self.analyze_column_usage_patterns,
+                ]
+            )
+            if self.enable_semantic_model_profiler:
+                methods_to_convert.append(self.profile_semantic_model_evidence)
+        methods_to_convert.append(self.analyze_metric_candidates_from_history)
 
         return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
 

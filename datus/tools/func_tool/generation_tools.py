@@ -334,7 +334,7 @@ class GenerationTools:
         self._semantic_table_object_index = index
         return index
 
-    def _resolve_planned_osi_semantic_target(self) -> tuple[str, str, str]:
+    def resolve_planned_osi_semantic_target(self) -> tuple[str, str, str]:
         """Return the planned file, absolute path, and declared OSI model name."""
         planned = self.osi_target_state.planned if self.osi_target_state is not None else None
         if planned is None:
@@ -355,7 +355,7 @@ class GenerationTools:
         model_names = self.extract_osi_model_names(resolved)
         if len(model_names) != 1:
             raise ValueError(
-                f"Generated Ossie files must declare exactly one semantic model; found {model_names or '<none>'}."
+                f"Generated OSI files must declare exactly one semantic model; found {model_names or '<none>'}."
             )
 
         planned_name = str(planned.get("semantic_model_name") or "")
@@ -384,7 +384,7 @@ class GenerationTools:
         try:
             osi_target: Optional[tuple[str, str]] = None
             if self._is_osi_authoring():
-                semantic_model_file, resolved, model_name = self._resolve_planned_osi_semantic_target()
+                semantic_model_file, resolved, model_name = self.resolve_planned_osi_semantic_target()
                 semantic_model_files = [semantic_model_file]
                 osi_target = (resolved, model_name)
                 validation_passed = self.generation_evidence.semantic_artifact_validation_passed(model_name, resolved)

@@ -510,6 +510,8 @@ class GenMetricsAgenticNode(AgenticNode):
         if not isinstance(response_content, str):
             response_content = str(response_content) if response_content else ""
 
+        blocker_code = blocker_code.strip().lower() if isinstance(blocker_code, str) else blocker_code
+        skip_reason = skip_reason.strip().lower() if isinstance(skip_reason, str) else skip_reason
         if status is not None and status not in {"generated", "skipped", "blocked"}:
             raise RuntimeError(f"Unsupported metric generation status: {status!r}")
         if skip_reason is not None and skip_reason != "not_a_metric":

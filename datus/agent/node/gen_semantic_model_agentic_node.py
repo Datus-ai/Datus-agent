@@ -582,7 +582,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             raise RuntimeError("OSI semantic model generation tools are unavailable.")
 
         try:
-            semantic_model_file, resolved, model_name = self.generation_tools._resolve_planned_osi_semantic_target()
+            semantic_model_file, resolved, model_name = self.generation_tools.resolve_planned_osi_semantic_target()
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
 

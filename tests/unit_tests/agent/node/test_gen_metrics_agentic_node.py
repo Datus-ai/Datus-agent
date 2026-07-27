@@ -207,14 +207,17 @@ class TestGenMetricsAgenticNodeExecution:
         assert last_action.status == ActionStatus.SUCCESS
 
     @pytest.mark.asyncio
-    async def test_before_stream_resets_all_request_scoped_authoring_state(self, real_agent_config, mock_llm_create):
+    async def test_before_stream_resets_authoring_state_and_preserves_request_hints(
+        self, real_agent_config, mock_llm_create
+    ):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.stream_run_context import StreamRunContext
 
         _set_global_semantic_adapter(real_agent_config, "osi")
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = SemanticNodeInput(
-            user_message="Create order metrics. The semantic model is at subject/semantic_models/warehouse/orders.yml."
+            user_message="Create order metrics. The semantic model is at subject/semantic_models/warehouse/orders.yml.",
+            semantic_model_name="requested_target",
         )
         node.osi_target_state.select(
             {
@@ -238,7 +241,7 @@ class TestGenMetricsAgenticNodeExecution:
         assert node.generation_evidence == type(evidence)()
         assert node.generation_tools.generation_evidence is evidence
         assert node.semantic_tools.generation_evidence is evidence
-        assert node.input.semantic_model_name is None
+        assert node.input.semantic_model_name == "requested_target"
         assert mock_llm_create.call_history == []
 
     @pytest.mark.asyncio
@@ -1363,7 +1366,7 @@ class TestExecuteStreamGenMetricsError:
             {
                 "metric_file": None,
                 "status": "blocked",
-                "blocker_code": "semantic_model_required",
+                "blocker_code": " Semantic_Model_Required ",
                 "output": "No existing model matches this metric domain.",
             }
         )
@@ -1373,6 +1376,31 @@ class TestExecuteStreamGenMetricsError:
         assert result.success is False
         assert result.status == "blocked"
         assert result.blocker_code == "semantic_model_required"
+
+    def test_osi_skipped_result_normalizes_skip_reason(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Explain the source data")
+        ctx = StreamRunContext(
+            user_input=node.input,
+            action_history_manager=ActionHistoryManager(),
+        )
+        ctx.response_content = json.dumps(
+            {
+                "metric_file": None,
+                "status": " SKIPPED ",
+                "skip_reason": " Not_A_Metric ",
+                "output": "The request does not define a metric.",
+            }
+        )
+
+        result = node._build_success_result(ctx)
+
+        assert result.status == "skipped"
+        assert result.skip_reason == "not_a_metric"
 
     def test_osi_bound_target_can_report_a_missing_semantic_prerequisite(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

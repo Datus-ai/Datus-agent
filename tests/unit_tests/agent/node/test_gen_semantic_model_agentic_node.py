@@ -210,7 +210,7 @@ class TestGenSemanticModelAgenticNodeInit:
         assert node.osi_target_state.planned["semantic_model_name"] == "orders"
         assert node.osi_target_state.last_error_code == "semantic_model_target_invalid"
         with pytest.raises(ValueError, match="unresolved after a failed replan"):
-            node.generation_tools._resolve_planned_osi_semantic_target()
+            node.generation_tools.resolve_planned_osi_semantic_target()
 
     def test_semantic_sql_history_profiler_tool_opt_out(self, real_agent_config, mock_llm_create):
         """An explicit empty skills entry removes the profiler tool."""
@@ -760,7 +760,7 @@ class TestExecuteStreamGenSemanticModelError:
         node.generation_evidence = GenerationEvidence(validation_passed=True)
         node.generation_evidence.record_semantic_artifact_validation("sales", sales_file)
         node.generation_tools = MagicMock()
-        node.generation_tools._resolve_planned_osi_semantic_target.return_value = (
+        node.generation_tools.resolve_planned_osi_semantic_target.return_value = (
             "subject/semantic_models/warehouse/finance.yml",
             str(finance_file),
             "finance",
@@ -790,7 +790,7 @@ class TestExecuteStreamGenSemanticModelError:
         node.agent_config = SimpleNamespace(resolve_semantic_adapter=lambda requested=None: "osi")
         node.generation_evidence = GenerationEvidence()
         node.generation_tools = MagicMock()
-        node.generation_tools._resolve_planned_osi_semantic_target.side_effect = ValueError(
+        node.generation_tools.resolve_planned_osi_semantic_target.side_effect = ValueError(
             "Plan the OSI semantic-model name and file before publishing."
         )
         node.semantic_func_tool = MagicMock()

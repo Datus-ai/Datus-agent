@@ -693,6 +693,16 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
         assert tool_names == {"analyze_metric_candidates_from_history"}
 
+    def test_available_tools_without_db_omits_enabled_profiler(self):
+        tools = SemanticDiscoveryTools(
+            db_tool=None,
+            enable_semantic_model_profiler=True,
+        )
+
+        tool_names = {tool.name for tool in tools.available_tools()}
+
+        assert tool_names == {"analyze_metric_candidates_from_history"}
+
     def test_history_analyzer_accepts_direct_sql_without_db(self):
         tools = SemanticDiscoveryTools(db_tool=None)
 
