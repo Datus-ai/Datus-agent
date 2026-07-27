@@ -18,11 +18,6 @@ COMMON_VARS = {
     "knowledge_base_dir": "/kb",
     "semantic_model_dir": "/kb/semantic_models/duckdb",
     "kind_subdir": "subject/semantic_models/duckdb",
-    "default_osi_semantic_model_name": "sales_domain",
-    "default_osi_semantic_model_file": "subject/semantic_models/duckdb/sales_domain.yml",
-    "osi_target_resolved": True,
-    "requested_semantic_model_name": "",
-    "requested_business_domain": "",
 }
 
 
@@ -62,10 +57,11 @@ def test_semantic_model_template_osi_mode():
     text = _render("gen_semantic_model_system", "osi")
     assert "OSI (Open Semantic Interchange) core schema" in text
     assert "never write backend YAML" in text
-    assert "Resolved semantic model file: `subject/semantic_models/duckdb/sales_domain.yml`" in text
+    assert "Semantic model target is not planned yet" in text
     assert "create it with `write_file`" in text
     assert "use `edit_file` for targeted changes" in text
     assert "Dimension tables never participate in the name" in text
+    assert "without a custom `checks` subset" in text
     assert '"semantic_model_files"' in text  # same publish contract as metricflow
 
 
@@ -143,6 +139,13 @@ def test_metrics_template_osi_mode_contract():
     assert "subject_path" in text
     assert "locked_metadata.tags" not in text.split("Record the classification")[1].split("\n")[0]
     assert "Covered by an existing base metric" in text
+    assert "bind_osi_semantic_model_target" in text
+    assert "list_existing_osi_semantic_models" in text
+    assert "request SQL tables, dataset names/sources/descriptions, and business meaning" in text
+    assert "semantic_model_selection_required" in text
+    assert "resolve_osi_semantic_model_target" not in text
+    assert "non-metric request" not in text
+    assert "without a custom `checks` subset" in text
 
 
 def test_semantic_model_template_includes_profiler_gate_both_formats():

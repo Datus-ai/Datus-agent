@@ -682,6 +682,25 @@ class TestProfileSemanticModelEvidence:
 
 
 class TestAnalyzeMetricCandidatesFromHistory:
+    def test_available_tools_without_db_exposes_only_history_analyzer(self):
+        tools = SemanticDiscoveryTools(
+            db_tool=None,
+            agent_config=MagicMock(),
+            sub_agent_name="gen_metrics",
+        )
+
+        tool_names = {tool.name for tool in tools.available_tools()}
+
+        assert tool_names == {"analyze_metric_candidates_from_history"}
+
+    def test_history_analyzer_accepts_direct_sql_without_db(self):
+        tools = SemanticDiscoveryTools(db_tool=None)
+
+        result = tools.analyze_metric_candidates_from_history(sql_queries=["SELECT SUM(amount) AS revenue FROM orders"])
+
+        assert result.success == 1
+        assert [candidate["name"] for candidate in result.result["metric_candidates"]] == ["revenue"]
+
     def test_available_tools_includes_metric_candidate_mining(self):
         tools = _make_tools()
         tool_names = {tool.name for tool in tools.available_tools()}
@@ -1578,12 +1597,12 @@ class TestAnalyzeMetricCandidatesFromHistory:
     def test_mysql_dialect_fallback_parses_backtick_aliases(self):
         tools = _make_tools()
         result = tools.analyze_metric_candidates_from_history(
-            sql_queries=["SELECT COUNT(DISTINCT `user_id`) AS `人数` FROM `orders`"]
+            sql_queries=["SELECT COUNT(DISTINCT `user_id`) AS `***` FROM `orders`"]
         )
 
         assert result.result["parse_errors"] == []
         candidate = result.result["metric_candidates"][0]
-        assert candidate["source_alias"] == "人数"
+        assert candidate["source_alias"] == "***"
         assert candidate["requires_name_translation"] is True
         assert candidate["name_source"] == "expression_fallback"
         assert candidate["name"] == "count_distinct_user_id"
@@ -1694,34 +1713,34 @@ class TestAnalyzeMetricCandidatesFromHistory:
         result = tools.analyze_metric_candidates_from_history(
             sql_queries=[
                 """
-                WITH user_total_playtime_per_mode AS (
-                    SELECT vplayerid, modename, SUM(roundtime) AS total_playtime
-                    FROM mode_roundrecord
-                    GROUP BY vplayerid, modename
+                WITH customer_total_amount_per_category AS (
+                    SELECT customer_id, category_name, SUM(amount) AS total_amount
+                    FROM transactions
+                    GROUP BY customer_id, category_name
                 ),
-                user_main_mode AS (
+                customer_preferred_category AS (
                     SELECT
-                        vplayerid,
-                        modename,
+                        customer_id,
+                        category_name,
                         ROW_NUMBER() OVER (
-                            PARTITION BY vplayerid
-                            ORDER BY total_playtime DESC
+                            PARTITION BY customer_id
+                            ORDER BY total_amount DESC
                         ) AS rn
-                    FROM user_total_playtime_per_mode
+                    FROM customer_total_amount_per_category
                 )
-                SELECT modename AS `主玩玩法`, COUNT(*) AS `人数`
-                FROM user_main_mode
+                SELECT category_name AS preferred_category, COUNT(*) AS `***`
+                FROM customer_preferred_category
                 WHERE rn = 1
-                GROUP BY modename
+                GROUP BY category_name
                 """
             ]
         )
 
         assert result.result["query_classification"] == "metric_plus_derived_datasource"
-        assert result.result["blocked_direct_metric_candidates"][0]["source_alias"] == "人数"
+        assert result.result["blocked_direct_metric_candidates"][0]["source_alias"] == "***"
         assert result.result["blocked_direct_metric_candidates"][0]["requires_name_translation"] is True
         recommendation = result.result["derived_datasource_recommendations"][0]
-        assert recommendation["source_cte"] == "user_main_mode"
+        assert recommendation["source_cte"] == "customer_preferred_category"
         assert recommendation["rank_alias"] == "rn"
         assert recommendation["window"]["function"] == "ROW_NUMBER"
         assert recommendation["rank_filters"] == ["rn = 1"]

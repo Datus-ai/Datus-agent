@@ -15,13 +15,16 @@ import time
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult
-from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.loggings import get_logger
+
+if TYPE_CHECKING:
+    from datus.configuration.agent_config import AgentConfig
+    from datus.tools.func_tool.database import DBFuncTool
 
 logger = get_logger(__name__)
 
@@ -38,18 +41,25 @@ class SemanticDiscoveryTools:
 
     _AGGREGATE_CLASSES = ()
 
-    def __init__(self, db_tool: DBFuncTool, enable_semantic_model_profiler: bool = False):
+    def __init__(
+        self,
+        db_tool: Optional["DBFuncTool"] = None,
+        enable_semantic_model_profiler: bool = False,
+        *,
+        agent_config: Optional["AgentConfig"] = None,
+        sub_agent_name: Optional[str] = None,
+    ):
         """
         Initialize semantic discovery tools.
 
         Args:
-            db_tool: Database function tool instance for accessing database info
+            db_tool: Optional database tool. Direct SQL metric analysis does not require it.
             enable_semantic_model_profiler: Whether to expose the optional
                 semantic SQL history profiler tool.
         """
         self.db_tool = db_tool
-        self.agent_config = db_tool.agent_config
-        self.sub_agent_name = db_tool.sub_agent_name
+        self.agent_config = agent_config if agent_config is not None else getattr(db_tool, "agent_config", None)
+        self.sub_agent_name = sub_agent_name if sub_agent_name is not None else getattr(db_tool, "sub_agent_name", None)
         self.enable_semantic_model_profiler = enable_semantic_model_profiler
 
     @classmethod
@@ -65,19 +75,17 @@ class SemanticDiscoveryTools:
         """Get all available semantic discovery tools."""
         from datus.tools.func_tool import trans_to_function_tool
 
-        bound_tools = []
-        methods_to_convert = [
-            self.analyze_table_relationships,
-            self.get_multiple_tables_ddl,
-            self.analyze_column_usage_patterns,
-            self.analyze_metric_candidates_from_history,
-        ]
+        methods_to_convert = [self.analyze_metric_candidates_from_history]
+        if self.db_tool is not None:
+            methods_to_convert[0:0] = [
+                self.analyze_table_relationships,
+                self.get_multiple_tables_ddl,
+                self.analyze_column_usage_patterns,
+            ]
         if self.enable_semantic_model_profiler:
             methods_to_convert.insert(3, self.profile_semantic_model_evidence)
 
-        for bound_method in methods_to_convert:
-            bound_tools.append(trans_to_function_tool(bound_method))
-        return bound_tools
+        return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
 
     def analyze_table_relationships(
         self,

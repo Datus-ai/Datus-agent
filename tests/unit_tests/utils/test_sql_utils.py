@@ -723,7 +723,7 @@ def test_parse_sql_type_with():
                      vplayerid,
                      sum(roundcnt) roundcnt,
                      sum(roundtime) roundtime
-              from dws_jordass_mode_roundrecord_di
+              from sample_activity_daily
               where ((dtstatdate between '20240326' and '20240409')
                   or (dtstatdate between '20240528' and '20240611'))
                 and mode in (401,402,403,101,102,103,603)
@@ -753,7 +753,7 @@ def test_parse_sql_type_with():
                ) a
                    left join (
               select dtstatdate,vplayerid
-              from dws_jordass_login_di
+              from sample_login_daily
               where ((dtstatdate between '20240326' and '20240404')
                   or (dtstatdate between '20240528' and '20240606'))
                 and platid =255
@@ -762,7 +762,7 @@ def test_parse_sql_type_with():
                              on a.vplayerid = b1.vplayerid and date_add(a.dtstatdate,1) = b1.dtstatdate
                    left join (
               select dtstatdate,vplayerid
-              from dws_jordass_login_di
+              from sample_login_daily
               where ((dtstatdate between '20240326' and '20240409') or (dtstatdate between '20240528' and '20240611'))
                 and platid =255
               group by dtstatdate,vplayerid

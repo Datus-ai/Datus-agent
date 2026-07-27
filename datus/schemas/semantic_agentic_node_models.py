@@ -9,7 +9,7 @@ This module defines the input and output models for the SemanticAgenticNode,
 providing structured validation for semantic model generation interactions.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -42,6 +42,10 @@ class SemanticNodeInput(AtContextInput):
     semantic_model_name: Optional[str] = Field(
         default=None,
         description="Explicit stable semantic model name; takes priority over inferred naming in Ossie mode",
+    )
+    semantic_model_file: Optional[str] = Field(
+        default=None,
+        description="Optional semantic model file hint; the agent must verify it before use",
     )
     business_domain: Optional[str] = Field(
         default=None,
@@ -88,3 +92,23 @@ class SemanticNodeResult(BaseResult):
         default_factory=list, description="List of generated semantic model file paths (single table or multi-table)"
     )
     tokens_used: int = Field(default=0, description="Total tokens used in this interaction")
+
+
+class GenMetricsNodeResult(SemanticNodeResult):
+    """Metric generation result, including an actionable blocked outcome."""
+
+    status: Optional[Literal["generated", "skipped", "blocked"]] = Field(
+        default=None,
+        description="Metric generation outcome; None is reserved for execution errors.",
+    )
+    blocker_code: Optional[
+        Literal[
+            "semantic_model_required",
+            "semantic_model_selection_required",
+            "semantic_model_target_invalid",
+        ]
+    ] = Field(default=None, description="Actionable prerequisite when status is blocked")
+    skip_reason: Optional[Literal["not_a_metric"]] = Field(
+        default=None,
+        description="Why metric generation was skipped; only non-metric requests may skip in OSI mode.",
+    )

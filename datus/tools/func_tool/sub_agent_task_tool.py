@@ -351,96 +351,12 @@ class SubAgentTaskTool:
             return FuncToolResult(success=0, error="Missing required parameter: prompt")
 
         try:
-            normalized_type = type.strip().strip("\"'") if isinstance(type, str) else type
-            semantic_types = {"gen_semantic_model", "gen_metrics"}
-            if normalized_type in semantic_types and normalized_type in self._get_available_types():
-                from datus.agent.node.semantic_authoring import semantic_authoring_guard
-
-                async with semantic_authoring_guard(self.agent_config):
-                    if normalized_type == "gen_metrics":
-                        precondition = self._osi_metric_precondition(prompt)
-                        if precondition is not None:
-                            return precondition
-                    return await self._execute_node(
-                        normalized_type,
-                        prompt,
-                        description=description,
-                        call_id=call_id,
-                        session_id=session_id,
-                    )
-
             return await self._execute_node(
                 type, prompt, description=description, call_id=call_id, session_id=session_id
             )
         except Exception as e:
             logger.error(f"Task tool execution error (type={type}): {e}")
             return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
-
-    def _osi_metric_precondition(self, prompt: str = "") -> Optional[FuncToolResult]:
-        """Require the OSI domain model before starting the metric subagent."""
-        from datus.agent.node.semantic_authoring import (
-            is_osi_authoring,
-            osi_semantic_model_directory,
-            resolve_existing_osi_semantic_model,
-        )
-
-        if not is_osi_authoring(self.agent_config):
-            return None
-
-        resolution = resolve_existing_osi_semantic_model(
-            self.agent_config,
-            user_input=getattr(self._parent_node, "input", None),
-            request_text=prompt,
-        )
-        if resolution["status"] == "found":
-            return None
-        if resolution["status"] == "ambiguous":
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "Multiple OSI semantic models match this metric request. "
-                    "Specify semantic_model_name or reference a dataset from the intended model."
-                ),
-                result={
-                    "code": "semantic_model_selection_required",
-                    "candidates": [
-                        {
-                            "semantic_model_name": model["semantic_model_name"],
-                            "semantic_model_file": model["semantic_model_file"],
-                        }
-                        for model in resolution.get("candidates") or []
-                    ],
-                    "retry_subagent": "gen_metrics",
-                },
-            )
-        if resolution["status"] == "invalid":
-            parse_errors = resolution.get("parse_errors") or []
-            details = "; ".join(f"{item.get('source_sql_name')}: {item.get('error')}" for item in parse_errors)
-            return FuncToolResult(
-                success=0,
-                error=f"Invalid structured source SQL: {details or resolution.get('reason')}",
-                result={
-                    "code": "semantic_model_source_sql_invalid",
-                    "parse_errors": parse_errors,
-                    "retry_subagent": "gen_metrics",
-                },
-            )
-
-        target_dir = osi_semantic_model_directory(self.agent_config)
-
-        return FuncToolResult(
-            success=0,
-            error=(
-                "OSI semantic model is required before metric generation. "
-                "Run gen_semantic_model first, wait for it to finish, then retry gen_metrics."
-            ),
-            result={
-                "code": "semantic_model_required",
-                "required_subagent": "gen_semantic_model",
-                "semantic_model_directory": str(target_dir) if target_dir is not None else "",
-                "retry_subagent": "gen_metrics",
-            },
-        )
 
     # ── node creation ─────────────────────────────────────────────────
 
@@ -1284,19 +1200,28 @@ class SubAgentTaskTool:
         to a later task() call.
         """
 
-        def _failure(error_msg: str) -> FuncToolResult:
+        def _failure(error_msg: str, output_payload: Optional[Dict[str, Any]] = None) -> FuncToolResult:
             # Carry session_id under `result` so the parent can resume the
             # partial subagent session. ``result`` is None when no session
             # was created (e.g. errors raised before node construction).
-            result_payload = {"session_id": session_id} if session_id else None
-            return FuncToolResult(success=0, error=error_msg, result=result_payload)
+            result_payload = {
+                key: output_payload[key]
+                for key in ("status", "blocker_code", "skip_reason", "response", "semantic_models", "tokens_used")
+                if output_payload is not None and key in output_payload
+            }
+            if session_id:
+                result_payload["session_id"] = session_id
+            return FuncToolResult(success=0, error=error_msg, result=result_payload or None)
 
         if not output or not isinstance(output, dict):
             return _failure("No result from subagent")
 
         # Check for explicit failure from subagent
         if output.get("success") is False:
-            return _failure(output.get("error") or output.get("response") or output.get("content", "Subagent failed"))
+            return _failure(
+                output.get("error") or output.get("response") or output.get("content", "Subagent failed"),
+                output,
+            )
 
         response = output.get("response", "")
         tokens = output.get("tokens_used", 0)
@@ -1334,13 +1259,15 @@ class SubAgentTaskTool:
         # Semantic model result: has 'semantic_models' key
         semantic_models = output.get("semantic_models")
         if semantic_models is not None:
-            return _wrap(
-                {
-                    "response": response,
-                    "semantic_models": semantic_models,
-                    "tokens_used": tokens,
-                }
+            result_dict = {
+                "response": response,
+                "semantic_models": semantic_models,
+                "tokens_used": tokens,
+            }
+            result_dict.update(
+                {key: output[key] for key in ("status", "blocker_code", "skip_reason") if output.get(key) is not None}
             )
+            return _wrap(result_dict)
 
         # SQL summary result: has 'sql_summary_file' key
         sql_summary_file = output.get("sql_summary_file")

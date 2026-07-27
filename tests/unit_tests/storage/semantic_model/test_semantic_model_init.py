@@ -1588,3 +1588,74 @@ class TestInitSuccessStorySemanticModelAsyncOverwriteTruncate:
         assert success is True
         fake_rag_instance.truncate.assert_not_called()
         profile_rag_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_osi_incremental_keeps_existing_coverage_fast_path(self, tmp_path):
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT COUNT(*) FROM orders,Q?\n")
+        mock_config = MagicMock()
+        mock_config.resolve_semantic_adapter.return_value = "osi"
+
+        with (
+            patch(
+                "datus.storage.semantic_model.auto_create.extract_tables_from_sql_list",
+                return_value=["orders"],
+            ),
+            patch(
+                "datus.storage.semantic_model.auto_create.find_missing_semantic_models",
+                return_value=[],
+            ),
+            patch("datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode") as semantic_node,
+        ):
+            success, error = await init_success_story_semantic_model_async(
+                mock_config,
+                str(csv_path),
+                build_mode="incremental",
+            )
+
+        assert success is True
+        assert error == ""
+        semantic_node.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_osi_incremental_runs_agent_when_exact_target_is_required(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
+
+        csv_path = tmp_path / "story.csv"
+        csv_path.write_text("sql,question\nSELECT COUNT(*) FROM orders,Q?\n")
+        mock_config = MagicMock()
+        mock_config.resolve_semantic_adapter.return_value = "osi"
+        mock_config.current_db_config.return_value = SimpleNamespace(catalog="", database="db", schema="")
+
+        class MockSemanticNode:
+            def __init__(self, *args, **kwargs):
+                self.input = None
+
+            async def execute_stream(self, action_history_manager):
+                yield SimpleNamespace(
+                    status=ActionStatus.SUCCESS,
+                    action_type="gen_semantic_model_response",
+                    output={"semantic_models": ["subject/semantic_models/warehouse/orders.yml"]},
+                    messages="ok",
+                )
+
+        monkeypatch.setattr(
+            "datus.storage.semantic_model.semantic_model_init.GenSemanticModelAgenticNode",
+            MockSemanticNode,
+        )
+        with patch("datus.storage.semantic_model.auto_create.find_missing_semantic_models") as coverage_probe:
+            success, error = await init_success_story_semantic_model_async(
+                mock_config,
+                str(csv_path),
+                build_mode="incremental",
+                require_exact_osi_target=True,
+            )
+
+        assert success is True
+        assert error == ""
+        coverage_probe.assert_not_called()
