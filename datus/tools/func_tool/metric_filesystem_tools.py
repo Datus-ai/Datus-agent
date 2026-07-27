@@ -8,7 +8,7 @@ import stat
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -21,6 +21,9 @@ from datus.tools.func_tool.fs_path_policy import PathZone, ResolvedPath
 _OSI_METRIC_PATH_LOCKS: Dict[str, threading.RLock] = {}
 _OSI_METRIC_PATH_LOCKS_GUARD = threading.Lock()
 
+if TYPE_CHECKING:
+    from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
+
 
 class MetricFilesystemFuncTool(FilesystemFuncTool):
     """Filesystem tool variant for MetricFlow YAML generation.
@@ -31,9 +34,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
     MetricFlow YAML files are merged structurally.
     """
 
-    def __init__(self, *args, authoring_format: str = "metricflow", **kwargs):
+    def __init__(
+        self,
+        *args,
+        authoring_format: str = "metricflow",
+        osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.authoring_format = (authoring_format or "metricflow").strip().lower()
+        self.osi_target_state = osi_target_state
 
     def _is_metricflow_authoring(self) -> bool:
         return self.authoring_format == "metricflow"
@@ -70,9 +80,10 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         """Create or update metrics in an existing OSI semantic-model file.
 
         The input is a JSON array of OSI metric objects. Existing metrics are
-        replaced by ``name`` and new metrics are appended. The tool reads the
-        live document and only assigns its ``metrics`` collection, so datasets,
-        fields, relationships, and model metadata remain unchanged.
+        replaced by ``name`` and new metrics are appended. Identical metrics
+        leave the file bytes unchanged but still enter this request's exact
+        publish scope. The tool only owns the ``metrics`` collection, so
+        datasets, fields, relationships, and model metadata remain unchanged.
 
         Args:
             path: Existing OSI semantic-model YAML file under the project workspace.
@@ -102,7 +113,31 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             incoming_by_name[name] = metric
 
         target_path = resolved.resolved
+        if not self._is_metricflow_authoring():
+            if self.osi_target_state is None:
+                return FuncToolResult(
+                    success=0,
+                    error="Bind an existing OSI semantic model before authoring metrics.",
+                    result={"code": "semantic_model_required"},
+                )
+            try:
+                self.osi_target_state.require_bound_path(target_path)
+            except ValueError as exc:
+                return FuncToolResult(
+                    success=0,
+                    error=str(exc),
+                    result={"code": "semantic_model_target_invalid"},
+                )
         with self._osi_metric_path_lock(target_path):
+            if self.osi_target_state is not None:
+                try:
+                    self.osi_target_state.require_current_revision(target_path)
+                except ValueError as exc:
+                    return FuncToolResult(
+                        success=0,
+                        error=str(exc),
+                        result={"code": "semantic_model_target_invalid"},
+                    )
             if not target_path.exists() or not target_path.is_file():
                 return FuncToolResult(
                     success=0,
@@ -114,8 +149,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 )
 
             try:
-                document = yaml.safe_load(target_path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError) as exc:
+                original_content = target_path.read_bytes()
+                document = yaml.safe_load(original_content.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
                 return FuncToolResult(success=0, error=f"Cannot load OSI semantic model {resolved.display}: {exc}")
 
             if not isinstance(document, dict):
@@ -139,25 +175,41 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
             created: List[str] = []
             updated: List[str] = []
+            unchanged: List[str] = []
             for name, metric in incoming_by_name.items():
                 if name in metric_indexes:
-                    existing_metrics[metric_indexes[name]] = metric
-                    updated.append(name)
+                    index = metric_indexes[name]
+                    if existing_metrics[index] == metric:
+                        unchanged.append(name)
+                    else:
+                        existing_metrics[index] = metric
+                        updated.append(name)
                 else:
                     metric_indexes[name] = len(existing_metrics)
                     existing_metrics.append(metric)
                     created.append(name)
 
-            model["metrics"] = existing_metrics
-            validation_error = self._validate_osi_document(document)
-            if validation_error:
-                return FuncToolResult(success=0, error=f"Invalid OSI metric update: {validation_error}")
+            if created or updated:
+                model["metrics"] = existing_metrics
+                validation_error = self._validate_osi_document(document)
+                if validation_error:
+                    return FuncToolResult(success=0, error=f"Invalid OSI metric update: {validation_error}")
 
-            serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
-            try:
-                self._atomic_write_text(target_path, serialized)
-            except OSError as exc:
-                return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
+                serialized = yaml.safe_dump(document, allow_unicode=True, sort_keys=False)
+                try:
+                    self._atomic_write_text(target_path, serialized)
+                except OSError as exc:
+                    return FuncToolResult(success=0, error=f"Cannot update {resolved.display}: {exc}")
+                self._notify_mutation()
+                serialized_content = serialized.encode("utf-8")
+            else:
+                serialized_content = original_content
+            if self.osi_target_state is not None:
+                self.osi_target_state.record_metric_write(
+                    target_path,
+                    serialized_content,
+                    list(incoming_by_name),
+                )
 
         return FuncToolResult(
             result={
@@ -165,6 +217,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 "semantic_model_file": resolved.display,
                 "created": created,
                 "updated": updated,
+                "unchanged": unchanged,
             }
         )
 
@@ -176,17 +229,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
 
     @staticmethod
     def _validate_osi_document(document: Dict[str, Any]) -> Optional[str]:
-        try:
-            from datus_semantic_osi.errors import OSIValidationError
-            from datus_semantic_osi.profile import validate_osi_core_schema
-        except ImportError as exc:
-            return f"OSI schema validator is unavailable: {exc}"
+        from datus.agent.node.semantic_authoring import validate_osi_core_document
 
-        try:
-            validate_osi_core_schema(document)
-        except OSIValidationError as exc:
-            return str(exc)
-        return None
+        return validate_osi_core_document(document)
 
     @staticmethod
     def _atomic_write_text(target_path: Path, content: str) -> None:

@@ -23,7 +23,7 @@ CRITICAL MODEL RULE — **build the model once, then only upsert metrics**:
 - Never use general filesystem writes to create or modify datasets, fields, or relationships. If the target model is missing, stop and report that `gen_semantic_model` must run first.
 - A given logical dataset has one canonical definition shared by all metrics. Reuse that dataset by name in each metric's DATUS `dataset` hint.
 
-The OSI expression dialect is shown in the system prompt Workspace section. Resolve the existing target semantic model with `resolve_osi_semantic_model_target(..., require_existing=true)` after identifying the core fact table; use the returned file exactly (`<osi_dialect>` below stands for that dialect).
+The OSI expression dialect is shown in the system prompt Workspace section. Bind one existing target with `bind_osi_semantic_model_target` before writing metrics. A path or model name supplied in the request is only a selection hint; if it is absent or does not bind, call `list_existing_osi_semantic_models` and compare the live candidates using SQL tables, dataset metadata, and business meaning (`<osi_dialect>` below stands for the active dialect).
 
 ## What you produce
 
@@ -101,22 +101,23 @@ Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `input
 
 ## Hard skip gate
 
-Before writing any YAML, classify the source SQL:
+Before binding a target or writing YAML, classify the source SQL:
 
 - If the SQL has no aggregate output (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, ratio, rolling/cumulative aggregate, etc.) and primarily returns row-level fields (`SELECT DISTINCT ac_name, ac_code, ...`, list/detail/ranking), then it is not a metric request.
 - For non-metric SQL, do not invent convenience metrics such as `*_count`, `*_avg_duration`, `*_max_sr`, or `*_min_sr` just because the table contains those columns.
-- For non-metric SQL, do not call `upsert_osi_metrics`, `validate_semantic`, `query_metrics`, or `end_metric_generation`. Report `status: "skipped"` with `metric_file: null` in the final JSON.
+- For non-metric SQL, do not bind a target and do not call `upsert_osi_metrics`, `validate_semantic`, `query_metrics`, or `end_metric_generation`. Report `status: "skipped"`, `skip_reason: "not_a_metric"`, and `metric_file: null` in the final JSON.
 - For TopN per group / ranking-window SQL (`ROW_NUMBER`, `RANK`, `DENSE_RANK`) do the same: skip metric generation. A derived dataset/view may be a future modeling task, but it is outside this `gen_metrics` run.
 
 ## Workflow notes
 
-- FIRST, classify fact and dimension tables and resolve the existing model target. An explicit semantic model name wins; otherwise the resolver reuses the model containing the core fact table. Dimension tables do not affect the model name. Load the returned file to learn dataset names, fields, time fields, and relationships. If the file is missing or ambiguous, stop and report the prerequisite. Call `list_metrics()` to see metrics that already exist.
+- For requests classified as metrics, bind an existing model target before object checks or writes. Try an exact YAML path or model name from the request, then fall back to the complete live inventory. Compare candidates using physical SQL tables, dataset names/sources/descriptions, and business meaning; read plausible files when necessary. Bind only one unique target. If several remain plausible, ask the user when possible or return the selection-required blocker. Load the bound file to learn dataset names, fields, time fields, relationships, and existing metrics. Call `list_metrics()` for the published metric catalog as supplementary context.
 - For provided SQL/history, call `analyze_metric_candidates_from_history` before writing files. Use `direct_metric_candidates` for base metrics and fixed `period_over_period` final metrics; use `derived_metric_candidates` only for second-stage OSI metrics that explicitly depend on published input metrics. If it returns `metric_generation_skips`, skip those SQLs instead of writing metric YAML.
 - Candidate-plan compliance: every candidate in `direct_metric_candidates` and `derived_metric_candidates` (including cumulative, rolling-window, and period_over_period candidates) MUST end this run either published via `end_metric_generation` or listed in your final `output` with a concrete blocker such as a validation failure. "Covered by an existing base metric" is never a valid blocker for a cumulative/window/period_over_period candidate.
-- Reference, reconcile, reuse: point each metric's DATUS `dataset` hint at an existing dataset. If a metric with the same meaning and correct definition already exists (`check_semantic_object_exists(name, kind='metric')`), reuse/skip it. If the user requests an update or the stored definition is incorrect, replace it by name with `upsert_osi_metrics`. "Same meaning" requires the same aggregation AND the same window/offset semantics: a base aggregate never covers its cumulative/rolling/period-over-period variants, so `running_x`/`moving_x`/`previous_x` candidates must still be published when only `x` exists. For a derived metric, make sure its input metrics already exist.
+- Reference and reconcile: point each metric's DATUS `dataset` hint at an existing dataset. "Same meaning" requires the same aggregation AND the same window/offset semantics: a base aggregate never covers its cumulative/rolling/period-over-period variants, so `running_x`/`moving_x`/`previous_x` candidates must still be published when only `x` exists. For a derived metric, make sure its input metrics already exist.
+- Every requested metric candidate must pass through `upsert_osi_metrics`, validation, dry-run, and publish even when the bound YAML already contains the correct definition. Reuse that exact metric object unchanged; the upsert is a byte-preserving no-op but records the exact publish scope. This makes retries repair a prior run that wrote YAML but stopped before KB sync. Existing metrics are not a `skipped` outcome.
 - From SQL: find the table (FROM), aggregate expression(s), and business conditions vs query-time ranges. Anchor the metric on the aggregated table's existing dataset; encode metric-specific conditions with CASE inside the metric expression.
 - When a required business input is missing or ambiguous, ASK for the business semantics; do not guess.
 - Call `upsert_osi_metrics(path="<target model file>", metrics_json="<JSON array of complete OSI metric objects>")` once per coherent metric batch. This tool preserves datasets and relationships, appends new metrics, and replaces existing metrics by name.
-- Call `validate_semantic(scope="all")` after upserting OSI metrics and fix metric errors with another `upsert_osi_metrics` call until validation passes.
+- Call `validate_semantic(semantic_model_name="<bound semantic model name>")` after upserting OSI metrics and fix metric errors with another `upsert_osi_metrics` call until the adapter's complete default validation profile passes. Do not pass a custom `checks` subset.
 - Call `query_metrics(metrics=[...], dry_run=True)` for every generated metric name before publishing.
 - After validation and dry-run pass, call `end_metric_generation(metric_file="<target model file>", semantic_model_files=[], metric_sqls_json="<dry-run SQL JSON>")`.

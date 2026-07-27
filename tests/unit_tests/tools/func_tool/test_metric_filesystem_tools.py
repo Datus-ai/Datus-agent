@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import hashlib
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +11,9 @@ from unittest.mock import Mock
 import pytest
 import yaml
 
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
 
 def _osi_metric(name, expression):
@@ -19,6 +22,20 @@ def _osi_metric(name, expression):
         "description": f"Definition for {name}",
         "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": expression}]},
     }
+
+
+def _bound_state(target, name="sales"):
+    state = OsiSemanticModelTargetState()
+    state.select(
+        {
+            "semantic_model_name": name,
+            "semantic_model_file": f"subject/semantic_models/warehouse/{target.name}",
+            "absolute_path": str(target.resolve()),
+            "artifact_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        },
+        mode="bound",
+    )
+    return state
 
 
 @pytest.fixture
@@ -82,6 +99,7 @@ semantic_model:
             root_path=str(project),
             current_node="gen_metrics",
             authoring_format="osi",
+            osi_target_state=_bound_state(target),
         )
 
         result = tool.upsert_osi_metrics(
@@ -111,6 +129,88 @@ semantic_model:
         assert after_model["metrics"][0]["description"] == "Corrected definition"
         osi_schema_validator.assert_called_once()
 
+    def test_upsert_invalidates_prior_validation_dry_run_and_sync_evidence(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "version: 0.2.0.dev0\n"
+            "semantic_model:\n"
+            "  - name: sales\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: orders\n",
+            encoding="utf-8",
+        )
+        evidence = GenerationEvidence(
+            validation_passed=True,
+            metric_dry_run_passed=True,
+            metric_dry_run_metrics={"revenue"},
+            semantic_kb_sync_passed=True,
+            metric_kb_sync_passed=True,
+        )
+        evidence.record_semantic_artifact_validation("sales", target)
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=_bound_state(target),
+            mutation_callback=evidence.invalidate_artifact_evidence,
+        )
+
+        result = tool.upsert_osi_metrics(
+            str(target.relative_to(tmp_path)),
+            json.dumps([_osi_metric("revenue", "SUM(amount)")]),
+        )
+
+        assert result.success == 1
+        assert evidence.validation_passed is False
+        assert evidence.metric_dry_run_passed is False
+        assert evidence.metric_dry_run_metrics == set()
+        assert evidence.validated_semantic_artifacts == {}
+        assert evidence.kb_sync_passed is False
+
+    def test_identical_upsert_preserves_bytes_and_registers_publish_scope(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        metric = _osi_metric("revenue", "SUM(amount)")
+        target.write_text(
+            yaml.safe_dump(
+                {
+                    "version": "0.2.0.dev0",
+                    "semantic_model": [
+                        {
+                            "name": "sales",
+                            "datasets": [{"name": "orders", "source": "orders"}],
+                            "metrics": [metric],
+                        }
+                    ],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        original_content = target.read_bytes()
+        mutation_callback = Mock()
+        state = _bound_state(target)
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=state,
+            mutation_callback=mutation_callback,
+        )
+
+        result = tool.upsert_osi_metrics(str(target.relative_to(tmp_path)), json.dumps([metric]))
+
+        assert result.success == 1
+        assert result.result["created"] == []
+        assert result.result["updated"] == []
+        assert result.result["unchanged"] == ["revenue"]
+        assert target.read_bytes() == original_content
+        assert state.authored_metric_names == ["revenue"]
+        mutation_callback.assert_not_called()
+        osi_schema_validator.assert_not_called()
+
     @pytest.mark.parametrize("invalid_metrics", [{}, ""])
     def test_upsert_osi_metrics_rejects_present_invalid_metrics_collection(self, tmp_path, invalid_metrics):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
@@ -122,7 +222,12 @@ semantic_model:
         document["semantic_model"][0]["metrics"] = invalid_metrics
         original = yaml.safe_dump(document, sort_keys=False)
         target.write_text(original, encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi")
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=_bound_state(target),
+        )
 
         result = tool.upsert_osi_metrics(
             str(target.relative_to(tmp_path)), json.dumps([_osi_metric("revenue", "SUM(amount)")])
@@ -143,7 +248,12 @@ semantic_model:
         source: orders
 """
         target.write_text(original, encoding="utf-8")
-        tool = MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi")
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=_bound_state(target),
+        )
         osi_schema_validator.return_value = "metric expression is required"
 
         result = tool.upsert_osi_metrics(
@@ -168,9 +278,20 @@ semantic_model:
 """,
             encoding="utf-8",
         )
+        target_state = _bound_state(target)
         tools = [
-            MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi"),
-            MetricFilesystemFuncTool(root_path=str(tmp_path), current_node="gen_metrics", authoring_format="osi"),
+            MetricFilesystemFuncTool(
+                root_path=str(tmp_path),
+                current_node="gen_metrics",
+                authoring_format="osi",
+                osi_target_state=target_state,
+            ),
+            MetricFilesystemFuncTool(
+                root_path=str(tmp_path),
+                current_node="gen_metrics",
+                authoring_format="osi",
+                osi_target_state=target_state,
+            ),
         ]
         relative_path = str(target.relative_to(tmp_path))
         shared_lock = tools[0]._osi_metric_path_lock(target)
@@ -209,6 +330,51 @@ semantic_model:
 
         assert result.success == 0
         assert result.result["code"] == "semantic_model_required"
+
+    def test_upsert_osi_metrics_rejects_path_other_than_bound_target(self, tmp_path):
+        model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
+        selected = model_dir / "selected.yml"
+        other = model_dir / "other.yml"
+        for path, name in ((selected, "selected"), (other, "other")):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"semantic_model:\n  - name: {name}\n    datasets: []\n", encoding="utf-8")
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=_bound_state(selected, "selected"),
+        )
+
+        result = tool.upsert_osi_metrics(
+            str(other.relative_to(tmp_path)),
+            json.dumps([_osi_metric("revenue", "SUM(amount)")]),
+        )
+
+        assert not result.success
+        assert result.result["code"] == "semantic_model_target_invalid"
+        assert "bound to" in result.error
+
+    def test_upsert_osi_metrics_rejects_target_changed_since_bind(self, tmp_path):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text("semantic_model:\n  - name: sales\n    datasets: []\n", encoding="utf-8")
+        state = _bound_state(target)
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=state,
+        )
+        target.write_text(target.read_text(encoding="utf-8") + "# external edit\n", encoding="utf-8")
+
+        result = tool.upsert_osi_metrics(
+            str(target.relative_to(tmp_path)),
+            json.dumps([_osi_metric("revenue", "SUM(amount)")]),
+        )
+
+        assert not result.success
+        assert result.result["code"] == "semantic_model_target_invalid"
+        assert "changed after selection" in result.error
 
     def test_write_file_merges_existing_semantic_model(self, tmp_path):
         project = tmp_path / "project"

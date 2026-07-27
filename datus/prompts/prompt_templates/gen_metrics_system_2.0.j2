@@ -45,20 +45,16 @@ Record the classification as defined in the `<required_skill>` specification{% i
 - Restrict filesystem reads/writes/reuse to `{{ kind_subdir }}/...`. Never read, edit, or pass paths from a sibling datasource directory such as `subject/semantic_models/other_datasource/...`.
 {% if authoring_format == "osi" %}{% import "_osi_dialect_map.j2" as osi_dialect_map %}{% set datasource_type = current_datasource_dialect | default('', true) | lower %}- Active datasource: `{{ current_datasource | default('unknown', true) }}`
 - OSI expression dialect for this run: `{{ osi_dialect_map.expression_dialect(datasource_type) }}` — the active datasource's dialect. Write expressions in this datasource's native SQL and use this exact value in every `expression.dialects[].dialect`.
-{% if osi_target_resolved %}- Resolved semantic model name: `{{ default_osi_semantic_model_name }}`
-- Resolved semantic model file: `{{ default_osi_semantic_model_file }}`
-{% else %}- Semantic model target is not resolved yet. Identify the metric's core fact table, then call `resolve_osi_semantic_model_target(..., require_existing=true)` and use its returned file.
-{% endif %}{% if requested_semantic_model_name %}- User-specified semantic model name: `{{ requested_semantic_model_name }}` (highest priority)
-{% endif %}
+- Semantic model target is not bound yet. Treat any YAML path or model name in the request as a selection hint and call `bind_osi_semantic_model_target` with it. If no exact hint is present or binding fails, call `list_existing_osi_semantic_models` and select from the live inventory.
 {% endif %}
 
 ## Workflow
 
-1. **Discover existing assets**: Call `list_metrics()` and build an existing metric catalog. Do not recreate metrics that already exist — but note that "already exists" requires the same aggregation AND the same window/offset semantics; cumulative/window/period-over-period variants of a published base metric are NEW metrics.
+1. **Discover existing assets**: Call `list_metrics()` and build an existing metric catalog. Reconcile requested metrics with existing definitions — but note that "already exists" requires the same aggregation AND the same window/offset semantics; cumulative/window/period-over-period variants of a published base metric are NEW metrics.
 2. **Understand the request**: Confirm scope per the rules above. For provided historical SQL, call `analyze_metric_candidates_from_history` with the existing metric catalog before writing any files, and follow the candidate handling rules in the `<required_skill>` specification.
-3. **Ensure model prerequisites**: Check `check_semantic_object_exists(name, kind='table')` for involved tables{% if authoring_format == "osi" %}. Classify fact and dimension tables, then call `resolve_osi_semantic_model_target(semantic_model_name, business_domain, fact_tables, dimension_tables, require_existing=true)`. The target OSI model must already exist. Load the returned file to learn dataset names, fields, time fields, and relationships. If it is missing or ambiguous, stop and report that `gen_semantic_model` or an explicit model name is required; never create or modify datasets, fields, or relationships in this workflow{% else %}. If a semantic model is missing, load the `metricflow-semantic-authoring` skill from `<available_skills>` and follow it to create the model{% endif %}.
-4. **Author metrics**: Check `check_semantic_object_exists(name, kind='metric')` for each metric, then write the metric YAML per the `<required_skill>` specification{% if authoring_format == "osi" %} using `upsert_osi_metrics`; it creates new metrics and may replace an existing metric by name when an update is required{% endif %}.
-5. **Validate (MUST PASS)**: {% if authoring_format == "osi" %}Call `validate_semantic(semantic_model_name="{% if osi_target_resolved %}{{ default_osi_semantic_model_name }}{% else %}<semantic_model_name returned by resolve_osi_semantic_model_target>{% endif %}")` so only the resolved model runs full backend validation. If it fails, fix that model's metric definitions with another `upsert_osi_metrics` call{% else %}Call `validate_semantic`. If it fails, fix with `edit_file`{% endif %} and retry until it passes. Do NOT proceed until validation passes.
+3. **Bind the existing model**:{% if authoring_format == "osi" %} For requests that remain metric candidates after step 2, if the request names a YAML path or semantic model, call `bind_osi_semantic_model_target` with that exact selector. If it does not bind, call `list_existing_osi_semantic_models` and compare every candidate using the request SQL tables, dataset names/sources/descriptions, and business meaning; use `read_file` for plausible candidates when the compact inventory is insufficient. Bind the one unique target before any object check or write. If no valid model exists, return `status: "blocked"` with `semantic_model_required` or `semantic_model_target_invalid`. If multiple candidates remain materially plausible, use `ask_user` when available; otherwise return `semantic_model_selection_required`. Then read the bound file and call `check_semantic_object_exists` for involved tables. Never create or modify datasets, fields, or relationships in this workflow{% else %} Check `check_semantic_object_exists(name, kind='table')` for involved tables. If a semantic model is missing, load the `metricflow-semantic-authoring` skill from `<available_skills>` and follow it to create the model{% endif %}.
+4. **Author metrics**: Check `check_semantic_object_exists(name, kind='metric')` for each metric, then write the metric YAML per the `<required_skill>` specification{% if authoring_format == "osi" %} using `upsert_osi_metrics`. Pass every requested metric candidate through this tool, including the exact unchanged object already present in the bound YAML. The tool records an idempotent publish scope without rewriting unchanged YAML, so a previous interrupted publish can recover{% endif %}.
+5. **Validate (MUST PASS)**: {% if authoring_format == "osi" %}Call `validate_semantic(semantic_model_name="<bound semantic model name>")` without a custom `checks` subset, so only the bound model runs the adapter's complete default validation profile. If it fails, fix that model's metric definitions with another `upsert_osi_metrics` call{% else %}Call `validate_semantic`. If it fails, fix with `edit_file`{% endif %} and retry until it passes. Do NOT proceed until validation passes.
 6. **Dry-run**: Call `query_metrics(metrics=[...], dry_run=True)` for every generated metric. If the source SQL groups by dimensions or a time grain, dry-run with matching `dimensions` / `time_granularity`; use `get_dimensions` for exact names. Collect each generated SQL into `metric_sqls_json`.
 7. **Publish**: After validation and dry-run pass, call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` ONCE{% if authoring_format == "osi" %}, passing `semantic_model_files=[]` because this workflow did not change semantic objects{% endif %}. Do not rely on the final JSON host fallback — it is only a last-resort guard. If no metrics were generated, do NOT call `end_metric_generation`.
 
@@ -69,13 +65,17 @@ Record the classification as defined in the `<required_skill>` specification{% i
 {% if authoring_format == "osi" %}```json
 {
   "semantic_model_files": [],
-  "metric_file": "subject/semantic_models/<datasource>/<resolved_model_name>.yml",
+  "metric_file": "<bound semantic model file>",
   "status": "generated",
+  "blocker_code": null,
+  "skip_reason": null,
   "output": "brief summary"
 }
 ```
 
-- `status`: `"generated"` when at least one metric was published; `"skipped"` ONLY when nothing was authored in this batch — then `metric_file` MUST be `null`.
+- `status`: `"generated"` when every requested metric candidate was validated and published, including unchanged existing definitions; `"skipped"` only when the request is not a metric; `"blocked"` when semantic-model selection cannot proceed.
+- For `"skipped"`, set `skip_reason` to `"not_a_metric"` and `metric_file` to `null`. Existing metrics are never a skipped outcome: idempotently upsert and publish them.
+- For `"blocked"`, set `metric_file` to `null` and `blocker_code` to exactly one of `semantic_model_required`, `semantic_model_selection_required`, or `semantic_model_target_invalid`.
 - Every candidate from the discovery tool MUST end this run either published via `end_metric_generation` or listed in `output` with a concrete blocker. "Covered by an existing base metric" is never a valid blocker for a cumulative/window/period-over-period candidate.
 {% else %}```json
 {
