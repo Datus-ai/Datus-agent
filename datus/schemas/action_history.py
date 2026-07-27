@@ -40,6 +40,7 @@ class ActionStatus(str, Enum):
 
 
 SUBAGENT_COMPLETE_ACTION_TYPE = "subagent_complete"
+INTERRUPTED_ACTION_TYPE = "interrupted"
 
 
 class ActionHistory(BaseModel):
@@ -124,6 +125,21 @@ class ActionHistoryManager:
         """Clear all actions"""
         self.actions.clear()
         self.current_action_id = None
+
+    def checkpoint(self) -> int:
+        """Return a marker that can be used to roll back later additions."""
+        return len(self.actions)
+
+    def rollback_to(self, checkpoint: int) -> None:
+        """Discard actions appended after *checkpoint*.
+
+        CLI cancellation uses this when ESC arrives before the model has
+        produced a response, making the unsubmitted-looking turn disappear
+        from the same in-memory history that future turns receive.
+        """
+        checkpoint = max(0, min(int(checkpoint), len(self.actions)))
+        del self.actions[checkpoint:]
+        self.current_action_id = self.actions[-1].action_id if self.actions else None
 
     def find_action_by_id(self, action_id: str) -> Optional[ActionHistory]:
         """Find an action by its action_id"""

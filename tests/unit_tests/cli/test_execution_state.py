@@ -81,6 +81,47 @@ class TestInterruptController:
             ctrl.reset()
             assert ctrl.is_interrupted is False
 
+    def test_interrupt_invokes_registered_cancel_callback(self):
+        ctrl = InterruptController()
+        calls = []
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+        ctrl.interrupt()
+
+        assert calls == ["cancel"]
+        ctrl.unregister_cancel_callback(token)
+
+    def test_repeated_interrupt_does_not_recancel_active_operation(self):
+        ctrl = InterruptController()
+        calls = []
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+        ctrl.interrupt()
+        ctrl.interrupt()
+
+        assert calls == ["cancel"]
+        ctrl.unregister_cancel_callback(token)
+
+    def test_late_cancel_callback_runs_immediately(self):
+        ctrl = InterruptController()
+        calls = []
+        ctrl.interrupt()
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+
+        assert calls == ["cancel"]
+        ctrl.unregister_cancel_callback(token)
+
+    def test_unregistered_cancel_callback_does_not_run(self):
+        ctrl = InterruptController()
+        calls = []
+
+        token = ctrl.register_cancel_callback(lambda: calls.append("cancel"))
+        ctrl.unregister_cancel_callback(token)
+        ctrl.interrupt()
+
+        assert calls == []
+
 
 # ===========================================================================
 # PendingInteraction Tests

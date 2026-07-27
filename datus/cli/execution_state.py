@@ -11,7 +11,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Dict, List, Optional
 
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.loggings import get_logger
@@ -33,10 +33,55 @@ class InterruptController:
 
     def __init__(self):
         self._interrupted = threading.Event()
+        self._callback_lock = threading.Lock()
+        self._cancel_callbacks: Dict[str, Callable[[], None]] = {}
 
     def interrupt(self):
-        """Signal that execution should be interrupted."""
-        self._interrupted.set()
+        """Signal interruption and wake any registered async operation.
+
+        The event preserves the cooperative polling API used by tools and
+        model adapters.  Cancellation callbacks provide the wake-up path for
+        operations currently parked in an ``await`` (for example, waiting for
+        the next LLM stream event), so interruption does not depend on the
+        upstream API returning first.
+        """
+        with self._callback_lock:
+            if self._interrupted.is_set():
+                return
+            self._interrupted.set()
+            callbacks = tuple(self._cancel_callbacks.values())
+
+        # Call outside the lock: callbacks may schedule work on another event
+        # loop and must never block registration/unregistration.
+        for callback in callbacks:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Interrupt cancellation callback failed")
+
+    def register_cancel_callback(self, callback: Callable[[], None]) -> str:
+        """Register a wake-up callback for the active async operation.
+
+        If interruption won the race before registration, invoke the callback
+        immediately.  The returned token must be passed to
+        :meth:`unregister_cancel_callback` when the operation finishes.
+        """
+        token = uuid.uuid4().hex
+        with self._callback_lock:
+            self._cancel_callbacks[token] = callback
+            interrupted = self._interrupted.is_set()
+
+        if interrupted:
+            try:
+                callback()
+            except Exception:
+                logger.exception("Late interrupt cancellation callback failed")
+        return token
+
+    def unregister_cancel_callback(self, token: str) -> None:
+        """Remove a previously registered cancellation callback."""
+        with self._callback_lock:
+            self._cancel_callbacks.pop(token, None)
 
     @property
     def is_interrupted(self) -> bool:
@@ -50,7 +95,8 @@ class InterruptController:
 
     def reset(self):
         """Clear the interrupt signal for a new execution cycle."""
-        self._interrupted.clear()
+        with self._callback_lock:
+            self._interrupted.clear()
 
 
 class PendingInputQueue:

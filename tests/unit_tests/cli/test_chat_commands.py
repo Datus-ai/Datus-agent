@@ -38,6 +38,7 @@ from rich.console import Console
 
 from datus.cli.chat_commands import ChatCommands, _is_model_config_error
 from datus.cli.cli_context import CliContext
+from datus.cli.execution_state import ExecutionInterrupted, InterruptController, PendingInputQueue
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 
 # ===========================================================================
@@ -83,7 +84,7 @@ class MinimalCLI:
         streaming turn raises ``AttributeError``.
         """
 
-    def run_on_bg_loop(self, coro):
+    def run_on_bg_loop(self, coro, **_kwargs):
         """Simple synchronous stand-in for ``DatusCLI.run_on_bg_loop``.
 
         The real implementation routes through a persistent background loop to
@@ -616,6 +617,11 @@ class TestExtractReportFromJson:
         cmds = _make_chat_commands(real_agent_config)
         result = cmds._extract_report_from_json("")
         assert result is None
+
+    def test_dict_input_returns_none(self, real_agent_config, mock_llm_create):
+        """Intermediate tool output must never be parsed as final report text."""
+        cmds = _make_chat_commands(real_agent_config)
+        assert cmds._extract_report_from_json({"response": "partial"}) is None
 
     def test_valid_json_with_report_field(self, real_agent_config, mock_llm_create):
         """Valid JSON with 'report' field extracts the report content."""
@@ -3476,7 +3482,7 @@ class MinimalCLIExtended:
     def prompt_input(self, message="", multiline=False, default="", **kw):
         return default
 
-    def run_on_bg_loop(self, coro):
+    def run_on_bg_loop(self, coro, **_kwargs):
         import asyncio
 
         return asyncio.run(coro)
@@ -3495,6 +3501,171 @@ def cli(real_agent_config):
 @pytest.fixture
 def chat_cmd(cli):
     return ChatCommands(cli)
+
+
+def test_rollback_unanswered_turn_cleans_all_in_memory_and_output_state(chat_cmd):
+    kept = ActionHistory.create_action(
+        role=ActionRole.ASSISTANT,
+        action_type="response",
+        messages="kept",
+        input_data={},
+    )
+    cancelled = ActionHistory.create_action(
+        role=ActionRole.USER,
+        action_type="chat_request",
+        messages="cancelled",
+        input_data={},
+    )
+    chat_cmd.cli.actions.add_action(kept)
+    action_checkpoint = chat_cmd.cli.actions.checkpoint()
+    chat_cmd.cli.actions.add_action(cancelled)
+
+    node = MagicMock()
+    node.session_id = "chat_session_cancelled"
+    node.actions = [kept, cancelled]
+    node.running_turn_usage = object()
+    session_manager = MagicMock()
+    output_buffer = MagicMock()
+    checkpoint = object()
+
+    incremental = [cancelled]
+    chat_cmd._rollback_unanswered_turn(
+        current_node=node,
+        incremental_actions=incremental,
+        action_checkpoint=action_checkpoint,
+        node_action_checkpoint=1,
+        session_manager=session_manager,
+        session_checkpoint=checkpoint,
+        output_buffer=output_buffer,
+        output_checkpoint=checkpoint,
+    )
+
+    assert chat_cmd.cli.actions.get_actions() == [kept]
+    assert node.actions == [kept]
+    assert incremental == []
+    assert node.running_turn_usage is None
+    session_manager.rollback_turn.assert_called_once_with(node.session_id, checkpoint)
+    output_buffer.rollback.assert_called_once_with(checkpoint)
+
+
+def test_interrupted_turn_skips_final_action_render_and_resets_controller(chat_cmd, monkeypatch):
+    class FakeStreamingContext:
+        def __init__(self):
+            self.unanswered_rollback_requested = False
+            self.interrupt_requested = False
+            self.has_streamed_response = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def set_editable_user_message(self, _message):
+            pass
+
+        def set_clear_header_callback(self, _callback):
+            pass
+
+        def set_input_collector(self, _collector):
+            pass
+
+        def set_event_loop(self, _loop):
+            pass
+
+        def mark_model_response_started(self):
+            pass
+
+        def request_interrupted_notice(self):
+            self.interrupt_requested = True
+
+    streaming_ctx = FakeStreamingContext()
+
+    class FakeDisplay:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def display_streaming_actions(self, *_args, **_kwargs):
+            return streaming_ctx
+
+    controller = InterruptController()
+    controller_reset = MagicMock(wraps=controller.reset)
+    controller.reset = controller_reset
+    node = MagicMock()
+    node.session_id = "chat_session_interrupted"
+    node.pending_input_queue = PendingInputQueue()
+    node.interrupt_controller = controller
+    node.actions = []
+    node.db_func_tool = None
+    node.get_node_name.return_value = "chat"
+    node.session_manager.checkpoint_turn.return_value = object()
+
+    intermediate = ActionHistory.create_action(
+        role=ActionRole.TOOL,
+        action_type="partial_tool",
+        messages="partial",
+        input_data={},
+        output_data={"response": {"partial": True}},
+        status=ActionStatus.SUCCESS,
+    )
+
+    async def interrupted_stream(*_args, **_kwargs):
+        yield intermediate
+        streaming_ctx.request_interrupted_notice()
+        raise ExecutionInterrupted("cancelled")
+
+    node.execute_stream_with_interactions = interrupted_stream
+    chat_cmd.current_node = node
+    chat_cmd.cli._use_tui = True
+    chat_cmd.cli._tui_output_buffer = None
+    monkeypatch.setattr(chat_cmd, "_should_create_new_node", lambda _name=None: False)
+    monkeypatch.setattr(chat_cmd, "_is_agent_switch", lambda _name=None: False)
+    monkeypatch.setattr(
+        chat_cmd,
+        "create_node_input",
+        lambda *_args, **_kwargs: (MagicMock(database=""), "chat"),
+    )
+    monkeypatch.setattr("datus.cli.chat_commands.ActionHistoryDisplay", FakeDisplay)
+    render_final = MagicMock()
+    monkeypatch.setattr(chat_cmd, "_render_final_response", render_final)
+
+    chat_cmd._execute_chat("cancel me", interactive=True)
+
+    render_final.assert_not_called()
+    controller_reset.assert_called()
+    assert controller.is_interrupted is False
+    assert chat_cmd.last_actions[0] is intermediate
+    assert chat_cmd.last_actions[-1].action_type == "interrupted"
+    assert chat_cmd.all_turn_actions == [("cancel me", chat_cmd.last_actions)]
+
+
+def test_interrupted_turn_user_row_survives_full_screen_reprint(chat_cmd):
+    """Ctrl+O/sidebar repaint keeps a response-started interrupted turn."""
+    interrupted_action = ActionHistory.create_action(
+        role=ActionRole.ASSISTANT,
+        action_type="response",
+        messages="partial answer before escape",
+        input_data={},
+        output_data={"raw_output": "partial answer before escape"},
+        status=ActionStatus.SUCCESS,
+    )
+    interrupted_marker = ActionHistory.create_action(
+        role=ActionRole.SYSTEM,
+        action_type="interrupted",
+        messages="Interrupted",
+        input_data={},
+        output_data={},
+        status=ActionStatus.SUCCESS,
+    )
+    chat_cmd.all_turn_actions = [("keep this interrupted question", [interrupted_action, interrupted_marker])]
+    chat_cmd.last_actions = [interrupted_action, interrupted_marker]
+
+    chat_cmd._full_screen_reprint(verbose=True)
+
+    output = chat_cmd.console.file.getvalue()
+    assert "keep this interrupted question" in output
+    assert output.count("partial answer before escape") == 1
+    assert "Interrupted" in output
 
 
 # ---------------------------------------------------------------------------

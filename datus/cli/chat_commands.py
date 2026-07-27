@@ -31,7 +31,7 @@ from datus.cli.cli_styles import (
 )
 from datus.cli.execution_state import ExecutionInterrupted, PendingInputQueue, auto_submit_interaction
 from datus.cli.list_selector_app import ListItem, ListSelectorApp
-from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import INTERRUPTED_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
 from datus.schemas.node_models import SQLContext
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import EscapeGuard, interrupt_on_escape
@@ -451,6 +451,7 @@ class ChatCommands:
             self.console.print("[yellow]Please provide a message to chat with the AI.[/]")
             return
 
+        editable_message = message
         try:
             # Manual-execution turns (SQL/bash run from the input bar) carry a
             # marker-encoded payload whose command may legitimately contain
@@ -460,6 +461,12 @@ class ChatCommands:
 
             if is_exec_message(message):
                 at_tables, at_metrics, at_sqls = [], [], []
+                from datus.cli.manual_exec import decode_exec_message
+
+                exec_payload = decode_exec_message(message)
+                if exec_payload is not None:
+                    command = str(exec_payload.get("command", ""))
+                    editable_message = f"!{command}" if exec_payload.get("kind") == "tool" else command
             else:
                 at_tables, at_metrics, at_sqls, at_agent = self.cli.at_completer.parse_at_context(message)
                 # ``@Agent <name>`` is a per-turn routing hint, not a default-agent
@@ -577,6 +584,12 @@ class ChatCommands:
             pending_non_thinking = None
 
             if interactive:
+                action_checkpoint = self.cli.actions.checkpoint()
+                node_action_checkpoint = len(getattr(current_node, "actions", []))
+                session_manager = current_node.session_manager
+                session_checkpoint = session_manager.checkpoint_turn(current_node.session_id)
+                output_checkpoint = None
+                execution_interrupted = False
 
                 async def run_chat_stream():
                     """Run chat stream — INTERACTION actions flow into incremental_actions."""
@@ -589,6 +602,12 @@ class ChatCommands:
                             action_history_manager=self.cli.actions
                         )
                         async for action in action_stream:
+                            if action.role in {
+                                ActionRole.ASSISTANT,
+                                ActionRole.TOOL,
+                                ActionRole.INTERACTION,
+                            } and action.action_type not in {"compact_progress", "compact_summary"}:
+                                streaming_ctx.mark_model_response_started()
                             # Token-usage updates drive the status bar / API
                             # ``usage`` events only; they carry no chat content
                             # and must never render as a transcript line. Sub-agent
@@ -672,6 +691,7 @@ class ChatCommands:
                     interaction_broker=current_node.interaction_broker,
                     streaming_deltas=streaming_deltas,
                 )
+                streaming_ctx.set_editable_user_message(editable_message)
                 # Reprint the CLI banner at the top after Ctrl+O clears the screen.
                 banner_callback = getattr(self.cli, "_print_welcome", None)
                 if banner_callback is not None:
@@ -683,6 +703,7 @@ class ChatCommands:
                 # mid-stream Ctrl+O verbose toggle wipes the viewport for real.
                 tui_output_buffer = getattr(self.cli, "_tui_output_buffer", None)
                 if tui_output_buffer is not None:
+                    output_checkpoint = tui_output_buffer.checkpoint()
                     streaming_ctx.set_clear_screen_callback(tui_output_buffer.clear)
 
                 # In TUI mode the persistent prompt_toolkit Application owns
@@ -706,14 +727,71 @@ class ChatCommands:
                     with esc_cm as esc_guard, streaming_ctx:
                         streaming_ctx.set_input_collector(self._make_input_collector(esc_guard))
                         try:
-                            self.cli.run_on_bg_loop(run_chat_stream())
+                            self.cli.run_on_bg_loop(
+                                run_chat_stream(),
+                                interrupt_controller=current_node.interrupt_controller,
+                            )
                         except KeyboardInterrupt:
+                            execution_interrupted = True
                             current_node.interrupt_controller.interrupt()
                             if current_node.pending_input_queue is not None:
                                 current_node.pending_input_queue.clear()
                             logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                         except ExecutionInterrupted:
+                            execution_interrupted = True
+                            current_node._drop_running_turn_usage_on_exit = True
+                            if current_node.pending_input_queue is not None:
+                                current_node.pending_input_queue.clear()
                             logger.info("ExecutionInterrupted caught, execution stopped gracefully")
+                    # A cooperative controller checkpoint can finish the
+                    # stream normally before Task.cancel is delivered. The
+                    # ESC-time latch, rather than the exception path, is the
+                    # authoritative rollback decision.
+                    rollback_unanswered = bool(getattr(streaming_ctx, "unanswered_rollback_requested", False))
+                    turn_interrupted = execution_interrupted or bool(
+                        getattr(streaming_ctx, "interrupt_requested", False)
+                    )
+                    if rollback_unanswered:
+                        self._rollback_unanswered_turn(
+                            current_node=current_node,
+                            incremental_actions=incremental_actions,
+                            action_checkpoint=action_checkpoint,
+                            node_action_checkpoint=node_action_checkpoint,
+                            session_manager=session_manager,
+                            session_checkpoint=session_checkpoint,
+                            output_buffer=tui_output_buffer,
+                            output_checkpoint=output_checkpoint,
+                        )
+                        current_node.interrupt_controller.reset()
+                        return
+                    if turn_interrupted:
+                        # Partial output (and the Interrupted notice) has
+                        # already been flushed by the streaming context. Do
+                        # not reinterpret the last intermediate/tool action as
+                        # a final response.  The turn is nevertheless durable:
+                        # the node/session layer has already recorded its user
+                        # message and any partial actions.  Keep the same turn
+                        # in the in-memory replay list before returning, or a
+                        # later full-screen repaint (Ctrl+O/sidebar reflow)
+                        # clears the visible user row even though /resume can
+                        # reconstruct it from SQLite.
+                        interrupted_actions = list(incremental_actions)
+                        interrupted_actions.append(
+                            ActionHistory.create_action(
+                                role=ActionRole.SYSTEM,
+                                action_type=INTERRUPTED_ACTION_TYPE,
+                                messages="Interrupted",
+                                input_data={},
+                                output_data={},
+                                status=ActionStatus.SUCCESS,
+                            )
+                        )
+                        self.last_actions = interrupted_actions
+                        self.all_turn_actions.append((message, interrupted_actions))
+                        # Clear the reusable controller before the next Enter
+                        # starts a fresh run.
+                        current_node.interrupt_controller.reset()
+                        return
                     streamed_body = bool(getattr(streaming_ctx, "has_streamed_response", False))
                 finally:
                     self.current_streaming_ctx = None
@@ -803,11 +881,17 @@ class ChatCommands:
                 )
                 with ns_streaming_ctx:
                     try:
-                        self.cli.run_on_bg_loop(run_stream())
+                        self.cli.run_on_bg_loop(
+                            run_stream(),
+                            interrupt_controller=current_node.interrupt_controller,
+                        )
                     except KeyboardInterrupt:
                         current_node.interrupt_controller.interrupt()
                         logger.info("KeyboardInterrupt caught, execution interrupted gracefully")
                     except ExecutionInterrupted:
+                        current_node._drop_running_turn_usage_on_exit = True
+                        if current_node.pending_input_queue is not None:
+                            current_node.pending_input_queue.clear()
                         logger.info("ExecutionInterrupted caught, execution stopped gracefully")
                 streamed_body = bool(getattr(ns_streaming_ctx, "has_streamed_response", False))
 
@@ -880,6 +964,37 @@ class ChatCommands:
             # Drop the in-progress reference so a later sidebar reflow does
             # not replay actions from a turn that has already finished.
             self._current_incremental_actions = None
+
+    def _rollback_unanswered_turn(
+        self,
+        *,
+        current_node,
+        incremental_actions: List[ActionHistory],
+        action_checkpoint: int,
+        node_action_checkpoint: int,
+        session_manager,
+        session_checkpoint,
+        output_buffer,
+        output_checkpoint,
+    ) -> None:
+        """Remove an ESC-cancelled, unanswered turn from every transcript."""
+        try:
+            session_manager.rollback_turn(current_node.session_id, session_checkpoint)
+        except Exception:  # pragma: no cover - rollback remains best-effort on damaged DBs
+            logger.exception("Failed to roll back unanswered SQLite turn")
+
+        self.cli.actions.rollback_to(action_checkpoint)
+        node_actions = getattr(current_node, "actions", None)
+        if isinstance(node_actions, list):
+            del node_actions[node_action_checkpoint:]
+        incremental_actions.clear()
+        current_node.running_turn_usage = None
+        pending_queue = getattr(current_node, "pending_input_queue", None)
+        if pending_queue is not None:
+            pending_queue.clear()
+
+        if output_buffer is not None and output_checkpoint is not None:
+            output_buffer.rollback(output_checkpoint)
 
     def _render_final_response(self, final_action: "ActionHistory", skip_markdown_body: bool = False) -> None:
         """Render the final response output (SQL, markdown, etc.) from a node action.
@@ -1309,7 +1424,7 @@ class ChatCommands:
         Returns:
             Extracted report content or None if not found
         """
-        if not response:
+        if not response or not isinstance(response, str):
             return None
 
         try:
@@ -1521,6 +1636,11 @@ class ChatCommands:
             attached — otherwise Ctrl+O verbose mode hides blocking validation
             details from runs whose retry budget was exhausted.
             """
+            # Response-started ESC turns intentionally have no final response.
+            # Their partial trace plus the replay-only Interrupted marker were
+            # already rendered by ``render_action_history`` above.
+            if any(action.action_type == INTERRUPTED_ACTION_TYPE for action in turn_actions):
+                return
             final_action = self._find_node_final_action(turn_actions)
             if not final_action or final_action.depth != 0:
                 return

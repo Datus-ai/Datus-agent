@@ -65,6 +65,7 @@ from datus.cli.cli_styles import (
 )
 from datus.cli.context_commands import ContextCommands
 from datus.cli.effort_commands import EffortCommands
+from datus.cli.execution_state import ExecutionInterrupted, InterruptController
 from datus.cli.init_commands import InitCommands
 from datus.cli.input_modes import MODE_CHROME, InputMode, next_input_mode
 from datus.cli.language_commands import LanguageCommands
@@ -564,15 +565,33 @@ class DatusCLI:
         current_node = getattr(chat_commands, "current_node", None)
         return getattr(current_node, "pending_input_queue", None) if current_node else None
 
-    def _interrupt_agent(self) -> None:
+    def _interrupt_agent(self, *, restore_unanswered_input: bool = False) -> None:
         chat_commands = getattr(self, "chat_commands", None)
         current_node = getattr(chat_commands, "current_node", None) if chat_commands else None
         controller = getattr(current_node, "interrupt_controller", None) if current_node else None
+        editable_message: Optional[str] = None
+        streaming_ctx = getattr(chat_commands, "current_streaming_ctx", None) if chat_commands else None
+        has_model_response = bool(getattr(streaming_ctx, "has_model_response_started", False))
+        if restore_unanswered_input and streaming_ctx is not None and not has_model_response:
+            editable_message = getattr(streaming_ctx, "editable_user_message", None)
+            streaming_ctx.request_unanswered_rollback()
+        elif restore_unanswered_input and streaming_ctx is not None and has_model_response:
+            streaming_ctx.request_interrupted_notice()
         if controller is not None:
             try:
+                # Active Task.cancel reaches the node as CancelledError rather
+                # than its cooperative ExecutionInterrupted branch. Preserve
+                # the pre-existing Ctrl+C/partial-turn usage semantics; the
+                # unanswered ESC rollback explicitly clears this snapshot.
+                if current_node is not None:
+                    current_node._drop_running_turn_usage_on_exit = False
                 controller.interrupt()
             except Exception as exc:  # pragma: no cover - defensive
+                if current_node is not None:
+                    current_node._drop_running_turn_usage_on_exit = True
                 logger.debug(f"interrupt_controller.interrupt failed: {exc}")
+        if editable_message is not None and self.tui_app is not None:
+            self.tui_app.restore_input_after_dispatch(editable_message)
 
     def _compute_pane_width(self, sidebar_visible: bool) -> int:
         """Width in cells available to the left output pane.
@@ -868,19 +887,18 @@ class DatusCLI:
         def _esc(event):  # noqa: ANN001
             """Escape: interrupt the running agent loop.
 
-            prompt_toolkit debounces ESC so this handler only fires for a
-            standalone key press, not for the leading byte of arrow-key
-            escape sequences (``\\x1b[A`` etc.). While idle it returns to chat
-            mode if a non-chat input mode is active, otherwise it is a no-op
-            so default Buffer behavior (no-op for ESC in insert mode) is
-            preserved.
+            DatusApp keeps prompt_toolkit's escape-sequence debounce at 10 ms,
+            which still distinguishes arrow keys (``\\x1b[A`` etc.) while
+            giving standalone ESC the same immediate feel as Ctrl+C. While
+            idle it returns to chat mode if a non-chat input mode is active,
+            otherwise it is a no-op.
             """
             if not self.tui_app._agent_running.is_set():
                 if self.input_mode is not InputMode.CHAT:
                     self._set_input_mode(InputMode.CHAT)
                     event.app.invalidate()
                 return
-            self._interrupt_agent()
+            self._interrupt_agent(restore_unanswered_input=True)
 
         @self.tui_app.key_bindings.add("c-c")
         def _c_c(event):  # noqa: ANN001
@@ -1171,7 +1189,7 @@ class DatusCLI:
         # is the standard way to bridge from a foreign thread into an asyncio loop.
         self._bg_loop.call_soon_threadsafe(lambda: self._bg_loop.create_task(_runner()))
 
-    def run_on_bg_loop(self, coro):
+    def run_on_bg_loop(self, coro, *, interrupt_controller: Optional[InterruptController] = None):
         """Run a coroutine on the persistent background event loop and block until done.
 
         ``asyncio.run(coro)`` creates and then tears down a fresh loop on every
@@ -1188,11 +1206,61 @@ class DatusCLI:
 
         Args:
             coro: Coroutine to execute on ``_bg_loop``.
+            interrupt_controller: Optional controller whose interrupt signal
+                actively cancels the background asyncio Task.  This wakes an
+                API stream currently parked waiting for its next event instead
+                of waiting for a later cooperative polling checkpoint.
 
         Returns:
             The coroutine's return value.
         """
-        future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
+
+        async def _run_cancellable():
+            if interrupt_controller is None:
+                return await coro
+
+            loop = asyncio.get_running_loop()
+            task = asyncio.current_task()
+            if task is None:  # pragma: no cover - asyncio always supplies one
+                return await coro
+            cancel_requested = threading.Event()
+
+            def _cancel_task() -> None:
+                # ``interrupt()`` normally runs on the prompt_toolkit/input
+                # thread.  Task.cancel is not cross-thread safe, so always
+                # marshal it onto the background loop.
+                cancel_requested.set()
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except RuntimeError:
+                    # Loop already stopped during shutdown.
+                    pass
+
+            token = interrupt_controller.register_cancel_callback(_cancel_task)
+            try:
+                return await coro
+            except asyncio.CancelledError:
+                # Preserve ordinary cancellation (for example application
+                # shutdown).  Only user-triggered cancellation becomes the
+                # chat-layer's existing graceful interrupt exception.  Keep a
+                # local latch because the node resets its reusable controller
+                # at stream startup; a very early key press can otherwise win
+                # registration but have its event flag cleared before
+                # CancelledError is delivered.
+                if cancel_requested.is_set() or interrupt_controller.is_interrupted:
+                    raise ExecutionInterrupted("Execution interrupted by user") from None
+                raise
+            finally:
+                interrupt_controller.unregister_cancel_callback(token)
+                # The controller is reused by the next chat turn. Leaving the
+                # event latched makes that turn's callback fire immediately
+                # during registration, swallowing the first Enter after a
+                # cancel. Reset only after this task has fully unwound, so
+                # same-turn early interrupts remain reliable.
+                if cancel_requested.is_set():
+                    interrupt_controller.reset()
+
+        future = asyncio.run_coroutine_threadsafe(_run_cancellable(), self._bg_loop)
         try:
             return future.result()
         except KeyboardInterrupt:

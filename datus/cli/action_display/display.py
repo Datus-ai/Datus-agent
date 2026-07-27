@@ -11,7 +11,13 @@ from rich.console import Console
 from rich.text import Text
 
 from datus.cli.action_display.renderers import ActionContentGenerator, ActionRenderer, is_task_anchor_input
-from datus.schemas.action_history import SUBAGENT_COMPLETE_ACTION_TYPE, ActionHistory, ActionRole, ActionStatus
+from datus.schemas.action_history import (
+    INTERRUPTED_ACTION_TYPE,
+    SUBAGENT_COMPLETE_ACTION_TYPE,
+    ActionHistory,
+    ActionRole,
+    ActionStatus,
+)
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -157,6 +163,7 @@ class ActionHistoryDisplay:
         subagent_groups: Dict[Optional[str], dict] = {}
         pending_task_tool_skips = 0
         deferred_groups: List[Tuple[dict, ActionHistory]] = []
+        is_interrupted_turn = any(action.action_type == INTERRUPTED_ACTION_TYPE for action in actions)
 
         # Pre-scan to identify which top-level ``task`` tool calls wrap a
         # sub-agent. ``subagent_complete.parent_action_id`` carries the
@@ -219,16 +226,17 @@ class ActionHistoryDisplay:
         # the end-of-turn full-screen reprint clears scrollback, and skipping
         # them is what makes that text disappear after the redraw.
         last_plain_response_idx: Optional[int] = None
-        for i in range(len(actions) - 1, -1, -1):
-            a = actions[i]
-            if (
-                a.role == ActionRole.ASSISTANT
-                and a.depth == 0
-                and a.action_type == "response"
-                and a.status == ActionStatus.SUCCESS
-            ):
-                last_plain_response_idx = i
-                break
+        if not is_interrupted_turn:
+            for i in range(len(actions) - 1, -1, -1):
+                a = actions[i]
+                if (
+                    a.role == ActionRole.ASSISTANT
+                    and a.depth == 0
+                    and a.action_type == "response"
+                    and a.status == ActionStatus.SUCCESS
+                ):
+                    last_plain_response_idx = i
+                    break
 
         for idx, action in enumerate(actions):
             # INTERACTION actions: only shown during live interaction, skip in history replay

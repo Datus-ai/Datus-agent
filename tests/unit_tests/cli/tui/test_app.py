@@ -567,6 +567,35 @@ def test_set_input_text_replaces_buffer(tui_app: DatusApp) -> None:
     assert tui_app.input_buffer.text == ""
 
 
+def test_escape_timeout_is_near_immediate(tui_app: DatusApp) -> None:
+    assert tui_app.application.ttimeoutlen == pytest.approx(0.01)
+
+
+def test_cancelled_input_restores_after_dispatch_and_first_enter_submits(tui_app: DatusApp) -> None:
+    tui_app.agent_running.set()
+    tui_app.restore_input_after_dispatch("edit this")
+
+    # Restoration is intentionally invisible while Enter would still take
+    # the running-agent queue path.
+    assert tui_app.input_buffer.text == ""
+
+    finished = Future()
+    finished.set_result(None)
+    tui_app._on_dispatch_done(finished)
+    assert not tui_app.agent_running.is_set()
+    assert tui_app.input_buffer.text == "edit this"
+
+    from prompt_toolkit.keys import Keys
+
+    handler = _binding_for_key(tui_app, Keys.ControlM)
+    event = mock.MagicMock()
+    event.app.current_buffer = tui_app.input_buffer
+    handler(event)
+
+    assert tui_app._test_dispatch_log == ["edit this"]
+    assert tui_app.input_buffer.text == ""
+
+
 def test_safe_dispatch_reraises_system_exit(tui_app: DatusApp) -> None:
     """SystemExit is the one exception type we must not swallow — callers
     rely on it to propagate out of the executor so graceful shutdown can
