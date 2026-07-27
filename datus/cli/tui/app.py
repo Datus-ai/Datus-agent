@@ -1782,6 +1782,7 @@ class DatusApp:
 
     def set_input_text(self, text: str) -> None:
         """Prefill the input buffer (e.g. for ``.rewind``). Thread-safe."""
+
         def _apply() -> None:
             self._set_input_text_now(text)
 

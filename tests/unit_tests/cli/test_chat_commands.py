@@ -3657,9 +3657,7 @@ def test_interrupted_turn_user_row_survives_full_screen_reprint(chat_cmd):
         output_data={},
         status=ActionStatus.SUCCESS,
     )
-    chat_cmd.all_turn_actions = [
-        ("keep this interrupted question", [interrupted_action, interrupted_marker])
-    ]
+    chat_cmd.all_turn_actions = [("keep this interrupted question", [interrupted_action, interrupted_marker])]
     chat_cmd.last_actions = [interrupted_action, interrupted_marker]
 
     chat_cmd._full_screen_reprint(verbose=True)

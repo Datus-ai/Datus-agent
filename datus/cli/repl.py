@@ -572,11 +572,7 @@ class DatusCLI:
         editable_message: Optional[str] = None
         streaming_ctx = getattr(chat_commands, "current_streaming_ctx", None) if chat_commands else None
         has_model_response = bool(getattr(streaming_ctx, "has_model_response_started", False))
-        if (
-            restore_unanswered_input
-            and streaming_ctx is not None
-            and not has_model_response
-        ):
+        if restore_unanswered_input and streaming_ctx is not None and not has_model_response:
             editable_message = getattr(streaming_ctx, "editable_user_message", None)
             streaming_ctx.request_unanswered_rollback()
         elif restore_unanswered_input and streaming_ctx is not None and has_model_response:
@@ -1218,6 +1214,7 @@ class DatusCLI:
         Returns:
             The coroutine's return value.
         """
+
         async def _run_cancellable():
             if interrupt_controller is None:
                 return await coro

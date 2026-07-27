@@ -602,10 +602,11 @@ class ChatCommands:
                             action_history_manager=self.cli.actions
                         )
                         async for action in action_stream:
-                            if (
-                                action.role in {ActionRole.ASSISTANT, ActionRole.TOOL, ActionRole.INTERACTION}
-                                and action.action_type not in {"compact_progress", "compact_summary"}
-                            ):
+                            if action.role in {
+                                ActionRole.ASSISTANT,
+                                ActionRole.TOOL,
+                                ActionRole.INTERACTION,
+                            } and action.action_type not in {"compact_progress", "compact_summary"}:
                                 streaming_ctx.mark_model_response_started()
                             # Token-usage updates drive the status bar / API
                             # ``usage`` events only; they carry no chat content
@@ -746,9 +747,7 @@ class ChatCommands:
                     # stream normally before Task.cancel is delivered. The
                     # ESC-time latch, rather than the exception path, is the
                     # authoritative rollback decision.
-                    rollback_unanswered = bool(
-                        getattr(streaming_ctx, "unanswered_rollback_requested", False)
-                    )
+                    rollback_unanswered = bool(getattr(streaming_ctx, "unanswered_rollback_requested", False))
                     turn_interrupted = execution_interrupted or bool(
                         getattr(streaming_ctx, "interrupt_requested", False)
                     )

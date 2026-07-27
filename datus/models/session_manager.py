@@ -275,8 +275,7 @@ class SessionManager:
                     )
                 if self._table_exists(conn, "user_message_context"):
                     conn.execute(
-                        "DELETE FROM user_message_context "
-                        "WHERE session_id = ? AND user_turn_number > ?",
+                        "DELETE FROM user_message_context WHERE session_id = ? AND user_turn_number > ?",
                         (session_id, checkpoint.max_user_turn_number),
                     )
                 if self._table_exists(conn, "running_turn_usage"):

@@ -258,8 +258,7 @@ class TestSessionManagerExecution:
             )
             conn.execute(SessionManager._USER_MESSAGE_CONTEXT_DDL)
             conn.execute(
-                "INSERT INTO user_message_context "
-                "(session_id, user_turn_number, context_json) VALUES (?, 2, '{}')",
+                "INSERT INTO user_message_context (session_id, user_turn_number, context_json) VALUES (?, 2, '{}')",
                 (session_id,),
             )
             conn.commit()
@@ -271,25 +270,36 @@ class TestSessionManagerExecution:
             {"role": "assistant", "content": "kept answer"},
         ]
         with sqlite3.connect(db_path) as conn:
-            assert conn.execute(
-                "SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,)
-            ).fetchone()[0] == 2
-            assert conn.execute(
-                "SELECT COUNT(*) FROM message_structure WHERE session_id = ?", (session_id,)
-            ).fetchone()[0] == 2
-            assert conn.execute(
-                "SELECT COUNT(*) FROM message_structure s "
-                "LEFT JOIN agent_messages m ON m.id = s.message_id WHERE m.id IS NULL"
-            ).fetchone()[0] == 0
-            assert conn.execute(
-                "SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (session_id,)
-            ).fetchone()[0] == 0
-            assert conn.execute(
-                "SELECT COUNT(*) FROM running_turn_usage WHERE session_id = ?", (session_id,)
-            ).fetchone()[0] == 0
-            assert conn.execute(
-                "SELECT COUNT(*) FROM user_message_context WHERE session_id = ?", (session_id,)
-            ).fetchone()[0] == 0
+            assert (
+                conn.execute("SELECT COUNT(*) FROM agent_messages WHERE session_id = ?", (session_id,)).fetchone()[0]
+                == 2
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM message_structure WHERE session_id = ?", (session_id,)).fetchone()[0]
+                == 2
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM message_structure s "
+                    "LEFT JOIN agent_messages m ON m.id = s.message_id WHERE m.id IS NULL"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM turn_usage WHERE session_id = ?", (session_id,)).fetchone()[0] == 0
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM running_turn_usage WHERE session_id = ?", (session_id,)).fetchone()[
+                    0
+                ]
+                == 0
+            )
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM user_message_context WHERE session_id = ?", (session_id,)
+                ).fetchone()[0]
+                == 0
+            )
 
     # -- clear_session --
 
