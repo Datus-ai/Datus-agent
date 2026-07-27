@@ -5,7 +5,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import Callable, Iterator, List, Optional
 
 from agents import Tool
 from wcmatch import glob as wc_glob
@@ -79,6 +79,8 @@ class FilesystemFuncTool(BaseTool):
         datus_home: Optional[str] = None,
         strict: bool = False,
         session_data_dir: Optional[str] = None,
+        mutation_callback: Optional[Callable[[], None]] = None,
+        mutation_guard: Optional[Callable[[Path], None]] = None,
         **kwargs,
     ):
         """
@@ -105,6 +107,21 @@ class FilesystemFuncTool(BaseTool):
         self._root_resolved = Path(self.root_path).expanduser().resolve(strict=False)
         self._strict = strict
         self._session_data_dir = Path(session_data_dir).expanduser().resolve(strict=False) if session_data_dir else None
+        self._mutation_callback = mutation_callback
+        self._mutation_guard = mutation_guard
+
+    def _notify_mutation(self) -> None:
+        if self._mutation_callback is not None:
+            self._mutation_callback()
+
+    def _mutation_guard_error(self, path: Path) -> Optional[FuncToolResult]:
+        if self._mutation_guard is None:
+            return None
+        try:
+            self._mutation_guard(path)
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
+        return None
 
     @property
     def strict(self) -> bool:
@@ -330,10 +347,14 @@ class FilesystemFuncTool(BaseTool):
             # must be able to emit any text artifact (shell/infra/scala/etc.).
             # Zone, read-only and strict-external gating above still apply.
             target_path = resolved.resolved
+            guard_error = self._mutation_guard_error(target_path)
+            if guard_error is not None:
+                return guard_error
 
             try:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(content, encoding="utf-8")
+                self._notify_mutation()
                 return FuncToolResult(result=f"File written successfully: {resolved.display}")
             except PermissionError:
                 return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
@@ -372,6 +393,9 @@ class FilesystemFuncTool(BaseTool):
                 return self._read_only_reject(resolved)
 
             target_path = resolved.resolved
+            guard_error = self._mutation_guard_error(target_path)
+            if guard_error is not None:
+                return guard_error
             if not target_path.exists():
                 return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
             if target_path.is_dir():
@@ -390,6 +414,7 @@ class FilesystemFuncTool(BaseTool):
 
             try:
                 target_path.unlink()
+                self._notify_mutation()
                 return FuncToolResult(result=f"File deleted successfully: {resolved.display}")
             except PermissionError:
                 return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
@@ -428,6 +453,9 @@ class FilesystemFuncTool(BaseTool):
                 return self._read_only_reject(resolved)
 
             target_path = resolved.resolved
+            guard_error = self._mutation_guard_error(target_path)
+            if guard_error is not None:
+                return guard_error
             if not target_path.exists():
                 return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
 
@@ -444,6 +472,7 @@ class FilesystemFuncTool(BaseTool):
                     return FuncToolResult(success=0, error=error)
 
                 target_path.write_text(new_content, encoding="utf-8")
+                self._notify_mutation()
                 return FuncToolResult(result=f"File edited successfully: {resolved.display}")
             except UnicodeDecodeError:
                 return FuncToolResult(success=0, error=f"Cannot edit binary file: {resolved.display}")

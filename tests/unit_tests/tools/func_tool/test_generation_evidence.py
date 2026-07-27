@@ -130,14 +130,18 @@ class TestGenerationEvidence:
         assert ev.validation_passed is False
         assert ev.metric_dry_run_passed is False
         assert ev.kb_sync_passed is False
-        assert ev.storage_revision == 0
 
     def test_kb_sync_passed_when_any_kind_set(self):
         ev = GenerationEvidence()
-        ev.mark_kb_sync("metric")
+        ev.mark_kb_sync("metric", ["revenue"])
         assert ev.kb_sync_passed is True
         assert ev.metric_kb_sync_passed is True
-        assert ev.storage_revision == 1
+        assert ev.has_metric_kb_sync(["revenue"])
+        assert not ev.has_metric_kb_sync(["revenue", "orders"])
+        assert not ev.has_metric_kb_sync()
+
+        ev.mark_kb_sync("metric", ["orders"])
+        assert ev.has_metric_kb_sync(["revenue", "orders"])
 
     def test_kb_sync_semantic(self):
         ev = GenerationEvidence()
@@ -148,6 +152,58 @@ class TestGenerationEvidence:
         ev = GenerationEvidence()
         ev.mark_kb_sync()
         assert ev.generic_kb_sync_passed is True
+
+    def test_reset_clears_all_request_evidence_without_replacing_object(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence(
+            validation_passed=True,
+            metric_dry_run_passed=True,
+            metric_dry_run_metrics={"revenue"},
+            metric_dry_run_queries=[{"metrics": ["revenue"]}],
+            metric_sqls={"revenue": "select 1"},
+            metric_queryability_contracts=[{"dimension_hints": ["country"]}],
+            metric_aliases={"rev": "revenue"},
+            semantic_kb_sync_passed=True,
+            metric_kb_sync_passed=True,
+            metric_kb_sync_metrics={"revenue"},
+            generic_kb_sync_passed=True,
+        )
+        ev.record_semantic_artifact_validation("sales", artifact)
+
+        ev.reset()
+
+        assert ev == GenerationEvidence()
+
+    def test_artifact_mutation_invalidates_publish_evidence_but_keeps_request_contracts(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence(
+            validation_passed=True,
+            metric_dry_run_passed=True,
+            metric_dry_run_metrics={"revenue"},
+            metric_dry_run_queries=[{"metrics": ["revenue"]}],
+            metric_sqls={"revenue": "select 1"},
+            metric_queryability_contracts=[{"dimension_hints": ["country"]}],
+            metric_aliases={"rev": "revenue"},
+            semantic_kb_sync_passed=True,
+            metric_kb_sync_passed=True,
+            metric_kb_sync_metrics={"revenue"},
+        )
+        ev.record_semantic_artifact_validation("sales", artifact)
+
+        ev.invalidate_artifact_evidence()
+
+        assert ev.validation_passed is False
+        assert ev.metric_dry_run_passed is False
+        assert ev.metric_dry_run_metrics == set()
+        assert ev.metric_dry_run_queries == []
+        assert ev.metric_sqls == {}
+        assert ev.validated_semantic_artifacts == {}
+        assert ev.kb_sync_passed is False
+        assert ev.metric_kb_sync_metrics == set()
+        assert ev.metric_queryability_contracts == [{"dimension_hints": ["country"]}]
+        assert ev.metric_aliases == {"rev": "revenue"}
 
     def test_record_validation_result_success(self):
         ev = GenerationEvidence()
@@ -184,6 +240,26 @@ class TestGenerationEvidence:
 
         artifact.write_text("semantic_model: changed\n", encoding="utf-8")
 
+        assert not ev.semantic_artifact_validation_passed("sales", artifact)
+
+    def test_explicit_validation_checks_do_not_satisfy_publish_gate(self, tmp_path):
+        artifact = tmp_path / "sales.yml"
+        artifact.write_text("semantic_model: sales\n", encoding="utf-8")
+        ev = GenerationEvidence()
+
+        ev.record_validation_result(
+            {
+                "success": 1,
+                "result": {
+                    "valid": True,
+                    "checks": ["authoring_quality"],
+                    "semantic_model_name": "sales",
+                    "semantic_model_file": str(artifact),
+                },
+            }
+        )
+
+        assert ev.validation_passed is False
         assert not ev.semantic_artifact_validation_passed("sales", artifact)
 
     def test_record_metric_dry_run_success(self):

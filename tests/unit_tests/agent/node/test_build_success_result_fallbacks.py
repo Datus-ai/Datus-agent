@@ -353,7 +353,14 @@ class TestGenSemanticModelBuildSuccessResultFallback:
 class TestGenMetricsBuildSuccessResultFallback:
     def test_falls_back_to_raw_output_dict(self):
         node = _bare_node(GenMetricsAgenticNode, agent_config=None)
-        node._extract_metric_and_output_from_response = lambda payload: (None, None, None, None)  # type: ignore[assignment]
+        node._extract_metric_and_output_from_response = lambda payload: (  # type: ignore[assignment]
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         node._finalize_metric_generation = lambda **_kw: None  # type: ignore[assignment]
         ctx = _ctx(last_successful_output={"raw_output": {"metric_file": "x.yml"}})
         result = node._build_success_result(ctx)
@@ -361,7 +368,14 @@ class TestGenMetricsBuildSuccessResultFallback:
 
     def test_falls_back_to_str_of_last_successful_output(self):
         node = _bare_node(GenMetricsAgenticNode, agent_config=None)
-        node._extract_metric_and_output_from_response = lambda payload: (None, None, None, None)  # type: ignore[assignment]
+        node._extract_metric_and_output_from_response = lambda payload: (  # type: ignore[assignment]
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         node._finalize_metric_generation = lambda **_kw: None  # type: ignore[assignment]
         ctx = _ctx(last_successful_output={"raw_output": ""})
         result = node._build_success_result(ctx)

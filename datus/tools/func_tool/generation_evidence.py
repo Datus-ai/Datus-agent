@@ -44,9 +44,9 @@ def _metadata_from_result(result: Any) -> Dict[str, Any]:
 class GenerationEvidence:
     """Minimal runtime state for generation publish gates.
 
-    The evidence is scoped to one node run and intentionally does not track
-    file hashes or dirty state. The generation flow assumes files are not edited
-    after successful validation / dry-run before publish.
+    Evidence is scoped to one node run. Exact semantic validation is tied to
+    artifact bytes, and every successful authoring mutation invalidates prior
+    validation, dry-run, and sync evidence.
     """
 
     validation_passed: bool = False
@@ -58,9 +58,28 @@ class GenerationEvidence:
     metric_aliases: Dict[str, str] = field(default_factory=dict)
     semantic_kb_sync_passed: bool = False
     metric_kb_sync_passed: bool = False
+    metric_kb_sync_metrics: Set[str] = field(default_factory=set)
     generic_kb_sync_passed: bool = False
-    storage_revision: int = 0
     validated_semantic_artifacts: Dict[str, Dict[str, str]] = field(default_factory=dict)
+
+    def reset(self) -> None:
+        """Clear evidence before reusing a node for another request."""
+        self.invalidate_artifact_evidence()
+        self.metric_queryability_contracts.clear()
+        self.metric_aliases.clear()
+
+    def invalidate_artifact_evidence(self) -> None:
+        """Discard validation, dry-run, and sync evidence after a file mutation."""
+        self.validation_passed = False
+        self.metric_dry_run_passed = False
+        self.metric_dry_run_metrics.clear()
+        self.metric_dry_run_queries.clear()
+        self.metric_sqls.clear()
+        self.semantic_kb_sync_passed = False
+        self.metric_kb_sync_passed = False
+        self.metric_kb_sync_metrics.clear()
+        self.generic_kb_sync_passed = False
+        self.validated_semantic_artifacts.clear()
 
     @property
     def kb_sync_passed(self) -> bool:
@@ -69,7 +88,10 @@ class GenerationEvidence:
     def record_validation_result(self, result: Any) -> None:
         payload = _result_payload(result)
         valid = isinstance(payload, dict) and payload.get("valid") is True
-        if _result_success(result) and valid:
+        # Explicit adapter checks are diagnostic subsets. Only the adapter's
+        # canonical default profile may satisfy a generation publish gate.
+        canonical_profile = isinstance(payload, dict) and payload.get("checks") is None
+        if _result_success(result) and valid and canonical_profile:
             self.validation_passed = True
             semantic_model_name = str(payload.get("semantic_model_name") or "").strip()
             semantic_model_file = str(payload.get("semantic_model_file") or "").strip()
@@ -270,14 +292,20 @@ class GenerationEvidence:
             return False
         return True
 
-    def mark_kb_sync(self, kind: str = "") -> None:
+    def has_metric_kb_sync(self, metric_names: Optional[Iterable[str]] = None) -> bool:
+        names = {str(name).strip() for name in (metric_names or []) if str(name).strip()}
+        if not names:
+            return False
+        return self.metric_kb_sync_passed and names.issubset(self.metric_kb_sync_metrics)
+
+    def mark_kb_sync(self, kind: str = "", metric_names: Optional[Iterable[str]] = None) -> None:
         if kind == "metric":
             self.metric_kb_sync_passed = True
+            self.metric_kb_sync_metrics.update(str(name).strip() for name in (metric_names or []) if str(name).strip())
         elif kind == "semantic":
             self.semantic_kb_sync_passed = True
         else:
             self.generic_kb_sync_passed = True
-        self.storage_revision += 1
 
 
 _GENERIC_DIMENSION_TOKENS = {"id", "key", "name", "dim", "dimension", "value"}
