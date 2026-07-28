@@ -1939,8 +1939,13 @@ def _build_validate_semantic_key_candidate(action: ActionHistory, verbose: bool)
             if isinstance(result, dict):
                 columns = result.get("columns")
                 arity = len(columns) if isinstance(columns, list) else 0
-                outcome = "verified" if result.get("is_valid_logical_key") is True else "rejected"
-                tc.compact_result = f"{arity}-column logical key {outcome}"
+                outcome = None
+                if result.get("is_valid_logical_key") is True:
+                    outcome = "verified"
+                elif "is_valid_logical_key" in result:
+                    outcome = "rejected"
+                if outcome:
+                    tc.compact_result = f"{arity}-column logical key {outcome}"
     return tc
 
 

@@ -1615,6 +1615,11 @@ class GenerationTools:
                 continue
             relationship_name = cls._relationship_path_name(relationship)
             if not relationship_name:
+                logger.warning(
+                    "Skipping unnamed OSI relationship %s -> %s; joined dimensions are omitted from the path.",
+                    dataset_name,
+                    to_dataset_name,
+                )
                 continue
             dimensions.extend(
                 cls._dataset_dimensions_with_relationships(

@@ -1173,12 +1173,12 @@ class SemanticDiscoveryTools:
                 joined_table = alias_to_table.get(
                     self._normalize_identifier(join.this.alias_or_name)
                 ) or alias_to_table.get(self._normalize_identifier(join.this.name))
-            for eq in on_expression.find_all(exp.EQ):
+            for eq in self._collect_conjunctive_equalities(on_expression):
                 collect_pair(eq.left, eq.right, joined_table)
 
         where_expression = select.args.get("where")
         if where_expression is not None:
-            for eq in where_expression.find_all(exp.EQ):
+            for eq in self._collect_conjunctive_equalities(where_expression):
                 collect_pair(eq.left, eq.right)
 
         for (source_table, target_table), pairs in grouped_pairs.items():
@@ -1203,6 +1203,32 @@ class SemanticDiscoveryTools:
             if isinstance(node, exp.Func) and id(node) not in covered_nodes:
                 predicates.append(node)
         return predicates
+
+    @staticmethod
+    def _collect_conjunctive_equalities(root: Any) -> List[Any]:
+        """Collect equality predicates under conjunctions while skipping OR branches."""
+        from sqlglot import expressions as exp
+
+        equalities: List[Any] = []
+        if root is None:
+            return equalities
+
+        def walk(node: Any) -> None:
+            if node is None or not isinstance(node, exp.Expression):
+                return
+            if isinstance(node, exp.Or):
+                return
+            if isinstance(node, exp.EQ):
+                equalities.append(node)
+                return
+            if isinstance(node, exp.Where):
+                walk(node.this)
+                return
+            for child in node.iter_expressions():
+                walk(child)
+
+        walk(root)
+        return equalities
 
     def _semantic_profile_operator_map(self) -> Dict[type, str]:
         from sqlglot import expressions as exp
@@ -4375,7 +4401,7 @@ class SemanticDiscoveryTools:
                 if on_expression is None:
                     continue
                 joined_table = self._resolve_join_target_table(join, alias_to_table, tables_lower_map)
-                for eq in on_expression.find_all(exp.EQ):
+                for eq in self._collect_conjunctive_equalities(on_expression):
                     collect_pair(
                         eq.left,
                         eq.right,
@@ -4386,7 +4412,7 @@ class SemanticDiscoveryTools:
 
             where_expression = parsed.args.get("where")
             if where_expression is not None:
-                for eq in where_expression.find_all(exp.EQ):
+                for eq in self._collect_conjunctive_equalities(where_expression):
                     collect_pair(
                         eq.left,
                         eq.right,
