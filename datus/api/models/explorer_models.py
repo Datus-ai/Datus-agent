@@ -143,6 +143,11 @@ class MetricDimensionsData(BaseModel):
 
     metric: str = Field(..., description="Metric name")
     dimensions: List[MetricDimensionItem] = Field(default_factory=list, description="Queryable dimensions")
+    time_dimension: Optional[str] = Field(None, description="Canonical time dimension for the metric")
+    time_granularities: List[str] = Field(
+        default_factory=list,
+        description="Legal time grains ordered from finest to coarsest",
+    )
 
 
 class MetricDimensionPreflight(BaseModel):

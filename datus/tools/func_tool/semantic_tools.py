@@ -163,7 +163,49 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
     return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
 
 
-_TIME_GRANULARITIES = {"day", "week", "month", "quarter", "year"}
+_TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
+_TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
+
+
+def extract_time_query_capabilities(raw_dimensions) -> Dict[str, Any]:
+    """Extract the metric-level time contract carried by ``get_dimensions``."""
+    candidates = []
+    for dimension in raw_dimensions or []:
+        if isinstance(dimension, dict):
+            name = dimension.get("name")
+            is_primary_time = dimension.get("is_primary_time")
+            raw_granularities = dimension.get("time_granularities")
+        else:
+            name = getattr(dimension, "name", None)
+            is_primary_time = getattr(dimension, "is_primary_time", None)
+            raw_granularities = getattr(dimension, "time_granularities", None)
+
+        granularities = {
+            str(granularity).strip().lower()
+            for granularity in _normalize_name_list(raw_granularities)
+            if str(granularity).strip().lower() in _TIME_GRANULARITIES
+        }
+        ordered_granularities = [granularity for granularity in _TIME_GRANULARITY_ORDER if granularity in granularities]
+        if name and (is_primary_time or ordered_granularities):
+            candidates.append(
+                (
+                    bool(is_primary_time),
+                    str(name),
+                    ordered_granularities,
+                )
+            )
+
+    if not candidates:
+        return {"time_dimension": None, "time_granularities": []}
+
+    _, time_dimension, time_granularities = next(
+        (candidate for candidate in candidates if candidate[0]),
+        candidates[0],
+    )
+    return {
+        "time_dimension": time_dimension,
+        "time_granularities": time_granularities,
+    }
 
 
 def _split_dimension_granularity(name: str) -> tuple[str, Optional[str]]:
@@ -793,8 +835,12 @@ class SemanticTools:
                 their full schema (name, type, expr, ...); storage dimensions
                 fall back to a minimal {"name": ...} shape when only names are
                 stored.
-              - total, has_more, extra: dimensions isn't paginated, so total
-                equals len(items) and has_more is False.
+              - total, has_more: dimensions isn't paginated, so total equals
+                len(items) and has_more is False.
+              - extra.time_dimension: canonical metric time dimension, or None.
+              - extra.time_granularities: legal grains ordered finest to
+                coarsest; the first item is the default. Empty when the metric
+                has no discoverable time contract.
         """
         # Normalize null values from LLM
         path = _normalize_optional_path(path)
@@ -806,9 +852,18 @@ class SemanticTools:
         try:
             dimensions = _run_async(adapter.get_dimensions(metric_name=metric_name, path=path))
             items = _normalize_dimension_rows(dimensions)
+            extra = extract_time_query_capabilities(dimensions)
+            for item in items:
+                item.pop("is_primary_time", None)
+                item.pop("time_granularities", None)
             return FuncToolResult(
                 success=1,
-                result=FuncToolListResult(items=items, total=len(items), has_more=False).model_dump(),
+                result=FuncToolListResult(
+                    items=items,
+                    total=len(items),
+                    has_more=False,
+                    extra=extra,
+                ).model_dump(),
             )
 
         except Exception as e:
@@ -818,11 +873,33 @@ class SemanticTools:
                 error=f"Failed to get dimensions: {str(e)}",
             )
 
+    def _load_dimensions_by_metric(
+        self,
+        metrics: List[str],
+        path: Optional[List[str]],
+    ) -> Optional[Dict[str, List[dict]]]:
+        try:
+            return {
+                metric_name: _normalize_dimension_rows(
+                    _run_async(
+                        self.adapter.get_dimensions(
+                            metric_name=metric_name,
+                            path=path or None,
+                        )
+                    )
+                )
+                for metric_name in metrics
+            }
+        except Exception as e:
+            logger.debug(f"Skipping query_metrics metadata preflight: {e}")
+            return None
+
     def _preflight_query_dimensions(
         self,
         metrics: List[str],
         dimensions: List[str],
         path: Optional[List[str]],
+        dimensions_by_metric: Optional[Dict[str, List[dict]]] = None,
     ) -> Optional[FuncToolResult]:
         if not dimensions:
             return None
@@ -832,19 +909,15 @@ class SemanticTools:
         if not checked_dimensions:
             return None
 
-        dimensions_by_metric: Dict[str, List[dict]] = {}
-        dimension_names_by_metric: Dict[str, List[str]] = {}
-        try:
-            for metric_name in metrics:
-                raw_dimensions = _run_async(self.adapter.get_dimensions(metric_name=metric_name, path=path or None))
-                rows = _normalize_dimension_rows(raw_dimensions)
-                dimensions_by_metric[metric_name] = rows
-                dimension_names_by_metric[metric_name] = sorted(
-                    _dimension_names_by_lookup(rows).values(), key=str.lower
-                )
-        except Exception as e:
-            logger.debug(f"Skipping query_metrics dimension preflight: {e}")
+        dimensions_by_metric = (
+            dimensions_by_metric if dimensions_by_metric is not None else self._load_dimensions_by_metric(metrics, path)
+        )
+        if dimensions_by_metric is None:
             return None
+        dimension_names_by_metric = {
+            metric_name: sorted(_dimension_names_by_lookup(rows).values(), key=str.lower)
+            for metric_name, rows in dimensions_by_metric.items()
+        }
 
         invalid_dimensions = []
         for dimension in checked_dimensions:
@@ -904,6 +977,88 @@ class SemanticTools:
                 "common_dimensions": common_dimension_names,
                 "dimensions_by_metric": dimension_names_by_metric,
                 "suggested_metric_groups": suggestions,
+            },
+        )
+
+    @staticmethod
+    def _preflight_time_granularity(
+        metrics: List[str],
+        dimensions: List[str],
+        time_granularity: Optional[str],
+        dimensions_by_metric: Optional[Dict[str, List[dict]]],
+    ) -> Optional[FuncToolResult]:
+        requested_grain = str(time_granularity or "").strip().lower()
+        if dimensions_by_metric is None:
+            return None
+
+        capabilities_by_metric = {
+            metric_name: extract_time_query_capabilities(rows) for metric_name, rows in dimensions_by_metric.items()
+        }
+        known_capabilities = {
+            metric_name: capability
+            for metric_name, capability in capabilities_by_metric.items()
+            if capability["time_granularities"]
+        }
+        if not known_capabilities:
+            return None
+
+        if not requested_grain:
+            time_dimension_names = {
+                str(capability["time_dimension"]).lower()
+                for capability in known_capabilities.values()
+                if capability["time_dimension"]
+            }
+            for dimension in dimensions:
+                base_name, dimension_grain = _split_dimension_granularity(dimension.strip().lower())
+                if dimension_grain and (_is_metric_time_dimension(dimension) or base_name in time_dimension_names):
+                    requested_grain = dimension_grain
+                    break
+        if not requested_grain:
+            return None
+
+        unsupported_metrics = [
+            metric_name
+            for metric_name, capability in known_capabilities.items()
+            if requested_grain not in capability["time_granularities"]
+        ]
+        if not unsupported_metrics:
+            return None
+
+        common_granularities = [
+            grain
+            for grain in _TIME_GRANULARITY_ORDER
+            if all(grain in capability["time_granularities"] for capability in known_capabilities.values())
+        ]
+        suggested_grain = common_granularities[0] if common_granularities else None
+        details = "; ".join(
+            f"{metric}: {', '.join(capability['time_granularities'])}"
+            for metric, capability in known_capabilities.items()
+        )
+        suggested_retry = (
+            {
+                "metrics": metrics,
+                "time_granularity": suggested_grain,
+            }
+            if suggested_grain
+            else None
+        )
+        return FuncToolResult(
+            success=0,
+            error=(
+                "query_metrics time granularity preflight failed: "
+                f"`{requested_grain}` is not supported by "
+                f"{', '.join(unsupported_metrics)}. Supported granularities: "
+                f"{details}."
+            ),
+            result={
+                "error_type": "semantic_validation_error",
+                "code": "unsupported_time_granularity",
+                "metrics": metrics,
+                "requested_time_granularity": requested_grain,
+                "required_time_granularity": suggested_grain,
+                "time_granularities": common_granularities,
+                "time_capabilities_by_metric": capabilities_by_metric,
+                "suggested_retry": suggested_retry,
             },
         )
 
@@ -983,7 +1138,26 @@ class SemanticTools:
         )
 
         try:
-            preflight_result = self._preflight_query_dimensions(metrics=metrics, dimensions=dimensions, path=path)
+            needs_dimension_metadata = (
+                bool(time_granularity)
+                or any(not _is_metric_time_dimension(dimension) for dimension in dimensions)
+                or any(_split_dimension_granularity(dimension)[1] for dimension in dimensions)
+            )
+            dimensions_by_metric = self._load_dimensions_by_metric(metrics, path) if needs_dimension_metadata else None
+            preflight_result = self._preflight_query_dimensions(
+                metrics=metrics,
+                dimensions=dimensions,
+                path=path,
+                dimensions_by_metric=dimensions_by_metric,
+            )
+            if preflight_result is not None:
+                return preflight_result
+            preflight_result = self._preflight_time_granularity(
+                metrics=metrics,
+                dimensions=dimensions,
+                time_granularity=time_granularity,
+                dimensions_by_metric=dimensions_by_metric,
+            )
             if preflight_result is not None:
                 return preflight_result
 

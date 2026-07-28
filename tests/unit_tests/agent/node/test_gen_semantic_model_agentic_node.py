@@ -107,6 +107,7 @@ class TestGenSemanticModelAgenticNodeInit:
         # registered by default (the optional skill is in the default set).
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
         assert "profile_semantic_model_evidence" in tool_names
+        assert "validate_semantic_key_candidate" in tool_names
 
     def test_osi_semantic_model_restores_write_and_edit_without_delete(self, real_agent_config, mock_llm_create):
         """Ossie authoring supports straightforward create/edit without destructive delete."""

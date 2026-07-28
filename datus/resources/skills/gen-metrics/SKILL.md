@@ -198,7 +198,7 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
   ```
 - Trade-off: dimensions from the pre-joined query are NOT reusable by other data sources (no identifier linkage). Only use this when Strategy A cannot handle the complexity.
 
-**Decision rule**: Default to Strategy A. Switch to Strategy B only if the JOIN cannot be expressed as simple identifier matching (e.g., composite keys, non-equi conditions, 3+ hop joins, or subquery-based logic).
+**Decision rule**: Default to Strategy A. Use it when the join can be represented as identifier-level keys (single-column or derived expressions). Use Strategy B for composite multi-column equi-joins unless they are represented in source SQL as a derived key expression, and for non-equi conditions, 3+ hop joins, or subquery-based logic.
 
 ## Phase 3: Generate and Validate
 

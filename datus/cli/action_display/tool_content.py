@@ -1925,6 +1925,30 @@ def _build_analyze_relationships(action: ActionHistory, verbose: bool) -> ToolCa
     return tc
 
 
+def _build_validate_semantic_key_candidate(action: ActionHistory, verbose: bool) -> ToolCallContent:
+    """validate_semantic_key_candidate: show the exact key-check outcome."""
+    tc = make_base_content(action)
+    if verbose:
+        tc.args_lines = extract_args_markup(action)
+        if action.output:
+            tc.output_lines = _format_result_only_markup(action.output)
+    else:
+        data = parse_output_data(action.output)
+        if data:
+            result = data.get("result")
+            if isinstance(result, dict):
+                columns = result.get("columns")
+                arity = len(columns) if isinstance(columns, list) else 0
+                outcome = None
+                if result.get("is_valid_logical_key") is True:
+                    outcome = "verified"
+                elif "is_valid_logical_key" in result:
+                    outcome = "rejected"
+                if outcome:
+                    tc.compact_result = f"{arity}-column logical key {outcome}"
+    return tc
+
+
 def _build_get_multiple_ddl(action: ActionHistory, verbose: bool) -> ToolCallContent:
     """get_multiple_tables_ddl: show DDL count, verbose highlights DDL."""
     tc = make_base_content(action)
@@ -2252,6 +2276,7 @@ class ToolCallContentBuilder:
 
         # Semantic discovery tools
         self._registry["analyze_table_relationships"] = _build_analyze_relationships
+        self._registry["validate_semantic_key_candidate"] = _build_validate_semantic_key_candidate
         self._registry["get_multiple_tables_ddl"] = _build_get_multiple_ddl
         self._registry["analyze_column_usage_patterns"] = _build_analyze_columns
         self._registry["profile_semantic_model_evidence"] = _build_profile_semantic_model_evidence

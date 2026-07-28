@@ -947,6 +947,11 @@ def test_failure_path_uniform(tool: str):
         ("end_metric_generation", {"metric_file": "m.yml"}, "metric generated"),
         ("analyze_table_relationships", {"relationships": [{}, {}, {}]}, "3 rels"),
         (
+            "validate_semantic_key_candidate",
+            {"columns": ["tenant_id", "id"], "is_valid_logical_key": True},
+            "2-col key verified",
+        ),
+        (
             "analyze_column_usage_patterns",
             {"summary": "Analyzed 5 columns from 10 SQLs"},
             "Analyzed 5 columns…",

@@ -1530,21 +1530,10 @@ class GenerationTools:
         normalized_column = str(getattr(relationship, normalized_name, None) or "")
         return [normalized_column] if normalized_column else []
 
-    @classmethod
-    def _first_relationship_column(cls, relationship: Any, core_name: str, normalized_name: str) -> str:
-        columns = cls._relationship_columns(relationship, core_name, normalized_name)
-        return columns[0] if columns else ""
-
-    @classmethod
-    def _relationship_join_name(cls, relationship: Any, to_dataset: Any) -> str:
-        from_column = cls._first_relationship_column(relationship, "from_columns", "from_identifier")
-        if from_column:
-            return from_column
-        to_column = cls._first_relationship_column(relationship, "to_columns", "to_identifier")
-        if to_column:
-            return to_column
-        primary_keys = cls._dataset_primary_keys(to_dataset)
-        return primary_keys[0] if primary_keys else ""
+    @staticmethod
+    def _relationship_path_name(relationship: Any) -> str:
+        """Return the native OSI relationship name used in dimension paths."""
+        return str(getattr(relationship, "name", None) or "")
 
     @classmethod
     def _metric_dataset_names(
@@ -1624,17 +1613,19 @@ class GenerationTools:
             to_dataset = datasets.get(to_dataset_name)
             if to_dataset is None:
                 continue
-            join_name = cls._relationship_join_name(
-                relationship,
-                to_dataset,
-            )
-            if not join_name:
+            relationship_name = cls._relationship_path_name(relationship)
+            if not relationship_name:
+                logger.warning(
+                    "Skipping unnamed OSI relationship %s -> %s; joined dimensions are omitted from the path.",
+                    dataset_name,
+                    to_dataset_name,
+                )
                 continue
             dimensions.extend(
                 cls._dataset_dimensions_with_relationships(
                     doc,
                     to_dataset_name,
-                    prefix=[*prefix, join_name],
+                    prefix=[*prefix, relationship_name],
                     visited=set(visited),
                 )
             )

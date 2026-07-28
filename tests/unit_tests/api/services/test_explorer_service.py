@@ -825,7 +825,14 @@ class TestExplorerServiceMetricDimensions:
         adapter.get_dimensions = AsyncMock(
             return_value=[
                 SimpleNamespace(name="region", type="string", description="Sales region", is_primary_key=False),
-                SimpleNamespace(name="metric_time", type="time", description=None, is_primary_key=None),
+                SimpleNamespace(
+                    name="metric_time",
+                    type="time",
+                    description=None,
+                    is_primary_key=None,
+                    is_primary_time=True,
+                    time_granularities=["month", "quarter", "year"],
+                ),
             ]
         )
         tools_stub = self._patch_adapter(monkeypatch, adapter=adapter)
@@ -845,6 +852,8 @@ class TestExplorerServiceMetricDimensions:
         assert [d.name for d in result.data.dimensions] == ["region", "metric_time"]
         assert result.data.dimensions[0].type == "string"
         assert result.data.dimensions[1].type == "time"
+        assert result.data.time_dimension == "metric_time"
+        assert result.data.time_granularities == ["month", "quarter", "year"]
         assert adapter.get_dimensions.await_args.kwargs["metric_name"] == "revenue"
         assert tools_stub.kwargs["runtime_db_context_provider"]() == {
             "datasource": real_agent_config.current_datasource,

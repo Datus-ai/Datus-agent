@@ -13,7 +13,7 @@ mined from historical SQL.
 import json
 import time
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -80,6 +80,7 @@ class SemanticDiscoveryTools:
             methods_to_convert.extend(
                 [
                     self.analyze_table_relationships,
+                    self.validate_semantic_key_candidate,
                     self.get_multiple_tables_ddl,
                     self.analyze_column_usage_patterns,
                 ]
@@ -123,10 +124,13 @@ class SemanticDiscoveryTools:
                     {
                         "source_table": "orders",
                         "source_column": "customer_id",
+                        "source_columns": ["customer_id"],
                         "target_table": "customers",
                         "target_column": "id",
+                        "target_columns": ["id"],
                         "confidence": "high|medium|low",
-                        "evidence": "foreign_key|join_pattern|column_name"
+                        "evidence": "foreign_key|join_pattern|column_name",
+                        "target_key_status": "declared|candidate_unverified"
                     },
                     ...
                 ],
@@ -159,6 +163,123 @@ class SemanticDiscoveryTools:
                 }
             )
 
+        except Exception as e:
+            return FuncToolResult(success=0, error=str(e))
+
+    def validate_semantic_key_candidate(
+        self,
+        table_name: str,
+        columns: List[str],
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema_name: Optional[str] = "",
+    ) -> FuncToolResult:
+        """
+        Verify a candidate logical key with exact full-table checks.
+
+        Historical JOINs and column names can suggest key columns, but they do
+        not prove uniqueness. This read-only tool checks every row for NULL key
+        components and counts every duplicate non-NULL key group. A passing
+        result may be authored as one OSI ``unique_keys`` entry. It never
+        infers a physical ``primary_key``; that requires an explicit source
+        constraint or data contract.
+
+        Args:
+            table_name: Table containing the candidate key
+            columns: Ordered candidate key columns; one or more columns
+            catalog: Optional catalog override
+            database: Optional database override
+            schema_name: Optional schema override
+
+        Returns:
+            FuncToolResult containing exact row/null/duplicate counts,
+            ``is_valid_logical_key``, and the permitted OSI declaration.
+        """
+        try:
+            normalized_columns = self._validate_key_candidate_columns(columns)
+            table_ref = self._key_validation_table_reference(
+                table_name=table_name,
+                catalog=catalog or "",
+                database=database or "",
+                schema_name=schema_name or "",
+            )
+            column_refs = [self._quote_sql_identifier(column) for column in normalized_columns]
+            null_predicate = " OR ".join(f"{column_ref} IS NULL" for column_ref in column_refs)
+            non_null_predicate = " AND ".join(f"{column_ref} IS NOT NULL" for column_ref in column_refs)
+            grouped_columns = ", ".join(column_refs)
+
+            summary_sql = (
+                "SELECT COUNT(*) AS row_count, "
+                f"SUM(CASE WHEN {null_predicate} THEN 1 ELSE 0 END) "
+                f"AS null_key_rows FROM {table_ref}"
+            )
+            summary = self._run_profile_scalar_query(summary_sql, database or "")
+            if summary.get("error"):
+                return FuncToolResult(
+                    success=0,
+                    error=f"Candidate key summary check failed: {summary['error']}",
+                )
+
+            duplicate_sql = (
+                "SELECT COUNT(*) AS duplicate_group_count, "
+                "COALESCE(SUM(duplicate_count - 1), 0) AS duplicate_row_count "
+                "FROM ("
+                "SELECT COUNT(*) AS duplicate_count "
+                f"FROM {table_ref} WHERE {non_null_predicate} "
+                f"GROUP BY {grouped_columns} HAVING COUNT(*) > 1"
+                ") duplicate_keys"
+            )
+            duplicate_stats = self._run_profile_scalar_query(duplicate_sql, database or "")
+            if duplicate_stats.get("error"):
+                return FuncToolResult(
+                    success=0,
+                    error=(f"Candidate key duplicate check failed: {duplicate_stats['error']}"),
+                )
+
+            row_count = self._required_profile_count(summary, "row_count")
+            null_key_rows = self._optional_profile_count(summary, "null_key_rows", default=0)
+            duplicate_group_count = self._required_profile_count(duplicate_stats, "duplicate_group_count")
+            duplicate_row_count = self._optional_profile_count(duplicate_stats, "duplicate_row_count", default=0)
+            is_non_null = null_key_rows == 0
+            is_unique = duplicate_group_count == 0
+            is_valid_logical_key = row_count > 0 and is_non_null and is_unique
+
+            if row_count == 0:
+                recommendation = "none"
+                reason = "The table is empty, so the candidate has no supporting data."
+            elif not is_non_null:
+                recommendation = "none"
+                reason = f"{null_key_rows} rows contain NULL in at least one key component."
+            elif not is_unique:
+                recommendation = "none"
+                reason = f"{duplicate_group_count} duplicate key groups contain {duplicate_row_count} excess rows."
+            else:
+                recommendation = "unique_keys"
+                reason = "The ordered columns are non-NULL and unique across the full table."
+
+            return FuncToolResult(
+                result={
+                    "table": table_name,
+                    "columns": normalized_columns,
+                    "verification_scope": "full_table",
+                    "access_scope": "rows visible to the current datasource principal",
+                    "verified_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "row_count": row_count,
+                    "null_key_rows": null_key_rows,
+                    "duplicate_group_count": duplicate_group_count,
+                    "duplicate_row_count": duplicate_row_count,
+                    "is_non_null": is_non_null,
+                    "is_unique": is_unique,
+                    "is_valid_logical_key": is_valid_logical_key,
+                    "recommended_osi_declaration": recommendation,
+                    "primary_key_inferred": False,
+                    "reason": reason,
+                    "verification_sql": {
+                        "summary": summary_sql,
+                        "duplicates": duplicate_sql,
+                    },
+                }
+            )
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
 
@@ -391,8 +512,10 @@ class SemanticDiscoveryTools:
                     "tables": table_evidence,
                     "parse_errors": parse_errors[:5],
                     "yaml_guidance": (
-                        "Keep generated YAML concise: use profiling evidence to choose identifiers, "
-                        "measures, dimensions, and time columns; include compact distribution notes "
+                        "Keep generated YAML concise: use profiling evidence to choose relationship "
+                        "candidates, measures, dimensions, and time columns; historical joins do not "
+                        "prove keys, so verify complete target column lists with "
+                        "validate_semantic_key_candidate before adding unique_keys. Include compact distribution notes "
                         "in descriptions when useful, such as observed min/max, percentiles, "
                         "null rate, date span/freshness/duration, low-cardinality distinct counts, "
                         "stable enum mappings, referential coverage, and common business filter "
@@ -991,28 +1114,80 @@ class SemanticDiscoveryTools:
     ) -> None:
         from sqlglot import expressions as exp
 
-        for eq in select.find_all(exp.EQ):
-            left = eq.left
-            right = eq.right
-            if not isinstance(left, exp.Column) or not isinstance(right, exp.Column):
-                continue
-            left_table = alias_to_table.get(self._normalize_identifier(left.table))
-            right_table = alias_to_table.get(self._normalize_identifier(right.table))
-            if not left_table or not right_table or left_table == right_table:
-                continue
+        def record(
+            source_table: str,
+            source_columns: List[str],
+            target_table: str,
+            target_columns: List[str],
+        ) -> None:
+            evidence = self._relationship_evidence(
+                source_table=source_table,
+                source_columns=source_columns,
+                target_table=target_table,
+                target_columns=target_columns,
+                confidence="medium",
+                evidence="historical_sql_join",
+                target_key_status="candidate_unverified",
+            )
             relationship = json.dumps(
-                {
-                    "source_table": left_table,
-                    "source_column": left.name,
-                    "target_table": right_table,
-                    "target_column": right.name,
-                    "evidence": "historical_sql_join",
-                },
+                evidence,
                 ensure_ascii=False,
                 sort_keys=True,
             )
-            table_stats[left_table]["join_relationships"][relationship] += 1
-            table_stats[right_table]["join_relationships"][relationship] += 1
+            table_stats[source_table]["join_relationships"][relationship] += 1
+            table_stats[target_table]["join_relationships"][relationship] += 1
+
+        grouped_pairs: Dict[tuple[str, str], List[tuple[str, str]]] = defaultdict(list)
+
+        def collect_pair(left: Any, right: Any, joined_table: Optional[str] = None) -> None:
+            if not isinstance(left, exp.Column) or not isinstance(right, exp.Column):
+                return
+            left_table = alias_to_table.get(self._normalize_identifier(left.table))
+            right_table = alias_to_table.get(self._normalize_identifier(right.table))
+            if not left_table or not right_table or left_table == right_table:
+                return
+
+            if joined_table and left_table == joined_table:
+                source_table, source_column = right_table, right.name
+                target_table, target_column = left_table, left.name
+            elif joined_table and right_table == joined_table:
+                source_table, source_column = left_table, left.name
+                target_table, target_column = right_table, right.name
+            elif (right_table, left_table) in grouped_pairs:
+                source_table, source_column = right_table, right.name
+                target_table, target_column = left_table, left.name
+            else:
+                source_table, source_column = left_table, left.name
+                target_table, target_column = right_table, right.name
+
+            pair = (source_column, target_column)
+            if pair not in grouped_pairs[(source_table, target_table)]:
+                grouped_pairs[(source_table, target_table)].append(pair)
+
+        for join in select.find_all(exp.Join):
+            on_expression = join.args.get("on")
+            if on_expression is None:
+                continue
+            joined_table = None
+            if isinstance(join.this, exp.Table):
+                joined_table = alias_to_table.get(
+                    self._normalize_identifier(join.this.alias_or_name)
+                ) or alias_to_table.get(self._normalize_identifier(join.this.name))
+            for eq in self._collect_conjunctive_equalities(on_expression):
+                collect_pair(eq.left, eq.right, joined_table)
+
+        where_expression = select.args.get("where")
+        if where_expression is not None:
+            for eq in self._collect_conjunctive_equalities(where_expression):
+                collect_pair(eq.left, eq.right)
+
+        for (source_table, target_table), pairs in grouped_pairs.items():
+            record(
+                source_table,
+                [pair[0] for pair in pairs],
+                target_table,
+                [pair[1] for pair in pairs],
+            )
 
     def _semantic_profile_filter_predicates(self, root: Any) -> List[Any]:
         from sqlglot import expressions as exp
@@ -1028,6 +1203,32 @@ class SemanticDiscoveryTools:
             if isinstance(node, exp.Func) and id(node) not in covered_nodes:
                 predicates.append(node)
         return predicates
+
+    @staticmethod
+    def _collect_conjunctive_equalities(root: Any) -> List[Any]:
+        """Collect equality predicates under conjunctions while skipping OR branches."""
+        from sqlglot import expressions as exp
+
+        equalities: List[Any] = []
+        if root is None:
+            return equalities
+
+        def walk(node: Any) -> None:
+            if node is None or not isinstance(node, exp.Expression):
+                return
+            if isinstance(node, exp.Or):
+                return
+            if isinstance(node, exp.EQ):
+                equalities.append(node)
+                return
+            if isinstance(node, exp.Where):
+                walk(node.this)
+                return
+            for child in node.iter_expressions():
+                walk(child)
+
+        walk(root)
+        return equalities
 
     def _semantic_profile_operator_map(self) -> Dict[type, str]:
         from sqlglot import expressions as exp
@@ -1562,34 +1763,76 @@ class SemanticDiscoveryTools:
             if deadline is not None and time.monotonic() > deadline:
                 break
             source_table = str(relationship.get("source_table") or "")
-            source_column = str(relationship.get("source_column") or "")
             target_table = str(relationship.get("target_table") or "")
-            target_column = str(relationship.get("target_column") or "")
-            key = (source_table, source_column, target_table, target_column)
-            if not all(key) or key in seen:
+            source_columns = [
+                str(column)
+                for column in (relationship.get("source_columns") or [relationship.get("source_column")])
+                if column
+            ]
+            target_columns = [
+                str(column)
+                for column in (relationship.get("target_columns") or [relationship.get("target_column")])
+                if column
+            ]
+            key = (
+                source_table,
+                tuple(source_columns),
+                target_table,
+                tuple(target_columns),
+            )
+            if (
+                not source_table
+                or not target_table
+                or not source_columns
+                or len(source_columns) != len(target_columns)
+                or key in seen
+            ):
                 continue
             seen.add(key)
             source_ref = self._profile_table_reference(source_table, catalog, database, schema_name)
             target_ref = self._profile_table_reference(target_table, catalog, database, schema_name)
-            source_col_ref = self._quote_sql_identifier(source_column)
-            target_col_ref = self._quote_sql_identifier(target_column)
-            sql = (
-                "SELECT "
-                "COUNT(*) AS source_rows, "
-                f"COUNT(src.{source_col_ref}) AS non_null_source_rows, "
-                f"COUNT(DISTINCT src.{source_col_ref}) AS distinct_source_keys, "
-                f"COUNT(tgt.{target_col_ref}) AS matched_join_rows, "
-                f"COUNT(DISTINCT CASE WHEN tgt.{target_col_ref} IS NOT NULL THEN src.{source_col_ref} END) "
-                "AS matched_distinct_source_keys "
-                f"FROM {source_ref} src LEFT JOIN {target_ref} tgt "
-                f"ON src.{source_col_ref} = tgt.{target_col_ref}"
+            source_col_refs = [self._quote_sql_identifier(column) for column in source_columns]
+            target_col_refs = [self._quote_sql_identifier(column) for column in target_columns]
+            join_condition = " AND ".join(
+                f"src.{source_column} = tgt.{target_column}"
+                for source_column, target_column in zip(source_col_refs, target_col_refs)
             )
+            if len(source_columns) == 1:
+                source_col_ref = source_col_refs[0]
+                target_col_ref = target_col_refs[0]
+                sql = (
+                    "SELECT "
+                    "COUNT(*) AS source_rows, "
+                    f"COUNT(src.{source_col_ref}) AS non_null_source_rows, "
+                    f"COUNT(DISTINCT src.{source_col_ref}) AS distinct_source_keys, "
+                    f"COUNT(tgt.{target_col_ref}) AS matched_join_rows, "
+                    f"COUNT(DISTINCT CASE WHEN tgt.{target_col_ref} IS NOT NULL "
+                    f"THEN src.{source_col_ref} END) AS matched_distinct_source_keys "
+                    f"FROM {source_ref} src LEFT JOIN {target_ref} tgt "
+                    f"ON {join_condition}"
+                )
+            else:
+                non_null_source = " AND ".join(f"src.{column} IS NOT NULL" for column in source_col_refs)
+                matched_target = " AND ".join(f"tgt.{column} IS NOT NULL" for column in target_col_refs)
+                sql = (
+                    "SELECT "
+                    "COUNT(*) AS source_rows, "
+                    f"SUM(CASE WHEN {non_null_source} THEN 1 ELSE 0 END) "
+                    "AS non_null_source_rows, "
+                    f"SUM(CASE WHEN {matched_target} THEN 1 ELSE 0 END) "
+                    "AS matched_join_rows "
+                    f"FROM {source_ref} src LEFT JOIN {target_ref} tgt "
+                    f"ON {join_condition}"
+                )
             stats = self._run_profile_scalar_query(sql, database)
             profile = {
                 "source_table": source_table,
-                "source_column": source_column,
+                "source_column": source_columns[0],
+                "source_columns": source_columns,
                 "target_table": target_table,
-                "target_column": target_column,
+                "target_column": target_columns[0],
+                "target_columns": target_columns,
+                "key_arity": len(source_columns),
                 "stats_sql": sql,
             }
             if stats:
@@ -1674,6 +1917,60 @@ class SemanticDiscoveryTools:
             return table_name
         parts = [part for part in (catalog, database, schema_name, table_name) if part]
         return ".".join(self._quote_sql_identifier(part) for part in parts)
+
+    def _validate_key_candidate_columns(self, columns: List[str]) -> List[str]:
+        if not isinstance(columns, list) or not columns:
+            raise ValueError("columns must contain at least one candidate key column")
+        normalized = [str(column or "").strip() for column in columns]
+        if any(not column for column in normalized):
+            raise ValueError("candidate key columns must not be empty")
+        comparable = [self._normalize_identifier(column) for column in normalized]
+        if len(set(comparable)) != len(comparable):
+            raise ValueError("candidate key columns must not contain duplicates")
+        return normalized
+
+    def _key_validation_table_reference(
+        self,
+        table_name: str,
+        catalog: str,
+        database: str,
+        schema_name: str,
+    ) -> str:
+        table_name = str(table_name or "").strip()
+        if not table_name:
+            raise ValueError("table_name is required")
+        if "." in table_name:
+            parts = [part.strip() for part in table_name.split(".")]
+        else:
+            parts = [
+                str(part).strip() for part in (catalog, database, schema_name, table_name) if str(part or "").strip()
+            ]
+        if not parts or any(not part for part in parts):
+            raise ValueError("table_name contains an empty qualified-name component")
+        return ".".join(self._quote_sql_identifier(part) for part in parts)
+
+    def _required_profile_count(self, stats: Dict[str, Any], key: str) -> int:
+        value = self._profile_number(self._profile_stat_value(stats, key))
+        if value is None or value < 0:
+            raise ValueError(f"Candidate key verification did not return `{key}`")
+        return int(value)
+
+    def _optional_profile_count(self, stats: Dict[str, Any], key: str, default: int) -> int:
+        value = self._profile_number(self._profile_stat_value(stats, key))
+        if value is None:
+            return default
+        if value < 0:
+            raise ValueError(f"Candidate key verification returned invalid `{key}`")
+        return int(value)
+
+    def _profile_stat_value(self, stats: Dict[str, Any], key: str) -> Any:
+        if key in stats:
+            return stats[key]
+        normalized_key = self._normalize_identifier(key)
+        for candidate, value in stats.items():
+            if self._normalize_identifier(str(candidate)) == normalized_key:
+                return value
+        return None
 
     def _quote_sql_identifier(self, value: str) -> str:
         value = str(value).strip().strip('"`[]')
@@ -3265,18 +3562,28 @@ class SemanticDiscoveryTools:
             ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
             if ddl_result.success and ddl_result.result:
                 ddl_text = ddl_result.result.get("definition", "")
-                # Match: FOREIGN KEY (column) REFERENCES target_table(target_column)
-                fk_pattern = r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+(\w+)\s*\(([^)]+)\)"
+                # Match both scalar and composite constraints:
+                # FOREIGN KEY (tenant_id, customer_id)
+                # REFERENCES customers(tenant_id, id)
+                fk_pattern = (
+                    r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+"
+                    r"([^\s(]+)\s*\(([^)]+)\)"
+                )
                 for match in re.finditer(fk_pattern, ddl_text, re.IGNORECASE):
+                    source_columns = self._split_constraint_columns(match.group(1))
+                    target_columns = self._split_constraint_columns(match.group(3))
+                    if not source_columns or len(source_columns) != len(target_columns):
+                        continue
                     relationships.append(
-                        {
-                            "source_table": table,
-                            "source_column": match.group(1).strip(),
-                            "target_table": match.group(2).strip(),
-                            "target_column": match.group(3).strip(),
-                            "confidence": "high",
-                            "evidence": "foreign_key",
-                        }
+                        self._relationship_evidence(
+                            source_table=table,
+                            source_columns=source_columns,
+                            target_table=match.group(2).strip().strip('`"[]'),
+                            target_columns=target_columns,
+                            confidence="high",
+                            evidence="foreign_key",
+                            target_key_status="declared",
+                        )
                     )
         return self._deduplicate_relationships(relationships)
 
@@ -3317,14 +3624,15 @@ class SemanticDiscoveryTools:
                         right_lower = right_table.lower()
                         if left_lower in tables_lower_map and right_lower in tables_lower_map:
                             relationships.append(
-                                {
-                                    "source_table": tables_lower_map[left_lower],
-                                    "source_column": left_col,
-                                    "target_table": tables_lower_map[right_lower],
-                                    "target_column": right_col,
-                                    "confidence": "medium",
-                                    "evidence": "join_pattern",
-                                }
+                                self._relationship_evidence(
+                                    source_table=tables_lower_map[left_lower],
+                                    source_columns=[left_col],
+                                    target_table=tables_lower_map[right_lower],
+                                    target_columns=[right_col],
+                                    confidence="medium",
+                                    evidence="join_pattern",
+                                    target_key_status="candidate_unverified",
+                                )
                             )
             except Exception as e:
                 logger.warning(f"Failed to search SQL history for table {table}: {e}")
@@ -4042,7 +4350,7 @@ class SemanticDiscoveryTools:
     def _extract_join_relationships_from_sql(
         self, sql_text: str, tables_lower_map: Dict[str, str]
     ) -> List[Dict[str, Any]]:
-        """Extract alias-aware join relationships using sqlglot."""
+        """Extract alias-aware scalar or composite JOIN relationships."""
         from sqlglot import expressions as exp
 
         relationships: List[Dict[str, Any]] = []
@@ -4055,26 +4363,95 @@ class SemanticDiscoveryTools:
 
         for parsed in parsed_expressions:
             alias_to_table = self._alias_to_table_map(parsed)
-            for eq in parsed.find_all(exp.EQ):
-                left = eq.left
-                right = eq.right
+            grouped_pairs: Dict[tuple[str, str], List[tuple[str, str]]] = defaultdict(list)
+
+            def collect_pair(
+                left: Any,
+                right: Any,
+                joined_table: Optional[str],
+                current_alias_to_table: Dict[str, str],
+                current_grouped_pairs: Dict[tuple[str, str], List[tuple[str, str]]],
+            ) -> None:
                 if not isinstance(left, exp.Column) or not isinstance(right, exp.Column):
-                    continue
-                left_table = self._resolve_column_table(left, alias_to_table, tables_lower_map)
-                right_table = self._resolve_column_table(right, alias_to_table, tables_lower_map)
+                    return
+                left_table = self._resolve_column_table(left, current_alias_to_table, tables_lower_map)
+                right_table = self._resolve_column_table(right, current_alias_to_table, tables_lower_map)
                 if not left_table or not right_table or left_table == right_table:
+                    return
+
+                if joined_table and left_table == joined_table:
+                    source_table, source_column = right_table, right.name
+                    target_table, target_column = left_table, left.name
+                elif joined_table and right_table == joined_table:
+                    source_table, source_column = left_table, left.name
+                    target_table, target_column = right_table, right.name
+                elif (right_table, left_table) in current_grouped_pairs:
+                    source_table, source_column = right_table, right.name
+                    target_table, target_column = left_table, left.name
+                else:
+                    source_table, source_column = left_table, left.name
+                    target_table, target_column = right_table, right.name
+
+                pair = (source_column, target_column)
+                if pair not in current_grouped_pairs[(source_table, target_table)]:
+                    current_grouped_pairs[(source_table, target_table)].append(pair)
+
+            for join in parsed.find_all(exp.Join):
+                on_expression = join.args.get("on")
+                if on_expression is None:
                     continue
+                joined_table = self._resolve_join_target_table(join, alias_to_table, tables_lower_map)
+                for eq in self._collect_conjunctive_equalities(on_expression):
+                    collect_pair(
+                        eq.left,
+                        eq.right,
+                        joined_table,
+                        alias_to_table,
+                        grouped_pairs,
+                    )
+
+            where_expression = parsed.args.get("where")
+            if where_expression is not None:
+                for eq in self._collect_conjunctive_equalities(where_expression):
+                    collect_pair(
+                        eq.left,
+                        eq.right,
+                        None,
+                        alias_to_table,
+                        grouped_pairs,
+                    )
+
+            for (source_table, target_table), pairs in grouped_pairs.items():
                 relationships.append(
-                    {
-                        "source_table": left_table,
-                        "source_column": left.name,
-                        "target_table": right_table,
-                        "target_column": right.name,
-                        "confidence": "medium",
-                        "evidence": "join_pattern",
-                    }
+                    self._relationship_evidence(
+                        source_table=source_table,
+                        source_columns=[pair[0] for pair in pairs],
+                        target_table=target_table,
+                        target_columns=[pair[1] for pair in pairs],
+                        confidence="medium",
+                        evidence="join_pattern",
+                        target_key_status="candidate_unverified",
+                    )
                 )
         return self._deduplicate_relationships(relationships)
+
+    def _resolve_join_target_table(
+        self,
+        join: Any,
+        alias_to_table: Dict[str, str],
+        tables_lower_map: Dict[str, str],
+    ) -> Optional[str]:
+        from sqlglot import expressions as exp
+
+        target = join.this
+        if not isinstance(target, exp.Table):
+            return None
+        for candidate in (target.alias_or_name, target.name):
+            resolved = alias_to_table.get(self._normalize_identifier(candidate), candidate)
+            canonical = tables_lower_map.get(self._normalize_identifier(resolved))
+            if canonical:
+                return canonical
+        return None
 
     def _alias_to_table_map(self, parsed: Any) -> Dict[str, str]:
         """Build alias -> table name mapping for one parsed SQL expression."""
@@ -4182,6 +4559,36 @@ class SemanticDiscoveryTools:
         """Normalize SQL identifiers for comparisons."""
         return (value or "").strip().strip('"`[]').lower()
 
+    def _split_constraint_columns(self, value: str) -> List[str]:
+        return [column.strip().strip('`"[]') for column in str(value or "").split(",") if column.strip().strip('`"[]')]
+
+    def _relationship_evidence(
+        self,
+        *,
+        source_table: str,
+        source_columns: List[str],
+        target_table: str,
+        target_columns: List[str],
+        confidence: str,
+        evidence: str,
+        target_key_status: str,
+    ) -> Dict[str, Any]:
+        if not source_columns or len(source_columns) != len(target_columns):
+            raise ValueError("relationship evidence requires equally sized non-empty column lists")
+        return {
+            "source_table": source_table,
+            "source_column": source_columns[0],
+            "source_columns": list(source_columns),
+            "target_table": target_table,
+            "target_column": target_columns[0],
+            "target_columns": list(target_columns),
+            "key_arity": len(source_columns),
+            "confidence": confidence,
+            "evidence": evidence,
+            "target_key_status": target_key_status,
+            "requires_target_key_validation": target_key_status == "candidate_unverified",
+        }
+
     def _is_same_expression(self, left: Any, right: Any) -> bool:
         """Compare SQL expressions by rendered SQL text."""
         return left.sql() == right.sql()
@@ -4255,14 +4662,15 @@ class SemanticDiscoveryTools:
                         target_columns = table_schemas.get(target_table, [])
                         if any(c.get("name", "").lower() == "id" for c in target_columns):
                             relationships.append(
-                                {
-                                    "source_table": source_table,
-                                    "source_column": orig_col_name,
-                                    "target_table": target_table,
-                                    "target_column": "id",
-                                    "confidence": "low",
-                                    "evidence": "column_name",
-                                }
+                                self._relationship_evidence(
+                                    source_table=source_table,
+                                    source_columns=[orig_col_name],
+                                    target_table=target_table,
+                                    target_columns=["id"],
+                                    confidence="low",
+                                    evidence="column_name",
+                                    target_key_status="candidate_unverified",
+                                )
                             )
 
         return relationships
@@ -4274,12 +4682,36 @@ class SemanticDiscoveryTools:
 
         # Sort by confidence (high > medium > low)
         confidence_order = {"high": 0, "medium": 1, "low": 2}
-        sorted_rels = sorted(relationships, key=lambda r: confidence_order.get(r["confidence"], 3))
+        sorted_rels = sorted(
+            relationships,
+            key=lambda r: confidence_order.get(r.get("confidence", ""), 3),
+        )
 
         for rel in sorted_rels:
-            key = (rel["source_table"], rel["source_column"], rel["target_table"], rel["target_column"])
+            normalized = dict(rel)
+            source_columns = list(
+                normalized.get("source_columns")
+                or ([normalized["source_column"]] if normalized.get("source_column") else [])
+            )
+            target_columns = list(
+                normalized.get("target_columns")
+                or ([normalized["target_column"]] if normalized.get("target_column") else [])
+            )
+            if not source_columns or len(source_columns) != len(target_columns):
+                continue
+            normalized["source_column"] = source_columns[0]
+            normalized["source_columns"] = source_columns
+            normalized["target_column"] = target_columns[0]
+            normalized["target_columns"] = target_columns
+            normalized["key_arity"] = len(source_columns)
+            key = (
+                normalized["source_table"],
+                tuple(source_columns),
+                normalized["target_table"],
+                tuple(target_columns),
+            )
             if key not in seen:
                 seen.add(key)
-                deduplicated.append(rel)
+                deduplicated.append(normalized)
 
         return deduplicated
