@@ -28,8 +28,8 @@ from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
 from datus.tools.db_tools import connector_registry
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -1038,32 +1038,17 @@ class GenerationHooks(AgentHooks):
 
                 # Try to parse hierarchy from sql_table if it's fully qualified
                 if sql_table:
-                    parts = [p.strip() for p in sql_table.split(".") if p.strip()]
-                    if len(parts) > 0:
-                        table_name = parts[-1]
-
-                        # Replicate DBFuncTool._determine_field_order logic for parsing
-                        dialect = agent_config.db_type
-                        possible_fields = []
-                        if connector_registry.support_catalog(dialect):
-                            possible_fields.append("catalog")
-                        if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
-                            possible_fields.append("database")
-                        if connector_registry.support_schema(dialect):
-                            possible_fields.append("schema")
-
-                        # Assign parts from right to left (excluding the table name itself)
-                        idx = len(parts) - 2
-                        for field in reversed(possible_fields):
-                            if idx < 0:
-                                break
-                            if field == "schema":
-                                schema_name = parts[idx]
-                            elif field == "database":
-                                database_name = parts[idx]
-                            elif field == "catalog":
-                                catalog_name = parts[idx]
-                            idx -= 1
+                    parsed = parse_table_name_parts(sql_table, agent_config.db_type)
+                    table_name = parsed["table_name"] or table_name
+                    catalog_name = parsed["catalog_name"] or catalog_name
+                    database_name = parsed["database_name"] or database_name
+                    # A parser-resolved database/project prefix makes the parsed
+                    # schema authoritative. This is important for adapters whose
+                    # two-part form is database.table: an old configured schema
+                    # must not turn it back into database.schema.table.
+                    schema_name = (
+                        parsed["schema_name"] if parsed["database_name"] else parsed["schema_name"] or schema_name
+                    )
 
                 # Clear schema_name if dialect doesn't support it (e.g. StarRocks, MySQL)
                 if not connector_registry.support_schema(agent_config.db_type):

@@ -30,7 +30,7 @@ def _register_test_capabilities():
     so future ``register_handlers`` calls (or changes to the method itself)
     can't leak into unrelated tests via execution order.
     """
-    snapshot_attrs = ("_capabilities", "_uri_builders", "_context_resolvers")
+    snapshot_attrs = ("_connectors", "_metadata", "_capabilities", "_uri_builders", "_context_resolvers")
     snapshots = {
         attr: {k: (set(v) if isinstance(v, set) else v) for k, v in getattr(connector_registry, attr).items()}
         for attr in snapshot_attrs
@@ -138,6 +138,49 @@ class TestExtractDDLTarget:
             database="SNOWFLAKE_SAMPLE_DATA",
             db_schema="TPCH_SF1",
             table="CUSTOMER",
+        )
+
+    def test_adapter_identifier_parser_controls_two_and_three_part_names(self, monkeypatch):
+        def parser(identifier):
+            parts = identifier.split(".")
+            return {
+                "catalog_name": "",
+                "database_name": parts[0] if len(parts) > 1 else "",
+                "schema_name": parts[1] if len(parts) == 3 else "",
+                "table_name": parts[-1],
+            }
+
+        connector_registry.register_handlers("flexdb", capabilities={"database", "schema"})
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: parser if dialect == "flexdb" else None,
+            raising=False,
+        )
+
+        two_level = extract_ddl_target(
+            "CREATE TABLE project_a.orders (id BIGINT)",
+            "source",
+            dialect="flexdb",
+        )
+        three_level = extract_ddl_target(
+            "CREATE TABLE project_a.analytics.orders (id BIGINT)",
+            "source",
+            dialect="flexdb",
+        )
+
+        assert two_level == TableTarget(datasource="source", database="project_a", table="orders")
+        assert three_level == TableTarget(
+            datasource="source",
+            database="project_a",
+            db_schema="analytics",
+            table="orders",
         )
 
     def test_two_part_identifier_catalog_is_none(self):

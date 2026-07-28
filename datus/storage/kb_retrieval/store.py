@@ -21,11 +21,11 @@ from datus.schemas.node_models import TableSchema, TableValue
 from datus.storage.base import StorageBase
 from datus.storage.datasource_scope import DATASOURCE_ID_COLUMN, datasource_condition, resolve_datasource_id
 from datus.storage.fts import FtsField, FtsIndexStatus, FtsSpec
-from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import json2csv
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_table_name_parts
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
@@ -1082,16 +1082,10 @@ class MetadataFtsRAG:
         schema_name: str = "",
         dialect: str = DBType.SQLITE,
     ) -> tuple[str, str, str, str]:
-        parts = full_table.split(".")
-        table_name = parts[-1]
-        if len(parts) == 4:
-            return parts[0], parts[1], parts[2], table_name
-        if len(parts) == 3:
-            if connector_registry.support_catalog(dialect) and not connector_registry.support_schema(dialect):
-                return parts[0], parts[1], "", table_name
-            return catalog_name, parts[0], parts[1], table_name
-        if len(parts) == 2:
-            if not connector_registry.support_schema(dialect):
-                return catalog_name, parts[0], "", table_name
-            return catalog_name, database_name, parts[0], table_name
-        return catalog_name, database_name, schema_name, table_name
+        parsed = parse_table_name_parts(full_table, dialect)
+        return (
+            parsed["catalog_name"] or catalog_name,
+            parsed["database_name"] or database_name,
+            parsed["schema_name"] or schema_name,
+            parsed["table_name"],
+        )

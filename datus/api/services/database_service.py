@@ -30,6 +30,7 @@ from datus.api.models.table_models import (
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config_loader import AgentConfig
 from datus.storage.semantic_model.store import SemanticModelRAG
+from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
 from datus.utils.sql_utils import parse_table_name_parts
@@ -169,10 +170,8 @@ class DatasourceService:
         database as ``current``. Request-level filters (database_name,
         schema_name, catalog_name) narrow the result set when provided.
         """
-        from datus_db_core import connector_registry
-
         dialect = getattr(connector, "dialect", "unknown")
-        has_schema = connector_registry.support_schema(dialect)
+        has_schema = supports_namespace("schema", connector=connector, dialect=dialect)
         catalog_name = request.catalog_name or getattr(connector, "catalog_name", None)
         now = now_utc_iso()
 
@@ -443,9 +442,13 @@ class DatasourceService:
                                 column_info = ColumnInfo(
                                     name=col.get("name", ""),
                                     type=col.get("type", ""),
-                                    nullable=col.get("notnull", 1) == 0,  # SQLite style: notnull=0 means nullable
-                                    default_value=col.get("dflt_value"),
-                                    pk=col.get("pk", 0) == 1,
+                                    nullable=(
+                                        bool(col["nullable"])
+                                        if "nullable" in col
+                                        else col.get("notnull", 1) == 0  # SQLite: notnull=0 means nullable
+                                    ),
+                                    default_value=col.get("default_value", col.get("dflt_value")),
+                                    pk=bool(col.get("pk", False)),
                                 )
                             else:
                                 # Handle string or other formats

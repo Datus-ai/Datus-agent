@@ -15,9 +15,19 @@ from datus.utils.loggings import get_logger
 logger = get_logger(__name__)
 
 
+def _registry_hook(name: str, dialect: str):
+    from datus.tools.db_tools import connector_registry
+
+    getter = getattr(connector_registry, name, None)
+    return getter(dialect) if callable(getter) else None
+
+
 def parse_read_dialect(dialect: str = "snowflake") -> str:
     """Map SQL dialect to the appropriate read dialect for sqlglot parsing."""
     db = (dialect or "").strip().lower()
+    registered = _registry_hook("get_parser_dialect", db)
+    if registered:
+        return registered
     if db in ("postgres", "postgresql", "redshift", "greenplum"):
         return "postgres"
     if db in ("spark", "databricks", "hive", "starrocks"):
@@ -30,6 +40,9 @@ def parse_read_dialect(dialect: str = "snowflake") -> str:
 def parse_dialect(dialect: str = "snowflake") -> str:
     """Map SQL dialect to the dialect for sqlglot parsing."""
     db = (dialect or "").strip().lower()
+    registered = _registry_hook("get_parser_dialect", db)
+    if registered:
+        return registered
     if db in ("postgres", "postgresql"):
         return "postgres"
     if db in ("mssql", "sqlserver"):
@@ -61,7 +74,8 @@ def parse_metadata_from_ddl(sql: str, dialect: str = "snowflake") -> Dict[str, A
             ]
         }
     """
-    dialect = parse_dialect(dialect)
+    raw_dialect = (dialect or "").strip().lower()
+    dialect = parse_dialect(raw_dialect)
 
     try:
         result = {"table": {"name": "", "schema_name": "", "database_name": ""}, "columns": []}
@@ -77,8 +91,16 @@ def parse_metadata_from_ddl(sql: str, dialect: str = "snowflake") -> Dict[str, A
             if isinstance(table_name, str):
                 table_name = table_name.strip('"').strip("`").strip("[]")
             result["table"]["name"] = table_name
-            result["table"]["schema_name"] = tb_info.db
-            result["table"]["database_name"] = tb_info.catalog
+            identifier_parser = _registry_hook("get_identifier_parser", raw_dialect)
+            if identifier_parser:
+                parsed_name = identifier_parser(
+                    ".".join(part for part in (tb_info.catalog, tb_info.db, table_name) if part)
+                )
+                result["table"]["schema_name"] = parsed_name["schema_name"]
+                result["table"]["database_name"] = parsed_name["database_name"]
+            else:
+                result["table"]["schema_name"] = tb_info.db
+                result["table"]["database_name"] = tb_info.catalog
             if tb_info.comments:
                 result["table"]["comment"] = tb_info.comments
 
@@ -151,6 +173,16 @@ def _table_names_from_expression(parsed, *, dialect: str, ignore_empty: bool) ->
         # Skip if the table is a CTE
         if table_name.lower() in cte_names:
             continue
+        if _registry_hook("get_identifier_parser", dialect):
+            parts = []
+            if not ignore_empty or db:
+                parts.append(db)
+            if not ignore_empty or schema:
+                parts.append(schema)
+            parts.append(table_name)
+            table_names.append(".".join(parts))
+            continue
+
         full_name = []
 
         if dialect in ["mysql", "oracle", "postgres", "postgresql"]:
@@ -215,7 +247,18 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
         - "database.schema.table" -> {"catalog_name": "", "database_name": "database",
                                       "schema_name": "schema", "table_name": "table"}
     """
-    dialect = parse_dialect(dialect)
+    raw_dialect = (dialect or "").strip().lower()
+    identifier_parser = _registry_hook("get_identifier_parser", raw_dialect)
+    if identifier_parser:
+        parsed = identifier_parser(full_table_name)
+        expected_fields = {"catalog_name", "database_name", "schema_name", "table_name"}
+        if not isinstance(parsed, dict) or not expected_fields.issubset(parsed):
+            raise ValueError(
+                "Adapter identifier parser must return catalog_name, database_name, schema_name, and table_name"
+            )
+        return {field: str(parsed[field] or "") for field in expected_fields}
+
+    dialect = parse_dialect(raw_dialect)
 
     # Build field mapping dynamically from registry capabilities
     def _build_field_mapping(d: str) -> list:

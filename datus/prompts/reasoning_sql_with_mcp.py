@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from datus.schemas.node_models import TableSchema, TableValue
 from datus.utils.loggings import get_logger
 
+from .database_notes import get_database_notes
 from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
@@ -104,13 +105,7 @@ def get_reasoning_prompt(
         logger.warning("Context is too long, truncating to %s characters" % max_context_length)
         processed_context = processed_context[:max_context_length] + "\n... (truncated)"
 
-    # Add Snowflake specific notes
-    database_notes = ""
-    if database_type.lower() == "snowflake":
-        database_notes = (
-            "\nEnclose all column names in double quotes to comply with Snowflake syntax requirements and avoid errors."
-            "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
-        )
+    database_notes = get_database_notes(database_type)
 
     user_content = get_prompt_manager(agent_config=agent_config).render_template(
         "reasoning_user",
