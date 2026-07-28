@@ -14,6 +14,18 @@ The context is intentionally passed through one command-scoped environment
 variable.  It contains only the invoked plugin's resolved profile and, when
 needed, the exact plugin directory selected by the normal managed-store /
 ``agent.plugin_paths`` precedence.
+
+The Bash command itself is preserved verbatim: :func:`prepare_plugin_invocation`
+locates the single ``datus`` command word and inserts an inline environment
+assignment in front of it, so redirections, ``&&``/``;`` lists, groupings and
+expansions in the model-written command keep working.
+
+The bridge only recognizes ``datus`` when it appears as a real command word.  An
+invocation hidden inside a string a wrapper interprets later (``sh -c "datus
+..."``) is not rewritten, so that subprocess simply receives no runtime context
+and resolves configuration the ordinary way; such wrapper commands never
+auto-allow in the permission layer either (see
+:mod:`datus.tools.permission.bash_rules`).
 """
 
 from __future__ import annotations
@@ -24,17 +36,33 @@ import os
 import re
 import shlex
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-from datus.tools.permission.bash_rules import split_pipeline
 
 RUNTIME_CONTEXT_ENV = "DATUS_PLUGIN_RUNTIME_CONTEXT"
 RUNTIME_CONTEXT_VERSION = 1
 RUNTIME_CONTEXT_PREFIX = "v1."
 MAX_RUNTIME_CONTEXT_SIZE = 64 * 1024
 _DATUS_COMMAND_WORD_RE = re.compile(r"(?<![A-Za-z0-9_.-])datus(?![A-Za-z0-9_.-])")
+
+# Tokens that may legally precede a command word inside one simple command.
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# `2>&1`, `<&3`, `3>&-` name their target inside the operator, while a bare
+# `>`/`2>>`/`<>` takes the FOLLOWING word as its target. Tested in that order
+# because _REDIRECT_TARGET_RE would also match `2>&1`.
+_REDIRECT_DUP_RE = re.compile(r"^\d*[<>]&(?:\d+-?|-)$")
+_REDIRECT_OP_RE = re.compile(r"^\d*(?:>>|>&|<&|<>|>|<)$")
+_REDIRECT_TARGET_RE = re.compile(r"^\d*(?:>>|>|<)\S+$")
+_COMMAND_PREFIX_WORDS = frozenset({"!", "time", "if", "elif", "while", "until", "then", "do", "else"})
+
+# Characters that end a simple command at the top level of the command line.
+_SEPARATOR_CHARS = ";&|\n"
+_GROUPING_CHARS = "(){}"
+
+# Bounds recursion while matching nested substitutions so a pathological
+# command can never hang the scanner; deeper nesting fails closed.
+_MAX_NESTING = 16
 
 
 class PluginRuntimeContextError(ValueError):
@@ -181,41 +209,59 @@ def load_runtime_context_from_env(*, expected_plugin: Optional[str] = None) -> O
 
 
 def prepare_plugin_invocation(command: str, agent_config: Any) -> Optional[PreparedPluginInvocation]:
-    """Prepare a managed ``datus <plugin>`` command or pure pipeline.
+    """Prepare a managed ``datus <plugin>`` command.
+
+    Any shell command shape is accepted as long as the single plugin CLI
+    invocation sits at a top-level command position: pipelines, redirections,
+    ``;``/``&&``/``||``/newline lists, ``(...)``/``{...}`` groupings, heredocs
+    and expansions all keep their original text.
 
     Returns ``None`` for commands with no plugin CLI segment.  Commands that
     contain a plugin invocation but cannot be bridged safely fail closed rather
     than falling back to a local config file.
     """
-    segments = split_pipeline(command)
-    if segments is None or _has_unsupported_shell_controls(command):
-        if _contains_datus_command(command):
-            raise PluginRuntimeContextError(
-                "Managed plugin commands support a single command or a pure `|` pipeline only"
-            )
+    scan = _scan_command(command)
+    if scan.error is not None:
+        # The command word cannot be located, so be maximally conservative: any
+        # `datus` word at all fails the command rather than letting it run
+        # unbridged (which would fall back to local config resolution). Token
+        # position analysis is unreliable here precisely because the parse failed.
+        if _DATUS_COMMAND_WORD_RE.search(command):
+            raise PluginRuntimeContextError(f"Invalid managed plugin command syntax: {scan.error}")
         return None
+    for substitution in scan.substitutions:
+        if _contains_datus_command(substitution):
+            raise PluginRuntimeContextError(
+                "Managed plugin commands cannot invoke `datus` inside a command substitution "
+                "(`$(...)`, backticks); run the plugin command directly and pipe its output instead"
+            )
 
-    plugin_segments: List[Tuple[int, List[str]]] = []
-    for index, segment in enumerate(segments):
+    plugin_invocations: List[Tuple[int, List[str]]] = []
+    for span in scan.spans:
+        index = _command_word_index(span.words)
+        if index is None:
+            continue
+        word_offset = span.words[index][0]
         try:
-            argv = shlex.split(segment)
+            argv = shlex.split(command[word_offset : span.end])
         except ValueError as exc:
-            if "datus" in segment:
+            if "datus" in command[span.start : span.end]:
                 raise PluginRuntimeContextError(f"Invalid managed plugin command syntax: {exc}") from exc
-            return None
+            continue
         if argv and Path(argv[0]).name == "datus":
-            plugin_segments.append((index, argv))
+            plugin_invocations.append((word_offset, argv))
         elif any(Path(token).name == "datus" for token in argv):
             raise PluginRuntimeContextError(
-                "Managed plugin commands must invoke `datus` directly at the start of a pipeline segment"
+                "Managed plugin commands must invoke `datus` directly as the command word, "
+                "not through a wrapper such as `timeout`, `env`, `xargs` or `sh -c`"
             )
 
-    if not plugin_segments:
+    if not plugin_invocations:
         return None
-    if len(plugin_segments) != 1:
+    if len(plugin_invocations) != 1:
         raise PluginRuntimeContextError("A managed Bash command may invoke only one plugin CLI")
 
-    segment_index, argv = plugin_segments[0]
+    insert_at, argv = plugin_invocations[0]
     if len(argv) < 2 or argv[1].startswith("-"):
         return None
     plugin_name = argv[1]
@@ -249,16 +295,17 @@ def prepare_plugin_invocation(command: str, agent_config: Any) -> Optional[Prepa
 
     # The payload initially enters Bash through its environment.  The prologue
     # copies it into a randomly-named, non-exported shell variable and unsets
-    # the exported name before the pipeline is spawned.  The inline assignment
-    # then exposes it only to the datus segment; sibling pipeline commands do
-    # not inherit it.
+    # the exported name before any command in the line is spawned.  The inline
+    # assignment then exports it only for the datus command; sibling commands
+    # in the same line do not inherit it.
     internal_var = f"__datus_plugin_ctx_{uuid.uuid4().hex}"
     while internal_var in command:
         internal_var = f"__datus_plugin_ctx_{uuid.uuid4().hex}"
-    wrapped_segments = list(segments)
-    wrapped_segments[segment_index] = f'{RUNTIME_CONTEXT_ENV}="${{{internal_var}}}" {wrapped_segments[segment_index]}'
-    wrapped_command = f'{internal_var}="${{{RUNTIME_CONTEXT_ENV}}}"; unset {RUNTIME_CONTEXT_ENV}; ' + " | ".join(
-        wrapped_segments
+    wrapped_command = (
+        f'{internal_var}="${{{RUNTIME_CONTEXT_ENV}}}"; unset {RUNTIME_CONTEXT_ENV}; '
+        + command[:insert_at]
+        + f'{RUNTIME_CONTEXT_ENV}="${{{internal_var}}}" '
+        + command[insert_at:]
     )
     read_dirs = [str(plugin_path)] if plugin_path is not None else []
     return PreparedPluginInvocation(
@@ -318,39 +365,382 @@ def _contains_datus_command(command: str) -> bool:
     return False
 
 
-def _has_unsupported_shell_controls(command: str) -> bool:
-    """Detect top-level shell controls while allowing literals inside quotes.
+def _command_word_index(words: List[Tuple[int, str]]) -> Optional[int]:
+    """Index of the command word among one simple command's raw words.
 
-    A plugin argument such as ``python -c 'a=1; print(a)'`` is safe to retain
-    in a pure pipeline, while a top-level ``;``/``&&``/redirection or command
-    substitution would change which processes receive the runtime context.
+    Variable assignments (``FOO=1 datus ...``), redirections placed before the
+    command word (``> out.txt datus ...``, ``2>&1 datus ...``) and shell
+    keywords that introduce a command (``do``, ``then``, ``!``, ``time``) are
+    skipped. Returns ``None`` when the command consists of prefix words only.
     """
-    in_single = in_double = False
     i = 0
-    while i < len(command):
-        char = command[i]
-        if char == "\\" and not in_single:
+    while i < len(words):
+        text = words[i][1]
+        if text in _COMMAND_PREFIX_WORDS or _ASSIGNMENT_RE.match(text):
+            i += 1
+            continue
+        if _REDIRECT_DUP_RE.match(text):
+            # Self-contained fd duplication: `2>&1`, `<&3`, `3>&-`.
+            i += 1
+            continue
+        if _REDIRECT_OP_RE.match(text):
+            # A bare operator takes the next word as its target. Checked before
+            # _REDIRECT_TARGET_RE, whose `\S+` would swallow `>>` itself.
             i += 2
             continue
-        if char == "'" and not in_double:
-            in_single = not in_single
+        if _REDIRECT_TARGET_RE.match(text):
+            # Target attached to the operator: `>out.txt`.
             i += 1
             continue
-        if char == '"' and not in_single:
-            in_double = not in_double
+        return i
+    return None
+
+
+@dataclass(frozen=True)
+class _CommandSpan:
+    """One top-level simple command: its offsets and its raw words."""
+
+    start: int
+    end: int
+    words: List[Tuple[int, str]]
+
+
+@dataclass(frozen=True)
+class _ShellScan:
+    """Structure of one Bash command line, as far as this bridge needs it.
+
+    ``spans`` describes the top-level simple commands; ``substitutions`` holds
+    the raw text of every command substitution and ``${...}`` expansion found,
+    so a ``datus`` word hiding in one can be rejected; ``error`` is set when the
+    line cannot be parsed at all.
+    """
+
+    spans: List[_CommandSpan] = field(default_factory=list)
+    substitutions: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+
+def _scan_command(command: str) -> _ShellScan:
+    """Split a command line into its top-level simple-command spans.
+
+    Only enough Bash syntax is modelled to know *where* a command word may
+    start: quoting, expansions, command substitutions, heredoc bodies and
+    comments are skipped, and separators (``;``, ``&``, ``|``, newline) plus
+    groupings (``(``, ``)``, ``{``, ``}``) end the current span. Redirections
+    stay inside the span they belong to.
+    """
+    spans: List[_CommandSpan] = []
+    substitutions: List[str] = []
+    heredocs: List[Tuple[str, bool]] = []
+    span_start: Optional[int] = None
+    words: List[Tuple[int, str]] = []
+    i = 0
+    n = len(command)
+
+    def close_span(end: int) -> None:
+        nonlocal span_start, words
+        if span_start is not None:
+            if words:
+                spans.append(_CommandSpan(span_start, end, words))
+            span_start = None
+            words = []
+
+    while i < n:
+        char = command[i]
+        if char in " \t\r":
             i += 1
             continue
-        if in_single:
+        if char == "\n":
+            close_span(i)
             i += 1
+            if heredocs:
+                i = _skip_heredoc_bodies(command, i, heredocs)
+                heredocs = []
+            continue
+        if char in _SEPARATOR_CHARS or char in _GROUPING_CHARS:
+            close_span(i)
+            i += 1
+            continue
+        if char == "#":
+            # An unquoted `#` starting a word begins a comment.
+            close_span(i)
+            newline = command.find("\n", i)
+            i = n if newline == -1 else newline
+            continue
+        if span_start is None:
+            span_start = i
+        word_start = i
+        i, error = _scan_word(command, i, substitutions, heredocs)
+        if error is not None:
+            return _ShellScan(spans, substitutions, error)
+        words.append((word_start, command[word_start:i]))
+    close_span(n)
+    return _ShellScan(spans, substitutions, None)
+
+
+def _scan_word(
+    command: str,
+    i: int,
+    substitutions: List[str],
+    heredocs: List[Tuple[str, bool]],
+) -> Tuple[int, Optional[str]]:
+    """Advance past one word, returning the offset after it.
+
+    Braces are literal here: ``--opt={a,b}`` is one word to Bash, and only a
+    brace at a word boundary (handled by :func:`_scan_command`) groups commands.
+    """
+    n = len(command)
+    while i < n:
+        char = command[i]
+        if char == "\\":
+            i += 2
+            continue
+        if char in " \t\r" or char in _SEPARATOR_CHARS or char in "()":
+            return i, None
+        if char == "'":
+            end = command.find("'", i + 1)
+            if end == -1:
+                return n, "unbalanced single quote"
+            i = end + 1
+            continue
+        if char == '"':
+            i, error = _skip_double_quoted(command, i, substitutions=substitutions)
+            if error is not None:
+                return n, error
             continue
         if char == "`":
-            return True
-        if char == "$" and i + 1 < len(command) and command[i + 1] in "({":
-            return True
-        if not in_double and (char in ";&<>()\n"):
-            return True
+            end = _find_backtick_end(command, i + 1)
+            if end is None:
+                return n, "unbalanced backtick"
+            substitutions.append(command[i + 1 : end])
+            i = end + 1
+            continue
+        if char == "$" and i + 1 < n and command[i + 1] == "(":
+            i, inner, error = _scan_substitution(command, i + 2)
+            if error is not None:
+                return n, error
+            substitutions.append(inner)
+            continue
+        if char == "$" and i + 1 < n and command[i + 1] == "{":
+            i, inner, error = _skip_brace_expansion(command, i + 2)
+            if error is not None:
+                return n, error
+            substitutions.append(inner)
+            continue
+        if char == "<" and command.startswith("<<<", i):
+            # A here-string takes its payload inline — consuming all three
+            # characters keeps the trailing `<<` from re-matching as a heredoc,
+            # whose body skip would swallow the rest of the command.
+            i += 3
+            continue
+        if char == "<" and command.startswith("<<", i):
+            i, error = _consume_heredoc_delimiter(command, i + 2, heredocs)
+            if error is not None:
+                return n, error
+            continue
+        if char in "<>" and command.startswith(f"{char}&", i):
+            # `2>&1` / `<&3` keep the `&` out of separator handling.
+            i += 2
+            continue
         i += 1
-    return False
+    return n, None
+
+
+def _skip_double_quoted(
+    command: str,
+    i: int,
+    nesting: int = 0,
+    substitutions: Optional[List[str]] = None,
+) -> Tuple[int, Optional[str]]:
+    """Advance past a double-quoted string starting at ``i``."""
+    n = len(command)
+    j = i + 1
+    while j < n:
+        char = command[j]
+        if char == "\\":
+            j += 2
+            continue
+        if char == '"':
+            return j + 1, None
+        if char == "`":
+            end = _find_backtick_end(command, j + 1)
+            if end is None:
+                return n, "unbalanced backtick"
+            if substitutions is not None:
+                substitutions.append(command[j + 1 : end])
+            j = end + 1
+            continue
+        if char == "$" and j + 1 < n and command[j + 1] == "(":
+            j, inner, error = _scan_substitution(command, j + 2, nesting + 1)
+            if error is not None:
+                return n, error
+            if substitutions is not None:
+                substitutions.append(inner)
+            continue
+        if char == "$" and j + 1 < n and command[j + 1] == "{":
+            j, inner, error = _skip_brace_expansion(command, j + 2)
+            if error is not None:
+                return n, error
+            if substitutions is not None:
+                substitutions.append(inner)
+            continue
+        j += 1
+    return n, "unbalanced double quote"
+
+
+def _scan_substitution(command: str, i: int, nesting: int = 0) -> Tuple[int, str, Optional[str]]:
+    """Match a ``$(...)`` substitution whose body starts at ``i``.
+
+    Returns the offset after the closing paren and the raw body text.
+    """
+    if nesting > _MAX_NESTING:
+        return len(command), command[i:], "command substitution nested too deeply"
+    n = len(command)
+    start = i
+    parens = 0
+    j = i
+    while j < n:
+        char = command[j]
+        if char == "\\":
+            j += 2
+            continue
+        if char == "'":
+            end = command.find("'", j + 1)
+            if end == -1:
+                return n, command[start:], "unbalanced single quote"
+            j = end + 1
+            continue
+        if char == '"':
+            j, error = _skip_double_quoted(command, j, nesting + 1)
+            if error is not None:
+                return n, command[start:], error
+            continue
+        if char == "`":
+            end = _find_backtick_end(command, j + 1)
+            if end is None:
+                return n, command[start:], "unbalanced backtick"
+            j = end + 1
+            continue
+        if char == "$" and j + 1 < n and command[j + 1] == "(":
+            j, _inner, error = _scan_substitution(command, j + 2, nesting + 1)
+            if error is not None:
+                return n, command[start:], error
+            continue
+        if char == "(":
+            parens += 1
+            j += 1
+            continue
+        if char == ")":
+            if parens:
+                parens -= 1
+                j += 1
+                continue
+            return j + 1, command[start:j], None
+        j += 1
+    return n, command[start:], "unterminated command substitution"
+
+
+def _skip_brace_expansion(command: str, i: int) -> Tuple[int, str, Optional[str]]:
+    """Match a ``${...}`` expansion whose body starts at ``i``.
+
+    The body is returned so a command substitution smuggled into a default
+    value (``${x:-$(datus ...)}``) is still inspected.
+    """
+    n = len(command)
+    start = i
+    depth = 1
+    j = i
+    while j < n:
+        char = command[j]
+        if char == "\\":
+            j += 2
+            continue
+        if char == "$" and j + 1 < n and command[j + 1] == "{":
+            # Only a nested expansion opens a level — a bare `{` in a default
+            # value (``${A:-{x\}}``) is literal text to Bash.
+            depth += 1
+            j += 2
+            continue
+        if char == "}":
+            depth -= 1
+            j += 1
+            if depth == 0:
+                return j, command[start : j - 1], None
+            continue
+        j += 1
+    return n, command[start:], "unbalanced ${...} expansion"
+
+
+def _find_backtick_end(command: str, i: int) -> Optional[int]:
+    """Offset of the backtick closing a substitution opened before ``i``."""
+    n = len(command)
+    while i < n:
+        if command[i] == "\\":
+            i += 2
+            continue
+        if command[i] == "`":
+            return i
+        i += 1
+    return None
+
+
+def _consume_heredoc_delimiter(
+    command: str,
+    i: int,
+    heredocs: List[Tuple[str, bool]],
+) -> Tuple[int, Optional[str]]:
+    """Read the delimiter word of a ``<<``/``<<-`` heredoc starting at ``i``."""
+    n = len(command)
+    strip_tabs = False
+    if i < n and command[i] == "-":
+        strip_tabs = True
+        i += 1
+    while i < n and command[i] in " \t":
+        i += 1
+    parts: List[str] = []
+    while i < n:
+        char = command[i]
+        if char == "'":
+            end = command.find("'", i + 1)
+            if end == -1:
+                return n, "unbalanced single quote"
+            parts.append(command[i + 1 : end])
+            i = end + 1
+            continue
+        if char == '"':
+            end = command.find('"', i + 1)
+            if end == -1:
+                return n, "unbalanced double quote"
+            parts.append(command[i + 1 : end])
+            i = end + 1
+            continue
+        if char in " \t\r\n<>" or char in _SEPARATOR_CHARS or char in _GROUPING_CHARS:
+            break
+        parts.append(char)
+        i += 1
+    delimiter = "".join(parts)
+    if delimiter:
+        heredocs.append((delimiter, strip_tabs))
+    return i, None
+
+
+def _skip_heredoc_bodies(command: str, i: int, heredocs: List[Tuple[str, bool]]) -> int:
+    """Advance past the bodies of the heredocs opened on the previous line.
+
+    Body text is never a command position, so a ``datus`` word inside a payload
+    must not be mistaken for a second plugin invocation. An unterminated body
+    consumes the remainder of the line, which is what Bash does too.
+    """
+    n = len(command)
+    for delimiter, strip_tabs in heredocs:
+        while i < n:
+            line_end = command.find("\n", i)
+            line = command[i:] if line_end == -1 else command[i:line_end]
+            i = n if line_end == -1 else line_end + 1
+            candidate = line.lstrip("\t") if strip_tabs else line
+            if candidate.rstrip("\r") == delimiter:
+                break
+    return i
 
 
 __all__ = [

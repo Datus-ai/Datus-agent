@@ -151,14 +151,18 @@ that request's `AgentConfig`. It does not fall back to another tenant's loaded
 configuration or to `./.datus/config.yml`. Standalone CLI skill commands that
 do not hold an `AgentConfig` keep the local project-file behavior.
 
-This bridge accepts one direct plugin invocation, optionally as one stage of a
-plain `|` pipeline. It deliberately fails closed for multiple `datus`
-invocations and for shell control forms such as `&&`, `;`, redirection, command
-substitution, and `|&`. `--profile` remains supported and is resolved against
-the request's `AgentConfig`; `--config` is rejected because the AuthProvider
-configuration is authoritative. The encoded runtime snapshot is capped at
-64 KiB. Sibling pipeline stages do not inherit it, and the parent process
-environment is never modified.
+This bridge accepts one plugin invocation per Bash command, in any shell shape
+that puts `datus` at a command position: pipelines, redirections (`>`, `2>&1`),
+`;`/`&&`/`||`/newline lists, `(...)`/`{...}` groupings, loops, heredocs and
+expansions all keep their original text — the runtime value is injected as an
+inline assignment in front of the `datus` command word only. It deliberately
+fails closed for multiple `datus` invocations in one command, for `datus` inside
+a command substitution (`$(...)`, backticks), and for `datus` behind a wrapper
+such as `timeout`, `env`, `xargs` or `sh -c`. `--profile` remains supported and
+is resolved against the request's `AgentConfig`; `--config` is rejected because
+the AuthProvider configuration is authoritative. The encoded runtime snapshot is
+capped at 64 KiB. Sibling commands in the same Bash invocation do not inherit
+it, and the parent process environment is never modified.
 
 ### Which profile runs
 
