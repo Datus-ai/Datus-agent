@@ -28,7 +28,13 @@ from datus.utils.sql_utils import (
     strip_sql_comments,
 )
 
-_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = ("_capabilities", "_uri_builders", "_context_resolvers")
+_CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = (
+    "_connectors",
+    "_metadata",
+    "_capabilities",
+    "_uri_builders",
+    "_context_resolvers",
+)
 
 
 def _snapshot_connector_registry():
@@ -614,6 +620,24 @@ def test_extract_table_names():
         assert set(extract_table_names(sql_two_part, dialect=dialect, ignore_empty=True)) == {"foo.bar"}
 
 
+def test_extract_table_names_adapter_hook_honors_ignore_empty(monkeypatch):
+    monkeypatch.setattr(
+        connector_registry,
+        "get_parser_dialect",
+        lambda dialect: "hive" if dialect == "flexdb" else None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        connector_registry,
+        "get_identifier_parser",
+        lambda dialect: (lambda identifier: identifier) if dialect == "flexdb" else None,
+        raising=False,
+    )
+
+    assert extract_table_names("SELECT * FROM orders", dialect="flexdb") == ["..orders"]
+    assert extract_table_names("SELECT * FROM orders", dialect="flexdb", ignore_empty=True) == ["orders"]
+
+
 def test_parse_full_tables():
     table_meta = parse_table_name_parts("test.abc", dialect=DBType.DUCKDB)
     assert table_meta["schema_name"] == "test"
@@ -1063,6 +1087,15 @@ class TestParseReadDialect:
     def test_whitespace_trimmed(self):
         assert parse_read_dialect("  postgres  ") == "postgres"
 
+    def test_adapter_registered_parser_dialect(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        assert parse_read_dialect("flexdb") == "hive"
+
 
 # ---------------------------------------------------------------------------
 # parse_dialect
@@ -1073,6 +1106,15 @@ class TestParseDialect:
     def test_postgres(self):
         assert parse_dialect("postgres") == "postgres"
         assert parse_dialect("postgresql") == "postgres"
+
+    def test_adapter_registered_parser_dialect(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        assert parse_dialect("flexdb") == "hive"
 
     def test_tsql(self):
         assert parse_dialect("mssql") == "tsql"
@@ -1454,6 +1496,49 @@ class TestParseTableNamePartsExtended:
         # More parts than expected - takes last N
         result = parse_table_name_parts("extra.catalog.db.schema.table", dialect="snowflake")
         assert result["table_name"] == "table"
+
+    def test_adapter_identifier_parser_handles_flexible_namespaces(self, monkeypatch):
+        def parser(identifier):
+            parts = identifier.split(".")
+            return {
+                "catalog_name": "",
+                "database_name": parts[0] if len(parts) > 1 else "",
+                "schema_name": parts[1] if len(parts) == 3 else "",
+                "table_name": parts[-1],
+            }
+
+        connector_registry.register_handlers("flexdb", capabilities={"database", "schema"})
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "hive" if dialect == "flexdb" else None,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: parser if dialect == "flexdb" else None,
+            raising=False,
+        )
+
+        assert parse_table_name_parts("project_a.orders", "flexdb") == {
+            "catalog_name": "",
+            "database_name": "project_a",
+            "schema_name": "",
+            "table_name": "orders",
+        }
+        assert parse_table_name_parts("project_a.analytics.orders", "flexdb")["schema_name"] == "analytics"
+
+    def test_adapter_identifier_parser_must_return_complete_contract(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_identifier_parser",
+            lambda dialect: (lambda identifier: {"table_name": identifier}) if dialect == "flexdb" else None,
+            raising=False,
+        )
+
+        with pytest.raises(ValueError, match="must return"):
+            parse_table_name_parts("orders", "flexdb")
 
     def test_unknown_dialect_fallback(self):
         # Unknown dialect falls through to default behavior

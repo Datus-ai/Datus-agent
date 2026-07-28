@@ -1763,6 +1763,57 @@ class TestDBFuncToolMultiConnector:
         assert len(result.result) == 2
         mock_connector.get_tables.assert_called_once()
 
+    def test_table_coordinates_use_routed_connector_dialect(self, mock_agent_config, monkeypatch):
+        """Secondary datasource identifiers must be parsed with that datasource's dialect."""
+        from datus.tools.db_tools.db_manager import DBManager
+
+        primary = Mock()
+        primary.dialect = "sqlite"
+        primary.database_name = "local"
+        primary.catalog_name = ""
+        primary.schema_name = ""
+
+        secondary = Mock()
+        secondary.dialect = "flexdb"
+        secondary.database_name = "project_a"
+        secondary.catalog_name = ""
+        secondary.schema_name = ""
+        secondary.get_schema.return_value = [{"name": "id", "type": "BIGINT"}]
+        secondary.get_tables_with_ddl.return_value = [
+            {
+                "identifier": "project_a.orders",
+                "database_name": "project_a",
+                "schema_name": "",
+                "table_name": "orders",
+                "definition": "CREATE TABLE orders (id BIGINT)",
+            }
+        ]
+
+        db_manager = Mock(spec=DBManager)
+        db_manager.get_conn.side_effect = lambda datasource, database="": secondary if datasource == "db2" else primary
+        parse_identifier = Mock(
+            return_value={
+                "catalog_name": "",
+                "database_name": "project_a",
+                "schema_name": "",
+                "table_name": "orders",
+            }
+        )
+        monkeypatch.setattr("datus.tools.func_tool.database.parse_table_name_parts", parse_identifier)
+
+        tool = DBFuncTool(
+            db_manager,
+            agent_config=mock_agent_config,
+            default_datasource="db1",
+        )
+
+        assert tool.describe_table("project_a.orders", datasource="db2").success == 1
+        assert tool.get_table_ddl("project_a.orders", datasource="db2").success == 1
+        assert [item.args for item in parse_identifier.call_args_list] == [
+            ("project_a.orders", "flexdb"),
+            ("project_a.orders", "flexdb"),
+        ]
+
     def test_read_query_with_database_parameter(self, mock_agent_config):
         """Test that read_query accepts database parameter in multi-connector mode."""
         from datus.tools.db_tools.db_manager import DBManager
