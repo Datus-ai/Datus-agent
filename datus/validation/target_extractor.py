@@ -102,7 +102,7 @@ def extract_ddl_target(
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, datasource, active_database, dialect=normalized_dialect)
+    return _table_to_target(target_expr, datasource, active_database, dialect=dialect or normalized_dialect)
 
 
 def extract_dml_target(
@@ -150,7 +150,7 @@ def extract_dml_target(
     if not isinstance(target_expr, expressions.Table):
         return None
 
-    return _table_to_target(target_expr, datasource, active_database, dialect=normalized_dialect)
+    return _table_to_target(target_expr, datasource, active_database, dialect=dialect or normalized_dialect)
 
 
 def _dialect_has_catalog(dialect: str) -> bool:
@@ -216,6 +216,20 @@ def _table_to_target(
     sql_catalog_slot = _identifier_name(table_expr.args.get("catalog")) or None
 
     datasource_key = datasource or None
+    from datus.tools.db_tools import connector_registry
+
+    getter = getattr(connector_registry, "get_identifier_parser", None)
+    identifier_parser = getter(dialect) if callable(getter) else None
+    if identifier_parser:
+        parsed = identifier_parser(".".join(part for part in (sql_catalog_slot, schema, name) if part))
+        return TableTarget(
+            catalog=parsed["catalog_name"] or None,
+            datasource=datasource_key,
+            database=parsed["database_name"] or active_database or "",
+            db_schema=parsed["schema_name"] or None,
+            table=parsed["table_name"],
+        )
+
     catalog: Optional[str] = None
     # The *physical* database is the connector's active namespace. We deliberately do NOT
     # fall back to the datasource key: a datasource name is not a database, and feeding it

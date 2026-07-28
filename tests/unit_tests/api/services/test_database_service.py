@@ -467,6 +467,25 @@ class TestGetTableSchema:
             assert col.name != ""
             assert col.type != ""
 
+    def test_get_table_schema_uses_connector_nullable_contract(self, real_agent_config):
+        svc = DatasourceService(agent_config=real_agent_config)
+        svc.current_db_connector.get_schema = MagicMock(
+            return_value=[
+                {
+                    "name": "id",
+                    "type": "BIGINT",
+                    "nullable": False,
+                    "default_value": None,
+                    "pk": False,
+                }
+            ]
+        )
+
+        result = svc.get_table_schema("orders")
+
+        assert result.success is True
+        assert result.data.table.columns[0].nullable is False
+
     def test_get_table_schema_nonexistent_table(self, real_agent_config):
         """Nonexistent table returns failure."""
         svc = DatasourceService(agent_config=real_agent_config)

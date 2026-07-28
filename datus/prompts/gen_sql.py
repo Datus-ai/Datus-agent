@@ -9,6 +9,7 @@ from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 
 from ..utils.json_utils import to_pretty_str
+from .database_notes import get_database_notes
 from .prompt_manager import get_prompt_manager
 
 logger = get_logger(__name__)
@@ -64,14 +65,8 @@ def get_sql_prompt(
         logger.warning("Context is too long, truncating to %s characters" % max_context_length)
         processed_context = processed_context[:max_context_length] + "\n... (truncated)"
 
-    # Add Snowflake specific notes
-    database_notes = ""
+    database_notes = get_database_notes(database_type)
     knowledge_content = "" if not external_knowledge else f"External Knowledge:\n{external_knowledge}"
-    if database_type.lower() == "snowflake":
-        database_notes = (
-            "\nEnclose all column names in double quotes to comply with Snowflake syntax requirements and avoid erros. "
-            "When referencing table names in Snowflake SQL, you must include both the database_name and schema_name."
-        )
 
     processed_metrics = ""
     if metrics:

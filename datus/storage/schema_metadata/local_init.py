@@ -5,12 +5,13 @@
 import asyncio
 from typing import Any, Dict, List, Optional, Set
 
-from datus_db_core import BaseSqlConnector, connector_registry
+from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig, DbConfig
 from datus.schemas.base import TABLE_TYPE
 from datus.schemas.batch_events import BatchEventEmitter, BatchEventHelper
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
+from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.constants import DBType
 from datus.utils.loggings import get_logger
@@ -296,7 +297,8 @@ def init_other_three_level_schema(
         catalog_name = catalog_name or sql_connector.default_catalog()
     elif hasattr(sql_connector, "catalog_name"):
         catalog_name = catalog_name or getattr(sql_connector, "catalog_name", "")
-    if not connector_registry.support_schema(db_type):
+    has_schema = supports_namespace("schema", connector=sql_connector, dialect=db_type)
+    if not has_schema:
         schema_name = ""
     elif not schema_name and hasattr(sql_connector, "schema_name"):
         schema_name = getattr(sql_connector, "schema_name", "")
@@ -345,7 +347,7 @@ def init_other_three_level_schema(
                 table["catalog_name"] = catalog_name
             if not table.get("database_name"):
                 table["database_name"] = database_name
-            if not connector_registry.support_schema(db_type):
+            if not has_schema:
                 table["schema_name"] = ""
             elif not table.get("schema_name"):
                 table["schema_name"] = schema_name
@@ -370,7 +372,7 @@ def init_other_three_level_schema(
                 view["catalog_name"] = catalog_name
             if not view.get("database_name"):
                 view["database_name"] = database_name
-            if not connector_registry.support_schema(db_type):
+            if not has_schema:
                 view["schema_name"] = ""
             elif not view.get("schema_name"):
                 view["schema_name"] = schema_name
@@ -393,7 +395,7 @@ def init_other_three_level_schema(
                 mv["catalog_name"] = catalog_name
             if not mv.get("database_name"):
                 mv["database_name"] = database_name
-            if not connector_registry.support_schema(db_type):
+            if not has_schema:
                 mv["schema_name"] = ""
             elif not mv.get("schema_name"):
                 mv["schema_name"] = schema_name

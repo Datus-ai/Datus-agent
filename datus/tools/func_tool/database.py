@@ -14,7 +14,7 @@ from fnmatch import fnmatchcase
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 from agents import Tool
-from datus_db_core import BaseSqlConnector, connector_registry
+from datus_db_core import BaseSqlConnector
 
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.agent_models import SubAgentConfig
@@ -24,6 +24,7 @@ from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.tools.db_tools.capabilities import get_effective_capabilities, supports_namespace
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
@@ -31,6 +32,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
+from datus.utils.sql_utils import parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -414,12 +416,13 @@ class DBFuncTool:
 
     def _determine_field_order(self) -> Sequence[str]:
         dialect = getattr(self._primary_connector, "dialect", "") or ""
+        capabilities = get_effective_capabilities(self._primary_connector, dialect)
         fields: List[str] = []
-        if connector_registry.support_catalog(dialect):
+        if "catalog" in capabilities:
             fields.append("catalog")
-        if connector_registry.support_database(dialect) or dialect == DBType.SQLITE:
+        if "database" in capabilities or dialect == DBType.SQLITE:
             fields.append("database")
-        if connector_registry.support_schema(dialect):
+        if "schema" in capabilities:
             fields.append("schema")
         fields.append("table")
         return fields
@@ -472,22 +475,16 @@ class DBFuncTool:
         token = (token or "").strip()
         if not token:
             return None
-        parts = [self._normalize_identifier_part(part) for part in token.split(".") if part.strip()]
-        if not parts:
+        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        parsed = parse_table_name_parts(token, dialect)
+        if not parsed.get("table_name"):
             return None
-        # Align parts from right to left (table is always rightmost)
-        # e.g., for "public.wb_health_population" with field_order ["database", "schema", "table"]:
-        #   - parts = ["public", "wb_health_population"]
-        #   - align from right: schema="public", table="wb_health_population"
-        # When parts > fields, keep only the rightmost num_fields parts
-        values: Dict[str, str] = {field: "" for field in self._field_order}
-        num_fields = len(self._field_order)
-        trimmed_parts = parts[-num_fields:]
-        start_field_idx = max(0, num_fields - len(trimmed_parts))
-        for i, part in enumerate(trimmed_parts):
-            field_idx = start_field_idx + i
-            if field_idx < num_fields:
-                values[self._field_order[field_idx]] = part
+        values = {
+            "catalog": parsed.get("catalog_name", ""),
+            "database": parsed.get("database_name", ""),
+            "schema": parsed.get("schema_name", ""),
+            "table": parsed.get("table_name", ""),
+        }
         return ScopedTablePattern(raw=token, **values)
 
     def _get_semantic_model(
@@ -707,7 +704,12 @@ class DBFuncTool:
         # Strip common quoting characters
         return normalized.strip("`\"'[]")
 
-    def _default_field_value(self, field: str, explicit: Optional[str]) -> str:
+    def _default_field_value(
+        self,
+        field: str,
+        explicit: Optional[str],
+        connector: Optional[BaseSqlConnector] = None,
+    ) -> str:
         if field not in self._field_order:
             return ""
         if explicit:
@@ -719,8 +721,9 @@ class DBFuncTool:
             "schema": "schema_name",
         }
         fallback_attr = fallback_attr_map.get(field)
-        if fallback_attr and hasattr(self.connector, fallback_attr):
-            return self._normalize_identifier_part(getattr(self.connector, fallback_attr))
+        source_connector = connector or self.connector
+        if fallback_attr and hasattr(source_connector, fallback_attr):
+            return self._normalize_identifier_part(getattr(source_connector, fallback_attr))
         return ""
 
     def _dialect_for_datasource(self, datasource: Optional[str] = "") -> str:
@@ -741,9 +744,17 @@ class DBFuncTool:
         database_value = self._normalize_identifier_part(database)
         schema_value = self._normalize_identifier_part(schema)
 
-        dialect = self._dialect_for_datasource(datasource)
-        if not connector_registry.support_catalog(dialect):
-            if catalog_value and not database_value and connector_registry.support_database(dialect):
+        try:
+            connector = self._get_connector(datasource)
+        except Exception:
+            connector = self.connector
+        dialect = getattr(connector, "dialect", "") or ""
+        if not supports_namespace("catalog", connector=connector, dialect=dialect):
+            if (
+                catalog_value
+                and not database_value
+                and supports_namespace("database", connector=connector, dialect=dialect)
+            ):
                 database_value = catalog_value
             catalog_value = ""
 
@@ -755,22 +766,25 @@ class DBFuncTool:
         catalog: Optional[str] = "",
         database: Optional[str] = "",
         schema: Optional[str] = "",
+        connector: Optional[BaseSqlConnector] = None,
     ) -> TableCoordinate:
+        routed_connector = connector or self.connector
         coordinate = TableCoordinate(
-            catalog=self._default_field_value("catalog", catalog),
-            database=self._default_field_value("database", database),
-            schema=self._default_field_value("schema", schema),
+            catalog=self._default_field_value("catalog", catalog, routed_connector),
+            database=self._default_field_value("database", database, routed_connector),
+            schema=self._default_field_value("schema", schema, routed_connector),
             table=self._normalize_identifier_part(raw_name),
         )
-        parts = [self._normalize_identifier_part(part) for part in raw_name.split(".") if part.strip()]
-        if parts:
-            coordinate.table = parts[-1]
-            idx = len(parts) - 2
-            for field in reversed(self._field_order[:-1]):
-                if idx < 0:
-                    break
-                setattr(coordinate, field, parts[idx])
-                idx -= 1
+        dialect = getattr(routed_connector, "dialect", "") or ""
+        parsed = parse_table_name_parts(raw_name, dialect)
+        for field, parsed_field in (
+            ("catalog", "catalog_name"),
+            ("database", "database_name"),
+            ("schema", "schema_name"),
+            ("table", "table_name"),
+        ):
+            if parsed.get(parsed_field):
+                setattr(coordinate, field, self._normalize_identifier_part(parsed[parsed_field]))
         return coordinate
 
     def _table_matches_scope(self, coordinate: TableCoordinate) -> bool:
@@ -784,6 +798,7 @@ class DBFuncTool:
         catalog: Optional[str],
         database: Optional[str],
         schema: Optional[str],
+        connector: BaseSqlConnector,
     ) -> List[Dict[str, Any]]:
         if not self._scoped_patterns:
             return list(entries)
@@ -795,6 +810,7 @@ class DBFuncTool:
                 catalog=catalog,
                 database=database,
                 schema=schema,
+                connector=connector,
             )
             if self._table_matches_scope(coordinate):
                 filtered.append(entry)
@@ -842,19 +858,20 @@ class DBFuncTool:
             wildcard_allowed = True
         return wildcard_allowed
 
-    def _check_sql_table_scope(self, sql: str) -> List[str]:
+    def _check_sql_table_scope(self, sql: str, connector: Optional[BaseSqlConnector] = None) -> List[str]:
         """Return table names from *sql* that fall outside the scoped context."""
         if not self._scoped_patterns:
             return []
         from datus.utils.sql_utils import extract_table_names
 
-        dialect = getattr(self._primary_connector, "dialect", "") or ""
+        routed_connector = connector or self._primary_connector
+        dialect = getattr(routed_connector, "dialect", "") or ""
         table_names = extract_table_names(sql, dialect=dialect, ignore_empty=True)
         if not table_names:
             return []  # can't parse → allow (SHOW/DESCRIBE/EXPLAIN have no tables)
         out_of_scope: List[str] = []
         for name in table_names:
-            coordinate = self._build_table_coordinate(raw_name=name)
+            coordinate = self._build_table_coordinate(raw_name=name, connector=routed_connector)
             if not self._table_matches_scope(coordinate):
                 out_of_scope.append(name)
         return out_of_scope
@@ -927,9 +944,19 @@ class DBFuncTool:
                 dialects.add(normalized)
         return dialects
 
+    def _configured_supports(self, namespace: str) -> bool:
+        primary_dialect = self._dialect_name(getattr(self.connector, "dialect", ""))
+        if namespace in get_effective_capabilities(self.connector, primary_dialect):
+            return True
+        return any(
+            namespace in get_effective_capabilities(dialect=dialect)
+            for dialect in self._configured_tool_dialects()
+            if dialect != primary_dialect
+        )
+
     def _excluded_tool_params(self) -> set[str]:
         excluded: set[str] = set()
-        if not any(connector_registry.support_catalog(dialect) for dialect in self._configured_tool_dialects()):
+        if not self._configured_supports("catalog"):
             excluded.add("catalog")
         return excluded
 
@@ -939,17 +966,16 @@ class DBFuncTool:
     def available_tools(self) -> List[Tool]:
         bound_tools = []
         methods_to_convert: List[Callable] = [self.list_tables, self.describe_table]
-        configured_dialects = self._configured_tool_dialects()
 
         if self.has_schema:
             methods_to_convert.append(self.search_table)
 
         methods_to_convert.append(self.execute_sql)
 
-        if any(connector_registry.support_database(dialect) for dialect in configured_dialects):
+        if self._configured_supports("database"):
             bound_tools.append(self.to_function_tool(self.list_databases))
 
-        if any(connector_registry.support_schema(dialect) for dialect in configured_dialects):
+        if self._configured_supports("schema"):
             bound_tools.append(self.to_function_tool(self.list_schemas))
 
         for bound_method in methods_to_convert:
@@ -1196,7 +1222,7 @@ class DBFuncTool:
                 except Exception as e:
                     logger.debug(f"get_materialized_views unavailable on {connector.dialect}: {e}")
 
-            filtered_result = self._filter_table_entries(result, catalog, database, schema_name)
+            filtered_result = self._filter_table_entries(result, catalog, database, schema_name, connector)
             return FuncToolResult(result=filtered_result)
         except Exception as e:
             return FuncToolResult(success=0, error=str(e))
@@ -1248,11 +1274,13 @@ class DBFuncTool:
                 schema_name,
                 datasource,
             )
+            connector = self._get_connector(datasource, database)
             coordinate = self._build_table_coordinate(
                 raw_name=table_name,
                 catalog=catalog,
                 database=database,
                 schema=schema_name,
+                connector=connector,
             )
 
             if not self._table_matches_scope(coordinate):
@@ -1652,7 +1680,7 @@ class DBFuncTool:
                     sql_type,
                 )
 
-        out_of_scope = self._check_sql_table_scope(sql)
+        out_of_scope = self._check_sql_table_scope(sql, connector)
         if out_of_scope:
             return (
                 FuncToolResult(
@@ -1723,11 +1751,13 @@ class DBFuncTool:
                 schema_name,
                 datasource,
             )
+            connector = self._get_connector(datasource, database)
             coordinate = self._build_table_coordinate(
                 raw_name=table_name,
                 catalog=catalog,
                 database=database,
                 schema=schema_name,
+                connector=connector,
             )
             if not self._table_matches_scope(coordinate):
                 return FuncToolResult(
@@ -1808,7 +1838,7 @@ class DBFuncTool:
                 error="DML statements (INSERT/UPDATE/DELETE) must run through the write path.",
             )
 
-        out_of_scope = self._check_sql_table_scope(cleaned)
+        out_of_scope = self._check_sql_table_scope(cleaned, connector)
         if out_of_scope:
             return FuncToolResult(
                 success=0,
@@ -1921,7 +1951,7 @@ class DBFuncTool:
                     ),
                 )
 
-            out_of_scope = self._check_sql_table_scope(normalized_sql)
+            out_of_scope = self._check_sql_table_scope(normalized_sql, connector)
             if out_of_scope:
                 return FuncToolResult(
                     success=0,

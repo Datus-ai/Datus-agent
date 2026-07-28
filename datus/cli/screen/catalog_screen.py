@@ -6,7 +6,7 @@ import json
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
-from datus_db_core import BaseSqlConnector, connector_registry
+from datus_db_core import BaseSqlConnector
 from rich import box
 from rich.console import Group
 from rich.table import Table
@@ -28,6 +28,7 @@ from datus.cli.screen.context_screen import ContextScreen
 from datus.storage.catalog_manager import CatalogUpdater
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
+from datus.tools.db_tools.capabilities import supports_namespace
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.json_utils import to_pretty_str
@@ -374,6 +375,9 @@ class CatalogScreen(ContextScreen):
             self._catalog_updater = CatalogUpdater(self._agent_config)
         return self._catalog_updater
 
+    def _supports(self, namespace: str) -> bool:
+        return supports_namespace(namespace, connector=self.db_connector, dialect=str(self.db_type))
+
     def compose(self) -> ComposeResult:
         """Compose the layout of the screen."""
         yield Header(show_clock=True, name="Catalogs")
@@ -451,10 +455,8 @@ class CatalogScreen(ContextScreen):
             if self.db_type in (DBType.SQLITE, DBType.DUCKDB):
                 # Built-in single-database connectors: show the known database directly
                 self._add_db_name(tree, self.database_name)
-            elif connector_registry.support_catalog(self.db_type) and not connector_registry.support_schema(
-                self.db_type
-            ):
-                # Catalog-first dialects (e.g. StarRocks): catalog → database → tables
+            elif self._supports("catalog"):
+                # Catalog-first dialects may expose database, schema, or both below the catalog.
                 self._load_catalogs_lazy(tree)
             else:
                 # Standard dialects: database → [schema →] tables
@@ -1126,7 +1128,7 @@ class CatalogScreen(ContextScreen):
 
         # Add loading indicator
         if node_type == "database":
-            if connector_registry.support_schema(self.db_type):
+            if self._supports("schema"):
                 node.add_leaf("⏳ Loading schemas...", data={"type": "loading"})
             else:
                 node.add_leaf("⏳ Loading tables...", data={"type": "loading"})
@@ -1160,7 +1162,7 @@ class CatalogScreen(ContextScreen):
 
     def _add_db_name(self, tree: TextualTree, db_name: str):
         db_node = tree.root.add(f"📁 {db_name}", data={"type": "database", "name": db_name})
-        support_schema = connector_registry.support_schema(self.db_type)
+        support_schema = self._supports("schema")
         db_node.add_leaf(
             f"⏳ Loading {'schemas' if support_schema else 'tables'}...",
             data={"type": "loading"},
@@ -1213,12 +1215,12 @@ class CatalogScreen(ContextScreen):
 
         try:
             if node_type == "database":
-                if connector_registry.support_schema(self.db_type):
+                if self._supports("schema"):
                     self._load_schemas_for_database(node)
                 else:
                     self._load_tables_for_schema(node)
             elif node_type == "catalog":
-                if connector_registry.support_database(self.db_type):
+                if self._supports("database"):
                     self._load_databases_for_catalog(node)
                 else:
                     self._load_schemas_for_database(node)
@@ -1235,31 +1237,45 @@ class CatalogScreen(ContextScreen):
         """Clear all caches to free memory."""
         _fetch_schema_with_cache.cache_clear()
 
-    def _load_schemas_for_database(self, db_node: TreeNode) -> None:
-        """Load schemas for a database node."""
-        db_name = str(db_node.label).replace("📁 ", "")
+    def _load_schemas_for_database(self, parent_node: TreeNode) -> None:
+        """Load schemas below a database or directly below a catalog."""
+        node_name = str(parent_node.label).replace("📁 ", "")
+        node_data = parent_node.data or {}
+        if node_data.get("type") == "catalog":
+            catalog_name = str(node_data.get("name") or node_name)
+            db_name = ""
+        else:
+            catalog_name = str(node_data.get("catalog") or "")
+            db_name = str(node_data.get("name") or node_name)
         try:
-            self.db_connector.switch_context(database_name=db_name)
-            schemas = self.db_connector.get_schemas()
+            self.db_connector.switch_context(catalog_name=catalog_name, database_name=db_name)
+            schemas = self.db_connector.get_schemas(catalog_name=catalog_name, database_name=db_name)
 
             if not schemas:
-                db_node.add_leaf("📂 No schemas found", data={"type": "empty"})
+                parent_node.add_leaf("📂 No schemas found", data={"type": "empty"})
                 return
 
             for schema_name in schemas:
-                schema_node = db_node.add(
-                    f"📂 {schema_name}", data={"type": "schema", "name": schema_name, "database": db_name}
+                schema_node = parent_node.add(
+                    f"📂 {schema_name}",
+                    data={
+                        "type": "schema",
+                        "name": schema_name,
+                        "database": db_name,
+                        "catalog": catalog_name,
+                    },
                 )
                 schema_node.add_leaf("⏳ Loading tables...", data={"type": "loading"})
         except DatusException as e:
-            logger.error(f"Failed to load schemas for database {db_name}: {str(e)}")
+            context_name = db_name or catalog_name
+            logger.error(f"Failed to load schemas for {context_name}: {str(e)}")
             if e.code == ErrorCode.DB_EXECUTION_TIMEOUT.code:
-                db_node.add_leaf(
+                parent_node.add_leaf(
                     "⏱️ Timeout loading schemas (press 'r' to retry)",
-                    data={"type": "timeout", "operation": "schemas", "parent": db_name},
+                    data={"type": "timeout", "operation": "schemas", "parent": context_name},
                 )
             else:
-                db_node.add_leaf("❌ Error loading schemas", data={"type": "error"})
+                parent_node.add_leaf("❌ Error loading schemas", data={"type": "error"})
 
     def _load_databases_for_catalog(self, catalog_node: TreeNode) -> None:
         """Load databases for a catalog node."""
@@ -1288,10 +1304,10 @@ class CatalogScreen(ContextScreen):
 
     def _load_tables_for_schema(self, schema_node: TreeNode) -> None:
         """Load tables for a schema node."""
-        if not connector_registry.support_schema(self.db_type):
+        if not self._supports("schema"):
             schema_name = ""
             db_name = schema_node.data.get("name")
-            if not connector_registry.support_catalog(self.db_type):
+            if not self._supports("catalog"):
                 catalog_name = ""
             else:
                 catalog_name = "" if not schema_node.parent else schema_node.parent.data.get("name")
@@ -1301,16 +1317,16 @@ class CatalogScreen(ContextScreen):
             parent = schema_node.parent
             if not parent:
                 return
-            if connector_registry.support_database(self.db_type):
+            if self._supports("database"):
                 db_name = parent.data.get("name")
-                if connector_registry.support_catalog(self.db_type):
+                if self._supports("catalog"):
                     parent = parent.parent
                     catalog_name = "" if not parent or not parent.data else parent.data.get("name")
                 else:
                     catalog_name = ""
             else:
                 db_name = ""
-                catalog_name = "" if not connector_registry.support_catalog(self.db_type) else parent.data.get("name")
+                catalog_name = "" if not self._supports("catalog") else parent.data.get("name")
 
         try:
             tables = self.db_connector.get_tables(
