@@ -427,10 +427,6 @@ class AskMetricsAgenticNode(AgenticNode):
         where: Optional[str] = None,
         limit: Optional[int] = None,
         order_by: Optional[List[str]] = None,
-        join_policy: Optional[
-            Literal["auto", "match_only", "fact_preserving", "dimension_preserving", "unmatched_only"]
-        ] = None,
-        zero_fill: bool = False,
         dry_run: bool = False,
     ) -> FuncToolResult:
         """
@@ -449,11 +445,11 @@ class AskMetricsAgenticNode(AgenticNode):
         metrics, AskMetrics expands the request to include related executable
         metrics when they are already present in the catalog.
 
-        For joined dimensions, use semantic join policies instead of SQL join
-        types: match_only for normal matched dimension grouping,
-        fact_preserving for unmatched fact analysis, dimension_preserving with
-        zero_fill for all dimension values including those with no facts, and
-        unmatched_only for only unmapped fact rows.
+        Joined dimensions always use matched-rows join semantics: fact rows
+        that cannot match the requested dimension are excluded. Unmatched-fact
+        audits and zero-filled dimension enumeration are not supported; state
+        the limitation to the user instead of emulating those shapes with
+        where filters.
         """
         if not self.semantic_tools:
             return FuncToolResult(success=0, error="semantic tools unavailable")
@@ -498,10 +494,6 @@ class AskMetricsAgenticNode(AgenticNode):
             "order_by": normalized_order_by,
             "dry_run": dry_run,
         }
-        if join_policy:
-            query_kwargs["join_policy"] = join_policy
-        if zero_fill:
-            query_kwargs["zero_fill"] = zero_fill
         result = self.semantic_tools.query_metrics(**query_kwargs)
         if self._is_deterministic_validation_failure(result):
             self._failed_query_signatures.add(signature)

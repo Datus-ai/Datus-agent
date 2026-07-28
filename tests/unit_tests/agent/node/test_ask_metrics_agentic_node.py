@@ -711,31 +711,6 @@ class TestAskMetricsAgenticNode:
         semantic_tools.query_metrics.assert_called_once()
         assert semantic_tools.query_metrics.call_args.kwargs["where"] == "region = 'east'"
 
-    def test_query_metrics_passes_join_controls(
-        self,
-        real_agent_config,
-        mock_llm_create,
-    ):
-        node, semantic_tools, _ = _make_node(
-            real_agent_config,
-            tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
-        )
-        semantic_tools.list_metrics.return_value = FuncToolResult(
-            result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
-        )
-        semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
-
-        node.query_metrics(
-            metrics=["order_count"],
-            dimensions=["dimension_key__display_name"],
-            join_policy="dimension_preserving",
-            zero_fill=True,
-        )
-
-        semantic_tools.query_metrics.assert_called_once()
-        assert semantic_tools.query_metrics.call_args.kwargs["join_policy"] == "dimension_preserving"
-        assert semantic_tools.query_metrics.call_args.kwargs["zero_fill"] is True
-
     def test_query_metrics_aliases_joined_dimension_display_columns(
         self,
         real_agent_config,
