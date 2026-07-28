@@ -4639,14 +4639,18 @@ plugin whitelist, <code>plugin_paths</code>, and <code>skills</code> directories
 that request's <code>AgentConfig</code>. It does not fall back to another tenant's loaded
 configuration or to <code>./.datus/config.yml</code>. Standalone CLI skill commands that
 do not hold an <code>AgentConfig</code> keep the local project-file behavior.</p>
-<p>This bridge accepts one direct plugin invocation, optionally as one stage of a
-plain <code>|</code> pipeline. It deliberately fails closed for multiple <code>datus</code>
-invocations and for shell control forms such as <code>&amp;&amp;</code>, <code>;</code>, redirection, command
-substitution, and <code>|&amp;</code>. <code>--profile</code> remains supported and is resolved against
-the request's <code>AgentConfig</code>; <code>--config</code> is rejected because the AuthProvider
-configuration is authoritative. The encoded runtime snapshot is capped at
-64 KiB. Sibling pipeline stages do not inherit it, and the parent process
-environment is never modified.</p>
+<p>This bridge accepts one plugin invocation per Bash command, in any shell shape
+that puts <code>datus</code> at a command position: pipelines, redirections (<code>&gt;</code>, <code>2&gt;&amp;1</code>),
+<code>;</code>/<code>&amp;&amp;</code>/<code>||</code>/newline lists, <code>(...)</code>/<code>{...}</code> groupings, loops, heredocs and
+expansions all keep their original text — the runtime value is injected as an
+inline assignment in front of the <code>datus</code> command word only. It deliberately
+fails closed for multiple <code>datus</code> invocations in one command, for <code>datus</code> inside
+a command substitution (<code>$(...)</code>, backticks), and for <code>datus</code> behind a wrapper
+such as <code>timeout</code>, <code>env</code>, <code>xargs</code> or <code>sh -c</code>. <code>--profile</code> remains supported and
+is resolved against the request's <code>AgentConfig</code>; <code>--config</code> is rejected because
+the AuthProvider configuration is authoritative. The encoded runtime snapshot is
+capped at 64 KiB. Sibling commands in the same Bash invocation do not inherit
+it, and the parent process environment is never modified.</p>
 <h3 id="which-profile-runs">Which profile runs<a class="headerlink" href="#which-profile-runs" title="Permanent link">&para;</a></h3>
 <p>When you run <code>datus &lt;name&gt; ...</code>, the active profile is resolved in this order:</p>
 <ol>
