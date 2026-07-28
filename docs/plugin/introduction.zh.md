@@ -130,11 +130,14 @@ plugin skill 发现遵循相同规则:`plugins_enabled`、激活 plugin 白名�
 租户已加载的配置或 `./.datus/config.yml`。只有拿不到 `AgentConfig` 的独立 CLI
 skill 命令才保留本地项目配置文件行为。
 
-此桥接允许一次直接的 plugin 调用,也允许它作为普通 `|` 管道中的一个 stage。
-若命令包含多个 `datus` 调用,或使用 `&&`、`;`、重定向、命令替换、`|&` 等 shell
-控制形式,则会 fail closed。`--profile` 仍受支持,并针对当前请求的 `AgentConfig`
-解析;`--config` 会被拒绝,因为 AuthProvider 提供的配置是权威来源。编码后的运行时
-快照上限为 64 KiB。管道中的其他 stage 不会继承它,父进程环境也不会被修改。
+每条 Bash 命令允许一次 plugin 调用,只要 `datus` 位于命令位即可,shell 形态不限:
+管道、重定向(`>`、`2>&1`)、`;`/`&&`/`||`/换行 序列、`(...)`/`{...}` 分组、循环、
+heredoc 与各类展开都会原样保留——运行时快照只以内联赋值的形式插在 `datus` 命令词
+之前。以下情形仍会 fail closed:同一条命令里出现多个 `datus` 调用;`datus` 位于命令
+替换(`$(...)`、反引号)内部;`datus` 被 `timeout`、`env`、`xargs`、`sh -c` 等包裹。
+`--profile` 仍受支持,并针对当前请求的 `AgentConfig` 解析;`--config` 会被拒绝,
+因为 AuthProvider 提供的配置是权威来源。编码后的运行时快照上限为 64 KiB。同一条 Bash
+命令中的其他命令不会继承它,父进程环境也不会被修改。
 
 ### 哪个 profile 生效 {#which-profile-runs}
 

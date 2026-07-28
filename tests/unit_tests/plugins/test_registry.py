@@ -326,6 +326,9 @@ def test_preamble_immutable_omits_config_path_and_edit_guidance(plugin_env, monk
     assert "agent.plugins.<plugin>.<profile>" not in sections[0]
     assert "administrator" in sections[0]
     assert "read-only" in sections[0]
+    # The managed bridge accepts one plugin invocation per bash call; telling
+    # the model up front avoids rejected commands it has to retry.
+    assert "one `datus <plugin>` command per bash call" in sections[0]
 
 
 def test_sections_pass_config_mutable_to_template(plugin_env):

@@ -365,7 +365,11 @@ def _plugin_config_preamble(config_mutable: bool = True) -> str:
             "agent configuration is read-only in this environment. Never suggest "
             "editing configuration files and never walk the user through plugin "
             "setup; if a plugin is not configured, tell the user to contact their "
-            "administrator. Configured `datus <plugin>` commands work normally."
+            "administrator. Configured `datus <plugin>` commands work normally.\n"
+            "Run at most one `datus <plugin>` command per bash call, with `datus` as "
+            "the command word: never wrap it in `$(...)`/backticks, and never behind "
+            "`timeout`, `env`, `xargs` or `sh -c`. Pipes, redirection, `&&`/`;` lists "
+            "and `--profile` are all fine; `--config` is rejected."
         )
     config_path = _agent_config_location()
     location = f"`{config_path}` " if config_path else "the agent config file (agent.yml) "
