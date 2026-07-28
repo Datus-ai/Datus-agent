@@ -17,7 +17,7 @@ from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SemanticNodeResult
+from datus.schemas.semantic_agentic_node_models import GenMetricsNodeResult, SemanticNodeInput
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -47,7 +47,7 @@ class GenMetricsAgenticNode(AgenticNode):
     """
 
     NODE_NAME = "gen_metrics"
-    result_class = SemanticNodeResult
+    result_class = GenMetricsNodeResult
 
     def __init__(
         self,
@@ -107,6 +107,10 @@ class GenMetricsAgenticNode(AgenticNode):
         self.semantic_discovery_tools = None
         self.filesystem_func_tool: Optional[FilesystemFuncTool] = None
         self.generation_tools: Optional[GenerationTools] = None
+        from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
+
+        self.osi_target_state = OsiSemanticModelTargetState()
+        self.osi_target_tools = None
         self.ask_user_tool = None
         self.hooks = None
         self.generation_evidence = GenerationEvidence()
@@ -138,144 +142,22 @@ class GenMetricsAgenticNode(AgenticNode):
 
         self.tools = []
 
-        # Setup db_tools.*, semantic_discovery_tools.*, generation_tools.*, filesystem_tools.*, semantic_tools.*
+        self._setup_osi_target_tools()
         self._setup_db_tools()
         self._setup_semantic_discovery_tools()
         self._setup_generation_tools()
         self._setup_filesystem_tools()
         self._setup_semantic_tools()
-        self._setup_semantic_model_bootstrap()
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
 
         logger.info(f"Setup {len(self.tools)} tools for {self.NODE_NAME}: {[tool.name for tool in self.tools]}")
 
-    def _setup_semantic_model_bootstrap(self) -> None:
-        """Create a host-only semantic-model runner for directly selected OSI metrics."""
-        from datus.agent.node.semantic_authoring import is_osi_authoring
-
-        self.sub_agent_task_tool = None
-        if self._is_subagent or not is_osi_authoring(self.agent_config):
-            return
-
-        from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
-
-        self.sub_agent_task_tool = SubAgentTaskTool(
-            agent_config=self.agent_config,
-            allowed_subagents=["gen_semantic_model"],
-            parent_node_name=self.get_node_name(),
-        )
-        self.sub_agent_task_tool.set_action_bus(self.action_bus)
-        self.sub_agent_task_tool.set_interaction_broker(self.interaction_broker)
-        self.sub_agent_task_tool.set_parent_node(self)
-
     async def _before_stream(self, ctx: StreamRunContext) -> None:
-        """Resolve or bootstrap the prerequisite OSI semantic model before metrics."""
+        """Reset request-local authoring state before the agent loop."""
         await super()._before_stream(ctx)
-
-        from datus.agent.node.semantic_authoring import (
-            is_osi_authoring,
-            resolve_existing_osi_semantic_model,
-        )
-
-        if not is_osi_authoring(self.agent_config):
-            return
-
-        resolution = resolve_existing_osi_semantic_model(
-            self.agent_config,
-            user_input=ctx.user_input,
-            request_text=ctx.user_input.user_message,
-        )
-        if resolution["status"] == "found":
-            self._set_osi_semantic_model_target(ctx.user_input, resolution["selected"])
-            return
-        if resolution["status"] == "ambiguous":
-            self._raise_osi_semantic_model_selection_error(resolution)
-        if resolution["status"] == "invalid":
-            self._raise_osi_source_query_error(resolution)
-        if self._is_subagent:
-            raise DatusException(
-                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
-                message_args={
-                    "error_message": (
-                        "no OSI semantic model contains the requested datasets; "
-                        "run gen_semantic_model first, then retry gen_metrics"
-                    )
-                },
-            )
-        if self.sub_agent_task_tool is None:
-            raise DatusException(
-                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
-                message_args={"error_message": "gen_semantic_model runner is unavailable"},
-            )
-
-        result = await self.sub_agent_task_tool.task(
-            type="gen_semantic_model",
-            prompt=(
-                "Create the OSI semantic model prerequisite for the metric request below. "
-                "Author semantic objects only; do not generate metrics.\n\n"
-                f"Original metric request:\n{ctx.user_input.user_message}"
-            ),
-            description="Create required OSI semantic model",
-        )
-        if not result.success:
-            raise DatusException(
-                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
-                message_args={"error_message": result.error or "gen_semantic_model failed"},
-            )
-
-        post_resolution = resolve_existing_osi_semantic_model(
-            self.agent_config,
-            user_input=ctx.user_input,
-            request_text=ctx.user_input.user_message,
-        )
-        selected = post_resolution.get("selected") if post_resolution["status"] == "found" else None
-
-        if selected is None:
-            if post_resolution["status"] == "ambiguous":
-                self._raise_osi_semantic_model_selection_error(post_resolution)
-            if post_resolution["status"] == "invalid":
-                self._raise_osi_source_query_error(post_resolution)
-            raise DatusException(
-                ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
-                message_args={
-                    "error_message": "gen_semantic_model completed without creating a resolvable OSI semantic model"
-                },
-            )
-
-        self._set_osi_semantic_model_target(ctx.user_input, selected)
-        logger.info("Bootstrapped prerequisite OSI semantic model: %s", selected["semantic_model_file"])
-
-    @staticmethod
-    def _set_osi_semantic_model_target(user_input: SemanticNodeInput, model: Dict[str, Any]) -> None:
-        """Attach the selected model name so the upstream resolver supplies its real file."""
-        user_input.semantic_model_name = model["semantic_model_name"]
-
-    @staticmethod
-    def _raise_osi_semantic_model_selection_error(resolution: Dict[str, Any]) -> None:
-        candidates = ", ".join(
-            f"{model['semantic_model_name']} ({model['semantic_model_file']})"
-            for model in resolution.get("candidates") or []
-        )
-        raise DatusException(
-            ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
-            message_args={
-                "error_message": (
-                    f"semantic model selection is ambiguous: {candidates}. "
-                    "Specify semantic_model_name or reference a dataset from the intended model."
-                )
-            },
-        )
-
-    @staticmethod
-    def _raise_osi_source_query_error(resolution: Dict[str, Any]) -> None:
-        errors = "; ".join(
-            f"{item.get('source_sql_name')}: {item.get('error')}" for item in resolution.get("parse_errors") or []
-        )
-        raise DatusException(
-            ErrorCode.SEMANTIC_MODEL_BOOTSTRAP_FAILED,
-            message_args={"error_message": f"invalid structured source SQL: {errors or resolution.get('reason')}"},
-        )
+        self.generation_evidence.reset()
+        self.osi_target_state.reset()
 
     def _ensure_bash_tool_in_tools(self) -> None:
         """Keep OSI metric authoring on its metrics-only filesystem surface."""
@@ -307,6 +189,10 @@ class GenMetricsAgenticNode(AgenticNode):
         if inherited_memory_node is None:
             inherited_memory_node = get_inherited_memory(current_node)
         session_data_dir = kwargs.pop("session_data_dir", None) or self._resolve_session_data_dir()
+        mutation_callback = kwargs.pop(
+            "mutation_callback",
+            self.generation_evidence.invalidate_artifact_evidence,
+        )
         return MetricFilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
@@ -314,7 +200,9 @@ class GenMetricsAgenticNode(AgenticNode):
             strict=strict,
             inherited_memory_node=inherited_memory_node,
             session_data_dir=session_data_dir,
+            mutation_callback=mutation_callback,
             authoring_format=resolve_authoring_format(self.agent_config),
+            osi_target_state=self.osi_target_state,
             **kwargs,
         )
 
@@ -340,11 +228,11 @@ class GenMetricsAgenticNode(AgenticNode):
                 self.agent_config,
                 generation_evidence=self.generation_evidence,
                 authoring_format=authoring_format,
+                osi_target_state=self.osi_target_state,
+                require_bound_osi_target=authoring_format == "osi",
             )
 
             self.tools.append(trans_to_function_tool(self.generation_tools.check_semantic_object_exists))
-            if authoring_format == "osi":
-                self.tools.append(trans_to_function_tool(self.generation_tools.resolve_osi_semantic_model_target))
             self.tools.append(trans_to_function_tool(self.generation_tools.end_metric_generation))
             if authoring_format != "osi":
                 self.tools.append(trans_to_function_tool(self.generation_tools.end_semantic_model_generation))
@@ -352,6 +240,26 @@ class GenMetricsAgenticNode(AgenticNode):
 
         except Exception as e:
             logger.error(f"Failed to setup generation tools: {e}")
+
+    def _setup_osi_target_tools(self) -> None:
+        """Expose live inventory and exact binding without touching DB or RAG."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
+
+        if not is_osi_authoring(self.agent_config):
+            return
+        from datus.tools.func_tool import OsiSemanticModelTargetTools, trans_to_function_tool
+
+        self.osi_target_tools = OsiSemanticModelTargetTools(
+            self.agent_config,
+            target_state=self.osi_target_state,
+            generation_evidence=self.generation_evidence,
+        )
+        self.tools.extend(
+            [
+                trans_to_function_tool(self.osi_target_tools.list_existing_osi_semantic_models),
+                trans_to_function_tool(self.osi_target_tools.bind_osi_semantic_model_target),
+            ]
+        )
 
     def _setup_skill_func_tools(self) -> None:
         """Default the optional skill set from the active authoring format."""
@@ -412,17 +320,18 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_semantic_discovery_tools(self):
         """Setup read-only semantic discovery tools."""
         try:
-            if not self.db_func_tool:
-                logger.warning("DBFuncTool not initialized, skipping semantic_discovery_tools setup")
-                return
-
             from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 
-            self.semantic_discovery_tools = SemanticDiscoveryTools(self.db_func_tool)
-            self.tools.extend(self.semantic_discovery_tools.available_tools())
+            self.semantic_discovery_tools = SemanticDiscoveryTools(
+                self.db_func_tool,
+                agent_config=self.agent_config,
+                sub_agent_name=self.NODE_NAME,
+            )
+            discovery_tools = self.semantic_discovery_tools.available_tools()
+            self.tools.extend(discovery_tools)
             logger.debug(
-                "Added semantic discovery tools: analyze_table_relationships, get_multiple_tables_ddl, "
-                "analyze_column_usage_patterns, analyze_metric_candidates_from_history"
+                "Added semantic discovery tools: %s",
+                [tool.name for tool in discovery_tools],
             )
         except Exception as e:
             logger.error(f"Failed to setup semantic discovery tools: {e}")
@@ -473,22 +382,9 @@ class GenMetricsAgenticNode(AgenticNode):
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context.update(build_datasource_prompt_context(self.agent_config))
 
-        from datus.agent.node.semantic_authoring import (
-            default_osi_semantic_model_file,
-            default_osi_semantic_model_name,
-            resolve_authoring_format,
-        )
+        from datus.agent.node.semantic_authoring import resolve_authoring_format
 
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
-        # Request-scoped target details belong in the enhanced user message;
-        # this context is frozen in the per-session system-prompt snapshot.
-        context["requested_semantic_model_name"] = ""
-        context["requested_business_domain"] = ""
-        context["requested_fact_tables"] = []
-        context["requested_dimension_tables"] = []
-        context["osi_target_resolved"] = False
-        context["default_osi_semantic_model_name"] = default_osi_semantic_model_name(self.agent_config)
-        context["default_osi_semantic_model_file"] = default_osi_semantic_model_file(self.agent_config)
 
         # Handle subject_tree context based on whether predefined or query from storage
         if self.subject_tree:
@@ -508,19 +404,29 @@ class GenMetricsAgenticNode(AgenticNode):
         user_input: SemanticNodeInput,
         extra_enhanced_parts: Optional[List[str]] = None,
     ) -> str:
-        """Add the resolved Ossie target to this turn instead of the cached system prompt."""
-        from datus.agent.node.semantic_authoring import osi_semantic_model_turn_context
+        """Expose a structured caller hint without resolving it on the host."""
+        from datus.agent.node.semantic_authoring import is_osi_authoring
 
         parts = list(extra_enhanced_parts or [])
-        target_context = osi_semantic_model_turn_context(self.agent_config, user_input)
-        if target_context:
-            parts.append(target_context)
+        semantic_model_name = str(getattr(user_input, "semantic_model_name", "") or "").strip()
+        semantic_model_file = str(getattr(user_input, "semantic_model_file", "") or "").strip()
+        if is_osi_authoring(self.agent_config) and (semantic_model_name or semantic_model_file):
+            hints = ["## OSI Semantic Model Selection Hint for This Turn"]
+            if semantic_model_file:
+                hints.append(f"- Requested semantic model file: `{semantic_model_file}`")
+            if semantic_model_name:
+                hints.append(f"- Requested semantic model name: `{semantic_model_name}`")
+            hints.append(
+                "Treat these as unverified hints: call `bind_osi_semantic_model_target` with the exact "
+                "selectors, then inspect the live inventory if binding fails."
+            )
+            parts.append("\n".join(hints))
         return super()._build_enhanced_message(user_input, parts)
 
     def _system_prompt_snapshot_meta(self, prompt_version: Optional[str]) -> Dict[str, str]:
         """Invalidate snapshots created before semantic targets became request-scoped."""
         meta = super()._system_prompt_snapshot_meta(prompt_version)
-        meta["semantic_target_scope"] = "per_turn_v1"
+        meta["semantic_target_scope"] = "agent_bound_v3"
         return meta
 
     def _get_system_prompt(
@@ -586,7 +492,7 @@ class GenMetricsAgenticNode(AgenticNode):
         self._set_metric_queryability_contracts_from_input(ctx.user_input)
         return self._prepare_template_context(ctx.user_input)
 
-    def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
+    def _build_success_result(self, ctx: StreamRunContext) -> GenMetricsNodeResult:
         response_content = ctx.response_content
         if not response_content and ctx.last_successful_output:
             raw_output = ctx.last_successful_output.get("raw_output", "")
@@ -595,8 +501,8 @@ class GenMetricsAgenticNode(AgenticNode):
             else:
                 response_content = str(ctx.last_successful_output)
 
-        semantic_model_files, metric_file, status, extracted_output = self._extract_metric_and_output_from_response(
-            {"content": response_content}
+        semantic_model_files, metric_file, status, blocker_code, skip_reason, extracted_output = (
+            self._extract_metric_and_output_from_response({"content": response_content})
         )
         if extracted_output:
             response_content = extracted_output
@@ -604,21 +510,59 @@ class GenMetricsAgenticNode(AgenticNode):
         if not isinstance(response_content, str):
             response_content = str(response_content) if response_content else ""
 
-        self._finalize_metric_generation(
-            semantic_model_files=semantic_model_files,
-            metric_file=metric_file,
-            status=status,
-        )
+        blocker_code = blocker_code.strip().lower() if isinstance(blocker_code, str) else blocker_code
+        skip_reason = skip_reason.strip().lower() if isinstance(skip_reason, str) else skip_reason
+        if status is not None and status not in {"generated", "skipped", "blocked"}:
+            raise RuntimeError(f"Unsupported metric generation status: {status!r}")
+        if skip_reason is not None and skip_reason != "not_a_metric":
+            raise RuntimeError(f"Unsupported metric generation skip_reason: {skip_reason!r}")
+        if skip_reason is not None and status != "skipped":
+            raise RuntimeError("skip_reason is only valid when status='skipped'.")
+        normalized_status = status
+        if normalized_status == "blocked":
+            if metric_file or self.osi_target_state.authored_metric_names:
+                raise RuntimeError(
+                    "status='blocked' is only valid before metric authoring and with metric_file set to null."
+                )
+            if blocker_code not in {
+                "semantic_model_required",
+                "semantic_model_selection_required",
+                "semantic_model_target_invalid",
+            }:
+                raise RuntimeError("status='blocked' requires a supported semantic-model blocker_code.")
+            if self.osi_target_tools is None:
+                raise RuntimeError("status='blocked' is only supported for OSI metric generation.")
+            final_metric_file = None
+        else:
+            self._finalize_metric_generation(
+                semantic_model_files=semantic_model_files,
+                metric_file=metric_file,
+                status=normalized_status,
+                skip_reason=skip_reason,
+            )
+            target_state = getattr(self, "osi_target_state", None)
+            bound = target_state.bound if target_state is not None else None
+            final_metric_file = (
+                str(bound["semantic_model_file"])
+                if bound is not None and target_state.authored_metric_names
+                else metric_file
+            )
+            if normalized_status is None:
+                normalized_status = "generated" if final_metric_file else "skipped"
 
         tokens_used = 0
         if self.execution_mode == "interactive":
             tokens_used = self._extract_total_tokens(ctx.action_history_manager.get_actions())
 
-        return SemanticNodeResult(
-            success=True,
+        return GenMetricsNodeResult(
+            success=normalized_status != "blocked",
+            error=response_content if normalized_status == "blocked" else None,
             response=response_content,
-            semantic_models=[metric_file] if metric_file else [],
+            semantic_models=[final_metric_file] if final_metric_file else [],
             tokens_used=int(tokens_used),
+            status=normalized_status,
+            blocker_code=blocker_code if normalized_status == "blocked" else None,
+            skip_reason=skip_reason if normalized_status == "skipped" else None,
         )
 
     @staticmethod
@@ -764,6 +708,7 @@ class GenMetricsAgenticNode(AgenticNode):
         semantic_model_files: Optional[List[str] | str],
         metric_file: Optional[str],
         status: Optional[str],
+        skip_reason: Optional[str] = None,
     ) -> None:
         """Ensure generated metric artifacts are published without relying on one LLM tool call."""
         from datus.agent.node.semantic_authoring import is_osi_authoring
@@ -773,6 +718,7 @@ class GenMetricsAgenticNode(AgenticNode):
                 semantic_model_files=semantic_model_files,
                 metric_file=metric_file,
                 status=status,
+                skip_reason=skip_reason,
             )
             return
 
@@ -862,58 +808,91 @@ class GenMetricsAgenticNode(AgenticNode):
         )
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"Metric KB sync failed: {self._tool_error(publish_result)}")
-        self.generation_evidence.mark_kb_sync("metric")
 
     def _finalize_osi_metric_generation(
         self,
         semantic_model_files: Optional[List[str] | str],
         metric_file: Optional[str],
         status: Optional[str],
+        skip_reason: Optional[str],
     ) -> None:
-        """Finalize OSI-authored metrics without using MetricFlow YAML preflight."""
+        """Validate and publish only the exact target bound during this request."""
+        del semantic_model_files
         normalized_status = status.strip().lower() if isinstance(status, str) else status
+        bound = self.osi_target_state.bound
+        metric_names = list(self.osi_target_state.authored_metric_names)
 
         if normalized_status == "skipped":
-            if metric_file:
+            if metric_file or metric_names:
                 raise RuntimeError(
-                    "Metric generation returned status='skipped' with a non-null metric_file. "
-                    "Skipped responses must set metric_file to null; generated metric files must be published."
+                    "Metric generation cannot return status='skipped' after authoring metrics "
+                    "or with a non-null metric_file."
+                )
+            if skip_reason != "not_a_metric":
+                raise RuntimeError(
+                    "OSI status='skipped' is only valid for a non-metric request with skip_reason='not_a_metric'. "
+                    "Existing requested metrics must be idempotently upserted and published."
                 )
             return
-
-        if self.generation_evidence.metric_kb_sync_passed:
-            return
-
-        if normalized_status and not metric_file:
+        if self.osi_target_state.last_error_code:
             raise RuntimeError(
-                f"Metric generation returned status='{normalized_status}' without a metric_file. "
-                "Non-skipped OSI metric responses must include metric_file or call end_metric_generation."
+                "The OSI target selection is unresolved after a failed bind. "
+                "Bind a valid target again or return a matching blocked result."
+            )
+        if bound is None:
+            raise RuntimeError(
+                "OSI metric generation must bind an existing semantic model or return a supported blocked result."
+            )
+        if not metric_names:
+            raise RuntimeError(
+                "No metrics were authored or scheduled for idempotent publish in the bound OSI semantic model. "
+                "Pass every requested metric through upsert_osi_metrics, including unchanged existing definitions."
             )
 
-        if not metric_file:
+        abs_metric_file = str(bound["absolute_path"])
+        try:
+            self.osi_target_state.require_current_revision(abs_metric_file)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        artifact_validated = self.generation_evidence.semantic_artifact_validation_passed(
+            bound["semantic_model_name"],
+            abs_metric_file,
+        )
+        if self.generation_evidence.has_metric_kb_sync(metric_names) and artifact_validated:
             return
 
+        if metric_file:
+            try:
+                reported = self._resolve_metric_artifact_path(metric_file, "metric")
+            except RuntimeError:
+                reported = ""
+            if reported and reported != abs_metric_file:
+                logger.warning(
+                    "Ignoring LLM-reported metric_file %s; publishing bound target %s",
+                    metric_file,
+                    bound["semantic_model_file"],
+                )
+
         if not self.generation_tools:
-            raise RuntimeError("Metric generation produced a metric_file, but generation tools are unavailable.")
+            raise RuntimeError("Metrics were authored in a bound OSI target, but generation tools are unavailable.")
         self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
 
         if not getattr(self, "semantic_tools", None):
-            raise RuntimeError("Metric generation produced a metric_file, but validate_semantic is unavailable.")
-        abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
+            raise RuntimeError("Metrics were authored in a bound OSI target, but validate_semantic is unavailable.")
         model_names = self.generation_tools.extract_osi_model_names(abs_metric_file)
-        if len(model_names) != 1:
-            raise RuntimeError("The generated Ossie metric artifact must declare exactly one semantic model.")
-        validation_result = self.semantic_tools.validate_semantic(
-            semantic_model_name=model_names[0],
-            checks=["authoring_quality"],
-        )
-        self.generation_evidence.record_validation_result(validation_result)
-        if not self._tool_succeeded(validation_result):
-            raise RuntimeError(
-                f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
+        if model_names != [bound["semantic_model_name"]]:
+            raise RuntimeError("The bound OSI artifact no longer declares the selected semantic model.")
+        if not artifact_validated:
+            validation_result = self.semantic_tools.validate_semantic(
+                semantic_model_name=bound["semantic_model_name"],
             )
+            self.generation_evidence.record_validation_result(validation_result)
+            if not self._tool_succeeded(validation_result):
+                raise RuntimeError(
+                    f"validate_semantic failed before publishing OSI metrics: {self._tool_error(validation_result)}"
+                )
 
-        metric_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
         if metric_names and not self.generation_evidence.has_metric_dry_run(metric_names):
             query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)
             if not callable(query_metrics):
@@ -925,33 +904,31 @@ class GenMetricsAgenticNode(AgenticNode):
                     "query_metrics(dry_run=True) failed for generated OSI metric(s) "
                     f"{', '.join(metric_names)}: {self._tool_error(dry_run_result)}"
                 )
-        if metric_names and not self.generation_evidence.has_required_queryability_dry_runs(metric_names):
-            missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
-            raise DatusException(
-                ErrorCode.COMMON_VALIDATION_FAILED,
-                "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions before "
-                "publishing metrics. Run a dry-run query for the generated metric names with the matching "
-                "dimensions/time grain, fix semantic model join or dimension issues, and retry. "
-                f"Missing: {summarize_queryability_contracts(missing_contracts)}",
-            )
-
         publish_result = self.generation_tools.end_metric_generation(
             metric_file=abs_metric_file,
             semantic_model_files=[],
         )
         if not self._tool_succeeded(publish_result):
             raise RuntimeError(f"OSI metric KB sync failed: {self._tool_error(publish_result)}")
-        self.generation_evidence.mark_kb_sync("metric")
 
     def _extract_metric_and_output_from_response(
         self, output: dict
-    ) -> tuple[Optional[List[str]], Optional[str], Optional[str], Optional[str]]:
+    ) -> tuple[
+        Optional[List[str]],
+        Optional[str],
+        Optional[str],
+        Optional[str],
+        Optional[str],
+        Optional[str],
+    ]:
         """
         Extract semantic model files, metric file, status and formatted output from model response.
 
         Per prompt template requirements, LLM should return JSON format:
         {"semantic_model_files": ["path.yml"], "metric_file": "path.yml",
-         "status": "generated" | "skipped", "output": "markdown text"}
+         "status": "generated" | "skipped" | "blocked", "blocker_code": null,
+         "skip_reason": null | "not_a_metric",
+         "output": "markdown text"}
 
         ``status`` is optional for backward compatibility; absent values are treated as ``"generated"``.
 
@@ -959,7 +936,8 @@ class GenMetricsAgenticNode(AgenticNode):
             output: Output dictionary from model generation
 
         Returns:
-            Tuple of (semantic_model_files, metric_file, status, output_string).
+            Tuple of (semantic_model_files, metric_file, status, blocker_code,
+            skip_reason, output_string).
         """
         try:
             from datus.utils.json_utils import strip_json_str
@@ -974,13 +952,22 @@ class GenMetricsAgenticNode(AgenticNode):
                 metric_file = content.get("metric_file")
                 status = content.get("status")
                 normalized_status = status.strip().lower() if isinstance(status, str) else None
+                blocker_code = content.get("blocker_code")
+                skip_reason = content.get("skip_reason")
 
                 if (metric_file and isinstance(metric_file, str)) or normalized_status:
                     logger.debug(
                         f"Extracted from dict: semantic_model_files={semantic_model_files}, "
                         f"metric_file={metric_file}, status={normalized_status}"
                     )
-                    return semantic_model_files, metric_file, normalized_status, output_text
+                    return (
+                        semantic_model_files,
+                        metric_file,
+                        normalized_status,
+                        blocker_code,
+                        skip_reason,
+                        output_text,
+                    )
 
                 logger.warning(f"Dict format but missing expected keys or invalid format: {content.keys()}")
 
@@ -999,6 +986,8 @@ class GenMetricsAgenticNode(AgenticNode):
                             metric_file = parsed.get("metric_file")
                             status = parsed.get("status")
                             normalized_status = status.strip().lower() if isinstance(status, str) else None
+                            blocker_code = parsed.get("blocker_code")
+                            skip_reason = parsed.get("skip_reason")
 
                             if (metric_file and isinstance(metric_file, str)) or normalized_status:
                                 logger.debug(
@@ -1006,18 +995,25 @@ class GenMetricsAgenticNode(AgenticNode):
                                     f"semantic_model_files={semantic_model_files}, "
                                     f"metric_file={metric_file}, status={normalized_status}"
                                 )
-                                return semantic_model_files, metric_file, normalized_status, output_text
+                                return (
+                                    semantic_model_files,
+                                    metric_file,
+                                    normalized_status,
+                                    blocker_code,
+                                    skip_reason,
+                                    output_text,
+                                )
 
                             logger.warning(f"Parsed JSON but missing expected keys or invalid format: {parsed.keys()}")
                     except Exception as e:
                         logger.warning(f"Failed to parse cleaned JSON: {e}. Cleaned content: {cleaned_json[:200]}")
 
             logger.warning(f"Could not extract metric_file from response. Content type: {type(content)}")
-            return None, None, None, None
+            return None, None, None, None, None, None
 
         except Exception as e:
             logger.error(f"Unexpected error extracting metric_file: {e}", exc_info=True)
-            return None, None, None, None
+            return None, None, None, None, None, None
 
     @staticmethod
     def _normalize_semantic_model_files(content: Dict[str, Any]) -> List[str]:

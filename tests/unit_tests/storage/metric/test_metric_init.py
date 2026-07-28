@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from datus.agent.node import semantic_authoring
+from datus.schemas.action_history import ActionStatus
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.storage.metric.metric_init import (
     BIZ_NAME,
@@ -26,8 +28,23 @@ from datus.storage.metric.metric_init import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_osi_schema_validation(monkeypatch):
+    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
+
+
 def _source_query(sql: str, name: str = "sql_1", question: str = "") -> SourceQueryEvidence:
     return SourceQueryEvidence(source_sql_name=name, sql=sql, question=question)
+
+
+def _report_semantic_target(action_callback, semantic_model_file: str) -> None:
+    action_callback(
+        SimpleNamespace(
+            status=ActionStatus.SUCCESS,
+            action_type="gen_semantic_model_response",
+            output={"semantic_models": [semantic_model_file]},
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +644,51 @@ class TestInitSuccessStoryMetricsAsyncOverwriteTruncate:
 @pytest.mark.ci
 class TestEnsureSemanticModelsForMetrics:
     @pytest.mark.asyncio
+    async def test_osi_lets_semantic_agent_reuse_the_only_live_model(self, tmp_path):
+        model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
+        model_dir.mkdir(parents=True)
+        (model_dir / "orders.yml").write_text(
+            "semantic_model:\n"
+            "  - name: order_operations\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: analytics.fact_orders\n",
+            encoding="utf-8",
+        )
+        config = SimpleNamespace(
+            project_root=str(tmp_path),
+            current_datasource="warehouse",
+            resolve_semantic_adapter=lambda requested=None: "osi",
+        )
+
+        async def fake_init(*args, action_callback=None, **kwargs):
+            _report_semantic_target(
+                action_callback,
+                "subject/semantic_models/warehouse/orders.yml",
+            )
+            return True, ""
+
+        with patch(
+            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
+            side_effect=fake_init,
+        ) as init_mock:
+            result = await _ensure_semantic_models_for_metrics(
+                config,
+                "success_story.csv",
+                [_source_query("SELECT COUNT(*) FROM analytics.fact_orders")],
+            )
+
+        assert result == (
+            True,
+            "",
+            {
+                "semantic_model_name": "order_operations",
+                "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+            },
+        )
+        init_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_osi_generates_domain_semantic_model_once(self, tmp_path):
         from unittest.mock import patch
 
@@ -640,7 +702,14 @@ class TestEnsureSemanticModelsForMetrics:
         action_callback = MagicMock()
         captured = {}
 
-        async def fake_init(agent_config, success_story, emit=None, build_mode="overwrite", action_callback=None):
+        async def fake_init(
+            agent_config,
+            success_story,
+            emit=None,
+            build_mode="overwrite",
+            action_callback=None,
+            require_exact_osi_target=False,
+        ):
             target_path.parent.mkdir(parents=True)
             target_path.write_text(
                 "version: 0.2.0.dev0\n"
@@ -652,7 +721,9 @@ class TestEnsureSemanticModelsForMetrics:
                 encoding="utf-8",
             )
             captured["build_mode"] = build_mode
+            captured["require_exact_osi_target"] = require_exact_osi_target
             captured["action_callback"] = action_callback
+            _report_semantic_target(action_callback, target_file)
             return True, ""
 
         with (
@@ -662,7 +733,7 @@ class TestEnsureSemanticModelsForMetrics:
             ) as init_mock,
             patch("datus.storage.metric.metric_init.ensure_semantic_models_exist") as ensure_mock,
         ):
-            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
+            ok, error, target = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
                 [_source_query("SELECT COUNT(*) FROM orders", question="How many orders?")],
@@ -671,12 +742,16 @@ class TestEnsureSemanticModelsForMetrics:
 
         assert ok is True
         assert error == ""
-        assert created == [target_file]
-        assert model_name == "orders_analytics"
+        assert target == {
+            "semantic_model_name": "orders_analytics",
+            "semantic_model_file": target_file,
+        }
         init_mock.assert_called_once()
         ensure_mock.assert_not_called()
         assert captured["build_mode"] == "incremental"
-        assert captured["action_callback"] is action_callback
+        assert captured["require_exact_osi_target"] is True
+        assert captured["action_callback"] is not action_callback
+        action_callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_osi_accepts_generated_query_backed_model_for_join_source(self, tmp_path):
@@ -696,7 +771,15 @@ class TestEnsureSemanticModelsForMetrics:
             resolve_semantic_adapter=lambda requested=None: "osi",
         )
 
-        async def fake_init(agent_config, success_story, emit=None, build_mode="overwrite", action_callback=None):
+        async def fake_init(
+            agent_config,
+            success_story,
+            emit=None,
+            build_mode="overwrite",
+            action_callback=None,
+            require_exact_osi_target=False,
+        ):
+            assert require_exact_osi_target is True
             target_path.parent.mkdir(parents=True)
             target_path.write_text(
                 "version: 0.2.0.dev0\n"
@@ -713,13 +796,14 @@ class TestEnsureSemanticModelsForMetrics:
                 '            data: \'{"source_type":"query"}\'\n',
                 encoding="utf-8",
             )
+            _report_semantic_target(action_callback, target_file)
             return True, ""
 
         with patch(
             "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
             side_effect=fake_init,
         ) as init_mock:
-            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
+            ok, error, target = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
                 [_source_query(query_source, "sql_9")],
@@ -727,12 +811,14 @@ class TestEnsureSemanticModelsForMetrics:
 
         assert ok is True
         assert error == ""
-        assert created == [target_file]
-        assert model_name == "account_analytics"
+        assert target == {
+            "semantic_model_name": "account_analytics",
+            "semantic_model_file": target_file,
+        }
         init_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_osi_rejects_success_story_split_across_models(self, tmp_path):
+    async def test_osi_propagates_exact_unchanged_model_selected_by_semantic_agent(self, tmp_path):
         from unittest.mock import patch
 
         model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
@@ -765,22 +851,30 @@ class TestEnsureSemanticModelsForMetrics:
             _source_query("SELECT SUM(amount) FROM finance.fact_payments", "sql_2"),
         ]
 
-        with (
-            patch(
-                "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async"
-            ) as init_mock,
-        ):
-            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
+        async def fake_init(*args, action_callback=None, **kwargs):
+            _report_semantic_target(
+                action_callback,
+                "subject/semantic_models/warehouse/orders.yml",
+            )
+            return True, ""
+
+        with patch(
+            "datus.storage.semantic_model.semantic_model_init.init_success_story_semantic_model_async",
+            side_effect=fake_init,
+        ) as init_mock:
+            ok, error, target = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
                 source_queries,
             )
 
-        assert ok is False
-        assert "exactly one semantic model" in error
-        assert created == []
-        assert model_name is None
-        init_mock.assert_not_called()
+        assert ok is True
+        assert error == ""
+        assert target == {
+            "semantic_model_name": "orders",
+            "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+        }
+        init_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_metricflow_keeps_per_table_semantic_model_auto_create(self):
@@ -808,7 +902,7 @@ class TestEnsureSemanticModelsForMetrics:
             ),
             patch("datus.storage.metric.metric_init.ensure_semantic_models_exist", side_effect=fake_ensure),
         ):
-            ok, error, created, model_name = await _ensure_semantic_models_for_metrics(
+            ok, error, target = await _ensure_semantic_models_for_metrics(
                 config,
                 "success_story.csv",
                 [_source_query(sql_list[0], question=records[0]["question"])],
@@ -816,8 +910,7 @@ class TestEnsureSemanticModelsForMetrics:
 
         assert ok is True
         assert error == ""
-        assert created == ["customers", "orders"]
-        assert model_name is None
+        assert target is None
 
 
 # ---------------------------------------------------------------------------
@@ -994,13 +1087,17 @@ class TestGenerateMetricsBatch:
                 None,
                 BatchEventHelper("test", None),
                 None,
-                semantic_model_name="orders_analytics",
+                semantic_model_target={
+                    "semantic_model_name": "orders_analytics",
+                    "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+                },
             )
 
         assert ok is True
         assert err == ""
         assert result == {"metrics": ["revenue"]}
         assert mock_node.input.semantic_model_name == "orders_analytics"
+        assert mock_node.input.semantic_model_file == "subject/semantic_models/warehouse/orders.yml"
         assert mock_node.input.source_queries[0].sql == "SELECT 1"
         assert "Analyze the following SQL queries" in mock_node.input.user_message
 
@@ -1283,7 +1380,16 @@ class TestBatchSplitting:
         mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
         mock_pm = MagicMock()
         mock_pm.get_latest_version.return_value = "1.0"
-        ensure = AsyncMock(return_value=(True, "", [], "orders_analytics"))
+        ensure = AsyncMock(
+            return_value=(
+                True,
+                "",
+                {
+                    "semantic_model_name": "orders_analytics",
+                    "semantic_model_file": "subject/semantic_models/warehouse/orders.yml",
+                },
+            )
+        )
         rows = [{"question": f"q{i}", "sql": f"SELECT SUM(amount) FROM orders WHERE id = {i}"} for i in range(3)]
 
         with (
@@ -1306,6 +1412,9 @@ class TestBatchSplitting:
         assert len(ensure.await_args.args[2]) == 3
         assert [len(node_input.source_queries) for node_input in captured_inputs] == [2, 1]
         assert {node_input.semantic_model_name for node_input in captured_inputs} == {"orders_analytics"}
+        assert {node_input.semantic_model_file for node_input in captured_inputs} == {
+            "subject/semantic_models/warehouse/orders.yml"
+        }
 
     @pytest.mark.asyncio
     async def test_partial_batch_failure_continues(self):

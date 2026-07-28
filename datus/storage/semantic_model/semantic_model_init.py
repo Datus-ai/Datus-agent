@@ -66,6 +66,7 @@ async def init_success_story_semantic_model_async(
     *,
     build_mode: str = "overwrite",
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
+    require_exact_osi_target: bool = False,
 ) -> tuple[bool, str]:
     """
     Async version: Initialize ONLY semantic model from success story CSV using ALL SQL queries.
@@ -84,6 +85,9 @@ async def init_success_story_semantic_model_async(
             for the current project before regenerating. ``"incremental"``
             skips generation when all referenced tables already have semantic
             model rows; otherwise it generates and upserts missing coverage.
+        require_exact_osi_target: In OSI incremental mode, run the semantic
+            agent even when coverage exists so a metrics bootstrap caller can
+            capture the exact planned target.
     """
     # Load and validate CSV file
     csv_path = success_story
@@ -177,31 +181,38 @@ async def init_success_story_semantic_model_async(
             return False, error_msg
 
     elif build_mode == "incremental":
-        try:
-            from datus.storage.semantic_model.auto_create import (
-                extract_tables_from_sql_list,
-                find_missing_semantic_models,
-            )
+        from datus.agent.node.semantic_authoring import AUTHORING_FORMAT_OSI, resolve_authoring_format
 
-            referenced_tables = extract_tables_from_sql_list(
-                [str(sql) for sql in all_sqls if str(sql).strip()], agent_config
-            )
-            if referenced_tables:
-                missing_tables = find_missing_semantic_models(referenced_tables, agent_config)
-                if not missing_tables:
-                    logger.info(
-                        "[incremental] semantic models already exist for %d referenced table(s); generation skipped",
-                        len(referenced_tables),
-                    )
-                    return True, ""
-                logger.info(
-                    "[incremental] %d/%d referenced table(s) need semantic model refresh: %s",
-                    len(missing_tables),
-                    len(referenced_tables),
-                    missing_tables,
+        if resolve_authoring_format(agent_config) == AUTHORING_FORMAT_OSI and require_exact_osi_target:
+            logger.info("[incremental] OSI target selection requires running gen_semantic_model")
+        else:
+            try:
+                from datus.storage.semantic_model.auto_create import (
+                    extract_tables_from_sql_list,
+                    find_missing_semantic_models,
                 )
-        except Exception as exc:
-            logger.warning("Failed to compute incremental semantic-model coverage; generation will continue: %s", exc)
+
+                referenced_tables = extract_tables_from_sql_list(
+                    [str(sql) for sql in all_sqls if str(sql).strip()], agent_config
+                )
+                if referenced_tables:
+                    missing_tables = find_missing_semantic_models(referenced_tables, agent_config)
+                    if not missing_tables:
+                        logger.info(
+                            "[incremental] semantic models already exist for %d referenced table(s); generation skipped",
+                            len(referenced_tables),
+                        )
+                        return True, ""
+                    logger.info(
+                        "[incremental] %d/%d referenced table(s) need semantic model refresh: %s",
+                        len(missing_tables),
+                        len(referenced_tables),
+                        missing_tables,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to compute incremental semantic-model coverage; generation will continue: %s", exc
+                )
 
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"

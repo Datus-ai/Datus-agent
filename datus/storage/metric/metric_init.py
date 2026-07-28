@@ -15,7 +15,6 @@ from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_OSI,
     discover_osi_semantic_models,
     resolve_authoring_format,
-    resolve_existing_osi_semantic_model,
 )
 from datus.configuration.agent_config import AgentConfig
 from datus.prompts.prompt_manager import get_prompt_manager
@@ -275,91 +274,73 @@ def _metrics_authoring_format(agent_config: AgentConfig) -> str:
     return resolve_authoring_format(agent_config)
 
 
-def _success_story_model_resolution_error(resolution: dict[str, Any]) -> str:
-    status = resolution.get("status")
-    if status == "invalid":
-        errors = "; ".join(
-            f"{item.get('source_sql_name')}: {item.get('error')}" for item in resolution.get("parse_errors") or []
-        )
-        return f"Invalid success-story source SQL: {errors or resolution.get('reason')}"
-    if status == "ambiguous":
-        candidates = ", ".join(
-            str(model.get("semantic_model_name") or model.get("semantic_model_file") or "")
-            for model in resolution.get("candidates") or []
-        )
-        return (
-            "A success-story CSV must resolve to exactly one semantic model; "
-            f"the referenced tables span or match multiple models: {candidates or 'unknown'}"
-        )
-    tables = ", ".join(resolution.get("referenced_tables") or [])
-    return "No single semantic model covers all tables referenced by the success-story CSV" + (
-        f": {tables}" if tables else ""
-    )
-
-
 async def _ensure_semantic_models_for_metrics(
     agent_config: AgentConfig,
     success_story: str,
     source_queries: list[SourceQueryEvidence],
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
-) -> tuple[bool, str, list[str], Optional[str]]:
+) -> tuple[bool, str, Optional[dict[str, str]]]:
     success_story_records = [{"sql": source.sql, "question": source.question} for source in source_queries]
     sql_list = [source.sql for source in source_queries]
 
     if _metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI:
-        from datus.storage.semantic_model.semantic_model_init import init_success_story_semantic_model_async
-
-        before_models = discover_osi_semantic_models(agent_config)
-        source_input = SemanticNodeInput(user_message="", source_queries=source_queries)
-        resolution = resolve_existing_osi_semantic_model(
-            agent_config,
-            user_input=source_input,
+        from datus.storage.semantic_model.semantic_model_init import (
+            SEMANTIC_MODEL_RESPONSE_ACTION_TYPE,
+            init_success_story_semantic_model_async,
         )
-        if resolution["status"] == "found":
-            selected = resolution["selected"]
-            logger.info(
-                "Reusing OSI semantic model '%s' for all %d success-story source queries",
-                selected["semantic_model_name"],
-                len(source_queries),
-            )
-            return True, "", [], selected["semantic_model_name"]
-        if resolution["status"] in {"ambiguous", "invalid"}:
-            return False, _success_story_model_resolution_error(resolution), [], None
 
-        logger.info("Generating one OSI semantic model target for the success-story CSV")
+        selected_files: list[str] = []
+
+        def capture_semantic_result(action: "ActionHistory") -> None:
+            if (
+                _action_status_value(action) == ActionStatus.SUCCESS.value
+                and getattr(action, "action_type", "") == SEMANTIC_MODEL_RESPONSE_ACTION_TYPE
+                and isinstance(getattr(action, "output", None), dict)
+            ):
+                files = action.output.get("semantic_models")
+                if isinstance(files, str):
+                    files = [files]
+                if isinstance(files, list):
+                    selected_files.extend(str(path).strip() for path in files if str(path).strip())
+            if action_callback is not None:
+                action_callback(action)
+
+        logger.info("Letting gen_semantic_model plan or reuse the OSI target for the success-story CSV")
         success, error = await init_success_story_semantic_model_async(
             agent_config,
             success_story,
             emit=None,
             build_mode="incremental",
-            action_callback=action_callback,
+            action_callback=capture_semantic_result,
+            require_exact_osi_target=True,
         )
         if not success:
-            return False, error, [], None
-        after_models = discover_osi_semantic_models(agent_config)
-        if not after_models:
-            return False, "OSI semantic model generation did not create a model file", [], None
-        post_resolution = resolve_existing_osi_semantic_model(
-            agent_config,
-            user_input=source_input,
+            return False, error, None
+        live_models = discover_osi_semantic_models(agent_config)
+        if not live_models:
+            return False, "OSI semantic model generation did not produce a valid model file", None
+        selected_paths = {path.replace("\\", "/").removeprefix("./") for path in selected_files}
+        selected_models = [
+            model
+            for model in live_models
+            if model["semantic_model_file"] in selected_paths
+            or str(Path(model["absolute_path"]).resolve(strict=False)) in selected_paths
+        ]
+        if len(selected_models) != 1:
+            return False, "gen_semantic_model did not report one exact OSI semantic-model target", None
+        selected_model = selected_models[0]
+        return (
+            True,
+            "",
+            {
+                "semantic_model_name": selected_model["semantic_model_name"],
+                "semantic_model_file": selected_model["semantic_model_file"],
+            },
         )
-        if post_resolution["status"] != "found":
-            return False, _success_story_model_resolution_error(post_resolution), [], None
-        before_files = {model["semantic_model_file"] for model in before_models}
-        created_files = sorted(
-            model["semantic_model_file"] for model in after_models if model["semantic_model_file"] not in before_files
-        )
-        selected = post_resolution["selected"]
-        logger.info(
-            "Resolved all %d success-story source queries to OSI semantic model '%s'",
-            len(source_queries),
-            selected["semantic_model_name"],
-        )
-        return True, "", created_files, selected["semantic_model_name"]
 
     all_tables = extract_tables_from_sql_list(sql_list, agent_config)
     if not all_tables:
-        return True, "", [], None
+        return True, "", None
 
     logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
     sql_evidence_by_table = extract_table_sql_evidence(success_story_records, agent_config)
@@ -376,7 +357,7 @@ async def _ensure_semantic_models_for_metrics(
     if error:
         logger.warning(f"Semantic model generation had partial failures: {error}")
 
-    return success, error, created_tables, None
+    return success, error, None
 
 
 def _build_existing_metric_catalog(agent_config: AgentConfig) -> list[dict[str, Any]]:
@@ -697,7 +678,7 @@ async def _generate_metrics_batch(
     action_callback: Optional[Callable[["ActionHistory"], None]],
     candidate_plan_json: Optional[str] = None,
     existing_metric_catalog_json: Optional[str] = None,
-    semantic_model_name: Optional[str] = None,
+    semantic_model_target: Optional[dict[str, str]] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """Process a single batch of SQL queries for metrics extraction."""
     rendered_queries = []
@@ -744,7 +725,8 @@ async def _generate_metrics_batch(
     metrics_input = SemanticNodeInput(
         user_message=batch_message,
         source_queries=batch_sources,
-        semantic_model_name=semantic_model_name,
+        semantic_model_name=(semantic_model_target or {}).get("semantic_model_name"),
+        semantic_model_file=(semantic_model_target or {}).get("semantic_model_file"),
         catalog=runtime_db_context.get("catalog")
         or runtime_db_context.get("catalog_name")
         or current_db_config.catalog,
@@ -887,7 +869,7 @@ async def init_success_story_metrics_async(
         return False, error_msg, None
 
     # Step 0: Resolve one semantic model for the entire CSV before metric batching.
-    success, error, _created_semantic_models, semantic_model_name = await _ensure_semantic_models_for_metrics(
+    success, error, semantic_model_target = await _ensure_semantic_models_for_metrics(
         agent_config,
         success_story,
         source_queries,
@@ -1055,7 +1037,7 @@ async def init_success_story_metrics_async(
             action_callback,
             candidate_plan_json=batch_candidate_plan_json,
             existing_metric_catalog_json=existing_metric_catalog_json,
-            semantic_model_name=semantic_model_name,
+            semantic_model_target=semantic_model_target,
         )
 
         if success and batch_result is not None:

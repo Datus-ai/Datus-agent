@@ -1,37 +1,29 @@
 """Unit tests for semantic authoring format resolution."""
 
-from dataclasses import dataclass
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import yaml
 
+from datus.agent.node import semantic_authoring
 from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_METRICFLOW,
     AUTHORING_FORMAT_OSI,
-    _source_query_dialect,
     default_optional_skills,
-    default_osi_semantic_model_file,
-    default_osi_semantic_model_name,
     discover_osi_semantic_models,
-    osi_semantic_models_cover_tables,
+    plan_osi_semantic_model_target,
     required_authoring_skills,
     resolve_authoring_format,
-    resolve_existing_osi_semantic_model,
-    resolve_osi_semantic_model_target,
     resolve_semantic_adapter_type,
+    validate_osi_core_document,
 )
-from datus.configuration.agent_config import DbConfig
-from datus.schemas.node_models import ReferenceSql
-from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-@dataclass
-class _DbScope:
-    database: str = ""
-    schema: str = ""
-    catalog: str = ""
+@pytest.fixture(autouse=True)
+def _stub_osi_schema_validation(monkeypatch):
+    monkeypatch.setattr(semantic_authoring, "validate_osi_core_document", lambda document: None)
 
 
 def _agent_config(adapter):
@@ -63,6 +55,29 @@ def _write_osi_model(tmp_path, filename, model_name, datasets):
     return target
 
 
+def test_validate_osi_core_document_uses_canonical_validator(monkeypatch):
+    class FakeOSIValidationError(Exception):
+        pass
+
+    profile_module = ModuleType("datus_semantic_osi.profile")
+    errors_module = ModuleType("datus_semantic_osi.errors")
+    package_module = ModuleType("datus_semantic_osi")
+    package_module.__path__ = []
+    errors_module.OSIValidationError = FakeOSIValidationError
+    profile_module.validate_osi_core_schema = lambda document: None
+    monkeypatch.setitem(sys.modules, "datus_semantic_osi", package_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_osi.profile", profile_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_osi.errors", errors_module)
+
+    assert validate_osi_core_document({"version": "valid"}) is None
+
+    def reject(document):
+        raise FakeOSIValidationError("schema mismatch")
+
+    profile_module.validate_osi_core_schema = reject
+    assert validate_osi_core_document({"version": "invalid"}) == "schema mismatch"
+
+
 def test_legacy_node_config_fields_are_ignored():
     assert (
         resolve_authoring_format(_agent_config("metricflow"), {"authoring_format": "osi"})
@@ -83,66 +98,6 @@ def test_legacy_node_semantic_adapter_is_ignored():
     )
 
 
-def test_default_osi_semantic_model_name_uses_database_scope():
-    config = SimpleNamespace(
-        current_datasource="warehouse",
-        current_db_config=lambda: _DbScope(database="Sales Domain"),
-    )
-
-    assert default_osi_semantic_model_name(config) == "sales_domain"
-    assert default_osi_semantic_model_file(config) == "subject/semantic_models/warehouse/sales_domain.yml"
-
-
-def test_default_osi_semantic_model_name_prefers_runtime_database_scope():
-    config = SimpleNamespace(
-        current_datasource="starrocks",
-        current_db_config=lambda: _DbScope(),
-        runtime_db_context=lambda: {"database": "ac_manage"},
-    )
-
-    assert default_osi_semantic_model_name(config) == "ac_manage"
-    assert default_osi_semantic_model_file(config) == "subject/semantic_models/starrocks/ac_manage.yml"
-
-
-def test_default_osi_semantic_model_name_uses_declared_db_scope_fallbacks():
-    config = SimpleNamespace(
-        current_datasource="warehouse",
-        current_db_config=lambda: _DbScope(schema="Reporting Schema", catalog="Lake House"),
-    )
-
-    assert default_osi_semantic_model_name(config) == "reporting_schema"
-    assert default_osi_semantic_model_file(config) == "subject/semantic_models/warehouse/reporting_schema.yml"
-
-
-def test_default_osi_semantic_model_name_skips_undeclared_schema_method():
-    class DbScopeWithSchemaMethod:
-        __annotations__ = {"database": str, "catalog": str}
-
-        database = ""
-        catalog = "Lake House"
-
-        def schema(self):
-            return "method-value"
-
-    config = SimpleNamespace(
-        current_datasource="warehouse",
-        current_db_config=lambda: DbScopeWithSchemaMethod(),
-    )
-
-    assert default_osi_semantic_model_name(config) == "lake_house"
-
-
-def test_default_osi_semantic_model_name_uses_agent_scope_fallbacks():
-    config = SimpleNamespace(
-        current_datasource="",
-        project_name="Project Alpha",
-        current_db_config=lambda: _DbScope(),
-    )
-
-    assert default_osi_semantic_model_name(config) == "project_alpha"
-    assert default_osi_semantic_model_file(config) == "subject/semantic_models/default/project_alpha.yml"
-
-
 def test_osi_target_explicit_name_wins_over_domain_and_existing_fact(tmp_path):
     config = _osi_config(tmp_path)
     _write_osi_model(
@@ -152,7 +107,7 @@ def test_osi_target_explicit_name_wins_over_domain_and_existing_fact(tmp_path):
         [{"name": "orders", "source": "analytics.fact_orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(
+    target = plan_osi_semantic_model_target(
         config,
         semantic_model_name="Executive Sales",
         business_domain="commerce",
@@ -166,7 +121,7 @@ def test_osi_target_explicit_name_wins_over_domain_and_existing_fact(tmp_path):
 
 
 def test_osi_target_uses_business_domain_for_a_new_model(tmp_path):
-    target = resolve_osi_semantic_model_target(
+    target = plan_osi_semantic_model_target(
         _osi_config(tmp_path),
         business_domain="Order Fulfillment",
         fact_tables=["analytics.fact_orders"],
@@ -179,12 +134,12 @@ def test_osi_target_uses_business_domain_for_a_new_model(tmp_path):
 
 def test_osi_target_fact_fallback_does_not_change_when_dimensions_change(tmp_path):
     config = _osi_config(tmp_path)
-    first = resolve_osi_semantic_model_target(
+    first = plan_osi_semantic_model_target(
         config,
         fact_tables=["analytics.fact_order_items"],
         dimension_tables=["analytics.dim_customer"],
     )
-    second = resolve_osi_semantic_model_target(
+    second = plan_osi_semantic_model_target(
         config,
         fact_tables=["analytics.fact_order_items"],
         dimension_tables=["analytics.dim_customer", "analytics.dim_product"],
@@ -204,7 +159,7 @@ def test_osi_target_reuses_existing_model_name_when_dimensions_are_added(tmp_pat
         [{"name": "orders", "source": "analytics.fact_orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(
+    target = plan_osi_semantic_model_target(
         config,
         business_domain="new_domain_label",
         fact_tables=["analytics.fact_orders"],
@@ -226,7 +181,7 @@ def test_osi_target_identity_uses_only_the_core_fact_table(tmp_path):
         [{"name": "inventory", "source": "analytics.fact_inventory"}],
     )
 
-    target = resolve_osi_semantic_model_target(
+    target = plan_osi_semantic_model_target(
         config,
         business_domain="support",
         fact_tables=["support.fact_tickets", "analytics.fact_inventory"],
@@ -235,287 +190,6 @@ def test_osi_target_identity_uses_only_the_core_fact_table(tmp_path):
     assert target["semantic_model_name"] == "support"
     assert target["matched_by"] == "business_domain"
     assert target["exists"] is False
-
-
-def test_osi_model_coverage_requires_one_model_to_cover_the_table_group(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(
-        tmp_path,
-        "orders.yml",
-        "orders",
-        [{"name": "orders", "source": "analytics.fact_orders"}],
-    )
-    _write_osi_model(
-        tmp_path,
-        "payments.yml",
-        "payments",
-        [{"name": "payments", "source": "finance.fact_payments"}],
-    )
-
-    assert osi_semantic_models_cover_tables(config, ["analytics.fact_orders"])
-    assert osi_semantic_models_cover_tables(config, ["finance.fact_payments"])
-    assert not osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "finance.fact_payments"])
-    assert not osi_semantic_models_cover_tables(config, ["analytics.fact_orders", "support.fact_tickets"])
-
-
-def test_existing_osi_metric_target_uses_dataset_mentioned_in_request(tmp_path):
-    config = _osi_config(tmp_path)
-    school_file = _write_osi_model(
-        tmp_path,
-        "school-domain.yaml",
-        "school_operations",
-        [{"name": "schools", "source": "education.schools"}],
-    )
-    _write_osi_model(
-        tmp_path,
-        "sales.yml",
-        "sales",
-        [{"name": "orders", "source": "commerce.orders"}],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(
-        config,
-        request_text="Generate enrollment metrics from schools",
-    )
-
-    assert resolution["status"] == "found"
-    assert resolution["selected"]["semantic_model_name"] == "school_operations"
-    assert resolution["selected"]["absolute_path"] == str(school_file)
-
-
-def test_existing_osi_metric_target_is_ambiguous_without_dataset_hint(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(tmp_path, "schools.yml", "schools", [{"name": "schools", "source": "edu.schools"}])
-    _write_osi_model(tmp_path, "sales.yml", "sales", [{"name": "orders", "source": "sales.orders"}])
-
-    resolution = resolve_existing_osi_semantic_model(config, request_text="Generate metrics")
-
-    assert resolution["status"] == "ambiguous"
-    assert {model["semantic_model_name"] for model in resolution["candidates"]} == {"schools", "sales"}
-
-
-def test_existing_osi_metric_target_does_not_reuse_unrelated_single_model(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(tmp_path, "sales.yml", "sales", [{"name": "orders", "source": "sales.orders"}])
-
-    resolution = resolve_existing_osi_semantic_model(
-        config,
-        request_text="Generate total amount from payments",
-    )
-
-    assert resolution["status"] == "missing"
-    assert resolution["referenced_tables"] == ["payments"]
-
-
-def test_existing_osi_metric_target_rejects_tables_split_across_models(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(tmp_path, "schools.yml", "schools", [{"name": "schools", "source": "edu.schools"}])
-    _write_osi_model(tmp_path, "sales.yml", "sales", [{"name": "orders", "source": "sales.orders"}])
-
-    resolution = resolve_existing_osi_semantic_model(
-        config,
-        referenced_tables=["edu.schools", "sales.orders"],
-    )
-
-    assert resolution["status"] == "ambiguous"
-    assert resolution["reason"] == "referenced datasets are split across multiple semantic models"
-
-
-def test_existing_osi_metric_target_uses_structured_source_sql_instead_of_batch_prompt(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(
-        tmp_path,
-        "campaign.yml",
-        "campaign_management",
-        [{"name": "campaign", "source": "analytics.campaign"}],
-    )
-    user_input = SemanticNodeInput(
-        user_message=(
-            "Analyze the following SQL queries and extract core metrics:\n\n"
-            "Query 2:\nQuestion: campaign count\nSQL:\nSELECT COUNT(*) FROM analytics.campaign"
-        ),
-        source_queries=[
-            SourceQueryEvidence(
-                source_sql_name="sql_2",
-                question="campaign count",
-                sql="SELECT COUNT(*) FROM analytics.campaign",
-            )
-        ],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(
-        config,
-        user_input=user_input,
-        request_text=user_input.user_message,
-    )
-
-    assert resolution["status"] == "found"
-    assert resolution["selected"]["semantic_model_name"] == "campaign_management"
-    assert resolution["referenced_tables"] == ["analytics.campaign"]
-    assert resolution["evidence_source"] == "source_queries"
-    assert resolution["source_sql_names"] == ["sql_2"]
-
-
-def test_structured_source_sql_does_not_change_reference_sql_context(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(
-        tmp_path,
-        "orders.yml",
-        "orders",
-        [{"name": "orders", "source": "sales.orders"}],
-    )
-    _write_osi_model(
-        tmp_path,
-        "payments.yml",
-        "payments",
-        [{"name": "payments", "source": "finance.payments"}],
-    )
-    user_input = SemanticNodeInput(
-        user_message="Generate order metrics",
-        source_queries=[SourceQueryEvidence(source_sql_name="sql_1", sql="SELECT COUNT(*) FROM sales.orders")],
-        reference_sql=[ReferenceSql(name="payment_example", sql="SELECT SUM(amount) FROM finance.payments")],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
-
-    assert resolution["status"] == "found"
-    assert resolution["selected"]["semantic_model_name"] == "orders"
-    assert resolution["referenced_tables"] == ["sales.orders"]
-    assert user_input.reference_sql[0].name == "payment_example"
-
-
-def test_reference_sql_still_resolves_model_without_structured_sources(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(
-        tmp_path,
-        "payments.yml",
-        "payments",
-        [{"name": "payments", "source": "finance.payments"}],
-    )
-    user_input = SemanticNodeInput(
-        user_message="Generate payment metrics",
-        reference_sql=[ReferenceSql(name="payment_example", sql="SELECT SUM(amount) FROM finance.payments")],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
-
-    assert resolution["status"] == "found"
-    assert resolution["selected"]["semantic_model_name"] == "payments"
-    assert resolution["evidence_source"] == "legacy_request"
-
-
-def test_invalid_structured_source_sql_does_not_fallback_to_prompt(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(
-        tmp_path,
-        "orders.yml",
-        "orders",
-        [{"name": "orders", "source": "sales.orders"}],
-    )
-    user_input = SemanticNodeInput(
-        user_message="SQL:\nSELECT COUNT(*) FROM sales.orders",
-        source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql="SELECT * FROM")],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(
-        config,
-        user_input=user_input,
-        request_text=user_input.user_message,
-    )
-
-    assert resolution["status"] == "invalid"
-    assert resolution["evidence_source"] == "source_queries"
-    assert resolution["parse_errors"][0]["source_sql_name"] == "sql_9"
-
-
-def test_invalid_structured_source_sql_is_rejected_before_explicit_model_selection(tmp_path):
-    config = _osi_config(tmp_path)
-    _write_osi_model(
-        tmp_path,
-        "orders.yml",
-        "orders",
-        [{"name": "orders", "source": "sales.orders"}],
-    )
-    user_input = SemanticNodeInput(
-        user_message="Generate order metrics",
-        semantic_model_name="orders",
-        source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql="SELECT * FROM")],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
-
-    assert resolution["status"] == "invalid"
-    assert resolution["parse_errors"][0]["source_sql_name"] == "sql_9"
-
-
-def test_structured_source_sql_uses_mysql_fallback_for_starrocks_datetime_cast(tmp_path):
-    config = _osi_config(tmp_path)
-    config.current_db_config = lambda: DbConfig(type="starrocks")
-    _write_osi_model(
-        tmp_path,
-        "campaign.yml",
-        "campaign_management",
-        [{"name": "activities", "source": "v_udata_ac_info"}],
-    )
-    user_input = SemanticNodeInput(
-        user_message="Analyze the following SQL queries",
-        source_queries=[
-            SourceQueryEvidence(
-                source_sql_name="sql_13",
-                sql=(
-                    "SELECT CAST(start_time AS DATETIME) AS start_at, COUNT(*) "
-                    "FROM v_udata_ac_info GROUP BY CAST(start_time AS DATETIME)"
-                ),
-            )
-        ],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
-
-    assert _source_query_dialect(config) == "starrocks"
-    assert resolution["status"] == "found"
-    assert resolution["selected"]["semantic_model_name"] == "campaign_management"
-    assert resolution["referenced_tables"] == ["v_udata_ac_info"]
-
-
-def test_existing_osi_metric_target_indexes_query_backed_dataset_source_tables(tmp_path):
-    config = _osi_config(tmp_path)
-    config.current_db_config = lambda: DbConfig(type="starrocks")
-    query_source = (
-        "SELECT a.suserid, c.city_level "
-        "FROM ac_manage.dim_mgamejp_account_allinfo_nf AS a "
-        "JOIN ac_manage.dim_uf_player_gameinfo_mf AS c ON a.suserid = c.userid"
-    )
-    _write_osi_model(
-        tmp_path,
-        "account.yml",
-        "account_analytics",
-        [
-            {
-                "name": "account_player_gameinfo",
-                "source": query_source,
-                "custom_extensions": [
-                    {
-                        "vendor_name": "DATUS",
-                        "data": '{"source_type":"query"}',
-                    }
-                ],
-            }
-        ],
-    )
-    user_input = SemanticNodeInput(
-        user_message="Analyze the following SQL queries",
-        source_queries=[SourceQueryEvidence(source_sql_name="sql_9", sql=query_source)],
-    )
-
-    resolution = resolve_existing_osi_semantic_model(config, user_input=user_input)
-
-    assert resolution["status"] == "found"
-    assert resolution["selected"]["semantic_model_name"] == "account_analytics"
-    assert set(resolution["referenced_tables"]) == {
-        "ac_manage.dim_mgamejp_account_allinfo_nf",
-        "ac_manage.dim_uf_player_gameinfo_mf",
-    }
 
 
 def test_osi_target_creates_a_different_file_for_an_unrelated_fact(tmp_path):
@@ -527,7 +201,7 @@ def test_osi_target_creates_a_different_file_for_an_unrelated_fact(tmp_path):
         [{"name": "orders", "source": "analytics.fact_orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(config, fact_tables=["finance.fact_payments"])
+    target = plan_osi_semantic_model_target(config, fact_tables=["finance.fact_payments"])
 
     assert target["semantic_model_name"] == "fact_payments_analytics"
     assert target["semantic_model_file"].endswith("/fact_payments_analytics.yml")
@@ -544,7 +218,7 @@ def test_osi_target_does_not_reuse_same_leaf_table_from_another_schema(tmp_path)
         [{"name": "orders", "source": "sales.fact_orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(config, fact_tables=["finance.fact_orders"])
+    target = plan_osi_semantic_model_target(config, fact_tables=["finance.fact_orders"])
 
     assert target["semantic_model_name"] == "fact_orders_analytics"
     assert target["semantic_model_file"].endswith("/fact_orders_analytics.yml")
@@ -560,7 +234,7 @@ def test_osi_target_preserves_qualified_table_component_boundaries(tmp_path):
         [{"name": "orders", "source": "sales_fact.orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(config, fact_tables=["sales.fact_orders"])
+    target = plan_osi_semantic_model_target(config, fact_tables=["sales.fact_orders"])
 
     assert target["semantic_model_name"] == "fact_orders_analytics"
     assert target["exists"] is False
@@ -575,7 +249,7 @@ def test_osi_target_allows_leaf_fallback_for_unqualified_fact_reference(tmp_path
         [{"name": "orders", "source": "sales.fact_orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(config, fact_tables=["fact_orders"])
+    target = plan_osi_semantic_model_target(config, fact_tables=["fact_orders"])
 
     assert target["semantic_model_name"] == "sales_orders"
     assert target["matched_by"] == "existing_fact_table"
@@ -587,7 +261,7 @@ def test_osi_target_refuses_to_overwrite_an_unparseable_target_file(tmp_path):
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text("semantic_model: [\n", encoding="utf-8")
 
-    target = resolve_osi_semantic_model_target(config, semantic_model_name="sales")
+    target = plan_osi_semantic_model_target(config, semantic_model_name="sales")
 
     assert target["ambiguous"] is True
     assert "already exists" in target["reason"]
@@ -595,7 +269,7 @@ def test_osi_target_refuses_to_overwrite_an_unparseable_target_file(tmp_path):
 
 
 def test_osi_target_refuses_an_unsafe_generic_fallback(tmp_path):
-    target = resolve_osi_semantic_model_target(
+    target = plan_osi_semantic_model_target(
         _osi_config(tmp_path),
         dimension_tables=["analytics.dim_customer"],
     )
@@ -614,7 +288,7 @@ def test_osi_target_refuses_to_reuse_an_occupied_filename_with_a_different_model
         [{"name": "orders", "source": "analytics.fact_orders"}],
     )
 
-    target = resolve_osi_semantic_model_target(
+    target = plan_osi_semantic_model_target(
         config,
         semantic_model_name="sales",
         fact_tables=["analytics.fact_payments"],

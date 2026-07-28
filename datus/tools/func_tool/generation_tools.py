@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import yaml
 from agents import Tool
@@ -32,6 +32,9 @@ from datus.utils.loggings import get_logger
 from datus.utils.path_manager import get_path_manager
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
 
 def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
@@ -90,6 +93,8 @@ class GenerationTools:
         agent_config: AgentConfig,
         generation_evidence: Optional[GenerationEvidence] = None,
         authoring_format: Optional[str] = None,
+        osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
+        require_bound_osi_target: bool = False,
     ):
         self.agent_config = agent_config
         self.generation_evidence = generation_evidence or GenerationEvidence()
@@ -109,6 +114,8 @@ class GenerationTools:
                 logger.debug(f"Failed to initialize table semantic profile storage: {exc}")
         self._semantic_object_exists_cache: Dict[tuple[str, str, str], FuncToolResult] = {}
         self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
+        self.osi_target_state = osi_target_state
+        self.require_bound_osi_target = require_bound_osi_target
 
     def _is_osi_authoring(self) -> bool:
         return self.authoring_format == "osi"
@@ -157,6 +164,8 @@ class GenerationTools:
                 return FuncToolResult(success=0, error="name is required")
 
             normalized_kind = str(kind or "").strip().lower()
+            if self._is_osi_authoring() and self.require_bound_osi_target:
+                return self._check_bound_osi_object(object_name, normalized_kind)
             cache_key = (
                 normalized_kind,
                 object_name.lower(),
@@ -236,69 +245,55 @@ class GenerationTools:
             logger.error(f"Error checking semantic object existence: {e}")
             return FuncToolResult(success=0, error=f"Failed to check object: {str(e)}")
 
-    def resolve_osi_semantic_model_target(
-        self,
-        semantic_model_name: str = "",
-        business_domain: str = "",
-        fact_tables: Optional[List[str]] = None,
-        dimension_tables: Optional[List[str]] = None,
-        require_existing: bool = False,
-    ) -> FuncToolResult:
-        """Choose the stable Ossie semantic-model name and file for this task.
-
-        Call this after identifying fact and dimension tables, before any file
-        mutation. An explicit semantic_model_name wins. Otherwise an existing
-        model containing the core fact table is reused, then business_domain is
-        used, and finally the first/core fact table becomes the naming fallback.
-        Dimension tables never affect the name. Set require_existing for metric
-        authoring, which is not allowed to create a semantic model.
-
-        Args:
-            semantic_model_name: User-specified stable model name, when provided.
-            business_domain: Concise business-domain name inferred from the request.
-            fact_tables: Fact tables in priority order, with the core fact first.
-            dimension_tables: Related dimensions; excluded from naming.
-            require_existing: Fail when the resolved model file does not exist.
-        """
+    def _check_bound_osi_object(self, object_name: str, normalized_kind: str) -> FuncToolResult:
+        """Check the exact bound YAML instead of potentially stale vector storage."""
+        state = self.osi_target_state
+        if state is None or state.bound is None:
+            return FuncToolResult(
+                success=0,
+                error="Bind an OSI semantic model before checking semantic objects.",
+                result={"code": "semantic_model_required"},
+            )
+        path = str(state.bound["absolute_path"])
         try:
-            from datus.agent.node.semantic_authoring import (
-                is_osi_authoring,
-                resolve_osi_semantic_model_target,
-            )
+            state.require_current_revision(path)
+            document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+            models = document.get("semantic_model") if isinstance(document, dict) else None
+            if not isinstance(models, list) or len(models) != 1 or not isinstance(models[0], dict):
+                raise ValueError("The bound YAML must contain exactly one semantic model.")
+            model = models[0]
+            exists = False
+            if normalized_kind == "metric":
+                target_name = normalize_metric_name(object_name)
+                exists = any(
+                    isinstance(metric, dict) and normalize_metric_name(metric.get("name")) == target_name
+                    for metric in model.get("metrics") or []
+                )
+            elif normalized_kind == "table":
+                from datus.agent.node.semantic_authoring import _model_covers_table
 
-            if not is_osi_authoring(self.agent_config):
-                return FuncToolResult(success=0, error="Ossie target resolution is only available in OSI mode.")
-            target = resolve_osi_semantic_model_target(
-                self.agent_config,
-                semantic_model_name=semantic_model_name,
-                business_domain=business_domain,
-                fact_tables=fact_tables,
-                dimension_tables=dimension_tables,
+                exists = _model_covers_table(state.bound, object_name)
+            else:
+                return FuncToolResult(
+                    success=0,
+                    error="Bound OSI YAML checks currently support kind='table' or kind='metric'.",
+                )
+            return FuncToolResult(
+                result={
+                    "exists": exists,
+                    "name": object_name if exists else None,
+                    "kind": normalized_kind,
+                    "semantic_model_name": state.bound["semantic_model_name"],
+                    "semantic_model_file": state.bound["semantic_model_file"],
+                    "message": (
+                        f"Object '{object_name}' ({normalized_kind}) exists in the bound OSI model."
+                        if exists
+                        else f"No {normalized_kind} found for '{object_name}' in the bound OSI model."
+                    ),
+                }
             )
-            if target.get("ambiguous"):
-                candidates = ", ".join(candidate["semantic_model_name"] for candidate in target.get("candidates") or [])
-                candidate_suffix = f" Candidates: {candidates}" if candidates else ""
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        f"Unable to resolve a safe Ossie semantic model target: {target.get('reason', 'ambiguous target')}"
-                        f" Specify semantic_model_name explicitly when needed.{candidate_suffix}"
-                    ),
-                    result=target,
-                )
-            if require_existing and not target.get("exists"):
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        "No existing Ossie semantic model matches this request. "
-                        "Run gen_semantic_model first or specify an existing semantic_model_name."
-                    ),
-                    result=target,
-                )
-            return FuncToolResult(result=target)
         except Exception as exc:
-            logger.error("Failed to resolve Ossie semantic-model target: %s", exc)
-            return FuncToolResult(success=0, error=f"Failed to resolve Ossie semantic-model target: {exc}")
+            return FuncToolResult(success=0, error=f"Failed to inspect the bound OSI semantic model: {exc}")
 
     # Backward compatibility wrapper
     def check_semantic_model_exists(
@@ -339,6 +334,35 @@ class GenerationTools:
         self._semantic_table_object_index = index
         return index
 
+    def resolve_planned_osi_semantic_target(self) -> tuple[str, str, str]:
+        """Return the planned file, absolute path, and declared OSI model name."""
+        planned = self.osi_target_state.planned if self.osi_target_state is not None else None
+        if planned is None:
+            raise ValueError(
+                "Plan the OSI semantic-model name and file with plan_osi_semantic_model_target before publishing."
+            )
+        if self.osi_target_state.last_error_code:
+            raise ValueError(
+                "The OSI semantic-model plan is unresolved after a failed replan. "
+                "Plan the authored target again before publishing."
+            )
+
+        semantic_model_file = str(planned.get("semantic_model_file") or "")
+        resolved = self._resolve_generation_path(semantic_model_file, "semantic")
+        if not resolved:
+            raise ValueError(f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_file!r}")
+
+        model_names = self.extract_osi_model_names(resolved)
+        if len(model_names) != 1:
+            raise ValueError(
+                f"Generated OSI files must declare exactly one semantic model; found {model_names or '<none>'}."
+            )
+
+        planned_name = str(planned.get("semantic_model_name") or "")
+        if model_names[0] != planned_name:
+            raise ValueError(f"The planned OSI target is {planned_name!r}, but the file declares {model_names[0]!r}.")
+        return semantic_model_file, resolved, model_names[0]
+
     def end_semantic_model_generation(self, semantic_model_files: List[str]) -> FuncToolResult:
         """
         Complete semantic model generation process.
@@ -360,33 +384,10 @@ class GenerationTools:
         try:
             osi_target: Optional[tuple[str, str]] = None
             if self._is_osi_authoring():
-                if len(semantic_model_files) != 1:
-                    return FuncToolResult(
-                        success=0,
-                        error=("Ossie semantic model generation must publish exactly one target file per run."),
-                        result={"semantic_model_files": semantic_model_files},
-                    )
-                resolved = self._resolve_generation_path(semantic_model_files[0], "semantic")
-                if not resolved:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"semantic_model_file escapes Knowledge Base sandbox: {semantic_model_files[0]!r}",
-                        result={"semantic_model_files": semantic_model_files},
-                    )
-                model_names = self.extract_osi_model_names(resolved)
-                if len(model_names) != 1:
-                    return FuncToolResult(
-                        success=0,
-                        error=(
-                            "Generated Ossie files must declare exactly one semantic model; "
-                            f"found {model_names or '<none>'}."
-                        ),
-                        result={"semantic_model_files": semantic_model_files},
-                    )
-                osi_target = (resolved, model_names[0])
-                validation_passed = self.generation_evidence.semantic_artifact_validation_passed(
-                    model_names[0], resolved
-                )
+                semantic_model_file, resolved, model_name = self.resolve_planned_osi_semantic_target()
+                semantic_model_files = [semantic_model_file]
+                osi_target = (resolved, model_name)
+                validation_passed = self.generation_evidence.semantic_artifact_validation_passed(model_name, resolved)
             else:
                 validation_passed = self.generation_evidence.validation_passed
 
@@ -478,6 +479,90 @@ class GenerationTools:
                 semantic_model_files = [semantic_model_file]
             semantic_model_files = semantic_model_files or []
 
+            exact_osi_target_required = self._is_osi_authoring() and self.require_bound_osi_target
+            osi_metric_names_to_sync: Optional[set[str]] = None
+            if exact_osi_target_required:
+                state = self.osi_target_state
+                if state is None or state.bound is None:
+                    return FuncToolResult(
+                        success=0,
+                        error="Bind an existing OSI semantic model before publishing metrics.",
+                        result={"code": "semantic_model_required"},
+                    )
+                if state.last_error_code:
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            "The OSI target selection is unresolved after a failed bind. "
+                            "Bind a valid target again before publishing."
+                        ),
+                        result={"code": state.last_error_code},
+                    )
+                abs_bound_metric = self._resolve_generation_path(metric_file, "metric")
+                try:
+                    state.require_current_revision(abs_bound_metric)
+                except ValueError as exc:
+                    return FuncToolResult(
+                        success=0,
+                        error=str(exc),
+                        result={"code": "semantic_model_target_invalid"},
+                    )
+                if self.extract_osi_model_names(abs_bound_metric) != [state.bound["semantic_model_name"]]:
+                    return FuncToolResult(
+                        success=0,
+                        error="The bound OSI artifact no longer declares the selected semantic model.",
+                        result={"code": "semantic_model_target_invalid"},
+                    )
+                if not state.authored_metric_names:
+                    return FuncToolResult(
+                        success=0,
+                        error="No metrics were authored in the bound OSI semantic model during this run.",
+                    )
+                osi_metric_names_to_sync = set(state.authored_metric_names)
+                current_metric_names = set(self.extract_osi_metric_names(abs_bound_metric))
+                missing_authored_metrics = [
+                    name for name in state.authored_metric_names if name not in current_metric_names
+                ]
+                if missing_authored_metrics:
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            "The bound OSI artifact no longer contains every metric authored in this run: "
+                            f"{', '.join(missing_authored_metrics)}."
+                        ),
+                        result={"code": "semantic_model_target_invalid"},
+                    )
+                if not self.generation_evidence.semantic_artifact_validation_passed(
+                    state.bound["semantic_model_name"],
+                    abs_bound_metric,
+                ):
+                    return FuncToolResult(
+                        success=0,
+                        error="validate_semantic must pass for the exact bound OSI semantic-model artifact.",
+                    )
+                if not self.generation_evidence.has_metric_dry_run(state.authored_metric_names):
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            "query_metrics(dry_run=True) must pass for every metric authored "
+                            "in the bound OSI semantic model."
+                        ),
+                    )
+                if not self.generation_evidence.has_required_queryability_dry_runs(state.authored_metric_names):
+                    missing_contracts = self.generation_evidence.missing_queryability_contracts(
+                        state.authored_metric_names
+                    )
+                    return FuncToolResult(
+                        success=0,
+                        error=(
+                            "query_metrics(dry_run=True) must pass with the source SQL group-by dimensions "
+                            "before publishing metrics. Run a dry-run query for the authored metric names "
+                            "with the matching dimensions/time grain, fix semantic model join or dimension "
+                            f"issues, and retry. Missing: {summarize_queryability_contracts(missing_contracts)}"
+                        ),
+                        result={"queryability_contracts": missing_contracts},
+                    )
+
             # Parse JSON string to dict
             metric_sqls: Dict[str, str] = {}
             if metric_sqls_json:
@@ -489,7 +574,7 @@ class GenerationTools:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning(f"Failed to parse metric_sqls_json: {e}")
 
-            if not self.generation_evidence.validation_passed:
+            if not exact_osi_target_required and not self.generation_evidence.validation_passed:
                 return FuncToolResult(
                     success=0,
                     error=(
@@ -503,7 +588,7 @@ class GenerationTools:
                     },
                 )
 
-            if not self.generation_evidence.metric_dry_run_passed:
+            if not exact_osi_target_required and not self.generation_evidence.metric_dry_run_passed:
                 return FuncToolResult(
                     success=0,
                     error=(
@@ -579,8 +664,13 @@ class GenerationTools:
                 )
 
             if self._is_osi_authoring():
+                if osi_metric_names_to_sync is None:
+                    osi_metric_names_to_sync = set(self.extract_osi_metric_names(abs_metric))
                 sync_result = self._sync_osi_metric_to_db(
-                    abs_metric, abs_semantic_files, metric_sqls, replace_metric_artifact=False
+                    abs_metric,
+                    abs_semantic_files,
+                    metric_sqls,
+                    metric_names_to_sync=osi_metric_names_to_sync,
                 )
                 if not sync_result.get("success"):
                     return FuncToolResult(
@@ -593,7 +683,7 @@ class GenerationTools:
                             "sync": sync_result,
                         },
                     )
-                self.generation_evidence.mark_kb_sync("metric")
+                self.generation_evidence.mark_kb_sync("metric", osi_metric_names_to_sync)
                 if sync_result.get("semantic_synced"):
                     self.generation_evidence.mark_kb_sync("semantic")
                 return FuncToolResult(
@@ -710,7 +800,7 @@ class GenerationTools:
                     },
                 )
 
-            self.generation_evidence.mark_kb_sync("metric")
+            self.generation_evidence.mark_kb_sync("metric", scoped_metric_names)
             if sync_result.get("semantic_synced"):
                 self.generation_evidence.mark_kb_sync("semantic")
             self._semantic_object_exists_cache.clear()
@@ -1794,18 +1884,34 @@ class GenerationTools:
         metric_file: str,
         semantic_model_file: Optional[str | List[str]] = None,
         metric_sqls: Optional[Dict[str, str]] = None,
-        replace_metric_artifact: bool = True,
+        metric_names_to_sync: Optional[set[str]] = None,
     ) -> dict:
-        """Sync OSI metrics into MetricRAG using the OSI document as source of truth."""
+        """Sync all OSI metrics, or incrementally upsert one explicit metric scope."""
         try:
             semantic_model_files = (
                 list(semantic_model_file)
                 if isinstance(semantic_model_file, list)
                 else ([semantic_model_file] if semantic_model_file else [])
             )
-            target_metric_names = set(self.extract_osi_metric_names(metric_file))
-            if not target_metric_names:
+            declared_metric_names = set(self.extract_osi_metric_names(metric_file))
+            if not declared_metric_names:
                 return {"success": False, "error": f"No OSI metrics found in metric file to sync: {metric_file}"}
+            target_metric_names = (
+                declared_metric_names
+                if metric_names_to_sync is None
+                else {str(name).strip() for name in metric_names_to_sync if str(name).strip()}
+            )
+            missing_metric_names = target_metric_names - declared_metric_names
+            if missing_metric_names:
+                return {
+                    "success": False,
+                    "error": (
+                        "OSI metric publish scope contains names not declared in the metric file: "
+                        f"{', '.join(sorted(missing_metric_names))}"
+                    ),
+                }
+            if not target_metric_names:
+                return {"success": False, "error": "OSI metric publish scope must not be empty"}
 
             doc = self._load_osi_document(
                 metric_file=metric_file,
@@ -1864,7 +1970,7 @@ class GenerationTools:
                 synced_semantic_files.append(current_semantic_file)
 
             metric_plan = (self.metric_rag, metric_file, metric_objects)
-            replacement_plans = [metric_plan] if replace_metric_artifact else []
+            replacement_plans = [metric_plan] if metric_names_to_sync is None else []
             snapshots = snapshot_artifact_replacements([metric_plan])
             try:
                 self.metric_rag.upsert_batch(metric_objects)
