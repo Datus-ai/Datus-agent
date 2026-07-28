@@ -4618,11 +4618,14 @@ plugin 路径与 profile,再通过带版本的环境变量把这份快照只传�
 <code>plugin_paths</code> 和 <code>skills</code> 目录均以当前请求的 <code>AgentConfig</code> 为准,不会回退到其他
 租户已加载的配置或 <code>./.datus/config.yml</code>。只有拿不到 <code>AgentConfig</code> 的独立 CLI
 skill 命令才保留本地项目配置文件行为。</p>
-<p>此桥接允许一次直接的 plugin 调用,也允许它作为普通 <code>|</code> 管道中的一个 stage。
-若命令包含多个 <code>datus</code> 调用,或使用 <code>&amp;&amp;</code>、<code>;</code>、重定向、命令替换、<code>|&amp;</code> 等 shell
-控制形式,则会 fail closed。<code>--profile</code> 仍受支持,并针对当前请求的 <code>AgentConfig</code>
-解析;<code>--config</code> 会被拒绝,因为 AuthProvider 提供的配置是权威来源。编码后的运行时
-快照上限为 64 KiB。管道中的其他 stage 不会继承它,父进程环境也不会被修改。</p>
+<p>每条 Bash 命令允许一次 plugin 调用,只要 <code>datus</code> 位于命令位即可,shell 形态不限:
+管道、重定向(<code>&gt;</code>、<code>2&gt;&amp;1</code>)、<code>;</code>/<code>&amp;&amp;</code>/<code>||</code>/换行 序列、<code>(...)</code>/<code>{...}</code> 分组、循环、
+heredoc 与各类展开都会原样保留——运行时快照只以内联赋值的形式插在 <code>datus</code> 命令词
+之前。以下情形仍会 fail closed:同一条命令里出现多个 <code>datus</code> 调用;<code>datus</code> 位于命令
+替换(<code>$(...)</code>、反引号)内部;<code>datus</code> 被 <code>timeout</code>、<code>env</code>、<code>xargs</code>、<code>sh -c</code> 等包裹。
+<code>--profile</code> 仍受支持,并针对当前请求的 <code>AgentConfig</code> 解析;<code>--config</code> 会被拒绝,
+因为 AuthProvider 提供的配置是权威来源。编码后的运行时快照上限为 64 KiB。同一条 Bash
+命令中的其他命令不会继承它,父进程环境也不会被修改。</p>
 <h3 id="which-profile-runs">哪个 profile 生效<a class="headerlink" href="#which-profile-runs" title="Permanent link">&para;</a></h3>
 <p>执行 <code>datus &lt;name&gt; ...</code> 时,激活 profile 按以下顺序解析:</p>
 <ol>
