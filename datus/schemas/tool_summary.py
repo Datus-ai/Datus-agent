@@ -630,6 +630,17 @@ def _fmt_analyze_table_relationships(result: Any) -> str:
     return ""
 
 
+def _fmt_validate_semantic_key_candidate(result: Any) -> str:
+    if isinstance(result, dict):
+        columns = result.get("columns")
+        arity = len(columns) if isinstance(columns, list) else 0
+        if result.get("is_valid_logical_key") is True:
+            return f"{arity}-col key verified"
+        if "is_valid_logical_key" in result:
+            return f"{arity}-col key rejected"
+    return ""
+
+
 def _fmt_analyze_column_usage_patterns(result: Any) -> str:
     if isinstance(result, dict):
         patterns = result.get("column_patterns")
@@ -1254,6 +1265,7 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         "end_metric_generation": _fmt_end_metric_generation,
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
         "analyze_table_relationships": _fmt_analyze_table_relationships,
+        "validate_semantic_key_candidate": _fmt_validate_semantic_key_candidate,
         "analyze_column_usage_patterns": _fmt_analyze_column_usage_patterns,
         "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
         "analyze_metric_candidates_from_history": _fmt_analyze_metric_candidates_from_history,

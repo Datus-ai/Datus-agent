@@ -756,7 +756,10 @@ class ExplorerService:
 
             metric_name = request.subject_path[-1]
 
-            from datus.tools.func_tool.semantic_tools import SemanticTools
+            from datus.tools.func_tool.semantic_tools import (
+                SemanticTools,
+                extract_time_query_capabilities,
+            )
 
             runtime_db_context = self._semantic_runtime_db_context(request)
             tools = SemanticTools(
@@ -772,6 +775,7 @@ class ExplorerService:
                 )
 
             dimensions = await adapter.get_dimensions(metric_name=metric_name)
+            time_capabilities = extract_time_query_capabilities(dimensions)
             items = [
                 MetricDimensionItem(
                     name=d.name,
@@ -783,7 +787,11 @@ class ExplorerService:
             ]
             return Result[MetricDimensionsData](
                 success=True,
-                data=MetricDimensionsData(metric=metric_name, dimensions=items),
+                data=MetricDimensionsData(
+                    metric=metric_name,
+                    dimensions=items,
+                    **time_capabilities,
+                ),
             )
 
         except Exception as e:

@@ -1067,6 +1067,86 @@ class TestQueryMetricsCompression:
 
         assert result.success == 1
 
+    def test_query_metrics_preflight_rejects_unsupported_time_granularity(self, semantic_tools, mock_adapter):
+        dimensions = [
+            {
+                "name": "event_month",
+                "type": "time",
+                "is_primary_time": True,
+                "time_granularities": ["month", "quarter", "year"],
+            }
+        ]
+
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            return_value=dimensions,
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["event_total"],
+                time_granularity="day",
+            )
+
+        assert result.success == 0
+        assert result.result["code"] == "unsupported_time_granularity"
+        assert result.result["required_time_granularity"] == "month"
+        assert result.result["time_granularities"] == [
+            "month",
+            "quarter",
+            "year",
+        ]
+        mock_adapter.query_metrics.assert_not_called()
+
+    def test_query_metrics_preflight_rejects_unsupported_metric_time_suffix(self, semantic_tools, mock_adapter):
+        dimensions = [
+            {
+                "name": "event_month",
+                "type": "time",
+                "is_primary_time": True,
+                "time_granularities": ["month", "quarter", "year"],
+            }
+        ]
+
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            return_value=dimensions,
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["event_total"],
+                dimensions=["metric_time__day"],
+            )
+
+        assert result.success == 0
+        assert result.result["code"] == "unsupported_time_granularity"
+        assert result.result["requested_time_granularity"] == "day"
+        mock_adapter.query_metrics.assert_not_called()
+
+    def test_query_metrics_preflight_accepts_supported_time_granularity(self, semantic_tools, mock_adapter):
+        dimensions = [
+            {
+                "name": "event_month",
+                "type": "time",
+                "is_primary_time": True,
+                "time_granularities": ["month", "quarter", "year"],
+            }
+        ]
+        query_result = QueryResult(
+            columns=["event_total"],
+            data=[{"event_total": 3}],
+            metadata={},
+        )
+
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=[dimensions, query_result],
+        ):
+            result = semantic_tools.query_metrics(
+                metrics=["event_total"],
+                time_granularity="quarter",
+            )
+
+        assert result.success == 1
+        mock_adapter.query_metrics.assert_called_once()
+
     def test_query_metrics_adapter_exception(self, semantic_tools):
         """Test query_metrics handles adapter exceptions gracefully."""
         with patch(
@@ -1967,6 +2047,36 @@ class TestGetDimensions:
         assert envelope["items"] == [{"name": "date"}, {"name": "region"}]
         assert envelope["total"] == 2
         assert envelope["has_more"] is False
+        assert envelope["extra"] == {
+            "time_dimension": None,
+            "time_granularities": [],
+        }
+
+    def test_returns_time_query_capabilities_in_existing_envelope(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+        dimensions = [
+            {
+                "name": "event_month",
+                "type": "time",
+                "is_primary_time": True,
+                "time_granularities": ["month", "quarter", "year"],
+            },
+            {"name": "event_type", "type": "categorical"},
+        ]
+
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            return_value=dimensions,
+        ):
+            result = tool.get_dimensions("event_total")
+
+        assert result.success == 1
+        assert result.result["extra"] == {
+            "time_dimension": "event_month",
+            "time_granularities": ["month", "quarter", "year"],
+        }
+        assert "is_primary_time" not in result.result["items"][0]
+        assert "time_granularities" not in result.result["items"][0]
 
     def test_no_adapter_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.get_dimensions("revenue")

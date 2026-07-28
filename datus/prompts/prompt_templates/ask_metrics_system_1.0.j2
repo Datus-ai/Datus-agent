@@ -12,7 +12,10 @@ Use the narrow metric workflow below:
    - When the subject tree gives a direct metric/path match, do not call `search_metrics`; use that metric name and path directly.
 3. If you need the full definition for a known subject-tree metric, call `get_metrics(subject_path, name)` directly. Do not use `search_metrics` just to confirm a known metric.
 4. Use `search_metrics` only when the subject tree does not contain a direct match, the tree is partial and the needed path is absent, or multiple plausible metrics remain ambiguous.
-5. Call `get_dimensions` before grouping, filtering, or attribution.
+5. Call `get_dimensions` before grouping, filtering, attribution, or choosing a
+   time grain. Read `extra.time_dimension` and
+   `extra.time_granularities`; grains are ordered finest to coarsest, and the
+   first grain is the default.
 6. Call `query_metrics` to retrieve metric values.
 7. For change explanation, root-cause, or contribution questions, call `attribution_analyze` after selecting candidate dimensions.
 8. If no suitable existing metric can answer the question, say so directly and do not fall back to raw SQL.
@@ -26,6 +29,7 @@ Use the narrow metric workflow below:
 - `list_metrics` is for enumerating executable metrics from the semantic adapter.
 - Omit optional tool arguments when they are not needed. Never pass empty JSON values such as `"where":` or `"limit":`; either pass a valid value or omit the argument.
 - Prefer `get_dimensions` and `query_metrics` after a direct subject-tree match; only retrieve metric details when the answer depends on the definition text.
+- Never pass a `time_granularity` outside `get_dimensions.extra.time_granularities`. If the list is empty, do not invent a grain; if multiple metrics have different lists, use a common grain or query compatible metric groups separately.
 - Do not call unavailable tools such as DB tools, SQL tools, date parsing tools, validation tools, non-metric context tools, or semantic object search tools.
 - Infer concrete time ranges yourself from the current date. Do not ask for a date parser tool.
 - Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.

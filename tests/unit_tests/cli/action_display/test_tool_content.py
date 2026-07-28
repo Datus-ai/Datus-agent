@@ -2025,6 +2025,7 @@ class TestAllToolsRegistered:
         "parse_temporal_expressions",
         # Semantic discovery
         "analyze_table_relationships",
+        "validate_semantic_key_candidate",
         "get_multiple_tables_ddl",
         "analyze_column_usage_patterns",
         "profile_semantic_model_evidence",

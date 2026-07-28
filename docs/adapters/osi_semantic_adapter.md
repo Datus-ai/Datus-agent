@@ -113,7 +113,7 @@ Key rules:
 - Use OSI core `fields`, not MetricFlow `dimensions`.
 - Dataset `source` is a table-name string, not `{table: ...}`.
 - **Field roles are structural.** A field with a `dimension:` block is a grouping/filtering dimension; a field without one is a plain row-level expression that documents the column and backs metric expressions. Columns that are only aggregated by metrics (balances, amounts, precomputed rates) are declared as plain fields without the block, and `get_dimensions` does not list them. Field-level `type` hints are not part of the authoring contract.
-- **Keys are transcribed, never inferred.** `primary_key` / `unique_keys` are written only when the source database declares them; warehouse tables without declared constraints get no `primary_key`, and the row grain is documented in `ai_context` instead.
+- **Physical and logical keys use different evidence.** `primary_key` is written only when source metadata or an explicit data contract declares it. Historical JOIN columns are candidates, not keys. A candidate may be added as one `unique_keys` entry only after `validate_semantic_key_candidate` verifies the complete ordered column list over the full table with no NULL components or duplicate groups.
 - A composite primary key that contains the dataset's time dimension (monthly snapshot tables) is valid: the compiler keeps the time dimension and resolves the identifier conflict during lowering.
 - Mark time fields with `dimension.is_time: true`; put the Datus `time_granularity` hint in `custom_extensions`.
 - Declare relationships under the semantic model object, not inside datasets.
@@ -211,22 +211,51 @@ Multi-table joins are represented with OSI core relationships:
 
 ```yaml
 relationships:
+  - name: order
+    from: order_items
+    to: orders
+    from_columns: [tenant_id, order_id]
+    to_columns: [tenant_id, id]
+```
+
+The target dataset must declare the complete target key:
+
+```yaml
+datasets:
+  - name: orders
+    source: orders
+    unique_keys:
+      - [tenant_id, id]
+```
+
+Scalar and composite equality relationships are supported. The two column lists must have the same length and order; every pair becomes one SQL `ON` predicate. `to_columns` must exactly match the target dataset's `primary_key` or one complete `unique_keys` entry, never a subset. Datus lowers the relationship to correlated MetricFlow identifiers on both sides.
+
+For example, the relationship above produces the logical join:
+
+```sql
+... JOIN orders
+  ON order_items.tenant_id = orders.tenant_id
+ AND order_items.order_id = orders.id
+```
+
+The native OSI relationship `name` is the joined-dimension prefix:
+
+```text
+order__status
+```
+
+`ask_metrics` discovers these queryable dimensions through `list_metrics` and `get_dimensions`.
+
+For a scalar relationship, the shorter form remains valid:
+
+```yaml
+relationships:
   - name: orders_to_customers
     from: orders
     to: customers
     from_columns: [customer_id]
     to_columns: [customer_id]
 ```
-
-The current Datus execution profile supports single-column relationships, primarily `many_to_one` and `one_to_one`. When lowering to MetricFlow, the adapter creates a foreign identifier on the `from` dataset so fact metrics can be grouped or filtered by fields from the dimension dataset.
-
-Joined dimension names usually include the target dataset's primary identifier prefix, for example:
-
-```text
-customer_id__country
-```
-
-`ask_metrics` discovers these queryable dimensions through `list_metrics` and `get_dimensions`.
 
 ## Validation and Publishing
 
@@ -278,7 +307,7 @@ These patterns may be modeled later with derived datasets, materialized views, o
 ## Current Limits
 
 - The OSI adapter currently defaults to the MetricFlow execution backend.
-- The current relationship execution profile supports single-column joins. Composite joins require future extension.
+- Relationship execution supports ordered scalar and composite equality joins. Non-equality predicates still require a pre-joined dataset or query layer.
 - SQL window functions cannot be written directly in OSI metric expressions. Use `offset_window` for period comparisons; ranking and TopN detail queries need a query layer or precomputed dataset.
 - When a semantic model has multiple datasets, each metric resolves its owning dataset from qualified column names in its expression (`SUM(orders.amount)`); a DATUS `dataset` hint is required only when the expression contains no qualified columns.
 - Datus execution information outside OSI core must be encoded in `custom_extensions[{vendor_name: DATUS}]`, not as top-level OSI fields.

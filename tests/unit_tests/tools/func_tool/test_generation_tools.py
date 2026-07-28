@@ -1421,6 +1421,7 @@ class TestOsiSync:
         relationships = [
             SimpleNamespace(
                 **{
+                    "name": "customer",
                     "from": "orders",
                     "to": "customers",
                     "from_columns": ["customer_id"],
@@ -1429,6 +1430,7 @@ class TestOsiSync:
             ),
             SimpleNamespace(
                 **{
+                    "name": "region",
                     "from": "customers",
                     "to": "regions",
                     "from_columns": ["region_id"],
@@ -1477,8 +1479,8 @@ class TestOsiSync:
         by_name = {obj["name"]: obj for obj in metric_objects}
         assert by_name["order_count"]["dimensions"] == [
             "order_date",
-            "customer_id__region_id",
-            "customer_id__region_id__region_name",
+            "customer__region_id",
+            "customer__region__region_name",
         ]
         assert by_name["order_count"]["entities"] == ["order_id"]
         assert by_name["order_count_prev"]["semantic_model_name"] == "shop"

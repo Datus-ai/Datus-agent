@@ -113,7 +113,7 @@ semantic_model:
 - dataset 使用 OSI core 的 `fields`，不是 MetricFlow 的 `dimensions`。
 - dataset `source` 是表名字符串，不是 `{table: ...}`。
 - **字段角色由结构决定。** 带 `dimension:` 块的 field 是可用于分组/筛选的维度；不带块的 field 是行级表达式,用于记录列语义并支撑 metric 表达式。只被指标聚合的列（余额、金额、预计算比率）声明为不带块的普通 field,`get_dimensions` 不会把它们列为维度。字段级 `type` hint 不属于 authoring 契约。
-- **键只转录、不推断。** 只有数据库显式声明了约束才写 `primary_key` / `unique_keys`；数仓表通常没有约束声明，此时不写 `primary_key`，行粒度写进 `ai_context` 说明。
+- **物理主键和逻辑唯一键使用不同证据。** 只有源元数据或明确数据契约声明时才写 `primary_key`。历史 JOIN 列只能作为候选键；必须用 `validate_semantic_key_candidate` 对完整、有序的候选列做全表校验，且所有分量无 NULL、无重复组，才能将其作为一项写入 `unique_keys`。
 - 复合主键包含时间维度列（月度快照表）是合法的：编译器在 lowering 时保留时间维度并自动消解 identifier 冲突。
 - 时间字段用 `dimension.is_time: true` 标记，Datus 的 `time_granularity` hint 写进 `custom_extensions`。
 - 关系写在 semantic model 对象的 `relationships` 下，不要写进 dataset。
@@ -211,22 +211,51 @@ metrics:
 
 ```yaml
 relationships:
+  - name: order
+    from: order_items
+    to: orders
+    from_columns: [tenant_id, order_id]
+    to_columns: [tenant_id, id]
+```
+
+目标 dataset 必须声明完整的目标键：
+
+```yaml
+datasets:
+  - name: orders
+    source: orders
+    unique_keys:
+      - [tenant_id, id]
+```
+
+Datus 同时支持单列和联合等值关系。左右列列表长度必须相同，顺序定义列分量的对应关系，每一对都会生成一个 SQL `ON` 条件。`to_columns` 必须完整匹配目标 dataset 的 `primary_key` 或某一项 `unique_keys`，不能只取联合键的子集。adapter 会在关系两侧生成对应的 MetricFlow composite identifier。
+
+上面的关系会生成如下逻辑 join：
+
+```sql
+... JOIN orders
+  ON order_items.tenant_id = orders.tenant_id
+ AND order_items.order_id = orders.id
+```
+
+原生 OSI relationship 的 `name` 会成为 joined dimension 的稳定前缀：
+
+```text
+order__status
+```
+
+`ask_metrics` 会通过 `list_metrics` 和 `get_dimensions` 发现这些可查询维度。
+
+单列关系仍可使用简写：
+
+```yaml
+relationships:
   - name: orders_to_customers
     from: orders
     to: customers
     from_columns: [customer_id]
     to_columns: [customer_id]
 ```
-
-当前 Datus execution profile 支持单列关系，类型主要是 `many_to_one` 和 `one_to_one`。降低到 MetricFlow 时，adapter 会在 `from` dataset 上生成 foreign identifier，使 fact 指标可以按 dimension dataset 的字段分组或过滤。
-
-查询时 joined dimension 的名字通常会带上目标 dataset 的主 identifier 前缀，例如：
-
-```text
-customer_id__country
-```
-
-`ask_metrics` 会通过 `list_metrics` 和 `get_dimensions` 发现这些可查询维度。
 
 ## 校验和发布流程
 
@@ -278,7 +307,7 @@ OSI adapter 返回的 metric metadata 会包含 Datus hints，例如：
 ## 当前限制
 
 - OSI adapter 当前默认执行后端是 MetricFlow。
-- relationship 当前执行 profile 支持单列 join。多列复合 join 需要后续扩展。
+- relationship 执行支持有序的单列或联合等值 join；非等值条件仍需预关联 dataset 或 query layer。
 - SQL 窗口函数不能直接写进 OSI metric expression；周期对比使用 `offset_window`，排名/TopN 明细需要 query layer 或预计算数据集。
 - 当 semantic model 包含多个 dataset 时，metric 的所属 dataset 从表达式中的限定列名解析（`SUM(orders.amount)`）；仅当表达式不含限定列名时才需要 DATUS `dataset` hint。
 - OSI core 之外的 Datus 执行信息必须写入 `custom_extensions[{vendor_name: DATUS}]`，不要写成 OSI core 顶层字段。

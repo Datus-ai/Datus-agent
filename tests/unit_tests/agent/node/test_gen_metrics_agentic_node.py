@@ -552,6 +552,9 @@ class TestSetupSemanticDiscoveryTools:
 
         tool_names = [tool.name for tool in node.tools]
         assert "analyze_table_relationships" in tool_names, f"Missing analyze_table_relationships, got: {tool_names}"
+        assert "validate_semantic_key_candidate" in tool_names, (
+            f"Missing validate_semantic_key_candidate, got: {tool_names}"
+        )
         assert "get_multiple_tables_ddl" in tool_names, f"Missing get_multiple_tables_ddl, got: {tool_names}"
         assert "analyze_column_usage_patterns" in tool_names, (
             f"Missing analyze_column_usage_patterns, got: {tool_names}"

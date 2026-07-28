@@ -89,6 +89,113 @@ class TestGetMultipleTablesDDL:
 
 
 # ---------------------------------------------------------------------------
+# validate_semantic_key_candidate
+# ---------------------------------------------------------------------------
+
+
+class TestValidateSemanticKeyCandidate:
+    def test_accepts_full_table_non_null_unique_composite_key(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,row_count,null_key_rows\n0,12,0\n"},
+            ),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,0,0\n")},
+            ),
+        ]
+        tools = _make_tools(db_tool)
+
+        result = tools.validate_semantic_key_candidate(
+            "customers",
+            ["tenant_id", "customer_id"],
+            schema_name="analytics",
+        )
+
+        assert result.success == 1
+        assert result.result["is_valid_logical_key"] is True
+        assert result.result["recommended_osi_declaration"] == "unique_keys"
+        assert result.result["primary_key_inferred"] is False
+        assert result.result["verification_scope"] == "full_table"
+        assert "GROUP BY tenant_id, customer_id" in db_tool.read_query.call_args_list[1].args[0]
+        assert "FROM analytics.customers" in db_tool.read_query.call_args_list[0].args[0]
+
+    def test_accepts_case_insensitive_profile_column_names(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,ROW_COUNT,NULL_KEY_ROWS\n0,12,0\n"},
+            ),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": ("index,DUPLICATE_GROUP_COUNT,DUPLICATE_ROW_COUNT\n0,0,0\n")},
+            ),
+        ]
+
+        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["tenant_id", "customer_id"])
+
+        assert result.success == 1
+        assert result.result["is_valid_logical_key"] is True
+
+    def test_rejects_candidate_with_nulls_or_duplicates(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,row_count,null_key_rows\n0,20,2\n"},
+            ),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,3,4\n")},
+            ),
+        ]
+        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["tenant_id", "customer_id"])
+
+        assert result.success == 1
+        assert result.result["is_non_null"] is False
+        assert result.result["is_unique"] is False
+        assert result.result["is_valid_logical_key"] is False
+        assert result.result["recommended_osi_declaration"] == "none"
+
+    def test_empty_table_is_not_supporting_key_evidence(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,row_count,null_key_rows\n0,0,\n"},
+            ),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": ("index,duplicate_group_count,duplicate_row_count\n0,0,0\n")},
+            ),
+        ]
+        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["customer_id"])
+
+        assert result.success == 1
+        assert result.result["is_valid_logical_key"] is False
+        assert "empty" in result.result["reason"]
+
+    def test_query_failure_is_not_reported_as_verification(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.return_value = FuncToolResult(success=0, error="permission denied")
+        result = _make_tools(db_tool).validate_semantic_key_candidate("customers", ["customer_id"])
+
+        assert result.success == 0
+        assert "permission denied" in result.error
+
+    def test_rejects_empty_or_duplicate_column_list(self):
+        tools = _make_tools()
+        empty = tools.validate_semantic_key_candidate("customers", [])
+        duplicate = tools.validate_semantic_key_candidate("customers", ["customer_id", "CUSTOMER_ID"])
+
+        assert empty.success == 0
+        assert duplicate.success == 0
+
+
+# ---------------------------------------------------------------------------
 # _extract_foreign_keys_from_ddl
 # ---------------------------------------------------------------------------
 
@@ -124,6 +231,24 @@ class TestExtractForeignKeys:
         tools = _make_tools(db_tool)
         result = tools._extract_foreign_keys_from_ddl(["missing"], "", "", "")
         assert result == []
+
+    def test_extracts_composite_foreign_key_as_one_ordered_relationship(self):
+        ddl = """CREATE TABLE order_items (
+            tenant_id INT,
+            order_id INT,
+            FOREIGN KEY (tenant_id, order_id)
+              REFERENCES orders(tenant_id, id)
+        )"""
+        db_tool = _make_db_tool()
+        db_tool.get_table_ddl.return_value = FuncToolResult(success=1, result={"definition": ddl})
+
+        result = _make_tools(db_tool)._extract_foreign_keys_from_ddl(["order_items"], "", "", "")
+
+        assert len(result) == 1
+        assert result[0]["source_columns"] == ["tenant_id", "order_id"]
+        assert result[0]["target_columns"] == ["tenant_id", "id"]
+        assert result[0]["key_arity"] == 2
+        assert result[0]["target_key_status"] == "declared"
 
 
 # ---------------------------------------------------------------------------
@@ -280,12 +405,67 @@ class TestAnalyzeJoinPatterns:
             {
                 "source_table": "orders",
                 "source_column": "customer_id",
+                "source_columns": ["customer_id"],
                 "target_table": "customers",
                 "target_column": "id",
+                "target_columns": ["id"],
+                "key_arity": 1,
                 "confidence": "medium",
                 "evidence": "join_pattern",
+                "target_key_status": "candidate_unverified",
+                "requires_target_key_validation": True,
             }
         ]
+
+    def test_groups_one_join_clause_into_composite_relationship(self):
+        tools = _make_tools()
+        result = tools._extract_join_relationships_from_sql(
+            """
+            SELECT *
+            FROM orders o
+            JOIN customers c
+              ON o.tenant_id = c.tenant_id
+             AND o.customer_id = c.id
+            """,
+            {"orders": "orders", "customers": "customers"},
+        )
+
+        assert len(result) == 1
+        assert result[0]["source_columns"] == ["tenant_id", "customer_id"]
+        assert result[0]["target_columns"] == ["tenant_id", "id"]
+        assert result[0]["key_arity"] == 2
+        assert result[0]["target_key_status"] == "candidate_unverified"
+
+    def test_groups_comma_join_predicates_into_composite_relationship(self):
+        result = _make_tools()._extract_join_relationships_from_sql(
+            """
+            SELECT *
+            FROM orders o, customers c
+            WHERE o.tenant_id = c.tenant_id
+              AND o.customer_id = c.id
+            """,
+            {"orders": "orders", "customers": "customers"},
+        )
+
+        assert len(result) == 1
+        assert result[0]["source_columns"] == ["tenant_id", "customer_id"]
+        assert result[0]["target_columns"] == ["tenant_id", "id"]
+
+    def test_merges_on_and_where_join_predicates(self):
+        result = _make_tools()._extract_join_relationships_from_sql(
+            """
+            SELECT *
+            FROM orders o
+            JOIN customers c ON o.tenant_id = c.tenant_id
+            WHERE o.customer_id = c.id
+              AND o.status = 'paid'
+            """,
+            {"orders": "orders", "customers": "customers"},
+        )
+
+        assert len(result) == 1
+        assert result[0]["source_columns"] == ["tenant_id", "customer_id"]
+        assert result[0]["target_columns"] == ["tenant_id", "id"]
 
     def test_search_exception_handled_gracefully(self):
         db_tool = _make_db_tool()
@@ -479,6 +659,45 @@ class TestProfileSemanticModelEvidence:
         assert tables["customers"]["group_by_expressions"][0]["expression"] == "c.region"
         assert tables["orders"]["join_relationships"][0]["evidence"] == "historical_sql_join"
         assert "compact distribution notes" in result.result["yaml_guidance"]
+
+    def test_sql_only_keeps_composite_join_components_together(self):
+        result = _make_tools().profile_semantic_model_evidence(
+            sql_queries=[
+                """
+                SELECT SUM(o.amount) AS revenue
+                FROM orders o
+                JOIN customers c
+                  ON o.tenant_id = c.tenant_id
+                 AND o.customer_id = c.id
+                """
+            ],
+            profile_mode="sql_only",
+        )
+
+        assert result.success == 1
+        relationship = result.result["tables"]["orders"]["join_relationships"][0]
+        assert relationship["source_columns"] == ["tenant_id", "customer_id"]
+        assert relationship["target_columns"] == ["tenant_id", "id"]
+        assert relationship["key_arity"] == 2
+        assert relationship["target_key_status"] == "candidate_unverified"
+
+    def test_sql_only_groups_comma_join_components(self):
+        result = _make_tools().profile_semantic_model_evidence(
+            sql_queries=[
+                """
+                SELECT SUM(o.amount) AS revenue
+                FROM orders o, customers c
+                WHERE o.tenant_id = c.tenant_id
+                  AND o.customer_id = c.id
+                """
+            ],
+            profile_mode="sql_only",
+        )
+
+        assert result.success == 1
+        relationship = result.result["tables"]["orders"]["join_relationships"][0]
+        assert relationship["source_columns"] == ["tenant_id", "customer_id"]
+        assert relationship["target_columns"] == ["tenant_id", "id"]
 
     def test_lightweight_profiles_used_columns(self):
         db_tool = _make_db_tool()
@@ -716,6 +935,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
         tool_names = {tool.name for tool in tools.available_tools()}
         assert {
             "analyze_table_relationships",
+            "validate_semantic_key_candidate",
             "get_multiple_tables_ddl",
             "analyze_column_usage_patterns",
             "analyze_metric_candidates_from_history",
