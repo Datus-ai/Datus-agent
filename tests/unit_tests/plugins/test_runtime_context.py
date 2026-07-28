@@ -119,6 +119,22 @@ def test_prepare_pipeline_injects_only_datus_segment(monkeypatch, tmp_path):
         ("datus hello run > out.txt", f'{_CTX}="${{V}}" datus hello run > out.txt'),
         ("datus hello run >> log 2>&1", f'{_CTX}="${{V}}" datus hello run >> log 2>&1'),
         ("> out.txt datus hello run", f'> out.txt {_CTX}="${{V}}" datus hello run'),
+        (">out.txt datus hello run", f'>out.txt {_CTX}="${{V}}" datus hello run'),
+        # An fd duplication names its target inside the operator, so it consumes
+        # one word — skipping two would make `hello` look like the command word
+        # and leave the invocation unbridged.
+        ("2>&1 datus hello run", f'2>&1 {_CTX}="${{V}}" datus hello run'),
+        ("<&3 datus hello run", f'<&3 {_CTX}="${{V}}" datus hello run'),
+        ("3<&4- datus hello run", f'3<&4- {_CTX}="${{V}}" datus hello run'),
+        # A here-string is inline: its `<<` must not re-match as a heredoc, whose
+        # body skip would swallow the rest of the command.
+        ("datus hello run <<< 'x'", f"{_CTX}=\"${{V}}\" datus hello run <<< 'x'"),
+        ("echo a <<< 'x'\ndatus hello run", f"echo a <<< 'x'\n{_CTX}=\"${{V}}\" datus hello run"),
+        # Braces inside a word are brace expansion, not a command grouping.
+        (
+            "datus hello run --opt={a,b} --x 1",
+            f'{_CTX}="${{V}}" datus hello run --opt={{a,b}} --x 1',
+        ),
         # Lists: the assignment goes in front of the plugin command only.
         ("cd /tmp && datus hello run", f'cd /tmp && {_CTX}="${{V}}" datus hello run'),
         ("echo before; datus hello run", f'echo before; {_CTX}="${{V}}" datus hello run'),
@@ -172,6 +188,7 @@ def test_prepare_supports_full_shell_command_shapes(monkeypatch, command, expect
         "datus hello run \\\n  --limit 5 \\\n  --format json",
         "datus hello post <<-'EOF'\n\t{\"a\": 1}\n\tEOF",
         'datus hello run --path "a b/c(d)"',
+        "datus hello run --opt={a,b} --nested={x,{y,z}}",
         "while true; do datus hello run; break; done",
         "case x in x) datus hello run;; esac",
     ],

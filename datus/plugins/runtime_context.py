@@ -48,7 +48,11 @@ _DATUS_COMMAND_WORD_RE = re.compile(r"(?<![A-Za-z0-9_.-])datus(?![A-Za-z0-9_.-])
 
 # Tokens that may legally precede a command word inside one simple command.
 _ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_REDIRECT_OP_RE = re.compile(r"^\d*(?:>>|>&|<&|<>|>|<)(?:\d+-?)?$")
+# `2>&1`, `<&3`, `3>&-` name their target inside the operator, while a bare
+# `>`/`2>>`/`<>` takes the FOLLOWING word as its target. Tested in that order
+# because _REDIRECT_TARGET_RE would also match `2>&1`.
+_REDIRECT_DUP_RE = re.compile(r"^\d*[<>]&(?:\d+-?|-)$")
+_REDIRECT_OP_RE = re.compile(r"^\d*(?:>>|>&|<&|<>|>|<)$")
 _REDIRECT_TARGET_RE = re.compile(r"^\d*(?:>>|>|<)\S+$")
 _COMMAND_PREFIX_WORDS = frozenset({"!", "time", "if", "elif", "while", "until", "then", "do", "else"})
 
@@ -365,9 +369,9 @@ def _command_word_index(words: List[Tuple[int, str]]) -> Optional[int]:
     """Index of the command word among one simple command's raw words.
 
     Variable assignments (``FOO=1 datus ...``), redirections placed before the
-    command word (``> out.txt datus ...``) and shell keywords that introduce a
-    command (``do``, ``then``, ``!``, ``time``) are skipped. Returns ``None``
-    when the command consists of prefix words only.
+    command word (``> out.txt datus ...``, ``2>&1 datus ...``) and shell
+    keywords that introduce a command (``do``, ``then``, ``!``, ``time``) are
+    skipped. Returns ``None`` when the command consists of prefix words only.
     """
     i = 0
     while i < len(words):
@@ -375,11 +379,17 @@ def _command_word_index(words: List[Tuple[int, str]]) -> Optional[int]:
         if text in _COMMAND_PREFIX_WORDS or _ASSIGNMENT_RE.match(text):
             i += 1
             continue
+        if _REDIRECT_DUP_RE.match(text):
+            # Self-contained fd duplication: `2>&1`, `<&3`, `3>&-`.
+            i += 1
+            continue
         if _REDIRECT_OP_RE.match(text):
-            # A bare operator takes the next word as its target.
+            # A bare operator takes the next word as its target. Checked before
+            # _REDIRECT_TARGET_RE, whose `\S+` would swallow `>>` itself.
             i += 2
             continue
         if _REDIRECT_TARGET_RE.match(text):
+            # Target attached to the operator: `>out.txt`.
             i += 1
             continue
         return i
@@ -474,14 +484,18 @@ def _scan_word(
     substitutions: List[str],
     heredocs: List[Tuple[str, bool]],
 ) -> Tuple[int, Optional[str]]:
-    """Advance past one word, returning the offset after it."""
+    """Advance past one word, returning the offset after it.
+
+    Braces are literal here: ``--opt={a,b}`` is one word to Bash, and only a
+    brace at a word boundary (handled by :func:`_scan_command`) groups commands.
+    """
     n = len(command)
     while i < n:
         char = command[i]
         if char == "\\":
             i += 2
             continue
-        if char in " \t\r" or char in _SEPARATOR_CHARS or char in _GROUPING_CHARS:
+        if char in " \t\r" or char in _SEPARATOR_CHARS or char in "()":
             return i, None
         if char == "'":
             end = command.find("'", i + 1)
@@ -513,7 +527,13 @@ def _scan_word(
                 return n, error
             substitutions.append(inner)
             continue
-        if char == "<" and command.startswith("<<", i) and not command.startswith("<<<", i):
+        if char == "<" and command.startswith("<<<", i):
+            # A here-string takes its payload inline — consuming all three
+            # characters keeps the trailing `<<` from re-matching as a heredoc,
+            # whose body skip would swallow the rest of the command.
+            i += 3
+            continue
+        if char == "<" and command.startswith("<<", i):
             i, error = _consume_heredoc_delimiter(command, i + 2, heredocs)
             if error is not None:
                 return n, error
