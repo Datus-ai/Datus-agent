@@ -787,6 +787,21 @@ class PermissionHooks(AgentHooks):
         """
         from datus.utils.sql_utils import looks_like_sql_file_ref, parse_sql_statement_kind, read_workspace_sql_file
 
+        raw_args = getattr(context, "tool_arguments", "{}")
+        if isinstance(raw_args, str):
+            try:
+                json.loads(raw_args)
+            except (json.JSONDecodeError, TypeError):
+                # DBFuncTool.execute_sql is always wrapped by
+                # trans_to_function_tool, whose malformed-JSON path repairs
+                # the history and returns a retry error without executing SQL.
+                # Let that no-execute path run instead of classifying an empty
+                # fallback as UNKNOWN and prompting (or denying workflows).
+                # The model's valid retry comes through this gate again and is
+                # classified from the actual SQL before it can execute.
+                logger.debug("Deferring malformed execute_sql arguments to tool recovery")
+                return True
+
         args = self._parse_tool_args(context)
         if not isinstance(args, dict):
             return False

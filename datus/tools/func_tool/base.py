@@ -8,6 +8,7 @@ import inspect
 import json
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+import json_repair
 from agents import FunctionTool, function_tool
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,96 @@ def normalize_null(value):
     if isinstance(value, str) and value.strip().lower() in ("null", "none", ""):
         return None
     return value
+
+
+def parse_tool_args(
+    args_str: Any,
+    *,
+    tool_name: str = "unknown",
+) -> tuple[dict, str, Optional[str]]:
+    """Parse tool arguments, repairing malformed JSON objects when possible.
+
+    Returns ``(arguments, canonical_json, error)``. ``canonical_json`` is always
+    a valid JSON object so it can safely replace the raw tool-call arguments
+    before the Agents SDK replays or persists the call. A repaired call returns
+    an error so the model retries with valid arguments instead of executing
+    parameters that permission hooks did not inspect.
+    """
+    if not args_str:
+        return {}, "{}", None
+
+    original_error: Optional[Exception] = None
+
+    if isinstance(args_str, str):
+        stripped = args_str.strip()
+        if not stripped:
+            return {}, "{}", None
+        try:
+            parsed = json.loads(stripped)
+        except (json.JSONDecodeError, TypeError) as exc:
+            original_error = exc
+            parsed = None
+            # Function-tool arguments must be a JSON object. Limiting repair to
+            # object-shaped input avoids turning arbitrary text into an empty
+            # object and treating it as a successful repair.
+            if stripped.startswith("{"):
+                try:
+                    parsed = json_repair.loads(stripped)
+                except Exception:  # noqa: BLE001 - json-repair is best effort
+                    parsed = None
+                if isinstance(parsed, dict):
+                    canonical_json = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+                    logger.warning(
+                        "Repaired malformed JSON arguments for tool '%s': %s",
+                        tool_name,
+                        original_error,
+                    )
+                    error = (
+                        f"Malformed JSON arguments for tool '{tool_name}' were repaired for replay. "
+                        "The tool was not executed. Retry the tool with one complete JSON object."
+                    )
+                    return parsed, canonical_json, error
+    else:
+        try:
+            parsed = dict(args_str)
+        except (TypeError, ValueError) as exc:
+            original_error = exc
+            parsed = None
+
+    if not isinstance(parsed, dict):
+        if original_error is None:
+            original_error = TypeError(f"expected a JSON object, got {type(parsed).__name__}")
+        args_len = len(args_str) if isinstance(args_str, str) else 0
+        truncated_hint = ""
+        if isinstance(args_str, str):
+            stripped = args_str.rstrip()
+            if stripped and not stripped.endswith("}"):
+                truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
+        error = (
+            f"Invalid JSON arguments for tool '{tool_name}' ({original_error}). "
+            f"Args length: {args_len} chars.{truncated_hint}"
+        )
+        return {}, "{}", error
+
+    canonical_json = (
+        args_str if isinstance(args_str, str) else json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+    )
+    return parsed, canonical_json, None
+
+
+def write_back_tool_args(tool_ctx: Any, canonical_json: str) -> None:
+    """Update the current SDK tool call so replay and session persistence use valid JSON."""
+    if tool_ctx is None:
+        return
+
+    tool_ctx.tool_arguments = canonical_json
+    tool_call = getattr(tool_ctx, "tool_call", None)
+    if tool_call is None:
+        return
+    if isinstance(tool_call, dict):
+        tool_call["arguments"] = canonical_json
+    else:
+        tool_call.arguments = canonical_json
 
 
 class FuncToolResult(BaseModel):
@@ -131,25 +222,13 @@ def trans_to_function_tool(
             This is an async wrapper for tool methods.
             The agent framework will 'await' this coroutine.
             """
-            # The actual work (JSON parsing, method call)
-            try:
-                if args_str:
-                    args_dict = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
-                else:
-                    args_dict = {}
-            except (TypeError, json.JSONDecodeError) as e:
-                args_len = len(args_str) if isinstance(args_str, str) else 0
-                truncated_hint = ""
-                if isinstance(args_str, str) and args_len > 0:
-                    # Check if it looks like truncated output (no closing brace)
-                    stripped = args_str.rstrip()
-                    if not stripped.endswith("}") and not stripped.endswith("]"):
-                        truncated_hint = " Output appears truncated — likely hit model max_output_tokens limit."
-                return {
-                    "success": 0,
-                    "error": f"Invalid JSON arguments ({e}). Args length: {args_len} chars.{truncated_hint}",
-                    "result": None,
-                }
+            args_dict, canonical_json, error = parse_tool_args(
+                args_str,
+                tool_name=method_to_call.__name__,
+            )
+            write_back_tool_args(tool_ctx, canonical_json)
+            if error:
+                return {"success": 0, "error": error, "result": None}
 
             # Call sync or async bound methods transparently
             if inspect.ismethod(method_to_call):

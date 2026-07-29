@@ -6,10 +6,27 @@ Focuses on trans_to_function_tool parameter filtering for LLM-hallucinated argum
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
+from typing import Optional
+from unittest.mock import MagicMock
 
 import pytest
+from agents import Agent, Runner, SQLiteSession
+from agents.items import ToolCallItem
+from agents.models.interface import Model
+from agents.run import RunConfig
+from agents.usage import Usage
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
+from datus.tools.permission.permission_hooks import PermissionHooks
+from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
+from datus.tools.registry.tool_registry import ToolRegistry
 
 
 class TestTransToFunctionTool:
@@ -85,6 +102,248 @@ class TestTransToFunctionTool:
         result = await tool.on_invoke_tool(None, "not-valid-json{")
         assert result["success"] == 0
         assert "Invalid JSON" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_repairs_arguments_for_replay_without_executing(self):
+        """Repair malformed arguments for replay, then execute only a valid retry."""
+
+        class FakeTool:
+            def __init__(self):
+                self.received = None
+
+            def execute_sql(
+                self,
+                sql: str,
+                datasource: str = "",
+                database: str = "",
+                min_rows: Optional[int] = None,
+                max_rows: Optional[int] = None,
+            ) -> FuncToolResult:
+                self.received = {
+                    "sql": sql,
+                    "datasource": datasource,
+                    "database": database,
+                    "min_rows": min_rows,
+                    "max_rows": max_rows,
+                }
+                return FuncToolResult(result="ok")
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.execute_sql)
+        raw_args = '{"sql":"SELECT 1","datasource":"njtest","database":"njyh","min_rows":,"max_rows":}'
+        raw_tool_call = ResponseFunctionToolCall(
+            arguments=raw_args,
+            call_id="call_repaired",
+            name="execute_sql",
+            type="function_call",
+        )
+        tool_ctx = SimpleNamespace(tool_arguments=raw_args, tool_call=raw_tool_call)
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 0
+        assert "not executed" in result["error"]
+        assert "Retry" in result["error"]
+        assert fake.received is None
+        written_args = json.loads(tool_ctx.tool_arguments)
+        assert written_args["sql"] == "SELECT 1"
+        assert {"min_rows", "max_rows"} <= written_args.keys()
+        assert json.loads(raw_tool_call.arguments) == written_args
+
+        replayed = ToolCallItem(agent=Agent(name="test"), raw_item=raw_tool_call).to_input_item()
+        assert json.loads(replayed["arguments"])["sql"] == "SELECT 1"
+
+        retry_args = json.dumps(
+            {
+                "sql": "SELECT 1",
+                "datasource": "njtest",
+                "database": "njyh",
+                "min_rows": None,
+                "max_rows": None,
+            }
+        )
+        retry_tool_call = ResponseFunctionToolCall(
+            arguments=retry_args,
+            call_id="call_retry",
+            name="execute_sql",
+            type="function_call",
+        )
+        retry_ctx = SimpleNamespace(tool_arguments=retry_args, tool_call=retry_tool_call)
+
+        retry_result = await tool.on_invoke_tool(retry_ctx, retry_args)
+
+        assert retry_result["success"] == 1
+        assert fake.received == {
+            "sql": "SELECT 1",
+            "datasource": "njtest",
+            "database": "njyh",
+            "min_rows": None,
+            "max_rows": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_valid_json_preserves_original_arguments_string(self):
+        """A valid call should not be rewritten merely to canonicalize formatting."""
+
+        class FakeTool:
+            def some_method(self, x: str) -> FuncToolResult:
+                return FuncToolResult(result=x)
+
+        tool = self._make_tool_from_method(FakeTool().some_method)
+        raw_args = '{\n  "x": "value"\n}'
+        raw_tool_call = ResponseFunctionToolCall(
+            arguments=raw_args,
+            call_id="call_valid",
+            name="some_method",
+            type="function_call",
+        )
+        tool_ctx = SimpleNamespace(tool_arguments=raw_args, tool_call=raw_tool_call)
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 1
+        assert tool_ctx.tool_arguments == raw_args
+        assert raw_tool_call.arguments == raw_args
+
+    @pytest.mark.asyncio
+    async def test_runner_replays_repaired_args_and_executes_only_valid_retry(self):
+        """Exercise the real Runner turn and session persistence path."""
+
+        class FakeTool:
+            def __init__(self):
+                self.calls = []
+
+            def execute_sql(
+                self,
+                sql: str,
+                min_rows: Optional[int] = None,
+                max_rows: Optional[int] = None,
+            ) -> FuncToolResult:
+                self.calls.append((sql, min_rows, max_rows))
+                return FuncToolResult(result="ok")
+
+        class SequenceModel(Model):
+            def __init__(self):
+                self.inputs = []
+
+            async def get_response(self, system_instructions, input, *_args, **_kwargs):
+                from agents.items import ModelResponse
+
+                del system_instructions
+                self.inputs.append(input)
+                if len(self.inputs) == 1:
+                    output = [
+                        ResponseFunctionToolCall(
+                            arguments='{"sql":"SELECT 1","min_rows":,"max_rows":}',
+                            call_id="call_malformed",
+                            name="execute_sql",
+                            type="function_call",
+                        )
+                    ]
+                elif len(self.inputs) == 2:
+                    replayed_call = next(
+                        item for item in input if isinstance(item, dict) and item.get("call_id") == "call_malformed"
+                    )
+                    assert json.loads(replayed_call["arguments"])["sql"] == "SELECT 1"
+                    output = [
+                        ResponseFunctionToolCall(
+                            arguments='{"sql":"SELECT 1","min_rows":null,"max_rows":null}',
+                            call_id="call_retry",
+                            name="execute_sql",
+                            type="function_call",
+                        )
+                    ]
+                else:
+                    output = [
+                        ResponseOutputMessage(
+                            id="message_done",
+                            content=[
+                                ResponseOutputText(
+                                    annotations=[],
+                                    text="done",
+                                    type="output_text",
+                                )
+                            ],
+                            role="assistant",
+                            status="completed",
+                            type="message",
+                        )
+                    ]
+                return ModelResponse(output=output, usage=Usage(), response_id=None)
+
+            async def stream_response(self, *_args, **_kwargs):
+                if False:
+                    yield None
+
+        fake = FakeTool()
+        model = SequenceModel()
+        session = SQLiteSession("tool-args-repair", ":memory:")
+        tool = self._make_tool_from_method(fake.execute_sql)
+        registry = ToolRegistry()
+        registry.register_tools("db_tools", [tool])
+        broker = MagicMock()
+        permission_hooks = PermissionHooks(
+            broker=broker,
+            permission_manager=PermissionManager(
+                global_config=get_profile("normal"),
+                active_profile="normal",
+            ),
+            node_name="chat",
+            tool_registry=registry,
+        )
+        agent = Agent(
+            name="test",
+            model=model,
+            tools=[tool],
+            hooks=permission_hooks,
+        )
+
+        result = await Runner.run(
+            agent,
+            input="run a query",
+            max_turns=5,
+            session=session,
+            run_config=RunConfig(tracing_disabled=True),
+        )
+
+        assert result.final_output == "done"
+        assert fake.calls == [("SELECT 1", None, None)]
+        broker.request.assert_not_called()
+        saved_calls = [
+            item for item in await session.get_items() if isinstance(item, dict) and item.get("type") == "function_call"
+        ]
+        assert len(saved_calls) == 2
+        assert all(isinstance(json.loads(item["arguments"]), dict) for item in saved_calls)
+
+    @pytest.mark.asyncio
+    async def test_unrepairable_json_is_not_executed_and_writes_back_empty_object(self):
+        """An unrecoverable call must leave valid JSON for the Runner's next turn."""
+
+        class FakeTool:
+            def __init__(self):
+                self.called = False
+
+            def some_method(self, x: str) -> FuncToolResult:
+                self.called = True
+                return FuncToolResult(result=x)
+
+        fake = FakeTool()
+        tool = self._make_tool_from_method(fake.some_method)
+        raw_tool_call = ResponseFunctionToolCall(
+            arguments="not-valid-json{",
+            call_id="call_invalid",
+            name="some_method",
+            type="function_call",
+        )
+        tool_ctx = SimpleNamespace(tool_arguments=raw_tool_call.arguments, tool_call=raw_tool_call)
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_tool_call.arguments)
+
+        assert result["success"] == 0
+        assert "Invalid JSON" in result["error"]
+        assert fake.called is False
+        assert tool_ctx.tool_arguments == "{}"
+        assert raw_tool_call.arguments == "{}"
 
     @pytest.mark.asyncio
     async def test_multiple_extra_params_all_filtered(self):

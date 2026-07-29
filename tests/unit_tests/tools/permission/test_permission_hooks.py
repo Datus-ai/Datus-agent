@@ -24,6 +24,7 @@ from datus.tools.permission.permission_hooks import (
     PermissionHooks,
 )
 from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
 from datus.tools.registry.tool_registry import ToolRegistry
 
 
@@ -1621,6 +1622,28 @@ class TestExecuteSqlPermission:
         t = MagicMock()
         t.name = "execute_sql"
         return t
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("profile", ["normal", "auto"])
+    @pytest.mark.parametrize("non_interactive", [False, True])
+    async def test_malformed_arguments_defer_to_tool_recovery_without_prompt(
+        self,
+        mock_broker,
+        profile,
+        non_interactive,
+    ):
+        """Malformed calls reach the no-execute recovery path in every default mode."""
+        hooks = self._make_hooks(
+            mock_broker,
+            get_profile(profile),
+            non_interactive=non_interactive,
+        )
+        context = MagicMock()
+        context.tool_arguments = '{"sql":"SELECT 1","min_rows":,"max_rows":}'
+
+        await hooks.on_tool_start(context, MagicMock(), self._tool())
+
+        mock_broker.request.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_read_auto_allows_under_normal_default_ask(self, mock_broker):

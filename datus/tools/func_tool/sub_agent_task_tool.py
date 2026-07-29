@@ -13,7 +13,6 @@ tools, template rendering, and action history.
 
 from __future__ import annotations
 
-import json
 import uuid
 from contextlib import nullcontext
 from datetime import datetime
@@ -34,7 +33,7 @@ from datus.schemas.action_history import (
 )
 from datus.schemas.agent_models import ScopedContext, SubAgentConfig
 from datus.schemas.at_context import apply_at_context
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolResult, parse_tool_args, write_back_tool_args
 from datus.utils.constants import SYS_SUB_AGENTS
 from datus.utils.loggings import get_logger
 from datus.utils.memory_loader import resolve_memory_node
@@ -313,10 +312,13 @@ class SubAgentTaskTool:
         }
 
         async def _invoke(_tool_ctx, args_str) -> dict:
-            try:
-                args = json.loads(args_str) if isinstance(args_str, str) else dict(args_str or {})
-            except (TypeError, json.JSONDecodeError):
-                return FuncToolResult(success=0, error="Invalid JSON arguments for task tool").model_dump()
+            args, canonical_json, error = parse_tool_args(
+                args_str,
+                tool_name="task",
+            )
+            write_back_tool_args(_tool_ctx, canonical_json)
+            if error:
+                return FuncToolResult(success=0, error=error).model_dump()
             # Resolve parent call_id from SDK ToolContext for action linking
             call_id = getattr(_tool_ctx, "tool_call_id", None) if _tool_ctx else None
             result = await self.task(call_id=call_id, **args)
