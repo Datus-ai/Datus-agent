@@ -248,7 +248,7 @@ graph LR
 
 ### 验证和同步
 
-发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试。在 interactive 模式下，验证通过后，`end_semantic_model_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的语义模型同步步骤或工具。
+发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`publish_semantic_model` 会在所有执行模式下校验发布证据并把 artifact 同步到 Knowledge Base。
 
 ### 语义模型结构
 
@@ -299,7 +299,7 @@ data_source:
 - ✅ 从表 DDL 自动生成 YAML
 - ✅ 交互式验证和错误修复
 - ✅ 验证通过后同步到知识库
-- ✅ interactive 自动同步，workflow/API 显式同步
+- ✅ 所有执行模式使用同一条 validation-gated publish 路径
 - ✅ 防止重复
 - ✅ MetricFlow 兼容性
 
@@ -368,7 +368,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ 不支持 JOIN
 
 ### 验证和同步
 
-发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL。在 interactive 模式下，两项检查都通过后，`end_metric_generation` 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的指标同步步骤或工具。
+发布前，agent 会用 `validate_semantic()` 校验 YAML，并用 `query_metrics(..., dry_run=True)` 编译 SQL；两项检查通过后，`publish_metrics` 会在所有执行模式下校验本次请求的证据并同步指标。
 
 ### 主题树分类
 

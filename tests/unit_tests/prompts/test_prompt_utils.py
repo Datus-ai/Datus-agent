@@ -298,7 +298,7 @@ class TestGenMetricsV12Template:
         template = env.get_template("gen_metrics_system_1.2.j2")
 
         result = template.render(
-            native_tools=["read_file", "write_file", "end_metric_generation"],
+            native_tools=["read_file", "write_file", "publish_metrics"],
             mcp_tools=[],
             has_ask_user_tool=True,
             semantic_model_dir="/tmp/test_models",

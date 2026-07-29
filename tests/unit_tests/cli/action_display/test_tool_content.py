@@ -13,26 +13,21 @@ import pytest
 from datus.cli.action_display.tool_content import (
     ToolCallContent,
     ToolCallContentBuilder,
-    _build_analyze_columns,
-    _build_analyze_metric_candidates,
-    _build_analyze_relationships,
     _build_ask_user,
     _build_attribution_analyze,
     _build_bash,
     _build_check_exists,
     _build_describe_table,
     _build_doc_search_result,
-    _build_end_generation,
-    _build_end_metric_generation,
     _build_generate_sql_summary_id,
     _build_get_detail,
     _build_get_dimensions,
     _build_get_document,
     _build_get_metrics,
-    _build_get_multiple_ddl,
     _build_get_reference_sql,
     _build_glob,
     _build_grep,
+    _build_inspect_semantic_sources,
     _build_list_databases,
     _build_list_document_nav,
     _build_list_metrics_semantic,
@@ -42,6 +37,8 @@ from datus.cli.action_display.tool_content import (
     _build_load_skill,
     _build_parse_dates,
     _build_profile_semantic_model_evidence,
+    _build_publish_metrics,
+    _build_publish_semantic_model,
     _build_query_metrics,
     _build_read_file,
     _build_read_query,
@@ -57,6 +54,7 @@ from datus.cli.action_display.tool_content import (
     _build_todo_update,
     _build_todo_write,
     _build_validate_semantic,
+    _build_validate_semantic_key_candidates,
     _build_web_fetch,
     _build_web_search,
     _build_write_file,
@@ -1606,13 +1604,13 @@ class TestBuildCheckExists:
 class TestBuildEndGeneration:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "end_semantic_model_generation"},
+            input_data={"function_name": "publish_semantic_model"},
             output_data={
                 "raw_output": '{"success": 1, "result": '
                 '{"message": "done", "semantic_model_files": ["a.yml", "b.yml"]}}'
             },
         )
-        tc = _build_end_generation(a, verbose=False)
+        tc = _build_publish_semantic_model(a, verbose=False)
         assert "2 semantic models generated" in tc.compact_result
 
 
@@ -1620,11 +1618,11 @@ class TestBuildEndGeneration:
 class TestBuildEndMetricGeneration:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "end_metric_generation"},
+            input_data={"function_name": "publish_metrics"},
             output_data={"raw_output": '{"success": 1, "result": {"message": "done"}}'},
         )
-        tc = _build_end_metric_generation(a, verbose=False)
-        assert "Metric generated" in tc.compact_result
+        tc = _build_publish_metrics(a, verbose=False)
+        assert "Metrics published" in tc.compact_result
 
 
 @pytest.mark.ci
@@ -1684,66 +1682,44 @@ class TestBuildParseDates:
 
 
 @pytest.mark.ci
-class TestBuildAnalyzeRelationships:
+class TestBuildInspectSemanticSources:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "analyze_table_relationships"},
+            input_data={"function_name": "inspect_semantic_sources"},
             output_data={
-                "raw_output": '{"success": 1, "result": {"relationships": ['
-                '{"source_table": "a", "target_table": "b"}], "summary": "ok"}}'
+                "raw_output": '{"success": 1, "result": {"tables": ['
+                '{"table_name": "a"}, {"table_name": "b"}], "relationships": ['
+                '{"source_table": "a", "target_table": "b"}]}}'
             },
         )
-        tc = _build_analyze_relationships(a, verbose=False)
-        assert "1 relationships found" in tc.compact_result
+        tc = _build_inspect_semantic_sources(a, verbose=False)
+        assert tc.compact_result == "2 tables, 1 relationships"
+
+    def test_verbose_shows_combined_result(self):
+        a = _make(
+            input_data={"function_name": "inspect_semantic_sources", "arguments": {"tables": ["t1"]}},
+            output_data={
+                "raw_output": '{"success": 1, "result": {"tables": ['
+                '{"table_name": "t1", "ddl": {"definition": "CREATE TABLE t1 (id INT)"}}],'
+                '"relationships": []}}'
+            },
+        )
+        tc = _build_inspect_semantic_sources(a, verbose=True)
+        assert tc.output_lines
 
 
 @pytest.mark.ci
-class TestBuildGetMultipleDdl:
+class TestBuildValidateSemanticKeyCandidates:
     def test_compact(self):
         a = _make(
-            input_data={"function_name": "get_multiple_tables_ddl"},
+            input_data={"function_name": "validate_semantic_key_candidates"},
             output_data={
-                "raw_output": '{"success": 1, "result": ['
-                '{"table_name": "t1", "definition": "CREATE TABLE t1 (id INT)"},'
-                '{"table_name": "t2", "definition": "CREATE TABLE t2 (id INT)"}]}'
+                "raw_output": '{"success": 1, "result": {"validations": ['
+                '{"is_valid_logical_key": true}, {"is_valid_logical_key": false}]}}'
             },
         )
-        tc = _build_get_multiple_ddl(a, verbose=False)
-        assert "2 DDLs retrieved" in tc.compact_result
-
-    def test_verbose_shows_ddl(self):
-        a = _make(
-            input_data={"function_name": "get_multiple_tables_ddl", "arguments": {"tables": ["t1"]}},
-            output_data={
-                "raw_output": '{"success": 1, "result": ['
-                '{"table_name": "t1", "definition": "CREATE TABLE t1 (id INT)"}]}'
-            },
-        )
-        tc = _build_get_multiple_ddl(a, verbose=True)
-        assert any("t1" in line for line in tc.output_lines)
-        assert any("CREATE TABLE" in line for line in tc.output_lines)
-
-    def test_verbose_shows_error(self):
-        a = _make(
-            input_data={"function_name": "get_multiple_tables_ddl", "arguments": {"tables": ["t1"]}},
-            output_data={"raw_output": '{"success": 1, "result": [{"table_name": "t1", "error": "not found"}]}'},
-        )
-        tc = _build_get_multiple_ddl(a, verbose=True)
-        assert any("not found" in line for line in tc.output_lines)
-
-
-@pytest.mark.ci
-class TestBuildAnalyzeColumns:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "analyze_column_usage_patterns"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {"column_patterns": '
-                '{"col1": {"usage_count": 5}, "col2": {"usage_count": 3}}, "summary": "ok"}}'
-            },
-        )
-        tc = _build_analyze_columns(a, verbose=False)
-        assert "2 columns analyzed" in tc.compact_result
+        tc = _build_validate_semantic_key_candidates(a, verbose=False)
+        assert tc.compact_result == "1/2 logical keys verified"
 
 
 class TestBuildProfileSemanticModelEvidence:
@@ -1762,34 +1738,6 @@ class TestBuildProfileSemanticModelEvidence:
         )
         tc = _build_profile_semantic_model_evidence(a, verbose=False)
         assert tc.compact_result == TOOL_SUMMARY_REGISTRY.summarize_dict(payload, "profile_semantic_model_evidence")
-
-
-@pytest.mark.ci
-class TestBuildAnalyzeMetricCandidates:
-    def test_compact(self):
-        a = _make(
-            input_data={"function_name": "analyze_metric_candidates_from_history"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"metric_candidates": [{"name": "paid_arppu"}, {"name": "gross_margin_rate"}], '
-                '"base_measures": [{"name": "paid_amount"}], "summary": "ok"}}'
-            },
-        )
-        tc = _build_analyze_metric_candidates(a, verbose=False)
-        assert "2 metric candidates, 1 base measure" in tc.compact_result
-
-    def test_compact_with_derived_datasource(self):
-        a = _make(
-            input_data={"function_name": "analyze_metric_candidates_from_history"},
-            output_data={
-                "raw_output": '{"success": 1, "result": {'
-                '"metric_candidates": [{"name": "time_count"}], '
-                '"base_measures": [{"name": "count_rows"}], '
-                '"derived_datasource_recommendations": [{"name": "rank_data"}]}}'
-            },
-        )
-        tc = _build_analyze_metric_candidates(a, verbose=False)
-        assert "1 metric candidate, 1 base measure, 1 derived datasource" in tc.compact_result
 
 
 # ── Skill tools ───────────────────────────────────────────────────
@@ -2018,18 +1966,15 @@ class TestAllToolsRegistered:
         # Generation
         "check_semantic_object_exists",
         "check_semantic_model_exists",
-        "end_semantic_model_generation",
-        "end_metric_generation",
+        "publish_semantic_model",
+        "publish_metrics",
         "generate_sql_summary_id",
         # Date
         "parse_temporal_expressions",
         # Semantic discovery
-        "analyze_table_relationships",
-        "validate_semantic_key_candidate",
-        "get_multiple_tables_ddl",
-        "analyze_column_usage_patterns",
+        "inspect_semantic_sources",
+        "validate_semantic_key_candidates",
         "profile_semantic_model_evidence",
-        "analyze_metric_candidates_from_history",
         # Skill
         "bash",
         "load_skill",

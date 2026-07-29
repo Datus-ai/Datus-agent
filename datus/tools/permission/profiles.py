@@ -295,6 +295,7 @@ _AUTO_EXTRA_RULES = [
     _rule("filesystem_tools", "edit_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "delete_file", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "upsert_osi_metrics", PermissionLevel.ALLOW),
+    _rule("filesystem_tools", "upsert_osi_datasets", PermissionLevel.ALLOW),
     # plan writes
     _rule("tools", "todo_write", PermissionLevel.ALLOW),
     _rule("tools", "todo_update", PermissionLevel.ALLOW),

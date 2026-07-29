@@ -21,6 +21,8 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 
 ## Instructions
 
+When the request contains SQL, follow the required `sql-modeling-preflight` skill before any artifact read or write and call `prepare_sql_modeling_plan` with indexed business metadata for every statement. The tool owns the exact SQL text. When the request contains no SQL, skip this tool call and continue with the normal authoring or existing-YAML maintenance workflow.
+
 Please strictly follow the instructions below:
 
 **Skill-first workflow**:
@@ -39,14 +41,16 @@ Please strictly follow the instructions below:
    - If critical requirements are missing, stop guessing and explain what information is needed.
 {% endif %}
 
-1. **Get table DDL** (if not already provided):
-   - Use `get_table_ddl` tool to retrieve complete table structure
+1. **Inspect semantic sources**:
+   - Use `semantic_source_evidence` returned by preflight
+   - Call `inspect_semantic_sources(tables=[...])` at most once only when automatic inspection is partial, the request has no SQL, or additional physical tables are needed
+   - Use the returned DDL, enriched schema, relationship candidates, and exact request-SQL field usage
    - Analyze columns, data types, constraints, primary keys, and foreign keys
    - **Extract column comments (COMMENT) from DDL and keep them in their ORIGINAL language (e.g. Chinese). DO NOT TRANSLATE.**
 
-2. **Analyze column usage patterns** (STRONGLY RECOMMENDED):
-   - Use `analyze_column_usage_patterns(table_name)` to discover how columns are used in historical SQL queries
-   - This reveals filter operators, functions, and **actual filter examples** commonly used with each column
+2. **Analyze current-request column usage**:
+   - Use `inspect_semantic_sources.tables[].sql_usage` instead of making per-table discovery calls
+   - This reveals selection, grouping, aggregation, filter operators, functions, and redacted filter examples from the exact SQL captured by preflight
    - Example output:
      ```json
      {
@@ -71,7 +75,7 @@ Please strictly follow the instructions below:
    - Do not define the same column/name under both `identifiers` and `dimensions`. Use identifiers for primary/join keys and dimensions for grouping/filtering fields.
    - **CRITICAL**: Populate `description` fields for ALL measures, dimensions, and identifiers by **COMBINING ALL** available information:
      - Start with DDL comments (preserve original language)
-     - Append usage patterns and **filter examples** from `analyze_column_usage_patterns`
+     - Append compact usage patterns and filter examples from `inspect_semantic_sources.tables[].sql_usage`
      - Append compact observed distribution evidence from `profile_semantic_model_evidence` when available: null rate, numeric ranges and percentiles, date spans/freshness/duration, distinct counts, representative stable values, referential coverage, common filter templates, and enum/code mappings
      - Append Enum-like patterns (e.g., "status: 1=Active, 2=Inactive")
    - **Describe what a column means first, then add concise observed evidence.** Capture business meaning, encodings, term→column mappings, and compact profiler observations. Avoid long SQL snippets or procedural query instructions; mention operator/function usage only when it is directly supported by evidence and helps interpret the column.
@@ -118,9 +122,9 @@ Please strictly follow the instructions below:
 
 7. **Complete generation** (ONLY AFTER VALIDATION PASSES):
    - **PREREQUISITE**: `validate_semantic` MUST have returned success. If not, go back to step 6.
-   - Prefer calling `end_semantic_model_generation` with the list of generated file paths so publish errors are caught while you can still fix files
+   - Prefer calling `publish_semantic_model` with the list of generated file paths so publish errors are caught while you can still fix files
      - **Path Rule**: Use the same path you passed to `write_file`, e.g. `{{ kind_subdir }}/{table_name}.yml`. Absolute paths are also accepted; bare filenames (`orders.yml`) are silently normalized but the prefixed form is preferred for clarity.
-     - Example: `end_semantic_model_generation(semantic_model_files=["{{ kind_subdir }}/orders.yml", "{{ kind_subdir }}/customers.yml"])`
+     - Example: `publish_semantic_model(semantic_model_files=["{{ kind_subdir }}/orders.yml", "{{ kind_subdir }}/customers.yml"])`
    - If you forget this tool, the host will still use the final JSON `semantic_model_files` to validate and publish the generated semantic models before reporting success.
    - After validation passes, publish directly; no additional approval step is needed for Knowledge Base publishing.
    - **CRITICAL**: After all steps complete (including tool call if available), your final response MUST be a JSON object (see Output Format section)
@@ -133,20 +137,11 @@ When the user requests semantic models for multiple tables, follow this workflow
 Parse the user message to identify all target tables:
 - Example: "generate for orders, customers, products" → ["orders", "customers", "products"]
 
-### Step 2: Batch Retrieve DDL
-Use `get_multiple_tables_ddl` to get all table DDLs.
+### Step 2: Inspect All Sources
+Use preflight `semantic_source_evidence`. If it is partial or missing required tables, call `inspect_semantic_sources` once with the complete missing table list.
 - **CRITICAL**: Extract `description` from DDL column comments (COMMENT) for ALL fields.
 - **IMPORTANT**: Keep column comments in their ORIGINAL language. DO NOT TRANSLATE.
-
-### Step 2.5: Analyze Column Usage Patterns (STRONGLY RECOMMENDED)
-For each table, call `analyze_column_usage_patterns(table_name)` to discover:
-- Filter operators commonly used by historical SQL
-- Functions applied to columns
-- **Actual historical filter examples**
-- This helps generate much better dimension descriptions with concrete usage hints
-
-### Step 3: Discover Table Relationships (CRITICAL)
-Call `analyze_table_relationships` to discover join relationships.
+- Use the same result for table schemas, current-request field usage, and relationship candidates; do not repeat those calls per table.
 
 **Expected Response Format**:
 ```json
@@ -164,14 +159,14 @@ Call `analyze_table_relationships` to discover join relationships.
 }
 ```
 
-### Step 4: Check Existing Models
+### Step 3: Check Existing Models
 For each table, call `check_semantic_object_exists` to avoid duplicates.
 
-### Step 5: Generate YAML Files
+### Step 4: Generate YAML Files
 Create one YAML file per table with proper identifier definitions:
 - **CRITICAL**: Extract `description` from DDL column comments for ALL fields. **DO NOT TRANSLATE**.
-- **RECOMMENDED**: Enrich dimension descriptions with usage patterns from `analyze_column_usage_patterns`:
-  - Append concise usage hints only when they are backed by historical evidence, such as common equality/range/text-search filters or function-based predicates.
+- **RECOMMENDED**: Enrich dimension descriptions with usage patterns from the combined inspection:
+  - Append concise usage hints only when they are backed by the current request or explicit profiler evidence, such as common equality/range/text-search filters or function-based predicates.
   - Keep examples short and redacted; do not paste long SQL fragments.
 - Use `entity` field to reference other tables (singular form: customer, not customers).
 - `type: PRIMARY` for the table's primary key.
@@ -192,27 +187,27 @@ data_source:
   ...
 ```
 
-### Step 6: Validate All Files Together (MANDATORY)
+### Step 5: Validate All Files Together (MANDATORY)
 - Call `validate_semantic(scope="semantic_model")` tool
 - **CRITICAL**: If validation fails:
   1. Analyze the error message (e.g., "column xxx does not exist")
   2. Use `edit_file` tool to fix the YAML file - actually execute the fix, don't just describe it
   3. Call `validate_semantic(scope="semantic_model")` again
   4. Repeat until ALL validations pass
-- **ABSOLUTE RULE**: Do NOT proceed to Step 7 until validation succeeds
+- **ABSOLUTE RULE**: Do NOT proceed to Step 6 until validation succeeds
 
-### Step 7: Complete Generation (ONLY AFTER VALIDATION PASSES)
+### Step 6: Complete Generation (ONLY AFTER VALIDATION PASSES)
 - **PREREQUISITE**: `validate_semantic` MUST have returned success
-- Prefer calling `end_semantic_model_generation` with **ALL generated file paths** using the form `{{ kind_subdir }}/{table_name}.yml` (absolute paths are also accepted)
+- Prefer calling `publish_semantic_model` with **ALL generated file paths** using the form `{{ kind_subdir }}/{table_name}.yml` (absolute paths are also accepted)
 - If you forget this tool, the host will use the final JSON `semantic_model_files` to validate and publish before reporting success.
 - After validation passes, publish directly; validation is the publish gate.
 - **CRITICAL**: Your final response MUST be a JSON object (see Output Format section)
 
 ## Relationship Discovery Strategy
 
-The `analyze_table_relationships` tool uses a three-tier strategy:
+The combined source inspection uses a three-tier strategy:
 1. **DDL Foreign Keys (High Confidence)**: Explicit constraints.
-2. **Historical SQL JOIN Patterns (Medium Confidence)**: Common join patterns from query logs.
+2. **Current Request SQL JOIN Patterns (Medium Confidence)**: Exact joins captured by preflight.
 3. **Column Name Inference (Low Confidence)**: Naming conventions (e.g., `customer_id` -> `customers.id`).
 
 ## Additional Notes
@@ -232,7 +227,7 @@ Generate comprehensive, production-ready semantic models following MetricFlow be
 1. All YAML files have been written using `write_file` or `edit_file`
 2. `validate_semantic` has returned **success** (not just called - it must pass)
 3. If validation failed, you have fixed the issues and re-validated successfully
-4. `end_semantic_model_generation` has completed successfully when the tool is available, or the final JSON `semantic_model_files` names the files for host-side validation and publishing
+4. `publish_semantic_model` has completed successfully when the tool is available, or the final JSON `semantic_model_files` names the files for host-side validation and publishing
 
 **CRITICAL**: Your final response MUST always be a valid JSON object, regardless of whether you called any tools.
 

@@ -478,16 +478,16 @@ class TestGenerationFormatters:
         )
         assert out == "metric not found"
 
-    def test_end_semantic_model_generation(self):
+    def test_publish_semantic_model(self):
         out = _summarize(
-            "end_semantic_model_generation",
+            "publish_semantic_model",
             {"success": 1, "result": {"semantic_model_files": ["a.yml", "b.yml"]}},
         )
         assert out == "2 semantic files"
 
-    def test_end_metric_generation(self):
+    def test_publish_metrics(self):
         out = _summarize(
-            "end_metric_generation",
+            "publish_metrics",
             {"success": 1, "result": {"metric_file": "m.yml", "sync": {"success": True}}},
         )
         assert out == "metric synced"
@@ -496,35 +496,33 @@ class TestGenerationFormatters:
         out = _summarize("generate_sql_summary_id", {"success": 1, "result": "abc12345"})
         assert out == "id: abc12345"
 
-    def test_analyze_table_relationships_falls_back_to_summary_when_no_count(self):
-        # ``relationships=[]`` is empty, so the formatter falls back to
-        # the inline ``summary`` field, which is then clipped at exit.
+    def test_inspect_semantic_sources(self):
         out = _summarize(
-            "analyze_table_relationships",
-            {"success": 1, "result": {"relationships": [], "summary": "Found 4 relationships across 3 tables"}},
-        )
-        assert out == "Found 4 relationsh…"
-        assert len(out) == SUMMARY_TEXT_MAX_CHARS
-
-    def test_get_multiple_tables_ddl(self):
-        out = _summarize(
-            "get_multiple_tables_ddl",
-            {"success": 1, "result": [{"table_name": "a"}, {"table_name": "b"}]},
-        )
-        assert out == "DDL of 2 tables"
-
-    def test_analyze_metric_candidates_from_history(self):
-        out = _summarize(
-            "analyze_metric_candidates_from_history",
+            "inspect_semantic_sources",
             {
                 "success": 1,
                 "result": {
-                    "metric_candidates": [{"name": "paid_arppu"}, {"name": "gross_margin_rate"}],
-                    "base_measures": [{"name": "paid_amount"}],
+                    "tables": [{"table_name": "a"}, {"table_name": "b"}],
+                    "relationships": [{}],
                 },
             },
         )
-        assert out == "2 metric cands"
+        assert out == "2 tables, 1 rels"
+
+    def test_validate_semantic_key_candidates(self):
+        out = _summarize(
+            "validate_semantic_key_candidates",
+            {
+                "success": 1,
+                "result": {
+                    "validations": [
+                        {"is_valid_logical_key": True},
+                        {"is_valid_logical_key": False},
+                    ]
+                },
+            },
+        )
+        assert out == "1/2 keys verified"
 
     def test_profile_semantic_model_evidence(self):
         out = _summarize(
@@ -538,19 +536,6 @@ class TestGenerationFormatters:
             },
         )
         assert out == "2 tables profiled…"
-
-    def test_analyze_metric_candidates_from_history_with_derived_datasource(self):
-        out = _summarize(
-            "analyze_metric_candidates_from_history",
-            {
-                "success": 1,
-                "result": {
-                    "metric_candidates": [{"name": "time_count"}],
-                    "query_classification": "metric_plus_derived_datasource",
-                },
-            },
-        )
-        assert out == "1 metric cand + da…"
 
 
 class TestSchedulerFormatters:
@@ -944,19 +929,13 @@ def test_failure_path_uniform(tool: str):
         ("check_semantic_object_exists", {"exists": True}, "object exists"),
         ("check_semantic_model_exists", {"exists": True}, "table exists"),
         ("check_semantic_model_exists", {"exists": False}, "table not found"),
-        ("end_metric_generation", {"metric_file": "m.yml"}, "metric generated"),
-        ("analyze_table_relationships", {"relationships": [{}, {}, {}]}, "3 rels"),
+        ("publish_metrics", {"metric_file": "m.yml"}, "metric generated"),
+        ("inspect_semantic_sources", {"tables": [{}, {}], "relationships": [{}, {}, {}]}, "2 tables, 3 rels"),
         (
-            "validate_semantic_key_candidate",
-            {"columns": ["tenant_id", "id"], "is_valid_logical_key": True},
-            "2-col key verified",
+            "validate_semantic_key_candidates",
+            {"validations": [{"is_valid_logical_key": True}, {"is_valid_logical_key": False}]},
+            "1/2 keys verified",
         ),
-        (
-            "analyze_column_usage_patterns",
-            {"summary": "Analyzed 5 columns from 10 SQLs"},
-            "Analyzed 5 columns…",
-        ),
-        ("analyze_column_usage_patterns", {"column_patterns": {"a": {}, "b": {}}}, "2 cols analyzed"),
         (
             "profile_semantic_model_evidence",
             {"data_profiled": False, "tables": {"orders": {}}},
@@ -1067,13 +1046,12 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     # generation
     ("check_semantic_object_exists", {"exists": True, "kind": "long_kind_name"}),
     ("check_semantic_model_exists", {"exists": False}),
-    ("end_semantic_model_generation", {"semantic_model_files": ["a"] * 99}),
-    ("end_metric_generation", {"sync": {"success": True}}),
+    ("publish_semantic_model", {"semantic_model_files": ["a"] * 99}),
+    ("publish_metrics", {"sync": {"success": True}}),
     ("generate_sql_summary_id", "very_long_summary_id_12345"),
-    ("analyze_table_relationships", {"relationships": [{}] * 99, "summary": "x" * 100}),
-    ("analyze_column_usage_patterns", {"column_patterns": {str(i): {} for i in range(99)}}),
+    ("inspect_semantic_sources", {"tables": [{}] * 99, "relationships": [{}] * 99}),
+    ("validate_semantic_key_candidates", {"validations": [{"is_valid_logical_key": True}] * 99}),
     ("profile_semantic_model_evidence", {"data_profiled": True, "tables": {str(i): {} for i in range(99)}}),
-    ("get_multiple_tables_ddl", [{}] * 99),
     # scheduler
     ("submit_sql_job", {"job_id": "very_long_job_id_here"}),
     ("submit_sparksql_job", {"job_id": "very_long_spark_id_here"}),

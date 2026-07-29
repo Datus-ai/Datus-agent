@@ -40,7 +40,7 @@ class TestGenMetricsAgentic:
         assert "write_file" in tool_names, f"Missing write_file tool, got: {tool_names}"
         assert "glob" in tool_names, f"Missing glob tool, got: {tool_names}"
         assert "check_semantic_object_exists" in tool_names, f"Missing check_semantic_object_exists, got: {tool_names}"
-        assert "end_metric_generation" in tool_names, f"Missing end_metric_generation, got: {tool_names}"
+        assert "publish_metrics" in tool_names, f"Missing publish_metrics, got: {tool_names}"
 
         logger.info(f"Node initialized with {len(node.tools)} tools: {tool_names}")
 
@@ -68,7 +68,7 @@ class TestGenMetricsAgentic:
                 "The frpm.yml semantic model already exists with measures: "
                 "total_enrollment_k12, total_free_meal_count_k12. "
                 "Read frpm.yml first to understand the existing data source, then create the metric. "
-                "Use the end_metric_generation tool when done."
+                "Use the publish_metrics tool when done."
             ),
         )
 
@@ -101,7 +101,7 @@ class TestGenMetricsAgentic:
             user_message=(
                 "Read the frpm.yml data source file and generate a metric for total FRPM count. "
                 "The frpm data source has a measure called total_frpm_count_k12 with SUM aggregation. "
-                "Use the end_metric_generation tool when done."
+                "Use the publish_metrics tool when done."
             ),
         )
 

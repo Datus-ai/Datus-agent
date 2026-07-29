@@ -90,7 +90,7 @@ With MetricFlow as the active semantic layer:
 2. `gen_metrics` writes MetricFlow metric YAML.
 3. `validate_semantic()` validates the full MetricFlow model.
 4. `query_metrics(..., dry_run=True)` verifies generated metrics can compile to SQL.
-5. `end_semantic_model_generation` and `end_metric_generation` sync validated assets to the Knowledge Base.
+5. `publish_semantic_model` and `publish_metrics` sync validated assets to the Knowledge Base.
 
 ## Supported Query Features
 

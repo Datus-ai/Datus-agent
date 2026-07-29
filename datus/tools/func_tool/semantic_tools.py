@@ -266,6 +266,31 @@ def _validation_has_errors(issues: List[dict]) -> bool:
     return any(str(issue.get("severity") or "").lower() == "error" for issue in issues)
 
 
+def _compact_validation_issues(issues: List[dict], *, limit: int = 8, message_limit: int = 600) -> List[dict]:
+    """Keep validation tool output bounded while full details remain in logs."""
+    compact = []
+    for issue in issues[:limit]:
+        message = str(issue.get("message") or "").strip()
+        if len(message) > message_limit:
+            message = f"{message[:message_limit]}... [truncated]"
+        item = {
+            "severity": str(issue.get("severity") or "error").lower(),
+            "message": message,
+        }
+        location = issue.get("location")
+        if location:
+            item["location"] = location
+        compact.append(item)
+    if len(issues) > limit:
+        compact.append(
+            {
+                "severity": "warning",
+                "message": f"{len(issues) - limit} additional validation issue(s) omitted; see logs for details.",
+            }
+        )
+    return compact
+
+
 def _format_validation_error(issues: List[dict]) -> str:
     count = len(issues)
     if count == 0:
@@ -330,6 +355,8 @@ class SemanticTools:
         adapter_type: Optional[str] = None,
         generation_evidence: Optional[GenerationEvidence] = None,
         runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
+        semantic_model_name_provider: Optional[Callable[[], str]] = None,
+        warehouse_dry_run_provider: Optional[Callable[[str], Mapping[str, Any]]] = None,
     ):
         """
         Initialize semantic function tool.
@@ -342,12 +369,18 @@ class SemanticTools:
                 publish-gate evidence.
             runtime_db_context_provider: Optional callback that returns the per-turn datasource/catalog/database/schema
                 context used to initialize the semantic adapter.
+            semantic_model_name_provider: Optional host callback that returns the
+                already-bound OSI semantic model for targeted generation checks.
+            warehouse_dry_run_provider: Optional host callback that validates
+                adapter-compiled SQL against the active warehouse.
         """
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.adapter_type = adapter_type
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
+        self._semantic_model_name_provider = semantic_model_name_provider
+        self._warehouse_dry_run_provider = warehouse_dry_run_provider
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
 
@@ -365,6 +398,15 @@ class SemanticTools:
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
         self._adapter_load_error: Optional[str] = None
         self._adapter_context_key: Optional[Tuple[str, str, str, str, str]] = None
+
+    def _target_semantic_model_name(self) -> str:
+        if self.adapter_type != "osi" or self._semantic_model_name_provider is None:
+            return ""
+        try:
+            return str(self._semantic_model_name_provider() or "").strip()
+        except Exception:
+            logger.debug("Unable to resolve bound OSI semantic model", exc_info=True)
+            return ""
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:
@@ -1074,7 +1116,8 @@ class SemanticTools:
             order_by: Optional list of columns to sort by. Use column name for ascending,
                       prefix with '-' for descending. Examples: ['metric_time__day'] for ascending,
                       ['-message_count'] for descending. Do NOT use 'asc'/'desc' keywords.
-            dry_run: If True, only validate and return query plan
+            dry_run: If True, compile and return the query plan. Live OSI
+                backends also validate the compiled SQL with a warehouse dry-run.
 
         Returns:
             FuncToolResult with query results or explain plan
@@ -1146,7 +1189,6 @@ class SemanticTools:
                 "order_by": order_by or None,
                 "dry_run": dry_run,
             }
-
             result = _run_async(adapter.query_metrics(**adapter_query_kwargs))
 
             # Drop non-JSON-serializable metadata entries (MetricFlow puts a
@@ -1160,6 +1202,29 @@ class SemanticTools:
                     safe_metadata[k] = v
                 except (TypeError, ValueError):
                     continue
+            warehouse_error = None
+            if (
+                dry_run
+                and callable(self._warehouse_dry_run_provider)
+                and not (
+                    isinstance(safe_metadata.get("warehouse_dry_run"), dict)
+                    and safe_metadata["warehouse_dry_run"].get("status") == "success"
+                )
+            ):
+                sql = str(safe_metadata.get("sql") or "").strip()
+                if not sql:
+                    warehouse_evidence: Mapping[str, Any] = {
+                        "status": "failed",
+                        "error": "Semantic adapter dry-run did not return compiled SQL.",
+                    }
+                else:
+                    try:
+                        warehouse_evidence = self._warehouse_dry_run_provider(sql)
+                    except Exception as exc:
+                        warehouse_evidence = {"status": "failed", "error": str(exc)}
+                safe_metadata["warehouse_dry_run"] = dict(warehouse_evidence)
+                if warehouse_evidence.get("status") != "success":
+                    warehouse_error = str(warehouse_evidence.get("error") or "Warehouse EXPLAIN failed.")
             cache_key = None
             if not dry_run:
                 cache_key = self._cache_query_metrics_result(result.columns, result.data)
@@ -1180,7 +1245,8 @@ class SemanticTools:
             }
 
             tool_result = FuncToolResult(
-                success=1,
+                success=0 if warehouse_error else 1,
+                error=f"Warehouse dry-run failed: {warehouse_error}" if warehouse_error else None,
                 result=result_dict,
             )
             if dry_run and self.generation_evidence:
@@ -1335,10 +1401,15 @@ class SemanticTools:
 
             if issues_data:
                 logger.warning(
-                    "Semantic validation issues scope=%s valid=%s effective_valid=%s issues=%s ignored=%s",
+                    "Semantic validation issues scope=%s valid=%s effective_valid=%s issues=%d ignored=%d",
                     scope,
                     validation_result.valid,
                     effective_valid,
+                    len(effective_issues),
+                    len(ignored_issues),
+                )
+                logger.debug(
+                    "Full semantic validation issues=%s ignored=%s",
                     json.dumps(effective_issues, ensure_ascii=False),
                     json.dumps(ignored_issues, ensure_ascii=False),
                 )
@@ -1348,12 +1419,16 @@ class SemanticTools:
                 logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
+            compact_issues = _compact_validation_issues(effective_issues)
+            compact_ignored_issues = _compact_validation_issues(ignored_issues)
             result_payload = {
                 "valid": effective_valid,
-                "issues": effective_issues,
+                "issues": compact_issues,
                 "scope": scope,
                 "checks": checks_list,
-                "ignored_issues": ignored_issues,
+                "ignored_issues": compact_ignored_issues,
+                "issue_count": len(effective_issues),
+                "ignored_issue_count": len(ignored_issues),
             }
             if effective_valid and semantic_model_name:
                 result_payload.update(self._semantic_model_artifact_evidence(semantic_model_name))
@@ -1361,7 +1436,7 @@ class SemanticTools:
             tool_result = FuncToolResult(
                 success=1 if effective_valid else 0,
                 result=result_payload,
-                error=None if effective_valid else _format_validation_error(effective_issues),
+                error=None if effective_valid else _format_validation_error(compact_issues),
             )
             if self.generation_evidence:
                 self.generation_evidence.record_validation_result(tool_result)

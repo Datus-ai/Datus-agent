@@ -4,6 +4,8 @@
 
 """Unit tests for datus.tools.func_tool.generation_evidence."""
 
+import pytest
+
 from datus.tools.func_tool.generation_evidence import (
     GenerationEvidence,
     _deduplicate_preserve_order,
@@ -164,6 +166,14 @@ class TestGenerationEvidence:
             metric_sqls={"revenue": "select 1"},
             metric_queryability_contracts=[{"dimension_hints": ["country"]}],
             metric_aliases={"rev": "revenue"},
+            required_metric_output_ids=["sales:output"],
+            required_query_backed_sql={"query_dataset:sales": "SELECT * FROM sales"},
+            query_backed_dataset_bindings={
+                "query_dataset:sales": {
+                    "semantic_model_file": str(artifact.resolve()),
+                    "dataset_name": "daily_sales",
+                }
+            },
             semantic_kb_sync_passed=True,
             metric_kb_sync_passed=True,
             metric_kb_sync_metrics={"revenue"},
@@ -186,6 +196,14 @@ class TestGenerationEvidence:
             metric_sqls={"revenue": "select 1"},
             metric_queryability_contracts=[{"dimension_hints": ["country"]}],
             metric_aliases={"rev": "revenue"},
+            required_metric_output_ids=["sales:output"],
+            required_query_backed_sql={"query_dataset:sales": "SELECT * FROM sales"},
+            query_backed_dataset_bindings={
+                "query_dataset:sales": {
+                    "semantic_model_file": str(artifact.resolve()),
+                    "dataset_name": "daily_sales",
+                }
+            },
             semantic_kb_sync_passed=True,
             metric_kb_sync_passed=True,
             metric_kb_sync_metrics={"revenue"},
@@ -204,6 +222,46 @@ class TestGenerationEvidence:
         assert ev.metric_kb_sync_metrics == set()
         assert ev.metric_queryability_contracts == [{"dimension_hints": ["country"]}]
         assert ev.metric_aliases == {"rev": "revenue"}
+        assert ev.required_metric_output_ids == ["sales:output"]
+        assert ev.required_query_backed_sql == {"query_dataset:sales": "SELECT * FROM sales"}
+        assert ev.query_backed_dataset_bindings["query_dataset:sales"]["dataset_name"] == "daily_sales"
+
+    def test_records_query_backed_sql_by_requirement_identity(self):
+        ev = GenerationEvidence()
+
+        ev.set_required_query_backed_datasets(
+            [
+                {"requirement_id": "query_dataset:daily_sales", "sql": "SELECT * FROM daily_sales"},
+                {"requirement_id": "query_dataset:empty", "sql": ""},
+            ]
+        )
+
+        assert ev.required_query_backed_sql == {"query_dataset:daily_sales": "SELECT * FROM daily_sales"}
+
+    def test_query_backed_dataset_binding_is_stable_within_request(self, tmp_path):
+        ev = GenerationEvidence()
+
+        ev.bind_query_backed_dataset(
+            "query_dataset:daily_sales",
+            semantic_model_file=tmp_path / "sales.yml",
+            dataset_name="daily_sales",
+        )
+        ev.bind_query_backed_dataset(
+            "query_dataset:daily_sales",
+            semantic_model_file=tmp_path / "sales.yml",
+            dataset_name="daily_sales",
+        )
+
+        assert ev.query_backed_dataset_binding("query_dataset:daily_sales") == {
+            "semantic_model_file": str((tmp_path / "sales.yml").resolve()),
+            "dataset_name": "daily_sales",
+        }
+        with pytest.raises(ValueError, match="already bound"):
+            ev.bind_query_backed_dataset(
+                "query_dataset:daily_sales",
+                semantic_model_file=tmp_path / "sales.yml",
+                dataset_name="daily_sales_v2",
+            )
 
     def test_record_validation_result_success(self):
         ev = GenerationEvidence()
@@ -339,6 +397,52 @@ class TestGenerationEvidence:
         assert "revenue_total" in hints
         alias_rewrites = ev.metric_queryability_contracts[0].get("metric_alias_rewrites", {})
         assert alias_rewrites.get("rev_alias") == "revenue_total"
+
+    def test_output_binding_prevents_english_metric_name_from_bypassing_dimensions(self):
+        output_id = "sql_1:statement_1:output_2:iusernum"
+        ev = GenerationEvidence()
+        ev.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "dimension_hints": ["week_start"],
+                    "metric_hints": ["iusernum"],
+                    "metric_output_ids": [output_id],
+                }
+            ]
+        )
+        ev.bind_metric_output_names([{"output_id": output_id, "metric_name": "first_week_retained_users"}])
+        ev.record_metric_dry_run(
+            ["first_week_retained_users"],
+            {"success": 1, "result": {"metadata": {}}},
+        )
+
+        contract = ev.metric_queryability_contracts[0]
+        assert contract["source_metric_hints"] == ["iusernum"]
+        assert contract["metric_hints"] == ["first_week_retained_users"]
+        assert ev.has_required_queryability_dry_runs(["first_week_retained_users"]) is False
+
+    def test_output_binding_accepts_renamed_metric_with_required_dimensions(self):
+        output_id = "sql_1:statement_1:output_2:iusernum"
+        ev = GenerationEvidence()
+        ev.set_metric_queryability_contracts(
+            [
+                {
+                    "source": "sql_1",
+                    "dimension_hints": ["week_start"],
+                    "metric_hints": ["iusernum"],
+                    "metric_output_ids": [output_id],
+                }
+            ]
+        )
+        ev.bind_metric_output_names([{"output_id": output_id, "metric_name": "first_week_retained_users"}])
+        ev.record_metric_dry_run(
+            ["first_week_retained_users"],
+            {"success": 1, "result": {"metadata": {}}},
+            dimensions=["week_start"],
+        )
+
+        assert ev.has_required_queryability_dry_runs(["first_week_retained_users"]) is True
 
     def test_has_required_queryability_dry_runs_no_contracts(self):
         ev = GenerationEvidence()

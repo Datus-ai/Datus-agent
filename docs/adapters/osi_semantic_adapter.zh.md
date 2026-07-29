@@ -113,7 +113,7 @@ semantic_model:
 - dataset 使用 OSI core 的 `fields`，不是 MetricFlow 的 `dimensions`。
 - dataset `source` 是表名字符串，不是 `{table: ...}`。
 - **字段角色由结构决定。** 带 `dimension:` 块的 field 是可用于分组/筛选的维度；不带块的 field 是行级表达式,用于记录列语义并支撑 metric 表达式。只被指标聚合的列（余额、金额、预计算比率）声明为不带块的普通 field,`get_dimensions` 不会把它们列为维度。字段级 `type` hint 不属于 authoring 契约。
-- **物理主键和逻辑唯一键使用不同证据。** 只有源元数据或明确数据契约声明时才写 `primary_key`。历史 JOIN 列只能作为候选键；必须用 `validate_semantic_key_candidate` 对完整、有序的候选列做全表校验，且所有分量无 NULL、无重复组，才能将其作为一项写入 `unique_keys`。
+- **物理主键和逻辑唯一键使用不同证据。** 只有源元数据或明确数据契约声明时才写 `primary_key`。JOIN 列只能作为候选键；把本次确实要使用的完整、有序候选列统一提交给 `validate_semantic_key_candidates` 做批量全表校验，且对应候选的所有分量无 NULL、无重复组，才能将其作为一项写入 `unique_keys`。
 - 复合主键包含时间维度列（月度快照表）是合法的：编译器在 lowering 时保留时间维度并自动消解 identifier 冲突。
 - 时间字段用 `dimension.is_time: true` 标记，Datus 的 `time_granularity` hint 写进 `custom_extensions`。
 - 关系写在 semantic model 对象的 `relationships` 下，不要写进 dataset。
@@ -264,7 +264,7 @@ OSI 模式下，Datus 在发布前会做硬性校验：
 1. `validate_semantic(scope="semantic_model")` 校验语义模型。
 2. `validate_semantic(scope="all")` 校验完整语义层。
 3. `query_metrics(..., dry_run=True)` 对生成的指标做 SQL dry-run。
-4. `end_semantic_model_generation` / `end_metric_generation` 把 OSI semantic objects 和 metrics 同步到 Knowledge Base。
+4. `publish_semantic_model` / `publish_metrics` 把 OSI semantic objects 和 metrics 同步到 Knowledge Base。
 
 如果 validation 或 dry-run 失败，Datus 不会发布该指标到 Knowledge Base。这样 `ask_metrics` 只会查询已经通过语义层验证的指标。
 

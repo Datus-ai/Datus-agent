@@ -60,7 +60,7 @@ LIMIT 100
 - `validate_semantic()` 校验语义模型和指标 YAML。
 - `query_metrics(..., dry_run=True)` 确认配置的 semantic adapter 能为生成的指标编译 SQL。
 
-两项检查都通过后，`end_metric_generation` 会自动把指标同步到知识库。
+两项检查都通过后，`publish_metrics` 会自动把指标同步到知识库。
 
 ## 配置
 

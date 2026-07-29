@@ -4,7 +4,10 @@
 """Unit tests for datus/tools/func_tool/semantic_discovery_tools.py"""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
@@ -23,14 +26,160 @@ def _make_db_tool(agent_config=None, sub_agent_name="test_agent"):
 
 
 def _make_tools(
-    db_tool: MagicMock | None = None, enable_semantic_model_profiler: bool = False
+    db_tool: MagicMock | None = None,
+    enable_semantic_model_profiler: bool = False,
+    source_sql_provider=None,
 ) -> SemanticDiscoveryTools:
     if db_tool is None:
         db_tool = _make_db_tool()
     return SemanticDiscoveryTools(
         db_tool=db_tool,
         enable_semantic_model_profiler=enable_semantic_model_profiler,
+        source_sql_provider=source_sql_provider,
     )
+
+
+# ---------------------------------------------------------------------------
+# Batched semantic source discovery
+# ---------------------------------------------------------------------------
+
+
+class TestInspectSemanticSources:
+    def test_combines_schema_relationship_and_request_sql_usage_in_one_call(self):
+        db_tool = _make_db_tool()
+
+        def ddl(table, *_args):
+            definitions = {
+                "orders": (
+                    "CREATE TABLE orders (id INT, customer_id INT, amount DECIMAL, "
+                    "FOREIGN KEY (customer_id) REFERENCES customers(id))"
+                ),
+                "customers": "CREATE TABLE customers (id INT, region VARCHAR)",
+            }
+            return FuncToolResult(success=1, result={"definition": definitions[table]})
+
+        def schema(table, *_args):
+            columns = {
+                "orders": [
+                    {"name": "id", "type": "INT"},
+                    {"name": "customer_id", "type": "INT"},
+                    {"name": "amount", "type": "DECIMAL"},
+                ],
+                "customers": [
+                    {"name": "id", "type": "INT"},
+                    {"name": "region", "type": "VARCHAR"},
+                ],
+            }
+            return FuncToolResult(success=1, result={"columns": columns[table]})
+
+        db_tool.get_table_ddl.side_effect = ddl
+        db_tool.describe_table.side_effect = schema
+        tools = _make_tools(
+            db_tool,
+            source_sql_provider=lambda: [
+                {
+                    "name": "revenue_by_region",
+                    "sql": (
+                        "SELECT c.region, SUM(o.amount) AS revenue "
+                        "FROM orders o JOIN customers c ON o.customer_id = c.id "
+                        "GROUP BY c.region"
+                    ),
+                }
+            ],
+        )
+
+        result = tools.inspect_semantic_sources(["orders", "customers"])
+
+        assert result.success == 1
+        assert [table["table_name"] for table in result.result["tables"]] == ["orders", "customers"]
+        assert result.result["source_sql_count"] == 1
+        assert len(result.result["relationships"]) == 1
+        assert result.result["relationships"][0]["evidence"] == "foreign_key"
+        orders = result.result["tables"][0]
+        customers = result.result["tables"][1]
+        assert orders["sql_usage"]["field_usage_statistics"]["amount"]["aggregate_count"] == 1
+        assert customers["sql_usage"]["field_usage_statistics"]["region"]["group_by_count"] == 1
+        assert db_tool.get_table_ddl.call_count == 2
+        assert db_tool.describe_table.call_count == 2
+
+    def test_reports_partial_table_inspection_without_repeating_calls(self):
+        db_tool = _make_db_tool()
+        db_tool.get_table_ddl.return_value = FuncToolResult(success=0, error="DDL unavailable")
+        db_tool.describe_table.return_value = FuncToolResult(
+            success=1,
+            result={"columns": [{"name": "id", "type": "INT"}]},
+        )
+
+        result = _make_tools(db_tool).inspect_semantic_sources(["orders", "orders"])
+
+        assert result.success == 1
+        assert len(result.result["tables"]) == 1
+        assert result.result["tables"][0]["ddl_error"] == "DDL unavailable"
+        db_tool.get_table_ddl.assert_called_once()
+        db_tool.describe_table.assert_called_once()
+
+    def test_rejects_empty_table_scope(self):
+        result = _make_tools().inspect_semantic_sources([])
+
+        assert result.success == 0
+        assert "at least one" in result.error
+
+
+class TestValidateSemanticKeyCandidatesBatch:
+    def test_verifies_multiple_candidates_in_one_tool_call(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(success=1, result={"compressed_data": "row_count,null_key_rows\n12,0\n"}),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "duplicate_group_count,duplicate_row_count\n0,0\n"},
+            ),
+            FuncToolResult(success=1, result={"compressed_data": "row_count,null_key_rows\n8,1\n"}),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "duplicate_group_count,duplicate_row_count\n0,0\n"},
+            ),
+        ]
+
+        result = _make_tools(db_tool).validate_semantic_key_candidates(
+            [
+                {"table_name": "customers", "columns": ["customer_id"]},
+                {"table_name": "stores", "columns": ["tenant_id", "store_id"]},
+            ]
+        )
+
+        assert result.success == 1
+        assert len(result.result["validations"]) == 2
+        assert result.result["validations"][0]["is_valid_logical_key"] is True
+        assert result.result["validations"][1]["is_valid_logical_key"] is False
+        assert db_tool.read_query.call_count == 4
+
+    def test_deduplicates_identical_candidates(self):
+        db_tool = _make_db_tool()
+        db_tool.read_query.side_effect = [
+            FuncToolResult(success=1, result={"compressed_data": "row_count,null_key_rows\n12,0\n"}),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "duplicate_group_count,duplicate_row_count\n0,0\n"},
+            ),
+        ]
+
+        result = _make_tools(db_tool).validate_semantic_key_candidates(
+            [
+                {"table_name": "customers", "columns": ["customer_id"]},
+                {"table_name": "CUSTOMERS", "columns": ["CUSTOMER_ID"]},
+            ]
+        )
+
+        assert result.success == 1
+        assert len(result.result["validations"]) == 1
+        assert db_tool.read_query.call_count == 2
+
+    def test_requires_at_least_one_candidate(self):
+        result = _make_tools().validate_semantic_key_candidates([])
+
+        assert result.success == 0
+        assert "Provide every" in result.error
 
 
 # ---------------------------------------------------------------------------
@@ -896,12 +1045,56 @@ class TestProfileSemanticModelEvidence:
 
 
 # ---------------------------------------------------------------------------
-# analyze_metric_candidates_from_history
+# Internal metric-candidate analyzer
 # ---------------------------------------------------------------------------
 
 
-class TestAnalyzeMetricCandidatesFromHistory:
-    def test_available_tools_without_db_exposes_only_history_analyzer(self):
+class TestMetricCandidateAnalyzer:
+    def test_parser_tries_configured_datasource_dialect_first(self, monkeypatch):
+        import sqlglot
+
+        calls = []
+        original_parse = sqlglot.parse
+
+        def record_parse(sql, read=None):
+            calls.append(read)
+            return original_parse(sql)
+
+        monkeypatch.setattr(sqlglot, "parse", record_parse)
+        tools = SemanticDiscoveryTools(
+            agent_config=SimpleNamespace(
+                current_datasource="analytics",
+                current_db_config=lambda _name: SimpleNamespace(type="starrocks"),
+            )
+        )
+
+        tools._parse_sql("SELECT 1")
+
+        assert calls == ["starrocks"]
+
+    def test_parser_uses_datasource_type_instead_of_connection_name(self, monkeypatch):
+        import sqlglot
+
+        calls = []
+        original_parse = sqlglot.parse
+
+        def record_parse(sql, read=None):
+            calls.append(read)
+            return original_parse(sql)
+
+        monkeypatch.setattr(sqlglot, "parse", record_parse)
+        tools = SemanticDiscoveryTools(
+            agent_config=SimpleNamespace(
+                current_datasource="warehouse_prod",
+                current_db_config=lambda _name: SimpleNamespace(type="mysql"),
+            )
+        )
+
+        tools._parse_sql("SELECT 1")
+
+        assert calls == ["mysql"]
+
+    def test_available_tools_without_db_is_empty(self):
         tools = SemanticDiscoveryTools(
             db_tool=None,
             agent_config=MagicMock(),
@@ -910,7 +1103,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
         tool_names = {tool.name for tool in tools.available_tools()}
 
-        assert tool_names == {"analyze_metric_candidates_from_history"}
+        assert tool_names == set()
 
     def test_available_tools_without_db_omits_enabled_profiler(self):
         tools = SemanticDiscoveryTools(
@@ -920,26 +1113,24 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
         tool_names = {tool.name for tool in tools.available_tools()}
 
-        assert tool_names == {"analyze_metric_candidates_from_history"}
+        assert tool_names == set()
 
     def test_history_analyzer_accepts_direct_sql_without_db(self):
         tools = SemanticDiscoveryTools(db_tool=None)
 
-        result = tools.analyze_metric_candidates_from_history(sql_queries=["SELECT SUM(amount) AS revenue FROM orders"])
+        result = tools._analyze_metric_candidates(sql_queries=["SELECT SUM(amount) AS revenue FROM orders"])
 
         assert result.success == 1
         assert [candidate["name"] for candidate in result.result["metric_candidates"]] == ["revenue"]
 
-    def test_available_tools_includes_metric_candidate_mining(self):
+    def test_available_tools_omits_internal_metric_candidate_analyzer(self):
         tools = _make_tools()
         tool_names = {tool.name for tool in tools.available_tools()}
-        assert {
-            "analyze_table_relationships",
-            "validate_semantic_key_candidate",
-            "get_multiple_tables_ddl",
-            "analyze_column_usage_patterns",
-            "analyze_metric_candidates_from_history",
-        }.issubset(tool_names)
+        assert tool_names == {
+            "inspect_semantic_sources",
+            "validate_semantic_key_candidates",
+        }
+        assert "_analyze_metric_candidates" not in tool_names
         assert "profile_semantic_model_evidence" not in tool_names
 
     def test_available_tools_includes_profiler_when_enabled(self):
@@ -949,7 +1140,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_ratio_candidate_preserves_base_measures(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT dt, SUM(paid_amount) / COUNT(DISTINCT user_id) AS paid_arppu
@@ -975,7 +1166,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_expr_candidate_for_measure_expression(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT (SUM(revenue) - SUM(cost)) / SUM(revenue) AS gross_margin_rate
@@ -993,7 +1184,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_derived_candidate_for_existing_metric_expression(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT revenue / ad_spend AS roas FROM metric_table"],
             existing_metric_catalog_json=(
                 '[{"name": "revenue", "type": "measure_proxy", "subject_path": "finance"}, '
@@ -1013,7 +1204,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_existing_metric_passthrough_is_identity_reference_not_derived_candidate(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT revenue AS revenue FROM metric_table"],
             existing_metric_catalog_json='[{"name": "revenue", "type": "measure_proxy"}]',
         )
@@ -1041,14 +1232,14 @@ class TestAnalyzeMetricCandidatesFromHistory:
                 {"sql": "SELECT SUM(cost) AS cost FROM orders"},
             ]
 
-            result = tools.analyze_metric_candidates_from_history(query_text="orders")
+            result = tools._analyze_metric_candidates(query_text="orders")
 
         assert result.success == 1
         assert {candidate["name"] for candidate in result.result["metric_candidates"]} == {"revenue", "cost"}
 
     def test_cumulative_candidate_for_window_expression(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT dt, SUM(revenue) OVER (ORDER BY dt ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS rolling_7d_revenue
@@ -1106,7 +1297,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_window_aggregate_candidate_resolves_cte_base_metric(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly AS (
@@ -1164,7 +1355,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_lag_period_aggregation_becomes_fixed_period_metrics(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1235,7 +1426,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_monthly_order_count_generates_previous_month_and_delta_metrics(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_entries_json=json.dumps(
                 [
                     {
@@ -1299,7 +1490,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_inline_lag_metric_math_uses_source_time_grain_context(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1339,7 +1530,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_inline_lag_aliases_do_not_leak_to_later_plain_columns(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1378,7 +1569,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_lag_percent_change_becomes_fixed_period_metric(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1423,7 +1614,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_lag_ratio_becomes_fixed_period_metric(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1467,7 +1658,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_lag_with_explicit_offset_count_sets_offset_window(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1503,7 +1694,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_period_shift_aliases_are_scoped_to_source_select(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH monthly_orders AS (
@@ -1561,7 +1752,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_conditional_aggregation_keeps_case_measure_evidence(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS paid_revenue
@@ -1576,7 +1767,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_filter_only_sql_becomes_non_metric_evidence(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT * FROM users WHERE is_test = 0 AND country = 'US'"]
         )
 
@@ -1587,7 +1778,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_raw_ratio_with_rate_context_becomes_llm_review_candidate(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_entries_json=json.dumps(
                 [
                     {
@@ -1625,7 +1816,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_detail_success_story_keeps_detail_sql_non_metric(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_entries_json=json.dumps(
                 [
                     {
@@ -1663,7 +1854,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_raw_division_without_rate_context_becomes_llm_review_candidate(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT price / quantity FROM order_lines WHERE quantity > 0"]
         )
 
@@ -1677,7 +1868,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_percentage_scaled_raw_ratio_becomes_llm_review_candidate(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT paid_users * 100.0 / total_users AS paid_user_pct FROM cohorts"]
         )
 
@@ -1690,7 +1881,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_wrapped_raw_ratio_becomes_llm_review_candidate(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT ROUND(CAST(a / NULLIF(b, 0) AS DOUBLE), 2) AS ratio_value FROM t"]
         )
 
@@ -1702,7 +1893,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_count_star_with_distinct_business_count_is_support_measure(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT COUNT(*) AS order_row_count,
@@ -1722,7 +1913,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_count_star_without_distinct_business_count_stays_direct_metric(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT COUNT(*) AS order_count, SUM(amount) AS revenue FROM orders"]
         )
 
@@ -1735,7 +1926,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_repeated_aliases_are_merged(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 "SELECT SUM(amount) AS revenue FROM orders",
                 "SELECT SUM(amount) AS revenue FROM payments",
@@ -1749,7 +1940,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_same_alias_with_different_formulas_are_not_merged(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 "SELECT SUM(amount) AS revenue FROM orders",
                 "SELECT COUNT(*) AS revenue FROM orders",
@@ -1805,7 +1996,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
             WHERE rank_no <= 10
             GROUP BY store_id
         """
-        result = tools.analyze_metric_candidates_from_history(sql_queries=[ranked_sql, ranked_sql])
+        result = tools._analyze_metric_candidates(sql_queries=[ranked_sql, ranked_sql])
 
         assert result.result["query_classification"] == "metric_plus_derived_datasource"
         assert result.result["metric_candidates"][0]["source_sql_name"] == "sql_1, sql_2"
@@ -1814,7 +2005,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_invalid_sql_does_not_block_other_queries(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 "SELECT FROM",
                 "SELECT SUM(amount) AS revenue FROM orders",
@@ -1826,7 +2017,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_mysql_dialect_fallback_parses_backtick_aliases(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT COUNT(DISTINCT `user_id`) AS `***` FROM `orders`"]
         )
 
@@ -1839,7 +2030,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_ranked_window_blocks_direct_metric_and_recommends_datasource(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH f_data AS (
@@ -1909,7 +2100,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_inline_ranked_subquery_blocks_direct_metric_and_recommends_datasource(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT store_id, COUNT(*) AS time_count
@@ -1940,7 +2131,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_row_number_main_entity_distribution_recommends_datasource(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 WITH customer_total_amount_per_category AS (
@@ -1977,7 +2168,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_simple_aggregation_stays_direct_metric(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=["SELECT dt, SUM(amount) AS revenue FROM orders GROUP BY dt"]
         )
 
@@ -1985,10 +2176,315 @@ class TestAnalyzeMetricCandidatesFromHistory:
         assert result.result["derived_datasource_recommendations"] == []
         assert result.result["blocked_direct_metric_candidates"] == []
         assert result.result["direct_metric_candidates"][0]["name"] == "revenue"
+        assert result.result["queryability_contracts"] == [
+            {
+                "source": "sql_1",
+                "dimension_hints": ["dt"],
+                "metric_hints": ["revenue"],
+                "metric_output_ids": ["sql_1:statement_1:output_2:revenue"],
+                "contract_source": "final_group_by",
+                "time_group_hints": [
+                    {
+                        "alias": "dt",
+                        "base_expr": "dt",
+                        "grain": "day",
+                    }
+                ],
+            }
+        ]
+
+    def test_queryability_contract_reuses_scope_lineage_for_cte_aliases(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH prepared AS (
+                    SELECT event_date AS activity_date,
+                           raw_channel AS login_channel,
+                           user_id
+                    FROM activity_events
+                )
+                SELECT activity_date AS metric_time__day,
+                       login_channel,
+                       COUNT(DISTINCT user_id) AS active_user_count
+                FROM prepared
+                GROUP BY activity_date, login_channel
+                """
+            ]
+        )
+
+        assert result.result["queryability_contracts"] == [
+            {
+                "source": "sql_1",
+                "dimension_hints": ["metric_time__day", "login_channel"],
+                "metric_hints": ["active_user_count"],
+                "metric_output_ids": ["sql_1:statement_1:output_3:active_user_count"],
+                "contract_source": "final_group_by",
+                "dimension_expr_hints": [
+                    {
+                        "alias": "login_channel",
+                        "expr": "raw_channel",
+                        "column": "raw_channel",
+                    }
+                ],
+                "time_group_hints": [
+                    {
+                        "alias": "metric_time__day",
+                        "base_expr": "event_date",
+                        "grain": "day",
+                    }
+                ],
+            }
+        ]
+
+    def test_positional_window_does_not_hide_directly_lowerable_metric_output(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                SELECT
+                    region,
+                    SUM(amount) AS revenue,
+                    ROW_NUMBER() OVER (ORDER BY SUM(amount) DESC) AS ranking
+                FROM orders
+                GROUP BY region
+                """
+            ]
+        )
+
+        assert [
+            (item["output_name"], item["output_role"], item["lowering_status"])
+            for item in result.result["output_contracts"]
+        ] == [
+            ("region", "dimension", "dimension"),
+            ("revenue", "metric", "direct"),
+            ("ranking", "non_metric", "non_metric"),
+        ]
+        assert [(item["preferred_name"], item["target_mode"]) for item in result.result["metric_requirements"]] == [
+            ("revenue", "direct_metric")
+        ]
+        assert result.result["dataset_requirements"] == []
+
+    def test_top_level_union_is_preserved_as_query_backed_output_contract(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                SELECT dt, SUM(amount) AS revenue
+                FROM current_orders
+                GROUP BY dt
+                UNION ALL
+                SELECT dt, SUM(amount) AS revenue
+                FROM archived_orders
+                GROUP BY dt
+                """
+            ]
+        )
+
+        assert [(item["output_name"], item["output_role"]) for item in result.result["output_contracts"]] == [
+            ("dt", "dimension"),
+            ("revenue", "metric"),
+        ]
+        assert result.result["metric_requirements"][0]["target_mode"] == "query_backed_metric"
+        assert result.result["dataset_requirements"][0]["output_grain"] == ["dt"]
+        assert result.result["queryability_contracts"][0]["contract_source"] == "query_backed_output_grain"
+
+    def test_final_group_key_is_not_promoted_from_upstream_cte_aggregate(self):
+        tools = _make_tools()
+        sql = """
+            WITH daily AS (
+                SELECT dt, SUM(amount) AS revenue
+                FROM orders
+                GROUP BY dt
+            )
+            SELECT revenue, COUNT(*) AS day_count
+            FROM daily
+            GROUP BY revenue
+        """
+
+        result = tools._analyze_metric_candidates(
+            sql_entries_json=json.dumps(
+                [
+                    {
+                        "sql": sql,
+                        "question": "Count grouped days for each daily revenue value",
+                    }
+                ]
+            )
+        )
+
+        assert [item["output_role"] for item in result.result["output_contracts"]] == [
+            "dimension",
+            "metric",
+        ]
+        assert [item["preferred_name"] for item in result.result["metric_requirements"]] == ["day_count"]
+        assert result.result["query_classification"] == "query_backed_then_metric"
+        dataset_requirement = result.result["dataset_requirements"][0]
+        assert dataset_requirement["sql"] == sql
+        assert dataset_requirement["question"] == "Count grouped days for each daily revenue value"
+        assert dataset_requirement["output_grain"] == ["revenue"]
+        assert dataset_requirement["requirement_id"].startswith("query_dataset:")
+        assert dataset_requirement["suggested_name"] == "day_count_query_dataset"
+        metric_requirement = result.result["metric_requirements"][0]
+        assert metric_requirement["dataset_requirement_id"] == dataset_requirement["requirement_id"]
+        assert metric_requirement["dataset_name_hint"] == dataset_requirement["suggested_name"]
+
+    @pytest.mark.parametrize("group_by", ["1", "revenue_bucket"])
+    def test_final_group_key_supports_ordinal_and_alias_grouping(self, group_by):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                f"""
+                WITH daily AS (
+                    SELECT order_date, SUM(amount) AS revenue
+                    FROM orders
+                    GROUP BY order_date
+                )
+                SELECT revenue AS revenue_bucket, COUNT(*) AS day_count
+                FROM daily
+                GROUP BY {group_by}
+                """
+            ]
+        )
+
+        assert [item["output_role"] for item in result.result["output_contracts"]] == [
+            "dimension",
+            "metric",
+        ]
+        assert [item["preferred_name"] for item in result.result["metric_requirements"]] == ["day_count"]
+
+    def test_query_backed_dataset_identity_uses_exact_sql_and_keeps_business_name_hint(self):
+        tools = _make_tools()
+        first_sql = """
+            WITH daily AS (
+                SELECT dt, SUM(amount) AS revenue FROM orders GROUP BY dt
+            )
+            SELECT revenue, COUNT(*) AS day_count FROM daily GROUP BY revenue
+        """
+        second_sql = first_sql.replace("orders", "archived_orders")
+
+        first = tools._analyze_metric_candidates(
+            sql_entries_json=json.dumps([{"name": "active_order_revenue_distribution", "sql": first_sql}])
+        )
+        second = tools._analyze_metric_candidates(
+            sql_entries_json=json.dumps([{"name": "archived_order_revenue_distribution", "sql": second_sql}])
+        )
+
+        first_requirement = first.result["dataset_requirements"][0]
+        second_requirement = second.result["dataset_requirements"][0]
+        assert first_requirement["source_sql_name"] == "active_order_revenue_distribution"
+        assert second_requirement["source_sql_name"] == "archived_order_revenue_distribution"
+        assert first_requirement["requirement_id"] != second_requirement["requirement_id"]
+        assert first_requirement["suggested_name"] == "active_order_revenue_distribution_query_dataset"
+        assert second_requirement["suggested_name"] == "archived_order_revenue_distribution_query_dataset"
+        assert first_requirement["sql_fingerprint"] not in first_requirement["suggested_name"]
+
+        same_sql_different_name = tools._analyze_metric_candidates(
+            sql_entries_json=json.dumps([{"name": "renamed_distribution", "sql": first_sql}])
+        )
+        renamed_requirement = same_sql_different_name.result["dataset_requirements"][0]
+        assert renamed_requirement["requirement_id"] == first_requirement["requirement_id"]
+        assert renamed_requirement["suggested_name"] == "renamed_distribution_query_dataset"
+
+    def test_inline_row_flags_can_stay_direct_metrics(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                SELECT
+                    SUM(is_paid) AS paid_count,
+                    SUM(is_new) AS new_count
+                FROM (
+                    SELECT
+                        CASE WHEN status = 'paid' THEN 1 ELSE 0 END AS is_paid,
+                        CASE WHEN created_at >= CURRENT_DATE THEN 1 ELSE 0 END AS is_new
+                    FROM orders
+                ) flags
+                """
+            ]
+        )
+
+        assert result.result["query_classification"] == "direct_metric"
+        assert result.result["dataset_requirements"] == []
+        assert [item["target_mode"] for item in result.result["metric_requirements"]] == [
+            "direct_metric",
+            "direct_metric",
+        ]
+
+    def test_passthrough_union_of_aligned_aggregates_preserves_query_boundary(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                SELECT part_dt, metric_value
+                FROM (
+                    SELECT dt AS part_dt, SUM(amount) AS metric_value
+                    FROM current_orders
+                    GROUP BY dt
+                    UNION ALL
+                    SELECT dt AS part_dt, SUM(amount) AS metric_value
+                    FROM archived_orders
+                    GROUP BY dt
+                ) combined
+                """
+            ]
+        )
+
+        assert result.result["query_classification"] == "query_backed_then_metric"
+        assert len(result.result["dataset_requirements"]) == 1
+        assert result.result["dataset_requirements"][0]["modeling_mode"] == "query_backed"
+        assert result.result["metric_requirements"][0]["preferred_name"] == "metric_value"
+        assert result.result["metric_requirements"][0]["target_mode"] == "query_backed_metric"
+
+    def test_cte_star_expands_final_metric_outputs(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH daily AS (
+                    SELECT dt, SUM(amount) AS revenue
+                    FROM orders
+                    GROUP BY dt
+                )
+                SELECT * FROM daily
+                """
+            ]
+        )
+
+        assert [item["output_name"] for item in result.result["output_contracts"]] == ["dt", "revenue"]
+        assert [item["output_role"] for item in result.result["output_contracts"]] == ["dimension", "metric"]
+        assert [item["preferred_name"] for item in result.result["metric_requirements"]] == ["revenue"]
+        assert result.result["dataset_requirements"][0]["output_grain"] == ["dt"]
+
+    def test_repeated_aliases_keep_distinct_stable_output_ids(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_entries_json=json.dumps(
+                [
+                    {
+                        "name": "sql_a",
+                        "source_context_id": "sales:sql_1:case",
+                        "sql": "SELECT SUM(amount) AS total FROM current_orders",
+                    },
+                    {
+                        "name": "sql_b",
+                        "source_context_id": "sales:sql_2:case",
+                        "sql": "SELECT SUM(amount) AS total FROM archived_orders",
+                    },
+                ]
+            )
+        )
+
+        requirements = result.result["metric_requirements"]
+        assert [item["preferred_name"] for item in requirements] == ["total", "total"]
+        assert [item["output_id"] for item in requirements] == [
+            "sql_a:statement_1:output_1:total",
+            "sql_b:statement_1:output_1:total",
+        ]
 
     def test_literal_values_and_time_grain_are_reported_as_preservation_evidence(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT
@@ -2034,7 +2530,7 @@ class TestAnalyzeMetricCandidatesFromHistory:
 
     def test_date_trunc_time_grain_uses_projection_unit(self):
         tools = _make_tools()
-        result = tools.analyze_metric_candidates_from_history(
+        result = tools._analyze_metric_candidates(
             sql_queries=[
                 """
                 SELECT

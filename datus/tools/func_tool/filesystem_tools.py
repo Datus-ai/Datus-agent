@@ -82,7 +82,7 @@ class FilesystemFuncTool(BaseTool):
         strict: bool = False,
         session_data_dir: Optional[str] = None,
         path_allowlist: Optional[PathAllowlist] = None,
-        mutation_callback: Optional[Callable[[], None]] = None,
+        mutation_callback: Optional[Callable[..., None]] = None,
         mutation_guard: Optional[Callable[[Path], None]] = None,
         **kwargs,
     ):
@@ -120,9 +120,12 @@ class FilesystemFuncTool(BaseTool):
         self._mutation_callback = mutation_callback
         self._mutation_guard = mutation_guard
 
-    def _notify_mutation(self) -> None:
+    def _notify_mutation(self, path: Optional[Path] = None) -> None:
         if self._mutation_callback is not None:
-            self._mutation_callback()
+            try:
+                self._mutation_callback(path)
+            except TypeError:
+                self._mutation_callback()
 
     def _mutation_guard_error(self, path: Path) -> Optional[FuncToolResult]:
         if self._mutation_guard is None:
@@ -370,7 +373,7 @@ class FilesystemFuncTool(BaseTool):
             try:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_text(content, encoding="utf-8")
-                self._notify_mutation()
+                self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File written successfully: {resolved.display}")
             except PermissionError:
                 return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
@@ -430,7 +433,7 @@ class FilesystemFuncTool(BaseTool):
 
             try:
                 target_path.unlink()
-                self._notify_mutation()
+                self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File deleted successfully: {resolved.display}")
             except PermissionError:
                 return FuncToolResult(success=0, error=f"Permission denied: {resolved.display}")
@@ -488,7 +491,7 @@ class FilesystemFuncTool(BaseTool):
                     return FuncToolResult(success=0, error=error)
 
                 target_path.write_text(new_content, encoding="utf-8")
-                self._notify_mutation()
+                self._notify_mutation(target_path)
                 return FuncToolResult(result=f"File edited successfully: {resolved.display}")
             except UnicodeDecodeError:
                 return FuncToolResult(success=0, error=f"Cannot edit binary file: {resolved.display}")

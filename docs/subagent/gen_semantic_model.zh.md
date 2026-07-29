@@ -40,7 +40,7 @@
 
 ### 验证和同步
 
-发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`end_semantic_model_generation` 会自动把语义模型同步到知识库。
+发布前，agent 会调用 `validate_semantic()`。如果验证失败，会修改 YAML 并重试；验证通过后，`publish_semantic_model` 会自动把语义模型同步到知识库。
 
 ## 配置
 

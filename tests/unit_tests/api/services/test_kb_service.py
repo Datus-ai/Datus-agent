@@ -447,6 +447,26 @@ class TestKbServiceInitSemanticAndMetrics:
             build_mode="incremental",
         )
 
+    def test_init_metrics_reports_partial_batch_success(self, real_agent_config):
+        svc = KbService(agent_config=real_agent_config)
+        args = KbService._build_args(
+            BootstrapKbInput(components=["metrics"], strategy="incremental", success_story="stories.csv"),
+            str(real_agent_config.home),
+        )
+
+        with (
+            patch("datus.api.services.kb_service.MetricRAG") as mock_rag_cls,
+            patch(
+                "datus.api.services.kb_service.init_success_story_metrics",
+                return_value=(True, "one metrics batch failed", {}),
+            ),
+        ):
+            mock_rag_cls.return_value.get_metrics_size.return_value = 5
+            result = svc._init_metrics(real_agent_config, "incremental", "", args, subject_tree=None, emit=None)
+
+        assert result["status"] == "partial"
+        assert result["error"] == "one metrics batch failed"
+
 
 class TestKbServiceRunComponent:
     """Tests for _run_component dispatch."""

@@ -1715,15 +1715,14 @@ class TestBuildNodeInputBuiltIn:
         assert result.user_message == "orders table"
         assert result.database is None
 
-    def test_semantic_model_node_inherits_source_queries_separately_from_reference_sql(self, task_tool):
+    def test_semantic_model_node_receives_raw_task_and_inherited_at_context(self, task_tool):
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.schemas.node_models import ReferenceSql
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
 
         parent = MagicMock()
         parent.input = SemanticNodeInput(
             user_message="Generate metrics",
-            source_queries=[SourceQueryEvidence(source_sql_name="sql_1", sql="SELECT COUNT(*) FROM sales.orders")],
             reference_sql=[ReferenceSql(name="example", sql="SELECT SUM(amount) FROM finance.payments")],
         )
         task_tool.set_parent_node(parent)
@@ -1731,9 +1730,9 @@ class TestBuildNodeInputBuiltIn:
         mock_node = Mock(spec=GenSemanticModelAgenticNode)
         result = task_tool._build_node_input(mock_node, "Create the prerequisite model")
 
-        assert result.source_queries == parent.input.source_queries
+        assert result.user_message == "Create the prerequisite model"
         assert result.reference_sql == parent.input.reference_sql
-        assert result.source_queries[0].sql != result.reference_sql[0].sql
+        assert not hasattr(result, "source_queries")
 
     def test_metrics_node_input(self, task_tool):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

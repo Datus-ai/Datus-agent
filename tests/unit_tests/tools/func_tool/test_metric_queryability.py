@@ -7,6 +7,8 @@
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.tools.func_tool.metric_queryability import (
     extract_metric_queryability_contracts_from_sources,
+    link_queryability_contracts_to_metric_outputs,
+    query_backed_queryability_contracts,
     summarize_queryability_contracts,
 )
 
@@ -59,3 +61,108 @@ class TestExtractMetricQueryabilityContractsFromSources:
         assert contracts[0]["source"] == "sql_9"
         assert contracts[0]["dimension_hints"] == ["region"]
         assert contracts[0]["metric_hints"] == ["revenue"]
+
+    def test_traces_grouped_alias_through_subquery(self):
+        contracts = extract_metric_queryability_contracts_from_sources(
+            [
+                SourceQueryEvidence(
+                    source_sql_name="channel_activity",
+                    sql=(
+                        "SELECT activity_date AS metric_time__day, login_channel, "
+                        "COUNT(DISTINCT user_id) AS active_user_count "
+                        "FROM (SELECT event_date AS activity_date, raw_channel AS login_channel, user_id "
+                        "FROM activity_events) AS metric_source "
+                        "GROUP BY activity_date, login_channel"
+                    ),
+                )
+            ]
+        )
+
+        assert contracts[0]["dimension_expr_hints"] == [
+            {
+                "alias": "login_channel",
+                "expr": "raw_channel",
+                "column": "raw_channel",
+            },
+        ]
+        assert contracts[0]["time_group_hints"] == [
+            {
+                "alias": "metric_time__day",
+                "base_expr": "event_date",
+                "grain": "day",
+            }
+        ]
+
+    def test_traces_grouped_alias_through_cte(self):
+        contracts = extract_metric_queryability_contracts_from_sources(
+            [
+                SourceQueryEvidence(
+                    source_sql_name="regional_sales",
+                    sql=(
+                        "WITH prepared AS ("
+                        "SELECT raw_region AS reporting_region, amount FROM orders"
+                        ") SELECT reporting_region, SUM(amount) AS revenue "
+                        "FROM prepared GROUP BY reporting_region"
+                    ),
+                )
+            ]
+        )
+
+        assert contracts[0]["dimension_expr_hints"] == [
+            {
+                "alias": "reporting_region",
+                "expr": "raw_region",
+                "column": "raw_region",
+            }
+        ]
+
+    def test_links_source_alias_to_stable_metric_output_id(self):
+        contracts = [
+            {
+                "source": "sql_9",
+                "dimension_hints": ["week_start"],
+                "metric_hints": ["iusernum"],
+            }
+        ]
+        requirements = [
+            {
+                "source_sql_name": "sql_9",
+                "preferred_name": "iusernum",
+                "output_id": "sql_9:statement_1:output_2:iusernum",
+            }
+        ]
+
+        linked = link_queryability_contracts_to_metric_outputs(contracts, requirements)
+
+        assert linked[0]["metric_output_ids"] == ["sql_9:statement_1:output_2:iusernum"]
+        assert linked[0]["metric_hints"] == ["iusernum"]
+
+    def test_query_backed_contract_uses_authoritative_final_output_grain(self):
+        output_id = "retention:statement_1:output_4:retained_players"
+        contracts = query_backed_queryability_contracts(
+            {
+                "metric_requirements": [
+                    {
+                        "output_id": output_id,
+                        "preferred_name": "retained_players",
+                    }
+                ],
+                "dataset_requirements": [
+                    {
+                        "source_sql_name": "retention_metrics",
+                        "output_grain": ["gameplay_name", "cohort_date", "retention_day"],
+                        "metric_output_ids": [output_id],
+                    }
+                ],
+            }
+        )
+
+        assert contracts == [
+            {
+                "source": "retention_metrics",
+                "dimension_hints": ["gameplay_name", "cohort_date", "retention_day"],
+                "metric_hints": ["retained_players"],
+                "metric_output_ids": [output_id],
+                "contract_source": "query_backed_output_grain",
+            }
+        ]

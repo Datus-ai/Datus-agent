@@ -659,7 +659,11 @@ class DatasourceService:
                 sync_result = GenerationTools(
                     agent_config=self.agent_config,
                     authoring_format="osi",
-                ).sync_osi_semantic_to_db(semantic_file_path)
+                ).sync_osi_to_db(
+                    semantic_file_path,
+                    include_semantic_objects=True,
+                    include_metrics=False,
+                )
             else:
                 sync_result = GenerationHooks._sync_semantic_to_db(
                     semantic_file_path,

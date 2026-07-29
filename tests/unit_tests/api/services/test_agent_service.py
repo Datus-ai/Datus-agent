@@ -279,13 +279,15 @@ class TestConstants:
             "edit_file",
             "delete_file",
             "upsert_osi_metrics",
+            "upsert_osi_datasets",
             "glob",
             "grep",
         }
         assert introspected == expected_runtime_methods
-        for name in expected_runtime_methods - {"upsert_osi_metrics"}:
+        for name in expected_runtime_methods - {"upsert_osi_metrics", "upsert_osi_datasets"}:
             assert hasattr(FilesystemFuncTool, name), f"FilesystemFuncTool dropped method {name!r}"
         assert hasattr(MetricFilesystemFuncTool, "upsert_osi_metrics")
+        assert hasattr(MetricFilesystemFuncTool, "upsert_osi_datasets")
         # BaseTool framework methods must NOT show up in the catalog.
         for framework_method in ("set_tool_context", "get_actions", "call_action"):
             assert framework_method not in catalog

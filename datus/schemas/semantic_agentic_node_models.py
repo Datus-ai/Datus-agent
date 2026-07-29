@@ -59,13 +59,6 @@ class SemanticNodeInput(AtContextInput):
         default=None,
         description="Dimension tables used by the model; recorded for context but excluded from model naming",
     )
-    source_queries: List[SourceQueryEvidence] = Field(
-        default_factory=list,
-        description=(
-            "Original success-story SQL queries used as authoritative programmatic evidence. "
-            "Unlike reference_sql, these queries are not @Sql context."
-        ),
-    )
     max_turns: Optional[int] = Field(default=None, description="Maximum conversation turns; None uses node config")
     workspace_root: Optional[str] = Field(default=None, description="Root directory path for filesystem MCP server")
     prompt_version: Optional[str] = Field(default=None, description="Version for prompt template")

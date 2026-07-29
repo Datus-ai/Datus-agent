@@ -100,13 +100,6 @@ class TestGenerationHooksInit:
 
 @pytest.mark.asyncio
 class TestOnToolEnd:
-    async def test_routes_end_semantic_model_generation(self, hooks):
-        hooks._handle_end_semantic_model_generation = AsyncMock()
-        tool = MagicMock()
-        tool.name = "end_semantic_model_generation"
-        await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
-        hooks._handle_end_semantic_model_generation.assert_awaited_once_with("result")
-
     async def test_routes_write_file_sql_summary(self, hooks):
         hooks._handle_sql_summary_result = AsyncMock()
         hooks._is_sql_summary_tool_call = MagicMock(return_value=True)
@@ -116,19 +109,18 @@ class TestOnToolEnd:
         hooks._handle_sql_summary_result.assert_awaited_once()
 
     async def test_unrelated_tool_does_nothing(self, hooks):
-        hooks._handle_end_semantic_model_generation = AsyncMock()
         tool = MagicMock()
         tool.name = "some_other_tool"
-        await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
-        hooks._handle_end_semantic_model_generation.assert_not_called()
+        assert await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result") is None
 
     async def test_tool_name_via_dunder_name(self, hooks):
         """Handles tools that use __name__ instead of .name attribute."""
-        hooks._handle_end_semantic_model_generation = AsyncMock()
+        hooks._handle_sql_summary_result = AsyncMock()
+        hooks._is_sql_summary_tool_call = MagicMock(return_value=True)
         tool = MagicMock(spec=[])  # no .name attribute
-        tool.__name__ = "end_semantic_model_generation"
+        tool.__name__ = "write_file"
         await hooks.on_tool_end(MagicMock(), MagicMock(), tool, "result")
-        hooks._handle_end_semantic_model_generation.assert_awaited_once()
+        hooks._handle_sql_summary_result.assert_awaited_once()
 
     async def test_records_validate_semantic_success(self, broker, agent_config):
         evidence = GenerationEvidence()
@@ -185,51 +177,6 @@ class TestStubHooks:
     async def test_on_end(self, hooks):
         result = await hooks.on_end(MagicMock(), MagicMock(), MagicMock())
         assert result is None
-
-
-# ---------------------------------------------------------------------------
-# Tests: _extract_filepaths_from_result
-# ---------------------------------------------------------------------------
-
-
-class TestExtractFilepaths:
-    def test_from_dict_with_files(self, hooks, agent_config):
-        # Absolute paths inside the subject directory pass the containment
-        # check and are returned normpath'd.
-        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
-        paths_in = [str(sem_dir / "a.yaml"), str(sem_dir / "b.yaml")]
-        result = {"result": {"semantic_model_files": paths_in}}
-        paths = hooks._extract_filepaths_from_result(result)
-        assert paths == paths_in
-
-    def test_from_dict_drops_paths_outside_subject(self, hooks):
-        """Absolute paths outside the subject directory must be filtered out."""
-        result = {"result": {"semantic_model_files": ["/etc/passwd", "/a/b.yaml"]}}
-        paths = hooks._extract_filepaths_from_result(result)
-        assert paths == []
-
-    def test_from_dict_no_files(self, hooks):
-        result = {"result": {}}
-        paths = hooks._extract_filepaths_from_result(result)
-        assert paths == []
-
-    def test_from_object_with_result(self, hooks, agent_config):
-        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
-        inside = str(sem_dir / "x.yaml")
-        r = MagicMock()
-        r.result = {"semantic_model_files": [inside]}
-        r.success = True
-        paths = hooks._extract_filepaths_from_result(r)
-        assert paths == [inside]
-
-    def test_from_none_returns_empty(self, hooks):
-        paths = hooks._extract_filepaths_from_result(None)
-        assert paths == []
-
-    def test_dict_with_empty_list(self, hooks):
-        result = {"result": {"semantic_model_files": []}}
-        paths = hooks._extract_filepaths_from_result(result)
-        assert paths == []
 
 
 class TestResolvePath:
@@ -323,14 +270,6 @@ class TestResolvePath:
         h, _ = self._make_hooks(broker, subject=str(subject))
         assert h._resolve_path("leak.yml", "semantic") == ""
 
-    def test_extract_filepaths_resolves_relative_entries(self, broker):
-        h, _ = self._make_hooks(broker)
-        # The relative entry resolves inside subject_dir; the escaping absolute entry
-        # is dropped so downstream processing never sees it.
-        result = {"result": {"semantic_model_files": ["orders.yml", "/abs/customers.yml"]}}
-        paths = h._extract_filepaths_from_result(result)
-        assert paths == ["/ws/semantic_models/orders.yml"]
-
 
 # ---------------------------------------------------------------------------
 # Tests: _process_single_file
@@ -417,56 +356,6 @@ class TestHandleSqlSummaryResult:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _handle_end_semantic_model_generation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestHandleEndSemanticModelGeneration:
-    async def test_failed_tool_result_skips_sync(self, hooks, agent_config):
-        hooks._process_single_file = AsyncMock()
-        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
-        result = FuncToolResult(
-            success=0,
-            error="validate_semantic must pass",
-            result={"semantic_model_files": [str(sem_dir / "a.yaml")]},
-        )
-
-        await hooks._handle_end_semantic_model_generation(result)
-
-        hooks._process_single_file.assert_not_called()
-
-    async def test_already_synced_by_generation_tool_skips_hook_sync(self, hooks):
-        hooks.generation_evidence.semantic_kb_sync_passed = True
-        hooks._extract_filepaths_from_result = MagicMock()
-        hooks._process_single_file = AsyncMock()
-
-        await hooks._handle_end_semantic_model_generation({"result": {"semantic_model_files": ["/tmp/a.yaml"]}})
-
-        hooks._extract_filepaths_from_result.assert_not_called()
-        hooks._process_single_file.assert_not_called()
-
-    async def test_no_file_paths_logs_warning(self, hooks):
-        hooks._process_single_file = AsyncMock()
-        result = {"result": {}}  # no semantic_model_files
-        await hooks._handle_end_semantic_model_generation(result)
-        hooks._process_single_file.assert_not_called()
-
-    async def test_with_file_paths_processes_each(self, hooks, agent_config):
-        hooks._process_single_file = AsyncMock()
-        sem_dir = Path(str(agent_config.path_manager.subject_dir)) / "semantic_models"
-        result = {"result": {"semantic_model_files": [str(sem_dir / "a.yaml"), str(sem_dir / "b.yaml")]}}
-        await hooks._handle_end_semantic_model_generation(result)
-        assert hooks._process_single_file.await_count == 2
-
-    async def test_cancelled_exception_absorbed(self, hooks):
-        hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException)
-        result = {"result": {"semantic_model_files": ["/a.yaml"]}}
-        await hooks._handle_end_semantic_model_generation(result)
-        # Path rejected by sandbox validation — _process_single_file never reached
-        assert hooks._process_single_file.await_count == 0
-
-
 @pytest.fixture
 def hooks_no_config(broker):
     return GenerationHooks(broker=broker, agent_config=None)
@@ -1621,7 +1510,7 @@ metric:
 
 
 class TestSyncSemanticToDbMetricOnlyDiagnostic:
-    """Metric-only syncs (e.g. end_metric_generation) emit a tailored error
+    """Metric-only syncs (e.g. publish_metrics) emit a tailored error
     message when the file has no `metric:` blocks, so the LLM can self-correct
     instead of getting a generic "No valid objects found to sync"."""
 
@@ -1726,91 +1615,6 @@ class TestResolvePathCommonpathValueError:
 
 
 # ---------------------------------------------------------------------------
-# Tests: _handle_end_metric_generation resolves relative paths
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-class TestHandleEndMetricGeneration:
-    async def test_failed_tool_result_skips_sync(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock()
-        hooks._process_single_file = AsyncMock()
-        hooks._process_metric_with_semantic_model = AsyncMock()
-        result = FuncToolResult(
-            success=0,
-            error="query_metrics dry-run must pass",
-            result={"metric_file": "metrics/orders.yml"},
-        )
-
-        await hooks._handle_end_metric_generation(result)
-
-        hooks._extract_metric_generation_result.assert_not_called()
-        hooks._process_single_file.assert_not_called()
-        hooks._process_metric_with_semantic_model.assert_not_called()
-
-    async def test_already_synced_by_generation_tool_skips_hook_sync(self, hooks):
-        hooks.generation_evidence.metric_kb_sync_passed = True
-        hooks._extract_metric_generation_result = MagicMock()
-        hooks._process_single_file = AsyncMock()
-        hooks._process_metric_with_semantic_model = AsyncMock()
-
-        await hooks._handle_end_metric_generation({"result": {"metric_file": "metrics/orders.yml"}})
-
-        hooks._extract_metric_generation_result.assert_not_called()
-        hooks._process_single_file.assert_not_called()
-        hooks._process_metric_with_semantic_model.assert_not_called()
-
-    async def test_missing_metric_file_warns_and_returns(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(return_value=(None, None, {}))
-        hooks._process_single_file = AsyncMock()
-        hooks._process_metric_with_semantic_model = AsyncMock()
-        await hooks._handle_end_metric_generation({"result": {}})
-        hooks._process_single_file.assert_not_awaited()
-        hooks._process_metric_with_semantic_model.assert_not_awaited()
-
-    async def test_resolves_relative_paths_via_resolve_path(self, hooks):
-        """Relative metric_file and semantic_model_file must be resolved through _resolve_path."""
-        hooks._extract_metric_generation_result = MagicMock(
-            return_value=("metrics/orders.yml", "semantic/orders.yml", {"m": "SELECT 1"})
-        )
-        hooks._process_metric_with_semantic_model = AsyncMock()
-        hooks._resolve_path = MagicMock(side_effect=lambda p, k: f"/ws/sm/{p}" if p else p)
-
-        await hooks._handle_end_metric_generation({"result": {"metric_file": "metrics/orders.yml"}})
-
-        hooks._resolve_path.assert_any_call("metrics/orders.yml", "semantic")
-        hooks._resolve_path.assert_any_call("semantic/orders.yml", "semantic")
-        hooks._process_metric_with_semantic_model.assert_awaited_once_with(
-            "/ws/sm/semantic/orders.yml", "/ws/sm/metrics/orders.yml", {"m": "SELECT 1"}
-        )
-
-    async def test_no_semantic_model_falls_back_to_single_file(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(return_value=("metrics/orders.yml", None, {"m": "SQL"}))
-        hooks._process_single_file = AsyncMock()
-        hooks._resolve_path = MagicMock(side_effect=lambda p, k: f"/ws/sm/{p}" if p else p)
-
-        await hooks._handle_end_metric_generation({"result": {}})
-
-        hooks._process_single_file.assert_awaited_once_with(
-            "/ws/sm/metrics/orders.yml",
-            metric_sqls={"m": "SQL"},
-            yaml_type="metric",
-        )
-
-    async def test_cancelled_exception_absorbed(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(return_value=("m.yml", None, {}))
-        hooks._resolve_path = MagicMock(side_effect=lambda p, k: p)
-        hooks._process_single_file = AsyncMock(side_effect=GenerationCancelledException("user-cancel"))
-        await hooks._handle_end_metric_generation({"result": {}})
-        hooks._process_single_file.assert_awaited_once()
-
-    async def test_unexpected_exception_absorbed(self, hooks):
-        hooks._extract_metric_generation_result = MagicMock(side_effect=RuntimeError("boom"))
-        await hooks._handle_end_metric_generation({"result": {}})
-        hooks._extract_metric_generation_result.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
 # Tests: normalize_kb_relative_path (pure function)
 # ---------------------------------------------------------------------------
 
@@ -1883,18 +1687,6 @@ class TestHookAndToolPathAgreement:
         on_disk = subject_root / "semantic_models" / "orders.yml"
         assert os.path.realpath(resolved) == os.path.realpath(str(on_disk))
         assert Path(resolved).is_file()
-
-    def test_extract_filepaths_resolves_relative_entries_against_subject(self, real_agent_config):
-        """end_semantic_model_generation payloads with bare filenames resolve correctly."""
-        subject_root = Path(str(real_agent_config.path_manager.subject_dir))
-        target = subject_root / "semantic_models" / "orders.yml"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("data\n")
-
-        hooks = GenerationHooks(broker=None, agent_config=real_agent_config)
-        paths = hooks._extract_filepaths_from_result({"result": {"semantic_model_files": ["orders.yml"]}})
-        assert len(paths) == 1
-        assert os.path.realpath(paths[0]) == os.path.realpath(str(target))
 
 
 # ---------------------------------------------------------------------------

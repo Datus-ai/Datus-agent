@@ -86,7 +86,7 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
             output=capture_native_trace_content("tool_results", {"success": True}),
         )
         failed_tool = start_native_tool_span(
-            name="end_semantic_model_generation",
+            name="publish_semantic_model",
             tool_call_id="toolu_456",
             input_value={"semantic_model": "orders"},
         )
@@ -126,8 +126,8 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
 
     assert sorted(span_by_name) == [
         "agent/gen_metrics",
-        "end_semantic_model_generation",
         "generation",
+        "publish_semantic_model",
         "sync_semantic",
     ]
     root = span_by_name["agent/gen_metrics"]
@@ -155,7 +155,7 @@ async def test_native_agent_stream_exports_agent_generation_tool_tree(monkeypatc
     assert "[REDACTED]" in tool.attributes["input.value"]
     assert "must-not-leak" not in tool.attributes["input.value"]
     assert tool.attributes["output.value"] == '{"success": true}'
-    failed_tool = span_by_name["end_semantic_model_generation"]
+    failed_tool = span_by_name["publish_semantic_model"]
     assert failed_tool.parent.span_id == root.context.span_id
     assert failed_tool.status.status_code.name == "ERROR"
     assert failed_tool.attributes["output.value"] == '{"success": false, "error": "sync failed"}'

@@ -248,10 +248,6 @@ class GenerationHooks(AgentHooks):
             self.generation_evidence.record_validation_result(result)
         elif tool_name == "query_metrics":
             self._record_query_metrics_result(context, result)
-        elif tool_name == "end_semantic_model_generation":
-            await self._handle_end_semantic_model_generation(result)
-        elif tool_name == "end_metric_generation":
-            await self._handle_end_metric_generation(result)
         # Intercept write_file tool and check if it's SQL summary
         elif tool_name == "write_file":
             # Check if this is a SQL summary file by examining tool arguments
@@ -293,135 +289,6 @@ class GenerationHooks(AgentHooks):
             )
         except Exception as e:
             logger.debug(f"Error recording query_metrics evidence: {e}")
-
-    async def _handle_end_semantic_model_generation(self, result):
-        """
-        Handle end_semantic_model_generation tool result.
-
-        Args:
-            result: Tool result containing semantic_model_files list
-        """
-        try:
-            if not self._result_success(result):
-                logger.info(f"Skipping semantic model sync because generation tool failed: {result}")
-                return
-            if self.generation_evidence.semantic_kb_sync_passed:
-                logger.info("Skipping semantic model hook sync because generation tool already published it")
-                return
-
-            file_paths = self._extract_filepaths_from_result(result)
-
-            if not file_paths:
-                logger.warning(f"Could not extract file paths from end_semantic_model_generation result: {result}")
-                return
-
-            logger.debug(f"Processing semantic model files: {file_paths}")
-
-            # Process each semantic model file
-            for file_path in file_paths:
-                await self._process_single_file(file_path)
-
-        except GenerationCancelledException:
-            logger.info("Generation workflow cancelled")
-        except Exception as e:
-            logger.error(f"Error handling end_semantic_model_generation: {e}", exc_info=True)
-
-    async def _handle_end_metric_generation(self, result):
-        """
-        Handle end_metric_generation tool result.
-
-        Args:
-            result: Tool result containing metric_file, optional semantic_model_file, and metric_sqls
-        """
-        try:
-            if not self._result_success(result):
-                logger.info(f"Skipping metric sync because generation tool failed: {result}")
-                return
-            if self.generation_evidence.metric_kb_sync_passed:
-                logger.info("Skipping metric hook sync because generation tool already published it")
-                return
-
-            metric_file, semantic_model_file, metric_sqls = self._extract_metric_generation_result(result)
-
-            if not metric_file:
-                logger.warning(f"Could not extract metric_file from end_metric_generation result: {result}")
-                return
-
-            # Resolve relative paths against the current sub-agent's semantic-model
-            # workspace using the shared resolver. This applies the same containment
-            # check (path traversal rejection) as the other generation kinds.
-            metric_file = self._resolve_path(metric_file, "semantic")
-            semantic_model_file = self._resolve_path(semantic_model_file, "semantic")
-
-            logger.debug(
-                f"Processing metric generation: metric_file={metric_file}, "
-                f"semantic_model_file={semantic_model_file}, metric_sqls={list(metric_sqls.keys())}"
-            )
-
-            if semantic_model_file:
-                # Process both files together for proper association
-                await self._process_metric_with_semantic_model(semantic_model_file, metric_file, metric_sqls)
-            else:
-                # Process metric file alone (semantic model already exists in KB)
-                await self._process_single_file(metric_file, metric_sqls=metric_sqls, yaml_type="metric")
-
-        except GenerationCancelledException:
-            logger.info("Generation workflow cancelled")
-        except Exception as e:
-            logger.error(f"Error handling end_metric_generation: {e}", exc_info=True)
-
-    def _extract_filepaths_from_result(self, result) -> list:
-        """
-        Extract semantic_model_files list from tool result.
-
-        Args:
-            result: Tool result (dict or FuncToolResult object)
-
-        Returns:
-            List of file paths
-        """
-        result_dict = None
-        if isinstance(result, dict):
-            result_dict = result.get("result", {})
-        elif hasattr(result, "result") and hasattr(result, "success"):
-            result_dict = result.result
-
-        if isinstance(result_dict, dict):
-            filepaths = result_dict.get("semantic_model_files", [])
-            if filepaths and isinstance(filepaths, list):
-                resolved = [self._resolve_path(p, "semantic") for p in filepaths if p]
-                return [p for p in resolved if p]
-
-        return []
-
-    def _extract_metric_generation_result(self, result) -> tuple:
-        """
-        Extract metric_file, semantic_model_file, and metric_sqls from tool result.
-
-        Args:
-            result: Tool result (dict or FuncToolResult object)
-
-        Returns:
-            Tuple of (metric_file, semantic_model_file, metric_sqls)
-        """
-        # Debug: log raw result type and content
-        logger.info(f"_extract_metric_generation_result raw result: type={type(result).__name__}, value={result}")
-
-        result_dict = None
-        if isinstance(result, dict):
-            result_dict = result.get("result", {})
-        elif hasattr(result, "result") and hasattr(result, "success"):
-            result_dict = result.result
-
-        if isinstance(result_dict, dict):
-            metric_file = result_dict.get("metric_file", "")
-            semantic_model_file = result_dict.get("semantic_model_file", "")
-            metric_sqls = result_dict.get("metric_sqls", {})
-            logger.info(f"Extracted from end_metric_generation: metric_sqls={metric_sqls}")
-            return metric_file, semantic_model_file, metric_sqls
-
-        logger.warning(f"Could not extract metric_generation_result from: {result}")
-        return "", "", {}
 
     async def _process_single_file(self, file_path: str, metric_sqls: dict = None, yaml_type: str = "semantic"):
         """
@@ -988,7 +855,7 @@ class GenerationHooks(AgentHooks):
                 elif doc and "metric" in doc:
                     metrics_list.append(doc["metric"])
 
-            # Metric-only sync (e.g. end_metric_generation -> _sync_metric_to_db)
+            # Metric-only sync (e.g. publish_metrics -> _sync_metric_to_db)
             # benefits from a more actionable error: the LLM frequently writes
             # markdown/documentation into the metric file and relies on
             # `create_metric: true` measures, which only generate metrics at

@@ -1036,17 +1036,7 @@ class SubAgentTaskTool:
             external_knowledge=at_ctx.get("external_knowledge"),
             context_hints=at_ctx.get("context_hints"),
         )
-        self._inherit_semantic_source_queries(node_input)
         return node_input
-
-    def _inherit_semantic_source_queries(self, node_input: Any) -> None:
-        """Forward bootstrap SQL only between semantic nodes, outside @-context."""
-        from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
-
-        parent_input = getattr(self._parent_node, "input", None)
-        if not isinstance(parent_input, SemanticNodeInput) or not isinstance(node_input, SemanticNodeInput):
-            return
-        node_input.source_queries = list(parent_input.source_queries)
 
     def _parent_at_context(self) -> Dict[str, Any]:
         """Resolved @-context (schemas/metrics/reference_sql/knowledge) the parent carries.
