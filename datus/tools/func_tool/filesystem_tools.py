@@ -16,6 +16,7 @@ from datus.tools.func_tool.fs_path_policy import (
     PathZone,
     ResolvedPath,
     classify_path,
+    strict_mode_rejection_message,
     whitelist_anchors,
 )
 from datus.utils.loggings import get_logger
@@ -200,13 +201,18 @@ class FilesystemFuncTool(BaseTool):
 
         Unlike ``_not_found``, this is explicit: the caller **asked** for a
         path outside the workspace, so hiding the rejection would be
-        confusing. The error message names the path so the LLM can fix it
-        on the next turn. Used by the API / gateway surfaces that have no
-        interactive broker to prompt the user.
+        confusing. The error message names both the path and the roots that
+        *are* reachable so the LLM can retarget on the next turn. Used by the
+        API / gateway surfaces that have no interactive broker to prompt the
+        user.
         """
         return FuncToolResult(
             success=0,
-            error=f"Path outside workspace is not allowed in strict mode: {resolved.display}",
+            error=strict_mode_rejection_message(
+                resolved.display,
+                root_path=self._root_resolved,
+                allowlist=self._path_allowlist,
+            ),
         )
 
     def _get_safe_path(self, path: str) -> Optional[Path]:

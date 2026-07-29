@@ -1503,6 +1503,8 @@ class TestSqlPathPolicy:
         )
         assert result.success == 0
         assert "outside workspace" in (result.error or "").lower()
+        # The reachable root is named so the model can retarget the SQL path.
+        assert str(project_root.resolve()) in (result.error or "")
 
     def test_non_strict_allows_external_path(self, tmp_path):
         """Default (non-strict) mode lets absolute paths through, matching

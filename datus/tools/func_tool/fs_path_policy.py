@@ -72,6 +72,52 @@ def _is_relative_to(candidate: Path, anchor: Path) -> bool:
         return False
 
 
+# Keeps a pathological allowlist from bloating a tool-result the LLM has to read.
+_MAX_LISTED_ROOTS = 8
+
+
+def _join_roots(roots: List[Path]) -> str:
+    shown = [str(root) for root in roots[:_MAX_LISTED_ROOTS]]
+    if len(roots) > _MAX_LISTED_ROOTS:
+        shown.append(f"... (+{len(roots) - _MAX_LISTED_ROOTS} more)")
+    return ", ".join(shown)
+
+
+def strict_mode_rejection_message(
+    display: str,
+    *,
+    root_path: Path,
+    allowlist: Optional[PathAllowlist] = None,
+) -> str:
+    """Error text for an ``EXTERNAL`` path rejected by strict mode.
+
+    Naming the reachable roots is what keeps the model from probing: with a bare
+    rejection it walks parent directories and shell-outs looking for a file it
+    wrote through a proxied (differently anchored) fs op, and every probe is
+    another rejected turn.
+
+    The text up to and including ``display`` is a tool-result contract matched by
+    the permission hooks' tests and by the LLM — only ever append to it.
+    """
+    root_resolved = Path(root_path).expanduser().resolve(strict=False)
+    allowed = [root_resolved]
+    read_only: List[Path] = []
+    if allowlist is not None:
+        # Anchors under the project root add nothing — the root already covers them.
+        for anchor in allowlist.write:
+            if not _is_relative_to(anchor, root_resolved) and anchor not in allowed:
+                allowed.append(anchor)
+        for anchor in allowlist.read:
+            if _is_relative_to(anchor, root_resolved) or anchor in allowed or anchor in read_only:
+                continue
+            read_only.append(anchor)
+
+    hints = [f"allowed roots: {_join_roots(allowed)}"]
+    if read_only:
+        hints.append(f"read-only roots: {_join_roots(read_only)}")
+    return f"Path outside workspace is not allowed in strict mode: {display} ({'; '.join(hints)})"
+
+
 def _resolve_home(datus_home: Optional[Path]) -> Path:
     """Resolve the effective ``~/.datus`` root for whitelist anchors."""
     if datus_home is not None:

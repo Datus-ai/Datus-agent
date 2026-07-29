@@ -11,6 +11,7 @@ from datus.tools.func_tool.fs_path_policy import (
     PathZone,
     build_walk_patterns,
     classify_path,
+    strict_mode_rejection_message,
     whitelist_anchors,
 )
 
@@ -268,3 +269,203 @@ class TestSessionDataAnchor:
         # project-side anchors + the global ``skills`` dir.
         for anchor in anchors:
             assert "sessions" not in anchor.parts
+<<<<<<< HEAD
+=======
+
+
+class TestPathAllowlistParsing:
+    """``agent.filesystem.allow_read``/``allow_write`` → anchors."""
+
+    def test_from_dict_parses_both_lists(self, tmp_path):
+        allowlist = PathAllowlist.from_dict(
+            {"allow_read": [str(tmp_path / "ro")], "allow_write": [str(tmp_path / "rw")]}
+        )
+        assert allowlist.read == ((tmp_path / "ro").resolve(),)
+        assert allowlist.write == ((tmp_path / "rw").resolve(),)
+        assert bool(allowlist) is True
+        # write-first ordering mirrors classify_path precedence
+        assert allowlist.anchors() == [(tmp_path / "rw").resolve(), (tmp_path / "ro").resolve()]
+
+    def test_missing_section_is_empty(self):
+        for raw in (None, {}, {"strict": True}, "not-a-dict", []):
+            allowlist = PathAllowlist.from_dict(raw)
+            assert allowlist.read == ()
+            assert allowlist.write == ()
+            assert bool(allowlist) is False
+
+    def test_single_string_accepted(self, tmp_path):
+        allowlist = PathAllowlist.from_dict({"allow_write": str(tmp_path / "dags")})
+        assert allowlist.write == ((tmp_path / "dags").resolve(),)
+
+    def test_relative_and_blank_entries_dropped(self, tmp_path):
+        # A relative entry would resolve against the process CWD — silently
+        # granting an unrelated directory. Must be ignored, not resolved.
+        allowlist = PathAllowlist.from_dict(
+            {"allow_write": ["relative/dags", "  ", None, 42, str(tmp_path / "ok")]},
+        )
+        assert allowlist.write == ((tmp_path / "ok").resolve(),)
+
+    def test_duplicates_collapsed(self, tmp_path):
+        target = str(tmp_path / "dags")
+        allowlist = PathAllowlist.from_dict({"allow_write": [target, target + "/", target]})
+        assert allowlist.write == ((tmp_path / "dags").resolve(),)
+
+    def test_nonexistent_root_still_anchored(self, tmp_path):
+        # The DAGs folder may be created later by the scheduler pod; anchoring
+        # must not depend on it existing at config-load time.
+        missing = tmp_path / "not-created-yet"
+        allowlist = PathAllowlist.from_dict({"allow_write": [str(missing)]})
+        assert allowlist.write == (missing.resolve(),)
+
+
+class TestClassifyWithAllowlist:
+    """Configured roots outside the project turn EXTERNAL into WHITELIST.
+
+    This is what lets a strict-mode deployment (no interactive broker) write
+    generated DAG files into a folder mounted next to the workspace.
+    """
+
+    @pytest.fixture
+    def dags(self, tmp_path):
+        folder = tmp_path / "services" / "airflow" / "dags" / "ws1" / "proj1"
+        folder.mkdir(parents=True)
+        return folder
+
+    def test_allow_write_root_is_writable_whitelist(self, project, dags):
+        r = classify_path(
+            str(dags / "daily_job.py"),
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        assert r.zone == PathZone.WHITELIST
+        assert r.read_only is False
+        # Absolute display: nothing project-relative would round-trip here.
+        assert r.display == str(dags / "daily_job.py")
+
+    def test_allow_read_root_is_read_only_whitelist(self, project, dags):
+        r = classify_path(
+            str(dags / "daily_job.py"),
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_read": [str(dags)]}),
+        )
+        assert r.zone == PathZone.WHITELIST
+        assert r.read_only is True
+
+    def test_write_anchor_wins_over_read_anchor(self, project, dags):
+        r = classify_path(
+            str(dags / "daily_job.py"),
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_read": [str(dags)], "allow_write": [str(dags)]}),
+        )
+        assert r.read_only is False
+
+    def test_sibling_of_allowed_root_stays_external(self, project, dags):
+        # Prefix-only match must not leak: ``.../proj1_backup`` is a sibling,
+        # not a descendant, of the allowed ``.../proj1``.
+        sibling = dags.parent / "proj1_backup" / "x.py"
+        r = classify_path(
+            str(sibling),
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        assert r.zone == PathZone.EXTERNAL
+
+    def test_traversal_out_of_allowed_root_stays_external(self, project, dags):
+        r = classify_path(
+            str(dags / ".." / ".." / "secrets.env"),
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        assert r.zone == PathZone.EXTERNAL
+
+    def test_allowlist_never_unhides_project_internals(self, project):
+        # Allowlisting an ancestor of the project must not expose ``.datus``:
+        # project-side zones are decided before the allowlist is consulted.
+        r = classify_path(
+            ".datus/sessions/foo.db",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(project.parent)]}),
+        )
+        assert r.zone == PathZone.HIDDEN
+
+    def test_project_paths_stay_internal_under_allowlisted_ancestor(self, project):
+        r = classify_path(
+            "src/main.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(project.parent)]}),
+        )
+        assert r.zone == PathZone.INTERNAL
+        assert r.display == "src/main.py"
+
+    def test_without_allowlist_dags_path_is_external(self, project, dags):
+        r = classify_path(str(dags / "daily_job.py"), root_path=project)
+        assert r.zone == PathZone.EXTERNAL
+
+    def test_whitelist_anchors_include_allowlist_roots(self, project, fake_home, dags):
+        anchors = whitelist_anchors(
+            root_path=project,
+            current_node="chat",
+            datus_home=fake_home,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        assert dags.resolve() in anchors
+        # Project-side anchors are still first so longer prefixes keep winning.
+        assert anchors[0] == (project / ".datus" / "skills").resolve(strict=False)
+
+
+class TestStrictModeRejectionMessage:
+    """The rejection text is read by the LLM, so its shape is a contract."""
+
+    @pytest.fixture
+    def dags(self, tmp_path):
+        folder = tmp_path / "services" / "airflow" / "dags" / "ws1" / "proj1"
+        folder.mkdir(parents=True)
+        return folder
+
+    def test_prefix_and_path_are_preserved(self, project):
+        msg = strict_mode_rejection_message("/outside/x.py", root_path=project)
+        assert msg.startswith("Path outside workspace is not allowed in strict mode: /outside/x.py")
+        assert str(project.resolve()) in msg
+
+    def test_lists_allowlisted_write_roots(self, project, dags):
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        assert f"allowed roots: {project.resolve()}, {dags.resolve()}" in msg
+        assert "read-only" not in msg
+
+    def test_read_roots_are_reported_separately(self, project, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_read": [str(shared)]}),
+        )
+        assert f"allowed roots: {project.resolve()}" in msg
+        assert f"read-only roots: {shared.resolve()}" in msg
+
+    def test_anchors_under_project_root_are_not_repeated(self, project):
+        inside = project / "dags"
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(inside)], "allow_read": [str(inside)]}),
+        )
+        assert msg.count(str(project.resolve())) == 1
+        assert "read-only" not in msg
+
+    def test_long_allowlist_is_truncated(self, project, tmp_path):
+        roots = [tmp_path / f"root{i}" for i in range(12)]
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(r) for r in roots]}),
+        )
+        # project root + 7 anchors listed, the rest collapsed into a counter.
+        assert str(roots[6].resolve()) in msg
+        assert str(roots[7].resolve()) not in msg
+        assert "... (+5 more)" in msg
+>>>>>>> b77e02c ([BugFix] Name the reachable roots when strict mode rejects a path (#1210))
