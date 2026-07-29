@@ -63,6 +63,10 @@ class ErrorCode(Enum):
         "SSL_CERT_FILE=<path-to-ca.pem>). Avoid `ssl_verify: false`, which disables verification. "
         "See docs/configuration/agent.md (Private or self-signed certificates).",
     )
+    MODEL_NOT_CONFIGURED = (
+        "300025",
+        "Unknown custom model `{model_name}`. Available: {available_models}",
+    )
 
     # OAuth authentication errors
     OAUTH_NOT_AUTHENTICATED = ("300030", "Not authenticated. Please run OAuth login first.")

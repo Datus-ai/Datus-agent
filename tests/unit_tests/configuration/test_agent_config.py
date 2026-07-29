@@ -36,7 +36,7 @@ from datus.configuration.agent_config import (
     load_model_config,
     resolve_env,
 )
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 
 pytestmark = pytest.mark.ci
 
@@ -2317,8 +2317,14 @@ class TestProviderConfigurationDispatch:
 
     def test_set_active_custom_rejects_unknown_name(self, tmp_path):
         cfg = self._make(tmp_path)
-        with pytest.raises(DatusException):
+        with pytest.raises(DatusException) as excinfo:
             cfg.set_active_custom("not-registered")
+
+        # Remote front-ends match on this error_type to recover a stale
+        # model selection, so keep both the code and the listing stable.
+        assert excinfo.value.code is ErrorCode.MODEL_NOT_CONFIGURED
+        assert "Unknown custom model `not-registered`" in str(excinfo.value)
+        assert "legacy" in str(excinfo.value)
 
     def test_set_provider_config_mutates_in_memory(self, tmp_path):
         cfg = self._make(tmp_path)

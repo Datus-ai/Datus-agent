@@ -2626,11 +2626,18 @@ class AgentConfig:
         Mirrors :meth:`set_active_provider_model` but drops into the
         legacy custom-model dispatch path. Persists as
         ``target: {custom: name}`` so the intent is explicit on reload.
+
+        Raises ``MODEL_NOT_CONFIGURED`` rather than a generic validation
+        error: remote front-ends pass a user-picked model into
+        ``stream_chat``, and that selection can name a connection the
+        project no longer has. They need a stable ``error_type`` to
+        recognise "your model is gone, refresh and pick another" instead of
+        matching on the message text.
         """
         if not name or name not in self.models:
             raise DatusException(
-                code=ErrorCode.COMMON_FIELD_INVALID,
-                message=f"Unknown custom model `{name}`. Available: {sorted(self.models.keys())}",
+                code=ErrorCode.MODEL_NOT_CONFIGURED,
+                message_args={"model_name": name, "available_models": sorted(self.models.keys())},
             )
         self._target_provider = None
         self._target_model = None
