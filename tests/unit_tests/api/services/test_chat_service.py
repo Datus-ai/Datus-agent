@@ -8,6 +8,7 @@ import pytest
 from datus.api.services.chat_service import ChatService
 from datus.api.services.chat_task_manager import ChatTaskManager
 from datus.models.session_manager import SessionManager
+from datus.utils.exceptions import ErrorCode
 
 
 @pytest.fixture
@@ -366,6 +367,30 @@ class TestChatServiceStreamChat:
                 break
         assert len(events) >= 1
         assert events[0].event == "session"
+
+    async def test_stream_chat_unknown_model_yields_model_not_configured(self, real_agent_config, mock_llm_create):
+        """A model param naming a connection this project no longer has is
+        reported under its own error_type, which is what remote front-ends
+        match on to refresh their model list instead of parsing the message."""
+        from datus.api.models.cli_models import StreamChatInput
+
+        svc = ChatService(
+            agent_config=real_agent_config,
+            task_manager=ChatTaskManager(),
+            project_id="test-proj",
+        )
+        request = StreamChatInput(
+            message="hello",
+            session_id="unknown-model",
+            model="custom/detached-connection",
+        )
+
+        events = [event async for event in svc.stream_chat(request)]
+
+        assert len(events) == 1
+        assert events[0].event == "error"
+        assert events[0].data.error_type == ErrorCode.MODEL_NOT_CONFIGURED.name
+        assert "detached-connection" in events[0].data.error
 
     async def test_stream_chat_duplicate_session_yields_error(self, real_agent_config, mock_llm_create):
         """stream_chat for duplicate session_id yields error event."""
