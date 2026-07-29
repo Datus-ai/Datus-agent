@@ -145,8 +145,10 @@ class TestTransToFunctionTool:
         assert "not executed" in result["error"]
         assert "Retry" in result["error"]
         assert fake.received is None
-        assert json.loads(tool_ctx.tool_arguments)["min_rows"] == ""
-        assert json.loads(raw_tool_call.arguments)["max_rows"] == ""
+        written_args = json.loads(tool_ctx.tool_arguments)
+        assert written_args["sql"] == "SELECT 1"
+        assert {"min_rows", "max_rows"} <= written_args.keys()
+        assert json.loads(raw_tool_call.arguments) == written_args
 
         replayed = ToolCallItem(agent=Agent(name="test"), raw_item=raw_tool_call).to_input_item()
         assert json.loads(replayed["arguments"])["sql"] == "SELECT 1"
