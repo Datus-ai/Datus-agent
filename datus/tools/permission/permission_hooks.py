@@ -28,7 +28,7 @@ from agents.lifecycle import AgentHooks
 
 from datus.cli.execution_state import InteractionBroker, InteractionCancelled
 from datus.schemas.interaction_event import InteractionEvent
-from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
+from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone, classify_path
 from datus.tools.permission.bash_classifier import BashClassifierContext
 from datus.tools.permission.bash_rules import (
     BashDecisionSource,
@@ -186,6 +186,11 @@ class FilesystemPolicy:
     # without prompting. Stays ``None`` outside of agentic sessions (e.g. SaaS
     # request-scoped tools) — those paths then remain EXTERNAL.
     session_data_dir: Optional[Path] = None
+    # Operator-configured roots outside the project root (``agent.filesystem
+    # .allow_read`` / ``allow_write``). Must mirror what the tool was built
+    # with, otherwise the hook would prompt (or fail) on a path the tool is
+    # perfectly willing to write.
+    allowlist: Optional[PathAllowlist] = None
 
 
 class CompositeHooks(AgentHooks):
@@ -569,6 +574,7 @@ class PermissionHooks(AgentHooks):
                 current_node=policy.current_node,
                 datus_home=policy.datus_home,
                 session_data_dir=policy.session_data_dir,
+                allowlist=policy.allowlist,
             )
         except Exception as e:
             logger.debug(f"classify_path failed for {tool_name} path={path_arg!r}: {e}")

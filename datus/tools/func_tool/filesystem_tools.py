@@ -13,6 +13,7 @@ from wcmatch import glob as wc_glob
 from datus.tools import BaseTool
 from datus.tools.func_tool import FuncToolResult
 from datus.tools.func_tool.fs_path_policy import (
+    PathAllowlist,
     PathZone,
     ResolvedPath,
     classify_path,
@@ -79,6 +80,7 @@ class FilesystemFuncTool(BaseTool):
         datus_home: Optional[str] = None,
         strict: bool = False,
         session_data_dir: Optional[str] = None,
+        path_allowlist: Optional[PathAllowlist] = None,
         mutation_callback: Optional[Callable[[], None]] = None,
         mutation_guard: Optional[Callable[[Path], None]] = None,
         **kwargs,
@@ -98,6 +100,12 @@ class FilesystemFuncTool(BaseTool):
                 qualifies as a read-only WHITELIST anchor so the LLM can
                 ``read_file`` archived tool I/O without triggering a permission
                 prompt. Other sessions' archive directories stay EXTERNAL.
+            path_allowlist: Operator-configured roots outside the project root
+                (``agent.filesystem.allow_read`` / ``allow_write``) that count
+                as WHITELIST rather than EXTERNAL. This is how a deployment
+                grants access to a shared directory mounted next to the
+                workspace — e.g. an Airflow DAGs folder — without turning
+                ``strict`` off.
         """
         super().__init__(**kwargs)
         self.root_path = root_path or os.getcwd()
@@ -107,6 +115,7 @@ class FilesystemFuncTool(BaseTool):
         self._root_resolved = Path(self.root_path).expanduser().resolve(strict=False)
         self._strict = strict
         self._session_data_dir = Path(session_data_dir).expanduser().resolve(strict=False) if session_data_dir else None
+        self._path_allowlist = path_allowlist
         self._mutation_callback = mutation_callback
         self._mutation_guard = mutation_guard
 
@@ -177,6 +186,7 @@ class FilesystemFuncTool(BaseTool):
             current_node=self._current_node,
             datus_home=self._datus_home,
             session_data_dir=self._session_data_dir,
+            allowlist=self._path_allowlist,
         )
 
     def _read_only_reject(self, resolved: ResolvedPath) -> FuncToolResult:
@@ -563,6 +573,7 @@ class FilesystemFuncTool(BaseTool):
             current_node=self._current_node,
             datus_home=self._datus_home,
             session_data_dir=self._session_data_dir,
+            allowlist=self._path_allowlist,
         )
 
         def has_whitelisted_descendant(directory: Path) -> bool:
@@ -629,6 +640,7 @@ class FilesystemFuncTool(BaseTool):
                                 current_node=self._current_node,
                                 datus_home=self._datus_home,
                                 session_data_dir=self._session_data_dir,
+                                allowlist=self._path_allowlist,
                             ).zone
                             if item_zone == PathZone.EXTERNAL:
                                 # Symlink escape from project tree; skip.
@@ -889,6 +901,7 @@ def filesystem_function_tools(
     current_node: Optional[str] = None,
     strict: bool = False,
     session_data_dir: Optional[str] = None,
+    path_allowlist: Optional[PathAllowlist] = None,
 ) -> List[Tool]:
     """Get filesystem function tools"""
     return FilesystemFuncTool(
@@ -896,4 +909,5 @@ def filesystem_function_tools(
         current_node=current_node,
         strict=strict,
         session_data_dir=session_data_dir,
+        path_allowlist=path_allowlist,
     ).available_tools()
