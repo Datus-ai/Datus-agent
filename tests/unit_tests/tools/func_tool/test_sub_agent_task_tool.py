@@ -4,10 +4,12 @@
 
 """CI-level tests for SubAgentTaskTool (AgenticNode-based execution)."""
 
+import json
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from openai.types.responses import ResponseFunctionToolCall
 
 from datus.configuration.agent_config import AgentConfig
 from datus.configuration.node_type import NodeType
@@ -77,6 +79,60 @@ class TestAvailableTools:
         assert "type" in schema["properties"]
         assert "prompt" in schema["properties"]
         assert set(schema["required"]) == {"type", "prompt", "description"}
+
+    @pytest.mark.asyncio
+    async def test_repairs_arguments_for_replay_without_executing(self, task_tool):
+        tool = task_tool.available_tools()[0]
+        task_tool.task = AsyncMock(return_value=FuncToolResult(result={"session_id": "child-1"}))
+        raw_args = '{"type":"gen_sql","prompt":"show sales","description":"sales query",}'
+        raw_tool_call = ResponseFunctionToolCall(
+            arguments=raw_args,
+            call_id="call_task",
+            name="task",
+            type="function_call",
+        )
+        tool_ctx = SimpleNamespace(
+            tool_call_id="call_task",
+            tool_arguments=raw_args,
+            tool_call=raw_tool_call,
+        )
+
+        result = await tool.on_invoke_tool(tool_ctx, raw_args)
+
+        assert result["success"] == 0
+        assert "not executed" in result["error"]
+        task_tool.task.assert_not_awaited()
+        assert json.loads(tool_ctx.tool_arguments)["prompt"] == "show sales"
+        assert json.loads(raw_tool_call.arguments)["description"] == "sales query"
+
+        retry_args = json.dumps(
+            {
+                "type": "gen_sql",
+                "prompt": "show sales",
+                "description": "sales query",
+            }
+        )
+        retry_tool_call = ResponseFunctionToolCall(
+            arguments=retry_args,
+            call_id="call_task_retry",
+            name="task",
+            type="function_call",
+        )
+        retry_ctx = SimpleNamespace(
+            tool_call_id="call_task_retry",
+            tool_arguments=retry_args,
+            tool_call=retry_tool_call,
+        )
+
+        retry_result = await tool.on_invoke_tool(retry_ctx, retry_args)
+
+        assert retry_result["success"] == 1
+        task_tool.task.assert_awaited_once_with(
+            call_id="call_task_retry",
+            type="gen_sql",
+            prompt="show sales",
+            description="sales query",
+        )
 
 
 # ── _get_available_types ───────────────────────────────────────────
