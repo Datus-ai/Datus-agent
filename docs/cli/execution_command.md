@@ -40,25 +40,9 @@ Type `!` on its own to list the available tools and plugins.
 ```
 
 - `!<plugin> <args...>` runs `datus <plugin> <args...>` as a subprocess. The command is permission-gated like any bash command, and the plugin's own CLI permissions apply inside the child process. Its output is fed to the model as an execution turn (same as `!<tool>`), so it enters the conversation and triggers a reply.
-- A plugin can declare its commands and arguments in its `datus-plugin.yml` manifest under `commands:` (see the plugin manifest reference). When present, the `!<plugin>` completer lists them and hints their argument names. Command groups nest via `subcommands:`, so the completer drills in one level at a time (`!airflow dags ` → `list`, `trigger`, …).
-
-```yaml
-# datus-plugin.yml (excerpt)
-commands:
-  - name: ls                        # a flat command with arguments
-    description: List objects under a prefix
-    args:
-      - {name: uri, required: true, description: s3://bucket/prefix}
-      - {name: --recursive, description: recurse into sub-prefixes}
-  - name: dags                      # a command group with nested subcommands
-    description: DAG operations
-    subcommands:
-      - name: trigger
-        args:
-          - {name: dag_id, required: true}
-          - {name: --conf, description: run configuration JSON}
-      - name: list
-```
+- When a plugin provides command metadata, the `!<plugin>` completer lists its
+  commands and hints their arguments. Completion follows nested command groups,
+  so typing `!airflow dags ` can offer commands such as `list` and `trigger`.
 
 ## 4. Notes
 
