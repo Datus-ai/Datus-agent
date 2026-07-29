@@ -737,6 +737,31 @@ class TestPathZones:
         assert result.success == 0
         assert "not allowed in strict mode" in (result.error or "").lower()
 
+    def test_strict_rejection_names_the_reachable_roots(self, tmp_path):
+        """Seeding a walk at the *parent* of the project root and the DAGs folder.
+
+        Observed in a SaaS session: the model wrote a DAG through the proxied
+        (workspace-anchored) fs path, then globbed the workspace root looking for
+        it and got a bare rejection, so it kept probing. Naming both roots is what
+        lets it retarget instead.
+        """
+        workspace = tmp_path / "ws"
+        project = workspace / "proj" / "files"
+        project.mkdir(parents=True)
+        dags = workspace / "proj" / "dags"
+        dags.mkdir()
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        result = tool.glob("**/*.py", str(workspace))
+        assert result.success == 0
+        assert str(workspace.resolve()) in (result.error or "")
+        assert str(project.resolve()) in (result.error or "")
+        assert str(dags.resolve()) in (result.error or "")
+
     def test_strict_allows_internal_and_whitelist(self, tmp_path):
         """Strict mode must NOT break project-internal / whitelist access —
         otherwise the API surface could not read its own files."""

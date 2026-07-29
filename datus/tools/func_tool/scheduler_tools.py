@@ -14,7 +14,7 @@ from datus_scheduler_core.registry import SchedulerAdapterRegistry
 from datus.configuration.agent_config import AgentConfig
 from datus.tools import BaseTool
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, trans_to_function_tool
-from datus.tools.func_tool.fs_path_policy import PathZone, classify_path
+from datus.tools.func_tool.fs_path_policy import PathZone, classify_path, strict_mode_rejection_message
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
@@ -90,7 +90,11 @@ class SchedulerTools(BaseTool):
         if self._strict and resolved.zone == PathZone.EXTERNAL:
             return None, FuncToolResult(
                 success=0,
-                error=f"Path outside workspace is not allowed in strict mode: {resolved.display}",
+                error=strict_mode_rejection_message(
+                    resolved.display,
+                    root_path=Path(self.agent_config.project_root),
+                    allowlist=getattr(self.agent_config, "filesystem_allowlist", None),
+                ),
             )
 
         sql_path = resolved.resolved

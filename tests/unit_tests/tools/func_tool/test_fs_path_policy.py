@@ -12,6 +12,7 @@ from datus.tools.func_tool.fs_path_policy import (
     PathZone,
     build_walk_patterns,
     classify_path,
+    strict_mode_rejection_message,
     whitelist_anchors,
 )
 
@@ -409,3 +410,60 @@ class TestClassifyWithAllowlist:
         assert dags.resolve() in anchors
         # Project-side anchors are still first so longer prefixes keep winning.
         assert anchors[0] == (project / ".datus" / "skills").resolve(strict=False)
+
+
+class TestStrictModeRejectionMessage:
+    """The rejection text is read by the LLM, so its shape is a contract."""
+
+    @pytest.fixture
+    def dags(self, tmp_path):
+        folder = tmp_path / "services" / "airflow" / "dags" / "ws1" / "proj1"
+        folder.mkdir(parents=True)
+        return folder
+
+    def test_prefix_and_path_are_preserved(self, project):
+        msg = strict_mode_rejection_message("/outside/x.py", root_path=project)
+        assert msg.startswith("Path outside workspace is not allowed in strict mode: /outside/x.py")
+        assert str(project.resolve()) in msg
+
+    def test_lists_allowlisted_write_roots(self, project, dags):
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        assert f"allowed roots: {project.resolve()}, {dags.resolve()}" in msg
+        assert "read-only" not in msg
+
+    def test_read_roots_are_reported_separately(self, project, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_read": [str(shared)]}),
+        )
+        assert f"allowed roots: {project.resolve()}" in msg
+        assert f"read-only roots: {shared.resolve()}" in msg
+
+    def test_anchors_under_project_root_are_not_repeated(self, project):
+        inside = project / "dags"
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(inside)], "allow_read": [str(inside)]}),
+        )
+        assert msg.count(str(project.resolve())) == 1
+        assert "read-only" not in msg
+
+    def test_long_allowlist_is_truncated(self, project, tmp_path):
+        roots = [tmp_path / f"root{i}" for i in range(12)]
+        msg = strict_mode_rejection_message(
+            "/outside/x.py",
+            root_path=project,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(r) for r in roots]}),
+        )
+        # project root + 7 anchors listed, the rest collapsed into a counter.
+        assert str(roots[6].resolve()) in msg
+        assert str(roots[7].resolve()) not in msg
+        assert "... (+5 more)" in msg
