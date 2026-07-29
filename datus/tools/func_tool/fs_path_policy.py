@@ -24,7 +24,13 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Iterable, List, Optional, Tuple
+
+from pydantic import BaseModel, ConfigDict
+
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
 
 
 class PathZone(str, Enum):
@@ -60,6 +66,85 @@ class ResolvedPath:
     read_only: bool = False
 
 
+def _normalize_allow_roots(raw: Any) -> Tuple[Path, ...]:
+    """Coerce an ``allow_read``/``allow_write`` config value into anchor paths.
+
+    Accepts a single string or a list of strings; non-absolute entries (after
+    ``~`` expansion) are dropped because resolving them against the process CWD
+    would silently grant an unrelated directory. Existence is NOT required —
+    the anchor may be created later (e.g. a DAGs folder the scheduler pod
+    provisions on first submit).
+    """
+    if raw is None:
+        return ()
+    candidates: Iterable[Any] = [raw] if isinstance(raw, (str, Path)) else raw
+    try:
+        candidates = list(candidates)
+    except TypeError:
+        logger.warning("filesystem allowlist must be a path or list of paths; ignoring %r.", raw)
+        return ()
+
+    roots: List[Path] = []
+    for candidate in candidates:
+        if not isinstance(candidate, (str, Path)):
+            continue
+        text = str(candidate).strip()
+        if not text:
+            continue
+        expanded = Path(os.path.expanduser(text))
+        if not expanded.is_absolute():
+            logger.warning("Ignoring relative filesystem allowlist entry %r — absolute paths only.", text)
+            continue
+        resolved = expanded.resolve(strict=False)
+        if resolved not in roots:
+            roots.append(resolved)
+    return tuple(roots)
+
+
+class PathAllowlist(BaseModel):
+    """Extra roots outside the project root that stay reachable to fs tools.
+
+    Parsed from ``agent.filesystem.allow_read`` / ``allow_write``: a path under
+    a ``write`` anchor classifies as a writable ``WHITELIST``, one under a
+    ``read`` anchor as a read-only ``WHITELIST``. Intentionally generic — the
+    first consumer is the Airflow DAGs folder mounted next to (not inside) the
+    project workspace, but any deployment-specific shared directory plugs in
+    through the same config keys with no code change.
+
+    Anchors only ever *upgrade* an otherwise ``EXTERNAL`` path: project-side
+    zones (``INTERNAL``, the built-in whitelist, ``HIDDEN``) are decided first,
+    so an allowlist entry can never expose ``.datus/`` internals.
+
+    Frozen: the tool, the permission hook and the scheduler tools all read the
+    same instance off ``AgentConfig``, so it must never be mutated underneath
+    one of them. Build via :meth:`from_dict` — direct construction skips the
+    absolute-path normalization that keeps a relative entry from resolving
+    against the process CWD.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    read: Tuple[Path, ...] = ()
+    write: Tuple[Path, ...] = ()
+
+    @classmethod
+    def from_dict(cls, raw: Optional[dict]) -> "PathAllowlist":
+        """Build from the ``agent.filesystem`` config section (``None`` → empty)."""
+        if not isinstance(raw, dict):
+            return cls()
+        return cls(
+            read=_normalize_allow_roots(raw.get("allow_read")),
+            write=_normalize_allow_roots(raw.get("allow_write")),
+        )
+
+    def anchors(self) -> List[Path]:
+        """All anchors, write-first (mirrors ``classify_path`` precedence)."""
+        return [*self.write, *self.read]
+
+    def __bool__(self) -> bool:
+        return bool(self.read or self.write)
+
+
 def _is_relative_to(candidate: Path, anchor: Path) -> bool:
     """Python 3.12 has ``Path.is_relative_to`` but guarded with a try/except for
     non-Path comparisons. Kept as a small helper for readability and so tests
@@ -86,6 +171,7 @@ def classify_path(
     current_node: Optional[str] = None,
     datus_home: Optional[Path] = None,
     session_data_dir: Optional[Path] = None,
+    allowlist: Optional[PathAllowlist] = None,
 ) -> ResolvedPath:
     """Classify ``path`` into a ``PathZone`` relative to ``root_path``.
 
@@ -111,6 +197,11 @@ def classify_path(
             compact pass owns the directory contents. Other session_ids'
             directories stay ``EXTERNAL`` even though they live under the
             same ``sessions/`` root.
+        allowlist: Operator-configured extra roots (``agent.filesystem
+            .allow_read`` / ``allow_write``). Matching paths become
+            ``WHITELIST`` (read-only for ``read``-only anchors) instead of
+            ``EXTERNAL``, which is what lets strict-mode deployments reach
+            shared directories mounted outside the project workspace.
 
     Returns:
         A ``ResolvedPath`` with the computed zone and display form. Never
@@ -193,6 +284,15 @@ def classify_path(
     elif _is_relative_to(resolved, root_resolved):
         zone = PathZone.INTERNAL
         display = resolved.relative_to(root_resolved).as_posix() or "."
+    elif allowlist is not None and any(_is_relative_to(resolved, anchor) for anchor in allowlist.write):
+        # Configured shared root outside the project — absolute display, since
+        # nothing project-relative would round-trip back to the same file.
+        zone = PathZone.WHITELIST
+        display = str(resolved)
+    elif allowlist is not None and any(_is_relative_to(resolved, anchor) for anchor in allowlist.read):
+        zone = PathZone.WHITELIST
+        read_only = True
+        display = str(resolved)
     else:
         zone = PathZone.EXTERNAL
         display = str(resolved)
@@ -206,6 +306,7 @@ def whitelist_anchors(
     current_node: Optional[str] = None,
     datus_home: Optional[Path] = None,
     session_data_dir: Optional[Path] = None,
+    allowlist: Optional[PathAllowlist] = None,
 ) -> list[Path]:
     """Return the resolved whitelist anchor directories for a given node.
 
@@ -214,7 +315,9 @@ def whitelist_anchors(
     for every descendant. The order mirrors ``classify_path`` (project-side
     first) so longer prefixes win. ``current_node`` is accepted for call-site
     compatibility but no longer contributes a memory anchor — the
-    ``.datus/memory/**`` subtree is HIDDEN to filesystem tools.
+    ``.datus/memory/**`` subtree is HIDDEN to filesystem tools. Configured
+    ``allowlist`` roots are appended last (they live outside the project, so
+    they never shadow a project-side anchor).
     """
     del current_node
     root_resolved = Path(root_path).expanduser().resolve(strict=False)
@@ -227,6 +330,8 @@ def whitelist_anchors(
     ]
     if session_data_dir is not None:
         anchors.append(Path(session_data_dir).expanduser().resolve(strict=False))
+    if allowlist is not None:
+        anchors.extend(allowlist.anchors())
     return anchors
 
 

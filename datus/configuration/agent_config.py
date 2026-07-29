@@ -23,6 +23,7 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 
 if TYPE_CHECKING:
     from datus.prompts.prompt_manager import PromptManager
+    from datus.tools.func_tool.fs_path_policy import PathAllowlist
     from datus.utils.path_manager import DatusPathManager
 
 # Regex for validating platform/identifier names (no special chars that break paths)
@@ -909,6 +910,15 @@ class AgentConfig:
         # CLI, or direct assignment from API/gateway bootstraps.
         filesystem_raw = kwargs.get("filesystem") or {}
         self._filesystem_strict = bool(filesystem_raw.get("strict", False))
+        # ``filesystem.allow_read`` / ``allow_write`` widen the fs tools beyond
+        # the project root with explicitly configured absolute directories (the
+        # filesystem counterpart of ``bash.sandbox.allow_*``). Needed whenever a
+        # deployment mounts a shared dir next to the workspace that the agent
+        # must still write — e.g. an Airflow DAGs folder. Lazy import for the
+        # same cycle reason as ``SandboxSettings`` below.
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        self._filesystem_allowlist: "PathAllowlist" = PathAllowlist.from_dict(filesystem_raw)
         # ``config_mutable`` gates whether the agent may be guided to edit the
         # loaded agent config file (e.g. ``agent.plugins`` profiles). Default
         # ``True`` (CLI). The chat API and gateway force it to ``False`` on
@@ -1199,6 +1209,29 @@ class AgentConfig:
     @filesystem_strict.setter
     def filesystem_strict(self, value: bool) -> None:
         self._filesystem_strict = bool(value)
+
+    @property
+    def filesystem_allowlist(self) -> "PathAllowlist":
+        """Extra fs roots outside the project root (``PathAllowlist``).
+
+        Populated from ``agent.filesystem.allow_read`` / ``allow_write``. Empty
+        by default, in which case only the project root and the built-in
+        whitelist are reachable. Nodes forward it to ``FilesystemFuncTool`` and
+        ``FilesystemPolicy`` so tool and permission layers agree.
+        """
+        return self._filesystem_allowlist
+
+    @filesystem_allowlist.setter
+    def filesystem_allowlist(self, value: Union["PathAllowlist", dict, None]) -> None:
+        """Accepts a ``PathAllowlist``, an ``agent.filesystem``-shaped dict, or ``None``."""
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        if value is None:
+            self._filesystem_allowlist = PathAllowlist()
+        elif isinstance(value, PathAllowlist):
+            self._filesystem_allowlist = value
+        else:
+            self._filesystem_allowlist = PathAllowlist.from_dict(value)
 
     @property
     def config_mutable(self) -> bool:

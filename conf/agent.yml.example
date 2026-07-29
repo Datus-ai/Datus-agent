@@ -178,6 +178,25 @@ agent:
   #     allow_write: []       # extra writable dirs
   #     deny_network: false   # true blocks all network inside the sandbox
 
+  # ---------------------------------------------------------------------------
+  # Filesystem tools (read_file / write_file / edit_file / delete_file / glob /
+  # grep) and the scheduler tools' SQL-file lookup.
+  #   strict      — fail-closed on paths outside the project root instead of
+  #                 asking the user (API / gateway surfaces set this; the CLI
+  #                 leaves it false and prompts instead).
+  #   allow_read  — extra absolute dirs readable outside the project root
+  #   allow_write — extra absolute dirs readable AND writable outside it
+  # allow_read/allow_write are the escape hatch for directories a deployment
+  # mounts next to the workspace — e.g. an Airflow DAGs folder the agent must
+  # write DAG files into — without giving up ``strict``. Relative entries are
+  # ignored (they would resolve against the process CWD).
+  # ---------------------------------------------------------------------------
+  # filesystem:
+  #   strict: false
+  #   allow_read: []
+  #   allow_write:
+  #     - /data/airflow/dags
+
   nodes:
     schema_linking:
       matching_rate: fast

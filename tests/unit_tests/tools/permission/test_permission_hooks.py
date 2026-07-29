@@ -625,7 +625,7 @@ class TestFilesystemZoneBranch:
     path so approval never leaks across targets.
     """
 
-    def _build(self, broker, tmp_path, rules=None, *, strict=False):
+    def _build(self, broker, tmp_path, rules=None, *, strict=False, allowlist=None):
         registry = ToolRegistry()
         fs_tool = MagicMock()
         fs_tool.name = "read_file"
@@ -643,9 +643,65 @@ class TestFilesystemZoneBranch:
             permission_manager=manager,
             node_name="chat",
             tool_registry=registry,
-            fs_policy=FilesystemPolicy(root_path=project, current_node="chat", strict=strict),
+            fs_policy=FilesystemPolicy(
+                root_path=project,
+                current_node="chat",
+                strict=strict,
+                allowlist=allowlist,
+            ),
         )
         return hooks, manager, project
+
+    @pytest.mark.asyncio
+    async def test_allowlisted_root_bypasses_ask(self, mock_broker, tmp_path):
+        """A configured ``allow_write`` root must not prompt.
+
+        The tool classifies it as WHITELIST and writes happily; if the hook
+        still treated it as EXTERNAL, an interactive deployment would prompt on
+        every DAG file and a non-interactive one would raise.
+        """
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        (dags / "job.py").write_text("x")
+        hooks, _, _ = self._build(
+            mock_broker,
+            tmp_path,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        mock_broker.request = AsyncMock(return_value="n")
+
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{dags / "job.py"}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        mock_broker.request.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_path_outside_allowlist_still_asks(self, mock_broker, tmp_path):
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        hooks, _, _ = self._build(
+            mock_broker,
+            tmp_path,
+            allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        mock_broker.request = AsyncMock(return_value="a")
+
+        target = tmp_path / "elsewhere.md"
+        target.write_text("x")
+        ctx = MagicMock()
+        ctx.tool_arguments = f'{{"path": "{target}"}}'
+        tool = MagicMock()
+        tool.name = "read_file"
+
+        await hooks.on_tool_start(ctx, MagicMock(), tool)
+        assert mock_broker.request.await_count == 1
 
     @pytest.mark.asyncio
     async def test_internal_bypasses_ask_rule(self, mock_broker, tmp_path):

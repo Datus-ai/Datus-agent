@@ -1778,6 +1778,52 @@ class TestAgentConfigFilesystemStrict:
         cfg.override_by_args(filesystem_strict=None)
         assert cfg.filesystem_strict is True
 
+
+class TestAgentConfigFilesystemAllowlist:
+    """``agent.filesystem.allow_read``/``allow_write`` → ``filesystem_allowlist``.
+
+    The allowlist is what lets a strict deployment reach directories mounted
+    outside the project root (e.g. the Airflow DAGs folder) — it must survive
+    alongside ``strict`` in the same config section.
+    """
+
+    _make = TestAgentConfigFilesystemStrict._make
+
+    def test_default_is_empty(self, tmp_path):
+        cfg = self._make(tmp_path)
+        assert bool(cfg.filesystem_allowlist) is False
+        assert cfg.filesystem_allowlist.read == ()
+        assert cfg.filesystem_allowlist.write == ()
+
+    def test_parsed_alongside_strict(self, tmp_path):
+        dags = tmp_path / "dags"
+        cfg = self._make(tmp_path, filesystem={"strict": True, "allow_write": [str(dags)]})
+        assert cfg.filesystem_strict is True
+        assert cfg.filesystem_allowlist.write == (dags.resolve(),)
+
+    def test_read_and_write_kept_separate(self, tmp_path):
+        cfg = self._make(
+            tmp_path,
+            filesystem={"allow_read": [str(tmp_path / "ro")], "allow_write": [str(tmp_path / "rw")]},
+        )
+        assert cfg.filesystem_allowlist.read == ((tmp_path / "ro").resolve(),)
+        assert cfg.filesystem_allowlist.write == ((tmp_path / "rw").resolve(),)
+
+    def test_setter_accepts_dict_and_none(self, tmp_path):
+        cfg = self._make(tmp_path)
+        cfg.filesystem_allowlist = {"allow_write": [str(tmp_path / "dags")]}
+        assert cfg.filesystem_allowlist.write == ((tmp_path / "dags").resolve(),)
+        cfg.filesystem_allowlist = None
+        assert bool(cfg.filesystem_allowlist) is False
+
+    def test_setter_accepts_allowlist_instance(self, tmp_path):
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        cfg = self._make(tmp_path)
+        allowlist = PathAllowlist.from_dict({"allow_read": [str(tmp_path / "shared")]})
+        cfg.filesystem_allowlist = allowlist
+        assert cfg.filesystem_allowlist is allowlist
+
     def test_override_by_args_missing_preserves_yaml(self, tmp_path):
         # override_by_args is also called without a filesystem_strict key
         # (e.g. in non-CLI code paths). That must not reset the flag.
