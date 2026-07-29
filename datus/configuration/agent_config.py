@@ -23,6 +23,7 @@ from datus.utils.path_utils import get_files_from_glob_pattern
 
 if TYPE_CHECKING:
     from datus.prompts.prompt_manager import PromptManager
+    from datus.tools.func_tool.fs_path_policy import PathAllowlist
     from datus.utils.path_manager import DatusPathManager
 
 # Regex for validating platform/identifier names (no special chars that break paths)
@@ -917,7 +918,7 @@ class AgentConfig:
         # same cycle reason as ``SandboxSettings`` below.
         from datus.tools.func_tool.fs_path_policy import PathAllowlist
 
-        self._filesystem_allowlist = PathAllowlist.from_dict(filesystem_raw)
+        self._filesystem_allowlist: "PathAllowlist" = PathAllowlist.from_dict(filesystem_raw)
         # ``config_mutable`` gates whether the agent may be guided to edit the
         # loaded agent config file (e.g. ``agent.plugins`` profiles). Default
         # ``True`` (CLI). The chat API and gateway force it to ``False`` on
@@ -1210,7 +1211,7 @@ class AgentConfig:
         self._filesystem_strict = bool(value)
 
     @property
-    def filesystem_allowlist(self):
+    def filesystem_allowlist(self) -> "PathAllowlist":
         """Extra fs roots outside the project root (``PathAllowlist``).
 
         Populated from ``agent.filesystem.allow_read`` / ``allow_write``. Empty
@@ -1221,7 +1222,7 @@ class AgentConfig:
         return self._filesystem_allowlist
 
     @filesystem_allowlist.setter
-    def filesystem_allowlist(self, value) -> None:
+    def filesystem_allowlist(self, value: Union["PathAllowlist", dict, None]) -> None:
         """Accepts a ``PathAllowlist``, an ``agent.filesystem``-shaped dict, or ``None``."""
         from datus.tools.func_tool.fs_path_policy import PathAllowlist
 

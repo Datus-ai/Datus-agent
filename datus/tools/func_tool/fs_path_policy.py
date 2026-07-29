@@ -26,6 +26,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Tuple
 
+from pydantic import BaseModel, ConfigDict
+
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -99,8 +101,7 @@ def _normalize_allow_roots(raw: Any) -> Tuple[Path, ...]:
     return tuple(roots)
 
 
-@dataclass(frozen=True)
-class PathAllowlist:
+class PathAllowlist(BaseModel):
     """Extra roots outside the project root that stay reachable to fs tools.
 
     Parsed from ``agent.filesystem.allow_read`` / ``allow_write``: a path under
@@ -113,7 +114,15 @@ class PathAllowlist:
     Anchors only ever *upgrade* an otherwise ``EXTERNAL`` path: project-side
     zones (``INTERNAL``, the built-in whitelist, ``HIDDEN``) are decided first,
     so an allowlist entry can never expose ``.datus/`` internals.
+
+    Frozen: the tool, the permission hook and the scheduler tools all read the
+    same instance off ``AgentConfig``, so it must never be mutated underneath
+    one of them. Build via :meth:`from_dict` — direct construction skips the
+    absolute-path normalization that keeps a relative entry from resolving
+    against the process CWD.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     read: Tuple[Path, ...] = ()
     write: Tuple[Path, ...] = ()

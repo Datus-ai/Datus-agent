@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from datus.agent.node.stream_run_context import StreamRunContext
     from datus.agent.workflow import Workflow
     from datus.schemas.token_usage import TokenUsage
+    from datus.tools.func_tool.fs_path_policy import PathAllowlist
     from datus.tools.permission.permission_manager import PermissionManager
     from datus.tools.skill_tools.skill_manager import SkillManager
 
@@ -3567,7 +3568,7 @@ class AgenticNode(Node):
             return False
         return bool(self.agent_config.filesystem_strict)
 
-    def _resolve_filesystem_allowlist(self):
+    def _resolve_filesystem_allowlist(self) -> Optional["PathAllowlist"]:
         """Resolve the configured extra fs roots for this node's tools.
 
         Reads ``agent_config.filesystem_allowlist`` (``agent.filesystem
