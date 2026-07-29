@@ -6,7 +6,7 @@
 from pathlib import Path
 
 from datus.tools.func_tool.filesystem_tools import FilesystemConfig, FilesystemFuncTool
-from datus.tools.func_tool.fs_path_policy import PathZone
+from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -746,6 +746,86 @@ class TestPathZones:
         tool = FilesystemFuncTool(root_path=str(project), current_node="chat", strict=True)
         assert tool.read_file("hello.md").result == "hi"
         assert tool.write_file(".datus/skills/x/SKILL.md", "# skill\n").success == 1
+
+    def test_strict_allows_write_into_allowlisted_root(self, tmp_path):
+        """The DAGs-folder case: strict mode + a configured ``allow_write`` root.
+
+        A deployment mounts a shared directory (Airflow DAGs folder) next to the
+        project workspace; the agent must be able to author files there without
+        the whole surface losing its fail-closed default.
+        """
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "services" / "airflow" / "dags" / "ws1" / "proj1"
+        dags.mkdir(parents=True)
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        target = dags / "daily_job.py"
+        assert tool.write_file(str(target), "print('dag')\n").success == 1
+        assert target.read_text() == "print('dag')\n"
+        # Round-trip through the other mutating/reading ops on the same root.
+        assert tool.read_file(str(target)).result == "print('dag')\n"
+        assert tool.edit_file(str(target), "dag", "dag2").success == 1
+        assert tool.delete_file(str(target)).success == 1
+
+    def test_strict_allowlisted_read_root_rejects_write(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        (shared / "ref.sql").write_text("select 1")
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_read": [str(shared)]}),
+        )
+        assert tool.read_file(str(shared / "ref.sql")).result == "select 1"
+        result = tool.write_file(str(shared / "ref.sql"), "select 2")
+        assert result.success == 0
+        assert "read-only" in (result.error or "").lower()
+        assert (shared / "ref.sql").read_text() == "select 1"
+
+    def test_strict_still_rejects_paths_outside_allowlist(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        target = tmp_path / "elsewhere.md"
+        result = tool.write_file(str(target), "payload")
+        assert result.success == 0
+        assert "not allowed in strict mode" in (result.error or "").lower()
+        assert not target.exists()
+
+    def test_glob_seeded_at_allowlisted_root_lists_files(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "dags"
+        dags.mkdir()
+        (dags / "a_dag.py").write_text("a")
+        (dags / "b_dag.py").write_text("b")
+        tool = FilesystemFuncTool(
+            root_path=str(project),
+            current_node="chat",
+            strict=True,
+            path_allowlist=PathAllowlist.from_dict({"allow_write": [str(dags)]}),
+        )
+        result = tool.glob("*_dag.py", str(dags))
+        assert result.success == 1
+        # Seed is WHITELIST (not EXTERNAL), and reported paths stay absolute
+        # because they cannot be expressed relative to the project root.
+        assert result.result.get("external") is None
+        assert {Path(p).name for p in result.result["files"]} == {"a_dag.py", "b_dag.py"}
 
     def test_glob_external_seed_returns_absolute_paths(self, tmp_path):
         other = tmp_path / "other"

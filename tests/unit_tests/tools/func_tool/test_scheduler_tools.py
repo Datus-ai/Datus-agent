@@ -63,6 +63,9 @@ def _make_agent_config(scheduler_config=None, project_root="/tmp/datus_test_proj
     # Without this an auto-attribute MagicMock would be truthy, flipping
     # SchedulerTools into strict mode and breaking existing EXTERNAL-path tests.
     cfg.filesystem_strict = False
+    # Same reason: an auto-attribute MagicMock here would be a truthy
+    # "allowlist" whose anchors cannot be iterated meaningfully.
+    cfg.filesystem_allowlist = None
 
     def _get_scheduler_config(service_name=None):
         if service_name:
@@ -774,6 +777,81 @@ class TestSubmitSqlJob:
 
         assert result.success == 0
         assert "Connection failed" in (result.error or "")
+
+
+# ── SchedulerTools SQL-path resolution in strict mode ────────────────────
+
+
+class TestStrictSqlPathResolution:
+    """``_load_sql_content`` shares ``classify_path`` with the filesystem tool.
+
+    Strict mode (API / gateway) must reject SQL outside the project root, but
+    accept the deployment's configured ``agent.filesystem.allow_*`` roots —
+    otherwise a DAG whose SQL lives in the mounted DAGs folder can never be
+    submitted.
+    """
+
+    def _strict_config(self, project_root, allowlist=None):
+        cfg = _make_agent_config(project_root=str(project_root))
+        cfg.filesystem_strict = True
+        cfg.filesystem_allowlist = allowlist
+        return cfg
+
+    def test_external_sql_rejected_in_strict_mode(self, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        sql_file = tmp_path / "outside.sql"
+        sql_file.write_text("SELECT 1")
+
+        tools = SchedulerTools(self._strict_config(project))
+        result = tools.submit_sql_job(job_name="j", sql_file_path=str(sql_file), conn_id="c")
+        assert result.success == 0
+        assert "not allowed in strict mode" in (result.error or "").lower()
+
+    def test_allowlisted_sql_accepted_in_strict_mode(self, tmp_path):
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        dags = tmp_path / "dags" / "ws1" / "proj1"
+        dags.mkdir(parents=True)
+        sql_file = dags / "daily.sql"
+        sql_file.write_text("SELECT 1")
+
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = _make_scheduled_job("daily")
+        mock_adapter.close.return_value = None
+
+        cfg = self._strict_config(project, PathAllowlist.from_dict({"allow_write": [str(dags)]}))
+        tools = SchedulerTools(cfg)
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="daily", sql_file_path=str(sql_file), conn_id="c")
+
+        assert result.success == 1
+        payload = mock_adapter.submit_job.call_args[0][0]
+        assert payload.sql == "SELECT 1"
+
+    def test_read_only_allowlist_still_loads_sql(self, tmp_path):
+        from datus.tools.func_tool.fs_path_policy import PathAllowlist
+
+        project = tmp_path / "proj"
+        project.mkdir()
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        sql_file = shared / "ref.sql"
+        sql_file.write_text("SELECT 2")
+
+        mock_adapter = MagicMock()
+        mock_adapter.submit_job.return_value = _make_scheduled_job("ref")
+        mock_adapter.close.return_value = None
+
+        cfg = self._strict_config(project, PathAllowlist.from_dict({"allow_read": [str(shared)]}))
+        tools = SchedulerTools(cfg)
+        with patch.object(tools, "_get_adapter", return_value=mock_adapter):
+            result = tools.submit_sql_job(job_name="ref", sql_file_path=str(sql_file), conn_id="c")
+
+        assert result.success == 1
+        assert mock_adapter.submit_job.call_args[0][0].sql == "SELECT 2"
 
 
 # ── SchedulerTools.submit_sparksql_job ───────────────────────────────────

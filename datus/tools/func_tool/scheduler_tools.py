@@ -67,7 +67,9 @@ class SchedulerTools(BaseTool):
         produced by ``write_file`` is read back from the same location regardless
         of process CWD. HIDDEN paths get the same "not found" response
         ``FilesystemFuncTool`` uses (so ``.datus/sessions/...`` stays invisible).
-        EXTERNAL paths are rejected only in ``strict`` mode.
+        EXTERNAL paths are rejected only in ``strict`` mode — configured
+        ``agent.filesystem.allow_read``/``allow_write`` roots (e.g. a mounted
+        DAGs folder holding generated SQL) classify as WHITELIST, not EXTERNAL.
 
         Returns:
             ``(sql_content, None)`` on success, or ``(None, error_result)`` on failure.
@@ -78,6 +80,7 @@ class SchedulerTools(BaseTool):
                 root_path=Path(self.agent_config.project_root),
                 current_node=None,
                 datus_home=None,
+                allowlist=getattr(self.agent_config, "filesystem_allowlist", None),
             )
         except Exception as exc:
             return None, FuncToolResult(success=0, error=f"Failed to resolve SQL file path '{sql_file_path}': {exc}")

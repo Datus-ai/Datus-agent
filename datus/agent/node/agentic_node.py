@@ -3567,6 +3567,16 @@ class AgenticNode(Node):
             return False
         return bool(self.agent_config.filesystem_strict)
 
+    def _resolve_filesystem_allowlist(self):
+        """Resolve the configured extra fs roots for this node's tools.
+
+        Reads ``agent_config.filesystem_allowlist`` (``agent.filesystem
+        .allow_read`` / ``allow_write``). Returns ``None`` when unset or empty
+        so the tool / policy layers keep their default project-only view.
+        """
+        allowlist = getattr(self.agent_config, "filesystem_allowlist", None) if self.agent_config else None
+        return allowlist or None
+
     def _resolve_config_mutable(self) -> bool:
         """Whether the agent may edit the agent config file (agent.yml).
 
@@ -3606,12 +3616,14 @@ class AgenticNode(Node):
             strict = self._resolve_filesystem_strict()
         current_node = kwargs.pop("current_node", None) or self.get_node_name()
         session_data_dir = kwargs.pop("session_data_dir", None) or self._resolve_session_data_dir()
+        path_allowlist = kwargs.pop("path_allowlist", None) or self._resolve_filesystem_allowlist()
         return FilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
             datus_home=datus_home,
             strict=strict,
             session_data_dir=session_data_dir,
+            path_allowlist=path_allowlist,
             **kwargs,
         )
 
@@ -3696,6 +3708,7 @@ class AgenticNode(Node):
                 datus_home=_Path(path_manager.datus_home),
                 strict=self._resolve_filesystem_strict(),
                 session_data_dir=session_data_dir,
+                allowlist=self._resolve_filesystem_allowlist(),
             )
         except Exception as e:
             logger.debug(f"Failed to build FilesystemPolicy: {e}")
