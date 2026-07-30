@@ -85,7 +85,7 @@ class TestGenMetricsAgenticNodeInit:
 
         # Generation tools
         assert "check_semantic_object_exists" in tool_names
-        assert "end_metric_generation" in tool_names
+        assert "publish_metrics" in tool_names
 
         # Tool instances should be initialized
         assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
@@ -103,15 +103,13 @@ class TestGenMetricsAgenticNodeInit:
         tool_names = {tool.name for tool in node.tools}
 
         assert {"read_file", "upsert_osi_metrics", "glob", "grep"}.issubset(tool_names)
-        assert {"write_file", "edit_file", "delete_file", "end_semantic_model_generation", "bash"}.isdisjoint(
-            tool_names
-        )
+        assert {"write_file", "edit_file", "delete_file", "publish_semantic_model", "bash"}.isdisjoint(tool_names)
         assert "task" not in tool_names
         assert node.sub_agent_task_tool is None
         assert "list_existing_osi_semantic_models" in tool_names
         assert "bind_osi_semantic_model_target" in tool_names
         assert "plan_osi_semantic_model_target" not in tool_names
-        assert "end_metric_generation" in tool_names
+        assert "publish_metrics" in tool_names
         node._populate_tool_registry()
         assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("bind_osi_semantic_model_target") == "semantic_tools"
@@ -155,7 +153,7 @@ class TestGenMetricsAgenticNodeInit:
         )
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
-        assert registry.get("end_metric_generation") == "semantic_tools"
+        assert registry.get("publish_metrics") == "semantic_tools"
         assert registry.get("check_semantic_object_exists") == "semantic_tools"
         assert registry.get("execute_sql") == "db_tools"
         assert "read_query" not in registry
@@ -243,6 +241,73 @@ class TestGenMetricsAgenticNodeExecution:
         assert node.semantic_tools.generation_evidence is evidence
         assert node.input.semantic_model_name == "requested_target"
         assert mock_llm_create.call_history == []
+
+    @pytest.mark.asyncio
+    async def test_before_stream_leaves_sql_preflight_pending(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate metrics for SELECT SUM(amount) AS revenue FROM orders")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+
+        await node._before_stream(ctx)
+
+        assert node.sql_modeling_plan is None
+        assert node.generation_evidence.sql_modeling_plan_status == "pending"
+        assert node.generation_evidence.required_metric_output_ids == []
+        assert "prepare_sql_modeling_plan" in {tool.name for tool in node.tools}
+
+    def test_sql_result_cannot_bypass_preflight(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+        from datus.utils.exceptions import DatusException
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = "not json"
+
+        with pytest.raises(DatusException, match="prepare_sql_modeling_plan"):
+            node._build_success_result(ctx)
+
+    def test_sql_result_requires_structured_terminal_response(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = json.dumps({"metric_file": "metrics/orders.yml"})
+
+        with pytest.raises(RuntimeError, match="structured final response"):
+            node._build_success_result(ctx)
+
+    def test_sql_result_cannot_skip_required_metric_outputs(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        node.generation_evidence.set_required_metric_outputs([{"output_id": "orders:output_1"}])
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = json.dumps(
+            {
+                "metric_file": None,
+                "status": "skipped",
+                "skip_reason": "not_a_metric",
+                "output": "Skipped.",
+            }
+        )
+
+        with pytest.raises(RuntimeError, match="required metric outputs"):
+            node._build_success_result(ctx)
 
     @pytest.mark.asyncio
     async def test_metrics_with_filesystem_tool(self, real_agent_config, mock_llm_create):
@@ -551,21 +616,18 @@ class TestSetupSemanticDiscoveryTools:
         )
 
         tool_names = [tool.name for tool in node.tools]
-        assert "analyze_table_relationships" in tool_names, f"Missing analyze_table_relationships, got: {tool_names}"
-        assert "validate_semantic_key_candidate" in tool_names, (
-            f"Missing validate_semantic_key_candidate, got: {tool_names}"
-        )
-        assert "get_multiple_tables_ddl" in tool_names, f"Missing get_multiple_tables_ddl, got: {tool_names}"
-        assert "analyze_column_usage_patterns" in tool_names, (
-            f"Missing analyze_column_usage_patterns, got: {tool_names}"
-        )
-        assert "analyze_metric_candidates_from_history" in tool_names, (
-            f"Missing analyze_metric_candidates_from_history, got: {tool_names}"
-        )
+        assert "inspect_semantic_sources" in tool_names
+        assert "validate_semantic_key_candidates" in tool_names
+        assert "analyze_table_relationships" not in tool_names
+        assert "validate_semantic_key_candidate" not in tool_names
+        assert "get_multiple_tables_ddl" not in tool_names
+        assert "analyze_column_usage_patterns" not in tool_names
+        assert "prepare_sql_modeling_plan" in tool_names
+        assert "analyze_metric_candidates_from_history" not in tool_names
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
 
-    def test_sql_history_analyzer_remains_when_no_db(self, real_agent_config, mock_llm_create):
-        """SQL-history analysis is filesystem-backed and does not require a live DB tool."""
+    def test_sql_modeling_preflight_remains_when_no_db(self, real_agent_config, mock_llm_create):
+        """Request-local SQL planning remains available without a live DB tool."""
         from unittest.mock import patch as _patch
 
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -580,10 +642,10 @@ class TestSetupSemanticDiscoveryTools:
             )
 
         tool_names = [tool.name for tool in node.tools]
-        assert "analyze_table_relationships" not in tool_names
-        assert "get_multiple_tables_ddl" not in tool_names
-        assert "analyze_column_usage_patterns" not in tool_names
-        assert "analyze_metric_candidates_from_history" in tool_names
+        assert "inspect_semantic_sources" not in tool_names
+        assert "validate_semantic_key_candidates" not in tool_names
+        assert "prepare_sql_modeling_plan" in tool_names
+        assert "analyze_metric_candidates_from_history" not in tool_names
         assert isinstance(node.semantic_discovery_tools, SemanticDiscoveryTools)
         assert "read_file" in tool_names
         assert "check_semantic_object_exists" in tool_names
@@ -613,6 +675,27 @@ class TestExtractMetricAndOutputFromResponse:
         assert blocker_code is None
         assert skip_reason is None
         assert out == "Generated successfully"
+
+    def test_retains_metric_output_bindings_for_host_publish_fallback(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        node = _make_node(real_agent_config, mock_llm_create)
+        bindings = [{"output_id": "output_1", "metric_name": "revenue"}]
+
+        node._extract_metric_and_output_from_response(
+            {
+                "content": {
+                    "metric_file": "revenue_metrics.yml",
+                    "metric_output_bindings": bindings,
+                    "status": "generated",
+                    "output": "Generated successfully",
+                }
+            }
+        )
+
+        assert node.response_metric_output_bindings == bindings
 
     def test_extracts_from_json_string(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
@@ -840,6 +923,95 @@ class TestPrepareTemplateContext:
         assert "Requested semantic model file: `subject/semantic_models/warehouse/orders.yml`" in enhanced
         assert "bind_osi_semantic_model_target" in enhanced
 
+    def test_sql_modeling_plan_is_not_reinjected_into_the_user_message(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
+
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.sql_modeling_plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={
+                "metric_requirements": [
+                    {
+                        "output_id": "output_1",
+                        "dataset_requirement_id": "query_dataset:abc",
+                        "dataset_name_hint": "retained_users_query_dataset",
+                    }
+                ],
+                "dataset_requirements": [
+                    {
+                        "requirement_id": "query_dataset:abc",
+                        "sql": "SELECT 1",
+                    }
+                ],
+            },
+        )
+
+        enhanced = node._build_enhanced_message(SemanticNodeInput(user_message="Generate retention metrics"))
+
+        assert "Generate retention metrics" in enhanced
+        assert "dataset_requirement_id" not in enhanced
+        assert "retained_users_query_dataset" not in enhanced
+        assert node.sql_modeling_plan.candidate_plan["dataset_requirements"][0]["sql"] == "SELECT 1"
+
+    def test_query_backed_plan_uses_final_output_grain_for_queryability(
+        self,
+        real_agent_config,
+        mock_llm_create,
+    ):
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
+
+        output_id = "retention:statement_1:output_2:retained_players"
+        node = _make_node(real_agent_config, mock_llm_create)
+        node.input = SemanticNodeInput(user_message="Generate retention metrics")
+        node._accept_sql_modeling_plan(
+            SqlModelingPlan(
+                source_fingerprint="source",
+                metric_catalog_fingerprint="catalog",
+                candidate_plan={
+                    "metric_requirements": [
+                        {
+                            "output_id": output_id,
+                            "preferred_name": "retained_players",
+                        }
+                    ],
+                    "dataset_requirements": [
+                        {
+                            "source_sql_name": "retention_metrics",
+                            "output_grain": ["cohort_date", "retention_day"],
+                            "metric_output_ids": [output_id],
+                        }
+                    ],
+                    "source_classifications": [
+                        {
+                            "source_sql_name": "retention_metrics",
+                            "classification": "metric_plus_derived_datasource",
+                        }
+                    ],
+                    "blocked_direct_metric_candidates": [
+                        {
+                            "source_sql_name": "retention_metrics",
+                            "name": "intermediate_count",
+                        }
+                    ],
+                },
+            )
+        )
+
+        assert node.generation_evidence.metric_queryability_contracts == [
+            {
+                "source": "retention_metrics",
+                "dimension_hints": ["cohort_date", "retention_day"],
+                "metric_hints": ["retained_players"],
+                "metric_output_ids": [output_id],
+                "contract_source": "query_backed_output_grain",
+            }
+        ]
+
 
 class TestGetSystemPrompt:
     def test_workflow_uses_latest_prompt_when_version_unset(self, real_agent_config, mock_llm_create):
@@ -974,6 +1146,7 @@ class TestExecuteStreamGenMetricsError:
         )
         node.input = SemanticNodeInput(user_message="Generate metrics")
         mock_llm_create.generate_with_tools_stream = _raise_error
+        node.filesystem_func_tool.rollback_failed_metric_authoring = MagicMock(return_value=True)
 
         action_manager = ActionHistoryManager()
         actions = []
@@ -985,6 +1158,7 @@ class TestExecuteStreamGenMetricsError:
         last = actions[-1]
         assert last.status == ActionStatus.FAILED
         assert last.action_type == "error"
+        node.filesystem_func_tool.rollback_failed_metric_authoring.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_final_metric_file_without_end_tool_auto_publishes(self, real_agent_config, mock_llm_create):
@@ -1030,9 +1204,18 @@ class TestExecuteStreamGenMetricsError:
             return_value=FuncToolResult(result={"valid": True, "issues": []})
         )
         node.semantic_tools.query_metrics = MagicMock(
-            return_value=FuncToolResult(result={"columns": ["sql"], "data": [], "metadata": {"sql": "SELECT 1"}})
+            return_value=FuncToolResult(
+                result={
+                    "columns": ["sql"],
+                    "data": [],
+                    "metadata": {
+                        "sql": "SELECT 1",
+                        "warehouse_dry_run": {"status": "success"},
+                    },
+                }
+            )
         )
-        node.generation_tools.end_metric_generation = MagicMock(
+        node.generation_tools.publish_metrics = MagicMock(
             return_value=FuncToolResult(result={"message": "Metric generation completed and synced to Knowledge Base"})
         )
 
@@ -1045,15 +1228,14 @@ class TestExecuteStreamGenMetricsError:
         assert actions[-1].action_type == "gen_metrics_response"
         node.semantic_tools.validate_semantic.assert_called_once()
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["orders_total"], dry_run=True)
-        node.generation_tools.end_metric_generation.assert_called_once_with(
+        node.generation_tools.publish_metrics.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
-    def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
+    def test_final_metric_publish_automatically_dry_runs_grouped_source_sql(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.tools.func_tool.base import FuncToolResult
-        from datus.utils.exceptions import DatusException
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
 
         datasource = real_agent_config.current_datasource
         metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
@@ -1070,25 +1252,92 @@ class TestExecuteStreamGenMetricsError:
         node.input = SemanticNodeInput(
             user_message=(
                 "Create this metric from SQL: "
-                "SELECT customer_segment, SUM(revenue) AS revenue_total FROM orders GROUP BY customer_segment;"
+                "SELECT activity_date AS metric_time__day, reporting_region, "
+                "SUM(revenue) AS revenue_total FROM ("
+                "SELECT event_date AS activity_date, raw_region AS reporting_region, revenue FROM orders"
+                ") metric_source GROUP BY activity_date, reporting_region;"
+            )
+        )
+        node._accept_sql_modeling_plan(
+            SqlModelingPlan(
+                source_fingerprint="source",
+                metric_catalog_fingerprint="catalog",
+                candidate_plan={
+                    "queryability_contracts": [
+                        {
+                            "source": "revenue_by_customer_segment",
+                            "dimension_hints": ["metric_time__day", "reporting_region"],
+                            "dimension_expr_hints": [
+                                {
+                                    "alias": "reporting_region",
+                                    "expr": "raw_region",
+                                    "column": "raw_region",
+                                }
+                            ],
+                            "time_group_hints": [
+                                {
+                                    "alias": "metric_time__day",
+                                    "base_expr": "event_date",
+                                    "grain": "day",
+                                }
+                            ],
+                            "metric_hints": ["revenue_total"],
+                        }
+                    ]
+                },
             )
         )
         node.semantic_tools = MagicMock()
         node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
-        node.semantic_tools.query_metrics = MagicMock(
-            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT 1"}})
+        node.semantic_tools.get_dimensions = MagicMock(
+            return_value=FuncToolResult(
+                result={
+                    "items": [{"name": "event_date"}, {"name": "raw_region"}],
+                    "extra": {"time_dimension": "event_date", "time_granularities": ["day"]},
+                }
+            )
         )
-        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(
+                result={
+                    "metadata": {
+                        "sql": "SELECT 1",
+                        "warehouse_dry_run": {"status": "success"},
+                    }
+                }
+            )
+        )
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
-        with pytest.raises(DatusException, match="source SQL group-by dimensions"):
-            node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+        node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
 
-        node.semantic_tools.query_metrics.assert_called_once_with(metrics=["revenue_total"], dry_run=True)
-        node.generation_tools.end_metric_generation.assert_not_called()
+        node.semantic_tools.get_dimensions.assert_called_once_with(metric_name="revenue_total")
+        node.semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["revenue_total"],
+            dimensions=["event_date", "raw_region"],
+            time_granularity="day",
+            dry_run=True,
+        )
+        node.generation_tools.publish_metrics.assert_called_once_with(metric_file=str(metric_path))
+
+    def test_metric_publish_requires_warehouse_dry_run_evidence(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT COUNT(*) FROM orders"}})
+        )
+
+        with pytest.raises(RuntimeError, match="did not complete a warehouse dry-run"):
+            node._ensure_metric_dry_runs(["order_count"])
 
     def test_final_metric_publish_accepts_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
         from datus.tools.func_tool.base import FuncToolResult
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
 
         datasource = real_agent_config.current_datasource
         metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
@@ -1108,20 +1357,53 @@ class TestExecuteStreamGenMetricsError:
                 "SELECT customer_segment, SUM(revenue) AS revenue_total FROM orders GROUP BY customer_segment;"
             )
         )
+        node._accept_sql_modeling_plan(
+            SqlModelingPlan(
+                source_fingerprint="source",
+                metric_catalog_fingerprint="catalog",
+                source_queries=[
+                    SourceQueryEvidence(
+                        source_sql_name="revenue_by_customer_segment",
+                        sql=(
+                            "SELECT customer_segment, SUM(revenue) AS revenue_total "
+                            "FROM orders GROUP BY customer_segment"
+                        ),
+                    )
+                ],
+                candidate_plan={},
+            )
+        )
         node.semantic_tools = MagicMock()
         node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.semantic_tools.get_dimensions = MagicMock(
+            return_value=FuncToolResult(
+                result={
+                    "items": [{"name": "customer_segment"}],
+                    "extra": {"time_dimension": None, "time_granularities": []},
+                }
+            )
+        )
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(
+                result={
+                    "metadata": {
+                        "sql": "SELECT 1",
+                        "warehouse_dry_run": {"status": "success"},
+                    }
+                }
+            )
+        )
         node.generation_evidence.record_metric_dry_run(
             ["revenue_total"],
             FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
             dimensions=["customer_segment"],
         )
-        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
         node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
 
-        node.generation_tools.end_metric_generation.assert_called_once_with(
+        node.generation_tools.publish_metrics.assert_called_once_with(
             metric_file=str(metric_path),
-            semantic_model_files=[str(real_agent_config.path_manager.semantic_model_path(datasource) / "orders.yml")],
         )
 
     @staticmethod
@@ -1169,10 +1451,17 @@ class TestExecuteStreamGenMetricsError:
         node.semantic_tools = MagicMock()
         node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
         node.semantic_tools.query_metrics = MagicMock(
-            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT 1"}})
+            return_value=FuncToolResult(
+                result={
+                    "metadata": {
+                        "sql": "SELECT 1",
+                        "warehouse_dry_run": {"status": "success"},
+                    }
+                }
+            )
         )
         node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
-        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
         node._finalize_metric_generation(
             semantic_model_files=["subject/semantic_models/ignored.yml"],
@@ -1184,9 +1473,8 @@ class TestExecuteStreamGenMetricsError:
             semantic_model_name="shop",
         )
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["order_count"], dry_run=True)
-        node.generation_tools.end_metric_generation.assert_called_once_with(
+        node.generation_tools.publish_metrics.assert_called_once_with(
             metric_file=str(target),
-            semantic_model_files=[],
         )
 
     def test_osi_retry_republishes_an_identical_existing_metric(self, real_agent_config, mock_llm_create):
@@ -1232,17 +1520,23 @@ class TestExecuteStreamGenMetricsError:
         node.semantic_tools = MagicMock()
         node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
         node.semantic_tools.query_metrics = MagicMock(
-            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT COUNT(*) FROM orders"}})
+            return_value=FuncToolResult(
+                result={
+                    "metadata": {
+                        "sql": "SELECT COUNT(*) FROM orders",
+                        "warehouse_dry_run": {"status": "success"},
+                    }
+                }
+            )
         )
         node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
-        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
         node._finalize_metric_generation(None, None, "generated")
 
         node.semantic_tools.query_metrics.assert_called_once_with(metrics=["order_count"], dry_run=True)
-        node.generation_tools.end_metric_generation.assert_called_once_with(
+        node.generation_tools.publish_metrics.assert_called_once_with(
             metric_file=str(target),
-            semantic_model_files=[],
         )
 
     def test_osi_publish_scope_expansion_does_not_reuse_partial_sync(
@@ -1297,10 +1591,17 @@ class TestExecuteStreamGenMetricsError:
         assert node.osi_target_state.authored_metric_names == ["order_count", "revenue"]
         node.semantic_tools = MagicMock()
         node.semantic_tools.query_metrics = MagicMock(
-            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT 1"}})
+            return_value=FuncToolResult(
+                result={
+                    "metadata": {
+                        "sql": "SELECT 1",
+                        "warehouse_dry_run": {"status": "success"},
+                    }
+                }
+            )
         )
         node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
-        node.generation_tools.end_metric_generation = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
         node._finalize_metric_generation(None, None, "generated")
 
@@ -1309,9 +1610,8 @@ class TestExecuteStreamGenMetricsError:
             metrics=["order_count", "revenue"],
             dry_run=True,
         )
-        node.generation_tools.end_metric_generation.assert_called_once_with(
+        node.generation_tools.publish_metrics.assert_called_once_with(
             metric_file=str(target),
-            semantic_model_files=[],
         )
 
     def test_osi_skipped_requires_non_metric_reason(self, real_agent_config, mock_llm_create):
@@ -1535,7 +1835,7 @@ class TestExecuteStreamGenMetricsError:
             return_value=FuncToolResult(result={"valid": True, "issues": []})
         )
         node.generation_tools._validate_metric_file_has_blocks = MagicMock(return_value=None)
-        node.generation_tools.end_metric_generation = MagicMock(
+        node.generation_tools.publish_metrics = MagicMock(
             return_value=FuncToolResult(result={"message": "should not publish"})
         )
 
@@ -1548,7 +1848,7 @@ class TestExecuteStreamGenMetricsError:
         assert actions[-1].action_type == "error"
         assert "outside Knowledge Base sandbox" in actions[-1].output["error"]
         node.generation_tools._validate_metric_file_has_blocks.assert_not_called()
-        node.generation_tools.end_metric_generation.assert_not_called()
+        node.generation_tools.publish_metrics.assert_not_called()
 
     def test_final_metric_path_resolver_rejects_parent_traversal(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

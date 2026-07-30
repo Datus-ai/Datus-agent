@@ -15,9 +15,9 @@ allowed_agents:
 
 Guide the user through metric generation using natural language business descriptions.
 
-## Phase 0: Discovery — Scan Existing Assets
+## Phase 0: SQL Modeling Preflight
 
-Before anything else, call `list_metrics()` to get all metrics already in the knowledge base. Build an existing metric catalog JSON array with each metric's exact `name`, `type`, `description` when available, and `subject_path` when available. Use this throughout the remaining phases to:
+For requests that directly contain SQL, follow the required `sql-modeling-preflight` skill and call `prepare_sql_modeling_plan` before reading or writing artifacts. Existing-YAML maintenance and natural-language-only authoring skip this tool call. A file path alone is not SQL input for this request-local contract: the caller must read the file first and include each original question and SQL statement in the delegated task. If the current task only names a CSV/SQL file, report that the SQL must be materialized into the task instead of reading the file and bypassing preflight. For SQL-backed requests, use the returned existing metric catalog and authoritative candidate plan throughout the remaining phases to:
 - **Skip redundant work** — don't recreate metrics that already exist. "Already exists" requires the same aggregation AND the same window/offset semantics: a cumulative/window/period-over-period variant (e.g. `running_x`, `moving_n_x`, `previous_period_x`) is a new metric even when its base metric `x` is already published
 - **Reuse existing measures** — reference measures from existing models instead of creating duplicates
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
@@ -32,7 +32,7 @@ Analyze the user's request and confirm the generation scope before proceeding. W
 ### Input Mode Detection
 
 - **Single mode**: User describes one metric or provides one SQL → follow Step 1a–1d below
-- **Batch mode**: User provides multiple SQL queries (pasted directly, or a CSV file path containing `question` + `sql` columns) → follow Step 1-batch below
+- **Batch mode**: The current task directly contains multiple SQL queries, optionally materialized by the caller from a CSV/SQL file → follow Step 1-batch below
 
 ### Single Mode: Step 1a–1d
 
@@ -60,24 +60,20 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 ### Batch Mode: Step 1-batch
 
 **Step 1-batch-a: Parse SQL queries**
-- The input may contain multiple SQL queries in various forms:
-  - **Direct paste**: multiple SQL statements in the prompt
-  - **File path**: user provides a path — call `read_file` to load it, then parse by file type:
-    - `.sql`: split by `;` or blank-line separators to extract individual statements
-    - `.csv` / `.tsv`: identify the SQL column by header name (common names: `sql`, `query`, `SQL`, `statement`) or by content heuristic (column values contain SQL keywords like `SELECT`, `FROM`, `GROUP BY`). The description/question column is any remaining text column. If column roles are ambiguous, call `ask_user` when available to confirm which column is SQL; otherwise stop and explain the missing column mapping.
-    - Other formats: call `ask_user` when available to clarify the file structure before proceeding; otherwise stop and explain the supported file formats or required structure.
+- The task must contain the SQL statements themselves. They may be pasted by the user or materialized into the task by the caller from a CSV/SQL file.
+- Do not read a file-only input inside this subagent: `prepare_sql_modeling_plan` owns exact SQL from the current task and cannot establish provenance for SQL discovered afterward.
 - Parse all SQL queries from the input
 - Call `describe_table` for each unique table found in the SQL queries
 
 **Step 1-batch-b: Mine metric candidates from SQL ASTs**
 
-Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `existing_metric_catalog_json` from Phase 0. Use its output to preserve final business metric expressions and their dependencies:
+Use the `candidate_plan` returned by `prepare_sql_modeling_plan` to preserve final business metric expressions and their dependencies:
 
 1. **Preserve final output metrics** — SQL aliases and final SELECT expressions are the primary metric candidates.
 2. **Keep base measures as dependencies** — base measures support the final metric but do not replace it.
-3. **Deduplicate by business metric** — merge repeated aliases/normalized expressions across SQL files while preserving source evidence.
+3. **Reuse only outside the output contract** — reusable base measures and catalog evidence may be deduplicated, but never merge two explicit `metric_requirements` merely because their aliases or normalized expressions match.
 4. **Separate non-metrics** — filter-only/detail SQL belongs in `non_metric_evidence`, not metric YAML.
-5. **Respect modeling classifications** — if `query_classification` is `metric_plus_derived_datasource` or `derived_datasource_recommendations` is non-empty, do not generate a direct metric from `blocked_direct_metric_candidates`; first model the recommended `sql_query` data source or materialized view, then define metrics on that data source.
+5. **Respect output-level lowering** — `metric_requirements` is the final-output completeness contract. Keep requirements distinct by `output_id`, even when aliases repeat, and process each `target_mode` independently. A statement may contain both `direct_metric` and `query_backed_metric` requirements: lower the direct outputs normally and follow each query-backed requirement's `dataset_requirement_id` to its authored dataset. Exact SQL matching and injection are owned by the dataset tool, so do not reconstruct SQL. Use the actual authored semantic name rather than `dataset_name_hint`, and do not generate direct physical-table metrics from intermediate CTE aggregates. Query-level classifications and recommendations are explanatory summaries; they must not replace the output-level contract.
 6. **Choose business-safe names** — if a candidate has `requires_name_translation: true`, treat `name` as a technical fallback only. Also inspect every `source_alias`: when the alias appears generated or lacks business meaning, do not use it as the final MetricFlow name. In interactive mode, ask the user to confirm if the business meaning is unclear; in batch/bootstrap mode, infer a clear English snake_case name from the SQL expression, question, and table/column context without stopping.
 7. **Preserve SQL literal values** — if `literal_mappings` is present, keep the literal `value` exactly as it appears in SQL predicates/CASE/sql_query output. Only MetricFlow object names may be translated or normalized.
 8. **Preserve SQL time grain** — if `time_grain_evidence` is present, expose an equivalent time dimension in any derived data source. Do not replace a projected date such as `CURDATE() AS part_dt` or `DATE(create_time) AS part_dt` with raw `create_time` as the primary time dimension.
@@ -90,8 +86,11 @@ Call `analyze_metric_candidates_from_history` with all parsed SQL queries and `e
 14. **Respect `support_measure_candidates`** — these are dependency or comparison measures, not direct metrics. You may add them to a semantic model only if a generated metric needs them, but do not publish a `metric:` block for them.
 15. **Review `llm_review_candidates` critically** — these are possible metric evidence, not confirmed metrics. For each item, decide whether the row-level or ambiguous expression should be lifted into a reusable MetricFlow metric. Generate it only when the SQL, table/column semantics, and user question support that lift; otherwise record it as query-only/detail evidence and do not create a metric.
 16. **Do not assume lifted equivalence** — for candidates with `equivalence: "lifted"` or `requires_validation: true`, do not assume exact equivalence to the historical SQL. Prefer a semantically correct aggregate metric such as `SUM(numerator) / SUM(denominator)` only when that lift is business-valid; otherwise skip the metric.
-17. **One metric per business meaning** — use the candidate's `name` exactly as the published metric name. When a candidate lists `equivalent_names`, those are acceptable aliases for the same metric — publish ONE metric (prefer the candidate `name`), never one per alias.
+17. **One metric per required output identity** — outside `metric_requirements`, equivalent candidate aliases may resolve to one business metric. Inside the output contract, publish one uniquely named metric per `output_id`; do not collapse requirements across SQL statements.
 18. **Names/questions are naming evidence only** — natural-language fields in the candidate plan (`question`, `name`, `summary`, or `source_context`) never override the SQL expression structure or turn a detail query into a metric by themselves.
+19. **Preserve source SQL byte-for-byte in query-backed sources** — do not reconstruct source SQL from the candidate plan. Follow the active authoring skill's requirement-reference flow so the tool layer inserts the exact request-local SQL. Normalize only authored object names.
+20. **Cover every required output** — every `metric_requirements[].output_id` must end as a generated metric or a concrete blocker. For a generated run, pass a typed array of `{output_id, metric_name}` objects as `metric_output_bindings` to `publish_metrics`, and return the same array in final JSON. Counts in tests are derived from these contracts; never hardcode a benchmark-wide expected count in production code.
+21. **Do not reparse for queryability** — consume `queryability_contracts` from the same preflight plan. `publish_metrics` owns compile validation and warehouse dry-runs for the complete required grouping combinations.
 
 **Step 1-batch-c: Business metric principle**
 
@@ -152,7 +151,7 @@ For each table involved in the metric:
 
 ### 2b. Create Missing Model
 
-If the semantic model is missing, follow the `metricflow-semantic-authoring` workflow when that skill is available. In brief: inspect table structure with `describe_table`, discover joins with `analyze_table_relationships` when multiple tables are involved, use `analyze_column_usage_patterns` for likely measures and dimensions, write the semantic model YAML under the semantic model directory shown in the system prompt, then run `validate_semantic` and fix issues until it passes before continuing.
+If the semantic model is missing, follow the `metricflow-semantic-authoring` workflow when that skill is available. In brief: use preflight `semantic_source_evidence`; only if it is partial or missing required tables, call `inspect_semantic_sources` once with all remaining physical tables. Use the combined schemas, request-SQL field usage, and relationship candidates to write semantic model YAML under the directory shown in the system prompt, then run `validate_semantic` and fix issues until it passes before continuing.
 
 ### 2c. Multi-Table / JOIN SQL Modeling
 
@@ -164,7 +163,7 @@ Use when: simple equi-JOIN between 2-3 tables via foreign keys, ≤ 2 JOIN hops.
 
 - Each table gets its own `data_source` with `sql_table`
 - Tables are linked via matching `identifiers` (same `name`, one PRIMARY, one FOREIGN)
-- Use `analyze_table_relationships` results to set up correct identifier linkages
+- Use `inspect_semantic_sources.relationships` to set up correct identifier linkages
 - Example: `orders.customer_id` (FOREIGN) links to `customers.customer_id` (PRIMARY) — both identifiers share `name: customer`
 - MetricFlow engine automatically resolves the JOIN path at query time
 
@@ -178,7 +177,7 @@ Use when: non-equi JOINs, > 2 hop joins, subqueries, LATERAL/CROSS joins, comple
   ```yaml
   data_source:
     name: order_customer_summary
-    sql_query: >
+    sql_query: |
       SELECT o.order_id, o.amount, o.order_date,
              c.name as customer_name, c.segment
       FROM schema.orders o
@@ -220,20 +219,15 @@ Do not read, edit, or pass `metric_file` / `semantic_model_files` paths from ano
    - If validation fails, fix errors with `edit_file` and retry until it **passes**.
    - **Do NOT proceed to Phase 4 until validation passes.** No exceptions.
 
-4. **Dry-run SQL**: Call `query_metrics(metrics=["{metric_name}"], dry_run=True)` to generate the SQL.
-   - If the source SQL groups by dimensions or a time grain, also dry-run the generated metric set with matching `dimensions` / `time_granularity` from that source query.
-   - Use `get_dimensions` to find exact generated dimension names; if a grouped source dimension cannot be queried, fix the semantic model joins/dimensions and retry.
-   - Collect the SQL into a dict: `{"{metric_name}": "SELECT ..."}`
-
 ## Phase 4: Batch Sync to Knowledge Base
 
-After all generated metrics have passed validation and dry-run:
-- Collect all generated metrics and their dry-run SQLs into `metric_sqls_json`
-- You MUST call `end_metric_generation(metric_file, semantic_model_files, metric_sqls_json)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors
+After all generated metrics have passed validation:
+- You MUST call `publish_metrics(metric_file, metric_output_bindings)` **ONCE** to sync them to Knowledge Base while you can still fix publish errors. Omit `metric_output_bindings` only when the preflight plan has no `metric_requirements`.
+- `publish_metrics` deterministically resolves every source SQL `GROUP BY` contract to generated dimensions, compiles the corresponding metric query, and checks the compiled SQL with a warehouse dry-run before syncing. Fix the semantic model or metric and retry if it reports a queryability or warehouse error.
 - Do not rely on the final JSON host fallback. The host fallback is only a last-resort guard when the tool call was accidentally missed.
-- If no metrics were generated, do NOT call `end_metric_generation`
+- If no metrics were generated, do NOT call `publish_metrics`
 
-Phase 1 confirms the generation scope; validation plus dry-run are the acceptance gate before syncing.
+Phase 1 confirms the generation scope; validation plus the publish-time queryability checks are the acceptance gate before syncing.
 
 ## Common Pitfalls (MUST avoid)
 
@@ -245,11 +239,11 @@ Phase 1 confirms the generation scope; validation plus dry-run are the acceptanc
 
 4. **Check before creating**: ALWAYS call `check_semantic_object_exists(name="{metric_name}", kind="metric")` before writing a new metric. If the metric already exists, skip it.
 
-5. **Verify names after validation**: After `validate_semantic` succeeds and the adapter reloads, call `list_metrics` to see the exact metric names available. Use these exact names when calling `query_metrics`.
+5. **Verify names after validation**: Bind each output ID to the exact metric name authored in the validated YAML when calling `publish_metrics`.
 
 6. **Every metric needs explicit YAML**: Whether it's a simple aggregation, filtered variant, ratio, expr, derived, or cumulative — write a `metric:` entry in the metrics YAML file so it can be persisted and discovered later.
 
-7. **Derived metrics are second-stage**: Generate non-derived metrics first, including fixed `period_over_period` direct candidates, validate them, refresh the metric catalog with `list_metrics`, then generate `derived_metric_candidates` only when every referenced metric exists in the refreshed catalog or was generated earlier in the same batch.
+7. **Derived metrics are second-stage**: Generate non-derived metrics first, including fixed `period_over_period` direct candidates, and validate them. Generate `derived_metric_candidates` only when every referenced metric exists in the preflight catalog or was generated earlier in the same run.
 
 8. **Support measures are not always metrics**: Add support measures needed for ratios, expressions, filters, and validation, but do not publish each support measure as a separate metric unless it is itself a requested/final business KPI.
 
@@ -374,7 +368,7 @@ Ordinary period-over-period SQL (`LAG`, previous period, DoD/WoW/MoM/QoQ/YoY, de
 
 - **Phase 1**: Confirm which metrics to generate before proceeding. Use `ask_user` when it is available.
 - **Validation MUST pass** — always call `validate_semantic` and ensure it passes before proceeding to the next phase. If it fails, fix and retry until it passes.
-- **Sync automatically after validation** — once validation and dry-run pass, call `end_metric_generation` without another user confirmation. The final JSON `metric_file` is only a last-resort fallback.
+- **Sync automatically after validation** — call `publish_metrics` without another user confirmation. It owns compile and warehouse dry-runs; the final JSON `metric_file` is only a last-resort fallback.
 - **COUNT agg must use `expr: "1"`** — never use `expr: {column}` with COUNT (use COUNT_DISTINCT for that).
 - For ratio metrics, both numerator and denominator measures must exist in the semantic model.
 - For expr metrics, all referenced measures must exist in the semantic model.
@@ -384,4 +378,4 @@ Ordinary period-over-period SQL (`LAG`, previous period, DoD/WoW/MoM/QoQ/YoY, de
 - Every metric data_source needs a primary time dimension when a reliable DATE/TIME/TIMESTAMP column or expression exists. Do not force a primary TIME dimension from numeric surrogate keys; join/convert to a real date first.
 - Measure names must be globally unique across all data sources.
 - For snapshot/balance data, always add `non_additive_dimension` to prevent incorrect time aggregation.
-- **Keep files scoped** — only write semantic model YAML and metric YAML files. Sync metrics through `end_metric_generation`; the final JSON `metric_file` is only a last-resort fallback.
+- **Keep files scoped** — only write semantic model YAML and metric YAML files. Sync metrics through `publish_metrics`; the final JSON `metric_file` is only a last-resort fallback.

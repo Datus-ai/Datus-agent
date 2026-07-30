@@ -3,7 +3,6 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import asyncio
-import json
 import os
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -31,10 +30,9 @@ from datus.storage.knowledge_provenance import (
     build_metric_provenance_rows,
     is_knowledge_provenance_enabled,
 )
-from datus.storage.semantic_model.auto_create import (
-    ensure_semantic_models_exist,
-    extract_table_sql_evidence,
-    extract_tables_from_sql_list,
+from datus.tools.func_tool.sql_modeling_planner import (
+    source_provenance_from_success_story_row,
+    source_query_from_success_story_row,
 )
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
@@ -51,82 +49,12 @@ def _action_status_value(action: Any) -> Optional[str]:
     return status.value if hasattr(status, "value") else str(status)
 
 
-def _clean_cell(value: Any) -> str:
-    if value is None:
-        return ""
-    try:
-        if pd.isna(value):
-            return ""
-    except (TypeError, ValueError):
-        pass
-    return str(value).strip()
-
-
-def _parse_context_ids(value: Any) -> list[str]:
-    text = _clean_cell(value)
-    if not text:
-        return []
-    parts = [part.strip() for part in text.replace(",", ";").split(";")]
-    return [part for part in parts if part]
-
-
-def _parse_source_metadata(value: Any) -> dict[str, Any]:
-    text = _clean_cell(value)
-    if not text:
-        return {}
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return {"raw": text}
-    return parsed if isinstance(parsed, dict) else {"raw": text}
-
-
 def _source_provenance_from_row(row: Any, row_index: int, success_story: str) -> Optional[dict[str, Any]]:
-    context_ids: list[str] = []
-    for column in ("source_context_ids", "source_context_id", "context_ids", "context_id"):
-        context_ids.extend(_parse_context_ids(row.get(column)))
-    context_ids = list(dict.fromkeys(context_ids))
-    if not context_ids:
-        return None
-
-    metadata = _parse_source_metadata(row.get("source_metadata"))
-    source_id = _clean_cell(row.get("source_id")) or f"{Path(success_story).name}:{row_index}"
-    source_type = _clean_cell(row.get("source_type")) or "success_story"
-    metadata.setdefault("source_id", source_id)
-    metadata.setdefault("source_type", source_type)
-    metadata.setdefault("row_index", row_index)
-    question = _clean_cell(row.get("question"))
-    if question:
-        metadata.setdefault("question", question)
-    task_id = _clean_cell(row.get("task_id"))
-    if task_id:
-        metadata.setdefault("task_id", task_id)
-
-    return {
-        "source_id": source_id,
-        "source_type": source_type,
-        "source_context_ids": context_ids,
-        "source_metadata": metadata,
-    }
+    return source_provenance_from_success_story_row(row, row_index, success_story)
 
 
 def _source_query_from_row(row: Any, row_index: int, success_story: str) -> Optional[SourceQueryEvidence]:
-    sql = _clean_cell(row.get("sql"))
-    if not sql:
-        return None
-    provenance = _source_provenance_from_row(row, row_index, success_story) or {}
-    return SourceQueryEvidence(
-        source_sql_name=f"sql_{row_index + 1}",
-        sql=sql,
-        question=_clean_cell(row.get("question")),
-        external_knowledge=_clean_cell(row.get("external_knowledge")),
-        source_id=provenance.get("source_id")
-        or _clean_cell(row.get("source_id"))
-        or f"{Path(success_story).name}:{row_index}",
-        source_type=provenance.get("source_type") or _clean_cell(row.get("source_type")) or "success_story",
-        source_context_ids=provenance.get("source_context_ids", []),
-        source_metadata=provenance.get("source_metadata") or _parse_source_metadata(row.get("source_metadata")),
-    )
+    return source_query_from_success_story_row(row, row_index, success_story)
 
 
 def _source_provenance_from_query(source_query: SourceQueryEvidence) -> Optional[dict[str, Any]]:
@@ -229,47 +157,6 @@ METRICS_NODE_NAME = GenMetricsAgenticNode.NODE_NAME
 METRICS_RESPONSE_ACTION_TYPE = f"{METRICS_NODE_NAME}_response"
 
 
-def _json_dump_compact(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def _normalize_metric_name(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
-def _source_names(value: Any) -> set[str]:
-    if not value:
-        return set()
-    if isinstance(value, (list, tuple, set)):
-        raw_values = value
-    else:
-        raw_values = str(value).split(",")
-    return {str(item).strip() for item in raw_values if str(item).strip()}
-
-
-def _source_scoped_items(items: Any, batch_sources: set[str]) -> list[dict[str, Any]]:
-    if not isinstance(items, list):
-        return []
-
-    scoped: list[dict[str, Any]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        item_sources = _source_names(item.get("source_sql_name") or item.get("source") or item.get("sql_name"))
-        if not item_sources or item_sources & batch_sources:
-            scoped.append(item)
-    return scoped
-
-
-def _agent_config_dialect(agent_config: AgentConfig) -> str:
-    try:
-        current_db_config = agent_config.current_db_config()
-    except Exception:
-        return "snowflake"
-    value = getattr(current_db_config, "db_type", "") or getattr(current_db_config, "dialect", "") or ""
-    return value if isinstance(value, str) and value.strip() else "snowflake"
-
-
 def _metrics_authoring_format(agent_config: AgentConfig) -> str:
     return resolve_authoring_format(agent_config)
 
@@ -277,395 +164,75 @@ def _metrics_authoring_format(agent_config: AgentConfig) -> str:
 async def _ensure_semantic_models_for_metrics(
     agent_config: AgentConfig,
     success_story: str,
-    source_queries: list[SourceQueryEvidence],
     action_callback: Optional[Callable[["ActionHistory"], None]] = None,
 ) -> tuple[bool, str, Optional[dict[str, str]]]:
-    success_story_records = [{"sql": source.sql, "question": source.question} for source in source_queries]
-    sql_list = [source.sql for source in source_queries]
-
-    if _metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI:
-        from datus.storage.semantic_model.semantic_model_init import (
-            SEMANTIC_MODEL_RESPONSE_ACTION_TYPE,
-            init_success_story_semantic_model_async,
-        )
-
-        selected_files: list[str] = []
-
-        def capture_semantic_result(action: "ActionHistory") -> None:
-            if (
-                _action_status_value(action) == ActionStatus.SUCCESS.value
-                and getattr(action, "action_type", "") == SEMANTIC_MODEL_RESPONSE_ACTION_TYPE
-                and isinstance(getattr(action, "output", None), dict)
-            ):
-                files = action.output.get("semantic_models")
-                if isinstance(files, str):
-                    files = [files]
-                if isinstance(files, list):
-                    selected_files.extend(str(path).strip() for path in files if str(path).strip())
-            if action_callback is not None:
-                action_callback(action)
-
-        logger.info("Letting gen_semantic_model plan or reuse the OSI target for the success-story CSV")
-        success, error = await init_success_story_semantic_model_async(
-            agent_config,
-            success_story,
-            emit=None,
-            build_mode="incremental",
-            action_callback=capture_semantic_result,
-            require_exact_osi_target=True,
-        )
-        if not success:
-            return False, error, None
-        live_models = discover_osi_semantic_models(agent_config)
-        if not live_models:
-            return False, "OSI semantic model generation did not produce a valid model file", None
-        selected_paths = {path.replace("\\", "/").removeprefix("./") for path in selected_files}
-        selected_models = [
-            model
-            for model in live_models
-            if model["semantic_model_file"] in selected_paths
-            or str(Path(model["absolute_path"]).resolve(strict=False)) in selected_paths
-        ]
-        if len(selected_models) != 1:
-            return False, "gen_semantic_model did not report one exact OSI semantic-model target", None
-        selected_model = selected_models[0]
-        return (
-            True,
-            "",
-            {
-                "semantic_model_name": selected_model["semantic_model_name"],
-                "semantic_model_file": selected_model["semantic_model_file"],
-            },
-        )
-
-    all_tables = extract_tables_from_sql_list(sql_list, agent_config)
-    if not all_tables:
-        return True, "", None
-
-    logger.info(f"Found {len(all_tables)} tables in success story SQL: {all_tables}")
-    sql_evidence_by_table = extract_table_sql_evidence(success_story_records, agent_config)
-
-    success, error, created_tables = await ensure_semantic_models_exist(
-        all_tables,
-        agent_config,
-        emit=None,
-        sql_evidence_by_table=sql_evidence_by_table,
+    from datus.storage.semantic_model.semantic_model_init import (
+        SEMANTIC_MODEL_RESPONSE_ACTION_TYPE,
+        init_success_story_semantic_model_async,
     )
 
-    if created_tables:
-        logger.info(f"Created semantic models for tables: {created_tables}")
-    if error:
-        logger.warning(f"Semantic model generation had partial failures: {error}")
+    selected_files: list[str] = []
 
-    return success, error, None
+    def capture_semantic_result(action: "ActionHistory") -> None:
+        if (
+            _action_status_value(action) == ActionStatus.SUCCESS.value
+            and getattr(action, "action_type", "") == SEMANTIC_MODEL_RESPONSE_ACTION_TYPE
+            and isinstance(getattr(action, "output", None), dict)
+        ):
+            files = action.output.get("semantic_models")
+            if isinstance(files, str):
+                files = [files]
+            if isinstance(files, list):
+                selected_files.extend(str(path).strip() for path in files if str(path).strip())
+        if action_callback is not None:
+            action_callback(action)
 
+    logger.info("Preparing semantic models through the shared gen_semantic_model workflow")
+    success, error = await init_success_story_semantic_model_async(
+        agent_config,
+        success_story,
+        emit=None,
+        build_mode="incremental",
+        action_callback=capture_semantic_result,
+        require_exact_osi_target=_metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI,
+    )
+    if not success or _metrics_authoring_format(agent_config) != AUTHORING_FORMAT_OSI:
+        return success, error, None
 
-def _build_existing_metric_catalog(agent_config: AgentConfig) -> list[dict[str, Any]]:
-    """Load existing metrics once for the bootstrap run."""
-    from datus.storage.metric.store import MetricRAG
-
-    try:
-        rows = MetricRAG(agent_config).search_all_metrics()
-    except Exception as exc:  # pragma: no cover - defensive; generation can proceed without catalog hints
-        logger.warning("Failed to load existing metric catalog; continuing without it: %s", exc)
-        return []
-
-    catalog: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for row in rows:
-        name = str(row.get("name") or "").strip()
-        if not name:
-            continue
-        normalized = _normalize_metric_name(name)
-        if normalized in seen:
-            continue
-        seen.add(normalized)
-        catalog.append(
-            {
-                "name": name,
-                "type": row.get("metric_type") or row.get("type") or "",
-                "description": row.get("description") or "",
-                "subject_path": row.get("subject_path") or [],
-                "semantic_model": row.get("semantic_model_name") or "",
-                "semantic_model_name": row.get("semantic_model_name") or "",
-                "base_measures": row.get("base_measures") or [],
-                "dimensions": row.get("dimensions") or [],
-                "entities": row.get("entities") or [],
-            }
-        )
-    return catalog
+    live_models = discover_osi_semantic_models(agent_config)
+    if not live_models:
+        return False, "OSI semantic model generation did not produce a valid model file", None
+    selected_paths = {path.replace("\\", "/").removeprefix("./") for path in selected_files}
+    selected_models = [
+        model
+        for model in live_models
+        if model["semantic_model_file"] in selected_paths
+        or str(Path(model["absolute_path"]).resolve(strict=False)).replace("\\", "/").removeprefix("./")
+        in selected_paths
+    ]
+    if len(selected_models) != 1:
+        return False, "gen_semantic_model did not report one exact OSI semantic-model target", None
+    selected_model = selected_models[0]
+    return (
+        True,
+        "",
+        {
+            "semantic_model_name": selected_model["semantic_model_name"],
+            "semantic_model_file": selected_model["semantic_model_file"],
+        },
+    )
 
 
 def _final_metric_count(agent_config: AgentConfig) -> int:
-    catalog = _build_existing_metric_catalog(agent_config)
-    return len(catalog)
-
-
-def _build_sql_to_table_lineage(sql_entries: list[dict[str, Any]], agent_config: AgentConfig) -> list[dict[str, Any]]:
-    from datus.utils.sql_utils import extract_table_names
-
-    lineage: list[dict[str, Any]] = []
-    dialect = _agent_config_dialect(agent_config)
-    for entry in sql_entries:
-        sql = str(entry.get("sql") or "").strip()
-        if not sql:
-            continue
-        try:
-            tables = sorted(extract_table_names(sql, dialect=dialect, ignore_empty=True))
-        except Exception as exc:
-            lineage.append({"source_sql_name": entry.get("name"), "tables": [], "error": str(exc)})
-            continue
-        lineage.append({"source_sql_name": entry.get("name"), "tables": tables})
-    return lineage
-
-
-def _build_candidate_plan(
-    sql_entries: list[dict[str, Any]],
-    existing_metric_catalog_json: str,
-    agent_config: AgentConfig,
-) -> dict[str, Any]:
-    """Run SQL metric candidate extraction once before launching gen_metrics agents."""
-    from types import SimpleNamespace
-
-    from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
-
-    if not sql_entries:
-        return {
-            "available": True,
-            "metric_candidates": [],
-            "direct_metric_candidates": [],
-            "derived_metric_candidates": [],
-            "llm_review_candidates": [],
-            "base_measures": [],
-            "support_measure_candidates": [],
-            "non_metric_evidence": [],
-            "identity_metric_references": [],
-            "parse_errors": [],
-            "query_classification": "manual_review_required",
-            "source_classifications": [],
-            "derived_datasource_recommendations": [],
-            "blocked_direct_metric_candidates": [],
-            "literal_mappings": [],
-            "time_grain_evidence": [],
-            "post_aggregation_constraints": [],
-            "modeling_plan": {},
-            "summary": "Found 0 metric candidates and 0 base measures from 0 SQL queries",
-            "sql_to_table_lineage": [],
-        }
+    """Return the persisted metric count after all Node batches finish."""
+    from datus.storage.metric.store import MetricRAG
 
     try:
-        discovery = SemanticDiscoveryTools(SimpleNamespace(agent_config=agent_config, sub_agent_name=METRICS_NODE_NAME))
-        result = discovery.analyze_metric_candidates_from_history(
-            sql_entries_json=_json_dump_compact(sql_entries),
-            existing_metric_catalog_json=existing_metric_catalog_json,
-            sample_sql_queries=len(sql_entries),
-        )
-        if not result.success:
-            logger.warning("Metric candidate extraction failed: %s", result.error)
-            return {
-                "available": False,
-                "error": result.error or "metric candidate extraction failed",
-                "sql_to_table_lineage": _build_sql_to_table_lineage(sql_entries, agent_config),
-            }
-        plan = dict(result.result or {})
-        plan["available"] = True
-        plan["sql_to_table_lineage"] = _build_sql_to_table_lineage(sql_entries, agent_config)
-        return plan
-    except Exception as exc:  # pragma: no cover - defensive; agent can still infer from SQL prompt
-        logger.warning("Metric candidate extraction raised; continuing without a candidate plan: %s", exc)
-        return {
-            "available": False,
-            "error": str(exc),
-            "sql_to_table_lineage": _build_sql_to_table_lineage(sql_entries, agent_config),
-        }
-
-
-def _candidate_plan_for_sources(candidate_plan: dict[str, Any], batch_sources: set[str]) -> dict[str, Any]:
-    if not candidate_plan or not candidate_plan.get("available"):
-        return candidate_plan or {}
-
-    scoped = dict(candidate_plan)
-    for key in (
-        "metric_candidates",
-        "direct_metric_candidates",
-        "derived_metric_candidates",
-        "llm_review_candidates",
-        "base_measures",
-        "support_measure_candidates",
-        "non_metric_evidence",
-        "identity_metric_references",
-        "source_classifications",
-        "derived_datasource_recommendations",
-        "blocked_direct_metric_candidates",
-        "metric_aliases",
-        "literal_mappings",
-        "time_grain_evidence",
-        "post_aggregation_constraints",
-        "sql_to_table_lineage",
-    ):
-        scoped[key] = _source_scoped_items(candidate_plan.get(key), batch_sources)
-
-    scoped["summary"] = (
-        f"Batch candidate plan for {len(batch_sources)} SQL source(s): "
-        f"{len(scoped.get('direct_metric_candidates') or [])} direct, "
-        f"{len(scoped.get('derived_metric_candidates') or [])} derived, "
-        f"{len(scoped.get('llm_review_candidates') or [])} LLM review, "
-        f"{len(scoped.get('blocked_direct_metric_candidates') or [])} blocked direct candidate(s)."
-    )
-    return scoped
-
-
-def _candidate_metric_names(candidate_plan: dict[str, Any]) -> list[str]:
-    names: list[str] = []
-    for key in ("direct_metric_candidates", "derived_metric_candidates", "llm_review_candidates", "metric_candidates"):
-        for candidate in candidate_plan.get(key) or []:
-            if not isinstance(candidate, dict):
-                continue
-            name = str(candidate.get("name") or "").strip()
-            if name and name not in names:
-                names.append(name)
-    return names
-
-
-def _batch_has_no_metric_candidates(batch_candidate_plan: dict[str, Any]) -> bool:
-    """Return True when the batch candidate plan has no actionable metric candidates.
-
-    Skipping the LLM call is safe when the plan is available, there are zero
-    direct/derived candidates, and there IS non-metric or identity-reference
-    evidence (i.e. the SQL was analysed but produced nothing metric-worthy).
-    """
-    if not batch_candidate_plan or not batch_candidate_plan.get("available"):
-        return False
-    if _candidate_metric_names(batch_candidate_plan):
-        return False
-    has_evidence = bool(
-        batch_candidate_plan.get("non_metric_evidence")
-        or batch_candidate_plan.get("identity_metric_references")
-        or batch_candidate_plan.get("derived_datasource_recommendations")
-    )
-    return has_evidence
-
-
-def _candidate_metric_items(candidate_plan: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates_by_name: dict[str, dict[str, Any]] = {}
-    ordered_names: list[str] = []
-    seen: set[str] = set()
-    for key in ("direct_metric_candidates", "derived_metric_candidates", "llm_review_candidates", "metric_candidates"):
-        for candidate in candidate_plan.get(key) or []:
-            if not isinstance(candidate, dict):
-                continue
-            name = str(candidate.get("name") or "").strip()
-            normalized = _normalize_metric_name(name)
-            if not normalized:
-                continue
-            if normalized not in seen:
-                seen.add(normalized)
-                ordered_names.append(normalized)
-                candidates_by_name[normalized] = candidate
-                continue
-            if not _candidate_has_definition_evidence(
-                candidates_by_name[normalized]
-            ) and _candidate_has_definition_evidence(candidate):
-                candidates_by_name[normalized] = candidate
-    return [candidates_by_name[name] for name in ordered_names]
-
-
-def _normalized_scalar(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
-def _normalized_metric_type(value: Any) -> str:
-    metric_type = _normalized_scalar(value)
-    return "measure_proxy" if metric_type == "simple" else metric_type
-
-
-def _normalized_measure_names(value: Any) -> set[str]:
-    names: set[str] = set()
-    if not isinstance(value, list):
-        return names
-    for item in value:
-        if isinstance(item, str):
-            name = item
-        elif isinstance(item, dict):
-            name = item.get("name") or item.get("measure") or item.get("expr")
-        else:
-            continue
-        normalized = _normalize_metric_name(name)
-        if normalized:
-            names.add(normalized)
-    return names
-
-
-def _candidate_has_definition_evidence(candidate: dict[str, Any]) -> bool:
-    return any(
-        candidate.get(field)
-        for field in (
-            "metric_type",
-            "type",
-            "semantic_model",
-            "semantic_model_name",
-            "base_measures",
-            "referenced_metrics",
-        )
-    )
-
-
-def _candidate_matches_existing_metric(candidate: dict[str, Any], existing: dict[str, Any]) -> bool:
-    if not _candidate_has_definition_evidence(candidate):
-        return False
-
-    candidate_type = _normalized_metric_type(candidate.get("metric_type") or candidate.get("type"))
-    existing_type = _normalized_metric_type(existing.get("type") or existing.get("metric_type"))
-    if candidate_type and existing_type and candidate_type != existing_type:
-        return False
-
-    candidate_semantic_model = _normalized_scalar(
-        candidate.get("semantic_model_name") or candidate.get("semantic_model")
-    )
-    existing_semantic_model = _normalized_scalar(existing.get("semantic_model_name") or existing.get("semantic_model"))
-    if candidate_semantic_model and existing_semantic_model and candidate_semantic_model != existing_semantic_model:
-        return False
-
-    candidate_measures = _normalized_measure_names(candidate.get("base_measures"))
-    if not candidate_measures and candidate.get("referenced_metrics"):
-        candidate_measures = _normalized_measure_names(candidate.get("referenced_metrics"))
-    existing_measures = _normalized_measure_names(existing.get("base_measures"))
-    if candidate_measures and existing_measures and candidate_measures != existing_measures:
-        return False
-
-    return True
-
-
-def _all_candidate_metrics_satisfied(
-    candidate_plan: dict[str, Any], existing_metric_catalog: list[dict[str, Any]]
-) -> bool:
-    candidates = _candidate_metric_items(candidate_plan)
-    if not candidates:
-        return False
-    existing_by_name = {
-        _normalize_metric_name(item.get("name")): item for item in existing_metric_catalog if item.get("name")
-    }
-    for candidate in candidates:
-        existing = existing_by_name.get(_normalize_metric_name(candidate.get("name")))
-        if not existing or not _candidate_matches_existing_metric(candidate, existing):
-            return False
-    return True
-
-
-def _unique_metric_catalog_by_name(
-    existing_metric_catalog: list[dict[str, Any]],
-) -> tuple[dict[str, dict[str, Any]], set[str]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for item in existing_metric_catalog:
-        if not isinstance(item, dict):
-            continue
-        normalized = _normalize_metric_name(item.get("name"))
-        if normalized:
-            grouped.setdefault(normalized, []).append(item)
-
-    unique = {name: items[0] for name, items in grouped.items() if len(items) == 1}
-    ambiguous = {name for name, items in grouped.items() if len(items) > 1}
-    return unique, ambiguous
+        count = MetricRAG(agent_config).get_metrics_size()
+        return count if isinstance(count, int) else 0
+    except Exception as exc:  # pragma: no cover - defensive reporting fallback
+        logger.warning("Failed to load final metric count: %s", exc)
+        return 0
 
 
 async def _generate_metrics_batch(
@@ -676,42 +243,16 @@ async def _generate_metrics_batch(
     extra_instructions: Optional[str],
     event_helper: BatchEventHelper,
     action_callback: Optional[Callable[["ActionHistory"], None]],
-    candidate_plan_json: Optional[str] = None,
-    existing_metric_catalog_json: Optional[str] = None,
     semantic_model_target: Optional[dict[str, str]] = None,
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """Process a single batch of SQL queries for metrics extraction."""
     rendered_queries = []
-    for source in batch_sources:
-        query_number = source.source_sql_name.removeprefix("sql_")
-        rendered = f"Query {query_number}:\nQuestion: {source.question}\nSQL:\n{source.sql}"
-        if source.external_knowledge:
-            rendered += f"\nExternal Knowledge:\n{source.external_knowledge}"
+    for source_index, source in enumerate(batch_sources, 1):
+        rendered = f"Query {source_index}:\nQuestion: {source.question}\nSQL:\n{source.sql}"
         rendered_queries.append(rendered)
     batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(
         rendered_queries
     )
-
-    if existing_metric_catalog_json:
-        batch_message += (
-            "\n\n## Existing Metric Catalog JSON\n"
-            "This catalog was loaded once by the bootstrap host before this batch. "
-            "Use it as the initial metric catalog; do not call list_metrics only to rediscover existing metrics.\n"
-            f"{existing_metric_catalog_json}"
-        )
-
-    if candidate_plan_json:
-        batch_message += (
-            "\n\n## Precomputed Metric Candidate Plan JSON\n"
-            "This plan was mined once from the full success-story SQL set before this batch. "
-            "Use it as Phase 1 metric-candidate evidence; do not call analyze_metric_candidates_from_history again "
-            "unless this JSON is malformed or insufficient for the requested generation.\n"
-            "Treat `direct_metric_candidates` and `derived_metric_candidates` as a publication checklist: every "
-            "candidate must end this batch either published or reported in your final output with a concrete "
-            "blocker. Cumulative/window/period_over_period candidates are standalone metrics; they are never "
-            "covered by an already-published base metric.\n"
-            f"{candidate_plan_json}"
-        )
 
     if extra_instructions:
         batch_message = f"{batch_message}\n\n## Additional Instructions\n{extra_instructions}"
@@ -724,7 +265,6 @@ async def _generate_metrics_batch(
 
     metrics_input = SemanticNodeInput(
         user_message=batch_message,
-        source_queries=batch_sources,
         semantic_model_name=(semantic_model_target or {}).get("semantic_model_name"),
         semantic_model_file=(semantic_model_target or {}).get("semantic_model_file"),
         catalog=runtime_db_context.get("catalog")
@@ -810,10 +350,10 @@ async def init_success_story_metrics_async(
     """
     Async version: Initialize metrics from success story CSV by batch processing.
 
-    This reads all SQL queries from the CSV and processes them in batches
-    to extract core unique metrics (deduplicating aggregation patterns).
-    Each batch is processed independently so that one failure does not
-    block the rest.
+    This is a batch wrapper around the same ``gen_semantic_model`` and
+    ``gen_metrics`` Nodes used by direct CLI/subagent calls. Each Node owns
+    SQL planning and authoring; this function only loads rows, prepares the
+    semantic prerequisite, batches metric calls, and aggregates progress.
 
     Args:
         agent_config: Agent configuration
@@ -821,9 +361,9 @@ async def init_success_story_metrics_async(
         subject_tree: Optional predefined subject tree categories
         emit: Optional callback to stream BatchEvent progress events
         extra_instructions: Optional extra instructions for the LLM
-        build_mode: ``"overwrite"`` (default) regenerates unconditionally;
-            ``"incremental"`` skips only batches whose metric candidates are
-            already satisfied by existing metric definitions.
+        build_mode: ``"overwrite"`` (default) clears existing metric storage
+            before invoking the Nodes; ``"incremental"`` preserves it and
+            lets the Node reconcile existing definitions.
         batch_size: Number of SQL queries per batch (default 5).
     """
     if batch_size <= 0:
@@ -872,7 +412,6 @@ async def init_success_story_metrics_async(
     success, error, semantic_model_target = await _ensure_semantic_models_for_metrics(
         agent_config,
         success_story,
-        source_queries,
         action_callback=action_callback,
     )
 
@@ -895,18 +434,6 @@ async def init_success_story_metrics_async(
         if cleared_provenance:
             logger.info("Cleared %d stale metric provenance row(s)", cleared_provenance)
 
-    sql_entries = [
-        {"name": source.source_sql_name, "sql": source.sql, "question": source.question} for source in source_queries
-    ]
-    existing_metric_catalog = _build_existing_metric_catalog(agent_config)
-    existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
-    candidate_plan = _build_candidate_plan(sql_entries, existing_metric_catalog_json, agent_config)
-    logger.info(
-        "Prepared metric bootstrap context: existing_metrics=%d, candidate_plan_available=%s",
-        len(existing_metric_catalog),
-        candidate_plan.get("available"),
-    )
-
     # Split into batches
     batches = [source_queries[i : i + batch_size] for i in range(0, len(source_queries), batch_size)]
     total_batches = len(batches)
@@ -922,12 +449,7 @@ async def init_success_story_metrics_async(
     failed_batches: list[tuple[int, str]] = []
     merged_result: Optional[dict[str, Any]] = None
     provenance_entries = 0
-    skipped_batches = 0
-
     for batch_idx, batch_records in enumerate(batches):
-        batch_sources = {record.source_sql_name for record in batch_records}
-        batch_candidate_plan = _candidate_plan_for_sources(candidate_plan, batch_sources)
-        batch_candidate_plan_json = _json_dump_compact(batch_candidate_plan) if batch_candidate_plan else ""
         source_entries = [
             source for record in batch_records if (source := _source_provenance_from_query(record)) is not None
         ]
@@ -935,97 +457,6 @@ async def init_success_story_metrics_async(
         logger.info(f"Processing batch {batch_idx + 1}/{total_batches} ({len(batch_records)} queries)")
 
         metric_ids_before = _metric_ids_in_storage(agent_config) if source_entries else set()
-
-        if build_mode == "incremental" and _all_candidate_metrics_satisfied(
-            batch_candidate_plan,
-            existing_metric_catalog,
-        ):
-            skipped_batches += 1
-            completed_batches += 1
-            skipped_names = _candidate_metric_names(batch_candidate_plan)
-            logger.info(
-                "Skipping metrics batch %d/%d: all %d candidate metric(s) already exist",
-                batch_idx + 1,
-                total_batches,
-                len(skipped_names),
-            )
-            if event_helper:
-                event_helper.item_processing(
-                    item_id=f"batch-{batch_idx}",
-                    action_name="gen_metrics_skip",
-                    status=ActionStatus.SUCCESS.value,
-                    messages=(
-                        f"Skipped metrics batch {batch_idx + 1}/{total_batches}: "
-                        f"existing metrics already satisfy candidates {skipped_names}"
-                    ),
-                    output={
-                        "skipped": True,
-                        "skipped_metric_candidates": skipped_names,
-                        "batch_index": batch_idx,
-                    },
-                )
-
-            batch_result = {
-                "skipped_batches": 1,
-                "skipped_queries": len(batch_records),
-                "skipped_metric_candidates": skipped_names,
-            }
-            if merged_result is None:
-                merged_result = batch_result
-            elif isinstance(merged_result, dict):
-                for key, value in batch_result.items():
-                    if key in merged_result and isinstance(merged_result[key], list) and isinstance(value, list):
-                        merged_result[key].extend(value)
-                    elif key in merged_result and isinstance(merged_result[key], int) and isinstance(value, int):
-                        merged_result[key] += value
-                    elif key not in merged_result:
-                        merged_result[key] = value
-            continue
-
-        if _batch_has_no_metric_candidates(batch_candidate_plan):
-            skipped_batches += 1
-            completed_batches += 1
-            non_metric_count = len(batch_candidate_plan.get("non_metric_evidence") or [])
-            identity_count = len(batch_candidate_plan.get("identity_metric_references") or [])
-            logger.info(
-                "Skipping metrics batch %d/%d: no metric candidates (%d non-metric evidence, %d identity references)",
-                batch_idx + 1,
-                total_batches,
-                non_metric_count,
-                identity_count,
-            )
-            if event_helper:
-                event_helper.item_processing(
-                    item_id=f"batch-{batch_idx}",
-                    action_name="gen_metrics_skip",
-                    status=ActionStatus.SUCCESS.value,
-                    messages=(
-                        f"Skipped metrics batch {batch_idx + 1}/{total_batches}: "
-                        f"candidate plan contains no metric candidates "
-                        f"({non_metric_count} non-metric, {identity_count} identity ref)"
-                    ),
-                    output={
-                        "skipped": True,
-                        "skip_reason": "no_metric_candidates",
-                        "non_metric_evidence_count": non_metric_count,
-                        "identity_reference_count": identity_count,
-                        "batch_index": batch_idx,
-                    },
-                )
-
-            batch_result = {
-                "skipped_batches": 1,
-                "skipped_queries": len(batch_records),
-            }
-            if merged_result is None:
-                merged_result = batch_result
-            elif isinstance(merged_result, dict):
-                for key, value in batch_result.items():
-                    if key in merged_result and isinstance(merged_result[key], int) and isinstance(value, int):
-                        merged_result[key] += value
-                    elif key not in merged_result:
-                        merged_result[key] = value
-            continue
 
         success, error, batch_result = await _generate_metrics_batch(
             batch_records,
@@ -1035,8 +466,6 @@ async def init_success_story_metrics_async(
             extra_instructions,
             event_helper,
             action_callback,
-            candidate_plan_json=batch_candidate_plan_json,
-            existing_metric_catalog_json=existing_metric_catalog_json,
             semantic_model_target=semantic_model_target,
         )
 
@@ -1062,18 +491,6 @@ async def init_success_story_metrics_async(
                         merged_result[key] += value
                     elif key not in merged_result:
                         merged_result[key] = value
-            if batch_idx + 1 < total_batches:
-                existing_metric_catalog = _build_existing_metric_catalog(agent_config)
-                existing_metric_catalog_json = _json_dump_compact(existing_metric_catalog)
-                candidate_plan = _build_candidate_plan(sql_entries, existing_metric_catalog_json, agent_config)
-                logger.info(
-                    "Refreshed metric bootstrap context after batch %d/%d: "
-                    "existing_metrics=%d, candidate_plan_available=%s",
-                    batch_idx + 1,
-                    total_batches,
-                    len(existing_metric_catalog),
-                    candidate_plan.get("available"),
-                )
             logger.info(f"Batch {batch_idx + 1}/{total_batches} completed successfully")
         else:
             failed_batches.append((batch_idx, error))
@@ -1097,9 +514,6 @@ async def init_success_story_metrics_async(
         final_metrics_count = _final_metric_count(agent_config)
         merged_result["metrics_count"] = final_metrics_count
         merged_result["final_metrics_count"] = final_metrics_count
-        if skipped_batches:
-            merged_result["skipped_batches"] = skipped_batches
-
     logger.info(f"Metrics extraction completed: {completed_batches}/{total_batches} batch(es) succeeded")
     event_helper.task_completed(
         total_items=total_batches,
@@ -1163,9 +577,11 @@ def init_semantic_yaml_metrics(
     if _metrics_authoring_format(agent_config) == AUTHORING_FORMAT_OSI:
         from datus.tools.func_tool.generation_tools import GenerationTools
 
-        result = GenerationTools(
-            agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI
-        )._sync_osi_metric_to_db(yaml_file_path)
+        result = GenerationTools(agent_config=agent_config, authoring_format=AUTHORING_FORMAT_OSI).sync_osi_to_db(
+            yaml_file_path,
+            include_semantic_objects=False,
+            include_metrics=True,
+        )
         if result.get("success"):
             return True, result.get("message", "")
         return False, result.get("error", "Unknown error")

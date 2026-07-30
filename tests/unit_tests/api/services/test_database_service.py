@@ -183,13 +183,17 @@ class TestSemanticLayerServiceBranches:
         request = SemanticModelInput(table="orders", yaml="kind: semantic_model\n")
 
         with patch("datus.tools.func_tool.generation_tools.GenerationTools") as tools_cls:
-            tools_cls.return_value.sync_osi_semantic_to_db.return_value = {"success": True}
+            tools_cls.return_value.sync_osi_to_db.return_value = {"success": True}
             result = await svc.save_semantic_model(request)
 
         assert result.success is True
         assert yaml_file.read_text(encoding="utf-8") == request.yaml
         tools_cls.assert_called_once_with(agent_config=svc.agent_config, authoring_format="osi")
-        tools_cls.return_value.sync_osi_semantic_to_db.assert_called_once_with(str(yaml_file))
+        tools_cls.return_value.sync_osi_to_db.assert_called_once_with(
+            str(yaml_file),
+            include_semantic_objects=True,
+            include_metrics=False,
+        )
 
     @pytest.mark.asyncio
     async def test_save_semantic_model_uses_metricflow_sync(self, tmp_path):

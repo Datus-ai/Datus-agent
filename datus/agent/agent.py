@@ -650,7 +650,7 @@ class Agent:
                 if successful:
                     self.metrics_store = MetricRAG(self.global_config)
                     result = {
-                        "status": "success",
+                        "status": "partial" if error_message else "success",
                         "message": f"metrics bootstrap completed, "
                         f"metrics_count={self.metrics_store.get_metrics_size()}",
                         "error": error_message,
@@ -732,14 +732,20 @@ class Agent:
         failed = {
             key: value
             for key, value in component_results.items()
-            if isinstance(value, dict) and value.get("status") not in {"success", "skipped"}
+            if isinstance(value, dict) and value.get("status") not in {"success", "partial", "skipped"}
         }
-        overall_status = "failed" if failed else "success"
+        partial = any(
+            isinstance(value, dict) and value.get("status") == "partial" for value in component_results.values()
+        )
+        overall_status = "failed" if failed else ("partial" if partial else "success")
+        messages = {
+            "success": "Knowledge base initialized",
+            "partial": "Knowledge base initialized with partial results",
+            "failed": "Knowledge base initialization failed",
+        }
         return {
             "status": overall_status,
-            "message": (
-                "Knowledge base initialized" if overall_status == "success" else "Knowledge base initialization failed"
-            ),
+            "message": messages[overall_status],
             "components": component_results,
         }
 

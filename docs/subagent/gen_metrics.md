@@ -60,7 +60,7 @@ Before publishing, the agent must pass both checks:
 - `validate_semantic()` validates the semantic model and metric YAML.
 - `query_metrics(..., dry_run=True)` verifies that the configured semantic adapter can compile SQL for the generated metric.
 
-After those checks pass, `end_metric_generation` syncs the generated metric to the Knowledge Base automatically.
+After those checks pass, `publish_metrics` syncs the generated metric to the Knowledge Base automatically.
 
 ## Configuration
 

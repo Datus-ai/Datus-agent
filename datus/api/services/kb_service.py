@@ -323,7 +323,7 @@ class KbService:
         )
         if successful:
             return {
-                "status": "success",
+                "status": "partial" if error_message else "success",
                 "message": f"metrics bootstrap completed, metrics_count={rag.get_metrics_size()}",
                 "error": error_message,
             }

@@ -90,7 +90,7 @@ metric:
 2. `gen_metrics` 写入 MetricFlow metric YAML。
 3. `validate_semantic()` 校验完整 MetricFlow model。
 4. `query_metrics(..., dry_run=True)` 确认生成指标可以编译成 SQL。
-5. `end_semantic_model_generation` 和 `end_metric_generation` 将通过校验的资产同步到 Knowledge Base。
+5. `publish_semantic_model` 和 `publish_metrics` 将通过校验的资产同步到 Knowledge Base。
 
 ## 支持的查询能力
 

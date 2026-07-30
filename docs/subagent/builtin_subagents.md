@@ -248,7 +248,7 @@ graph LR
 
 ### Validation and Sync
 
-The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. In interactive mode, once validation passes, `end_semantic_model_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit semantic sync step or tool.
+The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `publish_semantic_model` validates the publication evidence and syncs the artifact to the Knowledge Base in every execution mode.
 
 ### Semantic Model Structure
 
@@ -300,7 +300,7 @@ The semantic model generation feature provides:
 - ✅ Built-in tools, hooks, and MCP server integration
 - ✅ Interactive validation and error fixing
 - ✅ Validation-gated Knowledge Base sync
-- ✅ Interactive auto-sync and workflow/API explicit sync
+- ✅ One validation-gated publish path in every execution mode
 - ✅ Duplicate prevention
 - ✅ MetricFlow compatibility
 
@@ -369,7 +369,7 @@ JOIN customers c ON o.customer_id = c.id  -- ❌ JOIN not supported
 
 ### Validation and Sync
 
-Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. In interactive mode, after both checks pass, `end_metric_generation` triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit metric sync step or tool.
+Before publishing, the agent validates the YAML with `validate_semantic()` and compiles SQL with `query_metrics(..., dry_run=True)`. After both checks pass, `publish_metrics` validates the request-local evidence and syncs the metric in every execution mode.
 
 ### Subject Tree Categorization
 

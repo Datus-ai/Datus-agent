@@ -28,6 +28,8 @@ class OsiSemanticModelTargetState:
     authored_metric_names: List[str] = field(default_factory=list)
     target_mutated: bool = False
     last_error_code: str = ""
+    metric_snapshot_path: str = ""
+    metric_snapshot_content: Optional[bytes] = None
 
     def clear_target(self) -> None:
         self.selected = None
@@ -39,6 +41,8 @@ class OsiSemanticModelTargetState:
         self.clear_target()
         self.authored_metric_names = []
         self.last_error_code = ""
+        self.metric_snapshot_path = ""
+        self.metric_snapshot_content = None
 
     def _matches_selected_target(self, candidate: Dict[str, Any]) -> bool:
         if self.selected is None:
@@ -128,6 +132,24 @@ class OsiSemanticModelTargetState:
         for name in metric_names:
             if name not in self.authored_metric_names:
                 self.authored_metric_names.append(name)
+
+    def record_metric_snapshot(self, path: str | Path, content: bytes) -> None:
+        """Keep the pre-authoring artifact revision for terminal failure rollback."""
+        self.require_bound_path(path)
+        if self.metric_snapshot_content is not None:
+            return
+        self.metric_snapshot_path = str(Path(path).expanduser().resolve(strict=False))
+        self.metric_snapshot_content = bytes(content)
+
+    def clear_metric_snapshot(self) -> None:
+        self.metric_snapshot_path = ""
+        self.metric_snapshot_content = None
+
+    def record_metric_rollback(self, content: bytes) -> None:
+        """Reset request-local mutation state after restoring the original artifact."""
+        self.artifact_sha256 = hashlib.sha256(content).hexdigest()
+        self.authored_metric_names = []
+        self.clear_metric_snapshot()
 
 
 class OsiSemanticModelTargetTools:

@@ -108,8 +108,8 @@ class TestNormalProfile:
         config = NORMAL
         assert _resolve(config, "semantic_tools", "check_semantic_object_exists") == PermissionLevel.ALLOW
         assert _resolve(config, "semantic_tools", "generate_sql_summary_id") == PermissionLevel.ALLOW
-        assert _resolve(config, "semantic_tools", "end_semantic_model_generation") == PermissionLevel.ALLOW
-        assert _resolve(config, "semantic_tools", "end_metric_generation") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "publish_semantic_model") == PermissionLevel.ALLOW
+        assert _resolve(config, "semantic_tools", "publish_metrics") == PermissionLevel.ALLOW
 
     def test_all_semantic_tools_allowed(self):
         config = NORMAL
@@ -223,6 +223,7 @@ class TestFilesystemRuleSurface:
         "edit_file",
         "delete_file",
         "upsert_osi_metrics",
+        "upsert_osi_datasets",
     )
 
     def test_dead_filesystem_rules_absent(self):

@@ -16,10 +16,12 @@ allowed_agents:
 
 Author production-ready MetricFlow semantic model YAML for one or more database tables, validate it, and publish it to the Knowledge Base.
 
-## Column analysis
+## Source inspection
 
-- Use `analyze_column_usage_patterns(table_name)` to discover how columns are used in historical SQL — filter operators, functions, and actual filter examples. This is strongly recommended for every table unless profiler evidence already covers it.
-- When profiler evidence from `profile_semantic_model_evidence` is available, use it as the primary source for join hints, commonly filtered/grouped dimensions, aggregate candidates, and concise usage hints; use `analyze_column_usage_patterns` only as a fallback or to fill a narrow gap.
+- After SQL preflight, consume `semantic_source_evidence` returned by `prepare_sql_modeling_plan`. For SQL-backed requests it normally already contains each physical table's DDL and enriched schema, cross-table relationship candidates, and field-role evidence mined from the exact request SQL.
+- Call `inspect_semantic_sources(tables=[...])` at most once only when preflight reports partial inspection, the request has no SQL, or modeling requires additional physical tables absent from the plan.
+- Do not repeat `describe_table` for a table whose combined inspection succeeded. Use a separate schema call only to recover a specific table reported with `ddl_error` or `schema_error`.
+- When `profile_semantic_model_evidence` is available because explicit historical/distribution profiling was requested, use it only for additional distribution and historical evidence; the combined source inspection remains the canonical physical schema snapshot for this run.
 
 ## Field classification rules
 
@@ -38,6 +40,7 @@ Classify each column by actual data type and analytical usage, not by display co
 - Define `type: TIME` only for a physical DATE/TIME/TIMESTAMP column, or for a `sql_query` alias / SQL expression that is guaranteed to return a DATE/TIME/TIMESTAMP value.
 - Do NOT mark numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as `type: TIME`. Model them as identifiers or categorical dimensions unless you explicitly convert them to a real date.
 - If a fact table derives its business date by joining a calendar/date dimension, prefer a `sql_query` data source that joins the date dimension, selects the real date column with a clear alias, and uses that alias as the primary time dimension.
+- When the preflight SQL plan contains `dataset_requirements`, use `source_index` to locate the exact statement in the current request. Reuse an existing data source only when its complete `sql_query` matches that statement. Otherwise use a meaningful business name and create one `sql_query` containing the unchanged request SQL. Encode it with a YAML literal block (`|-` when the statement has no trailing newline), never a folded `>` block. Fingerprints and requirement IDs are internal identities and must never become authored names.
 - `agg_time_dimension` on measures must point to that real date/time dimension, not a numeric surrogate key.
 - Include a primary time dimension only when a reliable DATE/TIME/TIMESTAMP column or expression exists; never force one.
 
@@ -46,7 +49,7 @@ Classify each column by actual data type and analytical usage, not by display co
 Populate `description` fields for ALL measures, dimensions, and identifiers by COMBINING all available information:
 
 - Start with DDL comments and **preserve their original language — DO NOT TRANSLATE** (Chinese comments stay Chinese).
-- Append usage patterns and filter examples from `analyze_column_usage_patterns`.
+- Append compact filter/group/aggregate evidence from `inspect_semantic_sources.tables[].sql_usage`.
 - Append compact observed distribution evidence from `profile_semantic_model_evidence` when available: null rate, numeric ranges and percentiles, date spans/freshness/duration, distinct counts, representative stable values, referential coverage, common filter templates, and enum/code mappings.
 - Describe what a column means first, then add concise observed evidence. Avoid long SQL snippets or procedural query instructions.
 - ALWAYS wrap `description` values in double quotes (`"`). Escape special characters: `"` → `\"`, `\` → `\\`.
@@ -64,8 +67,8 @@ Example:
 
 When the request covers multiple tables:
 
-1. Batch retrieve DDL with `get_multiple_tables_ddl`.
-2. Discover join relationships with `analyze_table_relationships`. The tool uses a three-tier strategy: DDL foreign keys (high confidence), historical SQL JOIN patterns (medium), column name inference (low).
+1. Use the combined `semantic_source_evidence`; if it is incomplete, submit all missing physical tables in one `inspect_semantic_sources` call.
+2. Use its declared foreign keys first, exact request-SQL JOINs second, and low-confidence column-name hints only as fallback.
 3. Generate one YAML file per table. Use the `entity` field to reference other tables in **singular form** (`customer`, not `customers`); `type: PRIMARY` for the table's primary key, `type: FOREIGN` for columns that join to other tables. Linked identifiers share the same `name` (one PRIMARY, one FOREIGN).
 4. Write ALL files before validation, then validate them together.
 
@@ -81,7 +84,7 @@ When the request covers multiple tables:
    - Column not found: check column names match the DDL exactly
    - Duplicate semantic element name: remove the column from either `identifiers` or `dimensions`
    - Invalid YAML syntax: check indentation and quoting
-2. Only after validation succeeds, publish via `end_semantic_model_generation` with all generated file paths. Do not publish before validation passes; do not manually write Knowledge Base summary files.
+2. Only after validation succeeds, publish via `publish_semantic_model` with all generated file paths. Do not publish before validation passes; do not manually write Knowledge Base summary files.
 
 ## Document structure rules
 

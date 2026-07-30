@@ -333,10 +333,14 @@ def test_adapter_type_resolution_propagates_agent_config_errors():
 @pytest.mark.parametrize(
     "node_name, adapter, expected",
     [
-        ("gen_semantic_model", "metricflow", "metricflow-semantic-authoring"),
-        ("gen_semantic_model", "osi", "osi-semantic-authoring"),
-        ("gen_metrics", "metricflow", "gen-metrics"),
-        ("gen_metrics", "osi", "osi-metrics-authoring"),
+        (
+            "gen_semantic_model",
+            "metricflow",
+            "sql-modeling-preflight,metricflow-semantic-authoring",
+        ),
+        ("gen_semantic_model", "osi", "sql-modeling-preflight,osi-semantic-authoring"),
+        ("gen_metrics", "metricflow", "sql-modeling-preflight,gen-metrics"),
+        ("gen_metrics", "osi", "sql-modeling-preflight,osi-metrics-authoring"),
         ("unknown_node", "metricflow", ""),
     ],
 )
@@ -401,7 +405,10 @@ def test_node_skill_defaults_respect_explicit_config(monkeypatch):
 
 @pytest.mark.parametrize(
     "adapter, expected",
-    [("metricflow", ["metricflow-semantic-authoring"]), ("osi", ["osi-semantic-authoring"])],
+    [
+        ("metricflow", ["sql-modeling-preflight", "metricflow-semantic-authoring"]),
+        ("osi", ["sql-modeling-preflight", "osi-semantic-authoring"]),
+    ],
 )
 def test_gen_semantic_model_required_skills(adapter, expected):
     from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
@@ -413,7 +420,10 @@ def test_gen_semantic_model_required_skills(adapter, expected):
 
 @pytest.mark.parametrize(
     "adapter, expected",
-    [("metricflow", ["gen-metrics"]), ("osi", ["osi-metrics-authoring"])],
+    [
+        ("metricflow", ["sql-modeling-preflight", "gen-metrics"]),
+        ("osi", ["sql-modeling-preflight", "osi-metrics-authoring"]),
+    ],
 )
 def test_gen_metrics_required_skills(adapter, expected):
     from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

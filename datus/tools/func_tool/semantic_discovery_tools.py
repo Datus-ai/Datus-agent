@@ -10,14 +10,17 @@ including table relationships, column usage evidence, and metric candidates
 mined from historical SQL.
 """
 
+import hashlib
 import json
+import re
 import time
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from agents import Tool
+from pydantic import BaseModel, Field
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.loggings import get_logger
@@ -27,6 +30,36 @@ if TYPE_CHECKING:
     from datus.tools.func_tool.database import DBFuncTool
 
 logger = get_logger(__name__)
+
+
+class SemanticKeyCandidate(BaseModel):
+    """One ordered logical-key candidate to verify against the full table."""
+
+    table_name: str = Field(..., description="Table containing the candidate key")
+    columns: List[str] = Field(..., description="Complete ordered candidate key columns")
+
+
+def analyze_metric_candidate_entries(
+    entries: List[Dict[str, Any]],
+    existing_metric_catalog: Optional[List[Dict[str, Any]]] = None,
+    *,
+    agent_config: Optional["AgentConfig"] = None,
+    sub_agent_name: Optional[str] = None,
+) -> FuncToolResult:
+    """Internal deterministic SQL analyzer used by the request-local planner."""
+    analyzer = SemanticDiscoveryTools(
+        agent_config=agent_config,
+        sub_agent_name=sub_agent_name,
+    )
+    return analyzer._analyze_metric_candidates(
+        sql_entries_json=json.dumps(entries, ensure_ascii=False, separators=(",", ":")),
+        existing_metric_catalog_json=json.dumps(
+            existing_metric_catalog or [],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        sample_sql_queries=len(entries),
+    )
 
 
 class SemanticDiscoveryTools:
@@ -48,6 +81,7 @@ class SemanticDiscoveryTools:
         *,
         agent_config: Optional["AgentConfig"] = None,
         sub_agent_name: Optional[str] = None,
+        source_sql_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     ):
         """
         Initialize semantic discovery tools.
@@ -61,6 +95,7 @@ class SemanticDiscoveryTools:
         self.agent_config = agent_config if agent_config is not None else getattr(db_tool, "agent_config", None)
         self.sub_agent_name = sub_agent_name if sub_agent_name is not None else getattr(db_tool, "sub_agent_name", None)
         self.enable_semantic_model_profiler = enable_semantic_model_profiler
+        self.source_sql_provider = source_sql_provider
 
     @classmethod
     def _aggregate_classes(cls):
@@ -79,17 +114,35 @@ class SemanticDiscoveryTools:
         if self.db_tool is not None:
             methods_to_convert.extend(
                 [
-                    self.analyze_table_relationships,
-                    self.validate_semantic_key_candidate,
-                    self.get_multiple_tables_ddl,
-                    self.analyze_column_usage_patterns,
+                    self.inspect_semantic_sources,
+                    self.validate_semantic_key_candidates,
                 ]
             )
             if self.enable_semantic_model_profiler:
                 methods_to_convert.append(self.profile_semantic_model_evidence)
-        methods_to_convert.append(self.analyze_metric_candidates_from_history)
-
         return [trans_to_function_tool(bound_method) for bound_method in methods_to_convert]
+
+    # These compatibility methods remain callable by Python integrations while
+    # the LLM tool surface above exposes only the two batched operations.
+    def get_multiple_tables_ddl(
+        self,
+        tables: List[str],
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema_name: Optional[str] = "",
+    ) -> FuncToolResult:
+        """Return table DDLs for legacy Python callers; not an exposed LLM tool."""
+        try:
+            results = []
+            for table in tables:
+                ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
+                if ddl_result.success and ddl_result.result:
+                    results.append({"table_name": table, **ddl_result.result})
+                else:
+                    results.append({"table_name": table, "error": ddl_result.error})
+            return FuncToolResult(result=results)
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
     def analyze_table_relationships(
         self,
@@ -99,72 +152,33 @@ class SemanticDiscoveryTools:
         schema_name: Optional[str] = "",
         sample_sql_queries: int = 20,
     ) -> FuncToolResult:
-        """
-        Analyze relationships between tables using multiple strategies.
-
-        Discovers foreign key relationships by examining:
-        1. DDL FOREIGN KEY constraints (highest confidence)
-        2. Historical JOIN patterns from stored SQL queries (medium confidence)
-        3. Column name similarity analysis (low confidence fallback)
-
-        Use this tool when generating multi-table semantic models to discover
-        how tables are related through foreign key relationships.
-
-        Args:
-            tables: List of table names to analyze relationships for
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-            sample_sql_queries: Number of historical SQL queries to analyze for JOIN patterns
-
-        Returns:
-            FuncToolResult with result containing:
-            {
-                "relationships": [
-                    {
-                        "source_table": "orders",
-                        "source_column": "customer_id",
-                        "source_columns": ["customer_id"],
-                        "target_table": "customers",
-                        "target_column": "id",
-                        "target_columns": ["id"],
-                        "confidence": "high|medium|low",
-                        "evidence": "foreign_key|join_pattern|column_name",
-                        "target_key_status": "declared|candidate_unverified"
-                    },
-                    ...
-                ],
-                "summary": "Found 3 relationships across 3 tables"
-            }
-        """
+        """Return legacy relationship-only evidence; not an exposed LLM tool."""
         try:
-            relationships = []
-
-            # Strategy 1: Extract FOREIGN KEY from DDL
-            fk_relationships = self._extract_foreign_keys_from_ddl(tables, catalog, database, schema_name)
-            relationships.extend(fk_relationships)
-
-            # Strategy 2: Analyze historical SQL JOIN patterns
-            join_relationships = self._analyze_join_patterns_from_history(tables, sample_sql_queries)
-            relationships.extend(join_relationships)
-
-            # Strategy 3: Infer from column names (fallback)
+            relationships = self._extract_foreign_keys_from_ddl(
+                tables,
+                catalog or "",
+                database or "",
+                schema_name or "",
+            )
+            relationships.extend(self._analyze_join_patterns_from_history(tables, sample_sql_queries))
             if not relationships:
-                name_relationships = self._infer_from_column_names(tables, catalog, database, schema_name)
-                relationships.extend(name_relationships)
-
-            # Deduplicate and sort by confidence
-            deduplicated = self._deduplicate_relationships(relationships)
-
+                relationships.extend(
+                    self._infer_from_column_names(
+                        tables,
+                        catalog or "",
+                        database or "",
+                        schema_name or "",
+                    )
+                )
+            relationships = self._deduplicate_relationships(relationships)
             return FuncToolResult(
                 result={
-                    "relationships": deduplicated,
-                    "summary": f"Found {len(deduplicated)} relationships across {len(tables)} tables",
+                    "relationships": relationships,
+                    "summary": f"Found {len(relationships)} relationships across {len(tables)} tables",
                 }
             )
-
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
     def validate_semantic_key_candidate(
         self,
@@ -174,152 +188,17 @@ class SemanticDiscoveryTools:
         database: Optional[str] = "",
         schema_name: Optional[str] = "",
     ) -> FuncToolResult:
-        """
-        Verify a candidate logical key with exact full-table checks.
-
-        Historical JOINs and column names can suggest key columns, but they do
-        not prove uniqueness. This read-only tool checks every row for NULL key
-        components and counts every duplicate non-NULL key group. A passing
-        result may be authored as one OSI ``unique_keys`` entry. It never
-        infers a physical ``primary_key``; that requires an explicit source
-        constraint or data contract.
-
-        Args:
-            table_name: Table containing the candidate key
-            columns: Ordered candidate key columns; one or more columns
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-
-        Returns:
-            FuncToolResult containing exact row/null/duplicate counts,
-            ``is_valid_logical_key``, and the permitted OSI declaration.
-        """
+        """Verify one legacy key candidate; not an exposed LLM tool."""
         try:
-            normalized_columns = self._validate_key_candidate_columns(columns)
-            table_ref = self._key_validation_table_reference(
+            return self._validate_semantic_key_candidate(
                 table_name=table_name,
+                columns=columns,
                 catalog=catalog or "",
                 database=database or "",
                 schema_name=schema_name or "",
             )
-            column_refs = [self._quote_sql_identifier(column) for column in normalized_columns]
-            null_predicate = " OR ".join(f"{column_ref} IS NULL" for column_ref in column_refs)
-            non_null_predicate = " AND ".join(f"{column_ref} IS NOT NULL" for column_ref in column_refs)
-            grouped_columns = ", ".join(column_refs)
-
-            summary_sql = (
-                "SELECT COUNT(*) AS row_count, "
-                f"SUM(CASE WHEN {null_predicate} THEN 1 ELSE 0 END) "
-                f"AS null_key_rows FROM {table_ref}"
-            )
-            summary = self._run_profile_scalar_query(summary_sql, database or "")
-            if summary.get("error"):
-                return FuncToolResult(
-                    success=0,
-                    error=f"Candidate key summary check failed: {summary['error']}",
-                )
-
-            duplicate_sql = (
-                "SELECT COUNT(*) AS duplicate_group_count, "
-                "COALESCE(SUM(duplicate_count - 1), 0) AS duplicate_row_count "
-                "FROM ("
-                "SELECT COUNT(*) AS duplicate_count "
-                f"FROM {table_ref} WHERE {non_null_predicate} "
-                f"GROUP BY {grouped_columns} HAVING COUNT(*) > 1"
-                ") duplicate_keys"
-            )
-            duplicate_stats = self._run_profile_scalar_query(duplicate_sql, database or "")
-            if duplicate_stats.get("error"):
-                return FuncToolResult(
-                    success=0,
-                    error=(f"Candidate key duplicate check failed: {duplicate_stats['error']}"),
-                )
-
-            row_count = self._required_profile_count(summary, "row_count")
-            null_key_rows = self._optional_profile_count(summary, "null_key_rows", default=0)
-            duplicate_group_count = self._required_profile_count(duplicate_stats, "duplicate_group_count")
-            duplicate_row_count = self._optional_profile_count(duplicate_stats, "duplicate_row_count", default=0)
-            is_non_null = null_key_rows == 0
-            is_unique = duplicate_group_count == 0
-            is_valid_logical_key = row_count > 0 and is_non_null and is_unique
-
-            if row_count == 0:
-                recommendation = "none"
-                reason = "The table is empty, so the candidate has no supporting data."
-            elif not is_non_null:
-                recommendation = "none"
-                reason = f"{null_key_rows} rows contain NULL in at least one key component."
-            elif not is_unique:
-                recommendation = "none"
-                reason = f"{duplicate_group_count} duplicate key groups contain {duplicate_row_count} excess rows."
-            else:
-                recommendation = "unique_keys"
-                reason = "The ordered columns are non-NULL and unique across the full table."
-
-            return FuncToolResult(
-                result={
-                    "table": table_name,
-                    "columns": normalized_columns,
-                    "verification_scope": "full_table",
-                    "access_scope": "rows visible to the current datasource principal",
-                    "verified_at_utc": datetime.now(timezone.utc).isoformat(),
-                    "row_count": row_count,
-                    "null_key_rows": null_key_rows,
-                    "duplicate_group_count": duplicate_group_count,
-                    "duplicate_row_count": duplicate_row_count,
-                    "is_non_null": is_non_null,
-                    "is_unique": is_unique,
-                    "is_valid_logical_key": is_valid_logical_key,
-                    "recommended_osi_declaration": recommendation,
-                    "primary_key_inferred": False,
-                    "reason": reason,
-                    "verification_sql": {
-                        "summary": summary_sql,
-                        "duplicates": duplicate_sql,
-                    },
-                }
-            )
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
-
-    def get_multiple_tables_ddl(
-        self,
-        tables: List[str],
-        catalog: Optional[str] = "",
-        database: Optional[str] = "",
-        schema_name: Optional[str] = "",
-    ) -> FuncToolResult:
-        """
-        Batch retrieve DDL for multiple tables.
-
-        More efficient than calling get_table_ddl multiple times.
-
-        Args:
-            tables: List of table names
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-
-        Returns:
-            FuncToolResult with result as list of table DDL info:
-            [
-                {"table_name": "orders", "definition": "CREATE TABLE ...", ...},
-                {"table_name": "customers", "definition": "CREATE TABLE ...", ...}
-            ]
-        """
-        try:
-            results = []
-            for table in tables:
-                ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-                if ddl_result.success and ddl_result.result:
-                    results.append({"table_name": table, **ddl_result.result})
-                else:
-                    results.append({"table_name": table, "error": ddl_result.error})
-
-            return FuncToolResult(result=results)
-        except Exception as e:
-            return FuncToolResult(success=0, error=str(e))
+        except Exception as exc:
+            return FuncToolResult(success=0, error=str(exc))
 
     def analyze_column_usage_patterns(
         self,
@@ -330,105 +209,424 @@ class SemanticDiscoveryTools:
         schema_name: Optional[str] = "",
         sample_sql_queries: int = 50,
     ) -> FuncToolResult:
-        """
-        Analyze how columns are used in historical SQL queries.
-
-        Discovers column usage patterns including:
-        1. Filter operators from parsed SQL predicates
-        2. Function predicates from parsed SQL expressions
-        3. Common redacted filter patterns and usage frequency
-
-        Use this tool when generating semantic models to understand
-        how one table's columns are typically queried and filtered. For
-        multi-table semantic model evidence or sampled data distributions, use
-        the skill-gated `profile_semantic_model_evidence` tool.
-
-        Args:
-            table_name: Table name to analyze
-            columns: Optional list of specific columns to analyze (None = all columns)
-            catalog: Optional catalog override
-            database: Optional database override
-            schema_name: Optional schema override
-            sample_sql_queries: Number of historical SQL queries to analyze
-
-        Returns:
-            FuncToolResult with result containing:
-            {
-                "column_patterns": {
-                    "status": {
-                        "operators": ["=", "IN"],
-                        "functions": [],
-                        "common_filters": ["status = <REDACTED>", "status IN (<REDACTED>)"],
-                        "usage_count": 45,
-                        "usage_description": "Commonly filtered with =, IN"
-                    },
-                    "normalized_name": {
-                        "operators": ["="],
-                        "functions": ["LOWER"],
-                        "common_filters": ["LOWER(name) = '<REDACTED>'"],
-                        "usage_count": 23,
-                        "usage_description": "Commonly filtered with =. Function predicates: LOWER"
-                    }
-                },
-                "summary": "Analyzed 2 columns from 50 SQL queries"
-            }
-        """
+        """Return legacy reference-SQL field usage; not an exposed LLM tool."""
         try:
             if not self.agent_config:
                 return FuncToolResult(
-                    success=0, error="Cannot analyze column patterns without agent_config (no SQL history available)"
+                    success=0,
+                    error="Cannot analyze column patterns without agent_config (no SQL history available)",
                 )
-
             from datus.storage.reference_sql.store import ReferenceSqlRAG
 
-            # Get table schema to know which columns exist
             schema_result = self.db_tool.describe_table(table_name, catalog, database, schema_name)
             if not schema_result.success:
                 return FuncToolResult(success=0, error=f"Failed to get table schema: {schema_result.error}")
-
-            # describe_table returns {"columns": [...], "table": {...}}
             table_columns = schema_result.result.get("columns", []) if isinstance(schema_result.result, dict) else []
             all_columns = [
-                str(col.get("name") or "") for col in table_columns if isinstance(col, dict) and col.get("name")
+                str(column.get("name") or "")
+                for column in table_columns
+                if isinstance(column, dict) and column.get("name")
             ]
-            target_columns = [str(col) for col in (columns if columns else all_columns) if col]
-
-            # Search for SQL queries containing the table
+            target_columns = [str(column) for column in (columns if columns else all_columns) if column]
             sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
             search_results = sql_rag.search_reference_sql(
-                query_text=f"SELECT FROM {table_name}", top_n=sample_sql_queries
+                query_text=f"SELECT FROM {table_name}",
+                top_n=sample_sql_queries,
             )
-
-            logger.info(f"Found {len(search_results)} historical SQL queries for table {table_name}")
             entries = [
                 {
-                    "name": entry.get("name") or entry.get("summary") or entry.get("filepath") or f"sql_{idx + 1}",
+                    "name": entry.get("name") or entry.get("summary") or entry.get("filepath") or f"sql_{index + 1}",
                     **entry,
                     "sql": str(entry.get("sql") or "").strip(),
                 }
-                for idx, entry in enumerate(search_results)
+                for index, entry in enumerate(search_results)
                 if str(entry.get("sql") or "").strip()
             ]
             table_evidence, parse_errors = self._semantic_profile_sql_evidence(entries, [table_name], 1)
             table_profile = self._semantic_profile_table_evidence_for(table_evidence, table_name)
-            result_patterns = self._column_usage_patterns_from_semantic_profile(
+            patterns = self._column_usage_patterns_from_semantic_profile(
                 table_profile.get("field_usage_statistics", {}),
                 target_columns,
             )
-
-            logger.info(f"Analyzed {len(result_patterns)} columns with usage patterns")
-
             result = {
-                "column_patterns": result_patterns,
-                "summary": f"Analyzed {len(result_patterns)} columns from {len(search_results)} SQL queries",
+                "column_patterns": patterns,
+                "summary": f"Analyzed {len(patterns)} columns from {len(search_results)} SQL queries",
             }
             if parse_errors:
                 result["parse_errors"] = parse_errors[:5]
             return FuncToolResult(result=result)
-
-        except Exception as e:
+        except Exception as exc:
             logger.exception("Error analyzing column usage patterns")
+            return FuncToolResult(success=0, error=str(exc))
+
+    def inspect_semantic_sources(
+        self,
+        tables: List[str],
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema_name: Optional[str] = "",
+    ) -> FuncToolResult:
+        """Inspect all semantic-model source tables in one read-only call.
+
+        Args:
+            tables: Complete list of physical tables involved in the model.
+            catalog: Optional catalog override.
+            database: Optional database override.
+            schema_name: Optional schema override.
+
+        This tool batches the former schema, relationship, and per-table usage
+        discovery calls. It reads each table's DDL and enriched schema once,
+        extracts declared foreign keys, mines JOIN and field-role evidence from
+        the current request SQL prepared by ``prepare_sql_modeling_plan``, and
+        falls back to low-confidence column-name relationship hints only when
+        no stronger relationship exists. It never searches unrelated reference
+        SQL; explicit historical profiling remains a separate opt-in workflow.
+        """
+        try:
+            normalized_tables = self._normalize_semantic_source_tables(tables)
+            inspected_tables = []
+            for table in normalized_tables:
+                inspected = {"table_name": table}
+                ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
+                if ddl_result.success and isinstance(ddl_result.result, dict):
+                    inspected["ddl"] = ddl_result.result
+                else:
+                    inspected["ddl_error"] = ddl_result.error or "DDL unavailable"
+
+                schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
+                if schema_result.success and isinstance(schema_result.result, dict):
+                    inspected["schema"] = schema_result.result
+                else:
+                    inspected["schema_error"] = schema_result.error or "Schema unavailable"
+                inspected_tables.append(inspected)
+
+            source_entries = self._current_source_sql_entries()
+            sql_evidence, parse_errors = self._semantic_profile_sql_evidence(
+                source_entries,
+                normalized_tables,
+                max(len(normalized_tables), 1),
+            )
+
+            relationships = self._extract_foreign_keys_from_inspected_tables(inspected_tables)
+            tables_lower_map = {self._normalize_identifier(table.split(".")[-1]): table for table in normalized_tables}
+            for entry in source_entries:
+                relationships.extend(
+                    self._extract_join_relationships_from_sql(
+                        str(entry.get("sql") or ""),
+                        tables_lower_map,
+                    )
+                )
+            relationships = self._deduplicate_relationships(relationships)
+            if not relationships:
+                relationships = self._infer_relationships_from_inspected_tables(inspected_tables)
+
+            for inspected in inspected_tables:
+                table_profile = self._semantic_profile_table_evidence_for(
+                    sql_evidence,
+                    inspected["table_name"],
+                )
+                inspected["sql_usage"] = {
+                    "query_count": table_profile.get("query_count", 0),
+                    "field_usage_statistics": table_profile.get("field_usage_statistics", {}),
+                    "aggregate_expressions": table_profile.get("aggregate_expressions", []),
+                    "group_by_expressions": table_profile.get("group_by_expressions", []),
+                    "common_filter_conditions": table_profile.get("common_filter_conditions", []),
+                }
+
+            return FuncToolResult(
+                result={
+                    "tables": inspected_tables,
+                    "relationships": relationships,
+                    "source_sql_count": len(source_entries),
+                    "parse_errors": parse_errors[:5],
+                    "summary": (
+                        f"Inspected {len(inspected_tables)} table(s) and found "
+                        f"{len(relationships)} relationship candidate(s) from the current request"
+                    ),
+                }
+            )
+        except Exception as e:
             return FuncToolResult(success=0, error=str(e))
+
+    def validate_semantic_key_candidates(
+        self,
+        candidates: List[SemanticKeyCandidate],
+        catalog: Optional[str] = "",
+        database: Optional[str] = "",
+        schema_name: Optional[str] = "",
+    ) -> FuncToolResult:
+        """Verify all intended logical-key candidates in one read-only call.
+
+        Historical JOINs and column names can suggest key columns, but they do
+        not prove uniqueness. Each candidate is checked over all rows visible
+        to the current datasource principal for NULL components and duplicate
+        ordered key groups. A passing result may be authored as one OSI
+        ``unique_keys`` entry. This tool never infers a physical
+        ``primary_key``.
+
+        Args:
+            candidates: Complete ordered key candidates that the model intends
+                to use. Submit all candidates in one call.
+            catalog: Optional catalog override.
+            database: Optional database override.
+            schema_name: Optional schema override.
+        """
+        try:
+            parsed_candidates = [SemanticKeyCandidate.model_validate(candidate) for candidate in candidates or []]
+            if not parsed_candidates:
+                return FuncToolResult(
+                    success=0,
+                    error="Provide every logical-key candidate that must be verified.",
+                )
+
+            validations = []
+            errors = []
+            seen = set()
+            for candidate in parsed_candidates:
+                normalized_columns = self._validate_key_candidate_columns(candidate.columns)
+                identity = (
+                    self._normalize_identifier(candidate.table_name),
+                    tuple(self._normalize_identifier(column) for column in normalized_columns),
+                )
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                validation = self._validate_semantic_key_candidate(
+                    table_name=candidate.table_name,
+                    columns=normalized_columns,
+                    catalog=catalog or "",
+                    database=database or "",
+                    schema_name=schema_name or "",
+                )
+                if validation.success:
+                    validations.append(validation.result)
+                else:
+                    error = {
+                        "table": candidate.table_name,
+                        "columns": normalized_columns,
+                        "error": validation.error or "Candidate key verification failed",
+                    }
+                    validations.append(error)
+                    errors.append(error)
+
+            result = {
+                "validations": validations,
+                "all_checks_completed": not errors,
+                "summary": (
+                    f"Verified {len(validations) - len(errors)} of {len(validations)} logical-key candidate(s)"
+                ),
+            }
+            if errors:
+                return FuncToolResult(
+                    success=0,
+                    error="One or more logical-key candidates could not be verified.",
+                    result=result,
+                )
+            return FuncToolResult(result=result)
+        except Exception as e:
+            return FuncToolResult(success=0, error=str(e))
+
+    def _validate_semantic_key_candidate(
+        self,
+        *,
+        table_name: str,
+        columns: List[str],
+        catalog: str,
+        database: str,
+        schema_name: str,
+    ) -> FuncToolResult:
+        """Run exact full-table checks for one ordered logical-key candidate."""
+        normalized_columns = self._validate_key_candidate_columns(columns)
+        table_ref = self._key_validation_table_reference(
+            table_name=table_name,
+            catalog=catalog,
+            database=database,
+            schema_name=schema_name,
+        )
+        column_refs = [self._quote_sql_identifier(column) for column in normalized_columns]
+        null_predicate = " OR ".join(f"{column_ref} IS NULL" for column_ref in column_refs)
+        non_null_predicate = " AND ".join(f"{column_ref} IS NOT NULL" for column_ref in column_refs)
+        grouped_columns = ", ".join(column_refs)
+
+        summary_sql = (
+            "SELECT COUNT(*) AS row_count, "
+            f"SUM(CASE WHEN {null_predicate} THEN 1 ELSE 0 END) "
+            f"AS null_key_rows FROM {table_ref}"
+        )
+        summary = self._run_profile_scalar_query(summary_sql, database)
+        if summary.get("error"):
+            return FuncToolResult(
+                success=0,
+                error=f"Candidate key summary check failed: {summary['error']}",
+            )
+
+        duplicate_sql = (
+            "SELECT COUNT(*) AS duplicate_group_count, "
+            "COALESCE(SUM(duplicate_count - 1), 0) AS duplicate_row_count "
+            "FROM ("
+            "SELECT COUNT(*) AS duplicate_count "
+            f"FROM {table_ref} WHERE {non_null_predicate} "
+            f"GROUP BY {grouped_columns} HAVING COUNT(*) > 1"
+            ") duplicate_keys"
+        )
+        duplicate_stats = self._run_profile_scalar_query(duplicate_sql, database)
+        if duplicate_stats.get("error"):
+            return FuncToolResult(
+                success=0,
+                error=f"Candidate key duplicate check failed: {duplicate_stats['error']}",
+            )
+
+        row_count = self._required_profile_count(summary, "row_count")
+        null_key_rows = self._optional_profile_count(summary, "null_key_rows", default=0)
+        duplicate_group_count = self._required_profile_count(duplicate_stats, "duplicate_group_count")
+        duplicate_row_count = self._optional_profile_count(duplicate_stats, "duplicate_row_count", default=0)
+        is_non_null = null_key_rows == 0
+        is_unique = duplicate_group_count == 0
+        is_valid_logical_key = row_count > 0 and is_non_null and is_unique
+
+        if row_count == 0:
+            recommendation = "none"
+            reason = "The table is empty, so the candidate has no supporting data."
+        elif not is_non_null:
+            recommendation = "none"
+            reason = f"{null_key_rows} rows contain NULL in at least one key component."
+        elif not is_unique:
+            recommendation = "none"
+            reason = f"{duplicate_group_count} duplicate key groups contain {duplicate_row_count} excess rows."
+        else:
+            recommendation = "unique_keys"
+            reason = "The ordered columns are non-NULL and unique across the full table."
+
+        return FuncToolResult(
+            result={
+                "table": table_name,
+                "columns": normalized_columns,
+                "verification_scope": "full_table",
+                "access_scope": "rows visible to the current datasource principal",
+                "verified_at_utc": datetime.now(timezone.utc).isoformat(),
+                "row_count": row_count,
+                "null_key_rows": null_key_rows,
+                "duplicate_group_count": duplicate_group_count,
+                "duplicate_row_count": duplicate_row_count,
+                "is_non_null": is_non_null,
+                "is_unique": is_unique,
+                "is_valid_logical_key": is_valid_logical_key,
+                "recommended_osi_declaration": recommendation,
+                "primary_key_inferred": False,
+                "reason": reason,
+                "verification_sql": {
+                    "summary": summary_sql,
+                    "duplicates": duplicate_sql,
+                },
+            }
+        )
+
+    def _normalize_semantic_source_tables(self, tables: List[str]) -> List[str]:
+        """Return non-empty source table names without case-insensitive duplicates."""
+        normalized = []
+        seen = set()
+        for raw_table in tables or []:
+            table = str(raw_table or "").strip()
+            identity = self._normalize_identifier(table)
+            if not table or not identity or identity in seen:
+                continue
+            seen.add(identity)
+            normalized.append(table)
+        if not normalized:
+            raise ValueError("Provide at least one physical source table to inspect.")
+        return normalized
+
+    def _current_source_sql_entries(self) -> List[Dict[str, Any]]:
+        """Read exact request SQL captured by the shared preflight, when available."""
+        if self.source_sql_provider is None:
+            return []
+        try:
+            entries = self.source_sql_provider() or []
+        except Exception as exc:
+            logger.warning("Failed to read request-local SQL evidence: %s", exc)
+            return []
+        return [
+            {
+                **entry,
+                "name": entry.get("name") or entry.get("source_sql_name") or f"sql_{index + 1}",
+                "sql": str(entry.get("sql") or ""),
+            }
+            for index, entry in enumerate(entries)
+            if isinstance(entry, dict) and str(entry.get("sql") or "").strip()
+        ]
+
+    def _extract_foreign_keys_from_inspected_tables(
+        self,
+        inspected_tables: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Extract declared scalar or composite foreign keys from cached DDL."""
+        relationships = []
+        fk_pattern = (
+            r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+"
+            r"([^\s(]+)\s*\(([^)]+)\)"
+        )
+        for inspected in inspected_tables:
+            ddl = inspected.get("ddl")
+            ddl_text = str(ddl.get("definition") or "") if isinstance(ddl, dict) else ""
+            for match in re.finditer(fk_pattern, ddl_text, re.IGNORECASE):
+                source_columns = self._split_constraint_columns(match.group(1))
+                target_columns = self._split_constraint_columns(match.group(3))
+                if not source_columns or len(source_columns) != len(target_columns):
+                    continue
+                relationships.append(
+                    self._relationship_evidence(
+                        source_table=inspected["table_name"],
+                        source_columns=source_columns,
+                        target_table=match.group(2).strip().strip('`"[]'),
+                        target_columns=target_columns,
+                        confidence="high",
+                        evidence="foreign_key",
+                        target_key_status="declared",
+                    )
+                )
+        return self._deduplicate_relationships(relationships)
+
+    def _infer_relationships_from_inspected_tables(
+        self,
+        inspected_tables: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Infer low-confidence relationships from cached schema column names."""
+        table_columns = {}
+        tables_lower_map = {}
+        for inspected in inspected_tables:
+            table_name = inspected["table_name"]
+            tables_lower_map[self._normalize_identifier(table_name.split(".")[-1])] = table_name
+            schema = inspected.get("schema")
+            columns = schema.get("columns", []) if isinstance(schema, dict) else []
+            table_columns[table_name] = [column for column in columns if isinstance(column, dict)]
+
+        relationships = []
+        for source_table, columns in table_columns.items():
+            for column in columns:
+                source_column = str(column.get("name") or "")
+                normalized_column = self._normalize_identifier(source_column)
+                if not normalized_column.endswith("_id"):
+                    continue
+                target_table = tables_lower_map.get(normalized_column[:-3])
+                if not target_table:
+                    continue
+                if not any(
+                    self._normalize_identifier(target.get("name")) == "id"
+                    for target in table_columns.get(target_table, [])
+                ):
+                    continue
+                relationships.append(
+                    self._relationship_evidence(
+                        source_table=source_table,
+                        source_columns=[source_column],
+                        target_table=target_table,
+                        target_columns=["id"],
+                        confidence="low",
+                        evidence="column_name",
+                        target_key_status="candidate_unverified",
+                    )
+                )
+        return self._deduplicate_relationships(relationships)
 
     def profile_semantic_model_evidence(
         self,
@@ -515,7 +713,7 @@ class SemanticDiscoveryTools:
                         "Keep generated YAML concise: use profiling evidence to choose relationship "
                         "candidates, measures, dimensions, and time columns; historical joins do not "
                         "prove keys, so verify complete target column lists with "
-                        "validate_semantic_key_candidate before adding unique_keys. Include compact distribution notes "
+                        "one validate_semantic_key_candidates call before adding unique_keys. Include compact distribution notes "
                         "in descriptions when useful, such as observed min/max, percentiles, "
                         "null rate, date span/freshness/duration, low-cardinality distinct counts, "
                         "stable enum mappings, referential coverage, and common business filter "
@@ -527,7 +725,7 @@ class SemanticDiscoveryTools:
             logger.exception("Error profiling semantic model evidence")
             return FuncToolResult(success=0, error=str(e))
 
-    def analyze_metric_candidates_from_history(
+    def _analyze_metric_candidates(
         self,
         sql_queries: Optional[List[str]] = None,
         sql_entries_json: Optional[str] = "",
@@ -583,6 +781,10 @@ class SemanticDiscoveryTools:
             literal_mappings: List[Dict[str, Any]] = []
             time_grain_evidence: List[Dict[str, Any]] = []
             post_aggregation_constraints: List[Dict[str, Any]] = []
+            output_contracts: List[Dict[str, Any]] = []
+            metric_requirements: List[Dict[str, Any]] = []
+            dataset_requirements: List[Dict[str, Any]] = []
+            queryability_contracts: List[Dict[str, Any]] = []
 
             for idx, entry in enumerate(entries):
                 sql_text = entry.get("sql", "")
@@ -602,6 +804,18 @@ class SemanticDiscoveryTools:
                 entry_has_metric_evidence = False
                 found_candidate = False
                 modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
+                output_analysis = self._analyze_final_output_contracts(
+                    parsed_expressions=parsed_expressions,
+                    source_name=source_name,
+                    source_context_id=str(entry.get("source_context_id") or ""),
+                    sql_text=sql_text,
+                    question=str(entry.get("question") or ""),
+                )
+                output_contracts.extend(output_analysis["output_contracts"])
+                metric_requirements.extend(output_analysis["metric_requirements"])
+                if output_analysis["dataset_requirement"]:
+                    dataset_requirements.append(output_analysis["dataset_requirement"])
+                queryability_contracts.extend(output_analysis["queryability_contracts"])
                 if modeling_analysis["derived_datasource_recommendations"]:
                     derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
                     metric_generation_skips.extend(modeling_analysis["metric_generation_skips"])
@@ -722,18 +936,21 @@ class SemanticDiscoveryTools:
                     has_llm_review_candidates=entry_has_llm_review_candidates,
                     has_non_metric_evidence=entry_has_non_metric_evidence,
                     derived_datasource_recommendations=modeling_analysis["derived_datasource_recommendations"],
+                    requires_query_backed=output_analysis["requires_query_backed"],
+                    has_required_metric_outputs=bool(output_analysis["metric_requirements"]),
                 )
                 source_classifications.append(
                     {
                         "source_sql_name": source_name,
                         "classification": classification,
-                        "reason": modeling_analysis["classification_reason"],
+                        "reason": modeling_analysis["classification_reason"]
+                        or output_analysis["classification_reason"],
                     }
                 )
                 if classification == "metric_plus_derived_datasource":
                     for candidate in entry_candidates:
                         blocked = dict(candidate)
-                        blocked["block_reason"] = (
+                        blocked["block_reason"] = modeling_analysis["classification_reason"] or (
                             "aggregation over ranked/windowed result; create the recommended derived data source first"
                         )
                         blocked_direct_metric_candidates.append(blocked)
@@ -761,6 +978,7 @@ class SemanticDiscoveryTools:
                 and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
             ]
             modeling_plan = self._build_modeling_plan(derived_datasource_recommendations)
+            modeling_plan.extend(self._build_query_backed_modeling_plan(dataset_requirements))
             return FuncToolResult(
                 result={
                     "metric_candidates": candidates,
@@ -783,9 +1001,14 @@ class SemanticDiscoveryTools:
                     "literal_mappings": literal_mappings,
                     "time_grain_evidence": time_grain_evidence,
                     "post_aggregation_constraints": post_aggregation_constraints,
+                    "output_contracts": output_contracts,
+                    "metric_requirements": metric_requirements,
+                    "dataset_requirements": dataset_requirements,
+                    "queryability_contracts": queryability_contracts,
                     "modeling_plan": modeling_plan,
                     "summary": (
-                        f"Found {len(candidates)} metric candidates and {len(measures)} base measures "
+                        f"Found {len(metric_requirements)} required metric outputs, "
+                        f"{len(candidates)} reusable metric candidates, and {len(measures)} base measures "
                         f"from {len(entries)} SQL queries"
                     ),
                 }
@@ -2056,11 +2279,19 @@ class SemanticDiscoveryTools:
         has_llm_review_candidates: bool,
         has_non_metric_evidence: bool,
         derived_datasource_recommendations: List[Dict[str, Any]],
+        requires_query_backed: bool = False,
+        has_required_metric_outputs: bool = False,
     ) -> str:
         """Classify how a SQL query should be modeled."""
         if derived_datasource_recommendations:
             return "metric_plus_derived_datasource"
-        if has_direct_candidates:
+        if requires_query_backed and (
+            has_required_metric_outputs or has_direct_candidates or has_llm_review_candidates
+        ):
+            return "query_backed_then_metric"
+        if requires_query_backed:
+            return "query_backed_dataset"
+        if has_required_metric_outputs or has_direct_candidates:
             return "direct_metric"
         if has_llm_review_candidates:
             return "llm_review_candidate"
@@ -2077,6 +2308,10 @@ class SemanticDiscoveryTools:
         classifications = {item.get("classification") for item in source_classifications}
         if "metric_plus_derived_datasource" in classifications:
             return "metric_plus_derived_datasource"
+        if "query_backed_then_metric" in classifications:
+            return "query_backed_then_metric"
+        if "query_backed_dataset" in classifications:
+            return "query_backed_dataset"
         if "direct_metric" in classifications:
             return "direct_metric"
         if "llm_review_candidate" in classifications:
@@ -2120,6 +2355,44 @@ class SemanticDiscoveryTools:
                             "rank_filters": rank_filter,
                         },
                     ],
+                }
+            )
+        return plans
+
+    def _build_query_backed_modeling_plan(
+        self,
+        dataset_requirements: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build executable authoring steps for SQL-defined dataset boundaries."""
+        plans = []
+        for requirement in dataset_requirements:
+            steps = [
+                {
+                    "step": "create_query_backed_dataset",
+                    "description": (
+                        "Create one SQL-backed semantic dataset from the exact source SQL before defining metrics."
+                    ),
+                    "dataset_requirement_id": requirement.get("requirement_id", ""),
+                    "dataset_name_hint": requirement.get("suggested_name", ""),
+                    "output_grain": requirement.get("output_grain", []),
+                }
+            ]
+            if requirement.get("metric_output_ids"):
+                steps.append(
+                    {
+                        "step": "define_metrics_from_output_contracts",
+                        "description": (
+                            "Define every required metric output against the query-backed dataset; "
+                            "preserve output identity and do not replace it with intermediate aggregates."
+                        ),
+                        "metric_output_ids": requirement.get("metric_output_ids", []),
+                    }
+                )
+            plans.append(
+                {
+                    "source_sql_name": requirement.get("source_sql_name", ""),
+                    "classification": "query_backed_then_metric",
+                    "steps": steps,
                 }
             )
         return plans
@@ -2173,6 +2446,764 @@ class SemanticDiscoveryTools:
             "metric_generation_skips": metric_generation_skips,
             "classification_reason": reason,
         }
+
+    def _analyze_final_output_contracts(
+        self,
+        parsed_expressions: List[Any],
+        source_name: str,
+        source_context_id: str,
+        sql_text: str,
+        question: str = "",
+    ) -> Dict[str, Any]:
+        """Preserve final query outputs and trace aggregate lineage through derived relations."""
+        from sqlglot import expressions as exp
+        from sqlglot.optimizer.scope import build_scope
+
+        source_identity = self._safe_name(source_name)
+        output_contracts: List[Dict[str, Any]] = []
+        metric_requirements: List[Dict[str, Any]] = []
+        queryability_contracts: List[Dict[str, Any]] = []
+        requires_query_backed = False
+        classification_reason = ""
+        sql_fingerprint = hashlib.sha256(sql_text.encode("utf-8")).hexdigest()
+        dataset_requirement_id = f"query_dataset:{sql_fingerprint}"
+
+        for statement_index, parsed in enumerate(parsed_expressions, 1):
+            root_scope = build_scope(parsed)
+            if root_scope is None:
+                continue
+            statement_outputs = self._root_contract_outputs(root_scope)
+            statement_contracts: List[Dict[str, Any]] = []
+            statement_requirements: List[Dict[str, Any]] = []
+            for output_index, output in enumerate(statement_outputs, 1):
+                output_name = str(output.get("name") or "")
+                expression = output["expression"]
+                output_scope = output.get("scope") or root_scope
+                output_name = output_name or f"output_{output_index}"
+                if "aggregate_lineage" in output:
+                    aggregate_lineage = bool(output["aggregate_lineage"])
+                else:
+                    aggregate_lineage = bool(
+                        self._expression_has_aggregate_lineage(
+                            expression,
+                            output_scope,
+                            seen=set(),
+                        )
+                    )
+                if self._is_non_metric_window_output(expression):
+                    output_role = "non_metric"
+                else:
+                    output_role = "metric" if aggregate_lineage else "dimension"
+                output_id = (
+                    f"{source_identity}:statement_{statement_index}:"
+                    f"output_{output_index}:{self._normalize_identifier(output_name)}"
+                )
+                dependencies = output.get("dependencies")
+                if dependencies is None:
+                    dependencies = sorted({column.sql(comments=False) for column in expression.find_all(exp.Column)})
+                contract = {
+                    "output_id": output_id,
+                    "source_sql_name": source_name,
+                    "source_context_id": source_context_id,
+                    "statement_index": statement_index,
+                    "output_index": output_index,
+                    "output_name": output_name,
+                    "output_role": output_role,
+                    "expression": expression.sql(comments=False),
+                    "aggregate_lineage": aggregate_lineage,
+                    "dependencies": dependencies,
+                    "lowering_status": (
+                        "non_metric"
+                        if output_role == "non_metric"
+                        else "dimension"
+                        if output_role == "dimension"
+                        else "pending"
+                    ),
+                }
+                output_contracts.append(contract)
+                statement_contracts.append(contract)
+                if output_role != "metric":
+                    continue
+                output_requires_query_backed, output_reason = self._metric_output_requires_query_backed(
+                    root_scope=root_scope,
+                    expression=expression,
+                    force_query_backed=bool(output.get("force_query_backed")),
+                )
+                target_mode = "query_backed_metric" if output_requires_query_backed else "direct_metric"
+                requirement = {
+                    "output_id": output_id,
+                    "source_sql_name": source_name,
+                    "source_context_id": source_context_id,
+                    "preferred_name": output_name,
+                    "source_expression": expression.sql(comments=False),
+                    "metric_kind": (
+                        "derived_metric" if self._is_derived_metric_output(expression) else "aggregate_metric"
+                    ),
+                    "target_mode": target_mode,
+                    "lowering_status": "query_backed" if output_requires_query_backed else "direct",
+                    "lowering_reason": output_reason,
+                    "required_capabilities": self._required_output_capabilities(expression, root_scope),
+                    "dataset_requirement_id": dataset_requirement_id if output_requires_query_backed else "",
+                    "requires_name_translation": self._requires_name_translation(output_name),
+                }
+                contract["lowering_status"] = requirement["lowering_status"]
+                contract["lowering_reason"] = requirement["lowering_reason"]
+                metric_requirements.append(requirement)
+                statement_requirements.append(requirement)
+                if output_requires_query_backed:
+                    requires_query_backed = True
+                    classification_reason = classification_reason or output_reason
+
+            queryability_contracts.extend(
+                self._statement_queryability_contracts(
+                    source_name=source_name,
+                    root_scope=root_scope,
+                    statement_contracts=statement_contracts,
+                    statement_requirements=statement_requirements,
+                )
+            )
+
+        dataset_requirement: Optional[Dict[str, Any]] = None
+        if requires_query_backed:
+            source_contracts = [contract for contract in output_contracts if contract["source_sql_name"] == source_name]
+            query_backed_output_ids = {
+                requirement["output_id"]
+                for requirement in metric_requirements
+                if requirement.get("target_mode") == "query_backed_metric"
+            }
+            suggested_name = self._query_dataset_name_hint(
+                source_name=source_name,
+                source_contracts=[
+                    contract
+                    for contract in source_contracts
+                    if contract["output_id"] in query_backed_output_ids or contract["output_role"] == "dimension"
+                ],
+            )
+            for requirement in metric_requirements:
+                if requirement.get("dataset_requirement_id") == dataset_requirement_id:
+                    requirement["dataset_name_hint"] = suggested_name
+            dataset_requirement = {
+                "requirement_id": dataset_requirement_id,
+                "sql_fingerprint": sql_fingerprint,
+                "suggested_name": suggested_name,
+                "source_sql_name": source_name,
+                "source_context_id": source_context_id,
+                "question": question,
+                "modeling_mode": "query_backed",
+                "reason": classification_reason,
+                "sql": sql_text,
+                "output_grain": [
+                    contract["output_name"] for contract in source_contracts if contract["output_role"] == "dimension"
+                ],
+                "output_contract_ids": [contract["output_id"] for contract in source_contracts],
+                "metric_output_ids": [
+                    contract["output_id"]
+                    for contract in source_contracts
+                    if contract["output_id"] in query_backed_output_ids
+                ],
+            }
+
+        return {
+            "output_contracts": output_contracts,
+            "metric_requirements": metric_requirements,
+            "dataset_requirement": dataset_requirement,
+            "requires_query_backed": requires_query_backed,
+            "classification_reason": classification_reason,
+            "queryability_contracts": queryability_contracts,
+        }
+
+    def _root_contract_outputs(self, root_scope: Any) -> List[Dict[str, Any]]:
+        """Return final outputs for SELECT and aligned set-operation roots."""
+        from sqlglot import expressions as exp
+
+        if isinstance(root_scope.expression, exp.Select):
+            return [
+                {
+                    "name": name,
+                    "expression": expression,
+                    "scope": root_scope,
+                }
+                for name, expression in self._root_output_expressions(root_scope)
+            ]
+
+        if not isinstance(root_scope.expression, exp.SetOperation):
+            return []
+        branches = self._leaf_union_scopes(root_scope)
+        if not branches:
+            return []
+        branch_outputs = [self._root_output_expressions(branch) for branch in branches]
+        if not branch_outputs or not branch_outputs[0]:
+            return []
+
+        outputs: List[Dict[str, Any]] = []
+        for output_index, (name, expression) in enumerate(branch_outputs[0]):
+            aligned = [
+                (branch, outputs_for_branch[output_index][1])
+                for branch, outputs_for_branch in zip(branches, branch_outputs)
+                if output_index < len(outputs_for_branch)
+            ]
+            aggregate_flags = [
+                self._expression_has_aggregate_lineage(branch_expression, branch, seen=set())
+                for branch, branch_expression in aligned
+            ]
+            dependencies = sorted(
+                {
+                    column.sql(comments=False)
+                    for _branch, branch_expression in aligned
+                    for column in branch_expression.find_all(exp.Column)
+                }
+            )
+            outputs.append(
+                {
+                    "name": name,
+                    "expression": expression,
+                    "scope": branches[0],
+                    "aggregate_lineage": bool(aggregate_flags) and all(aggregate_flags),
+                    "dependencies": dependencies,
+                    "force_query_backed": True,
+                }
+            )
+        return outputs
+
+    def _metric_output_requires_query_backed(
+        self,
+        *,
+        root_scope: Any,
+        expression: Any,
+        force_query_backed: bool,
+    ) -> tuple[bool, str]:
+        """Classify one output from its own dependency slice."""
+        from sqlglot import expressions as exp
+        from sqlglot.optimizer.scope import Scope
+
+        if force_query_backed or not isinstance(root_scope.expression, exp.Select):
+            return True, "set operations must be preserved as a query-backed dataset"
+
+        if self._is_inlineable_row_projection(root_scope):
+            return False, "row-level projections can be lowered into direct metric expressions"
+
+        derived_sources = [
+            source for _node, source in root_scope.selected_sources.values() if isinstance(source, Scope)
+        ]
+        if derived_sources:
+            return True, "derived-relation joins or pre-aggregation must be preserved as a query-backed dataset"
+
+        windows = list(expression.find_all(exp.Window))
+        if windows and not all(self._is_supported_metric_window(window) for window in windows):
+            return True, "the output contains a window expression that has no direct metric lowering"
+        if windows:
+            return False, "the output window maps to a supported metric capability"
+        return False, "the output aggregate can be lowered directly"
+
+    @staticmethod
+    def _is_non_metric_window_output(expression: Any) -> bool:
+        """Treat positional analytic outputs as query attributes, not metrics."""
+        from sqlglot import expressions as exp
+
+        positional_functions = tuple(
+            function_type
+            for function_type in (
+                getattr(exp, "RowNumber", None),
+                getattr(exp, "Rank", None),
+                getattr(exp, "DenseRank", None),
+                getattr(exp, "Ntile", None),
+            )
+            if function_type is not None
+        )
+        return any(isinstance(window.this, positional_functions) for window in expression.find_all(exp.Window))
+
+    def _required_output_capabilities(self, expression: Any, root_scope: Any) -> List[str]:
+        """Describe SQL operator capabilities required by one output."""
+        from sqlglot import expressions as exp
+
+        capabilities = set()
+        if any(True for _node in expression.find_all(exp.AggFunc)):
+            capabilities.add("aggregate")
+        if any(True for _node in expression.find_all(exp.Distinct)):
+            capabilities.add("distinct")
+        if any(True for _node in expression.find_all(exp.Case)):
+            capabilities.add("case")
+        if any(True for _node in expression.find_all(exp.Window)):
+            capabilities.add("window")
+        if any(isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div)) for node in expression.walk()):
+            capabilities.add("arithmetic")
+        if self._time_grain_for_expr(expression):
+            capabilities.add("time_bucket")
+        if isinstance(root_scope.expression, exp.Select) and root_scope.expression.args.get("joins"):
+            capabilities.add("join")
+        return sorted(capabilities)
+
+    def _statement_queryability_contracts(
+        self,
+        *,
+        source_name: str,
+        root_scope: Any,
+        statement_contracts: List[Dict[str, Any]],
+        statement_requirements: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Build direct and query-backed validation contracts from one AST scope."""
+        contracts: List[Dict[str, Any]] = []
+        direct_requirements = [
+            requirement for requirement in statement_requirements if requirement.get("target_mode") == "direct_metric"
+        ]
+        query_backed_requirements = [
+            requirement
+            for requirement in statement_requirements
+            if requirement.get("target_mode") == "query_backed_metric"
+        ]
+
+        if direct_requirements:
+            direct_contract = self._direct_group_queryability_contract(
+                source_name,
+                root_scope,
+                direct_requirements,
+            )
+            if direct_contract:
+                contracts.append(direct_contract)
+
+        if query_backed_requirements:
+            dimension_hints = [
+                contract["output_name"]
+                for contract in statement_contracts
+                if contract.get("output_role") == "dimension"
+            ]
+            if dimension_hints:
+                contracts.append(
+                    {
+                        "source": source_name,
+                        "dimension_hints": list(dict.fromkeys(dimension_hints)),
+                        "metric_hints": [requirement["preferred_name"] for requirement in query_backed_requirements],
+                        "metric_output_ids": [requirement["output_id"] for requirement in query_backed_requirements],
+                        "contract_source": "query_backed_output_grain",
+                    }
+                )
+        return contracts
+
+    def _direct_group_queryability_contract(
+        self,
+        source_name: str,
+        root_scope: Any,
+        requirements: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Build a full GROUP BY contract from the already parsed root scope."""
+        from sqlglot import expressions as exp
+
+        select = root_scope.expression
+        if not isinstance(select, exp.Select):
+            return None
+        group = select.args.get("group")
+        if group is None:
+            return None
+
+        dimension_hints: List[str] = []
+        dimension_expr_hints: List[Dict[str, str]] = []
+        time_group_hints: List[Dict[str, str]] = []
+        for group_expression in group.expressions:
+            projection = self._projection_for_group_expression(select, group_expression)
+            projection_expression = projection.this if isinstance(projection, exp.Alias) else projection
+            expression = projection_expression or group_expression
+            resolved = self._resolve_scope_expression(expression, root_scope)
+            hint = self._group_dimension_hint(group_expression, projection, select)
+            if not hint:
+                continue
+            dimension_hints.append(hint)
+
+            grain = self._time_grain_for_expr(resolved) or self._time_grain_from_alias(hint)
+            normalized_grain = str(grain or "").lower()
+            if normalized_grain in {"day", "week", "month", "quarter", "year"}:
+                base_expression = self._time_group_base_expression(resolved)
+                time_group_hints.append(
+                    {
+                        "alias": hint,
+                        "base_expr": base_expression,
+                        "grain": normalized_grain,
+                    }
+                )
+                continue
+
+            expression_hint = {
+                "alias": hint,
+                "expr": resolved.sql(comments=False),
+            }
+            if isinstance(resolved, exp.Column):
+                expression_hint["column"] = str(resolved.name)
+            dimension_expr_hints.append(expression_hint)
+
+        if not dimension_hints:
+            return None
+        contract: Dict[str, Any] = {
+            "source": source_name,
+            "dimension_hints": list(dict.fromkeys(dimension_hints)),
+            "metric_hints": [requirement["preferred_name"] for requirement in requirements],
+            "metric_output_ids": [requirement["output_id"] for requirement in requirements],
+            "contract_source": "final_group_by",
+        }
+        if dimension_expr_hints:
+            contract["dimension_expr_hints"] = self._deduplicate_contract_hints(
+                dimension_expr_hints,
+                ("alias", "expr", "column"),
+            )
+        if time_group_hints:
+            contract["time_group_hints"] = self._deduplicate_contract_hints(
+                time_group_hints,
+                ("alias", "base_expr", "grain"),
+            )
+        return contract
+
+    def _time_group_base_expression(self, expression: Any) -> str:
+        """Return the non-grain operand of a parsed time-bucketing expression."""
+        from sqlglot import expressions as exp
+
+        grain_tokens = {
+            "second",
+            "minute",
+            "hour",
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year",
+        }
+        for date_trunc in expression.find_all(exp.DateTrunc):
+            for key in ("this", "unit"):
+                candidate = date_trunc.args.get(key)
+                if isinstance(candidate, exp.Column) and self._normalize_identifier(candidate.name) not in grain_tokens:
+                    return candidate.sql(comments=False)
+                if isinstance(candidate, exp.Literal):
+                    literal = str(candidate.this or "")
+                    normalized_literal = self._normalize_identifier(literal)
+                    if normalized_literal not in grain_tokens:
+                        return normalized_literal
+        columns = [
+            column
+            for column in expression.find_all(exp.Column)
+            if self._normalize_identifier(column.name) not in grain_tokens
+        ]
+        return columns[0].sql(comments=False) if len(columns) == 1 else expression.sql(comments=False)
+
+    def _projection_for_group_expression(self, select: Any, group_expression: Any) -> Optional[Any]:
+        from sqlglot import expressions as exp
+
+        if isinstance(group_expression, exp.Literal) and group_expression.is_int:
+            ordinal = int(group_expression.name)
+            if 1 <= ordinal <= len(select.expressions):
+                return select.expressions[ordinal - 1]
+
+        group_sql = group_expression.sql(comments=False).lower().replace("`", "")
+        group_name = self._normalize_identifier(group_expression.alias_or_name)
+        for projection in select.expressions:
+            expression = projection.this if isinstance(projection, exp.Alias) else projection
+            if projection.alias and group_name and self._normalize_identifier(projection.alias) == group_name:
+                return projection
+            if expression.sql(comments=False).lower().replace("`", "") == group_sql:
+                return projection
+        return None
+
+    def _group_dimension_hint(self, group_expression: Any, projection: Any, select: Any) -> str:
+        from sqlglot import expressions as exp
+
+        if projection is not None:
+            name = str(projection.alias_or_name or "")
+            if name:
+                return name
+        if isinstance(group_expression, exp.Literal) and group_expression.is_int:
+            ordinal = int(group_expression.name)
+            if 1 <= ordinal <= len(select.expressions):
+                return str(select.expressions[ordinal - 1].alias_or_name or "")
+        return str(group_expression.alias_or_name or group_expression.sql(comments=False))
+
+    def _resolve_scope_expression(
+        self,
+        expression: Any,
+        scope: Any,
+        seen: Optional[set[tuple[int, str, str]]] = None,
+    ) -> Any:
+        """Resolve projected columns through SQLGlot scopes without reparsing SQL."""
+        from sqlglot import expressions as exp
+
+        seen = set(seen or set())
+
+        def replace(node: Any) -> Any:
+            if not isinstance(node, exp.Column):
+                return node
+            return self._resolve_scope_column(node, scope, seen)
+
+        try:
+            return expression.transform(replace, copy=True)
+        except Exception:
+            return expression
+
+    def _resolve_scope_column(
+        self,
+        column: Any,
+        scope: Any,
+        seen: set[tuple[int, str, str]],
+    ) -> Any:
+        from sqlglot import expressions as exp
+
+        key = (
+            id(scope),
+            self._normalize_identifier(column.table),
+            self._normalize_identifier(column.name),
+        )
+        if key in seen:
+            return column
+        next_seen = {*seen, key}
+
+        matches: List[tuple[Any, Any]] = []
+        for source_scope in self._column_source_scopes(column, scope):
+            matches.extend(self._scope_output_projections(source_scope, column.name))
+        if len(matches) != 1:
+            return column
+
+        projection_scope, projection = matches[0]
+        resolved = projection.this if isinstance(projection, exp.Alias) else projection
+        if resolved.sql(comments=False).lower() == column.sql(comments=False).lower():
+            return column
+        return self._resolve_scope_expression(resolved, projection_scope, next_seen)
+
+    @staticmethod
+    def _deduplicate_contract_hints(
+        hints: List[Dict[str, str]],
+        keys: tuple[str, ...],
+    ) -> List[Dict[str, str]]:
+        result: List[Dict[str, str]] = []
+        seen = set()
+        for hint in hints:
+            signature = tuple(str(hint.get(key) or "") for key in keys)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            result.append(hint)
+        return result
+
+    def _root_output_expressions(self, root_scope: Any) -> List[tuple[str, Any]]:
+        """Expand stars backed by named derived outputs; keep physical-table stars unchanged."""
+        from sqlglot import expressions as exp
+        from sqlglot.optimizer.scope import Scope
+
+        outputs: List[tuple[str, Any]] = []
+        for projection in root_scope.expression.expressions:
+            qualifier: Optional[str] = None
+            if isinstance(projection, exp.Star):
+                qualifier = ""
+            elif isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star):
+                qualifier = str(projection.table or "")
+            else:
+                expression = projection.this if isinstance(projection, exp.Alias) else projection
+                outputs.append((projection.alias_or_name, expression))
+                continue
+
+            selected_sources = root_scope.selected_sources
+            if qualifier:
+                normalized_qualifier = self._normalize_identifier(qualifier)
+                sources = [
+                    (alias, source)
+                    for alias, (_node, source) in selected_sources.items()
+                    if self._normalize_identifier(alias) == normalized_qualifier
+                ]
+            else:
+                sources = [(alias, source) for alias, (_node, source) in selected_sources.items()]
+
+            if not sources or any(not isinstance(source, Scope) for _alias, source in sources):
+                outputs.append((projection.alias_or_name, projection))
+                continue
+
+            expanded: List[tuple[str, Any]] = []
+            for alias, source in sources:
+                names = [name for name in source.expression.named_selects if name and name != "*"]
+                if not names:
+                    expanded = []
+                    break
+                expanded.extend((name, exp.column(name, table=alias)) for name in names)
+            outputs.extend(expanded or [(projection.alias_or_name, projection)])
+        return outputs
+
+    def _query_dataset_name_hint(
+        self,
+        source_name: str,
+        source_contracts: List[Dict[str, Any]],
+    ) -> str:
+        """Return a weak semantic seed; the author chooses the final business name."""
+        source_hint = self._safe_name(source_name)
+        if not source_hint or re.fullmatch(r"sql_\d+", source_hint):
+            metric_output = next(
+                (
+                    contract.get("output_name", "")
+                    for contract in source_contracts
+                    if contract.get("output_role") == "metric"
+                ),
+                "",
+            )
+            source_hint = self._safe_name(str(metric_output))
+        if not source_hint or source_hint == "metric_candidate":
+            source_hint = "query_results"
+        return f"{source_hint}_query_dataset"
+
+    def _expression_has_aggregate_lineage(
+        self,
+        expression: Any,
+        scope: Any,
+        seen: set,
+    ) -> bool:
+        """Return whether an expression resolves to an aggregate at its current output grain."""
+        from sqlglot import expressions as exp
+
+        if self._is_grouping_expression(expression, scope.expression):
+            return False
+
+        signature = (id(scope), expression.sql(comments=False).lower())
+        if signature in seen:
+            return False
+        seen = {*seen, signature}
+
+        if any(True for _aggregate in expression.find_all(exp.AggFunc)):
+            return True
+
+        columns = [expression] if isinstance(expression, exp.Column) else list(expression.find_all(exp.Column))
+        for column in columns:
+            for source_scope in self._column_source_scopes(column, scope):
+                for projection_scope, projection in self._scope_output_projections(
+                    source_scope,
+                    column.name,
+                ):
+                    projection_expression = projection.this if isinstance(projection, exp.Alias) else projection
+                    if self._expression_has_aggregate_lineage(
+                        projection_expression,
+                        projection_scope,
+                        seen,
+                    ):
+                        return True
+        return False
+
+    def _column_source_scopes(self, column: Any, scope: Any) -> List[Any]:
+        """Resolve a column to derived-relation scopes visible from the current SELECT."""
+        from sqlglot.optimizer.scope import Scope
+
+        selected_sources = scope.selected_sources
+        if column.table:
+            normalized_table = self._normalize_identifier(column.table)
+            for alias, (_node, source) in selected_sources.items():
+                if self._normalize_identifier(alias) == normalized_table and isinstance(source, Scope):
+                    return [source]
+            return []
+
+        normalized_name = self._normalize_identifier(column.name)
+        matches = []
+        for _node, source in selected_sources.values():
+            if not isinstance(source, Scope):
+                continue
+            output_names = {self._normalize_identifier(name) for name in source.expression.named_selects}
+            if normalized_name in output_names:
+                matches.append(source)
+        return matches
+
+    def _scope_output_projections(
+        self,
+        scope: Any,
+        output_name: str,
+    ) -> List[tuple[Any, Any]]:
+        """Return matching projections from a SELECT or every leaf of a UNION scope."""
+        from sqlglot import expressions as exp
+
+        normalized_name = self._normalize_identifier(output_name)
+        if isinstance(scope.expression, exp.Select):
+            for name, projection in zip(
+                scope.expression.named_selects,
+                scope.expression.expressions,
+            ):
+                if self._normalize_identifier(name) == normalized_name:
+                    return [(scope, projection)]
+            return []
+
+        matches = []
+        for branch in self._leaf_union_scopes(scope):
+            matches.extend(self._scope_output_projections(branch, output_name))
+        return matches
+
+    def _leaf_union_scopes(self, scope: Any) -> List[Any]:
+        """Flatten nested UNION scopes to their leaf SELECT scopes."""
+        from sqlglot import expressions as exp
+
+        if isinstance(scope.expression, exp.Select):
+            return [scope]
+        leaves = []
+        for branch in scope.union_scopes:
+            leaves.extend(self._leaf_union_scopes(branch))
+        return leaves
+
+    def _is_grouping_expression(self, expression: Any, select: Any) -> bool:
+        """Treat an output used as a current-level GROUP BY key as a dimension."""
+        from sqlglot import expressions as exp
+
+        if not isinstance(select, exp.Select):
+            return False
+        group = select.args.get("group")
+        if group is None:
+            return False
+        expression_sql = expression.sql(comments=False).lower().replace("`", "")
+        group_expressions = list(group.expressions)
+        if expression_sql in {
+            group_expression.sql(comments=False).lower().replace("`", "") for group_expression in group_expressions
+        }:
+            return True
+
+        for projection_index, projection in enumerate(select.expressions, 1):
+            projection_expression = projection.this if isinstance(projection, exp.Alias) else projection
+            if projection_expression.sql(comments=False).lower().replace("`", "") != expression_sql:
+                continue
+            projection_alias = projection.alias if isinstance(projection, exp.Alias) else ""
+            for group_expression in group_expressions:
+                if isinstance(group_expression, exp.Literal) and not group_expression.is_string:
+                    try:
+                        if int(str(group_expression.this)) == projection_index:
+                            return True
+                    except (TypeError, ValueError):
+                        pass
+                if projection_alias and self._normalize_identifier(
+                    group_expression.alias_or_name
+                ) == self._normalize_identifier(projection_alias):
+                    return True
+        return False
+
+    def _is_derived_metric_output(self, expression: Any) -> bool:
+        """Identify arithmetic formulas whose final output is a derived metric."""
+        from sqlglot import expressions as exp
+
+        return any(isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div)) for node in expression.walk())
+
+    def _is_supported_metric_window(self, window: Any) -> bool:
+        """Return whether an analytic window maps to an existing metric type."""
+        from sqlglot import expressions as exp
+
+        return isinstance(window.this, (exp.AggFunc, exp.Lag))
+
+    def _is_inlineable_row_projection(self, root_scope: Any) -> bool:
+        """Recognize one row-level projection that can be folded into outer aggregates."""
+        from sqlglot import expressions as exp
+        from sqlglot.optimizer.scope import Scope
+
+        root_select = root_scope.expression
+        if not isinstance(root_select, exp.Select):
+            return False
+        if not any(True for _aggregate in root_select.find_all(exp.AggFunc)):
+            return False
+        if root_select.args.get("joins"):
+            return False
+        sources = list(root_scope.selected_sources.values())
+        if len(sources) != 1 or not isinstance(sources[0][1], Scope):
+            return False
+        source_scope = sources[0][1]
+        source_select = source_scope.expression
+        if not isinstance(source_select, exp.Select):
+            return False
+        if source_select.args.get("joins") or source_select.args.get("group"):
+            return False
+        if any(True for _aggregate in source_select.find_all(exp.AggFunc)):
+            return False
+        if any(True for _window in source_select.find_all(exp.Window)):
+            return False
+        return all(not isinstance(source, Scope) for _node, source in source_scope.selected_sources.values())
 
     def _period_over_period_metric_candidates(
         self,
@@ -3552,91 +4583,50 @@ class SemanticDiscoveryTools:
         return evidence
 
     def _extract_foreign_keys_from_ddl(
-        self, tables: List[str], catalog: str, database: str, schema_name: str
+        self,
+        tables: List[str],
+        catalog: str,
+        database: str,
+        schema_name: str,
     ) -> List[Dict[str, Any]]:
-        """Extract FOREIGN KEY constraints from DDL definitions."""
-        import re
-
-        relationships = []
+        """Extract foreign-key evidence for legacy relationship-only callers."""
+        inspected_tables = []
         for table in tables:
             ddl_result = self.db_tool.get_table_ddl(table, catalog, database, schema_name)
-            if ddl_result.success and ddl_result.result:
-                ddl_text = ddl_result.result.get("definition", "")
-                # Match both scalar and composite constraints:
-                # FOREIGN KEY (tenant_id, customer_id)
-                # REFERENCES customers(tenant_id, id)
-                fk_pattern = (
-                    r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+"
-                    r"([^\s(]+)\s*\(([^)]+)\)"
-                )
-                for match in re.finditer(fk_pattern, ddl_text, re.IGNORECASE):
-                    source_columns = self._split_constraint_columns(match.group(1))
-                    target_columns = self._split_constraint_columns(match.group(3))
-                    if not source_columns or len(source_columns) != len(target_columns):
-                        continue
-                    relationships.append(
-                        self._relationship_evidence(
-                            source_table=table,
-                            source_columns=source_columns,
-                            target_table=match.group(2).strip().strip('`"[]'),
-                            target_columns=target_columns,
-                            confidence="high",
-                            evidence="foreign_key",
-                            target_key_status="declared",
-                        )
-                    )
-        return self._deduplicate_relationships(relationships)
+            inspected = {"table_name": table}
+            if ddl_result.success and isinstance(ddl_result.result, dict):
+                inspected["ddl"] = ddl_result.result
+            inspected_tables.append(inspected)
+        return self._extract_foreign_keys_from_inspected_tables(inspected_tables)
 
-    def _analyze_join_patterns_from_history(self, tables: List[str], sample_size: int) -> List[Dict[str, Any]]:
-        """Search historical SQL queries for JOIN patterns."""
+    def _analyze_join_patterns_from_history(
+        self,
+        tables: List[str],
+        sample_size: int,
+    ) -> List[Dict[str, Any]]:
+        """Search indexed reference SQL for legacy relationship-only callers."""
         if not self.agent_config:
             return []
-
-        import re
-
         from datus.storage.reference_sql.store import ReferenceSqlRAG
 
         sql_rag = ReferenceSqlRAG(self.agent_config, self.sub_agent_name)
         relationships = []
-
-        # Build case-insensitive lookup: lowercased name -> canonical name
-        tables_lower_map = {t.lower(): t for t in tables}
-
-        # Search for SQL queries containing each table
+        tables_lower_map = {self._normalize_identifier(table.split(".")[-1]): table for table in tables}
         for table in tables:
             try:
-                search_results = sql_rag.search_reference_sql(query_text=f"JOIN {table}", top_n=sample_size)
-
+                search_results = sql_rag.search_reference_sql(
+                    query_text=f"JOIN {table}",
+                    top_n=sample_size,
+                )
                 for sql_entry in search_results:
-                    sql_text = sql_entry.get("sql", "")
-                    ast_relationships = self._extract_join_relationships_from_sql(sql_text, tables_lower_map)
-                    relationships.extend(ast_relationships)
-                    if ast_relationships:
-                        continue
-
-                    # Match: table1.column1 = table2.column2
-                    join_pattern = r"(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)"
-                    for match in re.finditer(join_pattern, sql_text, re.IGNORECASE):
-                        left_table, left_col, right_table, right_col = match.groups()
-
-                        # Only keep joins involving target tables (case-insensitive)
-                        left_lower = left_table.lower()
-                        right_lower = right_table.lower()
-                        if left_lower in tables_lower_map and right_lower in tables_lower_map:
-                            relationships.append(
-                                self._relationship_evidence(
-                                    source_table=tables_lower_map[left_lower],
-                                    source_columns=[left_col],
-                                    target_table=tables_lower_map[right_lower],
-                                    target_columns=[right_col],
-                                    confidence="medium",
-                                    evidence="join_pattern",
-                                    target_key_status="candidate_unverified",
-                                )
-                            )
-            except Exception as e:
-                logger.warning(f"Failed to search SQL history for table {table}: {e}")
-
+                    relationships.extend(
+                        self._extract_join_relationships_from_sql(
+                            str(sql_entry.get("sql") or ""),
+                            tables_lower_map,
+                        )
+                    )
+            except Exception as exc:
+                logger.warning("Failed to search SQL history for table %s: %s", table, exc)
         return self._deduplicate_relationships(relationships)
 
     def _load_metric_mining_entries(
@@ -3736,8 +4726,43 @@ class SemanticDiscoveryTools:
         """Parse one SQL string into sqlglot expressions."""
         import sqlglot
 
+        configured_dialect = ""
+        current_datasource = str(getattr(self.agent_config, "current_datasource", "") or "").strip()
+        current_db_config = getattr(self.agent_config, "current_db_config", None)
+        if callable(current_db_config):
+            try:
+                dialect_value = getattr(
+                    current_db_config(current_datasource),
+                    "type",
+                    "",
+                )
+                configured_dialect = str(getattr(dialect_value, "value", dialect_value) or "").strip().lower()
+            except Exception:
+                configured_dialect = ""
+        configured_dialect = {"postgresql": "postgres"}.get(
+            configured_dialect,
+            configured_dialect,
+        )
+        dialects = [
+            configured_dialect or None,
+            None,
+            "mysql",
+            "hive",
+            "spark",
+            "bigquery",
+            "snowflake",
+            "postgres",
+            "sqlite",
+            "duckdb",
+            "trino",
+            "starrocks",
+        ]
         errors = []
-        for dialect in (None, "mysql", "hive", "spark"):
+        seen = set()
+        for dialect in dialects:
+            if dialect in seen:
+                continue
+            seen.add(dialect)
             try:
                 parsed = sqlglot.parse(sql_text, read=dialect) if dialect else sqlglot.parse(sql_text)
                 expressions = [expr for expr in parsed if expr is not None]
@@ -4630,50 +5655,21 @@ class SemanticDiscoveryTools:
         return {name.strip() for name in (source_sql_name or "").split(",") if name.strip()}
 
     def _infer_from_column_names(
-        self, tables: List[str], catalog: str, database: str, schema_name: str
+        self,
+        tables: List[str],
+        catalog: str,
+        database: str,
+        schema_name: str,
     ) -> List[Dict[str, Any]]:
-        """Infer relationships from column naming patterns."""
-        relationships = []
-        table_schemas = {}
-
-        # Build case-insensitive lookup: lowercased name -> canonical name
-        tables_lower_map = {t.lower(): t for t in tables}
-
-        # Get all table schemas
+        """Infer relationships for legacy relationship-only callers."""
+        inspected_tables = []
         for table in tables:
             schema_result = self.db_tool.describe_table(table, catalog, database, schema_name)
-            if schema_result.success and schema_result.result:
-                table_schemas[table] = schema_result.result.get("columns", [])
-
-        # Check for {table_name}_id -> {table_name}.id patterns
-        for source_table, columns in table_schemas.items():
-            for column in columns:
-                orig_col_name = column.get("name", "")
-                col_name = orig_col_name.lower()  # Lowercase for pattern matching
-
-                # Match pattern: {target}_id
-                if col_name.endswith("_id"):
-                    target_table_lower = col_name[:-3]  # Remove "_id" (already lowercase)
-
-                    if target_table_lower in tables_lower_map:
-                        # Get canonical table name with original casing
-                        target_table = tables_lower_map[target_table_lower]
-                        # Check if target table has "id" column
-                        target_columns = table_schemas.get(target_table, [])
-                        if any(c.get("name", "").lower() == "id" for c in target_columns):
-                            relationships.append(
-                                self._relationship_evidence(
-                                    source_table=source_table,
-                                    source_columns=[orig_col_name],
-                                    target_table=target_table,
-                                    target_columns=["id"],
-                                    confidence="low",
-                                    evidence="column_name",
-                                    target_key_status="candidate_unverified",
-                                )
-                            )
-
-        return relationships
+            inspected = {"table_name": table}
+            if schema_result.success and isinstance(schema_result.result, dict):
+                inspected["schema"] = schema_result.result
+            inspected_tables.append(inspected)
+        return self._infer_relationships_from_inspected_tables(inspected_tables)
 
     def _deduplicate_relationships(self, relationships: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Deduplicate and sort relationships by confidence."""

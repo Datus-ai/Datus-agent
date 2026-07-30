@@ -1384,6 +1384,24 @@ class TestBootstrapKbMetrics:
 
         assert result["status"] == "failed"
 
+    def test_metrics_partial_success_is_reported(self):
+        args = _make_args_ext(components=["metrics"], kb_update_strategy="overwrite")
+        agent = _make_agent_ext(args=args)
+        mock_rag = MagicMock()
+        mock_rag.get_metrics_size.return_value = 4
+
+        with (
+            patch("datus.agent.agent.MetricRAG", return_value=mock_rag),
+            patch(
+                "datus.agent.agent.init_success_story_metrics",
+                return_value=(True, "one metrics batch failed", {}),
+            ),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "partial"
+        assert result["error"] == "one metrics batch failed"
+
     def test_metrics_check_skips_generation(self):
         args = _make_args_ext(components=["metrics"], kb_update_strategy="check")
         agent = _make_agent_ext(args=args)
@@ -1445,6 +1463,30 @@ class TestBootstrapKbMetrics:
         assert result["status"] == "failed"
         assert result["message"] == "Knowledge base initialization failed"
         assert result["components"]["metrics"]["status"] == "failed"
+
+    def test_multiple_components_preserve_partial_status(self):
+        args = _make_args_ext(components=["semantic_model", "metrics"], kb_update_strategy="overwrite")
+        agent = _make_agent_ext(args=args)
+        mock_semantic_rag = MagicMock()
+        mock_semantic_rag.get_size.return_value = 1
+        mock_metric_rag = MagicMock()
+        mock_metric_rag.get_metrics_size.return_value = 3
+
+        with (
+            patch("datus.agent.agent.SemanticModelRAG", return_value=mock_semantic_rag),
+            patch("datus.agent.agent.TableSemanticProfileRAG", return_value=MagicMock()),
+            patch("datus.agent.agent.MetricRAG", return_value=mock_metric_rag),
+            patch("datus.agent.agent.init_success_story_semantic_model", return_value=(True, None)),
+            patch(
+                "datus.agent.agent.init_success_story_metrics",
+                return_value=(True, "one metrics batch failed", {}),
+            ),
+        ):
+            result = agent.bootstrap_kb()
+
+        assert result["status"] == "partial"
+        assert result["message"] == "Knowledge base initialized with partial results"
+        assert result["components"]["metrics"]["status"] == "partial"
 
 
 # ---------------------------------------------------------------------------

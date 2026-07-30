@@ -27,7 +27,7 @@ Use this workflow when the skill is loaded because the user explicitly asked for
 
 2. Use the evidence to decide the model shape:
    - Join relationships from historical SQL become relationship and candidate-key hints, not proven keys. When one JOIN clause has multiple equality predicates, keep its ordered `source_columns` / `target_columns` together as one composite relationship.
-   - Before putting historical target columns in `unique_keys`, call `validate_semantic_key_candidate` once with the complete ordered target list. Only a passing full-table result is key evidence; profiling samples are not.
+   - Before putting historical target columns in `unique_keys`, collect every complete ordered target list you intend to use and submit them together to `validate_semantic_key_candidates`. Only passing full-table results are key evidence; profiling samples are not.
    - Group-by and filter fields are dimension candidates.
    - Aggregate expressions and numeric profiles are measure candidates.
    - Min/max values, percentiles, and null/fill rates help describe numeric ranges and data quality.

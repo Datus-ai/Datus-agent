@@ -17,6 +17,7 @@ from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionStatus
 from datus.schemas.batch_events import BatchEvent, BatchStage
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput, SourceQueryEvidence
+from datus.tools.func_tool.sql_modeling_planner import source_query_from_success_story_row
 from datus.utils.loggings import get_logger
 from datus.utils.terminal_utils import suppress_keyboard_input
 
@@ -83,11 +84,12 @@ async def init_success_story_semantic_model_async(
         emit: Optional callback to stream BatchEvent progress events
         build_mode: ``"overwrite"`` (default) wipes the semantic model store
             for the current project before regenerating. ``"incremental"``
-            skips generation when all referenced tables already have semantic
-            model rows; otherwise it generates and upserts missing coverage.
-        require_exact_osi_target: In OSI incremental mode, run the semantic
-            agent even when coverage exists so a metrics bootstrap caller can
-            capture the exact planned target.
+            preserves storage and lets the semantic-model Node reconcile the
+            request with existing artifacts.
+        require_exact_osi_target: Compatibility hint for callers that need the
+            Node's exact reported OSI target. Incremental mode always runs the
+            same Node workflow, so SQL-backed dataset requirements cannot be
+            hidden by a physical-table coverage shortcut.
     """
     # Load and validate CSV file
     csv_path = success_story
@@ -119,23 +121,14 @@ async def init_success_story_semantic_model_async(
 
     source_queries: list[SourceQueryEvidence] = []
     for idx, row in df.iterrows():
-        sql = _success_story_cell(row, "sql")
-        if not sql:
-            continue
-        source_queries.append(
-            SourceQueryEvidence(
-                source_sql_name=f"sql_{idx + 1}",
-                sql=sql,
-                question=_success_story_cell(row, "question"),
-                external_knowledge=_success_story_cell(row, "external_knowledge"),
-            )
-        )
+        source_query = source_query_from_success_story_row(row, idx, success_story)
+        if source_query is not None:
+            source_queries.append(source_query)
 
     if not source_queries:
         error_msg = f"Success story CSV '{csv_path}' contains no SQL rows"
         logger.error(error_msg)
         return False, error_msg
-    all_sqls = [source.sql for source in source_queries]
 
     if build_mode not in _VALID_BUILD_MODES:
         error_msg = (
@@ -181,38 +174,9 @@ async def init_success_story_semantic_model_async(
             return False, error_msg
 
     elif build_mode == "incremental":
-        from datus.agent.node.semantic_authoring import AUTHORING_FORMAT_OSI, resolve_authoring_format
-
-        if resolve_authoring_format(agent_config) == AUTHORING_FORMAT_OSI and require_exact_osi_target:
-            logger.info("[incremental] OSI target selection requires running gen_semantic_model")
-        else:
-            try:
-                from datus.storage.semantic_model.auto_create import (
-                    extract_tables_from_sql_list,
-                    find_missing_semantic_models,
-                )
-
-                referenced_tables = extract_tables_from_sql_list(
-                    [str(sql) for sql in all_sqls if str(sql).strip()], agent_config
-                )
-                if referenced_tables:
-                    missing_tables = find_missing_semantic_models(referenced_tables, agent_config)
-                    if not missing_tables:
-                        logger.info(
-                            "[incremental] semantic models already exist for %d referenced table(s); generation skipped",
-                            len(referenced_tables),
-                        )
-                        return True, ""
-                    logger.info(
-                        "[incremental] %d/%d referenced table(s) need semantic model refresh: %s",
-                        len(missing_tables),
-                        len(referenced_tables),
-                        missing_tables,
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "Failed to compute incremental semantic-model coverage; generation will continue: %s", exc
-                )
+        logger.info(
+            "[incremental] Preserving semantic-model storage and delegating reconciliation to gen_semantic_model"
+        )
 
     # Build comprehensive context from all rows
     context_message = "Generate semantic models for the following SQL queries:\n\n"
@@ -239,7 +203,6 @@ async def init_success_story_semantic_model_async(
 
     semantic_input = SemanticNodeInput(
         user_message=context_message,
-        source_queries=source_queries,
         catalog=runtime_db_context.get("catalog")
         or runtime_db_context.get("catalog_name")
         or current_db_config.catalog,
@@ -299,7 +262,7 @@ async def init_success_story_semantic_model_async(
             return False, terminal_error
 
         if not generated_files:
-            error_msg = f"Failed to generate any semantic models from {len(all_sqls)} SQL queries in '{csv_path}'"
+            error_msg = f"Failed to generate any semantic models from {len(source_queries)} SQL queries in '{csv_path}'"
             logger.error(error_msg)
             if emit:
                 emit(BatchEvent(biz_name="semantic_model_init", stage=BatchStage.TASK_FAILED, error=error_msg))
@@ -706,8 +669,10 @@ def refresh_semantic_yaml_profile_descriptions(
             try:
                 from datus.tools.func_tool.generation_tools import GenerationTools
 
-                result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_semantic_to_db(
-                    resolved_yaml_path
+                result = GenerationTools(agent_config=agent_config, authoring_format="osi").sync_osi_to_db(
+                    resolved_yaml_path,
+                    include_semantic_objects=True,
+                    include_metrics=False,
                 )
             except Exception as exc:
                 sync_error = f"Failed to sync OSI semantic YAML file '{resolved_yaml_path}' to vector store: {exc}"

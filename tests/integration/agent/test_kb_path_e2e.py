@@ -85,7 +85,7 @@ class TestKnowledgeBaseHomeE2E:
             user_message=(
                 "Generate a semantic model YAML for the `satscores` table. "
                 "Use get_table_ddl to get the schema, then write the YAML file and "
-                "call end_semantic_model_generation."
+                "call publish_semantic_model."
             ),
             database=nightly_agent_config.current_datasource,
         )

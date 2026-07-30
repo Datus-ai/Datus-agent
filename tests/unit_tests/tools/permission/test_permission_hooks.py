@@ -1101,7 +1101,10 @@ class TestFilesystemZoneProfileMatrix:
         silently regress to bypass for that tool.
         """
         from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
-        from datus.tools.func_tool.metric_filesystem_tools import MetricFilesystemFuncTool
+        from datus.tools.func_tool.metric_filesystem_tools import (
+            MetricFilesystemFuncTool,
+            OsiSemanticModelFilesystemFuncTool,
+        )
 
         fs_tool = FilesystemFuncTool(root_path="/tmp")
         tool_names = {t.name for t in fs_tool.available_tools()}
@@ -1111,18 +1114,30 @@ class TestFilesystemZoneProfileMatrix:
             authoring_format="osi",
         )
         osi_metric_tool_names = {t.name for t in osi_metric_tool.available_tools()}
+        osi_semantic_tool = OsiSemanticModelFilesystemFuncTool(
+            root_path="/tmp",
+            current_node="gen_semantic_model",
+        )
+        osi_semantic_tool_names = {t.name for t in osi_semantic_tool.available_tools()}
         # Every tool the filesystem surface advertises as a mutation must be
         # declared as a write, so the normal-profile INTERNAL gate doesn't
         # silently bypass it. Read-only tools (``read_file`` / ``glob`` /
         # ``grep``) stay out — they have their own gate path.
-        write_names = {"write_file", "edit_file", "delete_file", "upsert_osi_metrics"}
+        write_names = {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "upsert_osi_metrics",
+            "upsert_osi_datasets",
+        }
         # The hook's declared write-set must equal the writes these tools expose,
         # not a strict subset. Both directions matter:
         #   - subset breaks the matrix (writes get silently bypassed)
         #   - superset means we ASK on a tool name that doesn't exist
         assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert write_names - {"upsert_osi_metrics"} <= tool_names
+        assert write_names - {"upsert_osi_metrics", "upsert_osi_datasets"} <= tool_names
         assert "upsert_osi_metrics" in osi_metric_tool_names
+        assert "upsert_osi_datasets" in osi_semantic_tool_names
 
 
 class TestNonInteractiveMode:

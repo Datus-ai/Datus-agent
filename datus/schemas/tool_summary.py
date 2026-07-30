@@ -591,7 +591,7 @@ def _fmt_check_semantic_model_exists(result: Any) -> str:
     return ""
 
 
-def _fmt_end_semantic_model_generation(result: Any) -> str:
+def _fmt_publish_semantic_model(result: Any) -> str:
     if isinstance(result, dict):
         files = result.get("semantic_model_files")
         if isinstance(files, list):
@@ -600,7 +600,7 @@ def _fmt_end_semantic_model_generation(result: Any) -> str:
     return ""
 
 
-def _fmt_end_metric_generation(result: Any) -> str:
+def _fmt_publish_metrics(result: Any) -> str:
     if isinstance(result, dict):
         sync = result.get("sync") or {}
         if isinstance(sync, dict) and sync.get("success"):
@@ -616,37 +616,28 @@ def _fmt_generate_sql_summary_id(result: Any) -> str:
     return ""
 
 
-def _fmt_analyze_table_relationships(result: Any) -> str:
+def _fmt_inspect_semantic_sources(result: Any) -> str:
     if isinstance(result, dict):
+        tables = result.get("tables")
         relationships = result.get("relationships")
-        if isinstance(relationships, list) and relationships:
-            n = len(relationships)
-            return f"{n} rel" if n == 1 else f"{n} rels"
+        if isinstance(tables, list) and isinstance(relationships, list):
+            return f"{len(tables)} tables, {len(relationships)} rels"
         summary = result.get("summary")
         if isinstance(summary, str) and summary:
             return summary
-        if isinstance(relationships, list):
-            return "0 rels"
     return ""
 
 
-def _fmt_validate_semantic_key_candidate(result: Any) -> str:
+def _fmt_validate_semantic_key_candidates(result: Any) -> str:
     if isinstance(result, dict):
-        columns = result.get("columns")
-        arity = len(columns) if isinstance(columns, list) else 0
-        if result.get("is_valid_logical_key") is True:
-            return f"{arity}-col key verified"
-        if "is_valid_logical_key" in result:
-            return f"{arity}-col key rejected"
-    return ""
-
-
-def _fmt_analyze_column_usage_patterns(result: Any) -> str:
-    if isinstance(result, dict):
-        patterns = result.get("column_patterns")
-        if isinstance(patterns, dict) and patterns:
-            n = len(patterns)
-            return f"{n} col analyzed" if n == 1 else f"{n} cols analyzed"
+        validations = result.get("validations")
+        if isinstance(validations, list):
+            verified = sum(
+                1
+                for validation in validations
+                if isinstance(validation, dict) and validation.get("is_valid_logical_key") is True
+            )
+            return f"{verified}/{len(validations)} keys verified"
         summary = result.get("summary")
         if isinstance(summary, str) and summary:
             return summary
@@ -660,28 +651,6 @@ def _fmt_profile_semantic_model_evidence(result: Any) -> str:
             n = len(tables)
             suffix = " + data" if result.get("data_profiled") else ""
             return (f"{n} table profiled" if n == 1 else f"{n} tables profiled") + suffix
-        summary = result.get("summary")
-        if isinstance(summary, str) and summary:
-            return summary
-    return ""
-
-
-def _fmt_get_multiple_tables_ddl(result: Any) -> str:
-    if isinstance(result, list):
-        n = len(result)
-        return f"DDL of {n} table" if n == 1 else f"DDL of {n} tables"
-    return ""
-
-
-def _fmt_analyze_metric_candidates_from_history(result: Any) -> str:
-    if isinstance(result, dict):
-        candidates = result.get("metric_candidates")
-        if isinstance(candidates, list):
-            n = len(candidates)
-            suffix = ""
-            if result.get("query_classification") == "metric_plus_derived_datasource":
-                suffix = " + datasource"
-            return (f"{n} metric cand" if n == 1 else f"{n} metric cands") + suffix
         summary = result.get("summary")
         if isinstance(summary, str) and summary:
             return summary
@@ -1261,15 +1230,12 @@ def _register_builtins(registry: ToolSummaryRegistry) -> None:
         # Generation / semantic discovery
         "check_semantic_object_exists": _fmt_check_semantic_object_exists,
         "check_semantic_model_exists": _fmt_check_semantic_model_exists,
-        "end_semantic_model_generation": _fmt_end_semantic_model_generation,
-        "end_metric_generation": _fmt_end_metric_generation,
+        "publish_semantic_model": _fmt_publish_semantic_model,
+        "publish_metrics": _fmt_publish_metrics,
         "generate_sql_summary_id": _fmt_generate_sql_summary_id,
-        "analyze_table_relationships": _fmt_analyze_table_relationships,
-        "validate_semantic_key_candidate": _fmt_validate_semantic_key_candidate,
-        "analyze_column_usage_patterns": _fmt_analyze_column_usage_patterns,
+        "inspect_semantic_sources": _fmt_inspect_semantic_sources,
+        "validate_semantic_key_candidates": _fmt_validate_semantic_key_candidates,
         "profile_semantic_model_evidence": _fmt_profile_semantic_model_evidence,
-        "analyze_metric_candidates_from_history": _fmt_analyze_metric_candidates_from_history,
-        "get_multiple_tables_ddl": _fmt_get_multiple_tables_ddl,
         # Scheduler tools
         "submit_sql_job": _fmt_submit_sql_job,
         "submit_sparksql_job": _fmt_submit_sparksql_job,

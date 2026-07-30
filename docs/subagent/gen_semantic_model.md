@@ -40,7 +40,7 @@ User Request → DDL Analysis → YAML Generation → Validation → Storage
 
 ### Validation and Sync
 
-The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `end_semantic_model_generation` publishes the semantic model to the Knowledge Base automatically.
+The agent calls `validate_semantic()` before publishing. If validation fails, it edits the YAML and retries. Once validation passes, `publish_semantic_model` publishes the semantic model to the Knowledge Base automatically.
 
 ## Configuration
 

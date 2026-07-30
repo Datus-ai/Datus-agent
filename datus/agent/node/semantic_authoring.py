@@ -45,12 +45,12 @@ _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary
 # advertised for LLM-initiated ``load_skill``.
 _REQUIRED_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
     "gen_semantic_model": {
-        AUTHORING_FORMAT_METRICFLOW: "metricflow-semantic-authoring",
-        AUTHORING_FORMAT_OSI: "osi-semantic-authoring",
+        AUTHORING_FORMAT_METRICFLOW: "sql-modeling-preflight,metricflow-semantic-authoring",
+        AUTHORING_FORMAT_OSI: "sql-modeling-preflight,osi-semantic-authoring",
     },
     "gen_metrics": {
-        AUTHORING_FORMAT_METRICFLOW: "gen-metrics",
-        AUTHORING_FORMAT_OSI: "osi-metrics-authoring",
+        AUTHORING_FORMAT_METRICFLOW: "sql-modeling-preflight,gen-metrics",
+        AUTHORING_FORMAT_OSI: "sql-modeling-preflight,osi-metrics-authoring",
     },
 }
 
