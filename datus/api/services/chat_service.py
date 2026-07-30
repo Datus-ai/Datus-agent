@@ -100,6 +100,8 @@ class ChatService:
         self,
         user_id: Optional[str] = None,
         subagent_id: Optional[str] = None,
+        offset: int = 0,
+        limit: Optional[int] = None,
     ) -> Result[ChatSessionData]:
         """List chat sessions from disk, optionally filtered by agent.
 
@@ -107,15 +109,27 @@ class ChatService:
         returned. When set, only sessions whose id prefix encodes that agent
         are returned; the sentinel ``"chat"`` selects the default chat agent
         (including legacy prefix-less sessions).
+
+        ``offset``/``limit`` are applied *before* the per-session enrichment
+        below: only the requested page pays the per-file ``get_session_info``
+        cost (an individual sqlite open), so cost no longer scales with the
+        user's total lifetime session count. Ordering ids by file mtime here
+        (via ``sort_by_modified``, a cheap ``stat`` pass) is a proxy for the
+        final ``last_updated``-based sort applied to the enriched page below;
+        the two can disagree at page boundaries in rare cases, which is an
+        accepted tradeoff for avoiding an eager full-directory sqlite scan.
         """
         try:
             session_mgr = SessionManager(session_dir=self._session_dir, scope=user_id)
-            all_ids = session_mgr.list_sessions()
+            all_ids = session_mgr.list_sessions(sort_by_modified=True)
             if subagent_id is not None:
                 all_ids = [sid for sid in all_ids if session_matches_agent(sid, subagent_id)]
-            sessions = []
 
-            for sid in all_ids:
+            total_count = len(all_ids)
+            page_ids = all_ids[offset:] if limit is None else all_ids[offset : offset + limit]
+
+            sessions = []
+            for sid in page_ids:
                 try:
                     info = session_mgr.get_session_info(sid)
                     if not info.get("exists", False):
@@ -142,7 +156,7 @@ class ChatService:
                 success=True,
                 data=ChatSessionData(
                     sessions=sessions,
-                    total_count=len(sessions),
+                    total_count=total_count,
                 ),
             )
 

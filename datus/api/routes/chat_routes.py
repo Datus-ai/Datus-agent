@@ -337,7 +337,9 @@ async def compact_chat_session(
     description=(
         "List chat sessions. Pass subagent_id to filter by agent "
         "(use 'chat' for the default chat agent, or any builtin/custom subagent id). "
-        "Omit to return every session for the user."
+        "Omit to return every session for the user. Use offset/limit to paginate — "
+        "only the requested page is read from disk, so cost doesn't scale with the "
+        "user's total session count."
     ),
 )
 async def list_sessions(
@@ -347,10 +349,18 @@ async def list_sessions(
         default=None,
         description="Filter by subagent id; 'chat' selects the default chat agent",
     ),
+    offset: int = Query(default=0, ge=0, description="Number of sessions to skip"),
+    limit: Optional[int] = Query(default=None, ge=1, description="Maximum number of sessions to return"),
 ) -> Result[ChatSessionData]:
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(svc.chat.list_sessions, user_id=ctx.user_id, subagent_id=subagent_id),
+            asyncio.to_thread(
+                svc.chat.list_sessions,
+                user_id=ctx.user_id,
+                subagent_id=subagent_id,
+                offset=offset,
+                limit=limit,
+            ),
             timeout=_FUSE_IO_TIMEOUT,
         )
     except TimeoutError:

@@ -175,6 +175,80 @@ class TestChatServiceListSessions:
         assert parsed == datetime(2026, 4, 30, 12, 34, 56, tzinfo=timezone.utc)
 
 
+class TestChatServiceListSessionsPagination:
+    """offset/limit must slice *before* the expensive per-session get_session_info()
+    call, so cost stops scaling with a user's total lifetime session count
+    (regression test for the timeout reported in Datus-ai/Datus-agent#1222)."""
+
+    @staticmethod
+    def _fake_session_manager(ids):
+        fake = MagicMock()
+        fake.list_sessions.return_value = list(ids)
+        fake.get_session_info.side_effect = lambda sid: {
+            "exists": True,
+            "created_at": "2026-01-01 00:00:00",
+            "updated_at": "2026-01-01 00:00:00",
+            "first_user_message": None,
+            "message_count": 0,
+            "total_tokens": 0,
+        }
+        return fake
+
+    def test_uses_cheap_mtime_sort_instead_of_full_scan(self, chat_svc):
+        """Ordering comes from the stat-based sort, not an eager per-file open."""
+        fake = self._fake_session_manager([])
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            chat_svc.list_sessions()
+
+        fake.list_sessions.assert_called_once_with(sort_by_modified=True)
+
+    def test_total_count_reflects_all_matching_sessions_not_just_the_page(self, chat_svc):
+        ids = [f"session-{i}" for i in range(50)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(offset=0, limit=5)
+
+        assert result.success is True
+        assert result.data.total_count == 50
+        assert len(result.data.sessions) == 5
+
+    def test_offset_and_limit_select_the_requested_page(self, chat_svc):
+        ids = [f"session-{i}" for i in range(10)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(offset=4, limit=3)
+
+        assert [s.session_id for s in result.data.sessions] == ids[4:7]
+
+    def test_only_the_requested_page_is_enriched(self, chat_svc):
+        """The actual performance fix: get_session_info must not be called for
+        sessions outside the page, however many the user has accumulated."""
+        ids = [f"session-{i}" for i in range(300)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            chat_svc.list_sessions(offset=0, limit=20)
+
+        assert fake.get_session_info.call_count == 20
+
+    def test_no_limit_enriches_everything_from_offset(self, chat_svc):
+        ids = [f"session-{i}" for i in range(5)]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(offset=2)
+
+        assert [s.session_id for s in result.data.sessions] == ids[2:]
+        assert result.data.total_count == 5
+
+    def test_subagent_filter_applied_before_pagination(self, chat_svc):
+        ids = ["chat_session_a", "gen_metrics_session_a", "chat_session_b", "gen_metrics_session_b", "chat_session_c"]
+        fake = self._fake_session_manager(ids)
+        with patch("datus.api.services.chat_service.SessionManager", return_value=fake):
+            result = chat_svc.list_sessions(subagent_id="chat", offset=1, limit=1)
+
+        assert [s.session_id for s in result.data.sessions] == ["chat_session_b"]
+        assert result.data.total_count == 3
+
+
 class TestChatServiceDeleteSession:
     """Tests for delete_session."""
 

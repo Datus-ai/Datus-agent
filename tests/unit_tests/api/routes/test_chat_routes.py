@@ -591,11 +591,11 @@ class TestListSessions:
         expected = Result[ChatSessionData](success=True, data=ChatSessionData(sessions=[], total_count=0))
         svc.chat.list_sessions.return_value = expected
 
-        result = await list_sessions(svc, ctx, subagent_id=None)
+        result = await list_sessions(svc, ctx, subagent_id=None, offset=0, limit=None)
 
         assert result.success is True
         assert result is expected
-        svc.chat.list_sessions.assert_called_once_with(user_id="user1", subagent_id=None)
+        svc.chat.list_sessions.assert_called_once_with(user_id="user1", subagent_id=None, offset=0, limit=None)
 
     @pytest.mark.asyncio
     async def test_timeout_returns_request_timeout_error(self):
@@ -620,9 +620,22 @@ class TestListSessions:
             success=True, data=ChatSessionData(sessions=[], total_count=0)
         )
 
-        await list_sessions(svc, ctx, subagent_id="gen_sql")
+        await list_sessions(svc, ctx, subagent_id="gen_sql", offset=0, limit=None)
 
-        svc.chat.list_sessions.assert_called_once_with(user_id="user2", subagent_id="gen_sql")
+        svc.chat.list_sessions.assert_called_once_with(user_id="user2", subagent_id="gen_sql", offset=0, limit=None)
+
+    @pytest.mark.asyncio
+    async def test_forwards_offset_and_limit(self):
+        svc = MagicMock()
+        ctx = MagicMock()
+        ctx.user_id = "user3"
+        svc.chat.list_sessions.return_value = Result[ChatSessionData](
+            success=True, data=ChatSessionData(sessions=[], total_count=0)
+        )
+
+        await list_sessions(svc, ctx, subagent_id=None, offset=20, limit=10)
+
+        svc.chat.list_sessions.assert_called_once_with(user_id="user3", subagent_id=None, offset=20, limit=10)
 
     @pytest.mark.asyncio
     async def test_timeout_result_type_is_result(self):
