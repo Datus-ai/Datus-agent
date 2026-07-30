@@ -4393,7 +4393,7 @@
 <p><code>deepseek</code> 的默认底层模型由 <code>conf/providers.yml</code> 决定，当前为 <code>deepseek-v4-pro</code>。</p>
 <h2 id="_2">主要改动范围<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <h3 id="1-sql">1. SQL 指标候选抽取<a class="headerlink" href="#1-sql" title="Permanent link">&para;</a></h3>
-<p><code>analyze_metric_candidates_from_history</code> 现在会把 SQL 输出拆成更明确的几类：</p>
+<p>请求内 SQL 建模分析器现在会把 SQL 输出拆成更明确的几类：</p>
 <ul>
 <li><code>direct_metric_candidates</code>：可直接建模的业务指标，例如 <code>COUNT(DISTINCT ac_code)</code>、<code>AVG(sr_value)</code>、<code>MAX(sr_value)</code>。</li>
 <li><code>base_measures</code>：指标依赖的基础 measure。</li>
@@ -4420,10 +4420,10 @@
 <li>严格模式下，文件读写会先做路径策略检查，再读取已有文件进行合并。</li>
 </ul>
 <h3 id="3-kb">3. 批量指标生成与 KB 同步<a class="headerlink" href="#3-kb" title="Permanent link">&para;</a></h3>
-<p><code>bootstrap-kb --components metrics</code> 现在按 batch 处理 SQL 后会刷新上下文：</p>
+<p><code>bootstrap-kb --components metrics</code> 现在把 SQL 分成独立 batch，并让每个 batch 使用相同的 subagent 生成流程：</p>
 <ul>
-<li>已生成的 metric 会进入后续 batch 的 existing metric catalog，后续 batch 不再重复生成。</li>
-<li><code>end_metric_generation</code> 根据本批新增 metric 作用域同步 KB，不再把同一个 metric 文件里已有 metric 重复计入。</li>
+<li>每个 batch 根据自身请求内的 SQL preflight plan 生成和发布指标；bootstrap 不在 batch 之间重建 candidate plan 或 existing metric catalog。</li>
+<li><code>publish_metrics</code> 根据本批实际发布的 metric 作用域同步 KB，不再把同一个 metric 文件里已有 metric 重复计入。</li>
 <li>combined dry-run SQL 不再被错误归属给所有 metric；如果一条 dry-run 覆盖多个新 metric，会按当前新增 metric 范围同步。</li>
 <li>最终 <code>metrics_count</code> 代表本次 datasource 下最终同步成功的唯一 metric 数，而不是每个 batch 的重复累计数。</li>
 </ul>

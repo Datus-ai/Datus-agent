@@ -4605,7 +4605,7 @@
 <li><code>validate_semantic()</code> 校验语义模型和指标 YAML。</li>
 <li><code>query_metrics(..., dry_run=True)</code> 确认配置的 semantic adapter 能为生成的指标编译 SQL。</li>
 </ul>
-<p>两项检查都通过后，<code>end_metric_generation</code> 会自动把指标同步到知识库。</p>
+<p>两项检查都通过后，<code>publish_metrics</code> 会自动把指标同步到知识库。</p>
 <h2 id="_8">配置<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>大部分配置是内置的。在 <code>agent.yml</code> 中，最小化设置即可：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agent</span><span class="p">:</span>

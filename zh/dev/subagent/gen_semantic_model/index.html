@@ -4492,7 +4492,7 @@
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>用户请求 → DDL 分析 → YAML 生成 → 验证 → 存储
 </span></code></pre></div>
 <h3 id="_7">验证和同步<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
-<p>发布前，agent 会调用 <code>validate_semantic()</code>。如果验证失败，会修改 YAML 并重试；验证通过后，<code>end_semantic_model_generation</code> 会自动把语义模型同步到知识库。</p>
+<p>发布前，agent 会调用 <code>validate_semantic()</code>。如果验证失败，会修改 YAML 并重试；验证通过后，<code>publish_semantic_model</code> 会自动把语义模型同步到知识库。</p>
 <h2 id="_8">配置<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <p>大部分配置是内置的。在 <code>agent.yml</code> 中，最小化设置即可：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">agent</span><span class="p">:</span>

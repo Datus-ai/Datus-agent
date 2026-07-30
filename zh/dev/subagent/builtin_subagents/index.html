@@ -6450,7 +6450,7 @@
     C --&gt; D[验证]
     D --&gt; E[知识库同步]</code></pre>
 <h3 id="_15">验证和同步<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
-<p>发布前，agent 会调用 <code>validate_semantic()</code>。如果验证失败，会修改 YAML 并重试。在 interactive 模式下，验证通过后，<code>end_semantic_model_generation</code> 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的语义模型同步步骤或工具。</p>
+<p>发布前，agent 会调用 <code>validate_semantic()</code>。如果验证失败，会修改 YAML 并重试；验证通过后，<code>publish_semantic_model</code> 会在所有执行模式下校验发布证据并把 artifact 同步到 Knowledge Base。</p>
 <h3 id="_16">语义模型结构<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h3>
 <h4 id="_17">基本模板<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h4>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">data_source</span><span class="p">:</span>
@@ -6495,7 +6495,7 @@
 <li>✅ 从表 DDL 自动生成 YAML</li>
 <li>✅ 交互式验证和错误修复</li>
 <li>✅ 验证通过后同步到知识库</li>
-<li>✅ interactive 自动同步，workflow/API 显式同步</li>
+<li>✅ 所有执行模式使用同一条 validation-gated publish 路径</li>
 <li>✅ 防止重复</li>
 <li>✅ MetricFlow 兼容性</li>
 </ul>
@@ -6543,7 +6543,7 @@
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">c</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">customer_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w">  </span><span class="c1">-- ❌ 不支持 JOIN</span>
 </span></code></pre></div></p>
 <h3 id="_25">验证和同步<a class="headerlink" href="#_25" title="Permanent link">&para;</a></h3>
-<p>发布前，agent 会用 <code>validate_semantic()</code> 校验 YAML，并用 <code>query_metrics(..., dry_run=True)</code> 编译 SQL。在 interactive 模式下，两项检查都通过后，<code>end_metric_generation</code> 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的指标同步步骤或工具。</p>
+<p>发布前，agent 会用 <code>validate_semantic()</code> 校验 YAML，并用 <code>query_metrics(..., dry_run=True)</code> 编译 SQL；两项检查通过后，<code>publish_metrics</code> 会在所有执行模式下校验本次请求的证据并同步指标。</p>
 <h3 id="_26">主题树分类<a class="headerlink" href="#_26" title="Permanent link">&para;</a></h3>
 <p>在 CLI 模式下通过问题中包含主题树来组织指标：</p>
 <p><strong>带主题树示例：</strong>
