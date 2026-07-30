@@ -11,6 +11,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from pydantic import BaseModel, ConfigDict
+
 EXPECTED_LOCAL_PACKAGES = {
     "datus-db-core": "datus-db-adapters/datus-db-core",
     "datus-sqlalchemy": "datus-db-adapters/datus-sqlalchemy",
@@ -19,6 +21,8 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-mysql": "datus-db-adapters/datus-mysql",
     "datus-clickhouse": "datus-db-adapters/datus-clickhouse",
     "datus-starrocks": "datus-db-adapters/datus-starrocks",
+    "datus-doris": "datus-db-adapters/datus-doris",
+    "datus-hologres": "datus-db-adapters/datus-hologres",
     "datus-trino": "datus-db-adapters/datus-trino",
     "datus-greenplum": "datus-db-adapters/datus-greenplum",
     "datus-hive": "datus-db-adapters/datus-hive",
@@ -32,6 +36,26 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-semantic-metricflow": "datus-semantic-adapter/datus-semantic-metricflow",
     "datus-storage-base": "datus-storage-adapters/datus-storage-base",
     "datus-storage-postgresql": "datus-storage-adapters/datus-storage-postgresql",
+}
+
+
+class DatabaseAdapterContract(BaseModel):
+    """Agent-facing registration contract required from a database adapter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    db_type: str
+    parser_dialect: str | None = None
+    required_hooks: tuple[str, ...] = ()
+
+
+DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
+    "datus_doris": DatabaseAdapterContract(db_type="doris"),
+    "datus_hologres": DatabaseAdapterContract(
+        db_type="hologres",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
 }
 
 
@@ -94,6 +118,41 @@ def verify_semantic_adapter_imports() -> list[str]:
     return errors
 
 
+def verify_database_adapter_imports() -> list[str]:
+    """Verify new database adapters can register their Agent-facing hooks."""
+    errors: list[str] = []
+    try:
+        core = importlib.import_module("datus_db_core")
+        registry = core.connector_registry
+    except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+        return [f"datus-db-core registry import failed: {exc}"]
+
+    for module_name, contract in DATABASE_ADAPTER_CONTRACTS.items():
+        try:
+            module = importlib.import_module(module_name)
+            module.register()
+        except Exception as exc:  # noqa: BLE001 - report the actual nightly import failure.
+            errors.append(f"{module_name} registration failed: {exc}")
+            continue
+
+        db_type = contract.db_type
+        metadata_obj = registry.get_metadata(db_type)
+        if metadata_obj is None:
+            errors.append(f"{module_name} did not register connector metadata for {db_type}")
+            continue
+
+        expected_parser = contract.parser_dialect
+        if expected_parser and registry.get_parser_dialect(db_type) != expected_parser:
+            errors.append(f"{module_name} parser dialect is not {expected_parser}")
+
+        for hook_name in contract.required_hooks:
+            getter = getattr(registry, hook_name, None)
+            if not callable(getter) or not getter(db_type):
+                errors.append(f"{module_name} did not register {hook_name}")
+
+    return errors
+
+
 def verify_storage_adapter_imports() -> list[str]:
     errors: list[str] = []
     required_names = ("FtsField", "FtsIndexStatus", "FtsSpec", "normalize_fts_spec")
@@ -149,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     errors = verify_local_sources(args.external_repos_root)
+    errors.extend(verify_database_adapter_imports())
     errors.extend(verify_semantic_adapter_imports())
     errors.extend(verify_storage_adapter_imports())
     if errors:

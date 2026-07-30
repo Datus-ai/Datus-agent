@@ -21,6 +21,7 @@ from agents import Tool
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_dialect
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
@@ -3428,6 +3429,37 @@ class SemanticDiscoveryTools:
         """Parse one SQL string into sqlglot expressions."""
         import sqlglot
 
+<<<<<<< HEAD
+=======
+        configured_dialect = ""
+        current_datasource = str(getattr(self.agent_config, "current_datasource", "") or "").strip()
+        current_db_config = getattr(self.agent_config, "current_db_config", None)
+        if callable(current_db_config):
+            try:
+                dialect_value = getattr(
+                    current_db_config(current_datasource),
+                    "type",
+                    "",
+                )
+                configured_dialect = str(getattr(dialect_value, "value", dialect_value) or "").strip().lower()
+            except Exception:
+                configured_dialect = ""
+        configured_dialect = parse_dialect(configured_dialect) if configured_dialect else ""
+        dialects = [
+            configured_dialect or None,
+            None,
+            "mysql",
+            "hive",
+            "spark",
+            "bigquery",
+            "snowflake",
+            "postgres",
+            "sqlite",
+            "duckdb",
+            "trino",
+            "starrocks",
+        ]
+>>>>>>> 1681803 ([Enhancement] Integrate Doris and Hologres adapters (#1218))
         errors = []
         for dialect in (None, "mysql", "hive", "spark"):
             try:

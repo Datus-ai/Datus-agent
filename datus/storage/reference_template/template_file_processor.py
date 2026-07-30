@@ -14,6 +14,7 @@ import jinja2.meta
 
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_dialect
 
 logger = get_logger(__name__)
 
@@ -164,8 +165,10 @@ def _resolve_dimension_columns(template_content: str, quoted_params: set, dialec
     # Replace remaining {{param}} with ASC (safe for ORDER BY / LIMIT)
     sql = re.sub(r"\{\{\s*\w+\s*\}\}", "ASC", sql)
 
-    # Try specified dialect, then fallback chain for backtick support
-    dialects_to_try = [dialect] if dialect else [dialect, "sqlite", "mysql"]
+    # Resolve adapter-defined parser aliases before handing the dialect to
+    # sqlglot (for example, Hologres -> PostgreSQL).
+    parser_dialect = parse_dialect(dialect) if dialect else None
+    dialects_to_try = [parser_dialect] if parser_dialect else [None, "sqlite", "mysql"]
     parsed = None
     for d in dialects_to_try:
         try:

@@ -1,5 +1,6 @@
 """Tests for the EXPLAIN-based row-count guard (datus/tools/sql_guard.py)."""
 
+from datus.tools.db_tools import connector_registry
 from datus.tools.sql_guard import (
     MAX_ESTIMATED_ROWS,
     build_oversize_message,
@@ -47,6 +48,16 @@ class TestEstimateRowsFromExplain:
             {"QUERY PLAN": "        ->  Nested Loop  (cost=0.00..1.00 rows=9000000000 width=8)"},
         ]
         assert estimate_rows_from_explain("postgres", rows) == 9_000_000_000
+
+    def test_adapter_parser_dialect_keeps_postgres_guard(self, monkeypatch):
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "postgres" if dialect == "hologres" else None,
+            raising=False,
+        )
+        rows = [{"QUERY PLAN": "Nested Loop  (cost=0.00..1.00 rows=9000000000 width=8)"}]
+        assert estimate_rows_from_explain("hologres", rows) == 9_000_000_000
 
     def test_mysql_multiplies_per_table_rows(self):
         rows = [{"id": 1, "table": "a", "rows": 96478}, {"id": 1, "table": "b", "rows": 93358}]

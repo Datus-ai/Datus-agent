@@ -146,6 +146,33 @@ my_postgresql:
   database: analytics
 ```
 
+### Apache Doris
+
+```yaml
+my_doris:
+  type: doris
+  host: ${DORIS_HOST}
+  port: 9030                    # FE query port (MySQL protocol)
+  username: ${DORIS_USER}
+  password: ${DORIS_PASSWORD}
+  database: ${DORIS_DATABASE}
+  catalog: internal             # Optional, default is internal
+```
+
+### Hologres
+
+```yaml
+my_hologres:
+  type: hologres
+  host: ${HOLOGRES_ENDPOINT}    # Console endpoint, hostname or hostname:port
+  port: 80
+  username: ${HOLOGRES_ACCESS_KEY_ID}
+  password: ${HOLOGRES_ACCESS_KEY_SECRET}
+  database: ${HOLOGRES_DATABASE}
+  schema: public                # Optional
+  sslmode: prefer               # Optional
+```
+
 ### Path Pattern (Multiple Files)
 
 Use glob patterns to auto-discover database files:
@@ -164,7 +191,7 @@ Supported patterns: `*.sqlite`, `**/*.sqlite`, `data/2024/*.db`
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `type` | Yes | Database type: `sqlite`, `duckdb`, `snowflake`, `starrocks`, `mysql`, `postgresql` |
+| `type` | Yes | Database type: `sqlite`, `duckdb`, `snowflake`, `starrocks`, `mysql`, `postgresql`, `doris`, `hologres`, ... |
 | `default` | No | Set to `true` to mark as default database |
 | `uri` | For file DBs | Connection URI for SQLite/DuckDB |
 | `host` | For server DBs | Database server hostname |
@@ -179,6 +206,8 @@ Supported patterns: `*.sqlite`, `**/*.sqlite`, `data/2024/*.db`
 - **StarRocks**: `catalog`
 - **SQLite/DuckDB**: `path_pattern` for glob-based discovery
 - **MySQL/PostgreSQL**: `host`, `port`, `username`, `password`, `database`
+- **Apache Doris**: `catalog` (default `internal`)
+- **Hologres**: `schema`, `sslmode`; `access_key_id`/`access_key_secret` are accepted as aliases for `username`/`password`
 
 ## Managing Databases
 

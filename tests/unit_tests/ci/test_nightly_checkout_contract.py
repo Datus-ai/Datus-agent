@@ -44,6 +44,14 @@ def test_nightly_installs_storage_packages_from_latest_checkout():
         assert package_path in workflow
 
 
+def test_nightly_installs_new_database_adapters_from_latest_checkout():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    for package_name in ("datus-doris", "datus-hologres"):
+        assert f"--reinstall-package {package_name}" in workflow
+        assert f"./external/datus-db-adapters/{package_name}" in workflow
+
+
 def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
     script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
 
@@ -51,3 +59,15 @@ def test_nightly_runs_postgresql_storage_adapter_tests_from_checkout():
     assert 'run_logged "PostgreSQL Storage Adapter Tests"' in script
     assert 'uv run --no-sync pytest "$STORAGE_ADAPTERS_ROOT/datus-storage-postgresql/tests"' in script
     assert '"PostgreSQL Storage Adapter Tests"' in script.split("DOCKER_GROUPS=(", maxsplit=1)[1]
+
+
+def test_nightly_runs_doris_agent_contract_from_checkout():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'echo "ADAPTERS_DORIS=1" >> $GITHUB_ENV' in workflow
+    assert 'echo "DORIS_QUERY_HOST_PORT=29031" >> $GITHUB_ENV' in workflow
+    assert 'echo "DORIS_HTTP_HOST_PORT=28031" >> $GITHUB_ENV' in workflow
+    assert 'DORIS_COMPOSE="${DORIS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-doris/docker-compose.yml}"' in script
+    assert 'run_compose_suite "Doris Adapter Tests"' in script
+    assert "tests/integration/adapters/test_doris.py" in script
