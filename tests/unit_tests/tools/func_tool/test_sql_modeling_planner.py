@@ -7,14 +7,19 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from datus.configuration.agent_config import DbConfig
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.sql_modeling_planner import (
     SqlModelingPlan,
     SqlModelingPlanner,
     SqlModelingPlanTools,
+    _agent_config_dialect,
     _fingerprint_sources,
 )
+from datus.utils.exceptions import DatusException
 
 
 class TestSqlModelingPlanTools:
@@ -54,6 +59,15 @@ class TestSqlModelingPlanTools:
         assert "contains SQL" in result.error
         assert evidence.sql_modeling_plan_status == "unresolved"
         assert accepted == []
+
+    def test_terminal_sql_request_requires_ready_plan(self):
+        tool, evidence, _ = self._tool("SELECT COUNT(*) AS order_count FROM orders")
+
+        with pytest.raises(DatusException, match="prepare_sql_modeling_plan"):
+            tool.require_plan_for_sql_request()
+
+        evidence.set_sql_modeling_plan("ready", "source")
+        assert tool.require_plan_for_sql_request() is True
 
     def test_all_sql_statements_must_be_submitted_together(self):
         first_sql = "SELECT COUNT(*) AS order_count FROM orders"
@@ -232,7 +246,7 @@ class TestSqlModelingPlanner:
             error=None,
         )
         agent_config = MagicMock()
-        agent_config.current_db_config.return_value = SimpleNamespace(db_type="duckdb")
+        agent_config.current_db_config.return_value = SimpleNamespace(type="duckdb")
 
         with (
             patch(
@@ -266,7 +280,7 @@ class TestSqlModelingPlanner:
         )
         analyzer_result = SimpleNamespace(success=True, result={}, error=None)
         agent_config = MagicMock()
-        agent_config.current_db_config.return_value = SimpleNamespace(db_type="duckdb")
+        agent_config.current_db_config.return_value = SimpleNamespace(type="duckdb")
 
         with (
             patch(
@@ -301,7 +315,7 @@ class TestSqlModelingPlanner:
             error=None,
         )
         agent_config = MagicMock()
-        agent_config.current_db_config.return_value = SimpleNamespace(db_type="duckdb")
+        agent_config.current_db_config.return_value = SimpleNamespace(type="duckdb")
 
         with (
             patch(
@@ -317,3 +331,10 @@ class TestSqlModelingPlanner:
 
         assert plan.candidate_plan["available"] is False
         assert "broken_query" in plan.candidate_plan["error"]
+
+    @pytest.mark.parametrize("dialect", ["mysql", "starrocks", "sqlite"])
+    def test_reads_dialect_from_db_config_type(self, dialect):
+        agent_config = MagicMock()
+        agent_config.current_db_config.return_value = DbConfig(type=dialect)
+
+        assert _agent_config_dialect(agent_config) == dialect

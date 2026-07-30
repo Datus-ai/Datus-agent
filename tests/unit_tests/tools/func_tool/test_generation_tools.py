@@ -837,7 +837,8 @@ class TestEndMetricGeneration:
             "      - name: order_count\n",
             encoding="utf-8",
         )
-        _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        state = _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        state.record_metric_snapshot(target, b"pre-authoring")
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
         generation_tools.generation_evidence.record_metric_dry_run(
             ["order_count"],
@@ -864,6 +865,7 @@ class TestEndMetricGeneration:
         )
         assert result.result["metric_file"] == str(target)
         assert generation_tools.generation_evidence.has_metric_kb_sync(["order_count"])
+        assert state.metric_snapshot_content is None
 
     def test_osi_rejects_poisoned_target_after_failed_rebind(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"

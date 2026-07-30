@@ -137,7 +137,19 @@ class SqlModelingPlanTools:
 
     def request_contains_sql(self) -> bool:
         """Return whether the current request requires SQL modeling preflight."""
-        return bool(_extract_sql_snippets(self.user_message_provider() or ""))
+        return bool(
+            _extract_sql_snippets(
+                self.user_message_provider() or "",
+                dialect=_agent_config_dialect(self.agent_config),
+            )
+        )
+
+    def require_plan_for_sql_request(self) -> bool:
+        """Require a ready plan at the terminal boundary of SQL-backed requests."""
+        if not self.request_contains_sql():
+            return False
+        self.generation_evidence.require_sql_modeling_plan()
+        return True
 
     def prepare_sql_modeling_plan(
         self,
@@ -171,7 +183,10 @@ class SqlModelingPlanTools:
                 error="The current request contains no SQL. Skip prepare_sql_modeling_plan.",
             )
 
-        source_sql = _extract_sql_snippets(self.user_message_provider() or "")
+        source_sql = _extract_sql_snippets(
+            self.user_message_provider() or "",
+            dialect=_agent_config_dialect(self.agent_config),
+        )
         validation_error = self._validate_entries(entries, source_sql)
         if validation_error:
             self.generation_evidence.set_sql_modeling_plan("unresolved")
@@ -268,13 +283,14 @@ def _normalize_sql_for_source_check(value: str) -> str:
     return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
-def _extract_sql_snippets(value: str) -> list[str]:
+def _extract_sql_snippets(value: str, *, dialect: str = "") -> list[str]:
     """Extract exact request-local SQL without asking the model to reproduce it."""
     from datus.tools.func_tool.metric_queryability import extract_sql_snippets
 
     return extract_sql_snippets(
         _normalize_sql_for_source_check(value),
         preserve_source=True,
+        dialect=dialect,
     )
 
 
@@ -532,5 +548,6 @@ def _agent_config_dialect(agent_config: "AgentConfig") -> str:
         current_db_config = agent_config.current_db_config()
     except Exception:
         return "snowflake"
-    value = getattr(current_db_config, "db_type", "") or getattr(current_db_config, "dialect", "") or ""
+    value = getattr(current_db_config, "type", "")
+    value = getattr(value, "value", value)
     return value if isinstance(value, str) and value.strip() else "snowflake"

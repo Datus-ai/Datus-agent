@@ -247,9 +247,8 @@ async def _generate_metrics_batch(
 ) -> tuple[bool, str, Optional[dict[str, Any]]]:
     """Process a single batch of SQL queries for metrics extraction."""
     rendered_queries = []
-    for source in batch_sources:
-        query_number = source.source_sql_name.removeprefix("sql_")
-        rendered = f"Query {query_number}:\nQuestion: {source.question}\nSQL:\n{source.sql}"
+    for source_index, source in enumerate(batch_sources, 1):
+        rendered = f"Query {source_index}:\nQuestion: {source.question}\nSQL:\n{source.sql}"
         rendered_queries.append(rendered)
     batch_message = "Analyze the following SQL queries and extract core metrics:\n\n" + "\n\n---\n\n".join(
         rendered_queries

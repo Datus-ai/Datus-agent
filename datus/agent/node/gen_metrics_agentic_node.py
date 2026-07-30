@@ -348,9 +348,6 @@ class GenMetricsAgenticNode(AgenticNode):
                 adapter_type=adapter_type,
                 generation_evidence=self.generation_evidence,
                 runtime_db_context_provider=self._semantic_runtime_db_context,
-                semantic_model_name_provider=lambda: str(
-                    (self.osi_target_state.bound or {}).get("semantic_model_name") or ""
-                ),
                 warehouse_dry_run_provider=self._warehouse_dry_run_compiled_sql,
             )
 
@@ -597,6 +594,9 @@ class GenMetricsAgenticNode(AgenticNode):
         return self._prepare_template_context(ctx.user_input)
 
     def _build_success_result(self, ctx: StreamRunContext) -> GenMetricsNodeResult:
+        sql_request = (
+            self.sql_modeling_tools.require_plan_for_sql_request() if self.sql_modeling_tools is not None else False
+        )
         response_content = ctx.response_content
         if not response_content and ctx.last_successful_output:
             raw_output = ctx.last_successful_output.get("raw_output", "")
@@ -617,12 +617,21 @@ class GenMetricsAgenticNode(AgenticNode):
 
         blocker_code = blocker_code.strip().lower() if isinstance(blocker_code, str) else blocker_code
         skip_reason = skip_reason.strip().lower() if isinstance(skip_reason, str) else skip_reason
+        if sql_request and status is None:
+            raise RuntimeError(
+                "SQL-backed metric generation must return a structured final response "
+                "with status and the generated metric_file or an explicit supported skip."
+            )
         if status is not None and status not in {"generated", "skipped", "blocked"}:
             raise RuntimeError(f"Unsupported metric generation status: {status!r}")
         if skip_reason is not None and skip_reason != "not_a_metric":
             raise RuntimeError(f"Unsupported metric generation skip_reason: {skip_reason!r}")
         if skip_reason is not None and status != "skipped":
             raise RuntimeError("skip_reason is only valid when status='skipped'.")
+        if status == "skipped" and self.generation_evidence.required_metric_output_ids:
+            raise RuntimeError(
+                "SQL planning found required metric outputs, so generation cannot return status='skipped'."
+            )
         normalized_status = status
         if normalized_status == "blocked":
             if metric_file or self.osi_target_state.authored_metric_names:

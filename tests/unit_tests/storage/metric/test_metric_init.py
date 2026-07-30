@@ -1095,6 +1095,51 @@ class TestGenerateMetricsBatch:
         assert "SQL:\nSELECT 1" in mock_node.input.user_message
 
     @pytest.mark.asyncio
+    async def test_batch_prompt_uses_request_local_query_indexes(self):
+        from unittest.mock import patch
+
+        from datus.schemas.action_history import ActionStatus
+        from datus.schemas.batch_events import BatchEventHelper
+
+        mock_node = MagicMock()
+
+        async def fake_stream(_ahm):
+            action = MagicMock()
+            action.status = ActionStatus.SUCCESS
+            action.action_type = "gen_metrics_response"
+            action.output = {"metrics": ["revenue"]}
+            action.messages = "ok"
+            yield action
+
+        mock_node.execute_stream = fake_stream
+        mock_config = MagicMock()
+        mock_config.current_db_config.return_value = MagicMock(catalog="", database="db", schema="")
+        mock_pm = MagicMock()
+        mock_pm.get_latest_version.return_value = "1.0"
+
+        with (
+            patch("datus.storage.metric.metric_init.get_prompt_manager", return_value=mock_pm),
+            patch("datus.storage.metric.metric_init.GenMetricsAgenticNode", return_value=mock_node),
+        ):
+            ok, _, _ = await _generate_metrics_batch(
+                [
+                    _source_query("SELECT 6", name="sql_6", question="six?"),
+                    _source_query("SELECT 7", name="sql_7", question="seven?"),
+                ],
+                1,
+                mock_config,
+                None,
+                None,
+                BatchEventHelper("test", None),
+                None,
+            )
+
+        assert ok is True
+        assert "Query 1:\nQuestion: six?" in mock_node.input.user_message
+        assert "Query 2:\nQuestion: seven?" in mock_node.input.user_message
+        assert "Query 6:" not in mock_node.input.user_message
+
+    @pytest.mark.asyncio
     async def test_success_captures_synced_metric_artifact_ids(self):
         from unittest.mock import patch
 

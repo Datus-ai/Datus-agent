@@ -568,6 +568,9 @@ class GenSemanticModelAgenticNode(AgenticNode):
         return self._prepare_template_context(ctx.user_input)
 
     def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
+        sql_request = (
+            self.sql_modeling_tools.require_plan_for_sql_request() if self.sql_modeling_tools is not None else False
+        )
         response_content = ctx.response_content
         if not response_content and ctx.last_successful_output:
             raw_output = ctx.last_successful_output.get("raw_output", "")
@@ -583,6 +586,10 @@ class GenSemanticModelAgenticNode(AgenticNode):
         planned = target_state.planned if target_state is not None else None
         if planned is not None:
             semantic_model_files = [str(planned["semantic_model_file"])]
+        if sql_request and not semantic_model_files:
+            raise RuntimeError(
+                "SQL-backed semantic model generation must return the generated or reused semantic_model_files."
+            )
         if extracted_output:
             response_content = extracted_output
 

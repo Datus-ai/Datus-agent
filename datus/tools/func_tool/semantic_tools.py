@@ -368,7 +368,6 @@ class SemanticTools:
         adapter_type: Optional[str] = None,
         generation_evidence: Optional[GenerationEvidence] = None,
         runtime_db_context_provider: Optional[Callable[[], Mapping[str, Any]]] = None,
-        semantic_model_name_provider: Optional[Callable[[], str]] = None,
         warehouse_dry_run_provider: Optional[Callable[[str], Mapping[str, Any]]] = None,
     ):
         """
@@ -382,8 +381,6 @@ class SemanticTools:
                 publish-gate evidence.
             runtime_db_context_provider: Optional callback that returns the per-turn datasource/catalog/database/schema
                 context used to initialize the semantic adapter.
-            semantic_model_name_provider: Optional host callback that returns the
-                already-bound OSI semantic model for targeted generation checks.
             warehouse_dry_run_provider: Optional host callback that validates
                 adapter-compiled SQL against the active warehouse.
         """
@@ -392,7 +389,6 @@ class SemanticTools:
         self.adapter_type = adapter_type
         self.generation_evidence = generation_evidence
         self._runtime_db_context_provider = runtime_db_context_provider
-        self._semantic_model_name_provider = semantic_model_name_provider
         self._warehouse_dry_run_provider = warehouse_dry_run_provider
         self._runtime_db_context_static: Dict[str, str] = {}
         self._runtime_db_context_static_set = False
@@ -411,15 +407,6 @@ class SemanticTools:
         self._attribution_tool: Optional[DimensionAttributionUtil] = None
         self._adapter_load_error: Optional[str] = None
         self._adapter_context_key: Optional[Tuple[str, str, str, str, str]] = None
-
-    def _target_semantic_model_name(self) -> str:
-        if self.adapter_type != "osi" or self._semantic_model_name_provider is None:
-            return ""
-        try:
-            return str(self._semantic_model_name_provider() or "").strip()
-        except Exception:
-            logger.debug("Unable to resolve bound OSI semantic model", exc_info=True)
-            return ""
 
     @staticmethod
     def _query_data_row_count(data: Any) -> int:

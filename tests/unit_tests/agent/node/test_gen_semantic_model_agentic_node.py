@@ -189,6 +189,32 @@ class TestGenSemanticModelAgenticNodeInit:
         assert node.generation_evidence.sql_modeling_plan_status == "pending"
         assert "prepare_sql_modeling_plan" in {tool.name for tool in node.tools}
 
+    def test_sql_result_cannot_bypass_preflight(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+        from datus.utils.exceptions import DatusException
+
+        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = "not json"
+
+        with pytest.raises(DatusException, match="prepare_sql_modeling_plan"):
+            node._build_success_result(ctx)
+
+    def test_sql_result_requires_semantic_model_files(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = "not json"
+
+        with pytest.raises(RuntimeError, match="semantic_model_files"):
+            node._build_success_result(ctx)
+
     @pytest.mark.parametrize(
         ("adapter", "required_text", "forbidden_text"),
         [

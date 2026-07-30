@@ -847,6 +847,8 @@ class GenerationTools:
                 self.generation_evidence.mark_kb_sync("metric", osi_metric_names_to_sync)
                 if sync_result.get("semantic_synced"):
                     self.generation_evidence.mark_kb_sync("semantic")
+                if self.osi_target_state is not None:
+                    self.osi_target_state.clear_metric_snapshot()
                 return FuncToolResult(
                     result={
                         "message": "OSI metric generation completed and synced to Knowledge Base",

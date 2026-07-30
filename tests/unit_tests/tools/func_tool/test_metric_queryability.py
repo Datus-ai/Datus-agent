@@ -7,10 +7,38 @@
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.tools.func_tool.metric_queryability import (
     extract_metric_queryability_contracts_from_sources,
+    extract_sql_snippets,
     link_queryability_contracts_to_metric_outputs,
     query_backed_queryability_contracts,
     summarize_queryability_contracts,
 )
+
+
+class TestExtractSqlSnippets:
+    def test_trims_natural_language_after_unfenced_sql(self):
+        prompt = (
+            "请基于下面 SQL 生成指标：\n"
+            "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region\n"
+            "并把指标命名为 revenue。"
+        )
+
+        assert extract_sql_snippets(prompt, preserve_source=True, dialect="mysql") == [
+            "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region"
+        ]
+
+    def test_labeled_sql_stops_before_following_markdown_section(self):
+        prompt = (
+            "Query 6:\n"
+            "Question: Revenue?\n"
+            "SQL:\n"
+            "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region;\n\n"
+            "## Additional Instructions\n"
+            "Use concise English names."
+        )
+
+        assert extract_sql_snippets(prompt, preserve_source=True, dialect="mysql") == [
+            "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region;"
+        ]
 
 
 class TestSummarizeQueryabilityContracts:

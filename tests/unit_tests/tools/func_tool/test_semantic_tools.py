@@ -952,34 +952,6 @@ class TestQueryMetricsCompression:
             dry_run=False,
         )
 
-    def test_query_metrics_uses_public_adapter_contract_with_bound_osi_model(
-        self,
-        semantic_tools_with_target_adapter,
-    ):
-        tool, mock_adapter = semantic_tools_with_target_adapter
-        query_result = QueryResult(
-            columns=["revenue"],
-            data=[{"revenue": 10}],
-            metadata={},
-        )
-
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=query_result):
-            result = tool.query_metrics(metrics=["revenue"], dry_run=True)
-
-        assert result.success == 1
-        mock_adapter.query_metrics.assert_called_once_with(
-            metrics=["revenue"],
-            dimensions=[],
-            path=None,
-            time_start=None,
-            time_end=None,
-            time_granularity=None,
-            where=None,
-            limit=None,
-            order_by=None,
-            dry_run=True,
-        )
-
     def test_query_metrics_runs_warehouse_dry_run_for_compiled_sql(self, semantic_tools, mock_adapter):
         query_result = QueryResult(
             columns=["sql"],
@@ -1396,28 +1368,6 @@ def semantic_tools_with_adapter():
         config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
         config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
         tool = SemanticTools(agent_config=config, adapter_type="metricflow")
-        mock_adapter = Mock()
-        tool._adapter = mock_adapter
-        return tool, mock_adapter
-
-
-@pytest.fixture
-def semantic_tools_with_target_adapter():
-    with (
-        patch("datus.tools.func_tool.semantic_tools.SemanticModelRAG"),
-        patch("datus.tools.func_tool.semantic_tools.MetricRAG"),
-    ):
-        from datus.tools.func_tool.semantic_tools import SemanticTools
-
-        config = Mock()
-        config.active_model.return_value.model = "gpt-4o"
-        config.resolve_semantic_adapter.side_effect = lambda adapter_type=None: adapter_type
-        config.build_semantic_adapter_config.side_effect = lambda adapter_type=None: {"datasource": "ns1"}
-        tool = SemanticTools(
-            agent_config=config,
-            adapter_type="osi",
-            semantic_model_name_provider=lambda: "commerce",
-        )
         mock_adapter = Mock()
         tool._adapter = mock_adapter
         return tool, mock_adapter
@@ -2046,21 +1996,6 @@ class TestGetDimensions:
         envelope = result.result
         assert envelope["items"] == [{"name": "date"}]
         mock_adapter.get_dimensions.assert_called_once_with(metric_name="revenue", path=["Finance"])
-
-    def test_bound_osi_model_does_not_expand_public_adapter_input(
-        self,
-        semantic_tools_with_target_adapter,
-    ):
-        tool, mock_adapter = semantic_tools_with_target_adapter
-
-        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=["date"]):
-            result = tool.get_dimensions("revenue")
-
-        assert result.success == 1
-        mock_adapter.get_dimensions.assert_called_once_with(
-            metric_name="revenue",
-            path=None,
-        )
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter

@@ -24,7 +24,10 @@ _SQL_FENCE_LANGS = {
     "trino",
 }
 _FENCED_SQL_PATTERN = re.compile(r"```(?:\s*([^\n`]+))?\n(.*?)```", flags=re.IGNORECASE | re.DOTALL)
-_LABELED_SQL_PATTERN = re.compile(r"(?is)(?:^|\n)\s*SQL\s*:\s*(.*?)(?=\n\s*---\s*(?:\n|$)|\n\s*Query\s+\d+\s*:|$)")
+_LABELED_SQL_PATTERN = re.compile(
+    r"(?is)(?:^|\n)\s*SQL\s*:\s*(.*?)"
+    r"(?=\n\s*---\s*(?:\n|$)|\n\s*Query\s+\d+\s*:|\n\s*#{1,6}\s+\S|$)"
+)
 
 
 def extract_metric_queryability_contracts(text: Optional[str]) -> List[Dict[str, Any]]:
@@ -174,7 +177,12 @@ def summarize_queryability_contracts(contracts: Iterable[Dict[str, Any]]) -> str
     return "; ".join(parts)
 
 
-def extract_sql_snippets(text: str, *, preserve_source: bool = False) -> List[str]:
+def extract_sql_snippets(
+    text: str,
+    *,
+    preserve_source: bool = False,
+    dialect: str = "",
+) -> List[str]:
     """Extract SQL statements from structured prompts, CSV text, or raw SQL.
 
     This is the shared SQL-evidence entry point for metric planning and
@@ -191,26 +199,41 @@ def extract_sql_snippets(text: str, *, preserve_source: bool = False) -> List[st
         if re.search(r"\bselect\b", candidate, flags=re.IGNORECASE):
             snippets.append(candidate)
 
-    for candidate in _extract_labeled_sql_snippets(text, preserve_source=preserve_source):
+    for candidate in _extract_labeled_sql_snippets(
+        text,
+        preserve_source=preserve_source,
+        dialect=dialect,
+    ):
         if candidate not in snippets:
             snippets.append(candidate)
 
-    for candidate in _extract_csv_sql_snippets(text, preserve_source=preserve_source):
+    csv_snippets = _extract_csv_sql_snippets(text, preserve_source=preserve_source)
+    for candidate in csv_snippets:
         if candidate not in snippets:
             snippets.append(candidate)
 
     remaining = _FENCED_SQL_PATTERN.sub(_fence_replacement_for_fallback, text)
+    remaining = _LABELED_SQL_PATTERN.sub(" ", remaining)
+    if csv_snippets:
+        remaining = ""
     for match in re.finditer(r"(?is)\b(?:with\b.*?\bselect\b|select\b).*?(?:;|$)", remaining):
         candidate = _prepare_extracted_sql(match.group(0), preserve_source)
+        candidate = _trim_trailing_non_sql_text(candidate, dialect)
         if candidate and candidate not in snippets:
             snippets.append(candidate)
     return snippets
 
 
-def _extract_labeled_sql_snippets(text: str, *, preserve_source: bool = False) -> List[str]:
+def _extract_labeled_sql_snippets(
+    text: str,
+    *,
+    preserve_source: bool = False,
+    dialect: str = "",
+) -> List[str]:
     snippets: List[str] = []
     for match in _LABELED_SQL_PATTERN.finditer(text):
         candidate = _prepare_extracted_sql(match.group(1), preserve_source)
+        candidate = _trim_trailing_non_sql_text(candidate, dialect)
         if re.search(r"\bselect\b", candidate, flags=re.IGNORECASE):
             snippets.append(candidate)
     return snippets
@@ -253,6 +276,63 @@ def _strip_sql(sql: str) -> str:
 def _prepare_extracted_sql(sql: str, preserve_source: bool) -> str:
     text = str(sql or "").strip()
     return text if preserve_source else _strip_sql(text)
+
+
+def _trim_trailing_non_sql_text(sql: str, dialect: str) -> str:
+    """Trim prose beginning at the parser's first unexpected token.
+
+    This keeps the exact SQL prefix intact while allowing an unfenced statement
+    to be followed by a natural-language instruction in the same request.
+    """
+    if not sql:
+        return sql
+
+    import sqlglot
+    from sqlglot.errors import ParseError
+
+    from datus.utils.sql_utils import parse_read_dialect
+
+    read_dialect = parse_read_dialect(dialect) if dialect else None
+
+    def parses(candidate: str) -> bool:
+        try:
+            expressions = sqlglot.parse(
+                candidate,
+                read=read_dialect,
+                error_level=sqlglot.ErrorLevel.RAISE,
+            )
+        except (ParseError, ValueError):
+            return False
+        return bool(expressions) and all(expression is not None for expression in expressions)
+
+    try:
+        expressions = sqlglot.parse(
+            sql,
+            read=read_dialect,
+            error_level=sqlglot.ErrorLevel.RAISE,
+        )
+        if expressions:
+            return sql
+    except ParseError as exc:
+        lines = sql.splitlines(keepends=True)
+        for error in exc.errors:
+            line_number = error.get("line")
+            column = error.get("col")
+            highlight = str(error.get("highlight") or "")
+            if not isinstance(line_number, int) or not isinstance(column, int) or not highlight:
+                continue
+            if line_number < 1 or line_number > len(lines):
+                continue
+            start_column = column - len(highlight)
+            if start_column < 0:
+                continue
+            offset = sum(len(line) for line in lines[: line_number - 1]) + start_column
+            candidate = sql[:offset].rstrip()
+            if re.search(r"\bselect\b", candidate, flags=re.IGNORECASE) and parses(candidate):
+                return candidate
+    except ValueError:
+        pass
+    return sql
 
 
 def _normalize_name(value: str) -> str:

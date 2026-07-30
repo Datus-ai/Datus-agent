@@ -262,6 +262,53 @@ class TestGenMetricsAgenticNodeExecution:
         assert node.generation_evidence.required_metric_output_ids == []
         assert "prepare_sql_modeling_plan" in {tool.name for tool in node.tools}
 
+    def test_sql_result_cannot_bypass_preflight(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+        from datus.utils.exceptions import DatusException
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = "not json"
+
+        with pytest.raises(DatusException, match="prepare_sql_modeling_plan"):
+            node._build_success_result(ctx)
+
+    def test_sql_result_requires_structured_terminal_response(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = json.dumps({"metric_file": "metrics/orders.yml"})
+
+        with pytest.raises(RuntimeError, match="structured final response"):
+            node._build_success_result(ctx)
+
+    def test_sql_result_cannot_skip_required_metric_outputs(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.agent.node.stream_run_context import StreamRunContext
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        node.generation_evidence.set_required_metric_outputs([{"output_id": "orders:output_1"}])
+        ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
+        ctx.response_content = json.dumps(
+            {
+                "metric_file": None,
+                "status": "skipped",
+                "skip_reason": "not_a_metric",
+                "output": "Skipped.",
+            }
+        )
+
+        with pytest.raises(RuntimeError, match="required metric outputs"):
+            node._build_success_result(ctx)
+
     @pytest.mark.asyncio
     async def test_metrics_with_filesystem_tool(self, real_agent_config, mock_llm_create):
         """Test execute_stream where LLM calls write_file tool."""
