@@ -44,8 +44,10 @@ logger = get_logger(__name__)
 INSTALLABLE_TYPES = (
     "clickhouse",
     "clickzetta",
+    "doris",
     "greenplum",
     "hive",
+    "hologres",
     "mysql",
     "postgresql",
     "redshift",

@@ -6,9 +6,20 @@
 
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.tools.func_tool.metric_queryability import (
+    _extract_sql_snippets,
     extract_metric_queryability_contracts_from_sources,
     summarize_queryability_contracts,
 )
+
+
+class TestExtractSqlSnippets:
+    def test_accepts_new_adapter_fence_labels(self):
+        prompt = "```doris\nSELECT 1 AS doris_value\n```\n```hologres\nSELECT 2 AS hologres_value\n```"
+
+        assert _extract_sql_snippets(prompt) == [
+            "SELECT 1 AS doris_value",
+            "SELECT 2 AS hologres_value",
+        ]
 
 
 class TestSummarizeQueryabilityContracts:

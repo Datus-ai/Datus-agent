@@ -18,6 +18,7 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | SQLite | 内置 | 已包含 | 可用 |
 | DuckDB | 内置 | 已包含 | 可用 |
 | MySQL | datus-mysql | `pip install datus-mysql` | 可用 |
+| PostgreSQL | datus-postgresql | `pip install datus-postgresql` | 可用 |
 | StarRocks | datus-starrocks | `pip install datus-starrocks` | 可用 |
 | Snowflake | datus-snowflake | `pip install datus-snowflake` | 可用 |
 | ClickZetta | datus-clickzetta | `pip install datus-clickzetta` | 可用 |
@@ -25,6 +26,8 @@ Datus 使用模块化适配器架构，允许连接不同的数据库：
 | Spark | datus-spark | `pip install datus-spark` | 可用 |
 | ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | 可用 |
 | Trino | datus-trino | `pip install datus-trino` | 可用 |
+| Apache Doris | datus-doris | `pip install datus-doris` | 可用 |
+| Hologres | datus-hologres | `pip install datus-hologres` | 可用 |
 
 ## 安装
 
@@ -60,6 +63,12 @@ pip install datus-clickhouse
 
 # Trino
 pip install datus-trino
+
+# Apache Doris
+pip install datus-doris
+
+# Hologres
+pip install datus-hologres
 ```
 
 安装后，Datus Agent 会自动检测并加载适配器。
@@ -220,6 +229,40 @@ trino_data:
   http_scheme: http  # 可选：http 或 https
 ```
 
+### Apache Doris
+
+```yaml
+doris_data:
+  type: doris
+  host: localhost
+  port: 9030
+  username: root
+  password: your_password
+  database: your_database
+  catalog: internal  # 可选，默认为 internal
+```
+
+Doris 使用 MySQL 协议，`port` 为 FE 查询端口（默认 9030）。内置 catalog 为 `internal`，外部
+catalog（例如 Hive Metastore catalog）可通过同一个 `catalog` 字段选择。
+
+### Hologres
+
+```yaml
+hologres_data:
+  type: hologres
+  host: your-instance-cn-hangzhou.hologres.aliyuncs.com  # 控制台 endpoint，可内嵌 ":80"
+  port: 80
+  username: ${HOLOGRES_ACCESS_KEY_ID}
+  password: ${HOLOGRES_ACCESS_KEY_SECRET}
+  database: your_database
+  schema: public   # 可选，默认为 public
+  sslmode: prefer  # 可选，默认为 prefer
+```
+
+Hologres（阿里云）使用 PostgreSQL wire 协议和 AccessKey 凭证。`access_key_id`/`access_key_secret`
+也可作为 `username`/`password` 的别名。`host` 支持纯 hostname 或 `hostname:port` 形式的控制台
+endpoint；显式配置的 `port` 必须与 endpoint 中内嵌的端口一致。
+
 ## 多数据库连接
 
 可以在 `agent.services.datasources` 下配置多个独立数据源连接：
@@ -302,6 +345,19 @@ agent:
 - 内置 TPC-H 连接器用于基准测试
 - HTTP/HTTPS 连接及 SSL 支持
 
+#### Apache Doris
+- MySQL 协议兼容
+- 多 Catalog 发现与上下文切换（`catalog.database.table`）
+- 物化视图发现与 DDL 获取
+- Catalog 感知的元数据和样本数据获取
+
+#### Hologres
+- PostgreSQL wire 协议（PostgreSQL 兼容 SQL 方言）
+- 阿里云 AccessKey 认证
+- 多 schema 数据源支持
+- 控制台 endpoint 归一化（`hostname` 或 `hostname:port`）
+- SSL 连接模式（disable、allow、prefer、require、verify-ca、verify-full）
+
 ## 故障排除
 
 ### 适配器未找到
@@ -331,6 +387,8 @@ pip install datus-mysql
 - **Spark**：需要 `pyhive`、`thrift`、`thrift-sasl`、`pure-sasl`（自动安装）
 - **ClickHouse**：需要 `clickhouse-sqlalchemy`（自动安装）
 - **Trino**：需要 `trino`（自动安装）
+- **Apache Doris**：需要 `datus-mysql` 和 `pymysql`（自动安装）
+- **Hologres**：需要 `datus-postgresql` 和 `psycopg2-binary`（自动安装）
 
 ## 架构
 
@@ -343,7 +401,10 @@ datus-agent (核心)
 └── 插件系统 (Entry Points)
     ├── datus-sqlalchemy (基础层)
     │   ├── datus-mysql
-    │   ├── datus-starrocks
+    │   │   ├── datus-starrocks
+    │   │   └── datus-doris
+    │   ├── datus-postgresql
+    │   │   └── datus-hologres
     │   ├── datus-hive
     │   ├── datus-spark
     │   ├── datus-clickhouse

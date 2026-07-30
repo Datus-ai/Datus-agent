@@ -32,6 +32,8 @@ PACKAGE_NAMES = (
     "datus-mysql",
     "datus-clickhouse",
     "datus-starrocks",
+    "datus-doris",
+    "datus-hologres",
     "datus-trino",
     "datus-greenplum",
     "datus-hive",
