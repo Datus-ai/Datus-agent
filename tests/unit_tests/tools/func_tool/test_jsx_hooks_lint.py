@@ -360,6 +360,42 @@ export default function App({ xs }) {
 """
         assert find_hook_order_issues(source) == []
 
+    def test_template_url_does_not_swallow_the_rest_of_the_file(self):
+        # `//` inside a template body is text, not a comment. Reading it as one
+        # ate the closing backtick and bailed the whole scan, so the real
+        # violation below went unreported.
+        source = """
+export default function App({ id }) {
+  const url = `https://api.example.com/items/${id}`;
+  if (!id) return null;
+  const y = useMemo(() => fetch(url), [url]);
+  return <div>{y}</div>;
+}
+"""
+        assert names(source) == ["useMemo"]
+
+    def test_block_comment_opener_in_a_template_is_text(self):
+        source = """
+export default function App({ id }) {
+  const label = `rate /* per unit ${id}`;
+  if (!id) return null;
+  const y = useMemo(() => 1, []);
+  return <div>{y}{label}</div>;
+}
+"""
+        assert names(source) == ["useMemo"]
+
+    def test_comments_still_work_inside_a_template_expression(self):
+        # Inside `${ }` we are back in JS, where a comment is a comment.
+        source = """
+export default function App({ id }) {
+  const label = `id: ${/* keep */ id}`;
+  const [a] = useState();
+  return <div>{label}{a}</div>;
+}
+"""
+        assert find_hook_order_issues(source) == []
+
     def test_return_inside_line_and_block_comments(self):
         source = """
 export default function App() {

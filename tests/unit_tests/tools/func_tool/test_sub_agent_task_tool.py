@@ -252,8 +252,44 @@ class TestGetAvailableTypes:
 # ── _inherit_pending_input_queue ───────────────────────────────────
 
 
-@pytest.mark.ci
 class TestInheritPendingInputQueue:
+    @pytest.mark.asyncio
+    async def test_execute_node_wires_the_queue_into_the_sub_agent(self, task_tool, tmp_path):
+        """The call site, against a real node rather than a stand-in.
+
+        The unit tests below pin the helper's own logic; this one pins that
+        ``_execute_node`` actually calls it, and that ``pending_input_queue`` is
+        the attribute a real ``AgenticNode`` exposes — a stub object would agree
+        with any name we happened to pick.
+        """
+        from datus.cli.execution_state import PendingInputQueue
+
+        # ``_resolve_workspace_root`` reads ``project_root``; without a real
+        # path the node's filesystem tools fail to set up and log a traceback.
+        task_tool.agent_config.project_root = str(tmp_path)
+        task_tool.agent_config.workspace_root = str(tmp_path)
+        queue = PendingInputQueue()
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=queue, proxy_tool_patterns=None, session_id=None))
+
+        created = {}
+
+        def _create_and_mute(subagent_type, session_id=None):
+            node = task_tool._create_builtin_node(subagent_type, session_id=session_id)
+
+            async def _no_actions(*_args, **_kwargs):
+                return
+                yield  # pragma: no cover — makes this an async generator
+
+            node.execute_stream_with_interactions = _no_actions
+            created["node"] = node
+            return node
+
+        task_tool._create_node = _create_and_mute
+
+        await task_tool._execute_node("gen_visual_report", "build a revenue report")
+
+        assert created["node"].pending_input_queue is queue
+
     def test_shares_the_parents_queue_by_reference(self, task_tool):
         from datus.cli.execution_state import PendingInputQueue
 

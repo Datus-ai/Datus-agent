@@ -681,7 +681,7 @@ class SubAgentTaskTool:
                     if hasattr(h, "broker"):
                         h.broker = broker
 
-    def _inherit_pending_input_queue(self, node) -> None:
+    def _inherit_pending_input_queue(self, node: "AgenticNode") -> None:
         """Share the parent's pending-input queue with a sub-agent node.
 
         ``call_model_input_filter`` drains the queue on the node that owns it,

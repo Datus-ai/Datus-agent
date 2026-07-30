@@ -205,22 +205,11 @@ def _scan(source: str) -> List[HookOrderIssue]:  # noqa: C901 — one tokenizer 
             i += 1
             continue
 
-        # ---- comments
-        if ch == "/" and i + 1 < n and source[i + 1] == "/":
-            i = source.find("\n", i)
-            if i == -1:
-                break
-            continue
-
-        if ch == "/" and i + 1 < n and source[i + 1] == "*":
-            end = source.find("*/", i + 2)
-            if end == -1:
-                raise _Bail("unterminated block comment")
-            line += source.count("\n", i, end)
-            i = end + 2
-            continue
-
         # ---- template literal bodies (outside `${ }`)
+        # Must precede the comment branches: a template is raw text, so the
+        # `//` in an interpolated URL (`` `https://api/${id}` ``) is not a
+        # comment. Reading it as one swallowed the closing backtick and bailed
+        # the whole file, silently disabling the check for it.
         if in_template:
             if ch == "`":
                 in_template = False
@@ -239,6 +228,21 @@ def _scan(source: str) -> List[HookOrderIssue]:  # noqa: C901 — one tokenizer 
                 i += 2
                 continue
             i += 1
+            continue
+
+        # ---- comments
+        if ch == "/" and i + 1 < n and source[i + 1] == "/":
+            i = source.find("\n", i)
+            if i == -1:
+                break
+            continue
+
+        if ch == "/" and i + 1 < n and source[i + 1] == "*":
+            end = source.find("*/", i + 2)
+            if end == -1:
+                raise _Bail("unterminated block comment")
+            line += source.count("\n", i, end)
+            i = end + 2
             continue
 
         # ---- strings
