@@ -223,7 +223,7 @@ When the user message contains this tag (typically introduced by a `修改下面
 3. Make the change strictly inside that JSX file (and the relevant query bundle when the data shape changed). Do **not** modify any other `render/*.jsx` or any unrelated query.
 4. `validate_render()` once.
 
-`target-kind` tells you the granularity: `kpi` pins **one tile** even though `jsx-path` covers the whole strip (change that tile only — `chart-name` is its label, `chart-id` its `handleId`); `note` pins one key-finding / callout block, usually a copy or scope change; `chart` (or absent) pins a whole ChartCard. When `sql-id` is absent the block isn't query-backed — edit the JSX, don't invent a query for it.
+`target-kind` tells you the granularity: `kpi` pins **one tile**, but tiles normally render through `shared/kpi-card.jsx`, so that shared file is what `jsx-path` names for *every* tile — editing it changes all of them. Edit the tile's **call site** instead: the entry whose id matches `chart-id`, labelled `chart-name`. Only touch the shared component when the request genuinely applies to every tile, and say so in your reply. `note` pins one key-finding / callout block, usually a copy or scope change; `chart` (or absent) pins a whole ChartCard. When `sql-id` is absent the block isn't query-backed — edit the JSX, don't invent a query for it.
 
 The artifact kind is encoded in the slug attribute name — `report-slug` ⇒ this is a report edit; `dashboard-slug` ⇒ it's a dashboard edit (and you'll see this tag in the dashboard subagent's prompt instead).
 

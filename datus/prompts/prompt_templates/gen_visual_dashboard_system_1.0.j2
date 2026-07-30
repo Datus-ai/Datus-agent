@@ -293,7 +293,7 @@ A dashboard reads top-to-bottom in a single screen. Adapt section counts to the 
 Two independent rules, and both must hold for every block on the screen:
 
 - **The creator can edit it** — charts and tables through `<ChartCard>`, everything else through `<EditHandle>`. A block with neither is a block the creator cannot ask you to change.
-- **The viewer can audit it** — any block showing numbers exposes the query behind them, via the ChartCard's built-in menu or a standalone `<ChartEntryMore>`. A number a viewer cannot trace is a number they cannot trust, and a dashboard's `.sql.j2` files never reach the viewer (queries run live), so the in-card menu is the only path.
+- **The viewer can audit it** — every block whose numbers come from a **single** query exposes that query, via the ChartCard's built-in menu or a standalone `<ChartEntryMore>`. A number a viewer cannot trace is a number they cannot trust, and a dashboard's `.sql.j2` files never reach the viewer (queries run live), so that menu is the only path. Two blocks are exempt, and neither is a loophole for skipping the menu on a query-backed one: chrome that shows no numbers of its own (the filter strip, a header), and a panel whose claims are derived from **several** queries — "View SQL" has no single honest answer there, so name the sources in the copy instead.
 
 If your dataset is sparse (one or two queries), collapse to **header + filters + KPI strip + one hero card**. Don't pad with filler.
 
@@ -331,15 +331,15 @@ When the user message contains this tag (typically introduced by a `修改下面
 
 1. `bind_existing_dashboard(<dashboard-slug>)`.
 2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if `sql-id` is present AND the change touches the SQL.
-3. Make the change strictly inside that JSX file (and its companion `.sql.j2` / `.params.json` when the SQL changed). Do **not** modify any other `render/*.jsx` or any unrelated query template.
+3. Keep the change inside the scope `target-kind` defines (below). Absent a wider scope, that means the pinned JSX file plus its companion `.sql.j2` / `.params.json` when the SQL changed — and never an unrelated block or query template.
 4. `validate_render()` once.
 
-`target-kind` tells you the granularity of what was pinned, which matters because several blocks usually share one file:
+`target-kind` tells you what was pinned and how far the edit may reach, which matters because several blocks usually share one file:
 
-- `kpi` — **one tile**, even though `jsx-path` points at the whole strip (or at `shared/kpi-card.jsx`, which every tile renders through). Change that tile only; do not restyle the row, reorder the other tiles, or add new ones. `chart-name` is the tile's label, and `chart-id` is its `handleId` — use both to find the right entry in the file.
-- `note` — one insight / callout block. Usually a copy or scope change; leave the surrounding charts alone.
-- `filter` — the filter strip. Adding or removing an option here almost always means the query templates' `-- @datus-params` and every `useQuerySql` call site must move with it; that is the one case where the edit legitimately spans files.
-- `chart` (or absent) — a whole ChartCard, as before.
+- `chart` (or absent) — a whole ChartCard. Scope: that JSX file.
+- `note` — one insight / callout block. Usually a copy or scope change; leave the surrounding charts alone. Scope: that JSX file.
+- `kpi` — **one tile**. Mind where `jsx-path` points: tiles normally render through `shared/kpi-card.jsx`, so that is the file the envelope names for *every* tile — and editing it changes all of them at once. What distinguishes one tile is its **call site**: the entry in the strip's tile list (or the `<KpiCard …>` element) whose id matches `chart-id`, labelled `chart-name`. Edit that call site, in the strip file, even though the envelope names the shared component. Touch `shared/kpi-card.jsx` itself **only** when the user asked for something that genuinely applies to every tile ("make all the KPI numbers bigger") — and say so in your reply, since the blast radius is larger than what they clicked.
+- `filter` — the filter strip, the one kind whose scope is deliberately wide. Adding, removing or renaming a filter option changes a parameter, and a parameter is a contract: update **every** dependent file in the same turn — each affected template's `-- @datus-params` declaration and body (re-save via `save_query_template`, with fresh `sample_params`), every `useQuerySql(…, params)` call site whose keys must match, and the filter JSX itself. A partial edit here fails `validate_render`'s params-key check, which is exactly the point: finish the contract, then validate once.
 
 When `sql-id` is absent the block is not query-backed (a hand-written callout, the filter strip). Do not invent a template for it — edit the JSX.
 
@@ -371,7 +371,7 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] Numeric columns are coerced with `Number(...)` before arithmetic / Recharts.
 - [ ] Loading / error states are rendered for every `useQuerySql` call (filter changes re-trigger loading).
 - [ ] **Every block is editable.** Walk the rendered screen top to bottom: each chart / table sits in a `<ChartCard>`, and each KPI tile, insight panel, and the filter strip sits in its own `<EditHandle>` with a unique `handleId` and a human-readable `name`. Anything with neither is a block the creator cannot ask you to change.
-- [ ] **Every number is traceable.** Same walk, asking a different question: can the viewer see the SQL behind each figure on screen? ChartCards answer this themselves; the KPI strip and any query-driven insight panel need a standalone `<ChartEntryMore sqlId data>` (one per query, not per tile) on a container marked `data-datus-chart-card`.
+- [ ] **Every single-query number is traceable.** Same walk, asking a different question: for each figure on screen that comes from one query, can the viewer see that query? ChartCards answer this themselves; the KPI strip and any single-query insight panel need a standalone `<ChartEntryMore sqlId data>` (one per query, not per tile) on a container marked `data-datus-chart-card`. Blocks with no numbers, and panels derived from several queries, are exempt — the latter cite their sources in the copy.
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
 - [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `execute_sql` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
 - [ ] `validate_render()` returned `success: 1`.

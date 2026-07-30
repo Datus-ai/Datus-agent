@@ -282,6 +282,10 @@ interface ISqlQueryResult {
   row_count: number;
   columns: IQueryColumnMeta[];
   rows: Array<Record<string, unknown>>;
+  // Fully rendered SQL (after Jinja2 + bind substitution), attached by the
+  // backend. This is what a <ChartEntryMore> shows under "View SQL" — which
+  // is why that menu needs the whole `data`, not just the rows.
+  sql?: string | null;
 }
 ```
 
