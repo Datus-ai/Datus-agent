@@ -7,18 +7,16 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.sql_modeling_planner import (
     SqlModelingPlan,
     SqlModelingPlanner,
     SqlModelingPlanTools,
+    _fingerprint_sources,
 )
 
 
-@pytest.mark.ci
 class TestSqlModelingPlanTools:
     @staticmethod
     def _tool(user_message: str, semantic_source_inspector=None):
@@ -125,6 +123,33 @@ class TestSqlModelingPlanTools:
         assert evidence.metric_queryability_contracts[0]["dimension_hints"] == ["user_group"]
         assert accepted == [plan]
 
+    def test_reuses_fixed_plan_without_reloading_catalog(self):
+        sql = "SELECT COUNT(*) AS order_count FROM orders"
+        tool, evidence, accepted = self._tool(sql)
+        source = SourceQueryEvidence(
+            source_sql_name="order_count",
+            question="Count orders",
+            sql=sql,
+            source_type="prompt",
+        )
+        fixed_plan = SqlModelingPlan(
+            source_fingerprint=_fingerprint_sources([source]),
+            metric_catalog_fingerprint="catalog",
+            source_queries=[source],
+            candidate_plan={"available": True},
+        )
+        tool._plan = fixed_plan
+        evidence.set_sql_modeling_plan("ready", fixed_plan.source_fingerprint)
+
+        with patch("datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan") as planner:
+            result = tool.prepare_sql_modeling_plan(
+                [{"source_index": 1, "name": "order_count", "question": "Count orders"}]
+            )
+
+        assert result.success == 1
+        planner.assert_not_called()
+        assert accepted == []
+
     def test_sql_plan_includes_automatic_semantic_source_inspection(self):
         sql = "SELECT SUM(amount) AS revenue FROM orders"
         inspected = {
@@ -194,7 +219,6 @@ class TestSqlModelingPlanTools:
         assert accepted == []
 
 
-@pytest.mark.ci
 class TestSqlModelingPlanner:
     def test_plan_wraps_the_existing_analyzer_and_adds_fingerprints(self):
         source = SourceQueryEvidence(

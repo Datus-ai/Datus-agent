@@ -290,85 +290,6 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.debug(f"Error recording query_metrics evidence: {e}")
 
-    async def _process_single_file(self, file_path: str, metric_sqls: dict = None, yaml_type: str = "semantic"):
-        """
-        Process a single YAML file and sync it to Knowledge Base.
-
-        Args:
-            file_path: Path to the YAML file
-            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            yaml_type: YAML type to sync, e.g. "semantic", "metric", or "sql_summary"
-        """
-        # Check if file exists
-        if not os.path.exists(file_path):
-            logger.warning(f"File {file_path} does not exist")
-            return
-
-        # Read the file content
-        with open(file_path, "r", encoding="utf-8") as f:
-            yaml_content = f.read()
-
-        if not yaml_content:
-            logger.warning(f"Empty YAML content in {file_path}")
-            return
-
-        # Skip processing if this file has already been processed
-        if file_path in self.processed_files:
-            logger.info(f"File {file_path} already processed, skipping")
-            return
-
-        # Mark file as processed
-        self.processed_files.add(file_path)
-
-        await self._sync_generated_file(yaml_content, file_path, yaml_type, metric_sqls=metric_sqls)
-
-    async def _process_metric_with_semantic_model(
-        self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
-    ):
-        """
-        Process metric file along with its semantic model file.
-        Display both files and sync them together so metrics can reference semantic model data.
-
-        Args:
-            semantic_model_file: Path to the semantic model YAML file
-            metric_file: Path to the metric YAML file
-            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-        """
-        # Check if files exist
-        if not os.path.exists(semantic_model_file):
-            logger.warning(f"Semantic model file {semantic_model_file} does not exist")
-            # Still try to process metric file alone
-            if os.path.exists(metric_file):
-                await self._process_single_file(metric_file, metric_sqls=metric_sqls, yaml_type="metric")
-            return
-
-        if not os.path.exists(metric_file):
-            logger.warning(f"Metric file {metric_file} does not exist")
-            # Still try to process semantic model file alone
-            await self._process_single_file(semantic_model_file)
-            return
-
-        # Skip if both files have already been processed
-        if semantic_model_file in self.processed_files and metric_file in self.processed_files:
-            logger.info("Both files already processed, skipping")
-            return
-
-        # Mark both files as processed
-        self.processed_files.add(semantic_model_file)
-        self.processed_files.add(metric_file)
-
-        # Read both files
-        with open(semantic_model_file, "r", encoding="utf-8") as f:
-            semantic_content = f.read()
-        with open(metric_file, "r", encoding="utf-8") as f:
-            metric_content = f.read()
-
-        if not semantic_content or not metric_content:
-            logger.warning("Empty content in semantic model or metric file")
-            return
-
-        await self._sync_generated_pair(semantic_model_file, metric_file, metric_sqls)
-
     async def _handle_sql_summary_result(self, result):
         """
         Handle sql_summary tool result.
@@ -429,33 +350,6 @@ class GenerationHooks(AgentHooks):
             raise
         except Exception as e:
             logger.error(f"Error handling write_file_reference_sql result: {e}", exc_info=True)
-
-    async def _sync_generated_pair(
-        self,
-        semantic_model_file: str,
-        metric_file: str,
-        metric_sqls: dict = None,
-        display_content: str = "",
-    ):
-        """
-        Sync semantic model and metric files together to Knowledge Base.
-
-        Args:
-            semantic_model_file: Path to semantic model YAML file
-            metric_file: Path to metric YAML file
-            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-            display_content: Deprecated. Kept for caller compatibility; ignored.
-        """
-        try:
-            await self._sync_semantic_and_metric(semantic_model_file, metric_file, metric_sqls)
-
-        except InteractionCancelled:
-            raise GenerationCancelledException("User interrupted")
-        except GenerationCancelledException:
-            raise
-        except Exception as e:
-            logger.error(f"Error during Knowledge Base sync: {e}", exc_info=True)
-            raise
 
     async def _sync_generated_file(
         self,
@@ -555,82 +449,6 @@ class GenerationHooks(AgentHooks):
         except Exception as e:
             logger.error(f"Error syncing to storage: {e}")
             return f"**Sync error:** {e}\n\nYAML saved to file: `{file_path}`"
-
-    async def _sync_semantic_and_metric(
-        self, semantic_model_file: str, metric_file: str, metric_sqls: dict = None
-    ) -> str:
-        """
-        Sync both semantic model and metric files to RAG storage.
-        Creates a combined YAML for syncing so metrics can reference semantic model data.
-
-        Args:
-            semantic_model_file: Path to semantic model YAML file
-            metric_file: Path to metric YAML file
-            metric_sqls: Optional dict mapping metric names to generated SQL (from dry_run)
-
-        Returns:
-            Markdown string describing the result
-        """
-        files_info = f"- `{semantic_model_file}`\n- `{metric_file}`"
-
-        if not self.agent_config:
-            return (
-                f"**Error:** Agent configuration not available, cannot sync to RAG\n\n"
-                f"YAMLs saved to files:\n{files_info}"
-            )
-
-        try:
-            loop = asyncio.get_event_loop()
-
-            # Load both YAML files
-            with open(semantic_model_file, "r", encoding="utf-8") as f:
-                semantic_docs = list(yaml.safe_load_all(f))
-            with open(metric_file, "r", encoding="utf-8") as f:
-                metric_docs = list(yaml.safe_load_all(f))
-
-            # Create a temporary combined YAML content
-            combined_docs = semantic_docs + metric_docs
-            temp_file = semantic_model_file + ".combined.tmp"
-
-            try:
-                # Write combined YAML to temp file
-                with open(temp_file, "w", encoding="utf-8") as f:
-                    yaml.safe_dump_all(combined_docs, f, allow_unicode=True, sort_keys=False)
-
-                # Sync the combined file - only sync metrics, not semantic objects (avoid duplicates)
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: GenerationHooks._sync_semantic_to_db(
-                        temp_file,
-                        self.agent_config,
-                        include_semantic_objects=False,  # Semantic model already synced separately
-                        include_metrics=True,
-                        metric_sqls=metric_sqls,
-                        original_yaml_path=metric_file,  # Use original metric file path, not temp file
-                        replace_metric_artifact=False,
-                    ),
-                )
-
-                if result.get("success"):
-                    self.generation_evidence.mark_kb_sync("metric")
-                    result_content = "**Successfully synced semantic model and metrics to Knowledge Base**\n\n"
-                    message = result.get("message", "")
-                    if message:
-                        result_content += f"{message}\n\n"
-                    result_content += f"Files:\n{files_info}"
-                    return result_content
-                else:
-                    error = result.get("error", "Unknown error")
-                    return f"**Sync failed:** {error}\n\nYAMLs saved to files:\n{files_info}"
-
-            finally:
-                # Clean up temp file
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-
-        except Exception as e:
-            logger.error(f"Error syncing semantic and metric: {e}", exc_info=True)
-            return f"**Sync error:** {e}\n\nYAMLs saved to files:\n{files_info}"
 
     def _is_sql_summary_tool_call(self, context) -> bool:
         """

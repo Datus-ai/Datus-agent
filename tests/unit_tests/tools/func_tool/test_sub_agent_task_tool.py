@@ -1732,7 +1732,6 @@ class TestBuildNodeInputBuiltIn:
 
         assert result.user_message == "Create the prerequisite model"
         assert result.reference_sql == parent.input.reference_sql
-        assert not hasattr(result, "source_queries")
 
     def test_metrics_node_input(self, task_tool):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

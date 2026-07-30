@@ -950,7 +950,7 @@ class SemanticDiscoveryTools:
                 if classification == "metric_plus_derived_datasource":
                     for candidate in entry_candidates:
                         blocked = dict(candidate)
-                        blocked["block_reason"] = output_analysis["classification_reason"] or (
+                        blocked["block_reason"] = modeling_analysis["classification_reason"] or (
                             "aggregation over ranked/windowed result; create the recommended derived data source first"
                         )
                         blocked_direct_metric_candidates.append(blocked)
@@ -2480,16 +2480,16 @@ class SemanticDiscoveryTools:
                 expression = output["expression"]
                 output_scope = output.get("scope") or root_scope
                 output_name = output_name or f"output_{output_index}"
-                aggregate_lineage = bool(
-                    output.get(
-                        "aggregate_lineage",
+                if "aggregate_lineage" in output:
+                    aggregate_lineage = bool(output["aggregate_lineage"])
+                else:
+                    aggregate_lineage = bool(
                         self._expression_has_aggregate_lineage(
                             expression,
                             output_scope,
                             seen=set(),
-                        ),
+                        )
                     )
-                )
                 if self._is_non_metric_window_output(expression):
                     output_role = "non_metric"
                 else:

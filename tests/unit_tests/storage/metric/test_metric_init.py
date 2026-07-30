@@ -924,7 +924,7 @@ class TestMetricProvenanceHelpers:
             "/tmp/orders.csv",
         )
 
-        assert result is not None
+        assert isinstance(result, SourceQueryEvidence)
         assert result.source_sql_name == "sql_3"
         assert result.sql == "SELECT SUM(amount) FROM orders"
         assert result.source_id == "orders.csv:2"

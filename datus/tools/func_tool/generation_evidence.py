@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set
 
+from datus.utils.exceptions import DatusException, ErrorCode
+
 
 def _result_success(result: Any) -> bool:
     if isinstance(result, dict):
@@ -110,7 +112,10 @@ class GenerationEvidence:
         """Record the request-local SQL preflight result."""
         normalized_status = str(status or "").strip().lower()
         if normalized_status not in {"ready", "unresolved"}:
-            raise ValueError(f"Unsupported SQL modeling plan status: {status!r}")
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message=f"Unsupported SQL modeling plan status: {status!r}",
+            )
         self.sql_modeling_plan_status = normalized_status
         self.sql_modeling_plan_fingerprint = str(source_fingerprint or "").strip()
 
@@ -118,7 +123,10 @@ class GenerationEvidence:
         """Reject authoring publication before the shared preflight completes."""
         if self.sql_modeling_plan_status == "ready":
             return
-        raise ValueError("prepare_sql_modeling_plan must complete before publishing generated semantic artifacts.")
+        raise DatusException(
+            ErrorCode.TOOL_INVALID_INPUT,
+            message="prepare_sql_modeling_plan must complete before publishing generated semantic artifacts.",
+        )
 
     def invalidate_artifact_evidence(self) -> None:
         """Discard validation, dry-run, and sync evidence after a file mutation."""
@@ -271,7 +279,10 @@ class GenerationEvidence:
         normalized_name = str(dataset_name or "").strip()
         normalized_file = str(Path(semantic_model_file).expanduser().resolve(strict=False))
         if not normalized_id or not normalized_name:
-            raise ValueError("requirement_id and dataset_name are required")
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message="requirement_id and dataset_name are required",
+            )
 
         candidate = {
             "semantic_model_file": normalized_file,
@@ -279,8 +290,12 @@ class GenerationEvidence:
         }
         existing = self.query_backed_dataset_bindings.get(normalized_id)
         if existing is not None and existing != candidate:
-            raise ValueError(
-                f"Query-backed requirement {normalized_id!r} is already bound to dataset {existing['dataset_name']!r}."
+            raise DatusException(
+                ErrorCode.TOOL_INVALID_INPUT,
+                message=(
+                    f"Query-backed requirement {normalized_id!r} is already bound to dataset "
+                    f"{existing['dataset_name']!r}."
+                ),
             )
         self.query_backed_dataset_bindings[normalized_id] = candidate
 

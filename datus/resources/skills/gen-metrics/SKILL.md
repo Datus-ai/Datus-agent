@@ -17,7 +17,7 @@ Guide the user through metric generation using natural language business descrip
 
 ## Phase 0: SQL Modeling Preflight
 
-For SQL-backed requests, follow the required `sql-modeling-preflight` skill and call `prepare_sql_modeling_plan` before reading or writing artifacts. Existing-YAML maintenance and natural-language-only authoring skip this tool call. For SQL-backed requests, use the returned existing metric catalog and authoritative candidate plan throughout the remaining phases to:
+For requests that directly contain SQL, follow the required `sql-modeling-preflight` skill and call `prepare_sql_modeling_plan` before reading or writing artifacts. Existing-YAML maintenance and natural-language-only authoring skip this tool call. A file path alone is not SQL input for this request-local contract: the caller must read the file first and include each original question and SQL statement in the delegated task. If the current task only names a CSV/SQL file, report that the SQL must be materialized into the task instead of reading the file and bypassing preflight. For SQL-backed requests, use the returned existing metric catalog and authoritative candidate plan throughout the remaining phases to:
 - **Skip redundant work** — don't recreate metrics that already exist. "Already exists" requires the same aggregation AND the same window/offset semantics: a cumulative/window/period-over-period variant (e.g. `running_x`, `moving_n_x`, `previous_period_x`) is a new metric even when its base metric `x` is already published
 - **Reuse existing measures** — reference measures from existing models instead of creating duplicates
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
@@ -32,7 +32,7 @@ Analyze the user's request and confirm the generation scope before proceeding. W
 ### Input Mode Detection
 
 - **Single mode**: User describes one metric or provides one SQL → follow Step 1a–1d below
-- **Batch mode**: User provides multiple SQL queries (pasted directly, or a CSV file path containing `question` + `sql` columns) → follow Step 1-batch below
+- **Batch mode**: The current task directly contains multiple SQL queries, optionally materialized by the caller from a CSV/SQL file → follow Step 1-batch below
 
 ### Single Mode: Step 1a–1d
 
@@ -60,12 +60,8 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 ### Batch Mode: Step 1-batch
 
 **Step 1-batch-a: Parse SQL queries**
-- The input may contain multiple SQL queries in various forms:
-  - **Direct paste**: multiple SQL statements in the prompt
-  - **File path**: user provides a path — call `read_file` to load it, then parse by file type:
-    - `.sql`: split by `;` or blank-line separators to extract individual statements
-    - `.csv` / `.tsv`: identify the SQL column by header name (common names: `sql`, `query`, `SQL`, `statement`) or by content heuristic (column values contain SQL keywords like `SELECT`, `FROM`, `GROUP BY`). The description/question column is any remaining text column. If column roles are ambiguous, call `ask_user` when available to confirm which column is SQL; otherwise stop and explain the missing column mapping.
-    - Other formats: call `ask_user` when available to clarify the file structure before proceeding; otherwise stop and explain the supported file formats or required structure.
+- The task must contain the SQL statements themselves. They may be pasted by the user or materialized into the task by the caller from a CSV/SQL file.
+- Do not read a file-only input inside this subagent: `prepare_sql_modeling_plan` owns exact SQL from the current task and cannot establish provenance for SQL discovered afterward.
 - Parse all SQL queries from the input
 - Call `describe_table` for each unique table found in the SQL queries
 

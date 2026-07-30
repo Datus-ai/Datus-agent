@@ -75,7 +75,7 @@ The authoritative document shape you author against, including the Datus executi
 5. **Validate (MANDATORY — DO NOT SKIP)**
 {% if authoring_format == "osi" %}   - Call `validate_semantic(scope="semantic_model", semantic_model_name="<semantic_model_name returned by plan_osi_semantic_model_target>")` without a custom `checks` subset. This runs the adapter's complete default profile on only the planned target model; never merge or rewrite another model to satisfy validation.
 {% else %}   - Call `validate_semantic(scope="semantic_model")`.
-{% endif %}   - If validation fails: analyze the error, fix the target YAML with `edit_file` (actually execute the fix — do not just describe it), then call the same targeted `validate_semantic` again. Repeat until it passes.
+{% endif %}   - If validation fails: analyze the error and actually fix the target before retrying the same targeted `validate_semantic`. In OSI mode, repair datasets and fields through `upsert_osi_datasets`; use `edit_file` only for relationships or model metadata while preserving the planned target. In MetricFlow mode, repair the target YAML with `edit_file`. Repeat until validation passes.
    - **ABSOLUTE RULE**: You MUST NOT return the final JSON response until `validate_semantic` returns success.
 
 6. **Publish (ONLY AFTER VALIDATION PASSES)**

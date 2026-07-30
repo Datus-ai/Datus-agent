@@ -1601,7 +1601,7 @@ class TestBuildCheckExists:
 
 
 @pytest.mark.ci
-class TestBuildEndGeneration:
+class TestBuildPublishSemanticModel:
     def test_compact(self):
         a = _make(
             input_data={"function_name": "publish_semantic_model"},
@@ -1615,7 +1615,7 @@ class TestBuildEndGeneration:
 
 
 @pytest.mark.ci
-class TestBuildEndMetricGeneration:
+class TestBuildPublishMetrics:
     def test_compact(self):
         a = _make(
             input_data={"function_name": "publish_metrics"},

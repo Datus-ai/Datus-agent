@@ -258,6 +258,43 @@ class TestMetricFilesystemFuncTool:
         assert target.read_text(encoding="utf-8") == original
         osi_schema_validator.assert_not_called()
 
+    def test_query_backed_dataset_source_identity_normalizes_line_endings(
+        self,
+        tmp_path,
+        osi_schema_validator,
+    ):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        existing_dataset = {
+            "name": "retained_users",
+            "source": "SELECT user_id\r\nFROM retained_users\r\n",
+            "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
+        }
+        target.write_text(
+            yaml.safe_dump(
+                {"semantic_model": [{"name": "sales", "datasets": [existing_dataset]}]},
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        tool = OsiSemanticModelFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_semantic_model",
+        )
+        incoming_dataset = {
+            **existing_dataset,
+            "source": "SELECT user_id\nFROM retained_users",
+        }
+
+        result = tool.upsert_osi_datasets(
+            str(target.relative_to(tmp_path)),
+            json.dumps([incoming_dataset]),
+        )
+
+        assert result.success == 1
+        assert result.result["updated"] == ["retained_users"]
+        osi_schema_validator.assert_called_once()
+
     def test_query_backed_dataset_upsert_rejects_source_already_used_by_another_model(
         self,
         tmp_path,
@@ -265,7 +302,7 @@ class TestMetricFilesystemFuncTool:
     ):
         model_dir = tmp_path / "subject" / "semantic_models" / "warehouse"
         model_dir.mkdir(parents=True)
-        source_sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
+        source_sql = "SELECT region, COUNT(*) AS order_count\nFROM orders GROUP BY region"
         existing = model_dir / "regional_orders.yml"
         existing.write_text(
             yaml.safe_dump(
@@ -276,7 +313,7 @@ class TestMetricFilesystemFuncTool:
                             "datasets": [
                                 {
                                     "name": "orders_by_region",
-                                    "source": source_sql,
+                                    "source": source_sql.replace("\n", "\r\n"),
                                     "custom_extensions": [{"vendor_name": "DATUS", "data": '{"source_type":"query"}'}],
                                 }
                             ],
@@ -357,6 +394,20 @@ class TestMetricFilesystemFuncTool:
         assert "dataset_requirement_id" not in dataset
         extension_data = json.loads(dataset["custom_extensions"][0]["data"])
         assert extension_data == {"source_type": "query"}
+
+    def test_query_source_extension_always_serializes_data_as_json(self, tmp_path):
+        tool = OsiSemanticModelFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_semantic_model",
+        )
+
+        extensions = tool._query_source_extensions([{"vendor_name": "DATUS", "data": {"owner": "semantic-authoring"}}])
+
+        assert isinstance(extensions[0]["data"], str)
+        assert json.loads(extensions[0]["data"]) == {
+            "owner": "semantic-authoring",
+            "source_type": "query",
+        }
 
     def test_query_backed_requirement_reuses_first_dataset_name_during_retry(
         self,
@@ -619,6 +670,39 @@ semantic_model:
         assert target.read_bytes() == original
         assert state.authored_metric_names == []
         assert tool.rollback_failed_metric_authoring() is False
+
+    def test_failed_metric_authoring_rollback_returns_false_on_invalid_snapshot(self, tmp_path):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text("semantic_model: []\n", encoding="utf-8")
+        state = _bound_state(target)
+        state.record_metric_snapshot(target, b"\xff")
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=state,
+        )
+
+        assert tool.rollback_failed_metric_authoring() is False
+        assert state.metric_snapshot_content == b"\xff"
+
+    def test_failed_metric_authoring_rollback_returns_false_on_write_error(self, tmp_path):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text("semantic_model: []\n", encoding="utf-8")
+        state = _bound_state(target)
+        state.record_metric_snapshot(target, target.read_bytes())
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            osi_target_state=state,
+        )
+        tool._atomic_write_text = Mock(side_effect=OSError("disk full"))
+
+        assert tool.rollback_failed_metric_authoring() is False
+        assert state.metric_snapshot_content == b"semantic_model: []\n"
 
     def test_identical_upsert_preserves_bytes_and_registers_publish_scope(self, tmp_path, osi_schema_validator):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"

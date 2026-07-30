@@ -15,6 +15,7 @@ from datus.tools.func_tool.generation_evidence import (
     _result_success,
     _sql_contains_base_expr_text,
 )
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class TestResultSuccess:
@@ -256,12 +257,13 @@ class TestGenerationEvidence:
             "semantic_model_file": str((tmp_path / "sales.yml").resolve()),
             "dataset_name": "daily_sales",
         }
-        with pytest.raises(ValueError, match="already bound"):
+        with pytest.raises(DatusException, match="already bound") as exc_info:
             ev.bind_query_backed_dataset(
                 "query_dataset:daily_sales",
                 semantic_model_file=tmp_path / "sales.yml",
                 dataset_name="daily_sales_v2",
             )
+        assert exc_info.value.code is ErrorCode.TOOL_INVALID_INPUT
 
     def test_record_validation_result_success(self):
         ev = GenerationEvidence()

@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from datus.tools.func_tool.base import FuncToolResult
+from datus.utils.exceptions import DatusException, ErrorCode
 
 
 def _bind_osi_target(generation_tools, target, *, model_name="orders_model", metric_names=None):
@@ -88,8 +89,9 @@ class TestAvailableTools:
         generation_tools._require_sql_modeling_plan_if_needed()
 
         generation_tools.sql_modeling_plan_required = lambda: True
-        with pytest.raises(ValueError, match="prepare_sql_modeling_plan"):
+        with pytest.raises(DatusException, match="prepare_sql_modeling_plan") as exc_info:
             generation_tools._require_sql_modeling_plan_if_needed()
+        assert exc_info.value.code is ErrorCode.TOOL_INVALID_INPUT
 
         generation_tools.generation_evidence.set_sql_modeling_plan("ready", "source")
         generation_tools._require_sql_modeling_plan_if_needed()

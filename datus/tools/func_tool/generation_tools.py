@@ -605,13 +605,11 @@ class GenerationTools:
         try:
             self._require_sql_modeling_plan_if_needed()
             metric_sqls = dict(self.generation_evidence.metric_sqls)
+            # OSI gen_metrics owns only the metrics collection. Semantic
+            # objects are authored and synced by gen_semantic_model.
             semantic_model_files = (
                 [] if self._is_osi_authoring() else self.generation_evidence.semantic_model_mutations(metric_file)
             )
-            if self._is_osi_authoring():
-                # OSI gen_metrics owns only the metrics collection. Semantic
-                # objects are authored and synced by gen_semantic_model.
-                semantic_model_files = []
 
             exact_osi_target_required = self._is_osi_authoring() and self.require_bound_osi_target
             osi_metric_names_to_sync: Optional[set[str]] = None

@@ -49,10 +49,10 @@ nodes:
 
 ### 3. 批量指标生成与 KB 同步
 
-`bootstrap-kb --components metrics` 现在按 batch 处理 SQL 后会刷新上下文：
+`bootstrap-kb --components metrics` 现在把 SQL 分成独立 batch，并让每个 batch 使用相同的 subagent 生成流程：
 
-- 已生成的 metric 会进入后续 batch 的 existing metric catalog，后续 batch 不再重复生成。
-- `publish_metrics` 根据本批新增 metric 作用域同步 KB，不再把同一个 metric 文件里已有 metric 重复计入。
+- 每个 batch 根据自身请求内的 SQL preflight plan 生成和发布指标；bootstrap 不在 batch 之间重建 candidate plan 或 existing metric catalog。
+- `publish_metrics` 根据本批实际发布的 metric 作用域同步 KB，不再把同一个 metric 文件里已有 metric 重复计入。
 - combined dry-run SQL 不再被错误归属给所有 metric；如果一条 dry-run 覆盖多个新 metric，会按当前新增 metric 范围同步。
 - 最终 `metrics_count` 代表本次 datasource 下最终同步成功的唯一 metric 数，而不是每个 batch 的重复累计数。
 

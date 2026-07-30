@@ -12,8 +12,10 @@ real database tools, and real filesystem tools.
 import pytest
 
 from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
+from datus.cli.generation_hooks import GenerationHooks
 from datus.schemas.action_history import ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.semantic_agentic_node_models import SemanticNodeInput
+from datus.tools.func_tool.database import DBFuncTool
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +57,7 @@ class TestGenSemanticModelAgentic:
             execution_mode="workflow",
         )
 
-        assert node.db_func_tool is not None, "Database func tool should be initialized"
+        assert isinstance(node.db_func_tool, DBFuncTool), "Database func tool should be initialized"
 
         tool_names = [tool.name for tool in node.tools]
         # DB tools should be present (exact names depend on DBFuncTool implementation)
@@ -70,7 +72,7 @@ class TestGenSemanticModelAgentic:
             execution_mode="interactive",
         )
 
-        assert node.hooks is not None, "Interactive mode should have hooks"
+        assert isinstance(node.hooks, GenerationHooks), "Interactive mode should have hooks"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(600)

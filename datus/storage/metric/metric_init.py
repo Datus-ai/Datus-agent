@@ -207,7 +207,8 @@ async def _ensure_semantic_models_for_metrics(
         model
         for model in live_models
         if model["semantic_model_file"] in selected_paths
-        or str(Path(model["absolute_path"]).resolve(strict=False)) in selected_paths
+        or str(Path(model["absolute_path"]).resolve(strict=False)).replace("\\", "/").removeprefix("./")
+        in selected_paths
     ]
     if len(selected_models) != 1:
         return False, "gen_semantic_model did not report one exact OSI semantic-model target", None

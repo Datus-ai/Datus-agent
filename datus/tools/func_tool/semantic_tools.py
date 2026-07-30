@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Set, Tuple
 
 from agents import Tool
+from pydantic import BaseModel
 
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
@@ -266,27 +267,39 @@ def _validation_has_errors(issues: List[dict]) -> bool:
     return any(str(issue.get("severity") or "").lower() == "error" for issue in issues)
 
 
-def _compact_validation_issues(issues: List[dict], *, limit: int = 8, message_limit: int = 600) -> List[dict]:
+class _CompactValidationIssue(BaseModel):
+    """Bounded validation issue returned by the semantic tool."""
+
+    severity: str
+    message: str
+    location: Any | None = None
+
+
+def _compact_validation_issues(
+    issues: List[dict],
+    *,
+    limit: int = 8,
+    message_limit: int = 600,
+) -> List[_CompactValidationIssue]:
     """Keep validation tool output bounded while full details remain in logs."""
-    compact = []
+    compact: List[_CompactValidationIssue] = []
     for issue in issues[:limit]:
         message = str(issue.get("message") or "").strip()
         if len(message) > message_limit:
             message = f"{message[:message_limit]}... [truncated]"
-        item = {
-            "severity": str(issue.get("severity") or "error").lower(),
-            "message": message,
-        }
-        location = issue.get("location")
-        if location:
-            item["location"] = location
-        compact.append(item)
+        compact.append(
+            _CompactValidationIssue(
+                severity=str(issue.get("severity") or "error").lower(),
+                message=message,
+                location=issue.get("location"),
+            )
+        )
     if len(issues) > limit:
         compact.append(
-            {
-                "severity": "warning",
-                "message": f"{len(issues) - limit} additional validation issue(s) omitted; see logs for details.",
-            }
+            _CompactValidationIssue(
+                severity="warning",
+                message=f"{len(issues) - limit} additional validation issue(s) omitted; see logs for details.",
+            )
         )
     return compact
 
@@ -1419,8 +1432,12 @@ class SemanticTools:
                 logger.info("Validation succeeded, reloading adapter to pick up new metrics...")
                 self._reload_adapter()
 
-            compact_issues = _compact_validation_issues(effective_issues)
-            compact_ignored_issues = _compact_validation_issues(ignored_issues)
+            compact_issues = [
+                issue.model_dump(exclude_none=True) for issue in _compact_validation_issues(effective_issues)
+            ]
+            compact_ignored_issues = [
+                issue.model_dump(exclude_none=True) for issue in _compact_validation_issues(ignored_issues)
+            ]
             result_payload = {
                 "valid": effective_valid,
                 "issues": compact_issues,

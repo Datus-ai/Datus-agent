@@ -4,6 +4,9 @@
 """Unit tests for datus/tools/func_tool/filesystem_tools.py"""
 
 from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
 
 from datus.tools.func_tool.filesystem_tools import FilesystemConfig, FilesystemFuncTool
 from datus.tools.func_tool.fs_path_policy import PathAllowlist, PathZone
@@ -48,6 +51,29 @@ class TestFilesystemConfig:
     def test_custom_allowed_extensions(self):
         cfg = FilesystemConfig(allowed_extensions=[".py"])
         assert cfg.allowed_extensions == [".py"]
+
+
+class TestMutationCallback:
+    def test_callback_internal_type_error_is_not_retried(self, tmp_path):
+        callback = Mock(side_effect=TypeError("callback failed"))
+        tool = FilesystemFuncTool(root_path=str(tmp_path), mutation_callback=callback)
+        target = tmp_path / "model.yml"
+
+        with pytest.raises(TypeError, match="callback failed"):
+            tool._notify_mutation(target)
+
+        callback.assert_called_once_with(target)
+
+    def test_zero_argument_callback_is_invoked_once(self, tmp_path):
+        calls = []
+
+        def callback():
+            calls.append("called")
+
+        tool = FilesystemFuncTool(root_path=str(tmp_path), mutation_callback=callback)
+        tool._notify_mutation(tmp_path / "model.yml")
+
+        assert calls == ["called"]
 
 
 # ---------------------------------------------------------------------------

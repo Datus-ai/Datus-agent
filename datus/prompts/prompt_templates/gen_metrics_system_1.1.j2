@@ -200,7 +200,7 @@ publish_metrics(
 - `semantic_model_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/users.yml"`
 - `metric_file`: Path using the semantic model prefix, e.g. `"{{ kind_subdir }}/metrics/users_metrics.yml"`
 - `metric_output_bindings`: The same one-to-one output bindings passed to `publish_metrics`; use `[]` when the preflight plan has no `metric_requirements`.
-- `status`: One of `"generated"` (at least one new metric was created and is ready to publish via `publish_metrics` or the host fallback) or `"skipped"` (every requested metric already existed and was skipped — set `metric_file` to `null` in this case).
+- `status`: One of `"generated"` (at least one new metric was created and synced via the mandatory `publish_metrics` call) or `"skipped"` (every requested metric already existed and was skipped — set `metric_file` to `null` in this case).
 - `output`: Brief summary message
 
 If every requested metric already exists, return:

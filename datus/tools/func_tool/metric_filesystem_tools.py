@@ -278,9 +278,9 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                     query_backed_identity = _is_osi_query_backed_dataset(
                         existing_dataset
                     ) or _is_osi_query_backed_dataset(dataset)
-                    if query_backed_identity and str(existing_dataset.get("source") or "") != str(
-                        dataset.get("source") or ""
-                    ):
+                    if query_backed_identity and self._normalize_query_source(
+                        existing_dataset.get("source") or ""
+                    ) != self._normalize_query_source(dataset.get("source") or ""):
                         return FuncToolResult(
                             success=0,
                             error=(
@@ -343,12 +343,15 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         incoming_datasets: Dict[str, Dict[str, Any]],
     ) -> Optional[FuncToolResult]:
         """Reject duplicate query sources before they create parallel datasets."""
+        if not any(_is_osi_query_backed_dataset(dataset) for dataset in incoming_datasets.values()):
+            return None
+
         known_sources: Dict[str, Tuple[Path, str, str]] = {}
 
         def remember(source_path: Path, model_name: str, dataset: Dict[str, Any]) -> None:
             if not _is_osi_query_backed_dataset(dataset):
                 return
-            source = str(dataset.get("source") or "")
+            source = self._normalize_query_source(dataset.get("source") or "")
             dataset_name = str(dataset.get("name") or "").strip()
             if source and dataset_name:
                 known_sources.setdefault(source, (source_path, model_name, dataset_name))
@@ -389,7 +392,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         for dataset_name, dataset in incoming_datasets.items():
             if not _is_osi_query_backed_dataset(dataset):
                 continue
-            source = str(dataset.get("source") or "")
+            source = self._normalize_query_source(dataset.get("source") or "")
             existing = known_sources.get(source)
             if existing is not None:
                 existing_path, existing_model_name, existing_dataset_name = existing
@@ -433,7 +436,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             else:
                 parsed = dict(data) if isinstance(data, dict) else {}
                 parsed["source_type"] = "query"
-                extension["data"] = parsed
+                extension["data"] = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
             return extensions
         extensions.append(
             {
@@ -599,7 +602,11 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         target_path = Path(state.metric_snapshot_path)
         original_content = state.metric_snapshot_content
         with self._osi_metric_path_lock(target_path):
-            self._atomic_write_text(target_path, original_content.decode("utf-8"))
+            try:
+                restored_content = original_content.decode("utf-8")
+                self._atomic_write_text(target_path, restored_content)
+            except (OSError, UnicodeDecodeError):
+                return False
             self._notify_mutation(target_path)
             state.record_metric_rollback(original_content)
         return True

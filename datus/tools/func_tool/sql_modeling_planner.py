@@ -186,10 +186,9 @@ class SqlModelingPlanTools:
             )
             for entry in sorted(entries, key=lambda item: item.source_index)
         ]
-        plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(sources)
-
         if self._plan is not None:
-            if self._plan.source_fingerprint != plan.source_fingerprint:
+            source_fingerprint = _fingerprint_sources(_deduplicate_sources(sources))
+            if self._plan.source_fingerprint != source_fingerprint:
                 return FuncToolResult(
                     success=0,
                     error=(
@@ -200,6 +199,7 @@ class SqlModelingPlanTools:
                 )
             return FuncToolResult(result={"status": "ready", **self._plan.prompt_payload()})
 
+        plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(sources)
         if not plan.candidate_plan.get("available", False):
             self.generation_evidence.set_sql_modeling_plan("unresolved", plan.source_fingerprint)
             return FuncToolResult(

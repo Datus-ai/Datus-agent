@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
+import inspect
 import os
 import re
 from pathlib import Path
@@ -121,11 +122,20 @@ class FilesystemFuncTool(BaseTool):
         self._mutation_guard = mutation_guard
 
     def _notify_mutation(self, path: Optional[Path] = None) -> None:
-        if self._mutation_callback is not None:
-            try:
-                self._mutation_callback(path)
-            except TypeError:
-                self._mutation_callback()
+        callback = self._mutation_callback
+        if callback is None:
+            return
+        try:
+            signature = inspect.signature(callback)
+        except (TypeError, ValueError):
+            callback(path)
+            return
+        try:
+            signature.bind(path)
+        except TypeError:
+            callback()
+        else:
+            callback(path)
 
     def _mutation_guard_error(self, path: Path) -> Optional[FuncToolResult]:
         if self._mutation_guard is None:

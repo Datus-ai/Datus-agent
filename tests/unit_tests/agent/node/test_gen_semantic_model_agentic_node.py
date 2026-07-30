@@ -238,7 +238,7 @@ class TestGenSemanticModelAgenticNodeInit:
         assert "Plan the OSI semantic-model target" in unplanned.error
 
         plan = node.osi_target_tools.plan_osi_semantic_model_target(semantic_model_name="orders")
-        assert plan.success
+        assert plan.success == 1
         wrong_target = node.filesystem_func_tool.write_file(sibling, content.replace("orders", "customers"))
         assert not wrong_target.success
         assert "authoring is planned for" in wrong_target.error
@@ -252,8 +252,8 @@ class TestGenSemanticModelAgenticNodeInit:
             "source: analytics.orders",
         )
 
-        assert written.success
-        assert edited.success
+        assert written.success == 1
+        assert edited.success == 1
         assert node.generation_evidence.validation_passed is False
         assert node.generation_evidence.semantic_kb_sync_passed is False
 

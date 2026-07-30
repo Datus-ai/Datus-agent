@@ -62,6 +62,7 @@ def test_semantic_model_template_osi_mode():
     assert "Call `upsert_osi_datasets` with the first non-empty dataset batch" in text
     assert "It creates a missing target as a complete valid document" in text
     assert "Use `edit_file` only for relationships or model metadata" in text
+    assert "repair datasets and fields through `upsert_osi_datasets`" in text
     assert "Never create an empty semantic-model shell" in text
     assert "Dimension tables never participate in the name" in text
     assert "without a custom `checks` subset" in text

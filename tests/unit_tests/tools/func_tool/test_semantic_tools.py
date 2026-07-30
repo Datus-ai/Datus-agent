@@ -20,7 +20,7 @@ class _Severity(Enum):
     ERROR = "error"
 
 
-class TestGenerationEvidence:
+class TestSemanticToolsGenerationEvidence:
     def test_missing_success_key_is_not_success(self):
         evidence = GenerationEvidence()
 

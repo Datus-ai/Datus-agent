@@ -23,7 +23,7 @@ maintenance and natural-language-only authoring skip this skill's tool call.
 3. If the request contains SQL, call `prepare_sql_modeling_plan` exactly once with one metadata entry per statement:
    - `source_index`: its 1-based position in the request.
    - `name`: a concise, meaningful English snake_case business name inferred from the question and SQL.
-   - `question`: the business question; summarize it when necessary.
+   - `question`: preserve the supplied business question verbatim. Infer a concise question only when none was provided.
    - Do not copy SQL into the tool call. The tool extracts and owns the exact request text.
 4. Do not write or edit files while the returned status is `pending` or `unresolved`. Fix the submitted evidence or report the blocker.
 5. Treat the returned `candidate_plan` as authoritative:
