@@ -13,7 +13,9 @@ from typing import Any, Dict, Iterable, List, Optional
 
 _SQL_FENCE_LANGS = {
     "bigquery",
+    "doris",
     "duckdb",
+    "hologres",
     "mysql",
     "postgres",
     "postgresql",

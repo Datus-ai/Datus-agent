@@ -15,6 +15,14 @@ from datus.tools.func_tool.metric_queryability import (
 
 
 class TestExtractSqlSnippets:
+    def test_accepts_new_adapter_fence_labels(self):
+        prompt = "```doris\nSELECT 1 AS doris_value\n```\n```hologres\nSELECT 2 AS hologres_value\n```"
+
+        assert extract_sql_snippets(prompt) == [
+            "SELECT 1 AS doris_value",
+            "SELECT 2 AS hologres_value",
+        ]
+
     def test_trims_natural_language_after_unfenced_sql(self):
         prompt = (
             "Generate a metric from the following SQL:\n"

@@ -775,7 +775,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "charset-normalizer", specifier = ">=3.4.2" },
     { name = "datus-bi-core", specifier = ">=0.1.2" },
-    { name = "datus-db-core", specifier = ">=0.1.4" },
+    { name = "datus-db-core", specifier = ">=0.1.5" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
     { name = "datus-semantic-core", specifier = ">=0.2.2" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
@@ -865,15 +865,15 @@ wheels = [
 
 [[package]]
 name = "datus-db-core"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "sqlglot" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/47/edbf32ce34e180c98bb6b18bf7f6a1f022f9baaabe0dcaa5a7783a1641de/datus_db_core-0.1.4.tar.gz", hash = "sha256:02d2629592511639adf9ac85118895f3692b439cdd22ecd691902b11b34b80ac", size = 32089, upload-time = "2026-05-19T15:18:36.054Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/7e/3d7c569b0ec3b46978ebd3aa846d83874a903203aadc1c0033883c836b04/datus_db_core-0.1.5.tar.gz", hash = "sha256:bfd44618432e88718998e38b5122de470bdab06b27ba919ee51084cb10df2faa", size = 33739, upload-time = "2026-07-30T07:26:31.627Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/0e/a1c3436417bb7528b372d6d033f30b4590220b8b38c39582dcaef21a7323/datus_db_core-0.1.4-py3-none-any.whl", hash = "sha256:2c6a9872c82e2c02d74f27df4249ea92748cb2dbc0a96515d2854ce5adfec8fc", size = 25327, upload-time = "2026-05-19T15:18:28.481Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/6b/94d4c676d99a61deda25aa18f19bac5db722a1ff0849618b552f0c199297/datus_db_core-0.1.5-py3-none-any.whl", hash = "sha256:209ef6d0188bcba722ec040ad42d277a516242c1b7daaa0f787668cae96e01e1", size = 26174, upload-time = "2026-07-30T07:26:30.684Z" },
 ]
 
 [[package]]
