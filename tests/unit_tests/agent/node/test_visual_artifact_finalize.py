@@ -2025,6 +2025,7 @@ class TestRunFinalizeSkipNarrative:
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(
             tmp_path, sql_body="SELECT region FROM finbench.main.Account"
         )
+        self._seed_existing_narrative(analysis_dir)
 
         result = run_finalize_analysis(
             model=Mock(spec=["generate_with_json_output", "generate"]),
@@ -2044,12 +2045,21 @@ class TestRunFinalizeSkipNarrative:
         manifest = json.loads((artifact_dir / "manifest.json").read_text(encoding="utf-8"))
         assert "finbench.main.Account" in manifest["key_tables"]
 
-    def test_does_not_create_narrative_files_when_absent(self, tmp_path: Path):
-        # No prior insights/suggested_questions on disk: skip must not mint them.
+    def test_runs_llm_anyway_when_no_prior_narrative_on_disk(self, tmp_path: Path):
+        """Skip requested with nothing to reuse → full finalize instead.
+
+        A first generation whose queries landed in an earlier turn reaches
+        finalize with ``artifact_data_changed=False``; honouring the skip
+        would leave the artifact without chips permanently.
+        """
         artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
 
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.return_value = _ORIGINAL_INTENT
+
         result = run_finalize_analysis(
-            model=Mock(spec=["generate_with_json_output", "generate"]),
+            model=model,
             artifact_kind="report",
             artifact_dir=artifact_dir,
             queries_dir=queries_dir,
@@ -2059,5 +2069,56 @@ class TestRunFinalizeSkipNarrative:
         )
 
         assert result["ok"] is True
-        assert not (analysis_dir / "insights.json").exists()
-        assert not (analysis_dir / "suggested_questions.json").exists()
+        assert result.get("skipped_narrative") is None
+        assert model.generate_with_json_output.call_count == 1
+        assert (analysis_dir / "insights.json").is_file()
+        assert (analysis_dir / "suggested_questions.json").is_file()
+
+    def test_dashboard_skip_needs_only_suggested_questions(self, tmp_path: Path):
+        """Dashboards never write insights.json, so its absence must not
+        force a needless LLM re-run on a render-only edit."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        sq = json.dumps([{"question": "q?", "kind": "quick"}]) + "\n"
+        (analysis_dir / "suggested_questions.json").write_text(sq, encoding="utf-8")
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="dashboard",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["skipped_narrative"] is True
+        assert model.generate_with_json_output.call_count == 0
+        assert (analysis_dir / "suggested_questions.json").read_text(encoding="utf-8") == sq
+
+    def test_report_skip_reruns_when_only_insights_missing(self, tmp_path: Path):
+        """Half-present narrative (suggested_questions but no insights) is not
+        reusable for a report — the chips reference insight ids."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+        (analysis_dir / "suggested_questions.json").write_text(
+            json.dumps([{"question": "q?", "kind": "quick"}]) + "\n", encoding="utf-8"
+        )
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+        model.generate.return_value = _ORIGINAL_INTENT
+
+        result = run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            skip_narrative=True,
+        )
+
+        assert result["ok"] is True
+        assert model.generate_with_json_output.call_count == 1
+        assert (analysis_dir / "insights.json").is_file()

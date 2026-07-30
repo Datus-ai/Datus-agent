@@ -37,7 +37,11 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Dict, Generic, 
 from pydantic import BaseModel
 
 from datus.agent.node.agentic_node import AgenticNode
-from datus.agent.node.visual_artifact._visual_artifact_finalize import FINALIZE_STAGE_TEXT, run_finalize_analysis
+from datus.agent.node.visual_artifact._visual_artifact_finalize import (
+    FINALIZE_STAGE_TEXT,
+    narrative_outputs_present,
+    run_finalize_analysis,
+)
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 
@@ -427,6 +431,10 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
 
     # ── Finalize stage ────────────────────────────────────────────────────
 
+    def _artifact_dir(self, artifact_slug: str) -> Path:
+        """Absolute on-disk directory for ``artifact_slug``."""
+        return Path(self.agent_config.project_root).resolve() / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
+
     def _run_finalize(
         self,
         artifact_slug: str,
@@ -450,8 +458,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         the data is unchanged; the deterministic aggregations still run.
         """
         try:
-            project_root = Path(self.agent_config.project_root).resolve()
-            artifact_dir = project_root / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
+            artifact_dir = self._artifact_dir(artifact_slug)
             queries_dir = artifact_dir / "queries"
             analysis_dir = artifact_dir / "analysis"
             return run_finalize_analysis(
@@ -783,7 +790,12 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         # Render-only edit (no query saved this run): skip the finalize LLM
         # stage and its per-stage progress bubbles — the only work left is the
         # deterministic schema/key_tables refresh, which needs no narration.
-        skip_narrative = not ctx.extras.get("artifact_data_changed", True)
+        # Only legitimate when a prior finalize left narrative files to reuse;
+        # otherwise (first generation whose queries landed in an earlier turn)
+        # skipping would strand the artifact without chips.
+        skip_narrative = not ctx.extras.get("artifact_data_changed", True) and narrative_outputs_present(
+            self._artifact_dir(slug) / "analysis", artifact_kind=self.ARTIFACT_KIND
+        )
 
         progress_queue: asyncio.Queue = asyncio.Queue()
         loop = asyncio.get_running_loop()

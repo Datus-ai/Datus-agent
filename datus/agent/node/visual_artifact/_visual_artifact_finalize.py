@@ -397,6 +397,22 @@ def load_existing_finalize_output(
     return _load("insights.json"), _load("suggested_questions.json")
 
 
+def narrative_outputs_present(analysis_dir: Path, *, artifact_kind: str) -> bool:
+    """True when a prior finalize's LLM-authored files are on disk.
+
+    ``skip_narrative`` means "reuse what's already there". With nothing to
+    reuse — a first generation split across turns (queries saved in an
+    earlier run, ``validate_render`` landing in a later render-only one), or
+    a prior finalize whose LLM call failed and cleaned up after itself — the
+    skip would strand the artifact without chips permanently, so callers
+    upgrade to a full finalize instead.
+    """
+    if not (analysis_dir / "suggested_questions.json").is_file():
+        return False
+    # Dashboards never write insights.json — insights are report-only.
+    return artifact_kind != "report" or (analysis_dir / "insights.json").is_file()
+
+
 def parse_finalize_output(raw: Any, *, artifact_kind: str) -> FinalizeAnalysisOutput:
     """Validate the LLM's response against :class:`FinalizeAnalysisOutput`.
 
@@ -1237,11 +1253,23 @@ def run_finalize_analysis(
     ``suggested_questions.json`` are left in place (NOT deleted — they're
     still valid), and the deterministic aggregations below still run so the
     ask_* consultant's indices stay fresh. The result carries
-    ``skipped_narrative: True`` and ``ok: True``.
+    ``skipped_narrative: True`` and ``ok: True``. The skip is ignored when
+    there is nothing on disk to reuse (see
+    :func:`narrative_outputs_present`) — a full finalize runs instead.
     """
     warnings: List[str] = []
     output: Optional[FinalizeAnalysisOutput] = None
     llm_error: Optional[str] = None
+
+    if skip_narrative and not narrative_outputs_present(analysis_dir, artifact_kind=artifact_kind):
+        # Nothing on disk to preserve — honouring the skip would leave this
+        # artifact without insights / suggested questions for good. Callers
+        # pre-check the same way (so the progress bubbles are wired up); this
+        # is the belt-and-suspenders side for direct callers.
+        logger.info(
+            "Narrative skip requested for %s but prior outputs are missing; running the LLM stage.", analysis_dir
+        )
+        skip_narrative = False
 
     if not skip_narrative:
         intent_md = load_intent_md(analysis_dir)
