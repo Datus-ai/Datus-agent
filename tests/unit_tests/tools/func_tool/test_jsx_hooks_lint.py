@@ -235,6 +235,79 @@ export default function App({ xs }) {
 # --------------------------------------------------------------------------- #
 
 
+class TestHooksInsideTheReturnedExpression:
+    """A hook written into the returned JSX runs on every render that reaches
+    the return, so it is legal — the anchor must not swallow its own statement.
+    """
+
+    def test_hook_in_the_only_return(self):
+        source = """
+export default function App() {
+  return <div ref={useRef(null)}><Child /></div>;
+}
+"""
+        assert find_hook_order_issues(source) == []
+
+    def test_context_provider_value(self):
+        source = """
+export default function App({ a, x }) {
+  return (
+    <Ctx.Provider value={useMemo(() => a * x, [a, x])}>
+      <Child />
+    </Ctx.Provider>
+  );
+}
+"""
+        assert find_hook_order_issues(source) == []
+
+    def test_hook_in_a_guards_own_returned_expression(self):
+        # A conditional hook, which is a different violation family and out of
+        # this scanner's declared scope — but it must not be misreported as an
+        # ordering problem either.
+        source = """
+export default function App({ x }) {
+  if (x) return <A data={useMemo(() => 1, [])} />;
+  return <B />;
+}
+"""
+        assert find_hook_order_issues(source) == []
+
+    def test_hook_after_the_return_statement_is_still_caught(self):
+        source = """
+export default function App({ x }) {
+  if (!x) return <Empty />;
+  const y = useMemo(() => 1, []);
+  return <div>{y}</div>;
+}
+"""
+        assert names(source) == ["useMemo"]
+
+    def test_braced_guard_without_a_semicolon_closes_at_the_block(self):
+        source = """
+export default function App({ x }) {
+  if (!x) {
+    return null
+  }
+  const y = useMemo(() => 1, []);
+  return <div>{y}</div>;
+}
+"""
+        assert names(source) == ["useMemo"]
+
+    def test_arrow_inside_the_returned_jsx_does_not_end_the_statement(self):
+        source = """
+export default function App({ items }) {
+  return (
+    <List
+      onPick={(i) => { track(i); }}
+      footer={<Foot ref={useRef(null)} />}
+    />
+  );
+}
+"""
+        assert find_hook_order_issues(source) == []
+
+
 class TestTokenizerHazards:
     def test_return_as_jsx_text_before_hooks(self):
         source = """
@@ -530,6 +603,29 @@ export default function App({ data }) {
         source = "export default function App(){ if(!x) return null; const [a]=useState(); }\n"
         padding = "// " + ("x" * 600 * 1024) + "\n"
         assert find_hook_order_issues(padding + source) == []
+
+    @pytest.mark.parametrize(
+        "guard",
+        [
+            # `else` is not in the statement-start character set that keeps JSX
+            # text from being read as code.
+            "if (x) foo(); else return null;",
+            # No semicolon and no braces: the return statement never closes, so
+            # later hooks are not attributed to it.
+            "if (!x) return null",
+        ],
+    )
+    def test_documented_misses_stay_silent(self, guard: str):
+        source = f"""
+export default function App({{ x }}) {{
+  {guard}
+  const y = useMemo(() => 1, []);
+  return <div>{{y}}</div>;
+}}
+"""
+        # Recall traded away on purpose — see the module docstring. Pinned so a
+        # future change to either rule is a deliberate decision, not a surprise.
+        assert find_hook_order_issues(source) == []
 
     def test_use_prefixed_non_hook_identifiers_are_ignored(self):
         source = """

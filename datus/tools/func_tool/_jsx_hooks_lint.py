@@ -25,6 +25,19 @@ Scope is deliberately narrow: *early return before a hook call, in the same
 function*. Conditional hooks (``if (x) useMemo(...)``) and the missing/incorrect
 import families are NOT checked here.
 
+Known misses, all deliberate — every one of them trades recall for the
+guarantee that correct code is never rejected:
+
+* ``if (x) foo(); else return null;`` — a ``return`` is only anchored when the
+  previous significant character is one of ``{};):``, which is what stops JSX
+  text from being read as code. ``else`` does not qualify.
+* A guard with neither a semicolon nor braces (``if (!x) return null`` on its
+  own line) leaves the return statement open to the end of the function, so
+  later hooks are not reported. Closing it at the newline instead would
+  misjudge multi-line unparenthesised JSX returns, which is the worse trade.
+* Hooks inside the returned expression itself are legal and skipped; see
+  ``_Frame.return_open``.
+
 Design constraints
 ------------------
 
@@ -117,6 +130,12 @@ class _Frame:
 
     return_line: int = 0
     return_pos: int = -1
+    # True between the anchoring ``return`` and the end of that statement.
+    # Hooks *inside* the returned expression run unconditionally on the paths
+    # that reach the return, so they are not violations — see ``_scan``.
+    return_open: bool = False
+    # ``len(braces)`` when the return was anchored, used to find its end.
+    return_depth: int = 0
 
 
 @dataclass
@@ -274,9 +293,14 @@ def _scan(source: str) -> List[HookOrderIssue]:  # noqa: C901 — one tokenizer 
                     if frame.return_pos < 0:
                         frame.return_pos = start
                         frame.return_line = line
+                        frame.return_open = True
+                        frame.return_depth = len(braces)
             elif _HOOK_NAME_RE.match(token) and _next_significant_char(source, i) == "(":
                 frame = frames[-1]
-                if frame.return_pos >= 0:
+                # ``return_open`` skips hooks written *into* the returned
+                # expression — ``return <div ref={useRef(null)} />`` calls the
+                # hook on every render that reaches the return, so it is legal.
+                if frame.return_pos >= 0 and not frame.return_open:
                     issues.append(
                         HookOrderIssue(
                             hook_name=token,
@@ -324,7 +348,21 @@ def _scan(source: str) -> List[HookOrderIssue]:  # noqa: C901 — one tokenizer 
                 frames.pop()
             if brace.restore_template:
                 in_template = True
+            # The block holding the return just closed, so the statement is
+            # over even without a semicolon (``if (x) { return null }``).
+            frame = frames[-1]
+            if frame.return_open and len(braces) < frame.return_depth:
+                frame.return_open = False
             prev_char = "}"
+            prev_token = ""
+            i += 1
+            continue
+
+        if ch == ";":
+            frame = frames[-1]
+            if frame.return_open and len(braces) == frame.return_depth:
+                frame.return_open = False
+            prev_char = ";"
             prev_token = ""
             i += 1
             continue

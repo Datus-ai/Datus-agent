@@ -694,6 +694,17 @@ class SubAgentTaskTool:
         so parent and sub-agent holding one shared reference can never
         double-deliver an item; whichever loop reaches its next turn first
         consumes it.
+
+        Two consequences of that "first turn wins" rule, both accepted:
+
+        * Sharing is not scoped to artifact fixes. Any mid-run insert — even one
+          aimed at the parent ("stop, try another angle") — is consumed by a
+          sub-agent that happens to be holding the floor. Steering the loop that
+          is actually running is the intended reading of a mid-run message, and
+          the parent still sees the text on its own next turn via the session.
+        * With several sub-agents started in one parent turn, which of them
+          picks the item up is not deterministic. Still strictly better than the
+          old behaviour, where the item always waited out the full round trip.
         """
         parent_queue = getattr(self._parent_node, "pending_input_queue", None)
         if parent_queue is not None:
