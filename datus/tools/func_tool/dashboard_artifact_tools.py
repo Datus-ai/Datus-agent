@@ -44,6 +44,7 @@ from datus.schemas.gen_visual_dashboard_models import (
     parse_datus_params_header,
 )
 from datus.tools.func_tool._artifact_filesystem_base import ArtifactFilesystemFuncTool
+from datus.tools.func_tool._jsx_hooks_lint import format_hook_order_issues
 from datus.tools.func_tool._visual_artifact_helpers import (
     append_intent_section,
     coerce_uses_arg,
@@ -1035,6 +1036,8 @@ class DashboardArtifactTools:
         * Every ``import`` / ``export ... from`` path is either a bare
           specifier in the allowed list or a relative path that resolves
           to a file under ``render/``.
+        * No ``use*()`` hook call sits below a ``return`` in the same function
+          — the Rules-of-Hooks violation that renders as a blank artifact.
 
         Returns:
             FuncToolResult.result on success::
@@ -1293,6 +1296,9 @@ class DashboardArtifactTools:
                     f"render/{mod['rel']}: import {spec!r} is not allowed. Only bare specifiers "
                     f"{sorted(ALLOWED_BARE_MODULES)} or relative paths under render/ are allowed."
                 )
+
+            # ---- Rules of Hooks: no hook call below an early return
+            issues.extend(format_hook_order_issues(mod["rel"], source))
 
         if not _DEFAULT_EXPORT_RE.search(modules["app"]["source"]):
             issues.append(

@@ -249,6 +249,56 @@ class TestGetAvailableTypes:
         assert "explore" in types
 
 
+# ── _inherit_pending_input_queue ───────────────────────────────────
+
+
+@pytest.mark.ci
+class TestInheritPendingInputQueue:
+    def test_shares_the_parents_queue_by_reference(self, task_tool):
+        from datus.cli.execution_state import PendingInputQueue
+
+        queue = PendingInputQueue()
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=queue))
+        node = SimpleNamespace(pending_input_queue=None)
+
+        task_tool._inherit_pending_input_queue(node)
+
+        # Reference, not a copy — an insert pushed after the sub-agent started
+        # must be visible to the loop that is actually running.
+        assert node.pending_input_queue is queue
+        queue.push("the chart throws on render")
+        assert node.pending_input_queue.drain() == ["the chart throws on render"]
+
+    def test_drain_by_the_subagent_leaves_nothing_for_the_parent(self, task_tool):
+        from datus.cli.execution_state import PendingInputQueue
+
+        queue = PendingInputQueue()
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=queue))
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+
+        queue.push("fix it")
+        assert node.pending_input_queue.drain() == ["fix it"]
+        assert queue.drain() == []
+
+    def test_no_parent_leaves_the_node_untouched(self, task_tool):
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+        assert node.pending_input_queue is None
+
+    def test_parent_without_a_queue_leaves_the_node_untouched(self, task_tool):
+        task_tool.set_parent_node(SimpleNamespace(pending_input_queue=None))
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+        assert node.pending_input_queue is None
+
+    def test_parent_missing_the_attribute_is_tolerated(self, task_tool):
+        task_tool.set_parent_node(SimpleNamespace())
+        node = SimpleNamespace(pending_input_queue=None)
+        task_tool._inherit_pending_input_queue(node)
+        assert node.pending_input_queue is None
+
+
 # ── _resolve_node_type ─────────────────────────────────────────────
 
 
