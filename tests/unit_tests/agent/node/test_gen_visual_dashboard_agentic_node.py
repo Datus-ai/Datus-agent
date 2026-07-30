@@ -742,19 +742,38 @@ class TestFinalizeLanguageDirective:
         real_agent_config.language = "zh-CN"
         node = _make_node(real_agent_config)
         project_root = Path(real_agent_config.project_root)
+        dashboard_dir = project_root / "dashboards" / "lang_probe"
         _seed_dashboard_on_disk(project_root, "lang_probe")
+        # The response below grounds its quick chips in this slug; without the
+        # template on disk ``consistency_check`` rightly reports them as
+        # unresolvable, and the fixture would not be something finalize could
+        # legally emit.
+        (dashboard_dir / "queries" / "kpi_summary.sql.j2").write_text("SELECT 1 AS v\n", encoding="utf-8")
 
         model = MagicMock(spec=["generate_with_json_output", "generate"])
         model.generate_with_json_output.return_value = {
+            # Dashboards carry no insights, so every chip grounds on a query
+            # slug; the contract is 5 entries split 3 quick + 2 deep_dive.
             "insights": [],
             "suggested_questions": [
                 {
-                    "question": "这个看板默认的时间范围是什么？",
+                    "question": f"这个看板的{topic}是什么？",
                     "kind": "quick",
                     "related_queries": ["kpi_summary"],
                     "related_insight": None,
                     "priority": 0.9,
                 }
+                for topic in ("默认时间范围", "可用筛选维度", "指标口径")
+            ]
+            + [
+                {
+                    "question": f"{topic}的原因是什么？",
+                    "kind": "deep_dive",
+                    "related_queries": ["kpi_summary"],
+                    "related_insight": None,
+                    "priority": 0.6,
+                }
+                for topic in ("环比下降", "分组差异")
             ],
         }
         node.model = model
@@ -762,7 +781,9 @@ class TestFinalizeLanguageDirective:
         result = node._run_finalize("lang_probe", [])
 
         assert result["ok"] is True
+        # A contract-valid response on a well-formed artifact warns about nothing.
+        assert result["warnings"] == []
         prompt = model.generate_with_json_output.call_args.args[0]
         assert "Chinese (zh-CN)" in prompt
-        analysis_dir = project_root / "dashboards" / "lang_probe" / "analysis"
+        analysis_dir = dashboard_dir / "analysis"
         assert (analysis_dir / "suggested_questions.json").is_file()
