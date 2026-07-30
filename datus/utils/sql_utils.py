@@ -229,6 +229,50 @@ def metadata_identifier(
     return ".".join(parts)
 
 
+#: Widest identifier shape, in right-align order. Used for dialects that declare
+#: no namespace capabilities at all (adapter not installed, or one that reports
+#: none): assuming the widest shape keeps a qualified prefix in a namespace field
+#: instead of collapsing it into ``table_name``.
+_WIDEST_FIELD_ORDER = ("catalog_name", "database_name", "schema_name", "table_name")
+
+
+def table_name_field_order(dialect: str = "snowflake") -> List[str]:
+    """Return the fields a dotted identifier right-aligns into for *dialect*.
+
+    Single source of truth for the identifier *shape*, shared by
+    :func:`parse_table_name_parts` (which right-aligns onto this order) and by
+    callers that need to **emit** an identifier or scope token with a matching
+    segment count. Emitting fewer segments than the order has silently lands
+    every literal in the wrong field: ``default_catalog.*`` on StarRocks
+    (``[catalog, database, table]``) parses as ``{database: default_catalog,
+    table: *}`` and matches no real table.
+
+    Adapters that ship their own ``get_identifier_parser`` are expected to
+    right-align the same way; their order still follows the capabilities they
+    declare.
+    """
+    d = parse_dialect((dialect or "").strip().lower())
+    from datus.tools.db_tools import connector_registry
+
+    # Built-in connectors
+    if d == DBType.SQLITE:
+        return ["database_name", "table_name"]
+    if d == DBType.DUCKDB:
+        return ["database_name", "schema_name", "table_name"]
+    # External dialects: derive from registry
+    fields = []
+    if connector_registry.support_catalog(d):
+        fields.append("catalog_name")
+    if connector_registry.support_database(d):
+        fields.append("database_name")
+    if connector_registry.support_schema(d):
+        fields.append("schema_name")
+    if not fields:
+        return list(_WIDEST_FIELD_ORDER)
+    fields.append("table_name")
+    return fields
+
+
 def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> Dict[str, str]:
     """
     Parse a full table name into its component parts (catalog, database, schema, table).
@@ -259,26 +303,6 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
         return {field: str(parsed[field] or "") for field in expected_fields}
 
     dialect = parse_dialect(raw_dialect)
-
-    # Build field mapping dynamically from registry capabilities
-    def _build_field_mapping(d: str) -> list:
-        from datus.tools.db_tools import connector_registry
-
-        # Built-in connectors
-        if d == DBType.SQLITE:
-            return ["database_name", "table_name"]
-        if d == DBType.DUCKDB:
-            return ["database_name", "schema_name", "table_name"]
-        # External dialects: derive from registry
-        fields = []
-        if connector_registry.support_catalog(d):
-            fields.append("catalog_name")
-        if connector_registry.support_database(d):
-            fields.append("database_name")
-        if connector_registry.support_schema(d):
-            fields.append("schema_name")
-        fields.append("table_name")
-        return fields
 
     # Split the table name by dots
     # Handle different quote styles: `backticks`, "double quotes", [brackets]
@@ -326,30 +350,21 @@ def parse_table_name_parts(full_table_name: str, dialect: str = "snowflake") -> 
     if not parts:
         return result
 
-    # Get field mapping for the dialect, or use default mapping
-    field_mapping = _build_field_mapping(dialect)
-    if len(field_mapping) > 1:
-        max_parts = len(field_mapping)
+    # Right-align the parts onto the dialect's field order (always >= 2 fields,
+    # so an unknown dialect degrades to the widest shape rather than to a bare
+    # table name).
+    field_mapping = table_name_field_order(dialect)
+    max_parts = len(field_mapping)
 
-        # If we have more parts than expected, take the last N parts
-        if len(parts) > max_parts:
-            parts = parts[-max_parts:]
+    # If we have more parts than expected, take the last N parts
+    if len(parts) > max_parts:
+        parts = parts[-max_parts:]
 
-        # Map parts to fields according to the configuration
-        # We map from right to left (table_name is always the last part)
-        for i, part in enumerate(reversed(parts)):
-            if i < len(field_mapping):
-                field_name = field_mapping[-(i + 1)]  # Get field name from right to left
-                result[field_name] = part
-    else:
-        # Default behavior for unknown dialects: assume last part is table name
-        result["table_name"] = parts[-1]
-        if len(parts) > 1:
-            result["schema_name"] = parts[-2]
-        if len(parts) > 2:
-            result["database_name"] = parts[-3]
-        if len(parts) > 3:
-            result["catalog_name"] = parts[-4]
+    # Map parts to fields according to the configuration
+    # We map from right to left (table_name is always the last part)
+    for i, part in enumerate(reversed(parts)):
+        field_name = field_mapping[-(i + 1)]  # Get field name from right to left
+        result[field_name] = part
 
     return result
 

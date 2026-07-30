@@ -6,6 +6,7 @@ from datus.tools.db_tools import connector_registry
 from datus.utils.constants import DBType, SQLType
 from datus.utils.json_utils import llm_result2json
 from datus.utils.sql_utils import (
+    _WIDEST_FIELD_ORDER,
     _fallback_sql_type,
     _first_statement,
     _is_escaped,
@@ -26,6 +27,7 @@ from datus.utils.sql_utils import (
     parse_table_names_parts,
     read_workspace_sql_file,
     strip_sql_comments,
+    table_name_field_order,
 )
 
 _CONNECTOR_REGISTRY_SNAPSHOT_ATTRS = (
@@ -1779,3 +1781,73 @@ class TestParseSqlStatementKind:
     def test_case_insensitive_keywords(self):
         assert parse_sql_statement_kind("drop table t", "") == "drop"
         assert parse_sql_statement_kind("Truncate Table t", "") == "truncate"
+
+
+class TestTableNameFieldOrder:
+    """``table_name_field_order`` is the shape contract shared by the parser and
+    by every caller that *emits* a dotted identifier (scope tokens, metadata
+    identifiers)."""
+
+    def test_mysql_has_no_schema_level(self):
+        assert table_name_field_order("mysql") == ["database_name", "table_name"]
+
+    def test_starrocks_puts_catalog_first(self):
+        assert table_name_field_order("starrocks") == ["catalog_name", "database_name", "table_name"]
+
+    def test_postgres_family_resolves_through_parse_dialect(self):
+        """``postgresql`` maps to the ``postgres`` parser dialect; capabilities
+        must still resolve or the order silently degrades to the widest shape."""
+        assert table_name_field_order("postgresql") == ["database_name", "schema_name", "table_name"]
+
+    def test_sqlite_is_two_segments(self):
+        assert table_name_field_order(DBType.SQLITE) == ["database_name", "table_name"]
+
+    def test_duckdb_keeps_its_schema_level(self):
+        assert table_name_field_order(DBType.DUCKDB) == ["database_name", "schema_name", "table_name"]
+
+    def test_capability_less_dialect_falls_back_to_widest_shape(self):
+        """A dialect that declares no namespaces (adapter absent) must not
+        collapse to a bare table name — a qualified prefix has to land in a
+        namespace field so callers keep the segments they were given."""
+        assert table_name_field_order("frobnicate") == [
+            "catalog_name",
+            "database_name",
+            "schema_name",
+            "table_name",
+        ]
+
+    def test_blank_dialect_is_accepted(self):
+        assert table_name_field_order("") == list(_WIDEST_FIELD_ORDER)
+
+    @pytest.mark.parametrize(
+        "dialect",
+        ["mysql", "starrocks", "postgresql", "snowflake", DBType.SQLITE, DBType.DUCKDB, "frobnicate"],
+    )
+    def test_parse_right_aligns_onto_the_declared_order(self, dialect):
+        """Cross-component contract: a token built with one segment per field
+        parses back with every literal in the field it was emitted for. This is
+        what keeps emitted scope tokens matchable."""
+        order = table_name_field_order(dialect)
+        token = ".".join(field.removesuffix("_name") for field in order)
+
+        parsed = parse_table_name_parts(token, dialect=dialect)
+
+        assert parsed == {
+            "catalog_name": "catalog" if "catalog_name" in order else "",
+            "database_name": "database" if "database_name" in order else "",
+            "schema_name": "schema" if "schema_name" in order else "",
+            "table_name": "table",
+        }
+
+    @pytest.mark.parametrize("dialect", ["mysql", "starrocks", "postgresql", DBType.DUCKDB])
+    def test_short_token_right_aligns_and_leaves_the_leading_field_empty(self, dialect):
+        """The failure mode the order exists to prevent: one segment short and
+        every literal shifts left by a field."""
+        order = table_name_field_order(dialect)
+
+        parsed = parse_table_name_parts("x.*", dialect=dialect)
+
+        assert parsed[order[-2]] == "x"
+        assert parsed["table_name"] == "*"
+        for field in order[:-2]:
+            assert parsed[field] == ""
