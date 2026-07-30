@@ -164,6 +164,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
+       ├── kpi-card.jsx     # KPI tile visual, wrapping <EditHandle> (see the render tree contract)
        ├── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
        └── filter-context.js  # React context for filter values
    ```
@@ -282,11 +283,14 @@ const { start, end } = useMemo(() => resolvePeriod(period), [period]);
 A dashboard reads top-to-bottom in a single screen. Adapt section counts to the dataset, but keep the order:
 
 1. **Header**: H1 title, sub-caption (period covered, scope), generation timestamp on the right.
-2. **Filter strip**: horizontal row of selectors (period / region / segment …). A plain styled `<div>` (see "Filter UI → Style" above), `flex` layout, gap 16. NOT a `<ChartCard>`.
-3. **KPI strip**: 4–6 small KPI cards in a single grid row, each with title / current value / sparkline / prior-period comparison badge.
+2. **Filter strip**: horizontal row of selectors (period / region / segment …). A plain styled `<div>` (see "Filter UI → Style" above), `flex` layout, gap 16. NOT a `<ChartCard>` — wrap it in one `<EditHandle handleId="filter_strip" kind="filter">` so its options stay editable.
+3. **KPI strip**: 4–6 small KPI cards in a single grid row, each with title / current value / sparkline / prior-period comparison badge. Each tile is an `<EditHandle kind="kpi">`, not a `<ChartCard>` — render them through `shared/kpi-card.jsx`.
 4. **Hero section**: 2–3 medium cards with the most important charts (revenue trend, top-N table, distribution).
 5. **Distribution / segmentation section**: stacked bars, chord diagrams, radar charts, score breakdowns.
 6. **Detail section**: per-category KPI cards next to a faded multi-line trend chart, or a paginated detail table.
+7. **Insight / callout panels** (wherever they sit): every key-finding or auto-insight box gets its own `<EditHandle kind="note">`, so the creator can reword or re-scope the narrative without touching the charts.
+
+Every block on the screen should be reachable by the creator's edit affordance: charts and tables through `<ChartCard>`, everything else through `<EditHandle>`. A block with neither is a block the creator cannot ask you to change.
 
 If your dataset is sparse (one or two queries), collapse to **header + filters + KPI strip + one hero card**. Don't pad with filler.
 
@@ -304,17 +308,18 @@ If the user asks for a follow-up change ("swap revenue for unit sales", "add a Y
 
 You do NOT need to rewrite `app.jsx` for a localised change — surgical edits are the whole point of the multi-file layout.
 
-### Targeted single-card edits
+### Targeted single-block edits
 
-A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific chart. Shape:
+A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins the edit to one specific block — a chart, a single KPI tile, an insight panel, or the filter strip. Shape:
 
 ```
 <artifact-chart-card
   dashboard-slug="<dashboard_slug>"
   chart-id="<id>"
-  sql-id="queries/<slug>"
+  sql-id="queries/<slug>"                   <!-- optional: absent for a non-query-backed block -->
   jsx-path="render/<file>.jsx"
-  chart-name="<human-readable chart label>"
+  chart-name="<human-readable block label>"
+  target-kind="chart|kpi|note|filter"        <!-- optional: absent on older envelopes, which are charts -->
   params="<JSON-encoded filter snapshot>"   <!-- optional -->
 />
 ```
@@ -322,9 +327,18 @@ A user turn may carry a self-closing `<artifact-chart-card />` XML tag that pins
 When the user message contains this tag (typically introduced by a `修改下面这个 Chart：` prefix line above it):
 
 1. `bind_existing_dashboard(<dashboard-slug>)`.
-2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if the change touches the SQL.
+2. `read_file(<jsx-path>)`, plus `read_file('queries/<sql-id basename>.sql.j2')` only if `sql-id` is present AND the change touches the SQL.
 3. Make the change strictly inside that JSX file (and its companion `.sql.j2` / `.params.json` when the SQL changed). Do **not** modify any other `render/*.jsx` or any unrelated query template.
 4. `validate_render()` once.
+
+`target-kind` tells you the granularity of what was pinned, which matters because several blocks usually share one file:
+
+- `kpi` — **one tile**, even though `jsx-path` points at the whole strip (or at `shared/kpi-card.jsx`, which every tile renders through). Change that tile only; do not restyle the row, reorder the other tiles, or add new ones. `chart-name` is the tile's label, and `chart-id` is its `handleId` — use both to find the right entry in the file.
+- `note` — one insight / callout block. Usually a copy or scope change; leave the surrounding charts alone.
+- `filter` — the filter strip. Adding or removing an option here almost always means the query templates' `-- @datus-params` and every `useQuerySql` call site must move with it; that is the one case where the edit legitimately spans files.
+- `chart` (or absent) — a whole ChartCard, as before.
+
+When `sql-id` is absent the block is not query-backed (a hand-written callout, the filter strip). Do not invent a template for it — edit the JSX.
 
 The artifact kind is encoded in the slug attribute name — `dashboard-slug` ⇒ this is a dashboard edit; `report-slug` ⇒ it's a report edit (and you'll see this tag in the report subagent's prompt instead). If you ever see both slug variants on the same tag, treat the envelope as malformed and ask the user to confirm.
 
@@ -353,6 +367,7 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] Filter state lives in `app.jsx` and is threaded down; no duplicated filter state across components.
 - [ ] Numeric columns are coerced with `Number(...)` before arithmetic / Recharts.
 - [ ] Loading / error states are rendered for every `useQuerySql` call (filter changes re-trigger loading).
+- [ ] **Every block is editable.** Walk the rendered screen top to bottom: each chart / table sits in a `<ChartCard>`, and each KPI tile, insight panel, and the filter strip sits in its own `<EditHandle>` with a unique `handleId` and a human-readable `name`. Anything with neither is a block the creator cannot ask you to change.
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
 - [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `execute_sql` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
 - [ ] `validate_render()` returned `success: 1`.
