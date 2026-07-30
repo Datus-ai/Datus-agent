@@ -681,6 +681,35 @@ class SubAgentTaskTool:
                     if hasattr(h, "broker"):
                         h.broker = broker
 
+    def _inherit_pending_input_queue(self, node: "AgenticNode") -> None:
+        """Share the parent's pending-input queue with a sub-agent node.
+
+        ``call_model_input_filter`` drains the queue on the node that owns it,
+        once per LLM turn. Without this the queue stays with the parent while a
+        sub-agent holds the floor, so a mid-run insert — "the chart you just
+        wrote throws on render, fix it" — only reaches the model after the
+        sub-agent has already returned and delivered its broken artifact.
+
+        The queue is thread-safe and :meth:`PendingInputQueue.drain` empties it,
+        so parent and sub-agent holding one shared reference can never
+        double-deliver an item; whichever loop reaches its next turn first
+        consumes it.
+
+        Two consequences of that "first turn wins" rule, both accepted:
+
+        * Sharing is not scoped to artifact fixes. Any mid-run insert — even one
+          aimed at the parent ("stop, try another angle") — is consumed by a
+          sub-agent that happens to be holding the floor. Steering the loop that
+          is actually running is the intended reading of a mid-run message, and
+          the parent still sees the text on its own next turn via the session.
+        * With several sub-agents started in one parent turn, which of them
+          picks the item up is not deterministic. Still strictly better than the
+          old behaviour, where the item always waited out the full round trip.
+        """
+        parent_queue = getattr(self._parent_node, "pending_input_queue", None)
+        if parent_queue is not None:
+            node.pending_input_queue = parent_queue
+
     # ── execution via execute_stream ───────────────────────────────────
 
     async def _execute_node(
@@ -793,6 +822,8 @@ class SubAgentTaskTool:
             # avoid dual-consuming the same broker.fetch() stream.
             if self._interaction_broker is not None:
                 self._inject_broker(node, self._interaction_broker)
+
+            self._inherit_pending_input_queue(node)
 
             # Propagate proxy tool config from parent node so sub-agent tools are
             # also proxied.  Uses the parent's tool_channel so stdin dispatch can

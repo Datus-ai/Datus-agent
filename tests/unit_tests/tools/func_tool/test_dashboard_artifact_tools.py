@@ -767,6 +767,25 @@ class TestValidateRender:
         assert result.result["artifact_kind"] == "dashboard"
         assert result.result["artifact_slug"] == dashboard_tools.dashboard_slug
 
+    def test_rejects_hook_below_an_early_return(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        early_return = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data, loading } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  if (loading) return null;\n"
+            "  const rows = React.useMemo(() => data?.rows ?? [], [data]);\n"
+            "  return React.createElement('div', null, rows.length);\n"
+            "}\n"
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": early_return})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "useMemo() on line 7" in (result.error or "")
+        assert "line 6" in (result.error or "")
+
     def test_rejects_useQuerySql_without_params_arg(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
         _seed_template(dashboard_tools)
         app_no_params = (

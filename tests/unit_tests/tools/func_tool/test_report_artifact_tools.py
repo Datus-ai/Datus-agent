@@ -503,6 +503,55 @@ class TestValidateRender:
         assert result.success == 0
         assert "export default" in (result.error or "")
 
+    def test_rejects_hook_below_an_early_return(self, report_tools: ReportArtifactTools, project_root: Path):
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
+        early_return = """\
+import React from 'react';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data, loading } = useQuerySql('queries/sales_by_store');
+  if (loading) return null;
+  const rows = React.useMemo(() => data?.rows ?? [], [data]);
+  return React.createElement('div', null, rows.length);
+}
+"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": early_return})
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "useMemo() on line 8" in (result.error or "")
+        assert "line 7" in (result.error or "")
+
+    def test_accepts_a_guard_that_sits_below_every_hook(self, report_tools: ReportArtifactTools, project_root: Path):
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
+        correct = """\
+import React from 'react';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data, loading } = useQuerySql('queries/sales_by_store');
+  const rows = React.useMemo(() => data?.rows ?? [], [data]);
+  const fmt = (v) => { if (v == null) return '-'; return String(v); };
+  if (loading) return null;
+  return React.createElement('div', null, fmt(rows.length));
+}
+"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": correct})
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+
     def test_rejects_dangling_sqlid(self, report_tools: ReportArtifactTools, project_root: Path):
         _write_render(
             project_root,
