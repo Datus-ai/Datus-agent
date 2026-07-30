@@ -36,6 +36,23 @@ cd /path/to/datus-db-adapters/datus-postgresql
 docker compose down -v
 ```
 
+### Apache Doris
+
+```bash
+# Install the adapter and start its canonical FE/BE compose stack.
+uv pip install datus-doris
+cd /path/to/datus-db-adapters/datus-doris
+docker compose up -d
+
+# Run the Agent-facing DBFuncTool contract.
+cd /path/to/Datus-agent
+ADAPTERS_DORIS=1 uv run pytest tests/integration/adapters/test_doris.py -v
+
+# Tear down.
+cd /path/to/datus-db-adapters/datus-doris
+docker compose down -v
+```
+
 ## Env vars
 
 | Adapter | Opt-in flag | Connection env | Default (matches adapter's docker-compose.yml) |
@@ -44,6 +61,7 @@ docker compose down -v
 | mysql | `ADAPTERS_MYSQL=1` | `MYSQL_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:3306 test_user/test_password/test` |
 | clickhouse | `ADAPTERS_CH=1` | `CLICKHOUSE_HOST/PORT/USER/PASSWORD/DATABASE` | `localhost:8123 default_user/default_test/default_test` |
 | starrocks | `ADAPTERS_SR=1` | `STARROCKS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//default_catalog/test` |
+| doris | `ADAPTERS_DORIS=1` | `DORIS_HOST/PORT/USER/PASSWORD/CATALOG/DATABASE` | `127.0.0.1:9030 root//internal/test` |
 | trino | `ADAPTERS_TRINO=1` | `TRINO_HOST/PORT/USER` | `localhost:8080 trino` (uses built-in `tpch.tiny`, no seeding) |
 | greenplum | `ADAPTERS_GP=1` | `GREENPLUM_HOST/PORT/USER/PASSWORD/DATABASE/SCHEMA` | `localhost:15432 gpadmin/pivotal/postgres/public` |
 | hive | `ADAPTERS_HIVE=1` | `HIVE_HOST/PORT/USERNAME/PASSWORD/DATABASE` | `localhost:10000 hive//default` |
@@ -55,6 +73,7 @@ Several adapters use default ports that are commonly occupied:
 - postgresql (5432) — conflicts with any local Postgres / superset-db
 - trino (8080) — conflicts with Airflow / many web dev servers
 - starrocks (9030) — conflicts with existing StarRocks instances
+- doris (9030) — conflicts with StarRocks and existing Doris instances
 - hive / spark (10000) — both default to the HiveServer2/Spark Thrift port; run one suite at a time or remap one service
 
 For the Trino adapter, the compose file already supports a `TRINO_HOST_PORT`

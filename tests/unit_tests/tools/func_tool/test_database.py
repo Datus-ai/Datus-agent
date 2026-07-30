@@ -1195,6 +1195,21 @@ class TestTransferQueryResult:
         connector.execute_insert.return_value = insert_result
         return connector, connector.execute_insert
 
+    def test_transfer_helpers_honor_new_adapter_dialects(self, monkeypatch):
+        import pandas as pd
+
+        from datus.tools.db_tools import connector_registry
+
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "postgres" if dialect == "hologres" else None,
+            raising=False,
+        )
+
+        assert DBFuncTool._identifier_quote_char("doris") == "`"
+        assert DBFuncTool._infer_transfer_column_type(pd.Series([1.5]), "hologres") == "DOUBLE PRECISION"
+
     def test_transfer_replace_mode_success(self):
         import pandas as pd
 

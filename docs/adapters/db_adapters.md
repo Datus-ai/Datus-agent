@@ -26,6 +26,8 @@ This design keeps the core package lightweight while allowing you to add support
 | Spark | datus-spark | `pip install datus-spark` | Ready |
 | ClickHouse | datus-clickhouse | `pip install datus-clickhouse` | Ready |
 | Trino | datus-trino | `pip install datus-trino` | Ready |
+| Apache Doris | datus-doris | `pip install datus-doris` | Ready |
+| Hologres | datus-hologres | `pip install datus-hologres` | Ready |
 
 ## Installation
 
@@ -64,6 +66,12 @@ pip install datus-clickhouse
 
 # Trino
 pip install datus-trino
+
+# Apache Doris
+pip install datus-doris
+
+# Hologres
+pip install datus-hologres
 ```
 
 Once installed, Datus Agent will automatically detect and load the adapter.
@@ -227,6 +235,42 @@ trino_data:
   http_scheme: http  # optional: http or https
 ```
 
+### Apache Doris
+
+```yaml
+doris_data:
+  type: doris
+  host: localhost
+  port: 9030
+  username: root
+  password: your_password
+  database: your_database
+  catalog: internal  # optional, default is internal
+```
+
+Doris speaks the MySQL protocol; `port` is the FE query port (default 9030). The built-in catalog is
+`internal`; external catalogs (for example, Hive Metastore catalogs) can be selected through the same
+`catalog` field.
+
+### Hologres
+
+```yaml
+hologres_data:
+  type: hologres
+  host: your-instance-cn-hangzhou.hologres.aliyuncs.com  # console endpoint, may embed ":80"
+  port: 80
+  username: ${HOLOGRES_ACCESS_KEY_ID}
+  password: ${HOLOGRES_ACCESS_KEY_SECRET}
+  database: your_database
+  schema: public   # optional, default is public
+  sslmode: prefer  # optional, default is prefer
+```
+
+Hologres (Alibaba Cloud) uses the PostgreSQL wire protocol with AccessKey credentials.
+`access_key_id`/`access_key_secret` are also accepted as aliases for `username`/`password`. The `host`
+accepts either a plain hostname or a `hostname:port` console endpoint; an explicit `port` must match an
+embedded one.
+
 ### Multiple Database Entries
 
 ```yaml
@@ -314,6 +358,19 @@ All adapters support:
 - Built-in TPC-H connector for benchmarking
 - HTTP/HTTPS connection with SSL support
 
+#### Apache Doris
+- MySQL protocol compatibility
+- Multi-catalog discovery and context switching (`catalog.database.table`)
+- Materialized view discovery and DDL retrieval
+- Catalog-aware metadata and sample-row retrieval
+
+#### Hologres
+- PostgreSQL wire protocol (PostgreSQL-compatible SQL dialect)
+- Alibaba Cloud AccessKey authentication
+- Multi-schema datasource support
+- Console endpoint normalization (`hostname` or `hostname:port`)
+- SSL connection modes (disable, allow, prefer, require, verify-ca, verify-full)
+
 ## Troubleshooting
 
 ### Adapter Not Found
@@ -344,6 +401,8 @@ Some adapters require additional system dependencies:
 - **Spark**: Requires `pyhive`, `thrift`, `thrift-sasl`, `pure-sasl` (installed automatically)
 - **ClickHouse**: Requires `clickhouse-sqlalchemy` (installed automatically)
 - **Trino**: Requires `trino` (installed automatically)
+- **Apache Doris**: Requires `datus-mysql` and `pymysql` (installed automatically)
+- **Hologres**: Requires `datus-postgresql` and `psycopg2-binary` (installed automatically)
 
 ## Architecture
 
@@ -356,8 +415,10 @@ datus-agent (Core)
 └── Plugin System (Entry Points)
     ├── datus-sqlalchemy (Base layer)
     │   ├── datus-mysql
+    │   │   ├── datus-starrocks
+    │   │   └── datus-doris
     │   ├── datus-postgresql
-    │   ├── datus-starrocks
+    │   │   └── datus-hologres
     │   ├── datus-hive
     │   ├── datus-spark
     │   ├── datus-clickhouse

@@ -115,7 +115,12 @@ def estimate_rows_from_explain(dialect: str, explain_rows: List[Any]) -> Optiona
     """
     if not explain_rows:
         return None
-    normalized = (dialect or "").lower()
+    # Adapter names are not always sqlglot/engine-family names. Resolve the
+    # adapter-provided parser dialect so PostgreSQL-compatible engines such as
+    # Hologres retain the same pre-execution safety guard as PostgreSQL.
+    from datus.utils.sql_utils import parse_dialect
+
+    normalized = parse_dialect(dialect or "").lower()
     if normalized in ("starrocks", "doris"):
         return _max_match(_STARROCKS_CARDINALITY_RE, _flatten_text(explain_rows))
     if normalized == "duckdb":

@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.loggings import get_logger
+from datus.utils.sql_utils import parse_dialect
 
 if TYPE_CHECKING:
     from datus.configuration.agent_config import AgentConfig
@@ -4739,10 +4740,7 @@ class SemanticDiscoveryTools:
                 configured_dialect = str(getattr(dialect_value, "value", dialect_value) or "").strip().lower()
             except Exception:
                 configured_dialect = ""
-        configured_dialect = {"postgresql": "postgres"}.get(
-            configured_dialect,
-            configured_dialect,
-        )
+        configured_dialect = parse_dialect(configured_dialect) if configured_dialect else ""
         dialects = [
             configured_dialect or None,
             None,

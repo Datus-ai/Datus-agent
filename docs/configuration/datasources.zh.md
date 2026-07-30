@@ -151,6 +151,33 @@ my_postgresql:
   database: analytics
 ```
 
+### Apache Doris
+
+```yaml
+my_doris:
+  type: doris
+  host: ${DORIS_HOST}
+  port: 9030                    # FE 查询端口（MySQL 协议）
+  username: ${DORIS_USER}
+  password: ${DORIS_PASSWORD}
+  database: ${DORIS_DATABASE}
+  catalog: internal             # 可选，默认为 internal
+```
+
+### Hologres
+
+```yaml
+my_hologres:
+  type: hologres
+  host: ${HOLOGRES_ENDPOINT}    # 控制台 endpoint，hostname 或 hostname:port
+  port: 80
+  username: ${HOLOGRES_ACCESS_KEY_ID}
+  password: ${HOLOGRES_ACCESS_KEY_SECRET}
+  database: ${HOLOGRES_DATABASE}
+  schema: public                # 可选
+  sslmode: prefer               # 可选
+```
+
 ### 路径模式（批量发现多个文件）
 
 使用 glob 模式自动发现数据库文件：
@@ -169,7 +196,7 @@ bird_benchmark:
 
 | 参数 | 是否必填 | 说明 |
 |------|----------|------|
-| `type` | 是 | 数据库类型，例如 `sqlite`、`duckdb`、`snowflake`、`starrocks`、`mysql`、`postgresql` |
+| `type` | 是 | 数据库类型，例如 `sqlite`、`duckdb`、`snowflake`、`starrocks`、`mysql`、`postgresql`、`doris`、`hologres` 等 |
 | `default` | 否 | 设为 `true` 后作为默认数据库 |
 | `uri` | 文件型数据库必填 | SQLite / DuckDB 的连接 URI |
 | `host` | 服务型数据库必填 | 数据库主机地址 |
@@ -184,6 +211,8 @@ bird_benchmark:
 - **StarRocks**：`catalog`
 - **SQLite/DuckDB**：`path_pattern` 用于批量发现数据库文件
 - **MySQL/PostgreSQL**：`host`、`port`、`username`、`password`、`database`
+- **Apache Doris**：`catalog`（默认为 `internal`）
+- **Hologres**：`schema`、`sslmode`；`access_key_id`/`access_key_secret` 可作为 `username`/`password` 的别名
 
 ## 管理数据库
 

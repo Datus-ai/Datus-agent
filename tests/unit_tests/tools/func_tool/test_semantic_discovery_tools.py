@@ -1094,6 +1094,36 @@ class TestMetricCandidateAnalyzer:
 
         assert calls == ["mysql"]
 
+    def test_parser_uses_adapter_registered_parser_dialect(self, monkeypatch):
+        import sqlglot
+
+        from datus.tools.db_tools import connector_registry
+
+        calls = []
+        original_parse = sqlglot.parse
+
+        def record_parse(sql, read=None):
+            calls.append(read)
+            return original_parse(sql)
+
+        monkeypatch.setattr(sqlglot, "parse", record_parse)
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "postgres" if dialect == "hologres" else None,
+            raising=False,
+        )
+        tools = SemanticDiscoveryTools(
+            agent_config=SimpleNamespace(
+                current_datasource="analytics",
+                current_db_config=lambda _name: SimpleNamespace(type="hologres"),
+            )
+        )
+
+        tools._parse_sql("SELECT 1")
+
+        assert calls == ["postgres"]
+
     def test_available_tools_without_db_is_empty(self):
         tools = SemanticDiscoveryTools(
             db_tool=None,

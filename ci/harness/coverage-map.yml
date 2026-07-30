@@ -348,6 +348,7 @@ flow_groups:
               - tests/integration/adapters/test_mysql.py
               - tests/integration/adapters/test_clickhouse.py
               - tests/integration/adapters/test_starrocks.py
+              - tests/integration/adapters/test_doris.py
               - tests/integration/adapters/test_trino.py
               - tests/integration/adapters/test_greenplum.py
               - tests/integration/adapters/test_hive.py
@@ -439,6 +440,7 @@ flow_groups:
               - tests/integration/tools/test_bi_grafana.py
               - tests/integration/agent/test_scheduler_agentic.py
               - tests/integration/adapters/test_starrocks.py
+              - tests/integration/adapters/test_doris.py
           weekly_benchmark:
             status: covered
             notes: Weekly benchmark uses datus-agent with released/source adapter packages for the selected scenario.
