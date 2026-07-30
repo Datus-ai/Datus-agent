@@ -6450,7 +6450,7 @@
     C --&gt; D[Validation]
     D --&gt; E[Knowledge Base Sync]</code></pre>
 <h3 id="validation-and-sync">Validation and Sync<a class="headerlink" href="#validation-and-sync" title="Permanent link">&para;</a></h3>
-<p>The agent calls <code>validate_semantic()</code> before publishing. If validation fails, it edits the YAML and retries. In interactive mode, once validation passes, <code>end_semantic_model_generation</code> triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit semantic sync step or tool.</p>
+<p>The agent calls <code>validate_semantic()</code> before publishing. If validation fails, it edits the YAML and retries. Once validation passes, <code>publish_semantic_model</code> validates the publication evidence and syncs the artifact to the Knowledge Base in every execution mode.</p>
 <h3 id="semantic-model-structure">Semantic Model Structure<a class="headerlink" href="#semantic-model-structure" title="Permanent link">&para;</a></h3>
 <h4 id="basic-template">Basic Template<a class="headerlink" href="#basic-template" title="Permanent link">&para;</a></h4>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">data_source</span><span class="p">:</span>
@@ -6496,7 +6496,7 @@
 <li>✅ Built-in tools, hooks, and MCP server integration</li>
 <li>✅ Interactive validation and error fixing</li>
 <li>✅ Validation-gated Knowledge Base sync</li>
-<li>✅ Interactive auto-sync and workflow/API explicit sync</li>
+<li>✅ One validation-gated publish path in every execution mode</li>
 <li>✅ Duplicate prevention</li>
 <li>✅ MetricFlow compatibility</li>
 </ul>
@@ -6544,7 +6544,7 @@
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">c</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">customer_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w">  </span><span class="c1">-- ❌ JOIN not supported</span>
 </span></code></pre></div></p>
 <h3 id="validation-and-sync_1">Validation and Sync<a class="headerlink" href="#validation-and-sync_1" title="Permanent link">&para;</a></h3>
-<p>Before publishing, the agent validates the YAML with <code>validate_semantic()</code> and compiles SQL with <code>query_metrics(..., dry_run=True)</code>. In interactive mode, after both checks pass, <code>end_metric_generation</code> triggers automatic Knowledge Base sync; in workflow/API mode, use the explicit metric sync step or tool.</p>
+<p>Before publishing, the agent validates the YAML with <code>validate_semantic()</code> and compiles SQL with <code>query_metrics(..., dry_run=True)</code>. After both checks pass, <code>publish_metrics</code> validates the request-local evidence and syncs the metric in every execution mode.</p>
 <h3 id="subject-tree-categorization_1">Subject Tree Categorization<a class="headerlink" href="#subject-tree-categorization_1" title="Permanent link">&para;</a></h3>
 <p>Subject tree allows organizing metrics by domain and layers. In CLI mode, include it in your question:</p>
 <p><strong>Example with subject_tree:</strong>

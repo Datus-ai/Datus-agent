@@ -4536,7 +4536,7 @@
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>User Request → DDL Analysis → YAML Generation → Validation → Storage
 </span></code></pre></div>
 <h3 id="validation-and-sync">Validation and Sync<a class="headerlink" href="#validation-and-sync" title="Permanent link">&para;</a></h3>
-<p>The agent calls <code>validate_semantic()</code> before publishing. If validation fails, it edits the YAML and retries. Once validation passes, <code>end_semantic_model_generation</code> publishes the semantic model to the Knowledge Base automatically.</p>
+<p>The agent calls <code>validate_semantic()</code> before publishing. If validation fails, it edits the YAML and retries. Once validation passes, <code>publish_semantic_model</code> publishes the semantic model to the Knowledge Base automatically.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <h3 id="agent-configuration">Agent Configuration<a class="headerlink" href="#agent-configuration" title="Permanent link">&para;</a></h3>
 <p>Most configurations are built-in. In <code>agent.yml</code>, minimal setup is needed:</p>

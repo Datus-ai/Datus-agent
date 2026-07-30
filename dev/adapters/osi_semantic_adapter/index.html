@@ -4532,7 +4532,7 @@
 <li>Use OSI core <code>fields</code>, not MetricFlow <code>dimensions</code>.</li>
 <li>Dataset <code>source</code> is a table-name string, not <code>{table: ...}</code>.</li>
 <li><strong>Field roles are structural.</strong> A field with a <code>dimension:</code> block is a grouping/filtering dimension; a field without one is a plain row-level expression that documents the column and backs metric expressions. Columns that are only aggregated by metrics (balances, amounts, precomputed rates) are declared as plain fields without the block, and <code>get_dimensions</code> does not list them. Field-level <code>type</code> hints are not part of the authoring contract.</li>
-<li><strong>Physical and logical keys use different evidence.</strong> <code>primary_key</code> is written only when source metadata or an explicit data contract declares it. Historical JOIN columns are candidates, not keys. A candidate may be added as one <code>unique_keys</code> entry only after <code>validate_semantic_key_candidate</code> verifies the complete ordered column list over the full table with no NULL components or duplicate groups.</li>
+<li><strong>Physical and logical keys use different evidence.</strong> <code>primary_key</code> is written only when source metadata or an explicit data contract declares it. JOIN columns are candidates, not keys. Submit every candidate that will be authored in one <code>validate_semantic_key_candidates</code> call; a candidate may be added as one <code>unique_keys</code> entry only after its complete ordered column list passes the full-table check with no NULL components or duplicate groups.</li>
 <li>A composite primary key that contains the dataset's time dimension (monthly snapshot tables) is valid: the compiler keeps the time dimension and resolves the identifier conflict during lowering.</li>
 <li>Mark time fields with <code>dimension.is_time: true</code>; put the Datus <code>time_granularity</code> hint in <code>custom_extensions</code>.</li>
 <li>Declare relationships under the semantic model object, not inside datasets.</li>
@@ -4685,7 +4685,7 @@
 <li><code>validate_semantic(scope="semantic_model")</code> validates generated semantic models.</li>
 <li><code>validate_semantic(scope="all")</code> validates the full semantic layer.</li>
 <li><code>query_metrics(..., dry_run=True)</code> validates generated metrics by rendering SQL.</li>
-<li><code>end_semantic_model_generation</code> / <code>end_metric_generation</code> sync semantic objects and metrics to the Knowledge Base.</li>
+<li><code>publish_semantic_model</code> / <code>publish_metrics</code> sync semantic objects and metrics to the Knowledge Base.</li>
 </ol>
 <p>If validation or dry-run fails, Datus does not publish the metric to the Knowledge Base. This ensures <code>ask_metrics</code> only queries validated metrics.</p>
 <h2 id="ask_metrics-queries">ask_metrics Queries<a class="headerlink" href="#ask_metrics-queries" title="Permanent link">&para;</a></h2>
