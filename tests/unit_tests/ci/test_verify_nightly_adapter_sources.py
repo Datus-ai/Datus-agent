@@ -98,7 +98,7 @@ def test_verify_database_adapter_imports_requires_hologres_parser_hook(monkeypat
         ),
     ],
 )
-def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, missing_hook, expected_error):
+def test_verify_database_adapter_imports_requires_hologres_hooks(monkeypatch, missing_hook: str, expected_error: str):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
         get_parser_dialect=lambda db_type: "postgres" if db_type == "hologres" else None,
