@@ -176,6 +176,10 @@ The runtime does **not** ship a KPI-card component: own that visual in `render/s
 
 **Do not pass `__sourcePath`** here either — same auto-injection rule as ChartCard.
 
+**`EditHandle` carries no View SQL / Export menu, on purpose.** A viewer of a *published* dashboard should still be able to ask "where does this number come from" — but the handle is authoring-only, so folding the menu into it would hide a permanent, read-only affordance behind an authoring gate. The two also work at different granularities: a KPI strip is N tiles over ONE query, so edits are per-tile while the SQL is per-strip — N menus would all open the same statement.
+
+So when a wrapped block is query-backed, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself, **at the granularity the query actually has** — once per strip, not once per tile — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. Without a menu somewhere, a KPI strip's query is unreachable from the UI entirely: dashboards render their queries live, so the `.sql.j2` files are never shipped to the viewer.
+
 ```jsx
 // render/shared/kpi-card.jsx — the KPI visual is yours, the handle comes
 // from the runtime. Every tile rendered through this component gets an
@@ -200,8 +204,8 @@ export function KpiCard({ handleId, label, value, badge, icon: Icon, sqlId, para
 ```
 
 ```jsx
-// render/kpi-strip.jsx — one query, N tiles, one handle each.
-import { useDatusArtifact, Skeleton, ErrorBlock } from '@datus/web-artifact';
+// render/kpi-strip.jsx — one query, N tiles, one handle each, ONE menu.
+import { useDatusArtifact, ChartEntryMore, Skeleton, ErrorBlock } from '@datus/web-artifact';
 import { Banknote, Receipt, Users, Landmark } from 'lucide-react';
 import { KpiCard } from './shared/kpi-card';
 import { formatCurrency, formatInt } from './shared/formatters';
@@ -222,24 +226,35 @@ export function KpiStrip({ params }) {
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
-      {tiles.map(t => (
-        <KpiCard key={t.handleId} {...t} sqlId="queries/kpi_summary" params={params} />
-      ))}
+    // data-datus-chart-card marks the screenshot root for the strip's menu.
+    <div data-datus-chart-card style={{ marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <ChartEntryMore sqlId="queries/kpi_summary" data={data} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+        {tiles.map(t => (
+          <KpiCard key={t.handleId} {...t} sqlId="queries/kpi_summary" params={params} />
+        ))}
+      </div>
     </div>
   );
 }
 ```
 
-A static insight panel needs no `sqlId` at all, and its top-right corner is usually taken by a period badge:
+An insight panel that a query drives gets the same treatment — a handle for the copy, a menu for the numbers behind it. Its top-right corner is usually taken by a period badge, so move the handle to the left:
 
 ```jsx
-<EditHandle handleId="insight_panel" name="Auto insights" kind="note" placement="top-left">
-  <div style={{ backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 12, padding: '16px 18px' }}>
+<EditHandle handleId="insight_panel" name="Auto insights" kind="note" placement="top-left" sqlId="queries/regional_gaps" params={params}>
+  <div data-datus-chart-card style={{ position: 'relative', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 12, padding: '16px 18px' }}>
+    <div style={{ position: 'absolute', top: 12, right: 12 }}>
+      <ChartEntryMore sqlId="queries/regional_gaps" data={data} />
+    </div>
     {/* heading + findings grid */}
   </div>
 </EditHandle>
 ```
+
+Drop both `sqlId` and the menu when the block is genuinely static (hand-written copy, the filter strip) — and drop just the menu when the block's claims are derived from **several** queries, since "View SQL" then has no single honest answer. Say where the numbers came from in the copy instead.
 
 ### Data layer — `useDatusArtifact`
 
@@ -506,7 +521,9 @@ ChartCard embeds the chart-actions menu (View SQL / Export SQL / CSV / JSON / PN
 
 **Attach a ChartCard to every `useQuerySql`-backed visualization** — charts, custom SVG, **and data tables** (the table goes inside the ChartCard body, including the header strip; the chart-actions menu lives in the ChartCard's title strip above it). The exception is a KPI strip, where N tiles share one query and a per-tile card header would destroy the row: those get `<EditHandle>` instead of `<ChartCard>` (see "Edit handles for non-chart blocks").
 
-If you genuinely need to render a card without the chart-actions menu (decorative banner, a single hero number that still deserves card chrome), set `hideMenu` on the ChartCard. Direct use of the standalone `ChartEntryMore` import is reserved for the rare custom case where ChartCard's chrome doesn't fit — almost never required.
+If you genuinely need to render a card without the chart-actions menu (decorative banner, a single hero number that still deserves card chrome), set `hideMenu` on the ChartCard.
+
+**Standalone `<ChartEntryMore>`** is for the blocks that carry a query but no ChartCard — the two recurring cases are the KPI strip (one menu for the strip, since all its tiles share one query) and a query-driven insight panel. Pass `sqlId` + `data`, and mark the container it should screenshot with `data-datus-chart-card`. Never wire it up inside a `<ChartCard>` — that card already embeds one.
 
 ### Formatting helpers
 
