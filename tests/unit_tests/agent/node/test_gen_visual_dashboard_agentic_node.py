@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -694,3 +695,74 @@ async def test_execute_stream_fails_when_validate_render_not_called(real_agent_c
     # ``_active_dashboard_slug`` got captured even though validate_render didn't run.
     assert result["dashboard_slug"] == "incomplete"
     assert "validate_render" in (result.get("error") or "")
+
+
+class TestFinalizeLanguageDirective:
+    """The finalize stage is an independent LLM call with no system prompt, so
+    the node has to hand it the response-language directive explicitly —
+    otherwise an English instruction block yields English insights /
+    suggested questions for an artifact the user asked for in Chinese.
+    """
+
+    def test_pinned_language_is_resolved_into_a_directive(self, real_agent_config, mock_llm_create):
+        real_agent_config.language = "zh"
+        node = _make_node(real_agent_config)
+
+        directive = node._finalize_language_directive() or ""
+
+        assert "- Use: Chinese (zh)" in directive
+        # No leading blank lines — it is spliced into a prompt section.
+        assert directive == directive.strip()
+
+    def test_unpinned_language_yields_none(self, real_agent_config, mock_llm_create):
+        real_agent_config.language = None
+        node = _make_node(real_agent_config)
+
+        # None lets the finalize prompt fall back to "follow the language of
+        # the user's prompts in intent.md" instead of pinning a wrong one.
+        assert node._finalize_language_directive() is None
+
+    def test_template_failure_still_pins_the_language(self, real_agent_config, mock_llm_create, monkeypatch):
+        """``_inject_response_language`` swallows a render failure and returns
+        the prompt untouched. Reading that as "unpinned" would silently hand
+        finalize the infer-from-user-prompts branch, which contradicts an
+        operator who pinned a language the user doesn't write in."""
+        real_agent_config.language = "ja"
+        node = _make_node(real_agent_config)
+        monkeypatch.setattr(type(node), "_inject_response_language", lambda self, base: base)
+
+        directive = node._finalize_language_directive()
+
+        assert directive == "# Response Language\n- Use: Japanese (ja)"
+
+    def test_run_finalize_forwards_the_directive_to_the_llm(self, real_agent_config, mock_llm_create, tmp_path):
+        """End-to-end through ``_run_finalize`` → ``run_finalize_analysis``:
+        the resolved directive must reach the prompt of the independent
+        finalize LLM call, which is the only place it can take effect."""
+        real_agent_config.language = "zh-CN"
+        node = _make_node(real_agent_config)
+        project_root = Path(real_agent_config.project_root)
+        _seed_dashboard_on_disk(project_root, "lang_probe")
+
+        model = MagicMock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = {
+            "insights": [],
+            "suggested_questions": [
+                {
+                    "question": "这个看板默认的时间范围是什么？",
+                    "kind": "quick",
+                    "related_queries": ["kpi_summary"],
+                    "related_insight": None,
+                    "priority": 0.9,
+                }
+            ],
+        }
+        node.model = model
+
+        result = node._run_finalize("lang_probe", [])
+
+        assert result["ok"] is True
+        prompt = model.generate_with_json_output.call_args.args[0]
+        assert "Chinese (zh-CN)" in prompt
+        analysis_dir = project_root / "dashboards" / "lang_probe" / "analysis"
+        assert (analysis_dir / "suggested_questions.json").is_file()

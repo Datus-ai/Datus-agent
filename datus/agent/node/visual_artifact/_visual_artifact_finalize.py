@@ -107,6 +107,7 @@ def build_finalize_prompt(
     action_history_hints: List[Dict[str, Any]],
     existing_insights: Optional[List[Dict[str, Any]]],
     existing_suggested_questions: Optional[List[Dict[str, Any]]],
+    language_directive: Optional[str] = None,
 ) -> str:
     """Compose the single-shot finalize prompt.
 
@@ -114,6 +115,13 @@ def build_finalize_prompt(
     chatty: the LLM has to emit one strict JSON object matching
     :class:`FinalizeAnalysisOutput`, so we want every constraint visible
     in one place.
+
+    ``language_directive`` is the rendered ``response_language`` section
+    when ``agent_config.language`` pins one. finalize is an independent
+    LLM call with no system prompt, so the directive every agentic node
+    gets injected has to be restated here or the model answers an
+    English prompt in English — regardless of the language the user (and
+    therefore the artifact) actually uses.
     """
     is_dashboard = artifact_kind == "dashboard"
     sections: List[str] = []
@@ -194,6 +202,26 @@ def build_finalize_prompt(
         "output. The schema rejects quick questions with no grounding, and a "
         "post-validation check warns when the distribution drifts off-target."
     )
+
+    sections.append("## OUTPUT LANGUAGE")
+    audience_note = (
+        "This applies to `insights[].title`, `insights[].summary` and "
+        "`suggested_questions[].question` — they are shown to the user verbatim "
+        "(the questions become clickable chips beside the artifact). Everything "
+        "machine-read stays exactly as specified above: `insights[].id` and the "
+        "query slugs in `evidence_queries` / `related_queries`, the `kind` "
+        "values, and every JSON key."
+    )
+    if language_directive:
+        sections.append(f"{language_directive}\n\n{audience_note}")
+    else:
+        sections.append(
+            "Write the user-facing strings in the SAME language the user wrote "
+            "the prompts in RAW USER PROMPTS below — Chinese prompts get Chinese "
+            "questions, Japanese prompts get Japanese questions. Do NOT switch "
+            "to English just because these instructions are in English; the "
+            f"artifact itself is authored in the user's language.\n\n{audience_note}"
+        )
 
     sections.append("## RAW USER PROMPTS (intent.md)")
     sections.append(intent_md.strip() or "(empty)")
@@ -1204,6 +1232,7 @@ def run_finalize_analysis(
     db_func_tool: Optional[Any] = None,
     on_progress: Optional[Callable[[int], None]] = None,
     skip_narrative: bool = False,
+    language_directive: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Top-level orchestrator. Returns a result dict::
 
@@ -1286,6 +1315,7 @@ def run_finalize_analysis(
             action_history_hints=action_hints,
             existing_insights=existing_insights,
             existing_suggested_questions=existing_sq,
+            language_directive=language_directive,
         )
 
         if on_progress is not None:

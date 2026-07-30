@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Dict, Generic, 
 
 from pydantic import BaseModel
 
-from datus.agent.node.agentic_node import AgenticNode
+from datus.agent.node.agentic_node import AgenticNode, _resolve_language_name
 from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     FINALIZE_STAGE_TEXT,
     narrative_outputs_present,
@@ -435,6 +435,30 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
         """Absolute on-disk directory for ``artifact_slug``."""
         return Path(self.agent_config.project_root).resolve() / self.ARTIFACT_ROOT_DIR_NAME / artifact_slug
 
+    def _finalize_language_directive(self) -> Optional[str]:
+        """The configured response-language section, or ``None`` when unpinned.
+
+        finalize is an independent LLM call with no system prompt, so the
+        directive every agentic node gets injected has to travel into the
+        finalize prompt explicitly. Reuses the same rendered template rather
+        than a second copy of the wording.
+
+        ``_inject_response_language`` swallows a template-render failure and
+        returns the prompt untouched, which here would read as "no language
+        pinned" and hand finalize the infer-from-the-user's-prompts branch —
+        wrong whenever the operator pinned a language the user does not write
+        in. Fall back to a minimal directive built from the same code/name pair
+        so a pinned language always survives.
+        """
+        language_raw = getattr(self.agent_config, "language", None)
+        if not language_raw or not str(language_raw).strip():
+            return None
+        directive = self._inject_response_language("").strip()
+        if directive:
+            return directive
+        language_code = str(language_raw).strip()
+        return f"# Response Language\n- Use: {_resolve_language_name(language_code)} ({language_code})"
+
     def _run_finalize(
         self,
         artifact_slug: str,
@@ -469,6 +493,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
                 analysis_dir=analysis_dir,
                 actions=actions,
                 skip_narrative=skip_narrative,
+                language_directive=self._finalize_language_directive(),
                 # ``db_func_tool`` is wired by ``setup_tools`` early in
                 # the run. Passing it through enables the finalize-time
                 # ``key_tables_schema.json`` bake (describe_table snapshot

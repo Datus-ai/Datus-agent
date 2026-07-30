@@ -530,6 +530,36 @@ class TestBuildFinalizePrompt:
             existing_suggested_questions=None,
         )
 
+    def test_unpinned_language_follows_the_user_prompts(self, report_prompt: str):
+        """finalize has no system prompt, so the language rule must live in the
+        prompt itself — otherwise an English instruction block gets English
+        chips for a Chinese artifact."""
+        assert "## OUTPUT LANGUAGE" in report_prompt
+        assert "SAME language" in report_prompt
+        # The rule has to name the user-visible fields, since slugs / kinds in
+        # the same object must stay machine-readable.
+        assert "`suggested_questions[].question`" in report_prompt
+        assert "`insights[].title`" in report_prompt
+
+    def test_pinned_language_directive_is_inlined(self):
+        directive = "# Response Language\n- Use: Chinese (zh)"
+        prompt = build_finalize_prompt(
+            artifact_kind="dashboard",
+            intent_md="请做一个示例看板",
+            query_briefs=[],
+            query_previews=[],
+            action_history_hints=[],
+            existing_insights=None,
+            existing_suggested_questions=None,
+            language_directive=directive,
+        )
+
+        assert directive in prompt
+        # The pinned branch still carries the field-scope note.
+        assert "`suggested_questions[].question`" in prompt
+        # ...and drops the "infer it from the prompts" fallback.
+        assert "SAME language" not in prompt
+
     def test_prompt_announces_kind_field_in_schema(self, report_prompt: str):
         # Schema section must mention the kind field by name so the LLM
         # actually emits it.
@@ -1444,6 +1474,28 @@ class TestRunFinalizeAnalysis:
         refs = json.loads((analysis_dir / "subject_refs.json").read_text(encoding="utf-8"))
         assert any(m["path"] == ["Revenue"] and m["name"] == "revenue_by_region" for m in refs["metrics"])
         assert result["subject_refs_count"]["metrics"] == 1
+
+    def test_language_directive_reaches_the_llm_prompt(self, tmp_path: Path):
+        """The node resolves ``agent_config.language`` into a directive; it has
+        to land in the finalize prompt, since this LLM call carries no system
+        prompt of its own."""
+        artifact_dir, queries_dir, analysis_dir = _make_artifact_layout(tmp_path)
+
+        model = Mock(spec=["generate_with_json_output", "generate"])
+        model.generate_with_json_output.return_value = _full_finalize_response()
+
+        run_finalize_analysis(
+            model=model,
+            artifact_kind="report",
+            artifact_dir=artifact_dir,
+            queries_dir=queries_dir,
+            analysis_dir=analysis_dir,
+            actions=[],
+            language_directive="# Response Language\n- Use: Chinese (zh)",
+        )
+
+        prompt = model.generate_with_json_output.call_args.args[0]
+        assert "- Use: Chinese (zh)" in prompt
 
     def test_end_to_end_curates_intent_md_when_present(self, tmp_path: Path):
         """When intent.md exists, finalize triggers run_intent_curation
