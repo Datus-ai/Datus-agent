@@ -458,9 +458,16 @@ class TestSemanticFormatters:
     def test_attribution_analyze(self):
         out = _summarize(
             "attribution_analyze",
-            {"success": 1, "result": {"dimension_ranking": list(range(8)), "selected_dimensions": list(range(3))}},
+            {
+                "success": 1,
+                "result": {
+                    "dimension_ranking": list(range(8)),
+                    "selected_dimensions": list(range(3)),
+                    "warnings": [{"code": "UNEQUAL_WINDOWS"}],
+                },
+            },
         )
-        assert out == "sel 3/8 dims"
+        assert out == "sel 3/8 dims; warn…"
 
 
 class TestGenerationFormatters:

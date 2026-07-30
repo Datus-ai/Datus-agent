@@ -24,7 +24,10 @@ from pydantic import BaseModel
 from datus.configuration.agent_config import AgentConfig
 from datus.storage.metric.store import MetricRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
-from datus.tools.func_tool.attribution_utils import DimensionAttributionUtil
+from datus.tools.func_tool.attribution_utils import (
+    AttributionValidationException,
+    DimensionAttributionUtil,
+)
 from datus.tools.func_tool.base import FuncToolListResult, FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.semantic_tools.base import BaseSemanticAdapter
@@ -1465,6 +1468,9 @@ class SemanticTools:
         anomaly_context: Optional[AnomalyContext] = None,
         max_selected_dimensions: int = 3,
         top_n_values: int = 10,
+        where: Optional[str] = None,
+        path: Optional[List[str]] = None,
+        max_dimension_values: int = 500,
     ) -> FuncToolResult:
         """
         Unified attribution analysis for anomaly investigation.
@@ -1483,6 +1489,9 @@ class SemanticTools:
             anomaly_context: Optional anomaly detection context (AnomalyContext with rule and observed_change_pct)
             max_selected_dimensions: Maximum dimensions to select (default 3)
             top_n_values: Number of top dimension values to return (default 10)
+            where: Optional SQL boolean expression applied to every attribution query
+            path: Optional subject tree path for metric scoping
+            max_dimension_values: Maximum grouped values per dimension (hard-capped at 1000)
 
         Returns:
             FuncToolResult with:
@@ -1522,6 +1531,9 @@ class SemanticTools:
                     anomaly_context=anomaly_context_dict,
                     max_selected_dimensions=max_selected_dimensions,
                     top_n_values=top_n_values,
+                    where=where,
+                    path=path,
+                    max_dimension_values=max_dimension_values,
                 )
             )
 
@@ -1530,6 +1542,13 @@ class SemanticTools:
                 result=result.model_dump(),
             )
 
+        except AttributionValidationException as e:
+            logger.warning("Attribution result validation failed: %s", e.payload.message)
+            return FuncToolResult(
+                success=0,
+                error=e.payload.message,
+                result=e.payload.model_dump(),
+            )
         except Exception as e:
             logger.error(f"Error in attribution analysis: {e}")
             return FuncToolResult(

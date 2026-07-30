@@ -542,12 +542,24 @@ def _fmt_attribution_analyze(result: Any) -> str:
     if isinstance(result, dict):
         ranking = result.get("dimension_ranking") or []
         selected = result.get("selected_dimensions") or []
+        warnings = result.get("warnings") or []
         n_sel = len(selected) if isinstance(selected, list) else 0
         n_rank = len(ranking) if isinstance(ranking, list) else 0
+        summary = ""
         if n_sel and n_rank:
-            return f"sel {n_sel}/{n_rank} dims"
-        if n_sel:
-            return f"sel {n_sel} dim" if n_sel == 1 else f"sel {n_sel} dims"
+            summary = f"sel {n_sel}/{n_rank} dims"
+        elif n_sel:
+            summary = f"sel {n_sel} dim" if n_sel == 1 else f"sel {n_sel} dims"
+        warning_codes = []
+        if isinstance(warnings, list):
+            for warning in warnings:
+                code = warning.get("code") if isinstance(warning, dict) else None
+                if isinstance(code, str) and code and code not in warning_codes:
+                    warning_codes.append(code)
+        if warning_codes:
+            warning_summary = f"warn {','.join(warning_codes)}"
+            return f"{summary}; {warning_summary}" if summary else warning_summary
+        return summary
     return ""
 
 

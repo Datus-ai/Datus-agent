@@ -113,6 +113,9 @@ class TestAskMetricsAgenticNode:
         assert "do not call `search_metrics` for metrics that match these entries directly" in prompt
         assert "When the subject tree gives a direct metric/path match" in prompt
         assert "dedicated catalog metric" in prompt
+        assert "## Attribution Playbook" in prompt
+        assert "typed `filter_hint`" in prompt
+        assert "Read contribution details only from `per_dimension`" in prompt
         assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
         assert "Query complete metric results by default" in prompt

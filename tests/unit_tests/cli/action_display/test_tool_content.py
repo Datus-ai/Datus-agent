@@ -1301,11 +1301,12 @@ class TestBuildAttributionAnalyze:
             input_data={"function_name": "attribution_analyze"},
             output_data={
                 "raw_output": '{"success": 1, "result": {"dimension_ranking": ["d1", "d2"], '
-                '"selected_dimensions": ["d1"], "top_dimension_values": []}}'
+                '"selected_dimensions": ["d1"], "top_dimension_values": [], '
+                '"warnings": [{"code": "UNEQUAL_WINDOWS"}]}}'
             },
         )
         tc = _build_attribution_analyze(a, verbose=False)
-        assert "1 dimensions analyzed" in tc.compact_result
+        assert tc.compact_result == "1 dimension analyzed, 1 warning"
 
 
 # ── Filesystem tools ──────────────────────────────────────────────
