@@ -236,6 +236,26 @@ class TestAttributionAnalysis:
         assert "ZERO_TOTAL_DELTA_WITH_COMPONENT_CHANGES" in [warning.code for warning in output.warnings]
 
     @pytest.mark.asyncio
+    async def test_effectively_zero_delta_omits_delta_residual_percentage(self):
+        baseline_total = 1_000_000_000
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": baseline_total}),
+                result(["revenue"], {"revenue": baseline_total + 0.001}),
+                result(["region", "revenue"], {"region": "US", "revenue": baseline_total}),
+                result(["region", "revenue"], {"region": "US", "revenue": baseline_total + 1}),
+            ]
+        )
+
+        output = await analyze(adapter)
+
+        dimension = output.per_dimension["orders.region"]
+        assert dimension.additivity_check.status == "passed"
+        assert dimension.additivity_check.delta_residual_pct is None
+        assert dimension.score == 0
+        assert dimension.contributions[0].contribution_pct_of_total_delta == 0
+
+    @pytest.mark.asyncio
     async def test_union_cardinality_truncates_dimension_and_excludes_legacy_ranking(self):
         adapter = ScriptedAdapter(
             [

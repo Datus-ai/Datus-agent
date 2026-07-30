@@ -16,9 +16,9 @@ Both call sites must produce identical wording, so the per-tool formatters
 live in one place. Only the ``success`` path is per-tool; failure
 summaries are produced uniformly by :func:`format_failure`.
 
-All non-filesystem summaries are clipped to ``SUMMARY_TEXT_MAX_CHARS``
-characters at the registry exit; filesystem tools (``read_file``,
-``write_file``, ``edit_file``, ``glob``, ``grep``) bypass the clip.
+Most summaries are clipped to ``SUMMARY_TEXT_MAX_CHARS`` characters at the
+registry exit. Tools whose compact contract requires complete identifiers,
+including filesystem tools and ``attribution_analyze``, bypass the clip.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ SUMMARY_ERROR_MAX_CHARS = 19
 FS_TOOLS_NO_CLIP = frozenset(
     {"read_file", "write_file", "edit_file", "delete_file", "glob", "grep", "web_search", "web_fetch"}
 )
+SUMMARY_TOOLS_NO_CLIP = FS_TOOLS_NO_CLIP | frozenset({"attribution_analyze"})
 
 
 # ── Generic helpers (public API) ────────────────────────────────────────
@@ -174,13 +175,12 @@ def _list_count(value: Any, singular: str, plural: str) -> str:
 def _clip_short(text: str, tool_name: str = "", limit: int = SUMMARY_TEXT_MAX_CHARS) -> str:
     """Final-stage clip applied at registry exit.
 
-    Filesystem tools (``read_file``, ``write_file``, ``edit_file``,
-    ``delete_file``, ``glob``, ``grep``) are exempt — their summaries are
-    returned verbatim because users want full path / count visibility there.
+    Tools in ``SUMMARY_TOOLS_NO_CLIP`` are exempt because their summaries carry
+    identifiers that must remain complete.
     """
     if not isinstance(text, str):
         return text
-    if tool_name in FS_TOOLS_NO_CLIP:
+    if tool_name in SUMMARY_TOOLS_NO_CLIP:
         return text
     if len(text) <= limit:
         return text
@@ -540,16 +540,11 @@ def _fmt_validate_semantic(result: Any) -> str:
 
 def _fmt_attribution_analyze(result: Any) -> str:
     if isinstance(result, dict):
-        ranking = result.get("dimension_ranking") or []
         selected = result.get("selected_dimensions") or []
         warnings = result.get("warnings") or []
-        n_sel = len(selected) if isinstance(selected, list) else 0
-        n_rank = len(ranking) if isinstance(ranking, list) else 0
-        summary = ""
-        if n_sel and n_rank:
-            summary = f"sel {n_sel}/{n_rank} dims"
-        elif n_sel:
-            summary = f"sel {n_sel} dim" if n_sel == 1 else f"sel {n_sel} dims"
+        summary_parts = []
+        if isinstance(selected, list) and selected:
+            summary_parts.append(f"selected {','.join(str(dimension) for dimension in selected)}")
         warning_codes = []
         if isinstance(warnings, list):
             for warning in warnings:
@@ -557,9 +552,8 @@ def _fmt_attribution_analyze(result: Any) -> str:
                 if isinstance(code, str) and code and code not in warning_codes:
                     warning_codes.append(code)
         if warning_codes:
-            warning_summary = f"warn {','.join(warning_codes)}"
-            return f"{summary}; {warning_summary}" if summary else warning_summary
-        return summary
+            summary_parts.append(f"warnings {','.join(warning_codes)}")
+        return "; ".join(summary_parts)
     return ""
 
 
@@ -1134,8 +1128,8 @@ class ToolSummaryRegistry:
     per-tool formatters are invoked only when the payload indicates
     success and the unwrapped ``result`` is non-empty.
 
-    The registry exit applies :func:`_clip_short` so every non-filesystem
-    summary is bounded to ``SUMMARY_TEXT_MAX_CHARS`` characters.
+    The registry exit applies :func:`_clip_short`; tools outside
+    ``SUMMARY_TOOLS_NO_CLIP`` are bounded to ``SUMMARY_TEXT_MAX_CHARS``.
     """
 
     def __init__(self) -> None:

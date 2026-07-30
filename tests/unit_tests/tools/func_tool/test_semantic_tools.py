@@ -2379,6 +2379,15 @@ class TestAttributionAnalyze:
 
         assert {"where", "path", "max_dimension_values"}.issubset(schema["properties"])
 
+    def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+
+        description = trans_to_function_tool(tool.attribution_analyze).description.lower()
+
+        assert "descriptive dimension analysis" in description
+        assert "do not establish causation" in description
+        assert "root cause analysis" not in description
+
     def test_no_attribution_tool_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.attribution_analyze(
             metric_name="revenue",

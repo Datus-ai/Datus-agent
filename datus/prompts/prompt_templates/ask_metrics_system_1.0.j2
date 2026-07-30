@@ -57,6 +57,7 @@ Use the narrow metric workflow below:
 ## Attribution Playbook
 
 - Before attribution, use `query_metrics` at an appropriate time grain to confirm the comparison windows, observed change, and data coverage.
+- Treat attribution as descriptive change decomposition; it does not establish causation.
 - Use `get_dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
 - Use equal-length baseline and current windows. If the result contains `UNEQUAL_WINDOWS`, disclose that values were not normalized before comparing them.
 - Read contribution details only from `per_dimension`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is a legacy compatibility field and must not be used for analysis.

@@ -1473,11 +1473,11 @@ class SemanticTools:
         max_dimension_values: int = 500,
     ) -> FuncToolResult:
         """
-        Unified attribution analysis for anomaly investigation.
+        Descriptive dimension analysis for metric changes.
 
-        Automatically ranks candidate dimensions by explanatory power and calculates
-        delta contributions for the most important dimensions. Perfect for LLM-driven
-        root cause analysis of metric anomalies.
+        Ranks candidate dimensions by change concentration and calculates delta
+        contributions for selected dimensions. Results describe where a metric change
+        is concentrated; they do not establish causation.
 
         Args:
             metric_name: Metric to analyze(from list_metrics/search_metrics)

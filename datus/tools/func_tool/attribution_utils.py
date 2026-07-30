@@ -30,7 +30,7 @@ _ZERO_DELTA_EPSILON = 1e-6
 
 
 class DimensionRanking(BaseModel):
-    """Ranking score for a dimension's explanatory power."""
+    """Ranking score for a dimension's change concentration."""
 
     dimension: str = Field(..., description="Dimension name")
     score: float = Field(
@@ -111,7 +111,7 @@ class AttributionAnalysisResult(BaseModel):
 
     metric_name: str = Field(..., description="Metric being analyzed")
     candidate_dimensions: List[str] = Field(..., description="Input candidate dimensions")
-    dimension_ranking: List[DimensionRanking] = Field(..., description="Dimensions ranked by importance")
+    dimension_ranking: List[DimensionRanking] = Field(..., description="Dimensions ranked by change concentration")
     selected_dimensions: List[str] = Field(..., description="Dimensions selected for analysis")
     top_dimension_values: List[DimensionValueContribution] = Field(
         ..., description="Legacy cross-dimension list of top contributors"
@@ -285,6 +285,7 @@ class DimensionAttributionUtil:
                 current_total=current_total,
                 baseline_values=[item[1] for item in baseline_lookup.values()],
                 current_values=[item[1] for item in current_lookup.values()],
+                total_delta_is_zero=total_delta_is_zero,
             )
             if additivity_check.status == "failed":
                 warnings.append(
@@ -551,6 +552,7 @@ class DimensionAttributionUtil:
         current_total: float,
         baseline_values: List[float],
         current_values: List[float],
+        total_delta_is_zero: bool,
     ) -> AdditivityCheck:
         baseline_sum = sum(baseline_values)
         current_sum = sum(current_values)
@@ -577,7 +579,9 @@ class DimensionAttributionUtil:
             current_residual=current_residual,
             baseline_residual_pct=(baseline_residual / abs(baseline_total) * 100 if baseline_total != 0 else None),
             current_residual_pct=(current_residual / abs(current_total) * 100 if current_total != 0 else None),
-            delta_residual_pct=((grouped_delta - total_delta) / abs(total_delta) * 100 if total_delta != 0 else None),
+            delta_residual_pct=(
+                (grouped_delta - total_delta) / abs(total_delta) * 100 if not total_delta_is_zero else None
+            ),
         )
 
     @staticmethod
