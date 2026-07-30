@@ -1581,7 +1581,11 @@ def _build_attribution_analyze(action: ActionHistory, verbose: bool) -> ToolCall
             if isinstance(result, dict):
                 dims = result.get("selected_dimensions") or result.get("dimension_ranking", [])
                 count = len(dims) if isinstance(dims, list) else 0
-                tc.compact_result = f"{count} dimensions analyzed"
+                warnings = result.get("warnings") or []
+                warning_count = len(warnings) if isinstance(warnings, list) else 0
+                tc.compact_result = f"{count} {'dimension' if count == 1 else 'dimensions'} analyzed"
+                if warning_count:
+                    tc.compact_result += f", {warning_count} {'warning' if warning_count == 1 else 'warnings'}"
     return tc
 
 

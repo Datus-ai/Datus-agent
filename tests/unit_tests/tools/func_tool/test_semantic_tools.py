@@ -9,7 +9,11 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from datus.tools.func_tool.base import FuncToolResult, normalize_null
+from datus.tools.func_tool.attribution_utils import (
+    AttributionValidationErrorPayload,
+    AttributionValidationException,
+)
+from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.metric_queryability import extract_metric_queryability_contracts
 from datus.tools.func_tool.semantic_tools import _run_async
@@ -2368,6 +2372,22 @@ class TestValidateSemantic:
 
 
 class TestAttributionAnalyze:
+    def test_tool_schema_exposes_drilldown_guardrail_parameters(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+
+        schema = trans_to_function_tool(tool.attribution_analyze).params_json_schema
+
+        assert {"where", "path", "max_dimension_values"}.issubset(schema["properties"])
+
+    def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_adapter):
+        tool, _ = semantic_tools_with_adapter
+
+        description = trans_to_function_tool(tool.attribution_analyze).description.lower()
+
+        assert "descriptive dimension analysis" in description
+        assert "do not establish causation" in description
+        assert "root cause analysis" not in description
+
     def test_no_attribution_tool_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.attribution_analyze(
             metric_name="revenue",
@@ -2390,6 +2410,7 @@ class TestAttributionAnalyze:
             "dimension_ranking": [],
             "selected_dimensions": [],
             "top_dimension_values": {},
+            "warnings": [{"code": "UNEQUAL_WINDOWS", "message": "not equal"}],
         }
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_result):
@@ -2401,9 +2422,27 @@ class TestAttributionAnalyze:
                 current_start="2024-01-08",
                 current_end="2024-01-14",
                 anomaly_context={"rule": "3sigma", "observed_change_pct": 20.0},
+                where="region = 'US'",
+                path=["sales"],
+                max_dimension_values=25,
             )
 
         assert result.success == 1
+        assert result.result["warnings"][0]["code"] == "UNEQUAL_WINDOWS"
+        mock_attribution.attribution_analyze.assert_called_once_with(
+            metric_name="revenue",
+            candidate_dimensions=["region"],
+            baseline_start="2024-01-01",
+            baseline_end="2024-01-07",
+            current_start="2024-01-08",
+            current_end="2024-01-14",
+            anomaly_context={"rule": "3sigma", "observed_change_pct": 20.0},
+            max_selected_dimensions=3,
+            top_n_values=10,
+            where="region = 'US'",
+            path=["sales"],
+            max_dimension_values=25,
+        )
 
     def test_success_none_anomaly_context(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -2443,6 +2482,34 @@ class TestAttributionAnalyze:
 
         assert result.success == 0
         assert "analysis failed" in result.error
+
+    def test_validation_exception_returns_structured_failure(self, semantic_tools_with_adapter):
+        tool, mock_adapter = semantic_tools_with_adapter
+        tool._attribution_tool = Mock()
+        payload = AttributionValidationErrorPayload(
+            code="MULTI_ROW_TOTAL",
+            message="Expected one total row.",
+            period="baseline",
+            columns=["revenue"],
+            row_count=2,
+        )
+
+        with patch(
+            "datus.tools.func_tool.semantic_tools._run_async",
+            side_effect=AttributionValidationException(payload),
+        ):
+            result = tool.attribution_analyze(
+                metric_name="revenue",
+                candidate_dimensions=["region"],
+                baseline_start="2024-01-01",
+                baseline_end="2024-01-07",
+                current_start="2024-01-08",
+                current_end="2024-01-14",
+            )
+
+        assert result.success == 0
+        assert result.error == "Expected one total row."
+        assert result.result == payload.model_dump()
 
 
 class TestExtractDbConfig:

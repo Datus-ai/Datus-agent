@@ -8,9 +8,9 @@ These tests pin the wording produced by every registered formatter so a
 future formatter regression is caught before it reaches the CLI compact
 line or the SSE ``shortDesc`` payload.
 
-Contract: every non-filesystem summary must be ≤ ``SUMMARY_TEXT_MAX_CHARS``
-(19) characters; filesystem tools (``read_file``, ``write_file``,
-``edit_file``, ``glob``, ``grep``) bypass the clip and return verbatim.
+Contract: summaries are normally ≤ ``SUMMARY_TEXT_MAX_CHARS`` (19)
+characters. Tools whose compact summaries require complete identifiers,
+including filesystem tools and attribution analysis, bypass the clip.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from typing import Any
 import pytest
 
 from datus.schemas.tool_summary import (
-    FS_TOOLS_NO_CLIP,
     SUMMARY_TEXT_MAX_CHARS,
+    SUMMARY_TOOLS_NO_CLIP,
     TOOL_SUMMARY_REGISTRY,
     ToolSummaryRegistry,
     detect_tool_failure,
@@ -458,9 +458,17 @@ class TestSemanticFormatters:
     def test_attribution_analyze(self):
         out = _summarize(
             "attribution_analyze",
-            {"success": 1, "result": {"dimension_ranking": list(range(8)), "selected_dimensions": list(range(3))}},
+            {
+                "success": 1,
+                "result": {
+                    "dimension_ranking": list(range(8)),
+                    "selected_dimensions": ["region", "platform", "channel"],
+                    "warnings": [{"code": "UNEQUAL_WINDOWS"}],
+                },
+            },
         )
-        assert out == "sel 3/8 dims"
+        assert out == "selected region,platform,channel; warnings UNEQUAL_WINDOWS"
+        assert len(out) > SUMMARY_TEXT_MAX_CHARS
 
 
 class TestGenerationFormatters:
@@ -922,7 +930,7 @@ def test_failure_path_uniform(tool: str):
         ("list_databases", ["mydb"], "1 db"),
         # Semantic fallbacks
         ("validate_semantic", {"valid": False, "issues": []}, "invalid"),
-        ("attribution_analyze", {"selected_dimensions": [1]}, "sel 1 dim"),
+        ("attribution_analyze", {"selected_dimensions": ["region"]}, "selected region"),
         ("query_metrics", {"columns": ["a", "b"]}, "2 cols"),
         ("query_metrics", {"data": {"original_rows": 7}}, "7 rows"),
         # Generation fallbacks
@@ -1039,7 +1047,6 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
     ("get_dimensions", {"items": [{"name": "d"} for _ in range(50)], "total": 9999}),
     ("query_metrics", {"columns": ["x"] * 50, "data": {"original_rows": 99999}}),
     ("validate_semantic", {"valid": False, "issues": list(range(999))}),
-    ("attribution_analyze", {"dimension_ranking": list(range(99)), "selected_dimensions": list(range(99))}),
     ("search_metrics", [{}] * 99),
     ("search_reference_sql", [{}] * 99),
     ("search_semantic_objects", [{}] * 99),
@@ -1103,9 +1110,9 @@ _LENGTH_CONTRACT_SAMPLES: list[tuple[str, Any]] = [
 
 @pytest.mark.parametrize("tool, result", _LENGTH_CONTRACT_SAMPLES)
 def test_summary_length_contract_under_20(tool: str, result: Any):
-    """Every non-fs tool summary must be ≤ SUMMARY_TEXT_MAX_CHARS (19) characters."""
+    """Every normally clipped tool summary must be at most 19 characters."""
     out = TOOL_SUMMARY_REGISTRY.summarize_dict({"success": 1, "result": result}, tool)
-    assert tool not in FS_TOOLS_NO_CLIP, "fs tools are not part of this contract"
+    assert tool not in SUMMARY_TOOLS_NO_CLIP, "unclipped tools are not part of this contract"
     assert len(out) <= SUMMARY_TEXT_MAX_CHARS, f"{tool}: {out!r} ({len(out)} chars)"
 
 

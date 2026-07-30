@@ -17,7 +17,7 @@ Use the narrow metric workflow below:
    `extra.time_granularities`; grains are ordered finest to coarsest, and the
    first grain is the default.
 6. Call `query_metrics` to retrieve metric values.
-7. For change explanation, root-cause, or contribution questions, call `attribution_analyze` after selecting candidate dimensions.
+7. For change explanation, root-cause, or contribution questions, follow the Attribution Playbook below.
 8. If no suitable existing metric can answer the question, say so directly and do not fall back to raw SQL.
 
 ## Tool Rules
@@ -53,6 +53,23 @@ Use the narrow metric workflow below:
 - When you have the query result that should be used as the final structured answer, call `select_final_metric_result` with the `result_id` from that successful `query_metrics` result. This selection is required; do not select diagnostic or exploratory queries as final.
 - Before selecting the final result, verify that its columns include every grouping dimension explicitly requested by the user and every requested metric value that is exposed as a metric. If another successful `query_metrics` result better matches those requested dimensions and metrics, select that result instead.
 {% endif %}
+
+## Attribution Playbook
+
+- Before attribution, use `query_metrics` at an appropriate time grain to confirm the comparison windows, observed change, and data coverage.
+- Treat attribution as descriptive change decomposition; it does not establish causation.
+- Use `get_dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
+- Use equal-length baseline and current windows. If the result contains `UNEQUAL_WINDOWS`, disclose that values were not normalized before comparing them.
+- Read contribution details only from `per_dimension`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is a legacy compatibility field and must not be used for analysis.
+- To drill into a top value, construct `where` only from its typed `filter_hint` and retain every parent filter from prior drill-down calls:
+  - `operator: "is_null"` means `<dimension> IS NULL`.
+  - Numeric values are not quoted.
+  - String values are quoted with embedded quotes escaped for the datasource dialect.
+- Always disclose attribution `warnings`:
+  - With `NON_ADDITIVE_DIMENSION`, do not interpret that dimension's percentages as an additive decomposition.
+  - With `NO_DATA_*`, `NULL_TOTAL_*`, or `ZERO_OR_NO_DATA_*`, do not give an attribution conclusion; first confirm coverage with `query_metrics`.
+  - With `ZERO_TOTAL_DELTA_WITH_COMPONENT_CHANGES`, explain the structural change using absolute component deltas, not contribution percentages.
+  - With `HIGH_CARDINALITY_DIMENSION`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
 
 ## Period-Over-Period Metric Queries
 
