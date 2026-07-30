@@ -41,7 +41,7 @@ lxml>=5.0.0
 markdown-it-py>=3.0.0
 tabulate>=0.9.0
 datus-storage-base==0.1.5
-datus-db-core>=0.1.4
-datus-semantic-core>=0.2.2
+datus-db-core>=0.1.5
+datus-semantic-core>=0.2.3
 datus-bi-core>=0.1.2
 datus-scheduler-core>=0.1.1

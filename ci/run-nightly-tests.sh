@@ -68,6 +68,7 @@ POSTGRES_COMPOSE="${POSTGRES_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-postgresql/docke
 MYSQL_COMPOSE="${MYSQL_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-mysql/docker-compose.yml}"
 CLICKHOUSE_COMPOSE="${CLICKHOUSE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-clickhouse/docker-compose.yml}"
 STARROCKS_COMPOSE="${STARROCKS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-starrocks/docker-compose.yml}"
+DORIS_COMPOSE="${DORIS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-doris/docker-compose.yml}"
 TRINO_COMPOSE="${TRINO_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-trino/docker-compose.yml}"
 GREENPLUM_COMPOSE="${GREENPLUM_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-greenplum/docker-compose.yml}"
 HIVE_COMPOSE="${HIVE_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-hive/docker-compose.yml}"
@@ -81,6 +82,7 @@ COMPOSE_FILES=(
   "$MYSQL_COMPOSE"
   "$CLICKHOUSE_COMPOSE"
   "$STARROCKS_COMPOSE"
+  "$DORIS_COMPOSE"
   "$TRINO_COMPOSE"
   "$GREENPLUM_COMPOSE"
   "$HIVE_COMPOSE"
@@ -98,6 +100,7 @@ COMPOSE_GROUPS=(
   "MySQL Adapter Tests"
   "ClickHouse Adapter Tests"
   "StarRocks Adapter Tests"
+  "Doris Adapter Tests"
   "Trino Adapter Tests"
   "Greenplum Adapter Tests"
   "Hive Adapter Tests"
@@ -481,6 +484,7 @@ compose_project_slug() {
     "MySQL Adapter Tests") echo "mysql" ;;
     "ClickHouse Adapter Tests") echo "clickhouse" ;;
     "StarRocks Adapter Tests") echo "starrocks" ;;
+    "Doris Adapter Tests") echo "doris" ;;
     "Trino Adapter Tests") echo "trino" ;;
     "Greenplum Adapter Tests") echo "greenplum" ;;
     "Hive Adapter Tests") echo "hive" ;;
@@ -536,6 +540,7 @@ cleanup_all_compose() {
       "MySQL Adapter Tests") compose_file="$MYSQL_COMPOSE" ;;
       "ClickHouse Adapter Tests") compose_file="$CLICKHOUSE_COMPOSE" ;;
       "StarRocks Adapter Tests") compose_file="$STARROCKS_COMPOSE" ;;
+      "Doris Adapter Tests") compose_file="$DORIS_COMPOSE" ;;
       "Trino Adapter Tests") compose_file="$TRINO_COMPOSE" ;;
       "Greenplum Adapter Tests") compose_file="$GREENPLUM_COMPOSE" ;;
       "Hive Adapter Tests") compose_file="$HIVE_COMPOSE" ;;
@@ -821,6 +826,7 @@ export ADAPTERS_PG="${ADAPTERS_PG:-1}"
 export ADAPTERS_MYSQL="${ADAPTERS_MYSQL:-1}"
 export ADAPTERS_CH="${ADAPTERS_CH:-1}"
 export ADAPTERS_SR="${ADAPTERS_SR:-1}"
+export ADAPTERS_DORIS="${ADAPTERS_DORIS:-1}"
 export ADAPTERS_TRINO="${ADAPTERS_TRINO:-1}"
 export ADAPTERS_GP="${ADAPTERS_GP:-1}"
 export ADAPTERS_HIVE="${ADAPTERS_HIVE:-1}"
@@ -878,6 +884,15 @@ if [ "${NIGHTLY_FORCE_ADAPTER_ENV:-1}" = "1" ]; then
   export STARROCKS_PASSWORD=
   export STARROCKS_CATALOG=default_catalog
   export STARROCKS_DATABASE=test
+
+  export DORIS_QUERY_HOST_PORT="${DORIS_QUERY_HOST_PORT:-29031}"
+  export DORIS_HTTP_HOST_PORT="${DORIS_HTTP_HOST_PORT:-28031}"
+  export DORIS_HOST=127.0.0.1
+  export DORIS_PORT="$DORIS_QUERY_HOST_PORT"
+  export DORIS_USER=root
+  export DORIS_PASSWORD=
+  export DORIS_CATALOG=internal
+  export DORIS_DATABASE=test
 
   export TRINO_HOST_PORT="${TRINO_HOST_PORT:-28080}"
   export TRINO_HOST=127.0.0.1
@@ -1134,6 +1149,9 @@ compose_host_port_specs() {
       ;;
     "StarRocks Adapter Tests")
       printf 'StarRocks query:%s\nStarRocks HTTP:%s\n' "${STARROCKS_QUERY_HOST_PORT:-29030}" "${STARROCKS_HTTP_HOST_PORT:-28030}"
+      ;;
+    "Doris Adapter Tests")
+      printf 'Doris query:%s\nDoris HTTP:%s\n' "${DORIS_QUERY_HOST_PORT:-29031}" "${DORIS_HTTP_HOST_PORT:-28031}"
       ;;
     "Trino Adapter Tests")
       printf 'Trino HTTP:%s\n' "${TRINO_HOST_PORT:-28080}"
@@ -1417,6 +1435,9 @@ wait_for_compose_client_readiness() {
     "StarRocks Adapter Tests")
       wait_for_starrocks_client_readiness 300
       ;;
+    "Doris Adapter Tests")
+      wait_for_tcp_readiness "Doris" "${DORIS_HOST:-127.0.0.1}" "${DORIS_PORT:-9030}" 600
+      ;;
     "Trino Adapter Tests")
       wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
       ;;
@@ -1548,6 +1569,7 @@ log "POSTGRESQL_HOST=${POSTGRESQL_HOST:-} POSTGRESQL_PORT=${POSTGRESQL_PORT:-} P
 log "MYSQL_HOST=${MYSQL_HOST:-} MYSQL_PORT=${MYSQL_PORT:-} MYSQL_HOST_PORT=${MYSQL_HOST_PORT:-}"
 log "CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-} CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-} CLICKHOUSE_HTTP_HOST_PORT=${CLICKHOUSE_HTTP_HOST_PORT:-} CLICKHOUSE_NATIVE_HOST_PORT=${CLICKHOUSE_NATIVE_HOST_PORT:-}"
 log "STARROCKS_HOST=${STARROCKS_HOST:-} STARROCKS_PORT=${STARROCKS_PORT:-} STARROCKS_QUERY_HOST_PORT=${STARROCKS_QUERY_HOST_PORT:-} STARROCKS_HTTP_HOST_PORT=${STARROCKS_HTTP_HOST_PORT:-}"
+log "DORIS_HOST=${DORIS_HOST:-} DORIS_PORT=${DORIS_PORT:-} DORIS_QUERY_HOST_PORT=${DORIS_QUERY_HOST_PORT:-} DORIS_HTTP_HOST_PORT=${DORIS_HTTP_HOST_PORT:-}"
 log "TRINO_HOST=${TRINO_HOST:-} TRINO_PORT=${TRINO_PORT:-}"
 log "GREENPLUM_HOST=${GREENPLUM_HOST:-} GREENPLUM_PORT=${GREENPLUM_PORT:-} GREENPLUM_HOST_PORT=${GREENPLUM_HOST_PORT:-}"
 log "HIVE_HOST=${HIVE_HOST:-} HIVE_PORT=${HIVE_PORT:-} HIVE_METASTORE_HOST_PORT=${HIVE_METASTORE_HOST_PORT:-} HIVE_THRIFT_HOST_PORT=${HIVE_THRIFT_HOST_PORT:-} HIVE_WEBUI_HOST_PORT=${HIVE_WEBUI_HOST_PORT:-}"
@@ -1603,6 +1625,7 @@ NIGHTLY_DEDICATED_SUITE_DESELECTS=(
   --deselect tests/integration/adapters/test_mysql.py
   --deselect tests/integration/adapters/test_clickhouse.py
   --deselect tests/integration/adapters/test_starrocks.py
+  --deselect tests/integration/adapters/test_doris.py
   --deselect tests/integration/adapters/test_trino.py
   --deselect tests/integration/adapters/test_greenplum.py
   --deselect tests/integration/adapters/test_hive.py
@@ -1628,6 +1651,7 @@ run_compose_suite "PostgreSQL Adapter Tests" "$POSTGRES_COMPOSE" "postgres:300" 
 run_compose_suite "MySQL Adapter Tests" "$MYSQL_COMPOSE" "mysql:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_mysql.py tests/integration/adapters/test_semantic_metricflow_mysql.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "ClickHouse Adapter Tests" "$CLICKHOUSE_COMPOSE" "clickhouse:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_clickhouse.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "StarRocks Adapter Tests" "$STARROCKS_COMPOSE" "starrocks:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_starrocks.py --tb=short --verbose --timeout=300 --timeout-method=thread
+run_compose_suite "Doris Adapter Tests" "$DORIS_COMPOSE" "doris-fe:600" "doris-be:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_doris.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Trino Adapter Tests" "$TRINO_COMPOSE" "trino:300" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_trino.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Greenplum Adapter Tests" "$GREENPLUM_COMPOSE" "greenplum:600" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_greenplum.py --tb=short --verbose --timeout=300 --timeout-method=thread
 run_compose_suite "Hive Adapter Tests" "$HIVE_COMPOSE" "hive-metastore:600" "hive-server:900" -- run_with_agent_home "$NIGHTLY_HOME" "$NIGHTLY_PROJECT_ROOT" env DATUS_TEST_LAYER=nightly uv run pytest -m nightly tests/integration/adapters/test_hive.py --tb=short --verbose --timeout=300 --timeout-method=thread

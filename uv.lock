@@ -775,9 +775,9 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12.0" },
     { name = "charset-normalizer", specifier = ">=3.4.2" },
     { name = "datus-bi-core", specifier = ">=0.1.2" },
-    { name = "datus-db-core", specifier = ">=0.1.4" },
+    { name = "datus-db-core", specifier = ">=0.1.5" },
     { name = "datus-scheduler-core", specifier = ">=0.1.1" },
-    { name = "datus-semantic-core", specifier = ">=0.2.2" },
+    { name = "datus-semantic-core", specifier = ">=0.2.3" },
     { name = "datus-storage-base", specifier = ">=0.1.5,<0.2.0" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "duckdb", specifier = "==1.5.2" },
@@ -824,7 +824,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 ci = [
     { name = "datus-metricflow", specifier = ">=0.2.7" },
-    { name = "datus-semantic-metricflow", specifier = ">=0.2.11" },
+    { name = "datus-semantic-metricflow", specifier = ">=0.2.12" },
     { name = "datus-semantic-osi", specifier = ">=0.1.4" },
     { name = "datus-storage-postgresql", specifier = ">=0.1.5" },
 ]
@@ -865,15 +865,15 @@ wheels = [
 
 [[package]]
 name = "datus-db-core"
-version = "0.1.4"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "sqlglot" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8e/47/edbf32ce34e180c98bb6b18bf7f6a1f022f9baaabe0dcaa5a7783a1641de/datus_db_core-0.1.4.tar.gz", hash = "sha256:02d2629592511639adf9ac85118895f3692b439cdd22ecd691902b11b34b80ac", size = 32089, upload-time = "2026-05-19T15:18:36.054Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/7e/3d7c569b0ec3b46978ebd3aa846d83874a903203aadc1c0033883c836b04/datus_db_core-0.1.5.tar.gz", hash = "sha256:bfd44618432e88718998e38b5122de470bdab06b27ba919ee51084cb10df2faa", size = 33739, upload-time = "2026-07-30T07:26:31.627Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/0e/a1c3436417bb7528b372d6d033f30b4590220b8b38c39582dcaef21a7323/datus_db_core-0.1.4-py3-none-any.whl", hash = "sha256:2c6a9872c82e2c02d74f27df4249ea92748cb2dbc0a96515d2854ce5adfec8fc", size = 25327, upload-time = "2026-05-19T15:18:28.481Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/6b/94d4c676d99a61deda25aa18f19bac5db722a1ff0849618b552f0c199297/datus_db_core-0.1.5-py3-none-any.whl", hash = "sha256:209ef6d0188bcba722ec040ad42d277a516242c1b7daaa0f787668cae96e01e1", size = 26174, upload-time = "2026-07-30T07:26:30.684Z" },
 ]
 
 [[package]]
@@ -942,29 +942,29 @@ wheels = [
 
 [[package]]
 name = "datus-semantic-core"
-version = "0.2.2"
+version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/f7/45c9ad8168af72b3d96c5e59ccd348ff5b8bda5c6924911066e54357b1e0/datus_semantic_core-0.2.2.tar.gz", hash = "sha256:d7aeb0120f560ac82f877821ca37e25297b3cf4bf538faade91dcb3e16b311be", size = 20779, upload-time = "2026-07-22T09:51:45.502Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/3b/71c3cf9fa310e94c80a2b7985e2f20b35f13a3ae716cafad29106c096ed1/datus_semantic_core-0.2.3.tar.gz", hash = "sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42", size = 21011, upload-time = "2026-07-28T09:40:51.722Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/a4/40d293ee4a9b69c4727b76fa2a6927cba5965205cee35bd648104bb61e15/datus_semantic_core-0.2.2-py3-none-any.whl", hash = "sha256:1fea81362af873aada076d57e2f2ef513f2dafb4dc02668f15a5168f4fad601b", size = 18140, upload-time = "2026-07-22T09:51:44.596Z" },
+    { url = "https://files.pythonhosted.org/packages/31/6e/67d83303b7d5cf8fb5cab12ea73e38723173980b32f88e1d446f241d2dd6/datus_semantic_core-0.2.3-py3-none-any.whl", hash = "sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d", size = 18286, upload-time = "2026-07-28T09:40:50.661Z" },
 ]
 
 [[package]]
 name = "datus-semantic-metricflow"
-version = "0.2.11"
+version = "0.2.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "datus-metricflow", extra = ["snowflake"] },
     { name = "datus-semantic-core" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/5f/e54ace7d77458c052e89b8b4498d98f83763413045488d58d0cd839c408c/datus_semantic_metricflow-0.2.11.tar.gz", hash = "sha256:57ee277d7314795e0b91f50d21c11aa987e7fbe6b76fe1cb658e9d675115d5ec", size = 26984, upload-time = "2026-07-22T09:53:00.211Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/6c/7030bc814ff922e11cad1b6f4d620d6d943335060ee0c0abbbd1790e17df/datus_semantic_metricflow-0.2.12.tar.gz", hash = "sha256:8253df9353e95c1dd7d60bbdbb5bc3a5b3295ee75d39a80f5003f820f03c8cc4", size = 27705, upload-time = "2026-07-28T09:45:09.722Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/b4/821aa487500f129747d3f7fd3eee0259790ee08ddde10088bfb57279d5d5/datus_semantic_metricflow-0.2.11-py3-none-any.whl", hash = "sha256:72c86d3022bc5a2b60d82f3400c78539e71d4a34f8efccbe0688425daf182874", size = 29389, upload-time = "2026-07-22T09:52:59.415Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/95/ffcf8a436b9bae049da496a5b07eac534bcaf094240c9b9ec797765ad68d/datus_semantic_metricflow-0.2.12-py3-none-any.whl", hash = "sha256:02c9977e5260e175c2a42bfbaf1aa99b8115906c639f87748fc03de512a43395", size = 30059, upload-time = "2026-07-28T09:45:08.86Z" },
 ]
 
 [[package]]

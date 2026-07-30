@@ -17,7 +17,9 @@ logger = get_logger(__name__)
 
 _SQL_FENCE_LANGS = {
     "bigquery",
+    "doris",
     "duckdb",
+    "hologres",
     "mysql",
     "postgres",
     "postgresql",

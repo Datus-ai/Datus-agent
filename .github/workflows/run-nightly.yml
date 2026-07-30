@@ -154,6 +154,8 @@ jobs:
             --reinstall-package datus-semantic-core \
             --reinstall-package datus-semantic-metricflow \
             --reinstall-package datus-snowflake \
+            --reinstall-package datus-doris \
+            --reinstall-package datus-hologres \
             --reinstall-package datus-storage-base \
             --reinstall-package datus-storage-postgresql \
             pytest-playwright \
@@ -168,6 +170,8 @@ jobs:
             ./external/datus-db-adapters/datus-mysql \
             ./external/datus-db-adapters/datus-clickhouse \
             ./external/datus-db-adapters/datus-starrocks \
+            ./external/datus-db-adapters/datus-doris \
+            ./external/datus-db-adapters/datus-hologres \
             ./external/datus-db-adapters/datus-trino \
             ./external/datus-db-adapters/datus-greenplum \
             ./external/datus-db-adapters/datus-hive \
@@ -299,6 +303,7 @@ jobs:
           echo "ADAPTERS_MYSQL=1" >> $GITHUB_ENV
           echo "ADAPTERS_CH=1" >> $GITHUB_ENV
           echo "ADAPTERS_SR=1" >> $GITHUB_ENV
+          echo "ADAPTERS_DORIS=1" >> $GITHUB_ENV
           echo "ADAPTERS_TRINO=1" >> $GITHUB_ENV
           echo "ADAPTERS_GP=1" >> $GITHUB_ENV
           echo "ADAPTERS_HIVE=1" >> $GITHUB_ENV
@@ -321,6 +326,8 @@ jobs:
           echo "CLICKHOUSE_NATIVE_HOST_PORT=29000" >> $GITHUB_ENV
           echo "STARROCKS_QUERY_HOST_PORT=29030" >> $GITHUB_ENV
           echo "STARROCKS_HTTP_HOST_PORT=28030" >> $GITHUB_ENV
+          echo "DORIS_QUERY_HOST_PORT=29031" >> $GITHUB_ENV
+          echo "DORIS_HTTP_HOST_PORT=28031" >> $GITHUB_ENV
           echo "TRINO_HOST_PORT=28080" >> $GITHUB_ENV
           echo "GREENPLUM_HOST_PORT=15434" >> $GITHUB_ENV
           echo "HIVE_METASTORE_HOST_PORT=29083" >> $GITHUB_ENV

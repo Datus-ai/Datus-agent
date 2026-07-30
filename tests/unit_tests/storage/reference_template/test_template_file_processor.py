@@ -586,6 +586,22 @@ class TestAnalyzeTemplateParameters:
         assert len(result) == 1
         assert result[0]["type"] == "dimension"
 
+    def test_adapter_parser_dialect_is_used(self, monkeypatch):
+        from datus.storage.reference_template.template_file_processor import analyze_template_parameters
+        from datus.tools.db_tools import connector_registry
+
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "postgres" if dialect == "hologres" else None,
+            raising=False,
+        )
+
+        sql = "SELECT * FROM orders WHERE region = '{{region}}'"
+        result = analyze_template_parameters(sql, dialect="hologres")
+
+        assert result[0]["column_ref"] == "orders.region"
+
 
 class TestResolveDimensionColumns:
     """Tests for _resolve_dimension_columns — the sqlglot AST resolution function."""

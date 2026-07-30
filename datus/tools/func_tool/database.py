@@ -32,7 +32,7 @@ from datus.utils.constants import DBType, SQLType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.mcp_decorators import mcp_tool, mcp_tool_class
-from datus.utils.sql_utils import parse_table_name_parts
+from datus.utils.sql_utils import parse_dialect, parse_table_name_parts
 
 logger = get_logger(__name__)
 
@@ -2028,7 +2028,7 @@ class DBFuncTool:
 
     @staticmethod
     def _identifier_quote_char(dialect: str) -> str:
-        backtick_dialects = ("mysql", "starrocks", "hive", "spark", "bigquery", "clickhouse")
+        backtick_dialects = ("mysql", "starrocks", "doris", "hive", "spark", "bigquery", "clickhouse")
         return "`" if dialect in backtick_dialects else '"'
 
     @classmethod
@@ -2062,7 +2062,7 @@ class DBFuncTool:
 
         from pandas.api import types as pd_types
 
-        dialect = str(dialect or "").lower()
+        dialect = parse_dialect(str(dialect or "")).lower()
 
         def choose(default: str, *, sqlite: str = "", postgres: str = "", duckdb: str = "") -> str:
             if dialect == DBType.SQLITE:

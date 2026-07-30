@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from unittest.mock import MagicMock, patch
 
-from datus.cli.datasource_app import DatasourceApp, DatasourceSelection, _View
+from datus.cli.datasource_app import INSTALLABLE_TYPES, DatasourceApp, DatasourceSelection, _View
 from datus.cli.datasource_commands import DatasourceCommands
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -441,6 +441,9 @@ class TestDatasourceAppViews:
             assert app._view == _View.TYPE_SELECT
             assert ("duckdb", "duckdb", True) in app._db_types
             assert ("sqlite", "sqlite", True) in app._db_types
+
+    def test_new_database_adapters_are_installable(self):
+        assert {"doris", "hologres"} <= set(INSTALLABLE_TYPES)
 
     def test_enter_config_form(self):
         cli = _make_cli()

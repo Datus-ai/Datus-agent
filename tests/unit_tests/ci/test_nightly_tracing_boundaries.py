@@ -44,7 +44,8 @@ def test_nightly_pytest_commands_set_explicit_test_layer():
         if " uv run pytest " in line and ("run_logged" in line or "run_compose_suite" in line)
     ]
 
-    assert len(pytest_command_lines) == 20
+    assert len(pytest_command_lines) == 21
+    assert any("tests/integration/adapters/test_doris.py" in line for line in pytest_command_lines)
     for line in pytest_command_lines:
         expected_layer = "unit" if "Full Unit Tests" in line else "nightly"
         assert f"env DATUS_TEST_LAYER={expected_layer} uv run pytest" in line

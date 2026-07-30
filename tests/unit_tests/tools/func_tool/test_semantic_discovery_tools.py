@@ -4,6 +4,7 @@
 """Unit tests for datus/tools/func_tool/semantic_discovery_tools.py"""
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from datus.tools.func_tool.base import FuncToolResult
@@ -679,6 +680,82 @@ class TestProfileSemanticModelEvidence:
 # ---------------------------------------------------------------------------
 # analyze_metric_candidates_from_history
 # ---------------------------------------------------------------------------
+
+
+class TestMetricCandidateParser:
+    def test_parser_tries_configured_datasource_dialect_first(self, monkeypatch):
+        import sqlglot
+
+        calls = []
+        original_parse = sqlglot.parse
+
+        def record_parse(sql, read=None):
+            calls.append(read)
+            return original_parse(sql)
+
+        monkeypatch.setattr(sqlglot, "parse", record_parse)
+        tools = SemanticDiscoveryTools(
+            agent_config=SimpleNamespace(
+                current_datasource="analytics",
+                current_db_config=lambda _name: SimpleNamespace(type="starrocks"),
+            )
+        )
+
+        tools._parse_sql("SELECT 1")
+
+        assert calls == ["starrocks"]
+
+    def test_parser_uses_datasource_type_instead_of_connection_name(self, monkeypatch):
+        import sqlglot
+
+        calls = []
+        original_parse = sqlglot.parse
+
+        def record_parse(sql, read=None):
+            calls.append(read)
+            return original_parse(sql)
+
+        monkeypatch.setattr(sqlglot, "parse", record_parse)
+        tools = SemanticDiscoveryTools(
+            agent_config=SimpleNamespace(
+                current_datasource="warehouse_prod",
+                current_db_config=lambda _name: SimpleNamespace(type="mysql"),
+            )
+        )
+
+        tools._parse_sql("SELECT 1")
+
+        assert calls == ["mysql"]
+
+    def test_parser_uses_adapter_registered_parser_dialect(self, monkeypatch):
+        import sqlglot
+
+        from datus.tools.db_tools import connector_registry
+
+        calls = []
+        original_parse = sqlglot.parse
+
+        def record_parse(sql, read=None):
+            calls.append(read)
+            return original_parse(sql)
+
+        monkeypatch.setattr(sqlglot, "parse", record_parse)
+        monkeypatch.setattr(
+            connector_registry,
+            "get_parser_dialect",
+            lambda dialect: "postgres" if dialect == "hologres" else None,
+            raising=False,
+        )
+        tools = SemanticDiscoveryTools(
+            agent_config=SimpleNamespace(
+                current_datasource="analytics",
+                current_db_config=lambda _name: SimpleNamespace(type="hologres"),
+            )
+        )
+
+        tools._parse_sql("SELECT 1")
+
+        assert calls == ["postgres"]
 
 
 class TestAnalyzeMetricCandidatesFromHistory:
