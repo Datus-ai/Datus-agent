@@ -17,9 +17,9 @@ from datus.tools.func_tool.metric_queryability import (
 class TestExtractSqlSnippets:
     def test_trims_natural_language_after_unfenced_sql(self):
         prompt = (
-            "请基于下面 SQL 生成指标：\n"
+            "Generate a metric from the following SQL:\n"
             "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region\n"
-            "并把指标命名为 revenue。"
+            "Name the metric revenue."
         )
 
         assert extract_sql_snippets(prompt, preserve_source=True, dialect="mysql") == [
