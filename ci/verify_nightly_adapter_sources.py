@@ -11,6 +11,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from pydantic import BaseModel, ConfigDict
+
 EXPECTED_LOCAL_PACKAGES = {
     "datus-db-core": "datus-db-adapters/datus-db-core",
     "datus-sqlalchemy": "datus-db-adapters/datus-sqlalchemy",
@@ -36,15 +38,24 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-storage-postgresql": "datus-storage-adapters/datus-storage-postgresql",
 }
 
-DATABASE_ADAPTER_CONTRACTS = {
-    "datus_doris": {
-        "db_type": "doris",
-    },
-    "datus_hologres": {
-        "db_type": "hologres",
-        "parser_dialect": "postgres",
-        "required_hooks": ("get_identifier_parser", "get_sql_generation_notes"),
-    },
+
+class DatabaseAdapterContract(BaseModel):
+    """Agent-facing registration contract required from a database adapter."""
+
+    model_config = ConfigDict(frozen=True)
+
+    db_type: str
+    parser_dialect: str | None = None
+    required_hooks: tuple[str, ...] = ()
+
+
+DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
+    "datus_doris": DatabaseAdapterContract(db_type="doris"),
+    "datus_hologres": DatabaseAdapterContract(
+        db_type="hologres",
+        parser_dialect="postgres",
+        required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
 }
 
 
@@ -124,17 +135,17 @@ def verify_database_adapter_imports() -> list[str]:
             errors.append(f"{module_name} registration failed: {exc}")
             continue
 
-        db_type = contract["db_type"]
+        db_type = contract.db_type
         metadata_obj = registry.get_metadata(db_type)
         if metadata_obj is None:
             errors.append(f"{module_name} did not register connector metadata for {db_type}")
             continue
 
-        expected_parser = contract.get("parser_dialect")
+        expected_parser = contract.parser_dialect
         if expected_parser and registry.get_parser_dialect(db_type) != expected_parser:
             errors.append(f"{module_name} parser dialect is not {expected_parser}")
 
-        for hook_name in contract.get("required_hooks", ()):
+        for hook_name in contract.required_hooks:
             getter = getattr(registry, hook_name, None)
             if not callable(getter) or not getter(db_type):
                 errors.append(f"{module_name} did not register {hook_name}")

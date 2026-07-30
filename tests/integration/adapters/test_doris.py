@@ -13,7 +13,7 @@ Defaults match the adapter's docker-compose.yml:
 """
 
 import os
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
 
@@ -37,7 +37,7 @@ REGION_TABLE = "datus_agent_doris_region"
 NATION_TABLE = "datus_agent_doris_nation"
 
 
-def _config(database: str | None = None):
+def _config(database: str | None = None) -> DorisConfig:
     return DorisConfig(
         host=os.getenv("DORIS_HOST", "127.0.0.1"),
         port=int(os.getenv("DORIS_PORT", "9030")),
@@ -49,7 +49,7 @@ def _config(database: str | None = None):
 
 
 @pytest.fixture(scope="module")
-def doris_connector() -> Generator:
+def doris_connector() -> Generator[DorisConnector, None, None]:
     database = os.getenv("DORIS_DATABASE", "test")
     init_conn = DorisConnector(_config(database="information_schema"))
     try:
@@ -59,7 +59,7 @@ def doris_connector() -> Generator:
                 "Did you run `docker compose up -d` in datus-db-adapters/datus-doris?"
             )
         created = init_conn.execute_ddl(f"CREATE DATABASE IF NOT EXISTS `{database}`")
-        assert created.success, created.error
+        assert created.success == 1, created.error
     finally:
         init_conn.close()
 
@@ -79,7 +79,7 @@ def doris_connector() -> Generator:
             PROPERTIES ("replication_num" = "1")
             """
         )
-        assert region.success, region.error
+        assert region.success == 1, region.error
         nation = conn.execute_ddl(
             f"""
             CREATE TABLE `{NATION_TABLE}` (
@@ -93,14 +93,14 @@ def doris_connector() -> Generator:
             PROPERTIES ("replication_num" = "1")
             """
         )
-        assert nation.success, nation.error
+        assert nation.success == 1, nation.error
         inserted = conn.execute_insert(
             f"INSERT INTO `{REGION_TABLE}` VALUES "
             "(0, 'AFRICA', 'lar deposits.'), "
             "(1, 'AMERICA', 'hs use ironic requests.'), "
             "(2, 'ASIA', 'ges. pinto beans.')"
         )
-        assert inserted.success, inserted.error
+        assert inserted.success == 1, inserted.error
         yield conn
     finally:
         for table in (NATION_TABLE, REGION_TABLE):
