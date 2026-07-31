@@ -74,12 +74,34 @@ _JINJA_INTERP_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 # User-visible status text for each finalize stage. The node streams these
 # via a single chat bubble (CREATE then UPDATE_MESSAGE on the same id) so
 # the user sees the bubble's content swap stage-to-stage while finalize's
-# 10-15 s of LLM + describe_table work runs.
-FINALIZE_STAGE_TEXT = {
-    1: "Generating insights and follow-up questions...",
-    2: "Refining analysis intent...",
-    3: "Caching referenced table schemas, almost done...",
+# 10-15 s of LLM + describe_table work runs. Keyed by language so the
+# bubble matches the pinned ``agent_config.language`` — the finalize
+# *outputs* already follow it (see ``language_directive``), and an
+# English-only bubble over a Chinese artifact reads as a glitch.
+FINALIZE_STAGE_TEXT: Dict[str, Dict[int, str]] = {
+    "en": {
+        1: "Generating insights and follow-up questions...",
+        2: "Refining analysis intent...",
+        3: "Caching referenced table schemas, almost done...",
+    },
+    "zh": {
+        1: "正在生成洞察与后续问题...",
+        2: "正在提炼分析意图...",
+        3: "正在缓存引用的表结构，即将完成...",
+    },
 }
+
+
+def finalize_stage_text(stage: int, language: Optional[str] = None) -> Optional[str]:
+    """Resolve the status line for ``stage`` in the configured language.
+
+    ``language`` is ``agent_config.language`` as-is: any ``zh*`` code picks
+    the Chinese copy; everything else — including unpinned — falls back to
+    English. Unknown stages return ``None`` (caller skips the bubble).
+    """
+    code = (language or "").strip().lower()
+    table = FINALIZE_STAGE_TEXT["zh"] if code.startswith("zh") else FINALIZE_STAGE_TEXT["en"]
+    return table.get(stage)
 
 
 # Subject-library-aware tool names whose action history we surface as
