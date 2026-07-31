@@ -1050,7 +1050,167 @@ class TestExecuteStreamGenMetricsError:
     def test_final_metric_publish_requires_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.tools.func_tool.base import FuncToolResult
+<<<<<<< HEAD
         from datus.utils.exceptions import DatusException
+=======
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
+
+        datasource = real_agent_config.current_datasource
+        metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"
+        metric_dir.mkdir(parents=True, exist_ok=True)
+        metric_path = metric_dir / "revenue_metrics.yml"
+        metric_path.write_text(
+            "metric:\n  name: revenue_total\n  type: measure_proxy\n  type_params:\n    measure: revenue\n",
+            encoding="utf-8",
+        )
+        reported_semantic_path = f"subject/semantic_models/{datasource}/orders.yml"
+        reported_metric_path = f"subject/semantic_models/{datasource}/metrics/revenue_metrics.yml"
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(
+            user_message=(
+                "Create this metric from SQL: "
+                "SELECT activity_date AS metric_time__day, reporting_region, "
+                "SUM(revenue) AS revenue_total FROM ("
+                "SELECT event_date AS activity_date, raw_region AS reporting_region, revenue FROM orders"
+                ") metric_source GROUP BY activity_date, reporting_region;"
+            )
+        )
+        node._accept_sql_modeling_plan(
+            SqlModelingPlan(
+                source_fingerprint="source",
+                metric_catalog_fingerprint="catalog",
+                candidate_plan={
+                    "queryability_contracts": [
+                        {
+                            "source": "revenue_by_customer_segment",
+                            "dimension_hints": ["metric_time__day", "reporting_region"],
+                            "dimension_expr_hints": [
+                                {
+                                    "alias": "reporting_region",
+                                    "expr": "raw_region",
+                                    "column": "raw_region",
+                                }
+                            ],
+                            "time_group_hints": [
+                                {
+                                    "alias": "metric_time__day",
+                                    "base_expr": "event_date",
+                                    "grain": "day",
+                                }
+                            ],
+                            "metric_hints": ["revenue_total"],
+                        }
+                    ]
+                },
+            )
+        )
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.semantic_tools.get_dimensions = MagicMock(
+            return_value=FuncToolResult(
+                result={
+                    "items": [{"name": "event_date"}, {"name": "raw_region"}],
+                    "extra": {"time_dimension": "event_date", "time_granularities": ["day"]},
+                }
+            )
+        )
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(
+                result={
+                    "metadata": {
+                        "sql": "SELECT 1",
+                        "warehouse_dry_run": {"status": "success"},
+                    }
+                }
+            )
+        )
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+
+        node.semantic_tools.get_dimensions.assert_called_once_with(metric_name="revenue_total")
+        node.semantic_tools.query_metrics.assert_called_once_with(
+            metrics=["revenue_total"],
+            dimensions=["event_date", "raw_region"],
+            time_granularity="day",
+            dry_run=True,
+        )
+        node.generation_tools.publish_metrics.assert_called_once_with(metric_file=str(metric_path))
+
+    def test_metric_publish_requires_warehouse_dry_run_evidence(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.query_metrics = MagicMock(
+            return_value=FuncToolResult(result={"metadata": {"sql": "SELECT COUNT(*) FROM orders"}})
+        )
+
+        with pytest.raises(RuntimeError, match="did not complete a warehouse dry-run"):
+            node._ensure_metric_dry_runs(["order_count"])
+
+    def test_publish_metrics_returns_preflight_error_to_tool_caller(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.generation_tools = MagicMock()
+        node.generation_tools._extract_metric_names_from_file.return_value = ["order_count"]
+        node.generation_tools._extract_metric_definitions_from_file.return_value = {}
+        node.generation_tools._metric_names_requiring_dry_run.return_value = ["order_count"]
+        node._resolve_metric_artifact_path = MagicMock(return_value="/tmp/order_metrics.yml")
+        error = (
+            "query_metrics(dry_run=True) failed for generated metric(s) order_count: "
+            "Warehouse dry-run failed: invalid identifier 'DISC_PRICE'"
+        )
+        node._ensure_metric_dry_runs = MagicMock(side_effect=RuntimeError(error))
+
+        result = node.publish_metrics("metrics/order_metrics.yml")
+
+        assert isinstance(result, FuncToolResult)
+        assert result.success == 0
+        assert result.error == error
+        assert result.result == {
+            "code": "metric_publish_preflight_failed",
+            "stage": "query_metrics_dry_run",
+            "metric_file": "metrics/order_metrics.yml",
+            "metrics": ["order_count"],
+        }
+        node.generation_tools.publish_metrics.assert_not_called()
+
+    def test_publish_metrics_falls_back_to_exception_type_for_empty_error(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.generation_tools = MagicMock()
+        node.generation_tools._extract_metric_names_from_file.return_value = ["order_count"]
+        node.generation_tools._extract_metric_definitions_from_file.return_value = {}
+        node.generation_tools._metric_names_requiring_dry_run.return_value = ["order_count"]
+        node._resolve_metric_artifact_path = MagicMock(return_value="/tmp/order_metrics.yml")
+        node._ensure_metric_dry_runs = MagicMock(side_effect=RuntimeError())
+
+        result = node.publish_metrics("metrics/order_metrics.yml")
+
+        assert isinstance(result, FuncToolResult)
+        assert result.success == 0
+        assert result.error == "RuntimeError"
+        assert result.result == {
+            "code": "metric_publish_preflight_failed",
+            "stage": "query_metrics_dry_run",
+            "metric_file": "metrics/order_metrics.yml",
+            "metrics": ["order_count"],
+        }
+        node.generation_tools.publish_metrics.assert_not_called()
+
+    def test_final_metric_publish_accepts_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
+        from datus.tools.func_tool.base import FuncToolResult
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
+>>>>>>> f982826 ([BugFix] Propagate metric publish preflight errors (#1227))
 
         datasource = real_agent_config.current_datasource
         metric_dir = real_agent_config.path_manager.semantic_model_path(datasource) / "metrics"

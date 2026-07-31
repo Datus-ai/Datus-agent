@@ -18,6 +18,7 @@ from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import GenMetricsNodeResult, SemanticNodeInput
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools
@@ -590,6 +591,235 @@ class GenMetricsAgenticNode(AgenticNode):
             raise RuntimeError(f"Metric generation reported {kind}_file outside Knowledge Base sandbox: {path!r}")
         return resolved_path
 
+<<<<<<< HEAD
+=======
+    @staticmethod
+    def _tool_result_payload(result: Any) -> Dict[str, Any]:
+        payload = result.get("result") if isinstance(result, dict) else getattr(result, "result", None)
+        return payload if isinstance(payload, dict) else {}
+
+    @classmethod
+    def _warehouse_dry_run_succeeded(cls, result: Any) -> bool:
+        metadata = cls._tool_result_payload(result).get("metadata")
+        warehouse = metadata.get("warehouse_dry_run") if isinstance(metadata, dict) else None
+        return isinstance(warehouse, dict) and warehouse.get("status") == "success"
+
+    @staticmethod
+    def _normalized_query_name(value: Any) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+    @classmethod
+    def _matching_dimension_name(cls, available: List[str], candidates: List[str]) -> Optional[str]:
+        normalized_candidates = {
+            cls._normalized_query_name(candidate) for candidate in candidates if cls._normalized_query_name(candidate)
+        }
+        for name in available:
+            normalized = cls._normalized_query_name(name)
+            leaf = cls._normalized_query_name(str(name).split("__")[-1])
+            if normalized in normalized_candidates or leaf in normalized_candidates:
+                return name
+        return None
+
+    def _metric_dimension_capabilities(self, metric_name: str) -> tuple[List[str], Optional[str]]:
+        result = self.semantic_tools.get_dimensions(metric_name=metric_name)
+        if not self._tool_succeeded(result):
+            raise RuntimeError(
+                f"get_dimensions failed for generated metric `{metric_name}`: {self._tool_error(result)}"
+            )
+        payload = self._tool_result_payload(result)
+        names = [
+            str(item.get("name")).strip()
+            for item in payload.get("items") or []
+            if isinstance(item, dict) and str(item.get("name") or "").strip()
+        ]
+        extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
+        time_dimension = str(extra.get("time_dimension") or "").strip() or None
+        return names, time_dimension
+
+    def _queryability_dry_run_args(
+        self,
+        contract: Dict[str, Any],
+        metric_names: List[str],
+        dimension_cache: Dict[str, tuple[List[str], Optional[str]]],
+    ) -> tuple[List[str], List[str], Optional[str]]:
+        metric_hints = {str(name).strip() for name in contract.get("metric_hints") or [] if str(name).strip()}
+        contract_metrics = [name for name in metric_names if not metric_hints or name in metric_hints]
+        if not contract_metrics:
+            return [], [], None
+
+        capabilities = []
+        for name in contract_metrics:
+            if name not in dimension_cache:
+                dimension_cache[name] = self._metric_dimension_capabilities(name)
+            capabilities.append(dimension_cache[name])
+        common_dimensions = [
+            name for name in capabilities[0][0] if all(name in available for available, _ in capabilities[1:])
+        ]
+        time_dimensions = [time_dimension for _, time_dimension in capabilities]
+        common_time_dimensions = {time_dimension for time_dimension in time_dimensions if time_dimension}
+        primary_time_dimension = (
+            next(iter(common_time_dimensions)) if all(time_dimensions) and len(common_time_dimensions) == 1 else None
+        )
+
+        resolved_dimensions: List[str] = []
+        time_granularity: Optional[str] = None
+        expr_hints = [hint for hint in contract.get("dimension_expr_hints") or [] if isinstance(hint, dict)]
+        time_hints = [hint for hint in contract.get("time_group_hints") or [] if isinstance(hint, dict)]
+        for dimension_hint in contract.get("dimension_hints") or []:
+            if not isinstance(dimension_hint, str) or not dimension_hint.strip():
+                continue
+            matching_time_hint = next(
+                (
+                    hint
+                    for hint in time_hints
+                    if self._normalized_query_name(dimension_hint)
+                    in {
+                        self._normalized_query_name(hint.get("alias")),
+                        self._normalized_query_name(hint.get("base_expr")),
+                    }
+                ),
+                None,
+            )
+            candidates = [dimension_hint]
+            for expr_hint in expr_hints:
+                if self._normalized_query_name(dimension_hint) not in {
+                    self._normalized_query_name(expr_hint.get("alias")),
+                    self._normalized_query_name(expr_hint.get("expr")),
+                }:
+                    continue
+                candidates.extend([expr_hint.get("expr", ""), expr_hint.get("column", "")])
+            if matching_time_hint:
+                candidates.append(str(matching_time_hint.get("base_expr") or ""))
+                time_granularity = str(matching_time_hint.get("grain") or "").strip() or time_granularity
+            resolved = self._matching_dimension_name(common_dimensions, candidates)
+            if resolved is None and matching_time_hint:
+                resolved = primary_time_dimension
+            if resolved is None:
+                raise DatusException(
+                    ErrorCode.COMMON_VALIDATION_FAILED,
+                    "Cannot map source SQL GROUP BY dimension "
+                    f"`{dimension_hint}` to a queryable semantic dimension for "
+                    f"{', '.join(contract_metrics)}.",
+                )
+            if resolved not in resolved_dimensions:
+                resolved_dimensions.append(resolved)
+        return contract_metrics, resolved_dimensions, time_granularity
+
+    def _ensure_metric_dry_runs(self, metric_names: List[str]) -> None:
+        """Run fresh contract and warehouse dry-runs before every publication."""
+        query_metrics = getattr(getattr(self, "semantic_tools", None), "query_metrics", None)
+        if not callable(query_metrics):
+            raise RuntimeError("Metric generation produced metrics, but query_metrics is unavailable.")
+
+        dimension_cache: Dict[str, tuple[List[str], Optional[str]]] = {}
+        covered_metrics = set()
+        for contract in self.generation_evidence.metric_queryability_contracts:
+            contract_metrics, dimensions, time_granularity = self._queryability_dry_run_args(
+                contract,
+                metric_names,
+                dimension_cache,
+            )
+            if not contract_metrics:
+                continue
+            kwargs: Dict[str, Any] = {
+                "metrics": contract_metrics,
+                "dimensions": dimensions,
+                "dry_run": True,
+            }
+            if time_granularity:
+                kwargs["time_granularity"] = time_granularity
+            result = query_metrics(**kwargs)
+            self.generation_evidence.record_metric_dry_run(
+                contract_metrics,
+                result,
+                dimensions=dimensions,
+                time_granularity=time_granularity,
+            )
+            if not self._tool_succeeded(result):
+                raise RuntimeError(
+                    "query_metrics(dry_run=True) failed for source SQL GROUP BY contract "
+                    f"{contract.get('source') or 'unknown'}: {self._tool_error(result)}"
+                )
+            if not self._warehouse_dry_run_succeeded(result):
+                raise RuntimeError(
+                    "query_metrics(dry_run=True) compiled the source SQL GROUP BY contract "
+                    f"{contract.get('source') or 'unknown'}, but did not complete a warehouse dry-run."
+                )
+            covered_metrics.update(contract_metrics)
+
+        uncovered = [name for name in metric_names if name not in covered_metrics]
+        if uncovered:
+            result = query_metrics(metrics=uncovered, dry_run=True)
+            self.generation_evidence.record_metric_dry_run(uncovered, result)
+            if not self._tool_succeeded(result):
+                raise RuntimeError(
+                    "query_metrics(dry_run=True) failed for generated metric(s) "
+                    f"{', '.join(uncovered)}: {self._tool_error(result)}"
+                )
+            if not self._warehouse_dry_run_succeeded(result):
+                raise RuntimeError(
+                    "query_metrics(dry_run=True) compiled generated metric(s) "
+                    f"{', '.join(uncovered)}, but did not complete a warehouse dry-run."
+                )
+
+        missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
+        if missing_contracts:
+            raise DatusException(
+                ErrorCode.COMMON_VALIDATION_FAILED,
+                "query_metrics(dry_run=True) must pass with every source SQL GROUP BY dimension "
+                "before publishing metrics. "
+                f"Missing: {summarize_queryability_contracts(missing_contracts)}",
+            )
+
+    def publish_metrics(
+        self,
+        metric_file: str,
+        metric_output_bindings: Optional[List[MetricOutputBinding]] = None,
+    ):
+        """Run deterministic queryability checks, then sync metrics to storage."""
+        if not self.generation_tools:
+            raise RuntimeError("Metric generation tools are unavailable.")
+        self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
+        bindings = [
+            binding.model_dump() if isinstance(binding, MetricOutputBinding) else dict(binding)
+            for binding in metric_output_bindings or []
+        ]
+        self.generation_evidence.bind_metric_output_names(bindings)
+
+        abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
+        if self.osi_target_state.authored_metric_names:
+            metric_names = list(self.osi_target_state.authored_metric_names)
+        else:
+            metric_names = self.generation_tools._extract_metric_names_from_file(abs_metric_file)
+            metric_definitions = self.generation_tools._extract_metric_definitions_from_file(abs_metric_file)
+            metric_names = self.generation_tools._metric_names_requiring_dry_run(
+                metric_names,
+                metric_definitions,
+                self.generation_evidence.metric_sqls,
+            )
+        if metric_names:
+            try:
+                self._ensure_metric_dry_runs(metric_names)
+            except Exception as exc:
+                error_message = str(exc) or type(exc).__name__
+                logger.exception(f"publish_metrics preflight failed for metrics={metric_names}: {error_message}")
+                return FuncToolResult(
+                    success=0,
+                    error=error_message,
+                    result={
+                        "code": "metric_publish_preflight_failed",
+                        "stage": "query_metrics_dry_run",
+                        "metric_file": metric_file,
+                        "metrics": metric_names,
+                    },
+                )
+
+        publish_kwargs: Dict[str, Any] = {"metric_file": abs_metric_file}
+        if metric_output_bindings is not None:
+            publish_kwargs["metric_output_bindings"] = metric_output_bindings
+        return self.generation_tools.publish_metrics(**publish_kwargs)
+
+>>>>>>> f982826 ([BugFix] Propagate metric publish preflight errors (#1227))
     def _set_metric_queryability_contracts_from_input(self, user_input: Optional[SemanticNodeInput]) -> None:
         if not user_input:
             return
