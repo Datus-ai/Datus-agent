@@ -48,6 +48,31 @@ def _truncate_middle(text: str, max_len: int = 120) -> str:
     return text[:keep] + " ... " + text[-keep:]
 
 
+def resolve_assistant_body(action: ActionHistory) -> str:
+    """Return the user-facing body carried by an ASSISTANT action's ``output``.
+
+    ``raw_output`` is what the model layer writes for streamed assistant text;
+    ``response`` is what node result models (e.g. ``ChatNodeResult.response``)
+    carry on the terminal ``<node>_response`` wrapper action — that wrapper's own
+    ``messages`` is only a boilerplate summary ("chat interaction completed
+    successfully"). Returns ``""`` when no body is present, so callers rendering
+    a wrapper can tell "no body" apart from that boilerplate — unlike
+    :func:`_get_assistant_content`, which falls back to ``messages``.
+    """
+    from datus.utils.text_utils import strip_litellm_placeholder
+
+    if not isinstance(action.output, dict):
+        return ""
+    for key in ("raw_output", "response"):
+        value = action.output.get(key)
+        if not isinstance(value, str):
+            continue
+        body = strip_litellm_placeholder(value)
+        if body.strip():
+            return body
+    return ""
+
+
 def _get_assistant_content(action: ActionHistory) -> str:
     """Extract display content from an ASSISTANT action, preferring output.raw_output."""
     from datus.utils.text_utils import strip_litellm_placeholder

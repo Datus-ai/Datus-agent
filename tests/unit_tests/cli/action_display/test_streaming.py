@@ -714,6 +714,86 @@ class TestUnifiedReprint:
         # up once, in the user header at the top — which we also emit).
         assert output.count("original question") == 1
 
+    def _completed_chat_turn(self, *, wrapper_response: str) -> list:
+        """A finished chat turn exactly as ``chat_commands`` records it.
+
+        ``all_turn_actions`` stores ``incremental_actions`` (tool calls plus the
+        model layer's plain ``response``) followed by the node's
+        ``chat_response`` wrapper, whose ``output`` is
+        ``ChatNodeResult.model_dump()`` — i.e. a ``response`` key and no
+        ``raw_output``.
+        """
+        return [
+            _make_action(
+                ActionRole.TOOL,
+                ActionStatus.SUCCESS,
+                messages="ok",
+                input_data={"function_name": "list_tables"},
+            ),
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="response",
+                messages="The orders table has 42 rows.",
+                output_data={"raw_output": "The orders table has 42 rows.", "is_thinking": False},
+            ),
+            _make_action(
+                ActionRole.ASSISTANT,
+                ActionStatus.SUCCESS,
+                action_type="chat_response",
+                messages="chat interaction completed successfully",
+                output_data={"success": True, "response": wrapper_response, "tokens_used": 10},
+            ),
+        ]
+
+    def test_reprint_history_turn_renders_wrapper_response_body(self):
+        """Mid-run Ctrl+O must reprint the previous turn's answer, not the
+        wrapper's boilerplate summary.
+
+        ``render_action_history`` drops both the ``chat_response`` wrapper and
+        the trailing plain ``response``, so the per-turn callback is the only
+        thing painting the answer. Reading the wrapper's ``messages`` there
+        replaced completed answers with "chat interaction completed
+        successfully" after toggling verbose mid-stream.
+        """
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=100)
+        display = ActionHistoryDisplay(console)
+
+        ctx = InlineStreamingContext(
+            [],
+            display,
+            history_turns=[("how many rows in orders?", self._completed_chat_turn(wrapper_response="42 rows total."))],
+            current_user_message="now check customers",
+        )
+        ctx._processed_index = 0
+
+        ctx._reprint_history(verbose=False)
+
+        output = buf.getvalue()
+        assert "42 rows total." in output
+        assert "interaction completed successfully" not in output
+
+    def test_reprint_history_turn_falls_back_to_plain_response_body(self):
+        """An empty wrapper body falls through to the plain ``response`` text."""
+        buf = StringIO()
+        console = Console(file=buf, no_color=True, width=100)
+        display = ActionHistoryDisplay(console)
+
+        ctx = InlineStreamingContext(
+            [],
+            display,
+            history_turns=[("how many rows in orders?", self._completed_chat_turn(wrapper_response=""))],
+            current_user_message="now check customers",
+        )
+        ctx._processed_index = 0
+
+        ctx._reprint_history(verbose=True)
+
+        output = buf.getvalue()
+        assert "The orders table has 42 rows." in output
+        assert "interaction completed successfully" not in output
+
     def test_reprint_verbose_mode_with_active_groups(self):
         """Reprint in verbose mode shows active groups with in-progress indicator."""
         buf = StringIO()
