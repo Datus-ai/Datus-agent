@@ -18,6 +18,7 @@ from datus.agent.node.stream_run_context import StreamRunContext
 from datus.configuration.agent_config import AgentConfig
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager
 from datus.schemas.semantic_agentic_node_models import GenMetricsNodeResult, SemanticNodeInput
+from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools, MetricOutputBinding
@@ -910,7 +911,20 @@ class GenMetricsAgenticNode(AgenticNode):
                 self.generation_evidence.metric_sqls,
             )
         if metric_names:
-            self._ensure_metric_dry_runs(metric_names)
+            try:
+                self._ensure_metric_dry_runs(metric_names)
+            except Exception as exc:
+                logger.exception(f"publish_metrics preflight failed for metrics={metric_names}: {exc}")
+                return FuncToolResult(
+                    success=0,
+                    error=str(exc),
+                    result={
+                        "code": "metric_publish_preflight_failed",
+                        "stage": "query_metrics_dry_run",
+                        "metric_file": metric_file,
+                        "metrics": metric_names,
+                    },
+                )
 
         publish_kwargs: Dict[str, Any] = {"metric_file": abs_metric_file}
         if metric_output_bindings is not None:
