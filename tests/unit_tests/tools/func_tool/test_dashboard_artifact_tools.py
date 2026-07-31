@@ -998,7 +998,9 @@ class TestValidateRenderChartCard:
         _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": _CHART_CARD_APP_JSX})
         result = dashboard_tools.validate_render()
         assert result.success == 1, result.error
-        assert result.result["cards"] == [{"chart_id": "revenue_by_region", "jsx_path": "render/app.jsx"}]
+        assert result.result["cards"] == [
+            {"chart_id": "revenue_by_region", "jsx_path": "render/app.jsx", "kind": "chart"}
+        ]
         # ChartCard's sqlId joins the query-ref set even when the validator
         # has already seen the same slug from useQuerySql.
         assert "queries/revenue_by_region" in result.result["query_refs"]
@@ -1205,6 +1207,168 @@ class TestValidateRenderChartCard:
         assert result.success == 1, result.error
         warnings = result.result.get("warnings", [])
         assert any("spread props" in w for w in warnings)
+
+
+# ----------------------------------------------------------------------------- #
+# validate_render — <EditHandle> static checks                                   #
+# ----------------------------------------------------------------------------- #
+
+
+def _edit_handle_app(handle_attrs: str) -> str:
+    """App whose KPI tile is wrapped in an ``<EditHandle>`` with ``handle_attrs``."""
+    return (
+        "import React from 'react';\n"
+        "import { useDatusArtifact, EditHandle } from '@datus/web-artifact';\n"
+        "export default function App() {\n"
+        "  const { useQuerySql } = useDatusArtifact();\n"
+        "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+        "  return (\n"
+        f"    <EditHandle {handle_attrs}>\n"
+        "      <div>{data?.rows?.length}</div>\n"
+        "    </EditHandle>\n"
+        "  );\n"
+        "}\n"
+    )
+
+
+class TestValidateRenderEditHandle:
+    """Static validation around the runtime-provided ``<EditHandle>``."""
+
+    def test_edit_handle_happy_path_lands_in_cards_registry(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app(
+            'handleId="kpi_total_revenue" name="Total revenue" kind="kpi" sqlId="queries/revenue_by_region"'
+        )
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [
+            {"chart_id": "kpi_total_revenue", "jsx_path": "render/app.jsx", "kind": "kpi"}
+        ]
+
+    def test_edit_handle_without_sql_id_is_accepted(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        """A static callout has no query behind it — sqlId is optional."""
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="insight_panel" name="Auto insights" kind="note"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [{"chart_id": "insight_panel", "jsx_path": "render/app.jsx", "kind": "note"}]
+
+    def test_edit_handle_defaults_to_note_kind(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="filter_strip" name="Filters"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"][0]["kind"] == "note"
+
+    def test_edit_handle_missing_name_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="kpi_total_revenue" kind="kpi"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "missing required" in (result.error or "")
+        assert "name" in (result.error or "")
+
+    def test_edit_handle_invalid_handle_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="KPI-Total" name="Total revenue" kind="kpi"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "KPI-Total" in (result.error or "")
+
+    def test_edit_handle_chart_kind_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        """``kind="chart"`` belongs to ChartCard, which owns the actions menu."""
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="revenue_block" name="Revenue" kind="chart"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "'chart'" in (result.error or "")
+        assert "ChartCard" in (result.error or "")
+
+    def test_edit_handle_dangling_sql_id_rejected(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        _seed_template(dashboard_tools)
+        app = _edit_handle_app('handleId="kpi_total_revenue" name="Total revenue" sqlId="queries/orphaned_slug"')
+        _write_render(project_root, dashboard_tools.dashboard_slug, {"app.jsx": app})
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "orphaned_slug" in (result.error or "")
+        assert "save_query_template" in (result.error or "")
+
+    def test_edit_handle_id_collides_with_chart_id(self, dashboard_tools: DashboardArtifactTools, project_root: Path):
+        """handleId and chartId share one namespace — a collision is an error."""
+        _seed_template(dashboard_tools)
+        second = (
+            "import React from 'react';\n"
+            "import { EditHandle } from '@datus/web-artifact';\n"
+            "export function Tile() {\n"
+            "  return (\n"
+            '    <EditHandle handleId="revenue_by_region" name="Total revenue" kind="kpi">\n'
+            "      <div />\n"
+            "    </EditHandle>\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(
+            project_root,
+            dashboard_tools.dashboard_slug,
+            {"app.jsx": _CHART_CARD_APP_JSX, "tile.jsx": second},
+        )
+        result = dashboard_tools.validate_render()
+        assert result.success == 0
+        assert "duplicates" in (result.error or "")
+        assert "revenue_by_region" in (result.error or "")
+
+    def test_edit_handle_forwarded_props_deferred_to_runtime(
+        self, dashboard_tools: DashboardArtifactTools, project_root: Path
+    ):
+        """A shared KPI-card wrapper forwards handleId / name from its props.
+
+        Those values only exist at runtime, so the shape + uniqueness checks
+        can't run — but the handle itself is well-formed and must not be
+        reported as missing required props.
+        """
+        _seed_template(dashboard_tools)
+        shared = (
+            "import React from 'react';\n"
+            "import { EditHandle } from '@datus/web-artifact';\n"
+            "export function KpiCard({ handleId, label, value, sqlId, params }) {\n"
+            "  return (\n"
+            '    <EditHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>\n'
+            "      <div>{value}</div>\n"
+            "    </EditHandle>\n"
+            "  );\n"
+            "}\n"
+        )
+        app = (
+            "import React from 'react';\n"
+            "import { useDatusArtifact } from '@datus/web-artifact';\n"
+            "import { KpiCard } from './shared/kpi-card';\n"
+            "export default function App() {\n"
+            "  const { useQuerySql } = useDatusArtifact();\n"
+            "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
+            "  const r = data?.rows?.[0] ?? {};\n"
+            "  return (\n"
+            '    <KpiCard handleId="kpi_total_revenue" label="Total revenue" value={r.revenue} '
+            "sqlId=\"queries/revenue_by_region\" params={{ month_floor: '2026-01' }} />\n"
+            "  );\n"
+            "}\n"
+        )
+        _write_render(
+            project_root,
+            dashboard_tools.dashboard_slug,
+            {"app.jsx": app, "shared/kpi-card.jsx": shared},
+        )
+        result = dashboard_tools.validate_render()
+        assert result.success == 1, result.error
+        # Nothing statically knowable → no registry entry for the tile.
+        assert result.result["cards"] == []
 
 
 # ----------------------------------------------------------------------------- #

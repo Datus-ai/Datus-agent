@@ -197,6 +197,45 @@ _VALID_CHART_TYPES: Set[str] = {
 }
 
 
+# ``<EditHandle ... >`` opening tag — the edit entry point authors wrap
+# around blocks that aren't ChartCards (KPI tiles, insight panels, the
+# filter strip). Same atom-based attribute matching as ChartCard so
+# ``name={<span>a > b</span>}`` doesn't truncate the prop block.
+_EDIT_HANDLE_OPEN_RE = re.compile(
+    r"""
+    <EditHandle\b
+    (
+      (?:
+        [^'"{}<>]                                          # plain char
+        | '[^'\\]*(?:\\.[^'\\]*)*'                         # 'single-quoted'
+        | "[^"\\]*(?:\\.[^"\\]*)*"                         # "double-quoted"
+        | \{ (?: [^{}] | \{ (?: [^{}] | \{[^{}]*\} )* \} )* \}   # {balanced braces, depth ≤ 3}
+      )*
+    )
+    /?\s*>
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
+# String-literal props audited on ``<EditHandle>``.
+_EDIT_HANDLE_STR_ATTR_RE = re.compile(
+    r"""\b(handleId|name|kind|sqlId)\s*=\s*['"]([^'"]+)['"]""",
+)
+
+
+# Presence of a prop regardless of whether its value is a literal. Used to
+# tell "the author forgot ``handleId``" (an issue) apart from "``handleId``
+# is forwarded from a wrapper component" (legitimate — see below).
+_EDIT_HANDLE_ANY_ATTR_RE = re.compile(r"\b(handleId|name)\s*=")
+
+
+# ``EditHandle``'s kind enum. ``'chart'`` is deliberately absent: that kind
+# belongs to ChartCard, and a chart wrapped in a bare EditHandle would lose
+# the chart-actions menu.
+_VALID_EDIT_HANDLE_KINDS: Set[str] = {"kpi", "note", "filter"}
+
+
 # --------------------------------------------------------------------------- #
 # Jinja2 sandbox + bind-value resolution                                      #
 # --------------------------------------------------------------------------- #
@@ -1148,11 +1187,15 @@ class DashboardArtifactTools:
         issues: List[str] = []
         warnings: List[str] = []
         query_refs: Set[str] = set()
-        # chartId → render-file rel-path of its first declaration. Used to
-        # detect duplicates across the whole render/ tree; the validate_render
-        # result also exposes this as the cards-registry for downstream
-        # consumers, and both require global uniqueness.
+        # chartId / handleId → render-file rel-path of its first declaration.
+        # One namespace for both because they land in the same field of the
+        # edit-intent payload. Used to detect duplicates across the whole
+        # render/ tree; the validate_render result also exposes this as the
+        # cards-registry for downstream consumers.
         chart_ids_seen: Dict[str, str] = {}
+        # Same keys → what the block is ("chart" for ChartCard, the EditHandle
+        # kind otherwise), so the registry can tell a KPI tile from a chart.
+        card_kinds: Dict[str, str] = {}
 
         for key, mod in modules.items():
             source = mod["source"]
@@ -1216,6 +1259,83 @@ class DashboardArtifactTools:
                         f"render/{mod['rel']}: <ChartCard chartType={chart_type!r}> is not one of "
                         f"{sorted(_VALID_CHART_TYPES)}."
                     )
+
+                card_kinds[chart_id] = "chart"
+
+            # ---- <EditHandle ... > opening tags — the non-chart edit entry
+            # point. Checks are deliberately looser than ChartCard's: a KPI
+            # tile is normally rendered through a shared wrapper
+            # (``shared/kpi-card.jsx``) that forwards ``handleId`` / ``name``
+            # from its own props, so those values are expressions rather than
+            # string literals at this call site. Literals get the full shape +
+            # uniqueness treatment; forwarded props are deferred to runtime.
+            for eh_match in _EDIT_HANDLE_OPEN_RE.finditer(source):
+                attrs = eh_match.group(1) or ""
+                attr_values = {name: value for name, value in _EDIT_HANDLE_STR_ATTR_RE.findall(attrs)}
+                present = {name for name in _EDIT_HANDLE_ANY_ATTR_RE.findall(attrs)}
+
+                if _CHART_CARD_SPREAD_RE.search(attrs):
+                    warnings.append(
+                        f"render/{mod['rel']}: <EditHandle> uses spread props — static "
+                        "validation of handleId / name / kind is deferred to runtime."
+                    )
+                    continue
+
+                missing = [k for k in ("handleId", "name") if k not in present]
+                if missing:
+                    issues.append(
+                        f"render/{mod['rel']}: <EditHandle> is missing required props: {missing}. "
+                        "Every EditHandle needs a globally-unique handleId and a human-readable "
+                        "name (the label the user sees on the chat chip)."
+                    )
+                    continue
+
+                kind = attr_values.get("kind")
+                if kind is not None and kind not in _VALID_EDIT_HANDLE_KINDS:
+                    issues.append(
+                        f"render/{mod['rel']}: <EditHandle kind={kind!r}> is not one of "
+                        f"{sorted(_VALID_EDIT_HANDLE_KINDS)}. Charts belong in <ChartCard>, "
+                        "which carries its own edit entry point."
+                    )
+
+                handle_sql_id = attr_values.get("sqlId")
+                if handle_sql_id is not None:
+                    slug = extract_query_slug(handle_sql_id)
+                    if slug is None:
+                        issues.append(
+                            f"render/{mod['rel']}: <EditHandle sqlId={handle_sql_id!r}> is not a valid "
+                            "queries/<slug> reference. Omit sqlId entirely for a block with no query "
+                            "behind it."
+                        )
+                    else:
+                        query_refs.add(f"queries/{slug}")
+                        if slug not in templates:
+                            issues.append(
+                                f"render/{mod['rel']}: <EditHandle sqlId='queries/{slug}'> points to a "
+                                "template not produced via save_query_template."
+                            )
+
+                handle_id = attr_values.get("handleId")
+                if handle_id is None:
+                    # Forwarded from a wrapper component's props — the id only
+                    # exists at runtime, so shape and uniqueness can't be
+                    # checked here.
+                    continue
+
+                if not _CHART_ID_RE.fullmatch(handle_id):
+                    issues.append(
+                        f"render/{mod['rel']}: <EditHandle handleId={handle_id!r}> must match {_CHART_ID_RE.pattern}."
+                    )
+                elif handle_id in chart_ids_seen:
+                    issues.append(
+                        f"render/{mod['rel']}: <EditHandle handleId={handle_id!r}> duplicates the id "
+                        f"already declared in render/{chart_ids_seen[handle_id]}. handleId shares one "
+                        "namespace with ChartCard's chartId and must be globally unique across the "
+                        "dashboard."
+                    )
+                else:
+                    chart_ids_seen[handle_id] = mod["rel"]
+                    card_kinds[handle_id] = kind or "note"
 
             # ---- 1-arg useQuerySql calls (no params) — always rejected.
             for match in _USE_QUERY_SQL_NO_PARAMS_RE.finditer(source):
@@ -1329,11 +1449,16 @@ class DashboardArtifactTools:
             for k in unreferenced
         )
 
-        # Cards registry derived from the validated <ChartCard> instances.
-        # Sorted by chartId for stable wire output. Downstream consumers
+        # Cards registry derived from the validated <ChartCard> / <EditHandle>
+        # instances. Sorted by id for stable wire output. Downstream consumers
         # (publish wire payload, future static-edit APIs) read this off the
-        # validate_render result rather than re-walking the AST.
-        cards_registry = [{"chart_id": cid, "jsx_path": f"render/{rel}"} for cid, rel in sorted(chart_ids_seen.items())]
+        # validate_render result rather than re-walking the AST. EditHandles
+        # whose handleId is forwarded from a wrapper component's props are
+        # absent — their ids only exist at runtime.
+        cards_registry = [
+            {"chart_id": cid, "jsx_path": f"render/{rel}", "kind": card_kinds.get(cid, "chart")}
+            for cid, rel in sorted(chart_ids_seen.items())
+        ]
 
         return FuncToolResult(
             result={
