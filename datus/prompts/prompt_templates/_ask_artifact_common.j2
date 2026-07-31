@@ -110,22 +110,26 @@ Read the rest like this:
   and explain the gap rather than quietly answering about a different
   figure — a mismatch is itself the finding.
 {%- if artifact_kind == 'dashboard' %}
-- **`params` is load-bearing, and the catalog is not.** The rows inlined
-  above are the design-time sample the author saved; this dashboard runs
-  live, so the numbers the user is looking at came from these params, not
-  from that sample. Quoting the sample as if it were the current value is
-  the main way to be confidently wrong here.
+- **`params` is load-bearing, and the catalog holds no values.** A
+  dashboard query is a template executed live, so its catalog entry above
+  carries only shape and provenance — `columns`, the author's
+  `sample_params`, and the SQL body. There are **no result rows anywhere
+  in your context** for this artifact, and none in
+  `queries/<name>.params.json` either: that file is the parameter
+  declaration plus sample columns. Don't go looking for them, and never
+  present `sample_params` as if it were the filter state the user is
+  looking at — the envelope's decoded `params` is that state.
 {%- if has_db_tools %}
   Any answer that states a figure must come from re-running the query
-  with these params via `execute_sql`.
+  with the decoded `params` via `execute_sql`.
 {%- else %}
   You cannot re-run it — no database tools are enabled in this session.
   So answer about definition, composition and direction rather than
-  value, and say plainly that you can't recompute the figure. If
-  `display-text` is present, that is the one current number you may
-  quote; if it is absent — which is always the case for a whole chart
-  card — you have no current value at all, so do not reach for the
-  sample rows to fill the gap.
+  value, and say plainly that you can't compute the figure. If
+  `display-text` is present, that is the one current number available to
+  you; if it is absent — which is always the case for a whole chart
+  card — you have no value at all, and there is nothing in the catalog
+  to fall back on.
 {%- endif %}
 {%- else %}
 - **A report is a frozen snapshot.** The rows inlined above *are* the
