@@ -2,14 +2,17 @@ import csv
 import json
 import shutil
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.utils.benchmark_utils import TrajectoryParser, evaluate_benchmark_and_report
+from datus.utils.benchmark_utils import (
+    SingleFileGoldProvider,
+    TrajectoryParser,
+    evaluate_benchmark_and_report,
+)
 from datus.utils.constants import DBType
 
 TESTS_ROOT = Path(__file__).resolve().parent.parent.parent  # tests/
@@ -67,7 +70,7 @@ def _write_sql(path: Path, sql: str) -> None:
     path.write_text(sql, encoding="utf-8")
 
 
-def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict]] = None) -> None:
+def _write_trajectory(path: Path, task_id: str, tool_actions: list[dict] | None = None) -> None:
     payload = {
         "workflow": {
             "completion_time": 1,
@@ -461,3 +464,53 @@ def test_evaluate_benchmark_and_report_with_jsonl_manifest(agent_config: AgentCo
     )
     assert report["status"] == "success"
     _assert_report_structure(report)
+
+
+def test_gold_provider_loads_expected_tables_from_csv(tmp_path: Path) -> None:
+    gold_path = tmp_path / "gold.csv"
+    gold_path.write_text(
+        "\n".join(
+            [
+                "file,expected_table,gold_sql",
+                'task_1.json,"schools; frpm","select * from schools join frpm using (CDSCode)"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = SingleFileGoldProvider(
+        result_file=str(gold_path),
+        db_manager=object(),
+        datasource="test",
+        task_id_key="file",
+        sql_key="gold_sql",
+    )
+    artifacts = provider.get_artifacts("task_1.json")
+
+    assert artifacts is not None
+    assert artifacts.expected_tables == ["schools", "frpm"]
+
+
+def test_gold_provider_loads_expected_tables_plural_column(tmp_path: Path) -> None:
+    gold_path = tmp_path / "gold.csv"
+    gold_path.write_text(
+        "\n".join(
+            [
+                "file,expected_tables,gold_sql",
+                'task_1.json,"crm.accounts, billing.invoices","select * from crm.accounts"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    provider = SingleFileGoldProvider(
+        result_file=str(gold_path),
+        db_manager=object(),
+        datasource="test",
+        task_id_key="file",
+        sql_key="gold_sql",
+    )
+    artifacts = provider.get_artifacts("task_1.json")
+
+    assert artifacts is not None
+    assert artifacts.expected_tables == ["crm.accounts", "billing.invoices"]

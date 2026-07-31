@@ -178,7 +178,8 @@ class GoldArtifacts:
     file_reference: str = ""
     expected_sql: str = ""
     semantic_model: str = ""
-    expected_metrics: str = ""
+    expected_metrics: list[str] = field(default_factory=list)
+    expected_tables: list[str] = field(default_factory=list)
 
 
 def csv_str_to_pands(csv_str: str) -> pd.DataFrame:
@@ -935,7 +936,16 @@ class SingleFileGoldProvider(ResultProvider):
             expected_sql=expected_sql,
             semantic_model=semantic_model,
             expected_metrics=expected_metrics,
+            expected_tables=_extract_expected_tables(row),
         )
+
+def _extract_expected_tables(row: Mapping[str, Any]) -> list[str]:
+    explicit = row.get("expected_tables")
+    if explicit is None:
+        explicit = row.get("expected_table")
+    if explicit is None:
+        return []
+    return _split_expected_items(explicit)
 
 
 class DirectorySqlProvider(SqlProvider):
