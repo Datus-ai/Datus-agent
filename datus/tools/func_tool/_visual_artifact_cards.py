@@ -235,6 +235,7 @@ def scan_render_cards(
                 )
             else:
                 result.ids_seen[chart_id] = rel
+                result.kinds[chart_id] = "chart"
 
             slug = extract_query_slug(sql_id)
             if slug is None:
@@ -252,8 +253,6 @@ def scan_render_cards(
                 result.issues.append(
                     f"render/{rel}: <ChartCard chartType={chart_type!r}> is not one of {sorted(VALID_CHART_TYPES)}."
                 )
-
-            result.kinds[chart_id] = "chart"
 
         # ---- <BlockHandle ... > opening tags. Checks are deliberately
         # looser than ChartCard's: a KPI tile is normally rendered through

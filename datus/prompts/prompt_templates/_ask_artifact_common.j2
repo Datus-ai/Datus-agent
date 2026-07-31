@@ -93,10 +93,13 @@ the question; the envelope only says where to look. Read it like this:
   spending a `read_file` round-trip to rediscover it. When `sql-id` is
   absent the block isn't query-backed at all (a static callout, the
   filter strip); answer from the JSX and the surrounding context.
-- **`display-text` is the number on the user's screen.** When it
-  disagrees with what you compute, say so and explain the gap rather than
-  quietly answering about a different figure — a mismatch is itself the
-  finding.
+- **`display-text` is the number on the user's screen** — but only for
+  blocks that show one. A whole chart card never carries it (its rendered
+  text is axis ticks and legend entries, which would bury the question
+  rather than ground it), and neither does a block with nothing numeric
+  in it. When it IS present and disagrees with what you compute, say so
+  and explain the gap rather than quietly answering about a different
+  figure — a mismatch is itself the finding.
 {%- if artifact_kind == 'dashboard' %}
 - **`params` is load-bearing, and the catalog is not.** The rows inlined
   above are the design-time sample the author saved; this dashboard runs
@@ -108,9 +111,12 @@ the question; the envelope only says where to look. Read it like this:
   with these params via `execute_sql`.
 {%- else %}
   You cannot re-run it — no database tools are enabled in this session.
-  So answer about definition, composition and direction, take the figure
-  from `display-text` rather than from the sample, and say plainly that
-  you can't recompute it if the user wants the number verified.
+  So answer about definition, composition and direction rather than
+  value, and say plainly that you can't recompute the figure. If
+  `display-text` is present, that is the one current number you may
+  quote; if it is absent — which is always the case for a whole chart
+  card — you have no current value at all, so do not reach for the
+  sample rows to fill the gap.
 {%- endif %}
 {%- else %}
 - **A report is a frozen snapshot.** The rows inlined above *are* the
