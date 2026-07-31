@@ -47,7 +47,7 @@ The optional `/** @datus-title ... */` annotation at the top is used by the stan
 | Module | Version | Notes |
 |---|---|---|
 | `react` | `^18.2.0` | `useState`, `useEffect`, `useRef`, `useMemo`, `useCallback`, `useContext`, `createContext`, plus the default `React` namespace |
-| `@datus/web-artifact` | runtime-provided | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartCard` (see "Canonical component shape" + "Card props"), `EditHandle` (see "Edit handles for non-chart blocks"), `ChartEntryMore` (escape hatch — `ChartCard` already embeds it), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
+| `@datus/web-artifact` | runtime-provided | `useDatusArtifact`, `AnimateOnVisible` (see "Motion & animation"), `ChartCard` (see "Canonical component shape" + "Card props"), `BlockHandle` (see "Block handles for non-chart blocks"), `ChartEntryMore` (escape hatch — `ChartCard` already embeds it), `Skeleton`, `ErrorBlock` (see "Loading & error placeholders") |
 | `recharts` | `^3.8.1` | any named export (`AreaChart`, `LineChart`, `BarChart`, `RadarChart`, `PieChart`, `ResponsiveContainer`, `Tooltip`, `XAxis`, `YAxis`, `CartesianGrid`, `Area`, `Line`, `Bar`, `Radar`, `Pie`, `Cell`, etc.). **v3, not v2** — see the v3 notes below. |
 | `lucide-react` | `^0.563.0` | any icon component (`User`, `TrendingUp`, `Banknote`, `Globe`, `Landmark`, …). **Use these instead of emoji** — see the "Iconography & emoji" section below. |
 | `d3-format` | `^3.1.2` | `format` — build numeric / currency / percent / SI-prefix formatters |
@@ -74,7 +74,7 @@ Before saving a file, scan its body and JSX for every capitalized component (Rec
 
 Every chart / table component in `render/` is one `<ChartCard>` from `@datus/web-artifact` wrapping the chart body. **Copy this skeleton when you author a new component.** ChartCard owns the card chrome (white surface, 12-radius, asymmetric padding, flex-column stretch) and the chart-actions menu (View SQL / Export CSV / JSON / PNG / etc.). You only author the data layer and the chart body inside.
 
-(A KPI strip is the one exception: N small tiles fed by ONE query is not N ChartCards — see "Edit handles for non-chart blocks" below.)
+(A KPI strip is the one exception: N small tiles fed by ONE query is not N ChartCards — see "Block handles for non-chart blocks" below.)
 
 ```jsx
 import { useMemo } from 'react';
@@ -150,19 +150,21 @@ The four sections are not optional ordering — they are the only ordering React
 
 **Do not pass `__sourcePath`.** It is auto-injected by the artifact runtime at module-load time; any value you set is overwritten.
 
-### Edit handles for non-chart blocks
+### Block handles for non-chart blocks
 
-While an artifact is being authored, its creator needs a way to point at any block and say "change *this* one". `<ChartCard>` has that built in — a small Edit button in its title strip. The blocks that aren't ChartCards (KPI tiles, insight / callout panels, the filter strip) have no title strip to host it, and giving them a card header purely to carry a button would wreck the layout. Wrap those in `<EditHandle>` instead: it contributes **no visual surface of its own** and floats a small hover-revealed button in one corner of the block.
+While an artifact is being authored, its creator needs a way to point at any block and say "change *this* one". `<ChartCard>` has that built in — a small Edit button in its title strip. The blocks that aren't ChartCards (KPI tiles, insight / callout panels, the filter strip) have no title strip to host it, and giving them a card header purely to carry a button would wreck the layout. Wrap those in `<BlockHandle>` instead: it contributes **no visual surface of its own** and floats a small hover-revealed button in one corner of the block.
 
-`EditHandle` is an *entry point, not an editor*. Clicking it pins that block into the chat as a context chip; the change itself happens on the next turn, in the same shape as "Targeted single-block edits". The handle exists only while the artifact is being authored — the runtime hides it on published artifacts and in standalone HTML exports, exactly like ChartCard's Edit button. So attaching handles costs the viewer nothing.
+`BlockHandle` is an *entry point, not an editor*. Clicking it pins that block into the chat as a context chip; the change itself happens on the next turn, in the same shape as "Targeted single-block edits".
 
-**Wrap each of these in its own `EditHandle`:**
+**The same handle serves the reader after publication.** The runtime swaps what the button does based on where the artifact is mounted: while you are authoring it's an Edit wand pointed at you, and on the published page it becomes an "ask about this" button that pins the block into the reader's `ask_{% endraw %}{{ artifact_kind }}{% raw %}` chat — along with the value the block is displaying at that moment. Neither appears in a standalone HTML export. So a handle is not authoring scaffolding you are politely leaving behind: **every block you skip is a block no reader can point at**, and they will be reading this artifact for far longer than you spend building it.
+
+**Wrap each of these in its own `BlockHandle`:**
 
 - **Every KPI tile, individually.** A KPI strip is 4–6 tiles fed by ONE query — it is *not* 4–6 ChartCards (that would stack six card headers and six action menus into a row meant to read as one line of numbers). One handle per tile, because the user wants to change one number, not the whole row.
 - **Every insight / key-finding / callout panel** — the highlight boxes summarising what the data says.
 - **The filter strip** — one handle for the strip as a whole.
 
-The runtime does **not** ship a KPI-card component: own that visual in `render/shared/kpi-card.jsx` so it stays yours to restyle. Put the `EditHandle` inside that shared component and every tile gets a handle for free.
+The runtime does **not** ship a KPI-card component: own that visual in `render/shared/kpi-card.jsx` so it stays yours to restyle. Put the `BlockHandle` inside that shared component and every tile gets a handle for free.
 
 | Prop | Required | Notes |
 |---|---|---|
@@ -176,7 +178,7 @@ The runtime does **not** ship a KPI-card component: own that visual in `render/s
 
 **Do not pass `__sourcePath`** here either — same auto-injection rule as ChartCard.
 
-**`EditHandle` carries no View SQL / Export menu, on purpose.** A viewer of a *published* dashboard should still be able to ask "where does this number come from" — but the handle is authoring-only, so folding the menu into it would hide a permanent, read-only affordance behind an authoring gate. The two also work at different granularities: a KPI strip is N tiles over ONE query, so edits are per-tile while the SQL is per-strip — N menus would all open the same statement.
+**`BlockHandle` carries no View SQL / Export menu, on purpose.** Granularity is the reason: a KPI strip is N tiles over ONE query, so what the handle carries is per-tile (change *this* number, ask about *this* number) while the SQL is per-strip — N menus would all open the identical statement.
 
 So when a wrapped block is query-backed, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself, **at the granularity the query actually has** — once per strip, not once per tile — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. Without a menu somewhere, a KPI strip's query is unreachable from the UI entirely: dashboards render their queries live, so the `.sql.j2` files are never shipped to the viewer.
 
@@ -184,12 +186,12 @@ So when a wrapped block is query-backed, render a standalone `<ChartEntryMore sq
 // render/shared/kpi-card.jsx — the KPI visual is yours, the handle comes
 // from the runtime. Every tile rendered through this component gets an
 // edit entry point without the caller having to remember one.
-import { EditHandle } from '@datus/web-artifact';
+import { BlockHandle } from '@datus/web-artifact';
 import { COLORS } from './colors';
 
 export function KpiCard({ handleId, label, value, badge, icon: Icon, sqlId, params }) {
   return (
-    <EditHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>
+    <BlockHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>
       <div style={{ height: '100%', boxSizing: 'border-box', backgroundColor: COLORS.card, borderRadius: 12, padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: COLORS.muted, marginBottom: 6 }}>
           <Icon size={16} strokeWidth={2} color={COLORS.muted} />
@@ -198,7 +200,7 @@ export function KpiCard({ handleId, label, value, badge, icon: Icon, sqlId, para
         <div style={{ fontSize: 24, fontWeight: 700, color: COLORS.navy }}>{value}</div>
         {badge}
       </div>
-    </EditHandle>
+    </BlockHandle>
   );
 }
 ```
@@ -244,14 +246,14 @@ export function KpiStrip({ params }) {
 An insight panel that a query drives gets the same treatment — a handle for the copy, a menu for the numbers behind it. Its top-right corner is usually taken by a period badge, so move the handle to the left:
 
 ```jsx
-<EditHandle handleId="insight_panel" name="Auto insights" kind="note" placement="top-left" sqlId="queries/regional_gaps" params={params}>
+<BlockHandle handleId="insight_panel" name="Auto insights" kind="note" placement="top-left" sqlId="queries/regional_gaps" params={params}>
   <div data-datus-chart-card style={{ position: 'relative', backgroundColor: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 12, padding: '16px 18px' }}>
     <div style={{ position: 'absolute', top: 12, right: 12 }}>
       <ChartEntryMore sqlId="queries/regional_gaps" data={data} />
     </div>
     {/* heading + findings grid */}
   </div>
-</EditHandle>
+</BlockHandle>
 ```
 
 Drop both `sqlId` and the menu when the block is genuinely static (hand-written copy, the filter strip) — and drop just the menu when the block's claims are derived from **several** queries, since "View SQL" then has no single honest answer. Say where the numbers came from in the copy instead.
@@ -523,7 +525,7 @@ ChartCard embeds the chart-actions menu (View SQL / Export SQL / CSV / JSON / PN
 
 **One ChartCard per card.** When a card visualizes more than one sub-view (e.g. two side-by-side pies sharing one query), wrap them in a single `<ChartCard>` whose body is a 2-column grid — not two adjacent ChartCards.
 
-**Attach a ChartCard to every `useQuerySql`-backed visualization** — charts, custom SVG, **and data tables** (the table goes inside the ChartCard body, including the header strip; the chart-actions menu lives in the ChartCard's title strip above it). The exception is a KPI strip, where N tiles share one query and a per-tile card header would destroy the row: those get `<EditHandle>` instead of `<ChartCard>` (see "Edit handles for non-chart blocks").
+**Attach a ChartCard to every `useQuerySql`-backed visualization** — charts, custom SVG, **and data tables** (the table goes inside the ChartCard body, including the header strip; the chart-actions menu lives in the ChartCard's title strip above it). The exception is a KPI strip, where N tiles share one query and a per-tile card header would destroy the row: those get `<BlockHandle>` instead of `<ChartCard>` (see "Block handles for non-chart blocks").
 
 If you genuinely need to render a card without the chart-actions menu (decorative banner, a single hero number that still deserves card chrome), set `hideMenu` on the ChartCard.
 

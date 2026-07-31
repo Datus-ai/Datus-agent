@@ -1210,29 +1210,29 @@ class TestValidateRenderChartCard:
 
 
 # ----------------------------------------------------------------------------- #
-# validate_render — <EditHandle> static checks                                   #
+# validate_render — <BlockHandle> static checks                                   #
 # ----------------------------------------------------------------------------- #
 
 
 def _edit_handle_app(handle_attrs: str) -> str:
-    """App whose KPI tile is wrapped in an ``<EditHandle>`` with ``handle_attrs``."""
+    """App whose KPI tile is wrapped in an ``<BlockHandle>`` with ``handle_attrs``."""
     return (
         "import React from 'react';\n"
-        "import { useDatusArtifact, EditHandle } from '@datus/web-artifact';\n"
+        "import { useDatusArtifact, BlockHandle } from '@datus/web-artifact';\n"
         "export default function App() {\n"
         "  const { useQuerySql } = useDatusArtifact();\n"
         "  const { data } = useQuerySql('queries/revenue_by_region', { month_floor: '2026-01' });\n"
         "  return (\n"
-        f"    <EditHandle {handle_attrs}>\n"
+        f"    <BlockHandle {handle_attrs}>\n"
         "      <div>{data?.rows?.length}</div>\n"
-        "    </EditHandle>\n"
+        "    </BlockHandle>\n"
         "  );\n"
         "}\n"
     )
 
 
-class TestValidateRenderEditHandle:
-    """Static validation around the runtime-provided ``<EditHandle>``."""
+class TestValidateRenderBlockHandle:
+    """Static validation around the runtime-provided ``<BlockHandle>``."""
 
     def test_edit_handle_happy_path_lands_in_cards_registry(
         self, dashboard_tools: DashboardArtifactTools, project_root: Path
@@ -1306,12 +1306,12 @@ class TestValidateRenderEditHandle:
         _seed_template(dashboard_tools)
         second = (
             "import React from 'react';\n"
-            "import { EditHandle } from '@datus/web-artifact';\n"
+            "import { BlockHandle } from '@datus/web-artifact';\n"
             "export function Tile() {\n"
             "  return (\n"
-            '    <EditHandle handleId="revenue_by_region" name="Total revenue" kind="kpi">\n'
+            '    <BlockHandle handleId="revenue_by_region" name="Total revenue" kind="kpi">\n'
             "      <div />\n"
-            "    </EditHandle>\n"
+            "    </BlockHandle>\n"
             "  );\n"
             "}\n"
         )
@@ -1337,12 +1337,12 @@ class TestValidateRenderEditHandle:
         _seed_template(dashboard_tools)
         shared = (
             "import React from 'react';\n"
-            "import { EditHandle } from '@datus/web-artifact';\n"
+            "import { BlockHandle } from '@datus/web-artifact';\n"
             "export function KpiCard({ handleId, label, value, sqlId, params }) {\n"
             "  return (\n"
-            '    <EditHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>\n'
+            '    <BlockHandle handleId={handleId} name={label} kind="kpi" sqlId={sqlId} params={params}>\n'
             "      <div>{value}</div>\n"
-            "    </EditHandle>\n"
+            "    </BlockHandle>\n"
             "  );\n"
             "}\n"
         )

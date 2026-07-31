@@ -164,7 +164,7 @@ If the user is asking for an executive briefing, a narrative analysis, or anythi
    └── shared/
        ├── colors.js        # COLORS, palettes
        ├── formatters.js    # d3-format / dayjs wrappers
-       ├── kpi-card.jsx     # KPI tile visual, wrapping <EditHandle> (see the render tree contract)
+       ├── kpi-card.jsx     # KPI tile visual, wrapping <BlockHandle> (see the render tree contract)
        ├── table.jsx        # paginated <DataTable> primitive (sticky headers, row striping, fixed 15 rows/page — no page-size selector)
        └── filter-context.js  # React context for filter values
    ```
@@ -283,16 +283,16 @@ const { start, end } = useMemo(() => resolvePeriod(period), [period]);
 A dashboard reads top-to-bottom in a single screen. Adapt section counts to the dataset, but keep the order:
 
 1. **Header**: H1 title, sub-caption (period covered, scope), generation timestamp on the right.
-2. **Filter strip**: horizontal row of selectors (period / region / segment …). A plain styled `<div>` (see "Filter UI → Style" above), `flex` layout, gap 16. NOT a `<ChartCard>` — wrap it in one `<EditHandle handleId="filter_strip" kind="filter">` so its options stay editable.
-3. **KPI strip**: 4–6 small KPI cards in a single grid row, each with title / current value / sparkline / prior-period comparison badge. Each tile is an `<EditHandle kind="kpi">`, not a `<ChartCard>` — render them through `shared/kpi-card.jsx` — plus **one** `<ChartEntryMore>` for the strip so a viewer can see the query behind the numbers.
+2. **Filter strip**: horizontal row of selectors (period / region / segment …). A plain styled `<div>` (see "Filter UI → Style" above), `flex` layout, gap 16. NOT a `<ChartCard>` — wrap it in one `<BlockHandle handleId="filter_strip" kind="filter">` so its options stay editable.
+3. **KPI strip**: 4–6 small KPI cards in a single grid row, each with title / current value / sparkline / prior-period comparison badge. Each tile is an `<BlockHandle kind="kpi">`, not a `<ChartCard>` — render them through `shared/kpi-card.jsx` — plus **one** `<ChartEntryMore>` for the strip so a viewer can see the query behind the numbers.
 4. **Hero section**: 2–3 medium cards with the most important charts (revenue trend, top-N table, distribution).
 5. **Distribution / segmentation section**: stacked bars, chord diagrams, radar charts, score breakdowns.
 6. **Detail section**: per-category KPI cards next to a faded multi-line trend chart, or a paginated detail table.
-7. **Insight / callout panels** (wherever they sit): every key-finding or auto-insight box gets its own `<EditHandle kind="note">`, so the creator can reword or re-scope the narrative without touching the charts. Add a `<ChartEntryMore>` too when a single query drives its claims.
+7. **Insight / callout panels** (wherever they sit): every key-finding or auto-insight box gets its own `<BlockHandle kind="note">`, so the creator can reword or re-scope the narrative without touching the charts. Add a `<ChartEntryMore>` too when a single query drives its claims.
 
 Two independent rules, and both must hold for every block on the screen:
 
-- **The creator can edit it** — charts and tables through `<ChartCard>`, everything else through `<EditHandle>`. A block with neither is a block the creator cannot ask you to change.
+- **It can be pointed at** — charts and tables through `<ChartCard>`, everything else through `<BlockHandle>`. The same anchor serves both audiences: the creator asking you to change this block while it's being authored, and the reader asking `ask_dashboard` about this number once it's published. A block with neither is invisible to both.
 - **The viewer can audit it** — every block whose numbers come from a **single** query exposes that query, via the ChartCard's built-in menu or a standalone `<ChartEntryMore>`. A number a viewer cannot trace is a number they cannot trust, and a dashboard's `.sql.j2` files never reach the viewer (queries run live), so that menu is the only path. Two blocks are exempt, and neither is a loophole for skipping the menu on a query-backed one: chrome that shows no numbers of its own (the filter strip, a header), and a panel whose claims are derived from **several** queries — "View SQL" has no single honest answer there, so name the sources in the copy instead.
 
 If your dataset is sparse (one or two queries), collapse to **header + filters + KPI strip + one hero card**. Don't pad with filler.
@@ -370,7 +370,7 @@ Before you stop, confirm — `validate_render` covers manifest / entry-point / s
 - [ ] Filter state lives in `app.jsx` and is threaded down; no duplicated filter state across components.
 - [ ] Numeric columns are coerced with `Number(...)` before arithmetic / Recharts.
 - [ ] Loading / error states are rendered for every `useQuerySql` call (filter changes re-trigger loading).
-- [ ] **Every block is editable.** Walk the rendered screen top to bottom: each chart / table sits in a `<ChartCard>`, and each KPI tile, insight panel, and the filter strip sits in its own `<EditHandle>` with a unique `handleId` and a human-readable `name`. Anything with neither is a block the creator cannot ask you to change.
+- [ ] **Every block can be pointed at.** Walk the rendered screen top to bottom: each chart / table sits in a `<ChartCard>`, and each KPI tile, insight panel, and the filter strip sits in its own `<BlockHandle>` with a unique `handleId` and a human-readable `name`. Anything with neither can be neither edited by the creator nor asked about by a reader of the published dashboard.
 - [ ] **Every single-query number is traceable.** Same walk, asking a different question: for each figure on screen that comes from one query, can the viewer see that query? ChartCards answer this themselves; the KPI strip and any single-query insight panel need a standalone `<ChartEntryMore sqlId data>` (one per query, not per tile) on a container marked `data-datus-chart-card`. Blocks with no numbers, and panels derived from several queries, are exempt — the latter cite their sources in the copy.
 - [ ] All hooks (`useRef` / `useMemo` / `useState` / `useCallback` / `useEffect` / `useQuerySql` / custom hooks) are declared as named `const`s at the top of every component — never called inline from JSX (e.g. `<div ref={useRef(null)}>`), all before any `if (...) return …`. Violations crash the artifact with React error #310.
 - [ ] **Cross-chart reconciliation.** Charts that decompose the **same** metric along different dimensions MUST agree on the total. Before stopping, verify (a quick `execute_sql` against the rendered SQL is enough): KPI strip's `total_<metric>` ≈ `SUM(time_series_chart.<metric>)` ≈ `SUM(per_<dimension>_chart.<metric>)` for the same date range, for every breakdown chart of the same metric. A spread >0.5% means one of those queries has a fan-out bug, a date-filter mismatch, or an inconsistent unit conversion — find which one and fix it before finalizing. Independent metrics (e.g. customer count vs supply cost) don't need to reconcile; this rule applies only across charts that share a common total.
