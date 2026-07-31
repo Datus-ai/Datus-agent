@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/logo-light.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -33,7 +33,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -882,6 +882,17 @@
     <span class="md-ellipsis">
       
         Toggle Trace Display
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#switch-permission-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Switch Permission Mode
       
     </span>
   </a>
@@ -4357,6 +4368,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#switch-permission-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Switch Permission Mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#mid-run-message-insertion" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4400,7 +4422,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.8/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.9/docs/cli/chat_command.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4445,6 +4467,8 @@
 <p>After an interrupt, the session remains intact — you can continue typing new instructions, refine your question, or provide additional context. Nothing is lost.</p>
 <h3 id="toggle-trace-display">Toggle Trace Display<a class="headerlink" href="#toggle-trace-display" title="Permanent link">&para;</a></h3>
 <p>Press <strong>Ctrl+O</strong> while the agent is running to toggle the trace display mode between <strong>compact</strong> (progress only) and <strong>verbose</strong> (full step details). This lets you control how much detail you see during execution without interrupting the agent.</p>
+<h3 id="switch-permission-mode">Switch Permission Mode<a class="headerlink" href="#switch-permission-mode" title="Permanent link">&para;</a></h3>
+<p>Press <strong>Ctrl+P</strong> to cycle the permission mode through <strong>normal → auto → dangerous → normal</strong>. The shortcut remains active while the agent is running, and the new mode applies to subsequent tool permission checks in the current conversation.</p>
 <h3 id="mid-run-message-insertion">Mid-run Message Insertion<a class="headerlink" href="#mid-run-message-insertion" title="Permanent link">&para;</a></h3>
 <p>While the agent is running, you don't have to wait for it to finish before adding more context. Type into the input box and press <strong>Enter</strong> — the text is queued and delivered to the model right before its next LLM turn, so it influences the run already in progress rather than starting a new one.</p>
 <p>How it works:</p>
@@ -4621,7 +4645,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../../javascripts/analytics.js"></script>
       
