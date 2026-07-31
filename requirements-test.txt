@@ -386,13 +386,18 @@ datus-metricflow==0.2.7 \
     --hash=sha256:79326bc901b1a4e2ce9a92347536c302eb0ea80891bffccd67077f3eb2490787 \
     --hash=sha256:a85727556c2f1fb667b9e2059de095f1422ecc0eac4f05c8ced25d29acf80a95
     # via datus-semantic-metricflow
-datus-semantic-core==0.2.1 \
-    --hash=sha256:1ca8c1b0671f63a09175659ceac199f65664efb0d592a5495e7223c2c87de5e2 \
-    --hash=sha256:f1f8f43f2dab0944372f0028af3424c1dd18e5a37de23068e4e80d38d7583b5a
-    # via datus-semantic-metricflow
-datus-semantic-metricflow==0.2.9 \
-    --hash=sha256:543d4249f4c029a30c36c9c018565495b187d95b70a5ba2b4861815c8750468e \
-    --hash=sha256:c00778827c1771156cd4eda76c38551e08a585597b028e88598124fe7a478a76
+datus-semantic-core==0.2.3 \
+    --hash=sha256:24b38b2d00c99f0a0d9d7478a09300bd31a0f3aee7b30b486411ee0051194c1d \
+    --hash=sha256:de828ab07c956984029e94ff942dea495881517bf8b01517b2d516574c004d42
+    # via
+    #   datus-semantic-metricflow
+    #   datus-semantic-osi
+datus-semantic-metricflow==0.2.12 \
+    --hash=sha256:02c9977e5260e175c2a42bfbaf1aa99b8115906c639f87748fc03de512a43395 \
+    --hash=sha256:8253df9353e95c1dd7d60bbdbb5bc3a5b3295ee75d39a80f5003f820f03c8cc4
+datus-semantic-osi==0.1.4 \
+    --hash=sha256:35ee658090cbfd65fc2c82d1ba94665d8bf82bf13cd8b48d9ba7bf50ad397e6c \
+    --hash=sha256:568724d70afb599ba3cd638ab3f038b6ff6b321ae76dd01c8026ca35c0911460
 datus-storage-base==0.1.5 \
     --hash=sha256:3865635243dde9b46761bce8ecca21ed25efe4cf7bdd9ab64f52eb4576984a3c \
     --hash=sha256:ab70b8db8823590b2272b5c86178b833532e0b915014a9645ae8bc8aac7814a3
@@ -583,6 +588,7 @@ jsonschema==4.25.1 \
     --hash=sha256:e4a9655ce0da0c0b67a085847e00a3a51449e1157f4f75e9fb5aa545e122eb85
     # via
     #   datus-metricflow
+    #   datus-semantic-osi
     #   mcp
 jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe \
@@ -1028,6 +1034,7 @@ pydantic==2.12.3 \
     #   datus-metricflow
     #   datus-semantic-core
     #   datus-semantic-metricflow
+    #   datus-semantic-osi
     #   fastapi
     #   langfuse
     #   langsmith
@@ -1198,6 +1205,8 @@ pyyaml==6.0.1 \
     --hash=sha256:d483d2cdf104e7c9fa60c544d92981f12ad66a457afae824d146093b8c294c54
     # via
     #   datus-metricflow
+    #   datus-semantic-core
+    #   datus-semantic-osi
     #   langsmith-fetch
     #   pre-commit
     #   yamllint
@@ -1515,6 +1524,10 @@ sqlalchemy==2.0.23 \
     #   datus-metricflow
     #   duckdb-engine
     #   snowflake-sqlalchemy
+sqlglot==27.27.0 \
+    --hash=sha256:7f1e91f04e9dbedf08fcd703b54cb78b548d9c25b5b1829951e65c5a2380806e \
+    --hash=sha256:c1ce8a3b7ce9b3c9d5a0fc26f202d7ed6a203b7398ae834c979e0c455a99d9ce
+    # via datus-semantic-osi
 sse-starlette==1.8.2 \
     --hash=sha256:70cc7ef5aca4abe8a25dec1284cce4fe644dd7bf0c406d3e852e516092b7f849 \
     --hash=sha256:e0f9b8dec41adc092a0a6e0694334bd3cfd3084c44c497a6ebc1fb4bdd919acd
