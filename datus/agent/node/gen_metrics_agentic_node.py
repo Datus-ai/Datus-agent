@@ -914,10 +914,11 @@ class GenMetricsAgenticNode(AgenticNode):
             try:
                 self._ensure_metric_dry_runs(metric_names)
             except Exception as exc:
-                logger.exception(f"publish_metrics preflight failed for metrics={metric_names}: {exc}")
+                error_message = str(exc) or type(exc).__name__
+                logger.exception(f"publish_metrics preflight failed for metrics={metric_names}: {error_message}")
                 return FuncToolResult(
                     success=0,
-                    error=str(exc),
+                    error=error_message,
                     result={
                         "code": "metric_publish_preflight_failed",
                         "stage": "query_metrics_dry_run",

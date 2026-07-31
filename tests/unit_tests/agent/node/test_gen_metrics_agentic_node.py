@@ -1335,6 +1335,7 @@ class TestExecuteStreamGenMetricsError:
 
     def test_publish_metrics_returns_preflight_error_to_tool_caller(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.generation_tools = MagicMock()
@@ -1350,6 +1351,7 @@ class TestExecuteStreamGenMetricsError:
 
         result = node.publish_metrics("metrics/order_metrics.yml")
 
+        assert isinstance(result, FuncToolResult)
         assert result.success == 0
         assert result.error == error
         assert result.result == {
@@ -1358,6 +1360,23 @@ class TestExecuteStreamGenMetricsError:
             "metric_file": "metrics/order_metrics.yml",
             "metrics": ["order_count"],
         }
+        node.generation_tools.publish_metrics.assert_not_called()
+
+    def test_publish_metrics_falls_back_to_exception_type_for_empty_error(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.generation_tools = MagicMock()
+        node.generation_tools._extract_metric_names_from_file.return_value = ["order_count"]
+        node.generation_tools._extract_metric_definitions_from_file.return_value = {}
+        node.generation_tools._metric_names_requiring_dry_run.return_value = ["order_count"]
+        node._resolve_metric_artifact_path = MagicMock(return_value="/tmp/order_metrics.yml")
+        node._ensure_metric_dry_runs = MagicMock(side_effect=RuntimeError())
+
+        result = node.publish_metrics("metrics/order_metrics.yml")
+
+        assert result.success == 0
+        assert result.error == "RuntimeError"
         node.generation_tools.publish_metrics.assert_not_called()
 
     def test_final_metric_publish_accepts_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):
