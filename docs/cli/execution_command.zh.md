@@ -40,25 +40,9 @@
 ```
 
 - `!<plugin> <args...>` 会以子进程方式运行 `datus <plugin> <args...>`。该命令像普通 bash 命令一样受权限门控，并且插件自身的 CLI 权限在子进程内同样生效。其输出会作为执行 turn 喂给模型（与 `!<tool>` 一致），进入对话并触发一次回复。
-- 插件可以在其 `datus-plugin.yml` manifest 的 `commands:` 下声明命令与参数（见插件 manifest 参考）。声明后，`!<plugin>` 补全器会列出它们并提示其参数名。命令分组通过 `subcommands:` 嵌套，补全器会逐级下钻（`!airflow dags ` → `list`、`trigger` …）。
-
-```yaml
-# datus-plugin.yml（节选）
-commands:
-  - name: ls                        # 带参数的扁平命令
-    description: List objects under a prefix
-    args:
-      - {name: uri, required: true, description: s3://bucket/prefix}
-      - {name: --recursive, description: recurse into sub-prefixes}
-  - name: dags                      # 带嵌套子命令的命令分组
-    description: DAG operations
-    subcommands:
-      - name: trigger
-        args:
-          - {name: dag_id, required: true}
-          - {name: --conf, description: run configuration JSON}
-      - name: list
-```
+- 如果插件提供了命令信息，`!<plugin>` 补全器会列出可用命令并提示参数。补全也会
+  沿命令层级逐步展开，例如输入 `!airflow dags ` 后，可以继续选择 `list` 或
+  `trigger`。
 
 ## 4. 说明
 
