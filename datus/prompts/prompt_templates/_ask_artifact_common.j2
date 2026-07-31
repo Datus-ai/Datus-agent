@@ -86,7 +86,16 @@ this" handle. Clicking it attaches an envelope to the user's message:
 ```
 
 It means "this is the thing I'm asking about" — the user's own words are
-the question; the envelope only says where to look. Read it like this:
+the question; the envelope only says where to look.
+
+**Attribute values are HTML-entity encoded.** `&quot;` is `"`, `&amp;` is
+`&`, `&lt;`/`&gt;` are `<`/`>`. Decode before you parse or before you put
+a value in a tool-call argument — `params` in particular only becomes
+valid JSON after decoding, so `params="{&quot;period&quot;:&quot;last_30d&quot;}"`
+is the object `{"period": "last_30d"}`. Passing the raw attribute text
+through verbatim gets you a parse error or a nonsense bind value.
+
+Read the rest like this:
 
 - **`sql-id` is your entry point.** It names an entry in the query
   catalog above, which is already inlined — answer from there rather than

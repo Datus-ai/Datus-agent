@@ -867,6 +867,49 @@ export default function App() {
         # rather than guessing.
         assert result.result["cards"] == []
 
+    def test_nested_jsx_in_a_prop_value_does_not_truncate_the_tag(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        # The attribute matcher is atom-based precisely so a ``>`` inside a
+        # JSX expression can't end the tag early. If it did, the props after
+        # it would go unseen and this valid card would be reported as
+        # missing chartType.
+        body = """\
+      <ChartCard
+        title={<span>revenue &gt; target</span>}
+        titleRight={<Badge label={a > b ? 'up' : 'down'} />}
+        chartId="store_sales"
+        sqlId="queries/sales_by_store"
+        chartType="bar"
+        data={data}
+      >
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [{"chart_id": "store_sales", "jsx_path": "render/app.jsx", "kind": "chart"}]
+
+    def test_traversal_sql_id_rejected_on_grammar_not_on_disk(
+        self, report_tools: ReportArtifactTools, project_root: Path
+    ):
+        # ``queries/<slug>`` is matched against ^[a-z0-9_]+$, so a traversal
+        # attempt fails the grammar and never reaches a filesystem lookup.
+        # Asserting on WHICH message comes back is the point: the
+        # "not produced via save_query" wording would mean we had already
+        # gone to disk with attacker-shaped input.
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/../../etc/passwd" chartType="bar" data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "not a valid queries/<slug> reference" in (result.error or "")
+        assert "save_query" not in (result.error or "")
+
     def test_spread_props_warn_instead_of_failing(self, report_tools: ReportArtifactTools, project_root: Path):
         body = """\
       <ChartCard {...cardProps} data={data}>

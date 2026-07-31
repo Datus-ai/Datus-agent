@@ -156,7 +156,7 @@ While an artifact is being authored, its creator needs a way to point at any blo
 
 `BlockHandle` is an *entry point, not an editor*. Clicking it pins that block into the chat as a context chip; the change itself happens on the next turn, in the same shape as "Targeted single-block edits".
 
-**The same handle serves the reader after publication.** The runtime swaps what the button does based on where the artifact is mounted: while you are authoring it's an Edit wand pointed at you, and on the published page it becomes an "ask about this" button that pins the block into the reader's `ask_{{ artifact_kind }}` chat — along with the value the block is displaying at that moment. Neither appears in a standalone HTML export. So a handle is not authoring scaffolding you are politely leaving behind: **every block you skip is a block no reader can point at**, and they will be reading this artifact for far longer than you spend building it.
+**The same handle serves the reader after publication.** The runtime swaps what the button does based on where the artifact is mounted: while you are authoring it's an Edit wand pointed at you, and on the published page it becomes an "ask about this" button that pins the block into the reader's `ask_{% endraw %}{{ artifact_kind }}{% raw %}` chat — along with the value the block is displaying at that moment. Neither appears in a standalone HTML export. So a handle is not authoring scaffolding you are politely leaving behind: **every block you skip is a block no reader can point at**, and they will be reading this artifact for far longer than you spend building it.
 
 **Wrap each of these in its own `BlockHandle`:**
 
