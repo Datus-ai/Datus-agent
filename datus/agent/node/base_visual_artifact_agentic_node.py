@@ -38,7 +38,7 @@ from pydantic import BaseModel
 
 from datus.agent.node.agentic_node import AgenticNode, _resolve_language_name
 from datus.agent.node.visual_artifact._visual_artifact_finalize import (
-    FINALIZE_STAGE_TEXT,
+    finalize_stage_text,
     narrative_outputs_present,
     run_finalize_analysis,
 )
@@ -847,7 +847,7 @@ class BaseVisualArtifactAgenticNode(AgenticNode, Generic[InputT, ResultT]):
             if item is sentinel:
                 break
             stage = int(item) if isinstance(item, int) else 0
-            text = FINALIZE_STAGE_TEXT.get(stage)
+            text = finalize_stage_text(stage, getattr(self.agent_config, "language", None))
             if not text:
                 continue
             yield ActionHistory(

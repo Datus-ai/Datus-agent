@@ -34,6 +34,7 @@ from datus.agent.node.visual_artifact._visual_artifact_finalize import (
     collect_query_briefs,
     collect_query_previews,
     consistency_check,
+    finalize_stage_text,
     parse_finalize_output,
     run_finalize_analysis,
     run_intent_curation,
@@ -2174,3 +2175,30 @@ class TestRunFinalizeSkipNarrative:
         assert result["ok"] is True
         assert model.generate_with_json_output.call_count == 1
         assert (analysis_dir / "insights.json").is_file()
+
+
+# --------------------------------------------------------------------------- #
+# finalize_stage_text                                                         #
+# --------------------------------------------------------------------------- #
+
+
+class TestFinalizeStageText:
+    def test_unpinned_language_falls_back_to_english(self):
+        assert finalize_stage_text(1) == "Generating insights and follow-up questions..."
+        assert finalize_stage_text(1, None) == "Generating insights and follow-up questions..."
+        assert finalize_stage_text(1, "   ") == "Generating insights and follow-up questions..."
+
+    @pytest.mark.parametrize("code", ["zh", "ZH", "zh-CN", "zh-cn", "zh-TW"])
+    def test_zh_codes_pick_chinese_copy(self, code: str):
+        assert finalize_stage_text(1, code) == "正在生成洞察与后续问题..."
+        assert finalize_stage_text(2, code) == "正在提炼分析意图..."
+        assert finalize_stage_text(3, code) == "正在缓存引用的表结构，即将完成..."
+
+    @pytest.mark.parametrize("code", ["en", "ja", "fr", "custom-lang"])
+    def test_non_zh_codes_pick_english_copy(self, code: str):
+        assert finalize_stage_text(2, code) == "Refining analysis intent..."
+
+    @pytest.mark.parametrize("language", [None, "zh", "en"])
+    def test_unknown_stage_returns_none(self, language):
+        assert finalize_stage_text(0, language) is None
+        assert finalize_stage_text(99, language) is None
