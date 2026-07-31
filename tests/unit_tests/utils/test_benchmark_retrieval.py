@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from datus.utils.benchmark_retrieval import (
     RetrievalEvent,
     evaluate_retrieval,
+    extract_retrieval_events,
     summarize_retrieval,
 )
 from datus.utils.benchmark_utils import compute_table_matches
@@ -174,3 +177,114 @@ def test_summarize_retrieval_counts_only_evaluated_tasks_in_metric_denominators(
             "outcome_not_evaluable": 2,
         },
     }
+
+
+
+def test_extract_retrieval_events_reads_structured_search_table_result() -> None:
+    action_history = [
+        {
+            "action_id": "call_1",
+            "action_type": "tool",
+            "input": {
+                "function_name": "search_table",
+                "arguments": {"query_text": "school meals", "top_n": 5},
+            },
+            "output": None,
+            "status": "processing",
+            "start_time": "2026-07-31T10:00:00+00:00",
+            "end_time": None,
+        },
+        {
+            "action_id": "complete_call_1",
+            "action_type": "tool",
+            "input": {
+                "function_name": "search_table",
+                "arguments": {"query_text": "school meals", "top_n": 5},
+            },
+            "output": {
+                "result": {
+                    "metadata": [
+                        {"identifier": "california_schools.schools", "_distance": 0.1},
+                        {"identifier": "california_schools.frpm", "_distance": 0.2},
+                    ],
+                    "sample_data": [],
+                }
+            },
+            "status": "completed",
+            "start_time": "2026-07-31T10:00:00+00:00",
+            "end_time": "2026-07-31T10:00:00.250000+00:00",
+        },
+    ]
+
+    events = extract_retrieval_events(action_history)
+
+    assert len(events) == 1
+    assert events[0].action_id == "complete_call_1"
+    assert events[0].query_text == "school meals"
+    assert events[0].requested_top_n == 5
+    assert events[0].retrieved_tables == [
+        "california_schools.schools",
+        "california_schools.frpm",
+    ]
+    assert events[0].duration_ms == 250.0
+    assert events[0].success is True
+    assert events[0].error is None
+
+
+def test_extract_retrieval_events_accepts_prefixed_tool_name_and_json_raw_output() -> None:
+    action_history = [
+        {
+            "action_id": "complete_call_2",
+            "action_type": "tool",
+            "input": {
+                "function_name": "db_tools.search_table",
+                "arguments": {"query": "school tests", "top_k": 3},
+            },
+            "output": {
+                "raw_output": (
+                    "{\"metadata\":["
+                    "{\"database_name\":\"california_schools\","
+                    "\"table_name\":\"satscores\"}"
+                    "]}"
+                )
+            },
+            "status": "success",
+            "start_time": None,
+            "end_time": None,
+        },
+    ]
+
+    events = extract_retrieval_events(action_history)
+
+    assert len(events) == 1
+    assert events[0].query_text == "school tests"
+    assert events[0].requested_top_n == 3
+    assert events[0].retrieved_tables == ["california_schools.satscores"]
+    assert events[0].duration_ms is None
+    assert events[0].success is True
+
+
+def test_extract_retrieval_events_preserves_failed_terminal_calls() -> None:
+    action_history = [
+        {
+            "action_id": "complete_call_3",
+            "action_type": "tool",
+            "input": {
+                "function_name": "search_table",
+                "arguments": {"query_text": "bad query", "top_n": 5},
+            },
+            "output": {"error": "database connection failed"},
+            "status": "failed",
+            "start_time": datetime(2026, 7, 31, 10, 0, 0, tzinfo=timezone.utc),
+            "end_time": datetime(2026, 7, 31, 10, 0, 1, tzinfo=timezone.utc),
+        },
+    ]
+
+    events = extract_retrieval_events(action_history)
+
+    assert len(events) == 1
+    assert events[0].action_id == "complete_call_3"
+    assert events[0].success is False
+    assert events[0].error == "database connection failed"
+    assert events[0].retrieved_tables == []
+    assert events[0].duration_ms == 1000.0

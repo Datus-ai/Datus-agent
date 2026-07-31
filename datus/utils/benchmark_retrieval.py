@@ -16,8 +16,10 @@ This file is pure scoring logic. Callers supply:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import json
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal
 
 # Lifecycle of a single task's retrieval score:
@@ -305,6 +307,180 @@ def summarize_retrieval(evaluations: list[RetrievalEvaluation]) -> dict[str, Any
         "failed_search_calls": sum(item.failed_search_call_count for item in evaluations),
         "diagnosis_counts": diagnosis_counts,
     }
+
+
+def extract_retrieval_events(action_history: list[Mapping[str, Any]]) -> list[RetrievalEvent]:
+    events: list[RetrievalEvent] = []
+    seen_action_ids: set[str] = set()
+
+    for action in action_history:
+        record = _as_mapping(action)
+        action_id = str(record.get("action_id") or "")
+        if not action_id or action_id in seen_action_ids:
+            continue
+        if not _is_terminal_action(record):
+            continue
+
+        tool_name, arguments = _tool_name_and_arguments(record)
+        if not _is_search_table_tool(tool_name):
+            continue
+
+        seen_action_ids.add(action_id)
+        output = _extract_output_payload(record.get("output"))
+        success = _is_success_status(record.get("status")) and not _payload_has_error(output)
+
+        events.append(
+            RetrievalEvent(
+                action_id=action_id,
+                query_text=_query_text(arguments),
+                requested_top_n=_requested_top_n(arguments),
+                retrieved_tables=_metadata_tables(output),
+                duration_ms=_duration_ms(record.get("start_time"), record.get("end_time")),
+                success=success,
+                error=None if success else _error_message(output),
+            )
+        )
+
+    return events
+
+
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump()
+        return dumped if isinstance(dumped, Mapping) else {}
+    if hasattr(value, "dict"):
+        dumped = value.dict()
+        return dumped if isinstance(dumped, Mapping) else {}
+    if hasattr(value, "__dict__"):
+        return vars(value)
+    return {}
+
+
+def _is_terminal_action(record: Mapping[str, Any]) -> bool:
+    if record.get("output") is not None:
+        return True
+    status = str(record.get("status") or "").lower()
+    return status in {"completed", "complete", "success", "succeeded", "failed", "error"}
+
+
+def _tool_name_and_arguments(record: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
+    input_payload = _as_mapping(record.get("input"))
+    tool_name = str(
+        input_payload.get("function_name")
+        or input_payload.get("tool_name")
+        or input_payload.get("name")
+        or ""
+    )
+    arguments = _as_mapping(input_payload.get("arguments"))
+    return tool_name, arguments
+
+
+def _is_search_table_tool(tool_name: str) -> bool:
+    return tool_name == "search_table" or tool_name.endswith(".search_table")
+
+
+def _extract_output_payload(output: Any) -> Mapping[str, Any]:
+    output_mapping = _as_mapping(output)
+    result = output_mapping.get("result")
+    if isinstance(result, Mapping):
+        return result
+
+    raw_output = output_mapping.get("raw_output")
+    if isinstance(raw_output, Mapping):
+        return raw_output
+    if isinstance(raw_output, str):
+        try:
+            parsed = json.loads(raw_output)
+        except json.JSONDecodeError:
+            return output_mapping
+        return parsed if isinstance(parsed, Mapping) else output_mapping
+
+    return output_mapping
+
+
+def _is_success_status(status: Any) -> bool:
+    return str(status or "").lower() in {"completed", "complete", "success", "succeeded"}
+
+
+def _payload_has_error(payload: Mapping[str, Any]) -> bool:
+    return bool(payload.get("error") or payload.get("exception"))
+
+
+def _error_message(payload: Mapping[str, Any]) -> str | None:
+    error = payload.get("error") or payload.get("exception")
+    if error is None:
+        return None
+    return str(error)
+
+
+def _query_text(arguments: Mapping[str, Any]) -> str:
+    query = arguments.get("query_text") or arguments.get("query") or arguments.get("text") or ""
+    return str(query)
+
+
+def _requested_top_n(arguments: Mapping[str, Any]) -> int | None:
+    value = arguments.get("top_n")
+    if value is None:
+        value = arguments.get("top_k")
+    if value is None:
+        value = arguments.get("limit")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _metadata_tables(payload: Mapping[str, Any]) -> list[str]:
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, list):
+        return []
+
+    tables: list[str] = []
+    for item in metadata:
+        row = _as_mapping(item)
+        table_name = _table_identifier(row)
+        if table_name:
+            tables.append(table_name)
+    return _ordered_unique(tables)
+
+
+def _table_identifier(row: Mapping[str, Any]) -> str:
+    identifier = row.get("identifier")
+    if identifier:
+        return str(identifier)
+
+    parts = [
+        row.get("catalog_name"),
+        row.get("database_name"),
+        row.get("schema_name"),
+        row.get("table_name"),
+    ]
+    cleaned = [str(part) for part in parts if part]
+    return ".".join(cleaned)
+
+
+def _duration_ms(start_time: Any, end_time: Any) -> float | None:
+    start = _parse_datetime(start_time)
+    end = _parse_datetime(end_time)
+    if start is None or end is None:
+        return None
+    duration = (end - start).total_seconds() * 1000
+    if duration < 0:
+        return None
+    return round(duration, 3)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
 
 
 def _ordered_unique(values: Iterable[str]) -> list[str]:
