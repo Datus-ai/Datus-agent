@@ -9,7 +9,7 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.configuration.agent_config_loader import load_agent_config
-from datus.utils.benchmark_utils import evaluate_benchmark_and_report
+from datus.utils.benchmark_utils import TrajectoryParser, evaluate_benchmark_and_report
 from datus.utils.constants import DBType
 
 TESTS_ROOT = Path(__file__).resolve().parent.parent.parent  # tests/
@@ -88,6 +88,45 @@ def _write_trajectory(path: Path, task_id: str, tool_actions: Optional[list[dict
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
         yaml.safe_dump(payload, handle, allow_unicode=True)
+
+
+def test_trajectory_parser_extracts_retrieval_events(tmp_path: Path) -> None:
+    trajectory_path = tmp_path / "trajectory.yaml"
+    _write_trajectory(
+        trajectory_path,
+        "task-1",
+        [
+            {
+                "action_id": "complete_call_1",
+                "action_type": "tool",
+                "input": {
+                    "function_name": "search_table",
+                    "arguments": {"query_text": "school meals", "top_n": 5},
+                },
+                "output": {
+                    "result": {
+                        "metadata": [
+                            {"identifier": "california_schools.schools"},
+                            {"identifier": "california_schools.frpm"},
+                        ],
+                        "sample_data": [],
+                    }
+                },
+                "status": "completed",
+                "start_time": "2026-07-31T10:00:00+00:00",
+                "end_time": "2026-07-31T10:00:00.100000+00:00",
+            }
+        ],
+    )
+
+    analysis = TrajectoryParser().parse(trajectory_path, "task-1")
+
+    assert len(analysis.retrieval_events) == 1
+    assert analysis.retrieval_events[0].query_text == "school meals"
+    assert analysis.retrieval_events[0].retrieved_tables == [
+        "california_schools.schools",
+        "california_schools.frpm",
+    ]
 
 
 def _benchmark_root(agent_config: AgentConfig, relative_path: str) -> Path:
