@@ -719,7 +719,7 @@ export default function App() {
 
 
 # ----------------------------------------------------------------------------- #
-# Card primitives (<ChartCard> / <EditHandle>) inside a report render tree      #
+# Card primitives (<ChartCard> / <BlockHandle>) inside a report render tree      #
 # ----------------------------------------------------------------------------- #
 
 
@@ -727,7 +727,7 @@ def _cards_app_jsx(body: str) -> str:
     """An ``app.jsx`` whose single query is ``queries/sales_by_store``."""
     return f"""\
 import React from 'react';
-import {{ ChartCard, EditHandle, useDatusArtifact }} from '@datus/web-artifact';
+import {{ ChartCard, BlockHandle, useDatusArtifact }} from '@datus/web-artifact';
 
 export default function App() {{
   const {{ useQuerySql }} = useDatusArtifact();
@@ -764,9 +764,9 @@ class TestValidateRenderCards:
       <ChartCard chartId="store_sales" sqlId="queries/sales_by_store" chartType="bar" data={data}>
         <div />
       </ChartCard>
-      <EditHandle handleId="total_revenue" name="Total revenue" kind="kpi" sqlId="queries/sales_by_store">
+      <BlockHandle handleId="total_revenue" name="Total revenue" kind="kpi" sqlId="queries/sales_by_store">
         <div />
-      </EditHandle>"""
+      </BlockHandle>"""
         _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
 
         result = report_tools.validate_render()
@@ -783,9 +783,9 @@ class TestValidateRenderCards:
       <ChartCard chartId="store_sales" sqlId="queries/sales_by_store" chartType="bar" data={data}>
         <div />
       </ChartCard>
-      <EditHandle handleId="store_sales" name="Total revenue" kind="kpi">
+      <BlockHandle handleId="store_sales" name="Total revenue" kind="kpi">
         <div />
-      </EditHandle>"""
+      </BlockHandle>"""
         _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
 
         result = report_tools.validate_render()
@@ -794,9 +794,9 @@ class TestValidateRenderCards:
 
     def test_malformed_handle_id_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
         body = """\
-      <EditHandle handleId="Total Revenue" name="Total revenue" kind="kpi">
+      <BlockHandle handleId="Total Revenue" name="Total revenue" kind="kpi">
         <div />
-      </EditHandle>"""
+      </BlockHandle>"""
         _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
 
         result = report_tools.validate_render()
@@ -834,13 +834,13 @@ class TestValidateRenderCards:
         # not an error.
         shared = """\
 import React from 'react';
-import { EditHandle } from '@datus/web-artifact';
+import { BlockHandle } from '@datus/web-artifact';
 
 export default function KpiCard({ handleId, label, children }) {
   return (
-    <EditHandle handleId={handleId} name={label} kind="kpi">
+    <BlockHandle handleId={handleId} name={label} kind="kpi">
       {children}
-    </EditHandle>
+    </BlockHandle>
   );
 }
 """

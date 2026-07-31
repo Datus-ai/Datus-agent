@@ -830,7 +830,7 @@ class ReportArtifactTools:
         * No file escapes ``render/`` via ``../`` import.
         * No ``use*()`` hook call sits below a ``return`` in the same function
           — the Rules-of-Hooks violation that renders as a blank artifact.
-        * Every ``<ChartCard>`` / ``<EditHandle>`` declares its required
+        * Every ``<ChartCard>`` / ``<BlockHandle>`` declares its required
           props, and their ids share one globally-unique namespace (see
           ``_visual_artifact_cards``).
 
@@ -930,7 +930,7 @@ class ReportArtifactTools:
 
         module_keys: Set[str] = set(modules.keys())
 
-        # <ChartCard> / <EditHandle> audit — shared with the dashboard
+        # <ChartCard> / <BlockHandle> audit — shared with the dashboard
         # validator so the two kinds can't drift on id shape, uniqueness
         # or the kind enum. Reports carry the same card primitives, and a
         # duplicated id breaks the same way: two blocks pin an identical

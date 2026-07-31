@@ -1071,7 +1071,7 @@ class DashboardArtifactTools:
 
         module_keys: Set[str] = set(modules.keys())
 
-        # <ChartCard> / <EditHandle> audit — shared with the report
+        # <ChartCard> / <BlockHandle> audit — shared with the report
         # validator so the two kinds can't drift on id shape, uniqueness
         # or the kind enum.
         cards = scan_render_cards(
@@ -1199,7 +1199,7 @@ class DashboardArtifactTools:
         )
 
         # Cards registry derived from the validated <ChartCard> /
-        # <EditHandle> instances. Downstream consumers (publish wire
+        # <BlockHandle> instances. Downstream consumers (publish wire
         # payload, future static-edit APIs) read this off the
         # validate_render result rather than re-walking the AST.
         cards_registry = cards.registry()

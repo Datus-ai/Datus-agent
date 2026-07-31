@@ -9,7 +9,7 @@ Both visual-artifact kinds mount the same two runtime components from
 
 * ``<ChartCard>`` — chrome + chart-actions menu around a query-backed
   visualization.
-* ``<EditHandle>`` — a zero-chrome anchor around the blocks that aren't
+* ``<BlockHandle>`` — a zero-chrome anchor around the blocks that aren't
   charts (KPI tiles, insight callouts, the filter strip).
 
 Both carry an id that the viewer sends back to the agent when a user
@@ -22,10 +22,10 @@ identical chip, so the second one silently de-dupes away and the button
 looks broken.
 
 That failure is invisible until runtime, which is why it's checked here
-instead. Dashboards have had these checks since ``EditHandle`` landed;
-this module exists so reports get the identical treatment rather than a
-second, drifting copy — the only per-kind differences are where a query
-lives (a saved template vs a saved result) and how to say so.
+instead. The checks started out dashboard-only; this module exists so
+reports get the identical treatment rather than a second, drifting copy
+— the only per-kind differences are where a query lives (a saved
+template vs a saved result) and how to say so.
 """
 
 from __future__ import annotations
@@ -59,10 +59,10 @@ _JSX_ATTR_BLOCK = r"""
 CHART_CARD_OPEN_RE = re.compile(r"<ChartCard\b" + _JSX_ATTR_BLOCK, re.VERBOSE | re.DOTALL)
 
 
-# ``<EditHandle ... >`` opening tag — the entry point authors wrap around
+# ``<BlockHandle ... >`` opening tag — the entry point authors wrap around
 # blocks that aren't ChartCards. Same atom-based attribute matching so
 # ``name={<span>a > b</span>}`` doesn't truncate the prop block.
-EDIT_HANDLE_OPEN_RE = re.compile(r"<EditHandle\b" + _JSX_ATTR_BLOCK, re.VERBOSE | re.DOTALL)
+BLOCK_HANDLE_OPEN_RE = re.compile(r"<BlockHandle\b" + _JSX_ATTR_BLOCK, re.VERBOSE | re.DOTALL)
 
 
 # Top-level JSX spread attribute: ``{...rest}`` sitting between other
@@ -82,8 +82,8 @@ CHART_CARD_STR_ATTR_RE = re.compile(
 )
 
 
-# String-literal props audited on ``<EditHandle>``.
-EDIT_HANDLE_STR_ATTR_RE = re.compile(
+# String-literal props audited on ``<BlockHandle>``.
+BLOCK_HANDLE_STR_ATTR_RE = re.compile(
     r"""\b(handleId|name|kind|sqlId)\s*=\s*['"]([^'"]+)['"]""",
 )
 
@@ -91,7 +91,7 @@ EDIT_HANDLE_STR_ATTR_RE = re.compile(
 # Presence of a prop regardless of whether its value is a literal. Used to
 # tell "the author forgot ``handleId``" (an issue) apart from "``handleId``
 # is forwarded from a wrapper component" (legitimate — see below).
-EDIT_HANDLE_ANY_ATTR_RE = re.compile(r"\b(handleId|name)\s*=")
+BLOCK_HANDLE_ANY_ATTR_RE = re.compile(r"\b(handleId|name)\s*=")
 
 
 # ``chartId`` shape — same slug grammar used elsewhere in the artifact path
@@ -128,10 +128,10 @@ VALID_CHART_TYPES: Set[str] = {
 }
 
 
-# ``EditHandle``'s kind enum. ``'chart'`` is deliberately absent: that kind
-# belongs to ChartCard, and a chart wrapped in a bare EditHandle would lose
+# ``BlockHandle``'s kind enum. ``'chart'`` is deliberately absent: that kind
+# belongs to ChartCard, and a chart wrapped in a bare BlockHandle would lose
 # the chart-actions menu.
-VALID_EDIT_HANDLE_KINDS: Set[str] = {"kpi", "note", "filter"}
+VALID_BLOCK_HANDLE_KINDS: Set[str] = {"kpi", "note", "filter"}
 
 
 @dataclass
@@ -148,14 +148,14 @@ class CardScanResult:
     # One namespace for both because they land in the same field of the
     # card-reference payload.
     ids_seen: Dict[str, str] = field(default_factory=dict)
-    # Same keys → what the block is ("chart" for ChartCard, the EditHandle
+    # Same keys → what the block is ("chart" for ChartCard, the BlockHandle
     # kind otherwise), so the registry can tell a KPI tile from a chart.
     kinds: Dict[str, str] = field(default_factory=dict)
 
     def registry(self) -> List[Dict[str, str]]:
         """Cards registry for the ``validate_render`` wire result.
 
-        Sorted by id for stable output. EditHandles whose ``handleId`` is
+        Sorted by id for stable output. BlockHandles whose ``handleId`` is
         forwarded from a wrapper component's props are absent — their ids
         only exist at runtime.
         """
@@ -171,7 +171,7 @@ def scan_render_cards(
     query_exists: Callable[[str], bool],
     missing_query_hint: str,
 ) -> CardScanResult:
-    """Validate every ``<ChartCard>`` / ``<EditHandle>`` in a render tree.
+    """Validate every ``<ChartCard>`` / ``<BlockHandle>`` in a render tree.
 
     Args:
         modules: ``{module_key: {"rel": str, "source": str}}`` — the same
@@ -255,21 +255,21 @@ def scan_render_cards(
 
             result.kinds[chart_id] = "chart"
 
-        # ---- <EditHandle ... > opening tags. Checks are deliberately
+        # ---- <BlockHandle ... > opening tags. Checks are deliberately
         # looser than ChartCard's: a KPI tile is normally rendered through
         # a shared wrapper (``shared/kpi-card.jsx``) that forwards
         # ``handleId`` / ``name`` from its own props, so those values are
         # expressions rather than string literals at this call site.
         # Literals get the full shape + uniqueness treatment; forwarded
         # props are deferred to runtime.
-        for eh_match in EDIT_HANDLE_OPEN_RE.finditer(source):
+        for eh_match in BLOCK_HANDLE_OPEN_RE.finditer(source):
             attrs = eh_match.group(1) or ""
-            attr_values = dict(EDIT_HANDLE_STR_ATTR_RE.findall(attrs))
-            present = set(EDIT_HANDLE_ANY_ATTR_RE.findall(attrs))
+            attr_values = dict(BLOCK_HANDLE_STR_ATTR_RE.findall(attrs))
+            present = set(BLOCK_HANDLE_ANY_ATTR_RE.findall(attrs))
 
             if SPREAD_ATTR_RE.search(attrs):
                 result.warnings.append(
-                    f"render/{rel}: <EditHandle> uses spread props — static "
+                    f"render/{rel}: <BlockHandle> uses spread props — static "
                     "validation of handleId / name / kind is deferred to runtime."
                 )
                 continue
@@ -277,17 +277,17 @@ def scan_render_cards(
             missing = [k for k in ("handleId", "name") if k not in present]
             if missing:
                 result.issues.append(
-                    f"render/{rel}: <EditHandle> is missing required props: {missing}. "
-                    "Every EditHandle needs a globally-unique handleId and a human-readable "
+                    f"render/{rel}: <BlockHandle> is missing required props: {missing}. "
+                    "Every BlockHandle needs a globally-unique handleId and a human-readable "
                     "name (the label the user sees on the chat chip)."
                 )
                 continue
 
             kind = attr_values.get("kind")
-            if kind is not None and kind not in VALID_EDIT_HANDLE_KINDS:
+            if kind is not None and kind not in VALID_BLOCK_HANDLE_KINDS:
                 result.issues.append(
-                    f"render/{rel}: <EditHandle kind={kind!r}> is not one of "
-                    f"{sorted(VALID_EDIT_HANDLE_KINDS)}. Charts belong in <ChartCard>, "
+                    f"render/{rel}: <BlockHandle kind={kind!r}> is not one of "
+                    f"{sorted(VALID_BLOCK_HANDLE_KINDS)}. Charts belong in <ChartCard>, "
                     "which carries its own edit entry point."
                 )
 
@@ -296,7 +296,7 @@ def scan_render_cards(
                 slug = extract_query_slug(handle_sql_id)
                 if slug is None:
                     result.issues.append(
-                        f"render/{rel}: <EditHandle sqlId={handle_sql_id!r}> is not a valid "
+                        f"render/{rel}: <BlockHandle sqlId={handle_sql_id!r}> is not a valid "
                         "queries/<slug> reference. Omit sqlId entirely for a block with no query "
                         "behind it."
                     )
@@ -304,7 +304,7 @@ def scan_render_cards(
                     result.query_refs.add(f"queries/{slug}")
                     if not query_exists(slug):
                         result.issues.append(
-                            f"render/{rel}: <EditHandle sqlId='queries/{slug}'> points to {missing_query_hint}."
+                            f"render/{rel}: <BlockHandle sqlId='queries/{slug}'> points to {missing_query_hint}."
                         )
 
             handle_id = attr_values.get("handleId")
@@ -316,11 +316,11 @@ def scan_render_cards(
 
             if not CHART_ID_RE.fullmatch(handle_id):
                 result.issues.append(
-                    f"render/{rel}: <EditHandle handleId={handle_id!r}> must match {CHART_ID_RE.pattern}."
+                    f"render/{rel}: <BlockHandle handleId={handle_id!r}> must match {CHART_ID_RE.pattern}."
                 )
             elif handle_id in result.ids_seen:
                 result.issues.append(
-                    f"render/{rel}: <EditHandle handleId={handle_id!r}> duplicates the id "
+                    f"render/{rel}: <BlockHandle handleId={handle_id!r}> duplicates the id "
                     f"already declared in render/{result.ids_seen[handle_id]}. handleId shares one "
                     "namespace with ChartCard's chartId and must be globally unique across the "
                     "artifact."
