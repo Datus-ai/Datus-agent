@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/logo-light.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -33,7 +33,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -890,6 +890,17 @@
         
           <li class="md-nav__item">
   <a href="#_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        切换权限模式
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
     <span class="md-ellipsis">
       
         运行中插入消息
@@ -4360,6 +4371,17 @@
   <a href="#_6" class="md-nav__link">
     <span class="md-ellipsis">
       
+        切换权限模式
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
         运行中插入消息
       
     </span>
@@ -4400,7 +4422,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.8/docs/cli/chat_command.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.9/docs/cli/chat_command.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4445,7 +4467,9 @@
 <p>中断后会话保持不变——你可以继续输入新指令、修改问题或补充上下文，不会丢失任何内容。</p>
 <h3 id="trace">切换 Trace 显示模式<a class="headerlink" href="#trace" title="Permanent link">&para;</a></h3>
 <p>在智能体运行过程中，按 <strong>Ctrl+O</strong> 可以在 <strong>compact</strong>（仅显示进度）和 <strong>verbose</strong>（显示完整步骤详情）之间切换 trace 显示模式。这让你在不中断执行的情况下控制输出的详细程度。</p>
-<h3 id="_6">运行中插入消息<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<h3 id="_6">切换权限模式<a class="headerlink" href="#_6" title="Permanent link">&para;</a></h3>
+<p>按 <strong>Ctrl+P</strong> 可按 <strong>normal → auto → dangerous → normal</strong> 的顺序循环切换权限模式。智能体运行过程中该快捷键仍然有效，新模式会应用于当前对话后续的工具权限检查。</p>
+<h3 id="_7">运行中插入消息<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h3>
 <p>智能体运行过程中，你不必等它结束才能补充上下文。在输入框中输入文本并按 <strong>Enter</strong>，文本会被排入待发送队列，并在下一次 LLM turn 之前发送给模型——它会影响当前这一轮运行，而不是开启一段新对话。</p>
 <p>工作机制：</p>
 <ul>
@@ -4621,7 +4645,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../../javascripts/analytics.js"></script>
       

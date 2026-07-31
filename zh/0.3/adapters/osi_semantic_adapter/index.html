@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/logo-light.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -33,7 +33,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -4434,7 +4434,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.8/docs/adapters/osi_semantic_adapter.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.9/docs/adapters/osi_semantic_adapter.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -4532,7 +4532,7 @@
 <li>dataset 使用 OSI core 的 <code>fields</code>，不是 MetricFlow 的 <code>dimensions</code>。</li>
 <li>dataset <code>source</code> 是表名字符串，不是 <code>{table: ...}</code>。</li>
 <li><strong>字段角色由结构决定。</strong> 带 <code>dimension:</code> 块的 field 是可用于分组/筛选的维度；不带块的 field 是行级表达式,用于记录列语义并支撑 metric 表达式。只被指标聚合的列（余额、金额、预计算比率）声明为不带块的普通 field,<code>get_dimensions</code> 不会把它们列为维度。字段级 <code>type</code> hint 不属于 authoring 契约。</li>
-<li><strong>键只转录、不推断。</strong> 只有数据库显式声明了约束才写 <code>primary_key</code> / <code>unique_keys</code>；数仓表通常没有约束声明，此时不写 <code>primary_key</code>，行粒度写进 <code>ai_context</code> 说明。</li>
+<li><strong>物理主键和逻辑唯一键使用不同证据。</strong> 只有源元数据或明确数据契约声明时才写 <code>primary_key</code>。JOIN 列只能作为候选键；把本次确实要使用的完整、有序候选列统一提交给 <code>validate_semantic_key_candidates</code> 做批量全表校验，且对应候选的所有分量无 NULL、无重复组，才能将其作为一项写入 <code>unique_keys</code>。</li>
 <li>复合主键包含时间维度列（月度快照表）是合法的：编译器在 lowering 时保留时间维度并自动消解 identifier 冲突。</li>
 <li>时间字段用 <code>dimension.is_time: true</code> 标记，Datus 的 <code>time_granularity</code> hint 写进 <code>custom_extensions</code>。</li>
 <li>关系写在 semantic model 对象的 <code>relationships</code> 下，不要写进 dataset。</li>
@@ -4648,24 +4648,44 @@
 <h2 id="join">多表 join<a class="headerlink" href="#join" title="Permanent link">&para;</a></h2>
 <p>多表 join 通过 OSI core relationship 表达：</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">relationships</span><span class="p">:</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders_to_customers</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">customers</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">from_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">to_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">order</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">order_items</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">    </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">from_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">tenant_id</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">order_id</span><span class="p p-Indicator">]</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="nt">to_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">tenant_id</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">id</span><span class="p p-Indicator">]</span>
 </span></code></pre></div>
-<p>当前 Datus execution profile 支持单列关系，类型主要是 <code>many_to_one</code> 和 <code>one_to_one</code>。降低到 MetricFlow 时，adapter 会在 <code>from</code> dataset 上生成 foreign identifier，使 fact 指标可以按 dimension dataset 的字段分组或过滤。</p>
-<p>查询时 joined dimension 的名字通常会带上目标 dataset 的主 identifier 前缀，例如：</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>customer_id__country
+<p>目标 dataset 必须声明完整的目标键：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nt">datasets</span><span class="p">:</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">    </span><span class="nt">unique_keys</span><span class="p">:</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">tenant_id</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">id</span><span class="p p-Indicator">]</span>
+</span></code></pre></div>
+<p>Datus 同时支持单列和联合等值关系。左右列列表长度必须相同，顺序定义列分量的对应关系，每一对都会生成一个 SQL <code>ON</code> 条件。<code>to_columns</code> 必须完整匹配目标 dataset 的 <code>primary_key</code> 或某一项 <code>unique_keys</code>，不能只取联合键的子集。adapter 会在关系两侧生成对应的 MetricFlow composite identifier。</p>
+<p>上面的关系会生成如下逻辑 join：</p>
+<div class="language-sql highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="p">...</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">orders</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span><span class="k">ON</span><span class="w"> </span><span class="n">order_items</span><span class="p">.</span><span class="n">tenant_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">orders</span><span class="p">.</span><span class="n">tenant_id</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">order_items</span><span class="p">.</span><span class="n">order_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">orders</span><span class="p">.</span><span class="n">id</span>
+</span></code></pre></div>
+<p>原生 OSI relationship 的 <code>name</code> 会成为 joined dimension 的稳定前缀：</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>order__status
 </span></code></pre></div>
 <p><code>ask_metrics</code> 会通过 <code>list_metrics</code> 和 <code>get_dimensions</code> 发现这些可查询维度。</p>
+<p>单列关系仍可使用简写：</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">relationships</span><span class="p">:</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders_to_customers</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">    </span><span class="nt">from</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">orders</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">    </span><span class="nt">to</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">customers</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="nt">from_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="nt">to_columns</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">customer_id</span><span class="p p-Indicator">]</span>
+</span></code></pre></div>
 <h2 id="_7">校验和发布流程<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>OSI 模式下，Datus 在发布前会做硬性校验：</p>
 <ol>
 <li><code>validate_semantic(scope="semantic_model")</code> 校验语义模型。</li>
 <li><code>validate_semantic(scope="all")</code> 校验完整语义层。</li>
 <li><code>query_metrics(..., dry_run=True)</code> 对生成的指标做 SQL dry-run。</li>
-<li><code>end_semantic_model_generation</code> / <code>end_metric_generation</code> 把 OSI semantic objects 和 metrics 同步到 Knowledge Base。</li>
+<li><code>publish_semantic_model</code> / <code>publish_metrics</code> 把 OSI semantic objects 和 metrics 同步到 Knowledge Base。</li>
 </ol>
 <p>如果 validation 或 dry-run 失败，Datus 不会发布该指标到 Knowledge Base。这样 <code>ask_metrics</code> 只会查询已经通过语义层验证的指标。</p>
 <h2 id="ask_metrics">ask_metrics 查询<a class="headerlink" href="#ask_metrics" title="Permanent link">&para;</a></h2>
@@ -4703,7 +4723,7 @@
 <h2 id="_8">当前限制<a class="headerlink" href="#_8" title="Permanent link">&para;</a></h2>
 <ul>
 <li>OSI adapter 当前默认执行后端是 MetricFlow。</li>
-<li>relationship 当前执行 profile 支持单列 join。多列复合 join 需要后续扩展。</li>
+<li>relationship 执行支持有序的单列或联合等值 join；非等值条件仍需预关联 dataset 或 query layer。</li>
 <li>SQL 窗口函数不能直接写进 OSI metric expression；周期对比使用 <code>offset_window</code>，排名/TopN 明细需要 query layer 或预计算数据集。</li>
 <li>当 semantic model 包含多个 dataset 时，metric 的所属 dataset 从表达式中的限定列名解析（<code>SUM(orders.amount)</code>）；仅当表达式不含限定列名时才需要 DATUS <code>dataset</code> hint。</li>
 <li>OSI core 之外的 Datus 执行信息必须写入 <code>custom_extensions[{vendor_name: DATUS}]</code>，不要写成 OSI core 顶层字段。</li>
@@ -4853,7 +4873,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../../javascripts/analytics.js"></script>
       

@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../assets/logo-light.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -33,7 +33,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -6184,7 +6184,7 @@
 
 
   
-    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.8/docs/subagent/builtin_subagents.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/Datus-ai/Datus-agent/edit/v0.3.9/docs/subagent/builtin_subagents.zh.md" title="编辑此页" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -6450,7 +6450,7 @@
     C --&gt; D[验证]
     D --&gt; E[知识库同步]</code></pre>
 <h3 id="_15">验证和同步<a class="headerlink" href="#_15" title="Permanent link">&para;</a></h3>
-<p>发布前，agent 会调用 <code>validate_semantic()</code>。如果验证失败，会修改 YAML 并重试。在 interactive 模式下，验证通过后，<code>end_semantic_model_generation</code> 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的语义模型同步步骤或工具。</p>
+<p>发布前，agent 会调用 <code>validate_semantic()</code>。如果验证失败，会修改 YAML 并重试；验证通过后，<code>publish_semantic_model</code> 会在所有执行模式下校验发布证据并把 artifact 同步到 Knowledge Base。</p>
 <h3 id="_16">语义模型结构<a class="headerlink" href="#_16" title="Permanent link">&para;</a></h3>
 <h4 id="_17">基本模板<a class="headerlink" href="#_17" title="Permanent link">&para;</a></h4>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">data_source</span><span class="p">:</span>
@@ -6495,7 +6495,7 @@
 <li>✅ 从表 DDL 自动生成 YAML</li>
 <li>✅ 交互式验证和错误修复</li>
 <li>✅ 验证通过后同步到知识库</li>
-<li>✅ interactive 自动同步，workflow/API 显式同步</li>
+<li>✅ 所有执行模式使用同一条 validation-gated publish 路径</li>
 <li>✅ 防止重复</li>
 <li>✅ MetricFlow 兼容性</li>
 </ul>
@@ -6543,7 +6543,7 @@
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">JOIN</span><span class="w"> </span><span class="n">customers</span><span class="w"> </span><span class="k">c</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">customer_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">c</span><span class="p">.</span><span class="n">id</span><span class="w">  </span><span class="c1">-- ❌ 不支持 JOIN</span>
 </span></code></pre></div></p>
 <h3 id="_25">验证和同步<a class="headerlink" href="#_25" title="Permanent link">&para;</a></h3>
-<p>发布前，agent 会用 <code>validate_semantic()</code> 校验 YAML，并用 <code>query_metrics(..., dry_run=True)</code> 编译 SQL。在 interactive 模式下，两项检查都通过后，<code>end_metric_generation</code> 会触发自动知识库同步；在 workflow/API 模式下，请使用显式的指标同步步骤或工具。</p>
+<p>发布前，agent 会用 <code>validate_semantic()</code> 校验 YAML，并用 <code>query_metrics(..., dry_run=True)</code> 编译 SQL；两项检查通过后，<code>publish_metrics</code> 会在所有执行模式下校验本次请求的证据并同步指标。</p>
 <h3 id="_26">主题树分类<a class="headerlink" href="#_26" title="Permanent link">&para;</a></h3>
 <p>在 CLI 模式下通过问题中包含主题树来组织指标：</p>
 <p><strong>带主题树示例：</strong>
@@ -7466,7 +7466,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.footer", "navigation.tabs", "navigation.tracking", "navigation.indexes", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\u5df2\u590d\u5236", "clipboard.copy": "\u590d\u5236", "search.result.more.one": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.more.other": "\u5728\u8be5\u9875\u4e0a\u8fd8\u6709 # \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.none": "\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.one": "\u627e\u5230 1 \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.other": "# \u4e2a\u7b26\u5408\u6761\u4ef6\u7684\u7ed3\u679c", "search.result.placeholder": "\u952e\u5165\u4ee5\u5f00\u59cb\u641c\u7d22", "search.result.term.missing": "\u7f3a\u5c11", "select.version": "\u9009\u62e9\u5f53\u524d\u7248\u672c"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
         <script src="../../javascripts/analytics.js"></script>
       
