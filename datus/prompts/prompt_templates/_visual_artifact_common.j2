@@ -154,7 +154,9 @@ The four sections are not optional ordering — they are the only ordering React
 
 While an artifact is being authored, its creator needs a way to point at any block and say "change *this* one". `<ChartCard>` has that built in — a small Edit button in its title strip. The blocks that aren't ChartCards (KPI tiles, insight / callout panels, the filter strip) have no title strip to host it, and giving them a card header purely to carry a button would wreck the layout. Wrap those in `<EditHandle>` instead: it contributes **no visual surface of its own** and floats a small hover-revealed button in one corner of the block.
 
-`EditHandle` is an *entry point, not an editor*. Clicking it pins that block into the chat as a context chip; the change itself happens on the next turn, in the same shape as "Targeted single-block edits". The handle exists only while the artifact is being authored — the runtime hides it on published artifacts and in standalone HTML exports, exactly like ChartCard's Edit button. So attaching handles costs the viewer nothing.
+`EditHandle` is an *entry point, not an editor*. Clicking it pins that block into the chat as a context chip; the change itself happens on the next turn, in the same shape as "Targeted single-block edits".
+
+**The same handle serves the reader after publication.** The runtime swaps what the button does based on where the artifact is mounted: while you are authoring it's an Edit wand pointed at you, and on the published page it becomes an "ask about this" button that pins the block into the reader's `ask_{{ artifact_kind }}` chat — along with the value the block is displaying at that moment. Neither appears in a standalone HTML export. So a handle is not authoring scaffolding you are politely leaving behind: **every block you skip is a block no reader can point at**, and they will be reading this artifact for far longer than you spend building it.
 
 **Wrap each of these in its own `EditHandle`:**
 
@@ -176,7 +178,7 @@ The runtime does **not** ship a KPI-card component: own that visual in `render/s
 
 **Do not pass `__sourcePath`** here either — same auto-injection rule as ChartCard.
 
-**`EditHandle` carries no View SQL / Export menu, on purpose.** A viewer of a *published* dashboard should still be able to ask "where does this number come from" — but the handle is authoring-only, so folding the menu into it would hide a permanent, read-only affordance behind an authoring gate. The two also work at different granularities: a KPI strip is N tiles over ONE query, so edits are per-tile while the SQL is per-strip — N menus would all open the same statement.
+**`EditHandle` carries no View SQL / Export menu, on purpose.** Granularity is the reason: a KPI strip is N tiles over ONE query, so what the handle carries is per-tile (change *this* number, ask about *this* number) while the SQL is per-strip — N menus would all open the identical statement.
 
 So when a wrapped block is query-backed, render a standalone `<ChartEntryMore sqlId={...} data={data} />` yourself, **at the granularity the query actually has** — once per strip, not once per tile — and mark that container with `data-datus-chart-card` so the menu's PNG export can find its capture root. Without a menu somewhere, a KPI strip's query is unreachable from the UI entirely: dashboards render their queries live, so the `.sql.j2` files are never shipped to the viewer.
 

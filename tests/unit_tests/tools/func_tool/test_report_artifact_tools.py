@@ -719,6 +719,167 @@ export default function App() {
 
 
 # ----------------------------------------------------------------------------- #
+# Card primitives (<ChartCard> / <EditHandle>) inside a report render tree      #
+# ----------------------------------------------------------------------------- #
+
+
+def _cards_app_jsx(body: str) -> str:
+    """An ``app.jsx`` whose single query is ``queries/sales_by_store``."""
+    return f"""\
+import React from 'react';
+import {{ ChartCard, EditHandle, useDatusArtifact }} from '@datus/web-artifact';
+
+export default function App() {{
+  const {{ useQuerySql }} = useDatusArtifact();
+  const {{ data }} = useQuerySql('queries/sales_by_store');
+  return (
+    <div>
+{body}
+    </div>
+  );
+}}
+"""
+
+
+class TestValidateRenderCards:
+    """Reports get the same card audit dashboards have.
+
+    Before this, ``validate_render`` for a report checked imports, hooks
+    and query refs but never looked at the card primitives — so a
+    duplicated or malformed id shipped, and only misbehaved once a reader
+    clicked the block in the published viewer.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _saved_query(self, report_tools: ReportArtifactTools):
+        report_tools.save_query(
+            name="sales_by_store",
+            sql="SELECT store_name FROM sales",
+            goal="list store names",
+            hypothesis="store names are stable identifiers within the dataset",
+        )
+
+    def test_valid_cards_land_in_the_registry(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/sales_by_store" chartType="bar" data={data}>
+        <div />
+      </ChartCard>
+      <EditHandle handleId="total_revenue" name="Total revenue" kind="kpi" sqlId="queries/sales_by_store">
+        <div />
+      </EditHandle>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+        assert result.result["cards"] == [
+            {"chart_id": "store_sales", "jsx_path": "render/app.jsx", "kind": "chart"},
+            {"chart_id": "total_revenue", "jsx_path": "render/app.jsx", "kind": "kpi"},
+        ]
+
+    def test_duplicate_ids_across_primitives_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        # The failure this whole audit exists for: two blocks minting the
+        # same chip, the second of which de-dupes away in the chat input.
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/sales_by_store" chartType="bar" data={data}>
+        <div />
+      </ChartCard>
+      <EditHandle handleId="store_sales" name="Total revenue" kind="kpi">
+        <div />
+      </EditHandle>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "duplicates" in (result.error or "")
+
+    def test_malformed_handle_id_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <EditHandle handleId="Total Revenue" name="Total revenue" kind="kpi">
+        <div />
+      </EditHandle>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "handleId" in (result.error or "")
+
+    def test_chart_card_missing_props_rejected(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <ChartCard sqlId="queries/sales_by_store" data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "chartId" in (result.error or "")
+
+    def test_dangling_card_sql_id_names_the_report_saver(self, report_tools: ReportArtifactTools, project_root: Path):
+        # Wording is kind-specific: a report saves results via save_query,
+        # not templates via save_query_template.
+        body = """\
+      <ChartCard chartId="store_sales" sqlId="queries/nope" chartType="bar" data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 0
+        assert "save_query" in (result.error or "")
+        assert "save_query_template" not in (result.error or "")
+
+    def test_forwarded_handle_id_deferred_to_runtime(self, report_tools: ReportArtifactTools, project_root: Path):
+        # A shared KPI tile forwards handleId/name from its own props, so
+        # the values aren't literals here. That's the documented pattern,
+        # not an error.
+        shared = """\
+import React from 'react';
+import { EditHandle } from '@datus/web-artifact';
+
+export default function KpiCard({ handleId, label, children }) {
+  return (
+    <EditHandle handleId={handleId} name={label} kind="kpi">
+      {children}
+    </EditHandle>
+  );
+}
+"""
+        app = """\
+import React from 'react';
+import KpiCard from './kpi-card';
+import { useDatusArtifact } from '@datus/web-artifact';
+
+export default function App() {
+  const { useQuerySql } = useDatusArtifact();
+  const { data } = useQuerySql('queries/sales_by_store');
+  return <KpiCard handleId="total_revenue" label="Total revenue">{data?.rows?.length}</KpiCard>;
+}
+"""
+        _write_render(
+            project_root,
+            report_tools.report_slug,
+            {"app.jsx": app, "kpi-card.jsx": shared},
+        )
+
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+        # Runtime-only ids can't be registered — the registry stays empty
+        # rather than guessing.
+        assert result.result["cards"] == []
+
+    def test_spread_props_warn_instead_of_failing(self, report_tools: ReportArtifactTools, project_root: Path):
+        body = """\
+      <ChartCard {...cardProps} data={data}>
+        <div />
+      </ChartCard>"""
+        _write_render(project_root, report_tools.report_slug, {"app.jsx": _cards_app_jsx(body)})
+
+        result = report_tools.validate_render()
+        assert result.success == 1, result.error
+        assert any("spread props" in w for w in result.result["warnings"])
+
+
+# ----------------------------------------------------------------------------- #
 # ReportFilesystemFuncTool deny / allow rules                                   #
 # ----------------------------------------------------------------------------- #
 
