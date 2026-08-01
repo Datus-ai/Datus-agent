@@ -592,3 +592,63 @@ def test_benchmark_evaluator_reports_retrieval_evaluation(tmp_path: Path) -> Non
     assert retrieval["failed_search_call_count"] == 0
     assert retrieval["table_recall"] == 1.0
     assert retrieval["full_recall"] is True
+
+
+def test_evaluation_report_builder_includes_retrieval_summary(tmp_path: Path) -> None:
+    trajectory_path = tmp_path / "task_1.jsonl"
+    _write_trajectory(
+        trajectory_path,
+        "task_1.jsonl",
+        [
+            {
+                "action_id": "complete_call_1",
+                "action_type": "tool",
+                "input": {
+                    "function_name": "search_table",
+                    "arguments": {"query_text": "school meals", "top_n": 5},
+                },
+                "output": {
+                    "result": {
+                        "metadata": [
+                            {"identifier": "california_schools.schools"},
+                            {"identifier": "california_schools.frpm"},
+                        ],
+                        "sample_data": [],
+                    }
+                },
+                "status": "completed",
+            }
+        ],
+    )
+
+    class InMemoryResultProvider:
+        def fetch(self, task_id: str) -> ResultData:
+            return ResultData(
+                task_id=task_id,
+                source="memory",
+                dataframe=pd.DataFrame({"value": [1]}),
+            )
+
+        def get_artifacts(self, task_id: str) -> GoldArtifacts:
+            return GoldArtifacts(
+                expected_metrics="",
+                expected_tables=["schools", "frpm"],
+            )
+
+    evaluator = BenchmarkEvaluator(
+        trajectory_parser=None,
+        result_provider=InMemoryResultProvider(),
+        gold_result_provider=InMemoryResultProvider(),
+    )
+    report = evaluator.evaluate({"task_1.jsonl": trajectory_path}).to_dict()
+
+    retrieval_summary = report["summary"]["retrieval_summary"]
+    assert retrieval_summary["total_tasks"] == 1
+    assert retrieval_summary["grounded_tasks"] == 1
+    assert retrieval_summary["observed_tasks"] == 1
+    assert retrieval_summary["scored_tasks"] == 1
+    assert retrieval_summary["not_observed_tasks"] == 0
+    assert retrieval_summary["not_evaluable_tasks"] == 0
+    assert retrieval_summary["full_recall_count"] == 1
+    assert retrieval_summary["full_recall_rate_pct"] == 100.0
+    assert retrieval_summary["total_search_calls"] == 1

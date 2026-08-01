@@ -37,6 +37,7 @@ from datus.utils.benchmark_retrieval import (
     RetrievalEvent,
     evaluate_retrieval,
     extract_retrieval_events,
+    summarize_retrieval,
 )
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -1424,7 +1425,11 @@ class EvaluationReportBuilder:
         metrics_mismatched_count = 0
         metrics_matched_task_ids: set[str] = set()
         metrics_mismatched_task_ids: set[str] = set()
-
+        retrieval_evaluations = [
+            task.retrieval_evaluation
+            for task in evaluations.values()
+            if task.retrieval_evaluation is not None
+        ]
         for task_id, evaluation in evaluations.items():
             analysis = evaluation.analysis
 
@@ -1501,6 +1506,7 @@ class EvaluationReportBuilder:
                 "metrics_matched_task_ids": ",".join(map(str, sorted(metrics_matched_task_ids))),
                 "metrics_mismatched_task_ids": ",".join(map(str, sorted(metrics_mismatched_task_ids))),
             },
+            "retrieval_summary": summarize_retrieval(retrieval_evaluations),
         }
 
         task_ids = {
