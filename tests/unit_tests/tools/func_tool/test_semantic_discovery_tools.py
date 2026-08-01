@@ -1905,6 +1905,7 @@ class TestMetricCandidateAnalyzer:
         )
         assert percent_change["metric_type"] == "period_over_period"
         assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        assert "product_type" in percent_change["dimensions"]
         assert percent_change["period_over_period"] == {
             "time_grain": "month",
             "offset_window": "1 year",
@@ -2018,6 +2019,53 @@ class TestMetricCandidateAnalyzer:
         assert percent_change["period_over_period"] == {
             "time_grain": "month",
             "offset_window": "1 year",
+            "calculation": "percent_change",
+        }
+        assert "inputs" not in percent_change
+
+    def test_self_join_multi_count_offset_pluralizes_unit(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 2 YEAR)
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_activity_count,
+                    (activity_count - previous_activity_count) * 1.0
+                        / NULLIF(previous_activity_count, 0) AS activity_count_2y_percent_change
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        percent_change = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_2y_percent_change"
+        )
+        assert percent_change["metric_type"] == "period_over_period"
+        assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        assert percent_change["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "2 years",
             "calculation": "percent_change",
         }
         assert "inputs" not in percent_change
