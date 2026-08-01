@@ -1722,6 +1722,243 @@ class TestMetricCandidateAnalyzer:
         }
         assert "inputs" not in previous
 
+    def test_self_join_yoy_percent_change_becomes_fixed_period_metric(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_year_activity_count,
+                    (activity_count - previous_year_activity_count) * 1.0
+                        / NULLIF(previous_year_activity_count, 0) AS activity_count_yoy_percent_change
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        percent_change = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_percent_change"
+        )
+        assert percent_change["metric_type"] == "period_over_period"
+        assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        assert percent_change["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "percent_change",
+        }
+        assert "inputs" not in percent_change
+
+    def test_self_join_yoy_delta_becomes_fixed_period_metric(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_year_activity_count,
+                    activity_count - previous_year_activity_count AS activity_count_yoy_delta
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        delta = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_delta"
+        )
+        assert delta["metric_type"] == "period_over_period"
+        assert delta["expression"] == "COUNT(DISTINCT ac_code)"
+        assert delta["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "delta",
+        }
+        assert "inputs" not in delta
+
+    def test_self_join_yoy_ratio_becomes_fixed_period_metric(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_year_activity_count,
+                    activity_count * 1.0 / NULLIF(previous_year_activity_count, 0) AS activity_count_yoy_ratio
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        ratio = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_ratio"
+        )
+        assert ratio["metric_type"] == "period_over_period"
+        assert ratio["expression"] == "COUNT(DISTINCT ac_code)"
+        assert ratio["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "ratio",
+        }
+        assert "inputs" not in ratio
+
+    def test_self_join_with_additional_grouping_key(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        product_type,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date), product_type
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.product_type,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON p.product_type = c.product_type
+                      AND p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)
+                )
+                SELECT
+                    metric_time__month,
+                    product_type,
+                    activity_count,
+                    previous_year_activity_count,
+                    (activity_count - previous_year_activity_count) * 1.0
+                        / NULLIF(previous_year_activity_count, 0) AS activity_count_yoy_percent_change
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        percent_change = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_percent_change"
+        )
+        assert percent_change["metric_type"] == "period_over_period"
+        assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        assert percent_change["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "percent_change",
+        }
+        assert "inputs" not in percent_change
+
+    def test_self_join_reversed_date_add_predicate_form(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON DATE_ADD(p.metric_time__month, INTERVAL 1 YEAR) = c.metric_time__month
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_year_activity_count,
+                    (activity_count - previous_year_activity_count) * 1.0
+                        / NULLIF(previous_year_activity_count, 0) AS activity_count_yoy_percent_change
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        percent_change = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_percent_change"
+        )
+        assert percent_change["metric_type"] == "period_over_period"
+        assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        assert percent_change["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "percent_change",
+        }
+        assert "inputs" not in percent_change
+
     def test_period_shift_aliases_are_scoped_to_source_select(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(

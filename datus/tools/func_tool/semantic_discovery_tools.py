@@ -3252,6 +3252,12 @@ class SemanticDiscoveryTools:
                         if base_candidate:
                             base_candidates[self._metric_candidate_merge_key(base_candidate)] = base_candidate
 
+                # Self-join period shifts: e.g. ``FROM monthly c LEFT JOIN monthly p
+                # ON p.time = DATE_SUB(c.time, INTERVAL 1 YEAR)`` produces a
+                # previous-period output projection that behaves like a LAG output.
+                for self_join_alias, detail in self._self_join_period_shift_outputs(select, projection_index).items():
+                    shift_outputs_by_select.setdefault(select_name, {})[self_join_alias] = detail
+
             for select_name, select in self._named_selects_for_period_analysis(parsed):
                 source_names = self._direct_source_names(select)
                 visible_shifts = self._visible_period_shift_outputs(
@@ -3842,6 +3848,190 @@ class SemanticDiscoveryTools:
                 candidate["source_select"] = projection_info.get("select_name", source)
                 return candidate
         return None
+
+    def _self_join_period_shift_outputs(
+        self,
+        select: Any,
+        projection_index: Dict[str, Dict[str, Dict[str, Any]]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Detect self-join period shifts and return ``{alias: detail}`` outputs.
+
+        Recognizes fixed period-over-period metrics expressed as a self-join on a
+        time-offset predicate, e.g.::
+
+            WITH monthly AS (...)
+            SELECT
+                c.metric_time__month,
+                c.activity_count,
+                p.activity_count AS previous_year_activity_count
+            FROM monthly c
+            LEFT JOIN monthly p
+              ON p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)
+
+        The ``p.activity_count AS previous_year_activity_count`` projection is a
+        previous-period output: it is emitted by the JOIN'd (previous) alias of the
+        same source. Its ``detail`` reuses the same shape as
+        ``_period_shift_output_detail`` so downstream projection analysis can build
+        ``previous_value`` / ``delta`` / ``percent_change`` / ``ratio`` candidates.
+        """
+        from sqlglot import expressions as exp
+
+        sources = self._self_join_source_aliases(select)
+        if len(sources) < 2:
+            return {}
+
+        source_counts: Dict[str, int] = defaultdict(int)
+        for source_name, _alias in sources:
+            source_counts[source_name] += 1
+        self_joined = {name for name, count in source_counts.items() if count >= 2}
+        if not self_joined:
+            return {}
+
+        outputs: Dict[str, Dict[str, Any]] = {}
+        for join in select.args.get("joins") or []:
+            on = join.args.get("on")
+            if on is None:
+                continue
+            shift = self._parse_self_join_time_shift(on, sources, self_joined)
+            if not shift:
+                continue
+            previous_alias, _current_alias, offset_window, time_column = shift
+            source_name = next((name for name, alias in sources if alias == previous_alias), "")
+            if not source_name:
+                source_name = next((name for name in self_joined), "")
+            for projection in select.expressions:
+                expr = projection.this if isinstance(projection, exp.Alias) else projection
+                alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
+                if not alias:
+                    continue
+                cols = [
+                    col
+                    for col in expr.find_all(exp.Column)
+                    if self._normalize_identifier(col.table) == self._normalize_identifier(previous_alias)
+                ]
+                if not cols:
+                    continue
+                input_metric = self._safe_name(cols[0].name)
+                detail = {
+                    "alias": self._safe_name(alias),
+                    "input_metric": input_metric,
+                    "offset_window": offset_window,
+                    "window_function": "SELF_JOIN",
+                    "source_names": [source_name] if source_name else list(self_joined),
+                    "window": {
+                        "function": "SELF_JOIN",
+                        "order_by": [{"expr": time_column, "direction": "ASC"}],
+                    },
+                }
+                outputs[self._normalize_identifier(alias)] = detail
+        return outputs
+
+    def _self_join_source_aliases(self, select: Any) -> List[tuple]:
+        """Return ``(source_name, alias)`` pairs for FROM and JOIN clauses."""
+        from sqlglot import expressions as exp
+
+        sources: List[tuple] = []
+
+        def add_source(node: Any) -> None:
+            if isinstance(node, exp.Table):
+                sources.append((self._safe_name(node.name), self._safe_name(node.alias_or_name or node.name)))
+            elif isinstance(node, exp.Subquery):
+                sources.append(
+                    (
+                        self._safe_name(node.alias_or_name or "derived_datasource"),
+                        self._safe_name(node.alias_or_name or ""),
+                    )
+                )
+            else:
+                name = self._safe_name(getattr(node, "alias_or_name", "") or "")
+                sources.append((name, name))
+
+        from_clause = select.args.get("from_") or select.args.get("from")
+        if from_clause is not None and getattr(from_clause, "this", None) is not None:
+            add_source(from_clause.this)
+        for join in select.args.get("joins") or []:
+            if getattr(join, "this", None) is not None:
+                add_source(join.this)
+        return sources
+
+    def _parse_self_join_time_shift(
+        self,
+        on: Any,
+        sources: List[tuple],
+        self_joined: set,
+    ) -> Optional[tuple]:
+        """Return ``(previous_alias, current_alias, offset_window, time_column)``.
+
+        Parses a self-join time-offset equality predicate:
+        ``prev.time = DATE_SUB(curr.time, INTERVAL n UNIT)`` or
+        ``DATE_ADD(prev.time, INTERVAL n UNIT) = curr.time``.
+
+        ``sources`` is the ``(source_name, alias)`` list from
+        ``_self_join_source_aliases``; ``self_joined`` is the set of source names
+        referenced more than once. Only shifts between two aliases of the same
+        self-joined source are recognized.
+        """
+        from sqlglot import expressions as exp
+
+        alias_to_source = {self._normalize_identifier(alias): source for source, alias in sources if alias}
+        for predicate in self._iter_and_conditions(on):
+            if not isinstance(predicate, exp.EQ):
+                continue
+            left, right = predicate.this, predicate.args.get("expression")
+            column_side, func_side = None, None
+            if isinstance(left, exp.Column) and isinstance(right, (exp.DateSub, exp.DateAdd)):
+                column_side, func_side = left, right
+            elif isinstance(right, exp.Column) and isinstance(left, (exp.DateSub, exp.DateAdd)):
+                column_side, func_side = right, left
+            if column_side is None or func_side is None:
+                continue
+            func_arg = func_side.this
+            if not isinstance(func_arg, exp.Column):
+                continue
+            if isinstance(func_side, exp.DateSub):
+                # DATE_SUB(curr.time, ...): func arg is current, column side is previous
+                current_col, previous_col = func_arg, column_side
+            else:  # exp.DateAdd
+                # DATE_ADD(prev.time, ...): func arg is previous, column side is current
+                previous_col, current_col = func_arg, column_side
+            previous_alias = self._normalize_identifier(previous_col.table or "")
+            current_alias = self._normalize_identifier(current_col.table or "")
+            if not previous_alias or not current_alias or previous_alias == current_alias:
+                continue
+            prev_source = alias_to_source.get(previous_alias, "")
+            curr_source = alias_to_source.get(current_alias, "")
+            if not prev_source or prev_source != curr_source or prev_source not in self_joined:
+                continue
+            offset_window = self._self_join_offset_window(func_side)
+            if not offset_window:
+                continue
+            time_column = previous_col.name or current_col.name
+            return previous_alias, current_alias, offset_window, time_column
+        return None
+
+    def _iter_and_conditions(self, expr: Any):
+        """Yield the leaf predicates of an AND chain."""
+        from sqlglot import expressions as exp
+
+        if isinstance(expr, exp.And):
+            yield from self._iter_and_conditions(expr.this)
+            yield from self._iter_and_conditions(expr.args.get("expression"))
+        else:
+            yield expr
+
+    def _self_join_offset_window(self, date_func: Any) -> str:
+        """Extract an offset window like ``'1 year'`` from DATE_SUB/DATE_ADD."""
+        from sqlglot import expressions as exp
+
+        interval = date_func.args.get("expression")
+        if not isinstance(interval, exp.Interval):
+            return ""
+        count = getattr(interval.this, "this", None)
+        unit = interval.args.get("unit")
+        unit_text = getattr(unit, "this", None) or ""
+        if count is None or not unit_text:
+            return ""
+        return f"{count} {self._normalize_identifier(str(unit_text))}"
 
     def _visible_period_shift_outputs(
         self,
