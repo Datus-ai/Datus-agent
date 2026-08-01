@@ -3,12 +3,16 @@ import json
 import shutil
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.configuration.agent_config_loader import load_agent_config
 from datus.utils.benchmark_utils import (
+    BenchmarkEvaluator,
+    GoldArtifacts,
+    ResultData,
     SingleFileGoldProvider,
     TrajectoryParser,
     evaluate_benchmark_and_report,
@@ -514,3 +518,77 @@ def test_gold_provider_loads_expected_tables_plural_column(tmp_path: Path) -> No
 
     assert artifacts is not None
     assert artifacts.expected_tables == ["crm.accounts", "billing.invoices"]
+
+
+def test_benchmark_evaluator_reports_retrieval_evaluation(tmp_path: Path) -> None:
+    trajectory_path = tmp_path / "task_1.jsonl"
+    _write_trajectory(
+        trajectory_path,
+        "task_1.jsonl",
+        [
+            {
+                "action_id": "complete_call_1",
+                "action_type": "tool",
+                "input": {
+                    "function_name": "search_table",
+                    "arguments": {"query_text": "school meals", "top_n": 5},
+                },
+                "output": {
+                    "result": {
+                        "metadata": [
+                            {"identifier": "california_schools.schools"},
+                            {"identifier": "california_schools.frpm"},
+                        ],
+                        "sample_data": [],
+                    }
+                },
+                "status": "completed",
+                "start_time": "2026-07-31T10:00:00+00:00",
+                "end_time": "2026-07-31T10:00:00.100000+00:00",
+            },
+            {
+                "action_id": "final",
+                "action_type": "message",
+                "input": {},
+                "output": {"sql": "select * from schools join frpm using (CDSCode)"},
+                "status": "completed",
+            },
+        ],
+    )
+
+    class InMemoryResultProvider:
+        def fetch(self, task_id: str) -> ResultData:
+            return ResultData(
+                task_id=task_id,
+                source="memory",
+                dataframe=pd.DataFrame({"value": [1]}),
+            )
+
+        def get_artifacts(self, task_id: str) -> GoldArtifacts:
+            return GoldArtifacts(
+                expected_metrics="",
+                expected_tables=["schools", "frpm"],
+            )
+
+    evaluator = BenchmarkEvaluator(
+        trajectory_parser=None,
+        result_provider=InMemoryResultProvider(),
+        gold_result_provider=InMemoryResultProvider(),
+    )
+    report = evaluator.evaluate({"task_1.jsonl": trajectory_path}).to_dict()
+    task = report["details"]["task_1.jsonl"]
+
+    retrieval = task["retrieval_evaluation"]
+    assert retrieval["status"] == "evaluated"
+    assert retrieval["expected_tables_source"] == "explicit"
+    assert retrieval["expected_tables"] == ["schools", "frpm"]
+    assert retrieval["retrieved_tables"] == [
+        "california_schools.schools",
+        "california_schools.frpm",
+    ]
+    assert retrieval["matched_tables"] == ["schools", "frpm"]
+    assert retrieval["missing_tables"] == []
+    assert retrieval["search_call_count"] == 1
+    assert retrieval["failed_search_call_count"] == 0
+    assert retrieval["table_recall"] == 1.0
+    assert retrieval["full_recall"] is True

@@ -32,7 +32,12 @@ import yaml
 
 from datus.configuration.agent_config import AgentConfig, BenchmarkConfig
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
-from datus.utils.benchmark_retrieval import RetrievalEvent, extract_retrieval_events
+from datus.utils.benchmark_retrieval import (
+    RetrievalEvaluation,
+    RetrievalEvent,
+    evaluate_retrieval,
+    extract_retrieval_events,
+)
 from datus.utils.constants import DBType
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -518,6 +523,7 @@ class TaskEvaluation:
     task_id: str
     analysis: WorkflowAnalysis
     comparisons: list[ComparisonRecord] = field(default_factory=list)
+    retrieval_evaluation: RetrievalEvaluation | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -531,6 +537,9 @@ class TaskEvaluation:
             "completion_time": self.analysis.completion_time,
             "status": self.analysis.status,
             "comparison_results": [record.to_dict() for record in self.comparisons],
+            "retrieval_evaluation": (
+                self.retrieval_evaluation.to_dict() if self.retrieval_evaluation is not None else None
+            ),
         }
 
 
@@ -938,6 +947,7 @@ class SingleFileGoldProvider(ResultProvider):
             expected_metrics=expected_metrics,
             expected_tables=_extract_expected_tables(row),
         )
+
 
 def _extract_expected_tables(row: Mapping[str, Any]) -> list[str]:
     explicit = row.get("expected_tables")
@@ -1553,11 +1563,21 @@ class BenchmarkEvaluator:
             for output in analysis.outputs:
                 if output.success and output.status not in FAIL_STATUSES:
                     comparison_records.append(self._build_comparison_record(task_id, analysis))
+            gold_artifacts = self._fetch_gold_artifacts(task_id)
+            expected_tables, expected_tables_source = _golden_tables_for_retrieval(gold_artifacts)
+            retrieval_evaluation = evaluate_retrieval(
+                events=analysis.retrieval_events,
+                expected_tables=expected_tables,
+                expected_tables_source=expected_tables_source,
+                result_match=_result_match_from_comparisons(comparison_records),
+                table_matcher=compute_table_matches,
+            )
 
             evaluations[task_id] = TaskEvaluation(
                 task_id=task_id,
                 analysis=analysis,
                 comparisons=comparison_records,
+                retrieval_evaluation=retrieval_evaluation,
             )
 
         return self.report_builder.build(evaluations)
@@ -2181,6 +2201,29 @@ def evaluate_benchmark(
         str(trajectory_directory), target_task_ids, datasource=datasource, run_id=run_id
     )
     return report.to_dict()
+
+
+def _golden_tables_for_retrieval(
+    gold_artifacts: GoldArtifacts | None,
+) -> tuple[list[str], str]:
+    if gold_artifacts is None:
+        return [], "missing"
+    if gold_artifacts.expected_tables:
+        return gold_artifacts.expected_tables, "explicit"
+    if gold_artifacts.expected_sql:
+        parsed_tables = collect_sql_tables(gold_artifacts.expected_sql)
+        if parsed_tables:
+            return parsed_tables, "gold_sql"
+    return [], "missing"
+
+
+def _result_match_from_comparisons(comparisons: list[ComparisonRecord]) -> bool | None:
+    outcomes = [record.outcome for record in comparisons if record.outcome is not None]
+    if not outcomes:
+        return None
+    if any(outcome.error for outcome in outcomes):
+        return None
+    return all(outcome.match_rate == 1.0 for outcome in outcomes)
 
 
 def evaluate_benchmark_and_report(
