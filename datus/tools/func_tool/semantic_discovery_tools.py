@@ -4020,18 +4020,35 @@ class SemanticDiscoveryTools:
             yield expr
 
     def _self_join_offset_window(self, date_func: Any) -> str:
-        """Extract an offset window like ``'1 year'`` from DATE_SUB/DATE_ADD."""
+        """Extract an offset window like ``'1 year'`` from DATE_SUB/DATE_ADD.
+
+        sqlglot represents the interval differently across dialects: some parse
+        ``INTERVAL 1 YEAR`` into an ``exp.Interval`` (``expression`` arg), while
+        starrocks/doris normalize it to a string literal plus a separate ``unit``
+        arg. Both forms are handled here. The unit is pluralized for non-singular
+        counts so the resulting ``offset_window`` matches the LAG path's
+        ``_infer_period_offset_window`` format (e.g. ``2 months``), keeping the
+        same ``period_over_period.offset_window`` and merge-key identities.
+        """
         from sqlglot import expressions as exp
 
+        count = None
+        unit_text = ""
         interval = date_func.args.get("expression")
-        if not isinstance(interval, exp.Interval):
-            return ""
-        count = getattr(interval.this, "this", None)
-        unit = interval.args.get("unit")
-        unit_text = getattr(unit, "this", None) or ""
+        if isinstance(interval, exp.Interval):
+            count = getattr(interval.this, "this", None)
+            unit = interval.args.get("unit")
+            unit_text = getattr(unit, "this", None) or ""
+        else:
+            count = getattr(interval, "this", None)
+            unit = date_func.args.get("unit")
+            unit_text = getattr(unit, "this", None) or ""
         if count is None or not unit_text:
             return ""
-        return f"{count} {self._normalize_identifier(str(unit_text))}"
+        unit = self._normalize_identifier(str(unit_text))
+        if str(count) != "1" and not unit.endswith("s"):
+            unit = f"{unit}s"
+        return f"{count} {unit}"
 
     def _visible_period_shift_outputs(
         self,

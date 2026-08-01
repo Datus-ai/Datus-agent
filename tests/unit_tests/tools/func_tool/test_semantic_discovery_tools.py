@@ -1959,6 +1959,69 @@ class TestMetricCandidateAnalyzer:
         }
         assert "inputs" not in percent_change
 
+    @pytest.mark.parametrize(
+        ("dialect", "join_predicate"),
+        [
+            # starrocks normalizes DATE_ADD(p.t, INTERVAL 1 YEAR) into a string
+            # literal plus a separate unit arg; make sure the shift is still found.
+            ("starrocks", "DATE_ADD(p.metric_time__month, INTERVAL 1 YEAR) = c.metric_time__month"),
+            # snowflake parses DATE_SUB(c.t, INTERVAL 1 YEAR) as an exp.Interval.
+            ("snowflake", "p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)"),
+        ],
+    )
+    def test_self_join_recognized_in_non_default_dialect(self, dialect, join_predicate):
+        db_tool = _make_db_tool(
+            agent_config=SimpleNamespace(
+                current_datasource="analytics",
+                current_db_config=lambda _name: SimpleNamespace(type=dialect),
+            )
+        )
+        tools = _make_tools(db_tool)
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                f"""
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON {join_predicate}
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_year_activity_count,
+                    (activity_count - previous_year_activity_count) * 1.0
+                        / NULLIF(previous_year_activity_count, 0) AS activity_count_yoy_percent_change
+                FROM compared
+                """
+            ],
+        )
+
+        assert result.success == 1
+        percent_change = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_percent_change"
+        )
+        assert percent_change["metric_type"] == "period_over_period"
+        assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        assert percent_change["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "percent_change",
+        }
+        assert "inputs" not in percent_change
+
     def test_period_shift_aliases_are_scoped_to_source_select(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(
