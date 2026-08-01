@@ -3895,7 +3895,7 @@ class SemanticDiscoveryTools:
             shift = self._parse_self_join_time_shift(on, sources, self_joined)
             if not shift:
                 continue
-            previous_alias, _current_alias, offset_window, time_column = shift
+            previous_alias, _current_alias, offset_window, time_column, group_dimensions = shift
             source_name = next((name for name, alias in sources if alias == previous_alias), "")
             if not source_name:
                 source_name = next((name for name in self_joined), "")
@@ -3922,6 +3922,7 @@ class SemanticDiscoveryTools:
                         "function": "SELF_JOIN",
                         "order_by": [{"expr": time_column, "direction": "ASC"}],
                     },
+                    "group_dimensions": group_dimensions,
                 }
                 outputs[self._normalize_identifier(alias)] = detail
         return outputs
@@ -3960,11 +3961,14 @@ class SemanticDiscoveryTools:
         sources: List[tuple],
         self_joined: set,
     ) -> Optional[tuple]:
-        """Return ``(previous_alias, current_alias, offset_window, time_column)``.
+        """Return ``(previous_alias, current_alias, offset_window, time_column,
+        group_dimensions)``.
 
         Parses a self-join time-offset equality predicate:
         ``prev.time = DATE_SUB(curr.time, INTERVAL n UNIT)`` or
-        ``DATE_ADD(prev.time, INTERVAL n UNIT) = curr.time``.
+        ``DATE_ADD(prev.time, INTERVAL n UNIT) = curr.time``. Same-dimension
+        equality predicates (e.g. ``p.product_type = c.product_type``) are
+        collected as partition/grouping evidence.
 
         ``sources`` is the ``(source_name, alias)`` list from
         ``_self_join_source_aliases``; ``self_joined`` is the set of source names
@@ -3974,10 +3978,29 @@ class SemanticDiscoveryTools:
         from sqlglot import expressions as exp
 
         alias_to_source = {self._normalize_identifier(alias): source for source, alias in sources if alias}
+        group_dimensions: List[str] = []
         for predicate in self._iter_and_conditions(on):
             if not isinstance(predicate, exp.EQ):
                 continue
             left, right = predicate.this, predicate.args.get("expression")
+            # Same-dimension equality between the two self-join aliases is
+            # partition/grouping evidence, not a time offset.
+            if isinstance(left, exp.Column) and isinstance(right, exp.Column):
+                left_alias = self._normalize_identifier(left.table or "")
+                right_alias = self._normalize_identifier(right.table or "")
+                left_source = alias_to_source.get(left_alias, "")
+                right_source = alias_to_source.get(right_alias, "")
+                if (
+                    left_source
+                    and left_source == right_source
+                    and left_source in self_joined
+                    and left.name == right.name
+                    and left.name
+                ):
+                    dim = self._safe_name(left.name)
+                    if dim not in group_dimensions:
+                        group_dimensions.append(dim)
+                continue
             column_side, func_side = None, None
             if isinstance(left, exp.Column) and isinstance(right, (exp.DateSub, exp.DateAdd)):
                 column_side, func_side = left, right
@@ -4006,7 +4029,7 @@ class SemanticDiscoveryTools:
             if not offset_window:
                 continue
             time_column = previous_col.name or current_col.name
-            return previous_alias, current_alias, offset_window, time_column
+            return previous_alias, current_alias, offset_window, time_column, group_dimensions
         return None
 
     def _iter_and_conditions(self, expr: Any):
@@ -4161,6 +4184,11 @@ class SemanticDiscoveryTools:
                 "referenced_metrics": [],
             }
         )
+        # Same-dimension self-join predicates (e.g. p.product_type = c.product_type)
+        # are partition/grouping evidence; preserve them in the candidate.
+        for group_dim in detail.get("group_dimensions", []):
+            if group_dim not in candidate.get("dimensions", []):
+                candidate.setdefault("dimensions", []).append(group_dim)
         candidate.pop("inputs", None)
         candidate.pop("required_input_metrics", None)
         candidate.pop("offset_window", None)

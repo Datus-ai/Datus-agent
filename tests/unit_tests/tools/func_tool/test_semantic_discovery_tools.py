@@ -1913,6 +1913,58 @@ class TestMetricCandidateAnalyzer:
         }
         assert "inputs" not in percent_change
 
+    def test_self_join_join_predicate_grouping_key_is_preserved(self):
+        """Same-dimension equality in the self-join predicate is grouping evidence."""
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH monthly AS (
+                    SELECT
+                        DATE_TRUNC('month', start_date) AS metric_time__month,
+                        COUNT(DISTINCT ac_code) AS activity_count
+                    FROM v_udata_ac_info
+                    GROUP BY DATE_TRUNC('month', start_date)
+                ),
+                compared AS (
+                    SELECT
+                        c.metric_time__month,
+                        c.activity_count,
+                        p.activity_count AS previous_year_activity_count
+                    FROM monthly c
+                    LEFT JOIN monthly p
+                      ON p.product_type = c.product_type
+                      AND p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)
+                )
+                SELECT
+                    metric_time__month,
+                    activity_count,
+                    previous_year_activity_count,
+                    (activity_count - previous_year_activity_count) * 1.0
+                        / NULLIF(previous_year_activity_count, 0) AS activity_count_yoy_percent_change
+                FROM compared
+                """
+            ]
+        )
+
+        assert result.success == 1
+        percent_change = next(
+            candidate
+            for candidate in result.result["direct_metric_candidates"]
+            if candidate["name"] == "activity_count_yoy_percent_change"
+        )
+        assert percent_change["metric_type"] == "period_over_period"
+        assert percent_change["expression"] == "COUNT(DISTINCT ac_code)"
+        # product_type appears only in the self-join predicate; it must still be
+        # preserved as a partition/grouping dimension.
+        assert "product_type" in percent_change["dimensions"]
+        assert percent_change["period_over_period"] == {
+            "time_grain": "month",
+            "offset_window": "1 year",
+            "calculation": "percent_change",
+        }
+        assert "inputs" not in percent_change
+
     def test_self_join_reversed_date_add_predicate_form(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(
@@ -1970,7 +2022,7 @@ class TestMetricCandidateAnalyzer:
             ("snowflake", "p.metric_time__month = DATE_SUB(c.metric_time__month, INTERVAL 1 YEAR)"),
         ],
     )
-    def test_self_join_recognized_in_non_default_dialect(self, dialect, join_predicate):
+    def test_self_join_recognized_in_non_default_dialect(self, dialect: str, join_predicate: str):
         db_tool = _make_db_tool(
             agent_config=SimpleNamespace(
                 current_datasource="analytics",
