@@ -361,6 +361,47 @@ agent:
 
 ---
 
+## Retrieval Diagnostics
+
+The benchmark can report retrieval quality for `search_table` calls observed in an agent trajectory. This is a diagnostic layer inside the whole-agent benchmark, not a standalone retrieval benchmark.
+
+Add either of these optional columns to a benchmark CSV or JSONL file:
+
+- `expected_table`: one or more Golden Tables for the task.
+- `expected_tables`: plural alias for the same field.
+
+Multiple tables can be separated by semicolons, commas, or newlines:
+
+```csv
+file,question,expected_tables,gold_sql
+task_001.jsonl,"Which schools have high FRPM rates?","schools; frpm","select * from schools join frpm using (CDSCode)"
+```
+
+Golden Table source priority:
+
+1. Explicit `expected_table` or `expected_tables`.
+2. Tables parsed from `gold_sql`.
+3. `not_evaluable` when neither source exists.
+
+Each task report includes `retrieval_evaluation` with:
+
+- `status`: `evaluated`, `not_observed`, or `not_evaluable`.
+- `events`: terminal `search_table` calls with query text, requested top-n, retrieved table candidates, duration, and error status.
+- `table_recall`: expected tables retrieved at least once divided by expected tables.
+- `recall_at_1`, `recall_at_3`, `recall_at_5`: recall from the first successful retrieval call.
+- `first_relevant_rank`: first rank where any Golden Table appeared.
+- `diagnosis`: a diagnostic label connecting retrieval quality to the final benchmark result.
+
+The benchmark report summary also includes `retrieval_summary`, aggregated across evaluable tasks.
+
+Use this report to debug failures:
+
+- `retrieval_likely_bottleneck`: the agent missed at least one Golden Table and the final result failed.
+- `downstream_reasoning_failure`: the agent retrieved all Golden Tables but the final result failed.
+- `recovered_without_full_retrieval`: the agent missed at least one Golden Table but still produced a matching final result.
+
+Private Eval Packs should keep private schemas and business questions outside this repository. They only need to provide the same `expected_table` or `expected_tables` columns when running the benchmark locally.
+
 ### Build Knowledge Base
 
 Construct the metadata, metrics, and reference SQL knowledge bases according to your dataset.  
