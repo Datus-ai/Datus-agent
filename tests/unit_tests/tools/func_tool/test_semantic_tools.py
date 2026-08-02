@@ -2393,11 +2393,12 @@ class TestAttributionAnalyze:
     def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter
 
-        description = trans_to_function_tool(tool.attribution_analyze).description.lower()
+        description = " ".join(trans_to_function_tool(tool.attribution_analyze).description.lower().split())
 
         assert "descriptive dimension analysis" in description
         assert "do not establish causation" in description
         assert "root cause analysis" not in description
+        assert "failed and truncated dimensions are excluded" in description
 
     def test_no_attribution_tool_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.attribution_analyze(
@@ -2487,6 +2488,10 @@ class TestAttributionAnalyze:
 
         assert result.success == 1
         assert result.result["dimension_analysis_status"] == "unavailable"
+        assert result.result["per_dimension"]["region"]["error"] == {
+            "code": "DIMENSION_QUERY_FAILED",
+            "message": "region query failed",
+        }
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter

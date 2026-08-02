@@ -62,7 +62,7 @@ Use the narrow metric workflow below:
 - `attribution_analyze` uses the same OSI half-open `[start, end)` time-range contract as `query_metrics`.
 - Use equal-length baseline and current windows. If the result contains `UNEQUAL_WINDOWS`, disclose that values were not normalized before comparing them.
 - Read contribution details only from `per_dimension`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is a legacy compatibility field and must not be used for analysis.
-- Read `dimension_analysis_status` before interpreting dimensions. With `partial`, use only dimensions whose `per_dimension` entry has no `error`, and disclose every failed or truncated dimension. With `unavailable`, report the total change but do not give a dimension-attribution conclusion. A dimension omitted from `dimension_ranking` because it failed or was truncated is not a low-scoring dimension.
+- Read `dimension_analysis_status` before interpreting dimensions. With `partial`, use only dimensions whose `per_dimension` entry has `error` set to null and `truncated` set to false, and disclose every failed or truncated dimension. With `unavailable`, report the total change but do not give a dimension-attribution conclusion. A dimension omitted from `dimension_ranking` because it failed or was truncated is not a low-scoring dimension.
 - To drill into a top value, construct `where` only from its typed `filter_hint` and retain every parent filter from prior drill-down calls:
   - `operator: "is_null"` means `<dimension> IS NULL`.
   - Numeric values are not quoted.

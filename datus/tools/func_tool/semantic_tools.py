@@ -1479,7 +1479,8 @@ class SemanticTools:
 
         Ranks candidate dimensions by change concentration and calculates delta
         contributions for selected dimensions. Results describe where a metric change
-        is concentrated; they do not establish causation.
+        is concentrated; they do not establish causation. Failed and truncated dimensions
+        are excluded from rankings and contribution output.
 
         Args:
             metric_name: Metric to analyze(from list_metrics/search_metrics)
@@ -1502,6 +1503,7 @@ class SemanticTools:
             - top_dimension_values: Delta contributions of dimension values
             - dimension_analysis_status: complete, partial, unavailable, or not_requested
               when individual dimension queries fail, successful dimensions remain available
+              while failed and truncated dimensions are excluded from rankings and contribution output
         """
         _, error = self._require_adapter("attribution_analyze")
         if error:

@@ -493,6 +493,21 @@ class TestSemanticFormatters:
 
         assert out == "1/3 dimensions analyzed, 1 failed, 1 truncated, 2 warnings"
 
+    def test_attribution_analyze_totals_only(self):
+        out = _summarize(
+            "attribution_analyze",
+            {
+                "success": 1,
+                "result": {
+                    "candidate_dimensions": [],
+                    "per_dimension": {},
+                    "dimension_analysis_status": "not_requested",
+                },
+            },
+        )
+
+        assert out == "totals compared"
+
 
 class TestGenerationFormatters:
     def test_check_object_exists_true(self):

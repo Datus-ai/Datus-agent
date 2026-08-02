@@ -119,6 +119,10 @@ class TestAskMetricsAgenticNode:
         assert "OSI half-open `[start, end)` semantics" in prompt
         assert "`query_metrics.time_end` is inclusive" not in prompt
         assert "Read `dimension_analysis_status`" in prompt
+        assert "`error` set to null and `truncated` set to false" in prompt
+        assert "disclose every failed or truncated dimension" in prompt
+        assert "With `unavailable`, report the total change" in prompt
+        assert "failed or was truncated is not a low-scoring dimension" in prompt
         assert "`DIMENSION_ANALYSIS_FAILED`" in prompt
         assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
