@@ -2,6 +2,33 @@
 
 ## 0.3
 
+### 0.3.9
+
+**新功能**
+
+- **Datus Plugin 体系** - 第三方能力现可通过 Plugin 扩展 Datus，无需修改 Datus Agent 本身。Plugin 可提供 `datus <plugin>` CLI 命令、内置 Skill 和额外的提示词上下文；支持安装、升级、启停、离线打包与导出，并可按项目激活和选择 profile。0.3.9 进一步完善了声明式 `datus-plugin.yml` 契约、外部目录挂载与托管式多租户部署支持。[#1125](https://github.com/Datus-ai/Datus-agent/pull/1125) [#1151](https://github.com/Datus-ai/Datus-agent/pull/1151) [#1153](https://github.com/Datus-ai/Datus-agent/pull/1153) [#1155](https://github.com/Datus-ai/Datus-agent/pull/1155) [#1159](https://github.com/Datus-ai/Datus-agent/pull/1159) [#1192](https://github.com/Datus-ai/Datus-agent/pull/1192) [Plugin 文档](https://docs.datus.ai/zh/0.3/plugin/introduction/) [Plugin 开发文档](https://docs.datus.ai/zh/0.3/plugin/development/)
+- **三种输入模式与工具快捷执行** - 在 CLI 中按 `Tab` 可在对话、SQL 和 Bash 模式之间循环切换。对话模式下，使用 `!<tool>` 可直接运行 Agent 工具，使用 `!<plugin>` 可运行已安装 Plugin 的 CLI，并支持命令与参数自动补全。所有操作均遵循现有权限和 SQL 策略，执行结果会自动加入对话上下文，便于 Agent 继续分析。[#1157](https://github.com/Datus-ai/Datus-agent/pull/1157) [#1186](https://github.com/Datus-ai/Datus-agent/pull/1186) [文档](https://docs.datus.ai/zh/0.3/cli/execution_command/)
+- **操作系统级 Bash 沙箱** - Bash 命令可在 macOS `sandbox-exec` 或 Linux `bubblewrap` 提供的操作系统级沙箱中运行，并将写入范围限制在工作区、会话数据目录和临时目录。可通过 `/sandbox` 或 `agent.bash.sandbox` 开启；严格模式可进一步限制可访问目录并收紧子进程环境变量，设置 `deny_network: true` 后还可禁止网络访问。沙箱默认关闭；启用后如当前平台缺少可用机制，Bash 命令将被拒绝。[#1181](https://github.com/Datus-ai/Datus-agent/pull/1181) [文档](https://docs.datus.ai/zh/0.3/cli/reference/)
+
+**增强**
+
+- **`execute_sql` 细粒度权限** - SQL 语句按只读、写入、破坏性操作和未知类型分别授权。`auto` 模式现可直接执行 `INSERT` 和 `CREATE`，`UPDATE`、`DELETE`、`DROP` 和 `TRUNCATE` 仍需确认。授权范围严格限定到具体语句类型，也可在 `agent.yml` 中自定义规则，或在确认弹窗中将语句加入项目级允许列表。[#1173](https://github.com/Datus-ai/Datus-agent/pull/1173)
+- **Subject Tree 指标由 Semantic Adapter 统一读写** - Subject Tree API 现直接通过项目当前的 Semantic Adapter 读写指标。OSI 指标的 `expression.dialects`、`ai_context` 和 `custom_extensions` 等原生字段可完整保留，新建、编辑或删除指标也不再误写为 MetricFlow 格式。[#1185](https://github.com/Datus-ai/Datus-agent/pull/1185) [datus-semantic-adapter#56](https://github.com/Datus-ai/datus-semantic-adapter/pull/56)
+- **TUI 全界面选中与复制** - 状态栏、Todo 侧边栏、队列预览、输入框、搜索结果、权限弹窗和内嵌向导等所有可见区域均可选中复制。复制内容会自动排除面板边框和补白。[#1150](https://github.com/Datus-ai/Datus-agent/pull/1150)
+- **同一项目支持多个 OSI 语义模型** - 语义模型的生成、校验、发布、检索、清理和指标生成现均按模型名隔离。系统会根据显式名称、业务域和核心事实表稳定选择目标模型，避免同一数据库中的无关模型被误选或覆盖。[#1168](https://github.com/Datus-ai/Datus-agent/pull/1168) [#1169](https://github.com/Datus-ai/Datus-agent/pull/1169) [#1189](https://github.com/Datus-ai/Datus-agent/pull/1189) [datus-semantic-adapter#53](https://github.com/Datus-ai/datus-semantic-adapter/pull/53) [#55](https://github.com/Datus-ai/datus-semantic-adapter/pull/55)
+- **权限模式快捷键** - 按 `Ctrl+P` 可在 `normal` → `auto` → `dangerous` 之间循环切换权限模式，并且在 Agent 流式输出期间仍可使用。[#1187](https://github.com/Datus-ai/Datus-agent/pull/1187) [文档](https://docs.datus.ai/zh/0.3/cli/chat_command/)
+- **`/init` 与 `/build-kb` 减少 Todo 噪声** - 精简了知识库构建过程中的中间 Todo，减少重复任务，使进度信息更聚焦。[#1156](https://github.com/Datus-ai/Datus-agent/pull/1156)
+
+**Bug 修复**
+
+- **`Escape` 即时中断** - 按 `Escape` 现会立即取消正在运行的轮次，无需等待当前模型调用返回。中断前已产生的部分响应会保留在会话历史中；尚未产生响应的轮次则会恢复为可编辑输入。[#1194](https://github.com/Datus-ai/Datus-agent/pull/1194)
+- **DuckDB 版本与内存库 Catalog 修复** - DuckDB 依赖统一固定为 1.5.2，以保持扩展和 Iceberg 行为一致。`GET /api/v1/catalog/list` 现可正确返回内存 DuckDB 数据源及其已挂载的 Iceberg REST Catalog。[#1184](https://github.com/Datus-ai/Datus-agent/pull/1184) [#1191](https://github.com/Datus-ai/Datus-agent/pull/1191)
+
+**升级说明**
+
+- **`!<sql>` 快捷方式已替换** - `!` 前缀不再执行 SQL。请按 `Tab` 切换到 `sql>` 模式；`!` 现用于运行 Agent 工具或 Plugin CLI，并优先匹配工具。[#1157](https://github.com/Datus-ai/Datus-agent/pull/1157) [#1186](https://github.com/Datus-ai/Datus-agent/pull/1186) [文档](https://docs.datus.ai/zh/0.3/cli/execution_command/)
+- **Semantic Adapter 版本要求** - Datus Agent 0.3.9 要求 `datus-semantic-core>=0.2.2`。单独安装 Adapter 时，应使用 `datus-semantic-metricflow>=0.2.11`；使用 OSI 语义模型时，应使用 `datus-semantic-osi>=0.1.4`，以获得匹配的多模型和指标读写支持。[#1185](https://github.com/Datus-ai/Datus-agent/pull/1185) [datus-semantic-adapter#53](https://github.com/Datus-ai/datus-semantic-adapter/pull/53) [#56](https://github.com/Datus-ai/datus-semantic-adapter/pull/56)
+
 ### 0.3.8
 
 **新功能**
