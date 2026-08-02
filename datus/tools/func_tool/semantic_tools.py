@@ -1111,8 +1111,10 @@ class SemanticTools:
             metrics: List of metric names to query
             dimensions: Optional list of dimensions to group by (from get_dimensions)
             path: Optional subject tree path (from list_subject_tree)
-            time_start: Optional start time (ISO format like '2024-01-01' or relative like '-7d')
-            time_end: Optional end time (ISO format like '2024-01-31' or relative like 'now')
+            time_start: Optional inclusive start of an OSI half-open range (ISO format like '2024-01-01'
+                        or relative like '-7d')
+            time_end: Optional exclusive end of an OSI half-open range (for example, use '2024-02-01'
+                      to include all of January, or a relative value like 'now')
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL WHERE clause (without WHERE keyword)
             limit: Optional maximum number of rows
@@ -1482,10 +1484,10 @@ class SemanticTools:
         Args:
             metric_name: Metric to analyze(from list_metrics/search_metrics)
             candidate_dimensions: List of dimensions to evaluate (from get_dimensions)
-            baseline_start: Baseline period start date (e.g., "2026-01-01")
-            baseline_end: Baseline period end date (e.g., "2026-01-01")
-            current_start: Current period start date (e.g., "2026-01-08")
-            current_end: Current period end date (e.g., "2026-01-08")
+            baseline_start: Inclusive baseline start date in an OSI half-open range (e.g., "2026-01-01")
+            baseline_end: Exclusive baseline end date (e.g., "2026-01-08" for Jan 1-7)
+            current_start: Inclusive current start date in an OSI half-open range (e.g., "2026-01-08")
+            current_end: Exclusive current end date (e.g., "2026-01-15" for Jan 8-14)
             anomaly_context: Optional anomaly detection context (AnomalyContext with rule and observed_change_pct)
             max_selected_dimensions: Maximum dimensions to select (default 3)
             top_n_values: Number of top dimension values to return (default 10)
@@ -1498,6 +1500,8 @@ class SemanticTools:
             - dimension_ranking: All dimensions ranked by importance score
             - selected_dimensions: Top dimensions selected for analysis
             - top_dimension_values: Delta contributions of dimension values
+            - dimension_analysis_status: complete, partial, unavailable, or not_requested
+              when individual dimension queries fail, successful dimensions remain available
         """
         _, error = self._require_adapter("attribution_analyze")
         if error:

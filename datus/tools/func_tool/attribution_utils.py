@@ -68,6 +68,17 @@ class AdditivityCheck(BaseModel):
     delta_residual_pct: Optional[float] = None
 
 
+class DimensionAnalysisError(BaseModel):
+    """A query or result-validation failure isolated to one dimension."""
+
+    error_type: Literal["query_error", "validation_error"]
+    code: str
+    message: str
+    period: Optional[Literal["baseline", "current"]] = None
+    columns: List[str] = Field(default_factory=list)
+    row_count: Optional[int] = None
+
+
 class DimensionAttribution(BaseModel):
     """Attribution details and guardrail state for one dimension."""
 
@@ -76,6 +87,7 @@ class DimensionAttribution(BaseModel):
     additivity_check: AdditivityCheck = Field(default_factory=AdditivityCheck)
     truncated: bool = False
     contributions: List[DimensionValueContribution] = Field(default_factory=list)
+    error: Optional[DimensionAnalysisError] = None
 
 
 class AttributionWarning(BaseModel):
@@ -120,6 +132,7 @@ class AttributionAnalysisResult(BaseModel):
     comparison_metadata: Dict = Field(..., description="Comparison period metadata")
     per_dimension: Dict[str, DimensionAttribution] = Field(default_factory=dict)
     warnings: List[AttributionWarning] = Field(default_factory=list)
+    dimension_analysis_status: Literal["complete", "partial", "unavailable", "not_requested"] = "complete"
 
 
 # ==================== Attribution Util ====================
@@ -146,7 +159,18 @@ class DimensionAttributionUtil:
         where: Optional[str] = None,
         max_dimension_values: int = 500,
     ) -> AttributionAnalysisResult:
-        """Rank candidate dimensions and calculate guarded delta contributions."""
+        """Rank candidate dimensions over OSI half-open time windows."""
+        candidate_dimensions = list(dict.fromkeys(candidate_dimensions))
+        baseline_days = self._validate_time_window(
+            period="baseline",
+            start=baseline_start,
+            end=baseline_end,
+        )
+        current_days = self._validate_time_window(
+            period="current",
+            start=current_start,
+            end=current_end,
+        )
         requested_max_dimension_values = max_dimension_values
         effective_max_dimension_values = max(1, min(max_dimension_values, _MAX_DIMENSION_VALUES))
         grouped_query_limit = effective_max_dimension_values + 1
@@ -183,8 +207,6 @@ class DimensionAttributionUtil:
         )
         total_delta = current_total - baseline_total
 
-        baseline_days = self._window_days(baseline_start, baseline_end)
-        current_days = self._window_days(current_start, current_end)
         if baseline_days is not None and current_days is not None and baseline_days != current_days:
             warnings.append(
                 AttributionWarning(
@@ -206,24 +228,46 @@ class DimensionAttributionUtil:
         per_dimension: Dict[str, DimensionAttribution] = {}
 
         for dimension in candidate_dimensions:
-            baseline_result = await self.adapter.query_metrics(
-                metrics=[metric_name],
-                dimensions=[dimension],
-                path=path,
+            baseline_result, baseline_lookup, dimension_error = await self._query_grouped_period(
+                metric_name=metric_name,
+                dimension=dimension,
+                period="baseline",
                 time_start=baseline_start,
                 time_end=baseline_end,
+                path=path,
                 where=where,
                 limit=grouped_query_limit,
             )
-            current_result = await self.adapter.query_metrics(
-                metrics=[metric_name],
-                dimensions=[dimension],
-                path=path,
+            if dimension_error is not None:
+                self._record_dimension_failure(
+                    dimension=dimension,
+                    error=dimension_error,
+                    per_dimension=per_dimension,
+                    warnings=warnings,
+                )
+                continue
+
+            current_result, current_lookup, dimension_error = await self._query_grouped_period(
+                metric_name=metric_name,
+                dimension=dimension,
+                period="current",
                 time_start=current_start,
                 time_end=current_end,
+                path=path,
                 where=where,
                 limit=grouped_query_limit,
             )
+            if dimension_error is not None:
+                self._record_dimension_failure(
+                    dimension=dimension,
+                    error=dimension_error,
+                    per_dimension=per_dimension,
+                    warnings=warnings,
+                )
+                continue
+
+            assert baseline_result is not None and baseline_lookup is not None
+            assert current_result is not None and current_lookup is not None
 
             logger.debug(
                 "Analyzing dimension '%s': baseline=%d rows, current=%d rows",
@@ -232,18 +276,6 @@ class DimensionAttributionUtil:
                 len(current_result.data),
             )
 
-            baseline_lookup = self._parse_grouped_result(
-                baseline_result,
-                metric_name=metric_name,
-                dimension=dimension,
-                period="baseline",
-            )
-            current_lookup = self._parse_grouped_result(
-                current_result,
-                metric_name=metric_name,
-                dimension=dimension,
-                period="current",
-            )
             union_keys = list(dict.fromkeys([*baseline_lookup, *current_lookup]))
             truncated = (
                 len(baseline_result.data) >= grouped_query_limit
@@ -357,6 +389,7 @@ class DimensionAttributionUtil:
                     "total": current_total,
                 },
                 "total_delta": total_delta,
+                "time_range_semantics": "[start, end)",
                 "where": where,
                 "path": path,
                 "requested_max_dimension_values": requested_max_dimension_values,
@@ -364,6 +397,115 @@ class DimensionAttributionUtil:
             },
             per_dimension=per_dimension,
             warnings=warnings,
+            dimension_analysis_status=self._dimension_analysis_status(
+                requested_count=len(candidate_dimensions),
+                analyzed_count=len(dimension_rankings),
+            ),
+        )
+
+    async def _query_grouped_period(
+        self,
+        *,
+        metric_name: str,
+        dimension: str,
+        period: Literal["baseline", "current"],
+        time_start: str,
+        time_end: str,
+        path: Optional[List[str]],
+        where: Optional[str],
+        limit: int,
+    ) -> tuple[
+        Optional[QueryResult],
+        Optional[Dict[str, tuple[Optional[JsonScalar], float]]],
+        Optional[DimensionAnalysisError],
+    ]:
+        """Query and validate one dimension period without aborting its peers."""
+        try:
+            result = await self.adapter.query_metrics(
+                metrics=[metric_name],
+                dimensions=[dimension],
+                path=path,
+                time_start=time_start,
+                time_end=time_end,
+                where=where,
+                limit=limit,
+            )
+        except Exception as error:
+            payload = getattr(error, "payload", None)
+            code = getattr(payload, "code", None)
+            message = getattr(payload, "message", None) or str(error)
+            if not isinstance(code, str) or not code:
+                code = "DIMENSION_QUERY_FAILED"
+            if not isinstance(message, str) or not message:
+                message = "Dimension query failed."
+            logger.warning(
+                "Attribution query failed for dimension '%s' during %s: %s",
+                dimension,
+                period,
+                message,
+            )
+            return (
+                None,
+                None,
+                DimensionAnalysisError(
+                    error_type="query_error",
+                    code=code,
+                    message=message,
+                    period=period,
+                ),
+            )
+
+        try:
+            lookup = self._parse_grouped_result(
+                result,
+                metric_name=metric_name,
+                dimension=dimension,
+                period=period,
+            )
+        except AttributionValidationException as error:
+            payload = error.payload
+            logger.warning(
+                "Attribution result validation failed for dimension '%s' during %s: %s",
+                dimension,
+                period,
+                payload.message,
+            )
+            return (
+                result,
+                None,
+                DimensionAnalysisError(
+                    error_type="validation_error",
+                    code=payload.code,
+                    message=payload.message,
+                    period=period,
+                    columns=payload.columns,
+                    row_count=payload.row_count,
+                ),
+            )
+
+        return result, lookup, None
+
+    @staticmethod
+    def _record_dimension_failure(
+        *,
+        dimension: str,
+        error: DimensionAnalysisError,
+        per_dimension: Dict[str, DimensionAttribution],
+        warnings: List[AttributionWarning],
+    ) -> None:
+        per_dimension[dimension] = DimensionAttribution(
+            dimension=dimension,
+            error=error,
+        )
+        warnings.append(
+            AttributionWarning(
+                code="DIMENSION_ANALYSIS_FAILED",
+                dimension=dimension,
+                message=(
+                    f"Dimension '{dimension}' could not be analyzed during {error.period}: "
+                    f"[{error.code}] {error.message} Other dimensions were analyzed independently."
+                ),
+            )
         )
 
     def _parse_total(
@@ -707,12 +849,42 @@ class DimensionAttributionUtil:
     def _display_dimension_value(value: Optional[JsonScalar]) -> str:
         return "(null)" if value is None else str(value)
 
-    @staticmethod
-    def _window_days(start: str, end: str) -> Optional[int]:
+    def _validate_time_window(
+        self,
+        *,
+        period: Literal["baseline", "current"],
+        start: str,
+        end: str,
+    ) -> Optional[int]:
+        """Validate a concrete OSI half-open window and return its day count."""
         try:
-            return (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+            days = (date.fromisoformat(end) - date.fromisoformat(start)).days
         except (TypeError, ValueError):
             return None
+        if days <= 0:
+            self._raise_validation_error(
+                code="INVALID_TIME_WINDOW",
+                message=(
+                    f"{period.title()} window must be a non-empty OSI half-open range [start, end); "
+                    f"received [{start}, {end})."
+                ),
+                period=period,
+            )
+        return days
+
+    @staticmethod
+    def _dimension_analysis_status(
+        *,
+        requested_count: int,
+        analyzed_count: int,
+    ) -> Literal["complete", "partial", "unavailable", "not_requested"]:
+        if requested_count == 0:
+            return "not_requested"
+        if analyzed_count == requested_count:
+            return "complete"
+        if analyzed_count > 0:
+            return "partial"
+        return "unavailable"
 
     @staticmethod
     def _raise_validation_error(

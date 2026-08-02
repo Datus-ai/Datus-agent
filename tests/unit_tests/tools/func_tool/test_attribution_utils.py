@@ -19,7 +19,10 @@ class ScriptedAdapter:
 
     async def query_metrics(self, **kwargs):
         self.calls.append(kwargs)
-        return self.results.pop(0)
+        scripted_result = self.results.pop(0)
+        if isinstance(scripted_result, Exception):
+            raise scripted_result
+        return scripted_result
 
 
 def result(columns, *rows):
@@ -31,9 +34,9 @@ async def analyze(adapter, **kwargs):
         metric_name="revenue",
         candidate_dimensions=kwargs.pop("candidate_dimensions", ["orders.region"]),
         baseline_start=kwargs.pop("baseline_start", "2026-01-01"),
-        baseline_end=kwargs.pop("baseline_end", "2026-01-07"),
+        baseline_end=kwargs.pop("baseline_end", "2026-01-08"),
         current_start=kwargs.pop("current_start", "2026-01-08"),
-        current_end=kwargs.pop("current_end", "2026-01-14"),
+        current_end=kwargs.pop("current_end", "2026-01-15"),
         **kwargs,
     )
 
@@ -69,6 +72,12 @@ class TestAttributionAnalysis:
         assert all(call["where"] == "game = 'demo'" for call in adapter.calls)
         assert all(call["path"] == ["games", "revenue"] for call in adapter.calls)
         assert [call.get("limit") for call in adapter.calls] == [None, None, 26, 26]
+        assert [(call["time_start"], call["time_end"]) for call in adapter.calls] == [
+            ("2026-01-01", "2026-01-08"),
+            ("2026-01-08", "2026-01-15"),
+            ("2026-01-01", "2026-01-08"),
+            ("2026-01-08", "2026-01-15"),
+        ]
         contributions = output.per_dimension["orders.region"].contributions
         assert contributions[0].filter_hint.model_dump() == {
             "dimension": "orders.region",
@@ -78,6 +87,8 @@ class TestAttributionAnalysis:
         assert contributions[1].dimension_values == {"orders.region": "(null)"}
         assert contributions[1].filter_hint.operator == "is_null"
         assert output.per_dimension["orders.region"].additivity_check.status == "passed"
+        assert output.dimension_analysis_status == "complete"
+        assert output.comparison_metadata["time_range_semantics"] == "[start, end)"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -163,7 +174,7 @@ class TestAttributionAnalysis:
             ),
         ],
     )
-    async def test_rejects_invalid_grouped_shapes(self, grouped, expected_code):
+    async def test_isolates_invalid_grouped_shapes(self, grouped, expected_code):
         adapter = ScriptedAdapter(
             [
                 result(["revenue"], {"revenue": 10}),
@@ -173,12 +184,110 @@ class TestAttributionAnalysis:
             ]
         )
 
-        with pytest.raises(AttributionValidationException) as exc_info:
-            await analyze(adapter)
+        output = await analyze(adapter)
 
-        assert exc_info.value.payload.code == expected_code
-        assert exc_info.value.payload.dimension == "orders.region"
-        assert exc_info.value.payload.period == "baseline"
+        error = output.per_dimension["orders.region"].error
+        assert error.error_type == "validation_error"
+        assert error.code == expected_code
+        assert error.period == "baseline"
+        assert output.dimension_analysis_status == "unavailable"
+        assert output.dimension_ranking == []
+        assert output.selected_dimensions == []
+        assert output.warnings[-1].code == "DIMENSION_ANALYSIS_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_query_failure_isolated_and_next_dimension_still_analyzed(self):
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": 100}),
+                result(["revenue"], {"revenue": 150}),
+                RuntimeError("ambiguous organization column"),
+                result(["channel", "revenue"], {"channel": "direct", "revenue": 100}),
+                result(["channel", "revenue"], {"channel": "direct", "revenue": 150}),
+            ]
+        )
+
+        output = await analyze(
+            adapter,
+            candidate_dimensions=["orders.organization", "orders.channel"],
+        )
+
+        failed = output.per_dimension["orders.organization"]
+        assert failed.error.error_type == "query_error"
+        assert failed.error.code == "DIMENSION_QUERY_FAILED"
+        assert failed.error.period == "baseline"
+        assert output.per_dimension["orders.channel"].error is None
+        assert [ranking.dimension for ranking in output.dimension_ranking] == ["orders.channel"]
+        assert output.selected_dimensions == ["orders.channel"]
+        assert output.dimension_analysis_status == "partial"
+        assert len(adapter.calls) == 5
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_candidate_dimensions_before_querying_and_reporting(self):
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": 100}),
+                result(["revenue"], {"revenue": 150}),
+                result(["region", "revenue"], {"region": "US", "revenue": 100}),
+                result(["region", "revenue"], {"region": "US", "revenue": 150}),
+            ]
+        )
+
+        output = await analyze(
+            adapter,
+            candidate_dimensions=["orders.region", "orders.region"],
+        )
+
+        assert output.candidate_dimensions == ["orders.region"]
+        assert [ranking.dimension for ranking in output.dimension_ranking] == ["orders.region"]
+        assert output.selected_dimensions == ["orders.region"]
+        assert list(output.per_dimension) == ["orders.region"]
+        assert len(output.top_dimension_values) == 1
+        assert output.dimension_analysis_status == "complete"
+        assert len(adapter.calls) == 4
+
+    @pytest.mark.asyncio
+    async def test_current_query_failure_discards_partial_dimension_result(self):
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": 100}),
+                result(["revenue"], {"revenue": 150}),
+                result(["region", "revenue"], {"region": "US", "revenue": 100}),
+                RuntimeError("current query failed"),
+            ]
+        )
+
+        output = await analyze(adapter)
+
+        dimension = output.per_dimension["orders.region"]
+        assert dimension.error.period == "current"
+        assert dimension.contributions == []
+        assert output.dimension_analysis_status == "unavailable"
+
+    @pytest.mark.asyncio
+    async def test_all_dimension_failures_keep_valid_total_comparison(self):
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": 100}),
+                result(["revenue"], {"revenue": 150}),
+                RuntimeError("region query failed"),
+                RuntimeError("channel query failed"),
+            ]
+        )
+
+        output = await analyze(
+            adapter,
+            candidate_dimensions=["orders.region", "orders.channel"],
+        )
+
+        assert output.comparison_metadata["total_delta"] == 50
+        assert output.dimension_analysis_status == "unavailable"
+        assert output.dimension_ranking == []
+        assert all(item.error is not None for item in output.per_dimension.values())
+        assert [warning.code for warning in output.warnings] == [
+            "DIMENSION_ANALYSIS_FAILED",
+            "DIMENSION_ANALYSIS_FAILED",
+        ]
 
     @pytest.mark.asyncio
     async def test_checks_each_period_additivity_even_when_delta_residual_cancels(self):
@@ -283,6 +392,7 @@ class TestAttributionAnalysis:
         assert dimension.additivity_check.status == "skipped"
         assert output.dimension_ranking == []
         assert output.selected_dimensions == []
+        assert output.dimension_analysis_status == "unavailable"
         assert output.warnings[-1].code == "HIGH_CARDINALITY_DIMENSION"
 
     @pytest.mark.asyncio
@@ -314,12 +424,57 @@ class TestAttributionAnalysis:
         output = await analyze(
             adapter,
             candidate_dimensions=[],
-            baseline_end="2026-01-03",
+            baseline_end="2026-01-04",
         )
 
         assert output.comparison_metadata["baseline"]["days"] == 3
         assert output.comparison_metadata["current"]["days"] == 7
         assert "UNEQUAL_WINDOWS" in [warning.code for warning in output.warnings]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("start", "end"),
+        [
+            ("2026-01-01", "2026-01-01"),
+            ("2026-01-02", "2026-01-01"),
+        ],
+    )
+    async def test_rejects_empty_or_reversed_half_open_window_before_query(self, start, end):
+        adapter = ScriptedAdapter([])
+
+        with pytest.raises(AttributionValidationException) as exc_info:
+            await analyze(
+                adapter,
+                candidate_dimensions=[],
+                baseline_start=start,
+                baseline_end=end,
+            )
+
+        assert exc_info.value.payload.code == "INVALID_TIME_WINDOW"
+        assert exc_info.value.payload.period == "baseline"
+        assert adapter.calls == []
+
+    @pytest.mark.asyncio
+    async def test_single_day_snapshot_uses_next_day_as_exclusive_end(self):
+        adapter = ScriptedAdapter(
+            [
+                result(["revenue"], {"revenue": 100}),
+                result(["revenue"], {"revenue": 150}),
+            ]
+        )
+
+        output = await analyze(
+            adapter,
+            candidate_dimensions=[],
+            baseline_start="2026-06-30",
+            baseline_end="2026-07-01",
+            current_start="2026-07-31",
+            current_end="2026-08-01",
+        )
+
+        assert output.comparison_metadata["baseline"]["days"] == 1
+        assert output.comparison_metadata["current"]["days"] == 1
+        assert output.dimension_analysis_status == "not_requested"
 
     def test_old_serialized_result_gets_defaults_for_new_fields(self):
         output = AttributionAnalysisResult.model_validate(
@@ -346,4 +501,5 @@ class TestAttributionAnalysis:
 
         assert output.per_dimension == {}
         assert output.warnings == []
+        assert output.dimension_analysis_status == "complete"
         assert output.top_dimension_values[0].filter_hint is None

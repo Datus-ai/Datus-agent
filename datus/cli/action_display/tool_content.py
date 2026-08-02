@@ -1568,24 +1568,14 @@ def _build_validate_semantic(action: ActionHistory, verbose: bool) -> ToolCallCo
 
 
 def _build_attribution_analyze(action: ActionHistory, verbose: bool) -> ToolCallContent:
-    """attribution_analyze: show analyzed dimensions count."""
+    """attribution_analyze: share the canonical partial-result summary."""
     tc = make_base_content(action)
     if verbose:
         tc.args_lines = extract_args_markup(action)
         if action.output:
             tc.output_lines = _format_result_only_markup(action.output)
     else:
-        data = parse_output_data(action.output)
-        if data:
-            result = data.get("result")
-            if isinstance(result, dict):
-                dims = result.get("selected_dimensions") or result.get("dimension_ranking", [])
-                count = len(dims) if isinstance(dims, list) else 0
-                warnings = result.get("warnings") or []
-                warning_count = len(warnings) if isinstance(warnings, list) else 0
-                tc.compact_result = f"{count} {'dimension' if count == 1 else 'dimensions'} analyzed"
-                if warning_count:
-                    tc.compact_result += f", {warning_count} {'warning' if warning_count == 1 else 'warnings'}"
+        tc.compact_result = _summary_from_registry(action, "attribution_analyze")
     return tc
 
 

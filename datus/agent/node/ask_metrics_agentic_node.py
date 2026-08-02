@@ -450,6 +450,19 @@ class AskMetricsAgenticNode(AgenticNode):
         audits and zero-filled dimension enumeration are not supported; state
         the limitation to the user instead of emulating those shapes with
         where filters.
+
+        Args:
+            metrics: Metric names to query.
+            dimensions: Optional grouping dimensions.
+            path: Optional subject-tree path for metric scoping.
+            time_start: Optional inclusive start of an OSI half-open range.
+            time_end: Optional exclusive end of an OSI half-open range. For example,
+                use 2024-02-01 to include all of January.
+            time_granularity: Optional supported aggregation grain.
+            where: Optional SQL boolean expression without the WHERE keyword.
+            limit: Optional maximum row count when the question requests truncation.
+            order_by: Optional ordered columns, using a leading minus for descending order.
+            dry_run: Compile and validate the query without executing it when true.
         """
         if not self.semantic_tools:
             return FuncToolResult(success=0, error="semantic tools unavailable")

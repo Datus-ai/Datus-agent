@@ -540,6 +540,38 @@ def _fmt_validate_semantic(result: Any) -> str:
 
 def _fmt_attribution_analyze(result: Any) -> str:
     if isinstance(result, dict):
+        per_dimension = result.get("per_dimension")
+        if isinstance(per_dimension, dict) and per_dimension:
+            analyzed_count = 0
+            failed_count = 0
+            truncated_count = 0
+            for dimension_result in per_dimension.values():
+                if not isinstance(dimension_result, dict):
+                    continue
+                if dimension_result.get("error"):
+                    failed_count += 1
+                elif dimension_result.get("truncated"):
+                    truncated_count += 1
+                else:
+                    analyzed_count += 1
+
+            candidates = result.get("candidate_dimensions")
+            requested_count = len(candidates) if isinstance(candidates, list) else len(per_dimension)
+            noun = "dimension" if requested_count == 1 else "dimensions"
+            summary_parts = [f"{analyzed_count}/{requested_count} {noun} analyzed"]
+            if failed_count:
+                summary_parts.append(f"{failed_count} failed")
+            if truncated_count:
+                summary_parts.append(f"{truncated_count} truncated")
+            warnings = result.get("warnings") or []
+            warning_count = len(warnings) if isinstance(warnings, list) else 0
+            if warning_count:
+                summary_parts.append(pluralize(warning_count, "warning"))
+            return ", ".join(summary_parts)
+
+        if result.get("dimension_analysis_status") == "not_requested":
+            return "totals compared"
+
         selected = result.get("selected_dimensions") or []
         warnings = result.get("warnings") or []
         summary_parts = []
