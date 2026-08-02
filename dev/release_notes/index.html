@@ -4109,6 +4109,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#039" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.9
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#038" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4425,6 +4436,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#039" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0.3.9
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#038" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4721,6 +4743,32 @@
 
 <h1 id="release-notes">Release notes<a class="headerlink" href="#release-notes" title="Permanent link">&para;</a></h1>
 <h2 id="03">0.3<a class="headerlink" href="#03" title="Permanent link">&para;</a></h2>
+<h3 id="039">0.3.9<a class="headerlink" href="#039" title="Permanent link">&para;</a></h3>
+<p><strong>New Features</strong></p>
+<ul>
+<li><strong>Datus Plugin Ecosystem</strong> - Third-party capabilities can now extend Datus without modifying Datus Agent itself. Plugins can provide <code>datus &lt;plugin&gt;</code> CLI commands, bundled skills, and additional prompt context. They support installation, upgrades, activation, offline packaging, and export, with per-project activation and profile selection. Version 0.3.9 further completes the declarative <code>datus-plugin.yml</code> contract, external-directory mounting, and managed multi-tenant deployment support. <a href="https://github.com/Datus-ai/Datus-agent/pull/1125">#1125</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1151">#1151</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1153">#1153</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1155">#1155</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1159">#1159</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1192">#1192</a> <a href="https://docs.datus.ai/0.3/plugin/introduction/">Plugin docs</a> <a href="https://docs.datus.ai/0.3/plugin/development/">Plugin development docs</a></li>
+<li><strong>Three Input Modes and Direct Tool Execution</strong> - Press <code>Tab</code> in the CLI to cycle between chat, SQL, and Bash modes. In chat mode, use <code>!&lt;tool&gt;</code> to run an agent tool directly or <code>!&lt;plugin&gt;</code> to run an installed plugin CLI, with command and argument completion. All operations follow the existing permission and SQL policies, and results are added to the conversation so the agent can continue the analysis. <a href="https://github.com/Datus-ai/Datus-agent/pull/1157">#1157</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1186">#1186</a> <a href="https://docs.datus.ai/0.3/cli/execution_command/">docs</a></li>
+<li><strong>OS-Level Bash Sandbox</strong> - Bash commands can run inside an OS-enforced sandbox backed by macOS <code>sandbox-exec</code> or Linux <code>bubblewrap</code>, with writes restricted to the workspace, session data, and temporary directories. Enable it with <code>/sandbox</code> or <code>agent.bash.sandbox</code>; strict mode further limits accessible paths and minimizes the child-process environment, while <code>deny_network: true</code> also blocks network access. The sandbox is disabled by default; once enabled, Bash commands are rejected if the current platform has no supported isolation mechanism. <a href="https://github.com/Datus-ai/Datus-agent/pull/1181">#1181</a> <a href="https://docs.datus.ai/0.3/cli/reference/">docs</a></li>
+</ul>
+<p><strong>Enhancements</strong></p>
+<ul>
+<li><strong>Fine-Grained <code>execute_sql</code> Permissions</strong> - SQL statements are authorized separately as read, write, destructive, or unknown operations. The <code>auto</code> profile can now run <code>INSERT</code> and <code>CREATE</code> directly, while <code>UPDATE</code>, <code>DELETE</code>, <code>DROP</code>, and <code>TRUNCATE</code> still require confirmation. Grants remain scoped to the exact statement type; rules can also be customized in <code>agent.yml</code>, or a statement can be added to the project allowlist from the confirmation prompt. <a href="https://github.com/Datus-ai/Datus-agent/pull/1173">#1173</a></li>
+<li><strong>Semantic Adapter-Backed Subject Tree Metrics</strong> - The Subject Tree API now reads and writes metrics through the project's active semantic adapter. Native OSI fields such as <code>expression.dialects</code>, <code>ai_context</code>, and <code>custom_extensions</code> are preserved, and creating, editing, or deleting metrics no longer writes MetricFlow-shaped content into OSI models. <a href="https://github.com/Datus-ai/Datus-agent/pull/1185">#1185</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/56">datus-semantic-adapter#56</a></li>
+<li><strong>Selection and Copy Across the Entire TUI</strong> - All visible areas can now be selected and copied, including the status bar, Todo sidebar, queue preview, input box, search results, permission dialogs, and embedded wizards. Copied text automatically excludes panel borders and padding. <a href="https://github.com/Datus-ai/Datus-agent/pull/1150">#1150</a></li>
+<li><strong>Multiple OSI Semantic Models per Project</strong> - Semantic-model generation, validation, publishing, retrieval, cleanup, and metric generation are now isolated by model name. Datus selects a stable target from the explicit name, business domain, and core fact table, preventing unrelated models in the same database from being selected or overwritten. <a href="https://github.com/Datus-ai/Datus-agent/pull/1168">#1168</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1169">#1169</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1189">#1189</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/53">datus-semantic-adapter#53</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/55">#55</a></li>
+<li><strong>Permission Profile Shortcut</strong> - Press <code>Ctrl+P</code> to cycle through <code>normal</code> → <code>auto</code> → <code>dangerous</code>, including while the agent is streaming a response. <a href="https://github.com/Datus-ai/Datus-agent/pull/1187">#1187</a> <a href="https://docs.datus.ai/0.3/cli/chat_command/">docs</a></li>
+<li><strong>Less Todo Noise from <code>/init</code> and <code>/build-kb</code></strong> - Knowledge-base workflows now create fewer intermediate and duplicate Todo items, keeping progress information focused. <a href="https://github.com/Datus-ai/Datus-agent/pull/1156">#1156</a></li>
+</ul>
+<p><strong>Bug Fixes</strong></p>
+<ul>
+<li><strong>Immediate <code>Escape</code> Interruption</strong> - Pressing <code>Escape</code> now cancels the active turn immediately instead of waiting for the current model call to return. Partial responses produced before interruption remain in session history, while a turn interrupted before any response restores its input for editing. <a href="https://github.com/Datus-ai/Datus-agent/pull/1194">#1194</a></li>
+<li><strong>DuckDB Version and In-Memory Catalog Fixes</strong> - The DuckDB dependency is consistently pinned to 1.5.2 so extension and Iceberg behavior remains stable. <code>GET /api/v1/catalog/list</code> now correctly returns in-memory DuckDB datasources and their attached Iceberg REST catalogs. <a href="https://github.com/Datus-ai/Datus-agent/pull/1184">#1184</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1191">#1191</a></li>
+</ul>
+<p><strong>Upgrade Notes</strong></p>
+<ul>
+<li><strong><code>!&lt;sql&gt;</code> Shortcut Replaced</strong> - The <code>!</code> prefix no longer executes SQL. Press <code>Tab</code> to switch to <code>sql&gt;</code> mode; <code>!</code> now runs agent tools or plugin CLIs, with tools taking precedence. <a href="https://github.com/Datus-ai/Datus-agent/pull/1157">#1157</a> <a href="https://github.com/Datus-ai/Datus-agent/pull/1186">#1186</a> <a href="https://docs.datus.ai/0.3/cli/execution_command/">docs</a></li>
+<li><strong>Semantic Adapter Version Requirements</strong> - Datus Agent 0.3.9 requires <code>datus-semantic-core&gt;=0.2.2</code>. Deployments that install adapters separately should use <code>datus-semantic-metricflow&gt;=0.2.11</code>; OSI semantic-model deployments should use <code>datus-semantic-osi&gt;=0.1.4</code> for matching multi-model and metric read/write behavior. <a href="https://github.com/Datus-ai/Datus-agent/pull/1185">#1185</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/53">datus-semantic-adapter#53</a> <a href="https://github.com/Datus-ai/datus-semantic-adapter/pull/56">#56</a></li>
+</ul>
 <h3 id="038">0.3.8<a class="headerlink" href="#038" title="Permanent link">&para;</a></h3>
 <p><strong>New Features</strong></p>
 <ul>
