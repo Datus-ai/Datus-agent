@@ -379,7 +379,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             logger.error(f"Failed to setup generation tools: {e}")
 
     def _setup_osi_target_tools(self) -> None:
-        """Expose only semantic-model target planning on this node."""
+        """Expose live target discovery and semantic-model target planning."""
         from datus.agent.node.semantic_authoring import is_osi_authoring
 
         if not is_osi_authoring(self.agent_config):
@@ -391,6 +391,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
         )
+        self.tools.append(trans_to_function_tool(self.osi_target_tools.list_existing_osi_semantic_models))
         self.tools.append(trans_to_function_tool(self.osi_target_tools.plan_osi_semantic_model_target))
 
     def _setup_skill_func_tools(self) -> None:

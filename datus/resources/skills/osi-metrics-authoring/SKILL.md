@@ -4,7 +4,7 @@ description: OSI core schema metric authoring specification — metric expressio
 tags:
   - metrics
   - osi
-version: "1.2.0"
+version: "1.3.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -13,13 +13,13 @@ allowed_agents:
 
 # OSI Metrics Authoring
 
-ADD metrics to an existing strict OSI (Open Semantic Interchange) core semantic model, capturing each metric's business meaning from SQL queries or natural language.
+Create, update, or explicitly delete metrics in an existing strict OSI (Open Semantic Interchange) core semantic model, capturing each metric's business meaning from SQL queries or natural language.
 
 CRITICAL BOUNDARY: You author **OSI core semantics only**. You do NOT write MetricFlow YAML, `measure_proxy`, `type_params`, `measures:`, `ratio`, `cumulative`, or any execution-engine syntax. The Datus OSI compiler infers backing measures, picks the backend metric kind, and lowers to the execution engine. Do NOT write legacy MetricFlow `metric:` blocks.
 
-CRITICAL MODEL RULE — **build the model once, then only upsert metrics**:
+CRITICAL MODEL RULE — **build the model once, then only change its metrics collection**:
 - The datasets and relationships are owned by the semantic-model step and are ALREADY built.
-- The semantic model file is the durable OSI domain document. Load it and use `upsert_osi_metrics` to create or update metrics under `semantic_model[0].metrics`.
+- The semantic model file is the durable OSI domain document. Load it and use `upsert_osi_metrics` to create or update metrics, or `delete_osi_metrics` to remove explicitly requested names, under `semantic_model[0].metrics`.
 - Never use general filesystem writes to create or modify datasets, fields, or relationships. If the target model is missing, stop and report that `gen_semantic_model` must run first.
 - A given logical dataset has one canonical definition shared by all metrics. Reuse that dataset by name in each metric's DATUS `dataset` hint.
 
@@ -103,9 +103,11 @@ Datus execution hints such as `dataset`, `time_dimension`, `metric_kind`, `input
 
 Before binding a target or writing YAML, classify the source SQL:
 
+- This gate applies to metric creation requests, not an explicit request to delete named existing metrics. A named deletion remains in scope even when accompanying SQL is non-aggregate context.
+
 - If the SQL has no aggregate output (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, ratio, rolling/cumulative aggregate, etc.) and primarily returns row-level fields (`SELECT DISTINCT ac_name, ac_code, ...`, list/detail/ranking), then it is not a metric request.
 - For non-metric SQL, do not invent convenience metrics such as `*_count`, `*_avg_duration`, `*_max_sr`, or `*_min_sr` just because the table contains those columns.
-- For non-metric SQL, do not bind a target and do not call `upsert_osi_metrics`, `validate_semantic`, `query_metrics`, or `publish_metrics`. Report `status: "skipped"`, `skip_reason: "not_a_metric"`, and `metric_file: null` in the final JSON.
+- For a non-metric creation request that is not an explicit named deletion, do not bind a target and do not call `upsert_osi_metrics`, `validate_semantic`, `query_metrics`, or `publish_metrics`. Report `status: "skipped"`, `skip_reason: "not_a_metric"`, and `metric_file: null` in the final JSON.
 - For TopN per group / ranking-window SQL (`ROW_NUMBER`, `RANK`, `DENSE_RANK`) with no preflight query-backed requirement, do the same: skip metric generation. When the request-local plan contains `query_backed_metric` requirements, do not skip them: follow `dataset_requirement_id` to the corresponding query-backed dataset created through the requirement-reference flow, use its actual authored semantic name, and define metrics from its final output fields. `dataset_name_hint` is not authoritative. If the dataset is absent, return the semantic-model prerequisite as a concrete blocker.
 
 ## Workflow notes
@@ -116,8 +118,9 @@ Before binding a target or writing YAML, classify the source SQL:
 - Candidate-plan compliance: every candidate in `direct_metric_candidates` and `derived_metric_candidates` (including cumulative, rolling-window, and period_over_period candidates) MUST end this run either published via `publish_metrics` or listed in your final `output` with a concrete blocker such as a validation failure. "Covered by an existing base metric" is never a valid blocker for a cumulative/window/period_over_period candidate.
 - Reference and reconcile: point each metric's DATUS `dataset` hint at an existing dataset. "Same meaning" requires the same aggregation AND the same window/offset semantics: a base aggregate never covers its cumulative/rolling/period-over-period variants, so `running_x`/`moving_x`/`previous_x` candidates must still be published when only `x` exists. For a derived metric, make sure its input metrics already exist.
 - Every requested metric candidate must pass through `upsert_osi_metrics`, validation, and publish even when the bound YAML already contains the correct definition. Reuse that exact metric object unchanged; the upsert is a byte-preserving no-op but records the exact publish scope. This makes retries repair a prior run that wrote YAML but stopped before KB sync. Existing metrics are not a `skipped` outcome.
+- Delete only when the user explicitly asks to remove a named metric. Call `delete_osi_metrics(path="<target model file>", metric_names=["<name>"])`. Missing names are a successful `already_absent` result so a retry can still clean stale Knowledge Base rows. Do not invent cascade rules: validate the resulting model, then use the validation result and user intent to decide whether to delete another metric, restore one with `upsert_osi_metrics`, or edit a dependent definition.
 - From SQL: find the table (FROM), aggregate expression(s), and business conditions vs query-time ranges. Anchor the metric on the aggregated table's existing dataset; encode metric-specific conditions with CASE inside the metric expression.
 - When a required business input is missing or ambiguous, ASK for the business semantics; do not guess.
 - Call `upsert_osi_metrics(path="<target model file>", metrics_json="<JSON array of complete OSI metric objects>")` once per coherent metric batch. This tool preserves datasets and relationships, appends new metrics, and replaces existing metrics by name.
-- Call `validate_semantic(semantic_model_name="<bound semantic model name>")` after upserting OSI metrics and fix metric errors with another `upsert_osi_metrics` call until the adapter's complete default validation profile passes. Do not pass a custom `checks` subset.
-- After validation passes, call `publish_metrics(metric_file="<target model file>", metric_output_bindings=[{"output_id":"...","metric_name":"..."}])`. The tool consumes the planner-owned `queryability_contracts`, resolves every complete source `GROUP BY` combination, and runs both semantic compilation and live warehouse dry-runs before syncing; fix and retry on failure. Return the same binding array in final JSON. Omit it only when the preflight plan has no `metric_requirements`.
+- Call `validate_semantic(semantic_model_name="<bound semantic model name>")` after changing OSI metrics. When any deletion occurred, pass `scope="semantic_model"`; this keeps real model and metric errors while tolerating the valid no-metrics state. Fix errors with the appropriate `delete_osi_metrics` or `upsert_osi_metrics` call until validation passes. Do not pass a custom `checks` subset.
+- After validation passes, call `publish_metrics(metric_file="<target model file>", metric_output_bindings=[{"output_id":"...","metric_name":"..."}])`. The tool consumes the planner-owned `queryability_contracts`, resolves every complete source `GROUP BY` combination, and runs both semantic compilation and live warehouse dry-runs before syncing; fix and retry on failure. Return the same binding array in final JSON. For deletion-only publication, omit bindings and no metric dry-run is required because no metric is being authored.

@@ -613,6 +613,8 @@ class GenerationTools:
 
             exact_osi_target_required = self._is_osi_authoring() and self.require_bound_osi_target
             osi_metric_names_to_sync: Optional[set[str]] = None
+            osi_touched_metric_names: Optional[set[str]] = None
+            osi_absent_metric_names: set[str] = set()
             metric_output_bindings = [
                 binding.model_dump() if isinstance(binding, MetricOutputBinding) else dict(binding)
                 for binding in metric_output_bindings or []
@@ -649,38 +651,36 @@ class GenerationTools:
                         error="The bound OSI artifact no longer declares the selected semantic model.",
                         result={"code": "semantic_model_target_invalid"},
                     )
-                if not state.authored_metric_names:
+                if not state.touched_metric_names:
                     return FuncToolResult(
                         success=0,
-                        error="No metrics were authored in the bound OSI semantic model during this run.",
+                        error="No metrics were touched in the bound OSI semantic model during this run.",
                     )
-                osi_metric_names_to_sync = set(state.authored_metric_names)
-                current_metric_names = set(self.extract_osi_metric_names(abs_bound_metric))
-                missing_authored_metrics = [
-                    name for name in state.authored_metric_names if name not in current_metric_names
-                ]
-                if missing_authored_metrics:
-                    return FuncToolResult(
-                        success=0,
-                        error=(
-                            "The bound OSI artifact no longer contains every metric authored in this run: "
-                            f"{', '.join(missing_authored_metrics)}."
-                        ),
-                        result={"code": "semantic_model_target_invalid"},
+                current_metric_names = self.extract_osi_metric_names(abs_bound_metric)
+                present_metric_names, absent_metric_names = state.partition_touched_metrics(current_metric_names)
+                osi_touched_metric_names = set(state.touched_metric_names)
+                # One operation journal is sufficient: final YAML presence
+                # decides upsert versus deletion, including same-run reversals.
+                osi_metric_names_to_sync = set(present_metric_names)
+                osi_absent_metric_names = set(absent_metric_names)
+                if osi_metric_names_to_sync:
+                    binding_error, metric_output_bindings = self._validate_metric_output_bindings(
+                        metric_output_bindings,
+                        osi_metric_names_to_sync,
                     )
-                binding_error, metric_output_bindings = self._validate_metric_output_bindings(
-                    metric_output_bindings,
-                    osi_metric_names_to_sync,
-                )
-                if binding_error:
-                    return FuncToolResult(
-                        success=0,
-                        error=binding_error,
-                        result={
-                            "metric_file": metric_file,
-                            "metric_output_bindings": metric_output_bindings,
-                        },
-                    )
+                    if binding_error:
+                        return FuncToolResult(
+                            success=0,
+                            error=binding_error,
+                            result={
+                                "metric_file": metric_file,
+                                "metric_output_bindings": metric_output_bindings,
+                            },
+                        )
+                else:
+                    # Deletion-only publication has no newly published output
+                    # to bind, even if SQL was supplied as explanatory context.
+                    metric_output_bindings = []
                 self.generation_evidence.bind_metric_output_names(metric_output_bindings)
                 if not self.generation_evidence.semantic_artifact_validation_passed(
                     state.bound["semantic_model_name"],
@@ -690,7 +690,9 @@ class GenerationTools:
                         success=0,
                         error="validate_semantic must pass for the exact bound OSI semantic-model artifact.",
                     )
-                if not self.generation_evidence.has_metric_dry_run(state.authored_metric_names):
+                if osi_metric_names_to_sync and not self.generation_evidence.has_metric_dry_run(
+                    osi_metric_names_to_sync
+                ):
                     return FuncToolResult(
                         success=0,
                         error=(
@@ -698,9 +700,11 @@ class GenerationTools:
                             "in the bound OSI semantic model."
                         ),
                     )
-                if not self.generation_evidence.has_required_queryability_dry_runs(state.authored_metric_names):
+                if osi_metric_names_to_sync and not self.generation_evidence.has_required_queryability_dry_runs(
+                    osi_metric_names_to_sync
+                ):
                     missing_contracts = self.generation_evidence.missing_queryability_contracts(
-                        state.authored_metric_names
+                        osi_metric_names_to_sync
                     )
                     return FuncToolResult(
                         success=0,
@@ -798,7 +802,9 @@ class GenerationTools:
                         "metric_sqls": metric_sqls,
                     },
                 )
-            query_backed_error = self._validate_required_query_backed_sources([abs_metric, *abs_semantic_files])
+            query_backed_error = None
+            if not exact_osi_target_required or osi_metric_names_to_sync:
+                query_backed_error = self._validate_required_query_backed_sources([abs_metric, *abs_semantic_files])
             if query_backed_error:
                 return FuncToolResult(
                     success=0,
@@ -827,11 +833,14 @@ class GenerationTools:
                             },
                         )
                     self.generation_evidence.bind_metric_output_names(metric_output_bindings)
+                sync_kwargs: Dict[str, Any] = {"metric_names_to_sync": osi_metric_names_to_sync}
+                if osi_touched_metric_names is not None:
+                    sync_kwargs["metric_names_to_reconcile"] = osi_touched_metric_names
                 sync_result = self._sync_osi_metric_to_db(
                     abs_metric,
                     abs_semantic_files,
                     metric_sqls,
-                    metric_names_to_sync=osi_metric_names_to_sync,
+                    **sync_kwargs,
                 )
                 if not sync_result.get("success"):
                     return FuncToolResult(
@@ -844,7 +853,12 @@ class GenerationTools:
                             "sync": sync_result,
                         },
                     )
-                self.generation_evidence.mark_kb_sync("metric", osi_metric_names_to_sync)
+                kb_sync_metric_names = (
+                    set(osi_touched_metric_names)
+                    if osi_touched_metric_names is not None
+                    else set(osi_metric_names_to_sync)
+                )
+                self.generation_evidence.mark_kb_sync("metric", kb_sync_metric_names)
                 if sync_result.get("semantic_synced"):
                     self.generation_evidence.mark_kb_sync("semantic")
                 if self.osi_target_state is not None:
@@ -856,6 +870,7 @@ class GenerationTools:
                         "semantic_model_files": semantic_model_files,
                         "metric_sqls": metric_sqls,
                         "metric_output_bindings": metric_output_bindings,
+                        "deleted_metric_names": sorted(osi_absent_metric_names),
                         "sync": sync_result,
                     }
                 )
@@ -2085,7 +2100,13 @@ class GenerationTools:
             entities.extend(cls._dataset_primary_keys(datasets.get(dataset_name)))
         return cls._dedupe_strings(entities)
 
-    def _sync_osi_semantic_objects_to_db(self, semantic_model_path: str) -> dict:
+    def _sync_osi_semantic_objects_to_db(
+        self,
+        semantic_model_path: str,
+        *,
+        doc: Any = None,
+        prepare_only: bool = False,
+    ) -> dict:
         """Sync OSI datasets into the semantic object store."""
         try:
             target_dataset_names = set(self.extract_osi_dataset_names(semantic_model_path))
@@ -2095,7 +2116,7 @@ class GenerationTools:
                     "error": f"No OSI datasets found in semantic model file to sync: {semantic_model_path}",
                 }
 
-            doc = self._load_osi_document(semantic_model_file=semantic_model_path)
+            doc = doc or self._load_osi_document(semantic_model_file=semantic_model_path)
             semantic_model_name = str(getattr(doc, "name", "") or "")
             default_db_parts = self._current_db_parts(self.agent_config)
             semantic_objects: List[dict] = []
@@ -2215,6 +2236,13 @@ class GenerationTools:
                         f"context: {', '.join(sorted(target_dataset_names))}"
                     ),
                 }
+            if prepare_only:
+                return {
+                    "success": True,
+                    "semantic_objects": semantic_objects,
+                    "table_semantic_profiles": table_profiles,
+                    "synced_items": synced_items,
+                }
             replacement_plans = [(self.semantic_rag, semantic_model_path, semantic_objects)]
             if table_profiles and self.table_semantic_profile_rag is not None:
                 replacement_plans.append((self.table_semantic_profile_rag, semantic_model_path, table_profiles))
@@ -2289,61 +2317,29 @@ class GenerationTools:
             "entity": name if is_entity_key else "",
         }
 
-    def _sync_osi_metric_to_db(
+    def _build_osi_metric_objects(
         self,
+        *,
+        doc: Any,
         metric_file: str,
-        semantic_model_file: Optional[str | List[str]] = None,
+        target_metric_names: set[str],
         metric_sqls: Optional[Dict[str, str]] = None,
-        metric_names_to_sync: Optional[set[str]] = None,
-    ) -> dict:
-        """Sync all OSI metrics, or incrementally upsert one explicit metric scope."""
-        try:
-            semantic_model_files = (
-                list(semantic_model_file)
-                if isinstance(semantic_model_file, list)
-                else ([semantic_model_file] if semantic_model_file else [])
-            )
-            declared_metric_names = set(self.extract_osi_metric_names(metric_file))
-            if not declared_metric_names:
-                return {"success": False, "error": f"No OSI metrics found in metric file to sync: {metric_file}"}
-            target_metric_names = (
-                declared_metric_names
-                if metric_names_to_sync is None
-                else {str(name).strip() for name in metric_names_to_sync if str(name).strip()}
-            )
-            missing_metric_names = target_metric_names - declared_metric_names
-            if missing_metric_names:
-                return {
-                    "success": False,
-                    "error": (
-                        "OSI metric publish scope contains names not declared in the metric file: "
-                        f"{', '.join(sorted(missing_metric_names))}"
-                    ),
-                }
-            if not target_metric_names:
-                return {"success": False, "error": "OSI metric publish scope must not be empty"}
+    ) -> List[dict]:
+        """Materialize metric rows without mutating storage."""
 
-            doc = self._load_osi_document(
-                metric_file=metric_file,
-                semantic_model_file=semantic_model_files[0] if semantic_model_files else None,
-            )
-            semantic_model_name = str(getattr(doc, "name", "") or "")
-            db_parts = self._current_db_parts(self.agent_config)
-            metric_objects: List[dict] = []
-            synced_items: List[str] = []
-
-            for metric in getattr(doc, "metrics", []):
-                metric_name = getattr(metric, "name", "")
-                if not metric_name:
-                    continue
-                if metric_name not in target_metric_names:
-                    continue
-                dimensions = self._metric_query_dimensions(doc, metric)
-                entities = self._metric_entities(doc, metric)
-
-                subject_path = self._metric_subject_path(metric)
-                measure_expr = self._metric_expression(metric)
-                metric_obj = {
+        semantic_model_name = str(getattr(doc, "name", "") or "")
+        db_parts = self._current_db_parts(self.agent_config)
+        metric_objects: List[dict] = []
+        for metric in getattr(doc, "metrics", []):
+            metric_name = getattr(metric, "name", "")
+            if not metric_name or metric_name not in target_metric_names:
+                continue
+            dimensions = self._metric_query_dimensions(doc, metric)
+            entities = self._metric_entities(doc, metric)
+            subject_path = self._metric_subject_path(metric)
+            measure_expr = self._metric_expression(metric)
+            metric_objects.append(
+                {
                     "name": metric_name,
                     "subject_path": subject_path,
                     "semantic_model_name": semantic_model_name,
@@ -2360,10 +2356,90 @@ class GenerationTools:
                     "sql": metric_sqls.get(metric_name, "") if metric_sqls else "",
                     "yaml_path": metric_file,
                 }
-                metric_objects.append(metric_obj)
-                synced_items.append(f"metric:{metric_name}")
+            )
+        return metric_objects
 
-            if not metric_objects:
+    @staticmethod
+    def _preserve_existing_metric_sql(metric_objects: List[dict], existing_rows: Any) -> None:
+        """Keep generated SQL for unchanged metrics during a YAML-only refresh."""
+
+        existing_by_name = {
+            normalize_metric_name(row.get("name")): row
+            for row in _rows_to_dicts(existing_rows)
+            if normalize_metric_name(row.get("name")) and str(row.get("sql") or "").strip()
+        }
+        for metric_object in metric_objects:
+            if str(metric_object.get("sql") or "").strip():
+                continue
+            existing = existing_by_name.get(normalize_metric_name(metric_object.get("name")))
+            if existing is not None and metric_definition_conflict(existing, metric_object) is None:
+                metric_object["sql"] = existing["sql"]
+
+    def _sync_osi_metric_to_db(
+        self,
+        metric_file: str,
+        semantic_model_file: Optional[str | List[str]] = None,
+        metric_sqls: Optional[Dict[str, str]] = None,
+        metric_names_to_sync: Optional[set[str]] = None,
+        metric_names_to_reconcile: Optional[set[str]] = None,
+    ) -> dict:
+        """Upsert the requested scope and reconcile stale rows from final YAML."""
+        try:
+            full_artifact_sync = metric_names_to_sync is None
+            semantic_model_files = (
+                list(semantic_model_file)
+                if isinstance(semantic_model_file, list)
+                else ([semantic_model_file] if semantic_model_file else [])
+            )
+            declared_metric_names = set(self.extract_osi_metric_names(metric_file))
+            declared_metric_names_by_key = {
+                normalize_metric_name(name): name for name in declared_metric_names if normalize_metric_name(name)
+            }
+            reconcile_metric_names = {
+                str(name).strip() for name in metric_names_to_reconcile or set() if str(name).strip()
+            }
+            absent_metric_names = {
+                name
+                for name in reconcile_metric_names
+                if normalize_metric_name(name) not in declared_metric_names_by_key
+            }
+            target_metric_names = (
+                declared_metric_names
+                if full_artifact_sync
+                else {
+                    declared_metric_names_by_key[normalize_metric_name(name)]
+                    for name in metric_names_to_sync
+                    if normalize_metric_name(name) in declared_metric_names_by_key
+                }
+            )
+            missing_metric_names = {
+                str(name).strip()
+                for name in metric_names_to_sync or set()
+                if str(name).strip() and normalize_metric_name(name) not in declared_metric_names_by_key
+            }
+            if missing_metric_names:
+                return {
+                    "success": False,
+                    "error": (
+                        "OSI metric publish scope contains names not declared in the metric file: "
+                        f"{', '.join(sorted(missing_metric_names))}"
+                    ),
+                }
+            if not full_artifact_sync and not target_metric_names and not reconcile_metric_names:
+                return {"success": False, "error": "OSI metric publish scope must not be empty"}
+
+            doc = self._load_osi_document(
+                metric_file=metric_file,
+                semantic_model_file=semantic_model_files[0] if semantic_model_files else None,
+            )
+            metric_objects = self._build_osi_metric_objects(
+                doc=doc,
+                metric_file=metric_file,
+                target_metric_names=target_metric_names,
+                metric_sqls=metric_sqls,
+            )
+
+            if target_metric_names and not metric_objects:
                 return {
                     "success": False,
                     "error": (
@@ -2380,12 +2456,19 @@ class GenerationTools:
                 synced_semantic_files.append(current_semantic_file)
 
             metric_plan = (self.metric_rag, metric_file, metric_objects)
-            replacement_plans = [metric_plan] if metric_names_to_sync is None else []
             snapshots = snapshot_artifact_replacements([metric_plan])
+            self._preserve_existing_metric_sql(metric_objects, snapshots[0][2])
+            if full_artifact_sync:
+                for row in _rows_to_dicts(snapshots[0][2]):
+                    previous_name = str(row.get("name") or "").strip()
+                    if previous_name and normalize_metric_name(previous_name) not in declared_metric_names_by_key:
+                        absent_metric_names.add(previous_name)
+            keep_metric_ids = [build_metric_id([], name) for name in declared_metric_names]
             try:
-                self.metric_rag.upsert_batch(metric_objects)
-                self.metric_rag.create_indices()
-                delete_stale_artifact_rows(replacement_plans)
+                if metric_objects:
+                    self.metric_rag.upsert_batch(metric_objects)
+                    self.metric_rag.create_indices()
+                self.metric_rag.delete_artifact_rows_except(metric_file, keep_metric_ids)
             except Exception as sync_exc:
                 restore_failures = restore_artifact_replacements(snapshots)
                 if restore_failures:
@@ -2395,9 +2478,12 @@ class GenerationTools:
                 raise
             return {
                 "success": True,
-                "message": f"Synced {len(metric_objects)} OSI metric(s): {', '.join(synced_items[:5])}",
+                "message": (
+                    f"Synced {len(metric_objects)} and reconciled {len(absent_metric_names)} absent OSI metric(s)"
+                ),
                 "metric_artifact_ids": [obj["id"] for obj in metric_objects],
                 "metric_names": [obj["name"] for obj in metric_objects],
+                "deleted_metric_names": sorted(absent_metric_names),
                 "semantic_synced": bool(synced_semantic_files),
                 "semantic_model_files_synced": synced_semantic_files,
             }
@@ -2418,31 +2504,115 @@ class GenerationTools:
         generation. Agent authoring must publish through ``publish_semantic_model``
         or ``publish_metrics`` so validation and dry-run gates remain enforced.
 
-        A metrics-bearing document is synced in one pass: ``_sync_osi_metric_to_db``
-        already vectorizes the referenced datasets before the metrics when a
-        ``semantic_model_file`` is given, so no separate dataset sync is needed. A
-        dataset-only document syncs just its datasets. The result always carries a
-        ``synced`` count for uniform accounting across both shapes.
+        Requested stores are prepared from one normalized document and replaced
+        under one snapshot/restore boundary. Empty metric collections therefore
+        remove stale rows, and a later-store failure restores earlier stores.
+        The result always carries a ``synced`` count for uniform accounting.
         """
         try:
             if not include_semantic_objects and not include_metrics:
                 return {"success": False, "error": "At least one OSI sync scope must be enabled", "synced": 0}
-            if include_metrics and self.extract_osi_metric_names(osi_file_path):
-                result = self._sync_osi_metric_to_db(
-                    metric_file=osi_file_path,
-                    semantic_model_file=osi_file_path if include_semantic_objects else None,
+            doc = self._load_osi_document(
+                metric_file=osi_file_path if include_metrics else None,
+                semantic_model_file=osi_file_path if include_semantic_objects else None,
+            )
+
+            replacement_plans = []
+            semantic_objects: List[dict] = []
+            table_profiles: List[dict] = []
+            synced_items: List[str] = []
+            if include_semantic_objects:
+                prepared_semantic = self._sync_osi_semantic_objects_to_db(
+                    osi_file_path,
+                    doc=doc,
+                    prepare_only=True,
                 )
-                synced = len(result.get("metric_artifact_ids") or [])
-            elif include_metrics and not include_semantic_objects:
-                result = self._sync_osi_metric_to_db(metric_file=osi_file_path)
-                synced = len(result.get("metric_artifact_ids") or [])
-            else:
-                result = self._sync_osi_semantic_objects_to_db(osi_file_path)
-                synced = int(result.get("semantic_objects") or 0)
-            return {**result, "synced": synced}
+                if not prepared_semantic.get("success"):
+                    return {**prepared_semantic, "synced": 0}
+                semantic_objects = list(prepared_semantic.get("semantic_objects") or [])
+                table_profiles = list(prepared_semantic.get("table_semantic_profiles") or [])
+                synced_items = list(prepared_semantic.get("synced_items") or [])
+                replacement_plans.append((self.semantic_rag, osi_file_path, semantic_objects))
+                if table_profiles and self.table_semantic_profile_rag is not None:
+                    replacement_plans.append((self.table_semantic_profile_rag, osi_file_path, table_profiles))
+
+            declared_metric_names = set(self.extract_osi_metric_names(osi_file_path))
+            metric_objects: List[dict] = []
+            if include_metrics:
+                metric_objects = self._build_osi_metric_objects(
+                    doc=doc,
+                    metric_file=osi_file_path,
+                    target_metric_names=declared_metric_names,
+                )
+                if declared_metric_names and not metric_objects:
+                    return {
+                        "success": False,
+                        "error": (
+                            "OSI metrics declared in the document were not found after loading datasource context: "
+                            f"{', '.join(sorted(declared_metric_names))}"
+                        ),
+                        "synced": 0,
+                    }
+                replacement_plans.append((self.metric_rag, osi_file_path, metric_objects))
+
+            snapshots = snapshot_artifact_replacements(replacement_plans)
+            deleted_metric_names: set[str] = set()
+            if include_metrics:
+                metric_snapshot = next(
+                    (rows for rag, _path, rows in snapshots if rag is self.metric_rag),
+                    [],
+                )
+                self._preserve_existing_metric_sql(metric_objects, metric_snapshot)
+                declared_by_key = {
+                    normalize_metric_name(name) for name in declared_metric_names if normalize_metric_name(name)
+                }
+                for row in _rows_to_dicts(metric_snapshot):
+                    previous_name = str(row.get("name") or "").strip()
+                    if previous_name and normalize_metric_name(previous_name) not in declared_by_key:
+                        deleted_metric_names.add(previous_name)
+
+            try:
+                if semantic_objects:
+                    self.semantic_rag.upsert_batch(semantic_objects)
+                    self.semantic_rag.create_indices()
+                if table_profiles and self.table_semantic_profile_rag is not None:
+                    self.table_semantic_profile_rag.upsert_batch(table_profiles)
+                    self.table_semantic_profile_rag.create_indices()
+                if metric_objects:
+                    self.metric_rag.upsert_batch(metric_objects)
+                    self.metric_rag.create_indices()
+                delete_stale_artifact_rows(replacement_plans)
+            except Exception as sync_exc:
+                restore_failures = restore_artifact_replacements(snapshots)
+                if restore_failures:
+                    raise RuntimeError(
+                        "OSI document replacement failed and rollback was incomplete for: "
+                        f"{', '.join(restore_failures)}"
+                    ) from sync_exc
+                raise
+
+            if semantic_objects:
+                # Best-effort cleanup outside the replacement transaction.
+                self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
+
+            synced = len(metric_objects) if include_metrics else len(semantic_objects)
+            return {
+                "success": True,
+                "message": (
+                    f"Synced {len(semantic_objects)} OSI semantic object(s), "
+                    f"{len(table_profiles)} table profile(s), and {len(metric_objects)} metric(s)"
+                ),
+                "semantic_objects": len(semantic_objects),
+                "table_semantic_profiles": len(table_profiles) if self.table_semantic_profile_rag is not None else 0,
+                "metric_artifact_ids": [obj["id"] for obj in metric_objects],
+                "metric_names": [obj["name"] for obj in metric_objects],
+                "deleted_metric_names": sorted(deleted_metric_names),
+                "semantic_items": synced_items[:5],
+                "synced": synced,
+            }
         except Exception as e:
             logger.error(f"Error syncing OSI document to DB: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": str(e), "synced": 0}
 
     def _sync_metric_to_db(
         self,

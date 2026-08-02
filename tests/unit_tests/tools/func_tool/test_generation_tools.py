@@ -14,7 +14,13 @@ from datus.tools.func_tool.base import FuncToolResult
 from datus.utils.exceptions import DatusException, ErrorCode
 
 
-def _bind_osi_target(generation_tools, target, *, model_name="orders_model", metric_names=None):
+def _bind_osi_target(
+    generation_tools,
+    target,
+    *,
+    model_name="orders_model",
+    touched_metric_names=None,
+):
     from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
     state = OsiSemanticModelTargetState()
@@ -28,7 +34,7 @@ def _bind_osi_target(generation_tools, target, *, model_name="orders_model", met
         },
         mode="bound",
     )
-    state.authored_metric_names = list(metric_names or [])
+    state.touched_metric_names = list(touched_metric_names or [])
     generation_tools.authoring_format = "osi"
     generation_tools.osi_target_state = state
     generation_tools.require_bound_osi_target = True
@@ -359,9 +365,7 @@ class TestEndSemanticModelGeneration:
 
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(
-                generation_tools, "_sync_osi_semantic_objects_to_db", return_value={"success": True}
-            ) as sync_mock,
+            patch.object(generation_tools, "sync_osi_to_db", return_value={"success": True}) as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
@@ -395,14 +399,12 @@ class TestEndSemanticModelGeneration:
 
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(
-                generation_tools, "_sync_osi_semantic_objects_to_db", return_value={"success": True}
-            ) as sync_mock,
+            patch.object(generation_tools, "sync_osi_to_db", return_value={"success": True}) as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
         assert result.success == 1
-        sync_mock.assert_called_once_with(str(model_file))
+        sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
 
     def test_accepts_exact_query_backed_source_with_transport_whitespace(self, generation_tools, tmp_path):
         self._mark_validated(generation_tools)
@@ -516,7 +518,7 @@ class TestEndSemanticModelGeneration:
 
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(generation_tools, "_sync_osi_semantic_objects_to_db") as sync_mock,
+            patch.object(generation_tools, "sync_osi_to_db") as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(finance_file)])
 
@@ -539,14 +541,14 @@ class TestEndSemanticModelGeneration:
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
             patch.object(
                 generation_tools,
-                "_sync_osi_semantic_objects_to_db",
+                "sync_osi_to_db",
                 return_value={"success": True},
             ) as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
         assert result.success == 1
-        sync_mock.assert_called_once_with(str(model_file))
+        sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
 
     def test_osi_rejects_raw_dimension_for_derived_group_by_expression(self, generation_tools, tmp_path):
         model_file = tmp_path / "semantic_models" / "warehouse" / "events.yml"
@@ -590,7 +592,7 @@ class TestEndSemanticModelGeneration:
                 "datus.tools.func_tool.generation_tools.get_path_manager",
                 return_value=Mock(subject_dir=tmp_path),
             ),
-            patch.object(generation_tools, "_sync_osi_semantic_objects_to_db") as sync_mock,
+            patch.object(generation_tools, "sync_osi_to_db") as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
@@ -643,14 +645,14 @@ class TestEndSemanticModelGeneration:
             ),
             patch.object(
                 generation_tools,
-                "_sync_osi_semantic_objects_to_db",
+                "sync_osi_to_db",
                 return_value={"success": True},
             ) as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
         assert result.success == 1
-        sync_mock.assert_called_once_with(str(model_file))
+        sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
 
     def test_osi_accepts_source_dimension_for_pure_column_alias(self, generation_tools, tmp_path):
         model_file = tmp_path / "semantic_models" / "warehouse" / "events.yml"
@@ -696,14 +698,14 @@ class TestEndSemanticModelGeneration:
             ),
             patch.object(
                 generation_tools,
-                "_sync_osi_semantic_objects_to_db",
+                "sync_osi_to_db",
                 return_value={"success": True},
             ) as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
         assert result.success == 1
-        sync_mock.assert_called_once_with(str(model_file))
+        sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
 
     def test_osi_rejects_pure_column_alias_bound_to_a_different_column(self, generation_tools, tmp_path):
         model_file = tmp_path / "events.yml"
@@ -753,7 +755,7 @@ class TestEndSemanticModelGeneration:
 
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(generation_tools, "_sync_osi_semantic_objects_to_db") as sync_mock,
+            patch.object(generation_tools, "sync_osi_to_db") as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
@@ -811,7 +813,7 @@ class TestEndMetricGeneration:
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model:\n  - name: orders_model\n    metrics: []\n", encoding="utf-8")
         wrong_target.write_text("semantic_model:\n  - name: customers_model\n    metrics: []\n", encoding="utf-8")
-        _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
 
         with (
@@ -837,7 +839,7 @@ class TestEndMetricGeneration:
             "      - name: order_count\n",
             encoding="utf-8",
         )
-        state = _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        state = _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         state.record_metric_snapshot(target, b"pre-authoring")
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
         generation_tools.generation_evidence.record_metric_dry_run(
@@ -862,16 +864,61 @@ class TestEndMetricGeneration:
             [],
             {},
             metric_names_to_sync={"order_count"},
+            metric_names_to_reconcile={"order_count"},
         )
         assert result.result["metric_file"] == str(target)
         assert generation_tools.generation_evidence.has_metric_kb_sync(["order_count"])
+        assert state.metric_snapshot_content is None
+
+    def test_osi_publishes_pure_deletion_without_metric_dry_run(self, generation_tools, tmp_path):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "semantic_model:\n"
+            "  - name: orders_model\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: analytics.orders\n"
+            "    metrics: []\n",
+            encoding="utf-8",
+        )
+        state = _bind_osi_target(
+            generation_tools,
+            target,
+            touched_metric_names=["old_metric", "already_missing"],
+        )
+        state.record_metric_snapshot(target, b"pre-deletion")
+        generation_tools.generation_evidence.set_required_metric_outputs([{"output_id": "context_only_output"}])
+        generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
+        mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(
+                generation_tools,
+                "_sync_osi_metric_to_db",
+                return_value={"success": True, "message": "deleted"},
+            ) as sync_mock,
+        ):
+            result = generation_tools.publish_metrics(metric_file=str(target))
+
+        assert result.success == 1
+        assert result.result["metric_output_bindings"] == []
+        sync_mock.assert_called_once_with(
+            str(target),
+            [],
+            {},
+            metric_names_to_sync=set(),
+            metric_names_to_reconcile={"old_metric", "already_missing"},
+        )
+        assert generation_tools.generation_evidence.has_metric_kb_sync(["old_metric", "already_missing"])
         assert state.metric_snapshot_content is None
 
     def test_osi_rejects_poisoned_target_after_failed_rebind(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: order_count\n")
-        state = _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        state = _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         state.last_error_code = "semantic_model_target_invalid"
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
         generation_tools.generation_evidence.record_metric_dry_run(
@@ -895,7 +942,7 @@ class TestEndMetricGeneration:
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: order_count\n")
-        _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
@@ -933,7 +980,7 @@ class TestEndMetricGeneration:
             generation_tools,
             target,
             model_name="retention_model",
-            metric_names=["first_week_retained_users"],
+            touched_metric_names=["first_week_retained_users"],
         )
         generation_tools.generation_evidence.set_required_metric_outputs([{"output_id": output_id}])
         generation_tools.generation_evidence.record_semantic_artifact_validation(
@@ -969,11 +1016,11 @@ class TestEndMetricGeneration:
         assert result.result["queryability_contracts"][0]["metric_hints"] == ["first_week_retained_users"]
         sync_mock.assert_not_called()
 
-    def test_osi_rejects_stale_authored_metric_names(self, generation_tools, tmp_path):
+    def test_osi_treats_touched_name_absent_from_final_yaml_as_deletion(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: replacement_metric\n")
-        _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
         generation_tools.generation_evidence.record_metric_dry_run(
             ["order_count"],
@@ -983,13 +1030,22 @@ class TestEndMetricGeneration:
 
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(generation_tools, "_sync_osi_metric_to_db") as sync_mock,
+            patch.object(
+                generation_tools,
+                "_sync_osi_metric_to_db",
+                return_value={"success": True, "message": "reconciled"},
+            ) as sync_mock,
         ):
             result = generation_tools.publish_metrics(metric_file=str(target))
 
-        assert result.success == 0
-        assert "no longer contains" in result.error
-        sync_mock.assert_not_called()
+        assert result.success == 1
+        sync_mock.assert_called_once_with(
+            str(target),
+            [],
+            {},
+            metric_names_to_sync=set(),
+            metric_names_to_reconcile={"order_count"},
+        )
 
     def test_osi_rejects_unrelated_validation_and_dry_run_evidence(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
@@ -997,7 +1053,7 @@ class TestEndMetricGeneration:
         target.parent.mkdir(parents=True)
         target.write_text("semantic_model:\n  - name: orders_model\n    metrics:\n      - name: order_count\n")
         unrelated.write_text("semantic_model:\n  - name: finance\n")
-        _bind_osi_target(generation_tools, target, metric_names=["order_count"])
+        _bind_osi_target(generation_tools, target, touched_metric_names=["order_count"])
         generation_tools.generation_evidence.validation_passed = True
         generation_tools.generation_evidence.metric_dry_run_passed = True
         generation_tools.generation_evidence.metric_dry_run_metrics.add("finance_total")
@@ -1759,6 +1815,68 @@ class TestSyncMetricToDb:
 
 
 class TestOsiSync:
+    def test_preserve_existing_metric_sql_keeps_only_compatible_sql(self, generation_tools):
+        metric_objects = [
+            {"name": "revenue", "measure_expr": "SUM(revenue)", "sql": "SELECT fresh"},
+            {"name": "order_count", "measure_expr": "COUNT(*)", "sql": ""},
+            {"name": "customer_count", "measure_expr": "COUNT(DISTINCT customer_id)", "sql": ""},
+        ]
+
+        generation_tools._preserve_existing_metric_sql(
+            metric_objects,
+            [
+                {"name": "Revenue", "measure_expr": "SUM(revenue)", "sql": "SELECT stale"},
+                {"name": "ORDER_COUNT", "measure_expr": "COUNT(*)", "sql": "SELECT preserved"},
+                {"name": "customer_count", "measure_expr": "COUNT(*)", "sql": "SELECT obsolete"},
+            ],
+        )
+
+        assert metric_objects == [
+            {"name": "revenue", "measure_expr": "SUM(revenue)", "sql": "SELECT fresh"},
+            {"name": "order_count", "measure_expr": "COUNT(*)", "sql": "SELECT preserved"},
+            {"name": "customer_count", "measure_expr": "COUNT(DISTINCT customer_id)", "sql": ""},
+        ]
+
+    def test_sync_osi_metric_to_db_reconciles_absent_touched_names_without_upsert(self, generation_tools, tmp_path):
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    datasets: []\n    metrics: []\n",
+            encoding="utf-8",
+        )
+        doc = SimpleNamespace(name="shop", datasets=[], metrics=[])
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(
+                str(metric_file),
+                metric_names_to_sync=set(),
+                metric_names_to_reconcile={"old_metric"},
+            )
+
+        assert result["success"] is True
+        assert result["metric_names"] == []
+        assert result["deleted_metric_names"] == ["old_metric"]
+        generation_tools.metric_rag.upsert_batch.assert_not_called()
+        generation_tools.metric_rag.create_indices.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once_with(str(metric_file), [])
+
+    def test_sync_osi_metric_full_replacement_restores_snapshot_on_failure(self, generation_tools, tmp_path):
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "semantic_model:\n  - name: shop\n    datasets: []\n    metrics: []\n",
+            encoding="utf-8",
+        )
+        snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
+        generation_tools.metric_rag.list_artifact_rows.return_value = snapshot
+        generation_tools.metric_rag.delete_artifact_rows_except.side_effect = RuntimeError("delete failed")
+        doc = SimpleNamespace(name="shop", datasets=[], metrics=[])
+
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file))
+
+        assert result["success"] is False
+        assert "delete failed" in result["error"]
+        generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(str(metric_file), snapshot)
+
     def test_sync_osi_metric_to_db_upserts_only_metrics_declared_in_current_file(self, generation_tools, tmp_path):
         generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(
             catalog="default_catalog", database="shop", schema=""
@@ -1882,7 +2000,12 @@ class TestOsiSync:
         assert [metric["name"] for metric in metric_objects] == ["new_metric"]
         assert metric_objects[0]["sql"] == "SELECT new_metric"
         generation_tools.metric_rag.delete_artifact_rows.assert_not_called()
-        generation_tools.metric_rag.delete_artifact_rows_except.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once()
+        assert generation_tools.metric_rag.delete_artifact_rows_except.call_args.args[0] == str(metric_file)
+        assert set(generation_tools.metric_rag.delete_artifact_rows_except.call_args.args[1]) == {
+            "metric:existing_metric",
+            "metric:new_metric",
+        }
         generation_tools.metric_rag.list_artifact_rows.assert_called_once_with(str(metric_file))
 
     def test_sync_osi_metric_partial_publish_restores_on_later_failure(self, generation_tools, tmp_path):
@@ -2086,7 +2209,7 @@ class TestOsiSync:
         assert result["semantic_model_files_synced"] == [str(orders_file), str(customers_file)]
         assert [call.args[0] for call in sync_mock.call_args_list] == [str(orders_file), str(customers_file)]
 
-    def test_sync_osi_metric_to_db_rejects_metric_file_without_metrics(self, generation_tools, tmp_path):
+    def test_sync_osi_metric_to_db_reconciles_metric_file_without_metrics(self, generation_tools, tmp_path):
         metric_file = tmp_path / "empty_metrics.yml"
         metric_file.write_text(
             "version: 0.2.0.dev0\n"
@@ -2096,12 +2219,18 @@ class TestOsiSync:
             "      - name: orders\n"
             "        source: orders\n"
         )
+        snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
+        generation_tools.metric_rag.list_artifact_rows.return_value = snapshot
+        doc = SimpleNamespace(name="empty", datasets=[], metrics=[])
 
-        result = generation_tools._sync_osi_metric_to_db(str(metric_file))
+        with patch.object(generation_tools, "_load_osi_document", return_value=doc):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file))
 
-        assert result["success"] is False
-        assert "No OSI metrics found in metric file" in result["error"]
+        assert result["success"] is True
+        assert result["metric_names"] == []
+        assert result["deleted_metric_names"] == ["old_metric"]
         generation_tools.metric_rag.upsert_batch.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once_with(str(metric_file), [])
 
     def test_sync_osi_metric_to_db_rejects_missing_scoped_metric(self, generation_tools, tmp_path):
         metric_file = tmp_path / "orders.yml"
@@ -2377,55 +2506,141 @@ class TestOsiSync:
         generation_tools.semantic_rag.restore_artifact_rows.assert_called_once()
         generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once()
 
-    def test_sync_osi_to_db_routes_metric_file_through_metric_sync(self, generation_tools, tmp_path):
-        # A metrics-bearing OSI doc: one pass through _sync_osi_metric_to_db (which
-        # also syncs the referenced datasets); no separate semantic sync call.
+    def test_sync_osi_to_db_reconciles_semantic_and_metric_rows_together(self, generation_tools, tmp_path):
         osi_file = tmp_path / "shop.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
+        doc = SimpleNamespace()
+        semantic_rows = [{"id": "table:shop:orders"}]
+        metric_rows = [{"id": "metric:order_count", "name": "order_count", "sql": ""}]
+        generation_tools.metric_rag.list_artifact_rows.return_value = [
+            {
+                "id": "metric:order_count",
+                "name": "Order_Count",
+                "sql": "SELECT COUNT(*) FROM orders",
+            }
+        ]
         with (
+            patch.object(generation_tools, "_load_osi_document", return_value=doc),
             patch.object(generation_tools, "extract_osi_metric_names", return_value=["order_count"]),
             patch.object(
                 generation_tools,
-                "_sync_osi_metric_to_db",
-                return_value={"success": True, "metric_artifact_ids": ["metric:a", "metric:b"]},
-            ) as metric_sync,
-            patch.object(generation_tools, "_sync_osi_semantic_objects_to_db") as semantic_sync,
+                "_sync_osi_semantic_objects_to_db",
+                return_value={
+                    "success": True,
+                    "semantic_objects": semantic_rows,
+                    "table_semantic_profiles": [],
+                    "synced_items": ["table:orders"],
+                },
+            ) as prepare_semantic,
+            patch.object(generation_tools, "_build_osi_metric_objects", return_value=metric_rows),
         ):
             result = generation_tools.sync_osi_to_db(str(osi_file))
 
-        metric_sync.assert_called_once_with(metric_file=str(osi_file), semantic_model_file=str(osi_file))
-        semantic_sync.assert_not_called()
+        prepare_semantic.assert_called_once_with(str(osi_file), doc=doc, prepare_only=True)
+        generation_tools.semantic_rag.upsert_batch.assert_called_once_with(semantic_rows)
+        generation_tools.metric_rag.upsert_batch.assert_called_once_with(metric_rows)
+        assert metric_rows[0]["sql"] == "SELECT COUNT(*) FROM orders"
+        generation_tools.semantic_rag.delete_artifact_rows_except.assert_called_once()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once()
         assert result["success"] is True
-        assert result["synced"] == 2
+        assert result["synced"] == 1
+        assert result["semantic_objects"] == 1
+        assert result["metric_names"] == ["order_count"]
 
-    def test_sync_osi_to_db_routes_dataset_only_file_through_semantic_sync(self, generation_tools, tmp_path):
-        # A dataset-only OSI doc (no metrics): syncs just the datasets.
+    def test_sync_osi_to_db_reconciles_empty_metric_collection(self, generation_tools, tmp_path):
         osi_file = tmp_path / "model.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
+        doc = SimpleNamespace()
+        generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "metric:old", "name": "old"}]
         with (
+            patch.object(generation_tools, "_load_osi_document", return_value=doc),
             patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
             patch.object(
                 generation_tools,
                 "_sync_osi_semantic_objects_to_db",
-                return_value={"success": True, "semantic_objects": 3},
-            ) as semantic_sync,
-            patch.object(generation_tools, "_sync_osi_metric_to_db") as metric_sync,
+                return_value={
+                    "success": True,
+                    "semantic_objects": [{"id": "table:model:orders"}],
+                    "table_semantic_profiles": [],
+                    "synced_items": [],
+                },
+            ),
+            patch.object(generation_tools, "_build_osi_metric_objects", return_value=[]),
         ):
             result = generation_tools.sync_osi_to_db(str(osi_file))
 
-        semantic_sync.assert_called_once_with(str(osi_file))
-        metric_sync.assert_not_called()
         assert result["success"] is True
-        assert result["synced"] == 3
+        assert result["synced"] == 0
+        assert result["deleted_metric_names"] == ["old"]
+        generation_tools.metric_rag.upsert_batch.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once_with(str(osi_file), [])
+
+    def test_sync_osi_to_db_reconciles_empty_metrics_without_semantic_sync(self, generation_tools, tmp_path):
+        osi_file = tmp_path / "model.yml"
+        osi_file.write_text("version: 0.2.0.dev0\n")
+        with (
+            patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+            patch.object(generation_tools, "extract_osi_metric_names", return_value=[]),
+            patch.object(generation_tools, "_build_osi_metric_objects", return_value=[]),
+            patch.object(generation_tools, "_sync_osi_semantic_objects_to_db") as semantic_sync,
+        ):
+            result = generation_tools.sync_osi_to_db(
+                str(osi_file), include_semantic_objects=False, include_metrics=True
+            )
+
+        semantic_sync.assert_not_called()
+        assert result["success"] is True
+        assert result["synced"] == 0
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_called_once_with(str(osi_file), [])
+
+    def test_sync_osi_to_db_restores_all_stores_when_metric_write_fails(self, generation_tools, tmp_path):
+        osi_file = tmp_path / "model.yml"
+        osi_file.write_text("version: 0.2.0.dev0\n")
+        semantic_rows = [{"id": "table:model:orders"}]
+        profile_rows = [{"id": "profile:model:orders"}]
+        metric_rows = [{"id": "metric:new", "name": "new"}]
+        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.semantic_rag.list_artifact_rows.return_value = [{"id": "table:old"}]
+        generation_tools.table_semantic_profile_rag.list_artifact_rows.return_value = [{"id": "profile:old"}]
+        generation_tools.metric_rag.list_artifact_rows.return_value = [{"id": "metric:old", "name": "old"}]
+        generation_tools.metric_rag.create_indices.side_effect = RuntimeError("metric index failed")
+        with (
+            patch.object(generation_tools, "_load_osi_document", return_value=SimpleNamespace()),
+            patch.object(generation_tools, "extract_osi_metric_names", return_value=["new"]),
+            patch.object(
+                generation_tools,
+                "_sync_osi_semantic_objects_to_db",
+                return_value={
+                    "success": True,
+                    "semantic_objects": semantic_rows,
+                    "table_semantic_profiles": profile_rows,
+                    "synced_items": [],
+                },
+            ),
+            patch.object(generation_tools, "_build_osi_metric_objects", return_value=metric_rows),
+        ):
+            result = generation_tools.sync_osi_to_db(str(osi_file))
+
+        assert result["success"] is False
+        assert "metric index failed" in result["error"]
+        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
+            str(osi_file), [{"id": "table:old"}]
+        )
+        generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once_with(
+            str(osi_file), [{"id": "profile:old"}]
+        )
+        generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(
+            str(osi_file), [{"id": "metric:old", "name": "old"}]
+        )
 
     def test_sync_osi_to_db_returns_error_dict_on_unexpected_failure(self, generation_tools, tmp_path):
         # Consistent with the delegated syncs: an unexpected raise degrades to an
         # error dict rather than propagating out of the public entry.
         osi_file = tmp_path / "shop.yml"
         osi_file.write_text("version: 0.2.0.dev0\n")
-        with patch.object(generation_tools, "extract_osi_metric_names", side_effect=RuntimeError("bad yaml")):
+        with patch.object(generation_tools, "_load_osi_document", side_effect=RuntimeError("bad yaml")):
             result = generation_tools.sync_osi_to_db(str(osi_file))
-        assert result == {"success": False, "error": "bad yaml"}
+        assert result == {"success": False, "error": "bad yaml", "synced": 0}
 
 
 class TestGenerateSqlSummaryId:

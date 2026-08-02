@@ -9,13 +9,17 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional
 
 from datus.configuration.agent_config import AgentConfig
 from datus.tools.func_tool.base import FuncToolResult
 
 if TYPE_CHECKING:
     from datus.tools.func_tool.generation_evidence import GenerationEvidence
+
+
+def _normalize_metric_name(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 @dataclass
@@ -25,7 +29,7 @@ class OsiSemanticModelTargetState:
     selected: Optional[Dict[str, Any]] = None
     mode: str = ""
     artifact_sha256: str = ""
-    authored_metric_names: List[str] = field(default_factory=list)
+    touched_metric_names: List[str] = field(default_factory=list)
     target_mutated: bool = False
     last_error_code: str = ""
     metric_snapshot_path: str = ""
@@ -39,7 +43,7 @@ class OsiSemanticModelTargetState:
 
     def reset(self) -> None:
         self.clear_target()
-        self.authored_metric_names = []
+        self.touched_metric_names = []
         self.last_error_code = ""
         self.metric_snapshot_path = ""
         self.metric_snapshot_content = None
@@ -54,7 +58,7 @@ class OsiSemanticModelTargetState:
         )
 
     def select(self, candidate: Dict[str, Any], *, mode: str) -> None:
-        if (self.target_mutated or self.authored_metric_names) and not self._matches_selected_target(candidate):
+        if (self.target_mutated or self.touched_metric_names) and not self._matches_selected_target(candidate):
             raise ValueError("The OSI target cannot change after authoring started.")
         self.selected = dict(candidate)
         self.mode = mode
@@ -126,12 +130,37 @@ class OsiSemanticModelTargetState:
         self.artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         self.target_mutated = True
 
-    def record_metric_write(self, path: str | Path, content: bytes, metric_names: List[str]) -> None:
+    def record_metric_touch(self, path: str | Path, content: bytes, metric_names: List[str]) -> None:
+        """Record explicit metric changes for final-YAML reconciliation."""
         self.require_bound_path(path)
         self.artifact_sha256 = hashlib.sha256(content).hexdigest()
+        self._record_touched_metric_names(metric_names)
+
+    def partition_touched_metrics(self, current_metric_names: Iterable[str]) -> tuple[List[str], List[str]]:
+        """Split touched names by presence in the final YAML, preserving canonical names."""
+        current_names_by_key = {
+            _normalize_metric_name(name): str(name).strip()
+            for name in current_metric_names
+            if _normalize_metric_name(name)
+        }
+        present: List[str] = []
+        absent: List[str] = []
+        for touched_name in self.touched_metric_names:
+            current_name = current_names_by_key.get(_normalize_metric_name(touched_name))
+            if current_name is None:
+                absent.append(touched_name)
+            else:
+                present.append(current_name)
+        return present, absent
+
+    def _record_touched_metric_names(self, metric_names: List[str]) -> None:
+        """Remember explicit upserts/deletes without encoding intermediate state."""
         for name in metric_names:
-            if name not in self.authored_metric_names:
-                self.authored_metric_names.append(name)
+            normalized_name = _normalize_metric_name(name)
+            if normalized_name and not any(
+                _normalize_metric_name(touched) == normalized_name for touched in self.touched_metric_names
+            ):
+                self.touched_metric_names.append(str(name).strip())
 
     def record_metric_snapshot(self, path: str | Path, content: bytes) -> None:
         """Keep the pre-authoring artifact revision for terminal failure rollback."""
@@ -148,7 +177,7 @@ class OsiSemanticModelTargetState:
     def record_metric_rollback(self, content: bytes) -> None:
         """Reset request-local mutation state after restoring the original artifact."""
         self.artifact_sha256 = hashlib.sha256(content).hexdigest()
-        self.authored_metric_names = []
+        self.touched_metric_names = []
         self.clear_metric_snapshot()
 
 
@@ -343,7 +372,7 @@ class OsiSemanticModelTargetTools:
             return FuncToolResult(success=0, error=f"Failed to list OSI semantic models: {exc}")
 
     def _bind_failure(self, code: str, error: str, **result: Any) -> FuncToolResult:
-        if not self.target_state.authored_metric_names:
+        if not self.target_state.touched_metric_names:
             self.target_state.clear_target()
         self.target_state.last_error_code = code
         return FuncToolResult(success=0, error=error, result={"code": code, **result})

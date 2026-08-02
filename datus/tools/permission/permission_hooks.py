@@ -496,7 +496,15 @@ class PermissionHooks(AgentHooks):
     # belongs here too — it mutates the filesystem just as much as a write
     # and should hit the same INTERNAL × write × normal ASK gate.
     _FILESYSTEM_WRITE_TOOLS = frozenset(
-        {"write_file", "edit_file", "delete_file", "upsert_osi_metrics", "upsert_osi_datasets"}
+        {
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
+        }
     )
 
     # Subagents that author their own artifact tree (manifest.json,
@@ -536,7 +544,7 @@ class PermissionHooks(AgentHooks):
         read          EXTERNAL (interactive)    ASK(path bucket) ASK(path bucket) bypass
         read          EXTERNAL (strict)         tool fail       tool fail       tool fail
         read          EXTERNAL (non-interactive) raise          raise           raise
-        write         INTERNAL                  rule lookup ASK bypass          bypass
+        write         INTERNAL                  rule lookup ASK bypass*         bypass
         write         WHITELIST (parent memory) tool reject     tool reject     tool reject
         write         HIDDEN                    tool not-found  tool not-found  tool not-found
         write         EXTERNAL (interactive)    ASK(path bucket) ASK(path bucket) bypass
@@ -549,6 +557,8 @@ class PermissionHooks(AgentHooks):
         * ``non_interactive`` short-circuits ``dangerous`` — workflow flows must
           never silently write outside the project just because they happen to
           run under the dangerous profile.
+        * OSI object deletes are the narrow exceptions to AUTO's INTERNAL write
+          bypass: normal and auto both defer them to explicit ASK rules.
         * ``policy.strict`` short-circuits everything for EXTERNAL paths;
           callers without an interactive broker rely on the tool-layer fail.
         * WHITELIST writes are left to ``FilesystemFuncTool._read_only_reject``
@@ -586,6 +596,17 @@ class PermissionHooks(AgentHooks):
         profile = getattr(self.permission_manager, "active_profile", None) or "normal"
 
         if resolved.zone in (PathZone.INTERNAL, PathZone.WHITELIST):
+            if (
+                tool_name in {"delete_osi_metrics", "delete_osi_datasets"}
+                and profile in {"normal", "auto"}
+                and resolved.zone == PathZone.INTERNAL
+            ):
+                logger.debug(
+                    "Filesystem zone INTERNAL × OSI object delete × %s: deferring to rule lookup for %s",
+                    profile,
+                    resolved.display,
+                )
+                return False
             # INTERNAL × write × normal: fall through to rule lookup so the
             # category-level ``default=ASK`` (or any explicit ``filesystem_tools.write_file``
             # rule) takes over. ``_NORMAL_RULES`` has no entry for write_file,

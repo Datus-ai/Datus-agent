@@ -13,6 +13,7 @@ from datus.api.models.table_models import (
     GetTableDetailData,
     GetTablesColumnsData,
     GetTablesColumnsInput,
+    SaveSemanticModelData,
     SemanticModelInput,
     ValidateSemanticModelData,
 )
@@ -88,15 +89,15 @@ async def get_semantic_model(
 
 @router.post(
     "/semantic_model",
-    response_model=Result[dict],
+    response_model=Result[SaveSemanticModelData],
     summary="Save Semantic Model",
-    description="Save or update SemanticModel YAML configuration for a table",
+    description="Atomically save and reconcile one SemanticModel YAML artifact",
 )
 async def save_semantic_model(
     request: SemanticModelInput,
     svc: ServiceDep,
-) -> Result[dict]:
-    """Save SemanticModel YAML."""
+) -> Result[SaveSemanticModelData]:
+    """Save SemanticModel YAML and reconcile its Knowledge Base rows."""
     return await svc.datasource.save_semantic_model(request)
 
 

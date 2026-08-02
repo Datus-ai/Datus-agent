@@ -54,6 +54,15 @@ def _write_model(
     )
 
 
+def test_partition_touched_metrics_uses_final_yaml_presence_and_canonical_names():
+    state = OsiSemanticModelTargetState(touched_metric_names=[" Revenue ", "missing_metric"])
+
+    present, absent = state.partition_touched_metrics(["revenue", "order_count"])
+
+    assert present == ["revenue"]
+    assert absent == ["missing_metric"]
+
+
 def test_list_scans_live_yaml_inventory_without_mutating_binding(tmp_path):
     config, model_dir = _config(tmp_path)
     _write_model(model_dir / "orders.yml", name="orders_model")
@@ -278,13 +287,13 @@ def test_failed_rebind_clears_previous_unwritten_target(tmp_path):
         tools.target_state.require_bound_path(target)
 
 
-def test_failed_rebind_after_write_keeps_authored_target_poisoned(tmp_path):
+def test_failed_rebind_after_touch_keeps_bound_target_poisoned(tmp_path):
     config, model_dir = _config(tmp_path)
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
     assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
-    tools.target_state.authored_metric_names = ["order_count"]
+    tools.target_state.touched_metric_names = ["order_count"]
 
     result = tools.bind_osi_semantic_model_target(semantic_model_file="missing.yml")
 
@@ -293,13 +302,28 @@ def test_failed_rebind_after_write_keeps_authored_target_poisoned(tmp_path):
     assert tools.target_state.last_error_code == "semantic_model_target_invalid"
 
 
-def test_authored_target_cannot_rebind_to_a_different_revision_or_model(tmp_path):
+def test_failed_rebind_after_another_touch_keeps_bound_target_poisoned(tmp_path):
     config, model_dir = _config(tmp_path)
     target = model_dir / "orders.yml"
     _write_model(target, name="orders_model")
     tools = OsiSemanticModelTargetTools(config)
     assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
-    tools.target_state.authored_metric_names = ["order_count"]
+    tools.target_state.touched_metric_names = ["order_count"]
+
+    result = tools.bind_osi_semantic_model_target(semantic_model_file="missing.yml")
+
+    assert not result.success
+    assert tools.target_state.bound is not None
+    assert tools.target_state.last_error_code == "semantic_model_target_invalid"
+
+
+def test_touched_target_cannot_rebind_to_a_different_revision_or_model(tmp_path):
+    config, model_dir = _config(tmp_path)
+    target = model_dir / "orders.yml"
+    _write_model(target, name="orders_model")
+    tools = OsiSemanticModelTargetTools(config)
+    assert tools.bind_osi_semantic_model_target(semantic_model_file=str(target)).success
+    tools.target_state.touched_metric_names = ["order_count"]
 
     _write_model(target, name="replacement_model")
     result = tools.bind_osi_semantic_model_target(semantic_model_file=str(target))

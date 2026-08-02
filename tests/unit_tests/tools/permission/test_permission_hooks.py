@@ -1030,6 +1030,27 @@ class TestFilesystemZoneProfileMatrix:
         await hooks.on_tool_start(self._ctx_for("draft.md"), MagicMock(), self._tool("write_file"))
         mock_broker.request.assert_not_called()
 
+    @pytest.mark.parametrize("profile", ["normal", "auto"])
+    @pytest.mark.parametrize("tool_name", ["delete_osi_metrics", "delete_osi_datasets"])
+    @pytest.mark.asyncio
+    async def test_internal_osi_delete_asks_in_non_dangerous_profiles(self, mock_broker, tmp_path, profile, tool_name):
+        hooks, _, project = self._build(
+            mock_broker,
+            tmp_path,
+            profile=profile,
+            registered_tools=(tool_name,),
+        )
+        (project / "metrics.yml").write_text("")
+        mock_broker.request = AsyncMock(return_value="y")
+
+        await hooks.on_tool_start(
+            self._ctx_for("metrics.yml"),
+            MagicMock(),
+            self._tool(tool_name),
+        )
+
+        assert mock_broker.request.await_count == 1
+
     # --------------------------------------------------------------- EXTERNAL
     @pytest.mark.parametrize(
         "tool_name",
@@ -1128,16 +1149,29 @@ class TestFilesystemZoneProfileMatrix:
             "edit_file",
             "delete_file",
             "upsert_osi_metrics",
+            "delete_osi_metrics",
             "upsert_osi_datasets",
+            "delete_osi_datasets",
         }
         # The hook's declared write-set must equal the writes these tools expose,
         # not a strict subset. Both directions matter:
         #   - subset breaks the matrix (writes get silently bypassed)
         #   - superset means we ASK on a tool name that doesn't exist
         assert write_names == PermissionHooks._FILESYSTEM_WRITE_TOOLS
-        assert write_names - {"upsert_osi_metrics", "upsert_osi_datasets"} <= tool_names
+        assert (
+            write_names
+            - {
+                "upsert_osi_metrics",
+                "delete_osi_metrics",
+                "upsert_osi_datasets",
+                "delete_osi_datasets",
+            }
+            <= tool_names
+        )
         assert "upsert_osi_metrics" in osi_metric_tool_names
+        assert "delete_osi_metrics" in osi_metric_tool_names
         assert "upsert_osi_datasets" in osi_semantic_tool_names
+        assert "delete_osi_datasets" in osi_semantic_tool_names
 
 
 class TestNonInteractiveMode:
