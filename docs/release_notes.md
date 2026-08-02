@@ -2,6 +2,33 @@
 
 ## 0.3
 
+### 0.3.9
+
+**New Features**
+
+- **Datus Plugin Ecosystem** - Third-party capabilities can now extend Datus without modifying Datus Agent itself. Plugins can provide `datus <plugin>` CLI commands, bundled skills, and additional prompt context. They support installation, upgrades, activation, offline packaging, and export, with per-project activation and profile selection. Version 0.3.9 further completes the declarative `datus-plugin.yml` contract, external-directory mounting, and managed multi-tenant deployment support. [#1125](https://github.com/Datus-ai/Datus-agent/pull/1125) [#1151](https://github.com/Datus-ai/Datus-agent/pull/1151) [#1153](https://github.com/Datus-ai/Datus-agent/pull/1153) [#1155](https://github.com/Datus-ai/Datus-agent/pull/1155) [#1159](https://github.com/Datus-ai/Datus-agent/pull/1159) [#1192](https://github.com/Datus-ai/Datus-agent/pull/1192) [Plugin docs](https://docs.datus.ai/0.3/plugin/introduction/) [Plugin development docs](https://docs.datus.ai/0.3/plugin/development/)
+- **Three Input Modes and Direct Tool Execution** - Press `Tab` in the CLI to cycle between chat, SQL, and Bash modes. In chat mode, use `!<tool>` to run an agent tool directly or `!<plugin>` to run an installed plugin CLI, with command and argument completion. All operations follow the existing permission and SQL policies, and results are added to the conversation so the agent can continue the analysis. [#1157](https://github.com/Datus-ai/Datus-agent/pull/1157) [#1186](https://github.com/Datus-ai/Datus-agent/pull/1186) [docs](https://docs.datus.ai/0.3/cli/execution_command/)
+- **OS-Level Bash Sandbox** - Bash commands can run inside an OS-enforced sandbox backed by macOS `sandbox-exec` or Linux `bubblewrap`, with writes restricted to the workspace, session data, and temporary directories. Enable it with `/sandbox` or `agent.bash.sandbox`; strict mode further limits accessible paths and minimizes the child-process environment, while `deny_network: true` also blocks network access. The sandbox is disabled by default; once enabled, Bash commands are rejected if the current platform has no supported isolation mechanism. [#1181](https://github.com/Datus-ai/Datus-agent/pull/1181) [docs](https://docs.datus.ai/0.3/cli/reference/)
+
+**Enhancements**
+
+- **Fine-Grained `execute_sql` Permissions** - SQL statements are authorized separately as read, write, destructive, or unknown operations. The `auto` profile can now run `INSERT` and `CREATE` directly, while `UPDATE`, `DELETE`, `DROP`, and `TRUNCATE` still require confirmation. Grants remain scoped to the exact statement type; rules can also be customized in `agent.yml`, or a statement can be added to the project allowlist from the confirmation prompt. [#1173](https://github.com/Datus-ai/Datus-agent/pull/1173)
+- **Semantic Adapter-Backed Subject Tree Metrics** - The Subject Tree API now reads and writes metrics through the project's active semantic adapter. Native OSI fields such as `expression.dialects`, `ai_context`, and `custom_extensions` are preserved, and creating, editing, or deleting metrics no longer writes MetricFlow-shaped content into OSI models. [#1185](https://github.com/Datus-ai/Datus-agent/pull/1185) [datus-semantic-adapter#56](https://github.com/Datus-ai/datus-semantic-adapter/pull/56)
+- **Selection and Copy Across the Entire TUI** - All visible areas can now be selected and copied, including the status bar, Todo sidebar, queue preview, input box, search results, permission dialogs, and embedded wizards. Copied text automatically excludes panel borders and padding. [#1150](https://github.com/Datus-ai/Datus-agent/pull/1150)
+- **Multiple OSI Semantic Models per Project** - Semantic-model generation, validation, publishing, retrieval, cleanup, and metric generation are now isolated by model name. Datus selects a stable target from the explicit name, business domain, and core fact table, preventing unrelated models in the same database from being selected or overwritten. [#1168](https://github.com/Datus-ai/Datus-agent/pull/1168) [#1169](https://github.com/Datus-ai/Datus-agent/pull/1169) [#1189](https://github.com/Datus-ai/Datus-agent/pull/1189) [datus-semantic-adapter#53](https://github.com/Datus-ai/datus-semantic-adapter/pull/53) [#55](https://github.com/Datus-ai/datus-semantic-adapter/pull/55)
+- **Permission Profile Shortcut** - Press `Ctrl+P` to cycle through `normal` → `auto` → `dangerous`, including while the agent is streaming a response. [#1187](https://github.com/Datus-ai/Datus-agent/pull/1187) [docs](https://docs.datus.ai/0.3/cli/chat_command/)
+- **Less Todo Noise from `/init` and `/build-kb`** - Knowledge-base workflows now create fewer intermediate and duplicate Todo items, keeping progress information focused. [#1156](https://github.com/Datus-ai/Datus-agent/pull/1156)
+
+**Bug Fixes**
+
+- **Immediate `Escape` Interruption** - Pressing `Escape` now cancels the active turn immediately instead of waiting for the current model call to return. Partial responses produced before interruption remain in session history, while a turn interrupted before any response restores its input for editing. [#1194](https://github.com/Datus-ai/Datus-agent/pull/1194)
+- **DuckDB Version and In-Memory Catalog Fixes** - The DuckDB dependency is consistently pinned to 1.5.2 so extension and Iceberg behavior remains stable. `GET /api/v1/catalog/list` now correctly returns in-memory DuckDB datasources and their attached Iceberg REST catalogs. [#1184](https://github.com/Datus-ai/Datus-agent/pull/1184) [#1191](https://github.com/Datus-ai/Datus-agent/pull/1191)
+
+**Upgrade Notes**
+
+- **`!<sql>` Shortcut Replaced** - The `!` prefix no longer executes SQL. Press `Tab` to switch to `sql>` mode; `!` now runs agent tools or plugin CLIs, with tools taking precedence. [#1157](https://github.com/Datus-ai/Datus-agent/pull/1157) [#1186](https://github.com/Datus-ai/Datus-agent/pull/1186) [docs](https://docs.datus.ai/0.3/cli/execution_command/)
+- **Semantic Adapter Version Requirements** - Datus Agent 0.3.9 requires `datus-semantic-core>=0.2.2`. Deployments that install adapters separately should use `datus-semantic-metricflow>=0.2.11`; OSI semantic-model deployments should use `datus-semantic-osi>=0.1.4` for matching multi-model and metric read/write behavior. [#1185](https://github.com/Datus-ai/Datus-agent/pull/1185) [datus-semantic-adapter#53](https://github.com/Datus-ai/datus-semantic-adapter/pull/53) [#56](https://github.com/Datus-ai/datus-semantic-adapter/pull/56)
+
 ### 0.3.8
 
 **New Features**
