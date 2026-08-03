@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from datus.configuration.agent_config import ServicesConfig
 from datus.tools.mcp_tools.mcp_config import (
     HTTPServerConfig,
     MCPConfig,
@@ -764,6 +765,21 @@ class TestServersFromAgentConfig:
 
         assert manager.externally_managed is False
         assert [s.name for s in manager.list_servers()] == ["local"]
+
+    def test_loads_through_the_real_services_config(self, tmp_path):
+        """The production path is AgentConfig -> ServicesConfig dataclass, not a
+        plain dict. Cover it end to end: an untyped section is dropped by
+        `from_dict` and never reaches the manager, which is exactly how this
+        broke once — every dict-shaped test stayed green while the agent read
+        nothing."""
+        services = ServicesConfig.from_dict({"mcp_servers": self.SERVERS})
+        assert services.mcp_servers == self.SERVERS
+
+        manager = self._manager(tmp_path, services)
+
+        assert manager.externally_managed is True
+        assert [s.name for s in manager.list_servers()] == ["github"]
+        assert not (tmp_path / "conf" / ".mcp.json").exists()
 
     def test_writes_are_refused(self, tmp_path):
         manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
