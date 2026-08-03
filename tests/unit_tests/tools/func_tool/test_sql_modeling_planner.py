@@ -17,73 +17,285 @@ from datus.tools.func_tool.sql_modeling_planner import (
     SqlModelingPlanner,
     SqlModelingPlanTools,
     _agent_config_dialect,
-    _fingerprint_sources,
 )
-from datus.utils.exceptions import DatusException
 
 
 class TestSqlModelingPlanTools:
     @staticmethod
-    def _tool(user_message: str, semantic_source_inspector=None):
+    def _tool(semantic_source_inspector=None):
         evidence = GenerationEvidence()
         accepted = []
         tool = SqlModelingPlanTools(
             agent_config=MagicMock(),
             sub_agent_name="gen_metrics",
-            user_message_provider=lambda: user_message,
             generation_evidence=evidence,
             plan_consumer=accepted.append,
             semantic_source_inspector=semantic_source_inspector,
         )
         return tool, evidence, accepted
 
-    def test_no_sql_request_skips_preflight(self):
-        tool, evidence, accepted = self._tool("Generate a revenue metric")
+    def test_exposes_the_standard_native_tool_group_contract(self):
+        tool, _, _ = self._tool()
 
-        assert tool.request_contains_sql() is False
+        assert tool.all_tools_name() == ["prepare_sql_modeling_plan"]
+        assert [item.name for item in tool.available_tools()] == ["prepare_sql_modeling_plan"]
+
+    def test_empty_entries_mark_the_invoked_preflight_unresolved(self):
+        tool, evidence, accepted = self._tool()
+
         result = tool.prepare_sql_modeling_plan([])
 
         assert result.success == 0
-        assert "Skip prepare_sql_modeling_plan" in result.error
-        assert evidence.sql_modeling_plan_status == "pending"
-        assert accepted == []
-
-    def test_empty_entries_are_rejected_when_request_contains_sql(self):
-        sql = "SELECT COUNT(*) AS order_count FROM orders"
-        tool, evidence, accepted = self._tool(sql)
-
-        assert tool.request_contains_sql() is True
-        result = tool.prepare_sql_modeling_plan([])
-
-        assert result.success == 0
-        assert "contains SQL" in result.error
+        assert "must contain every SQL statement" in result.error
         assert evidence.sql_modeling_plan_status == "unresolved"
         assert accepted == []
 
-    def test_terminal_sql_request_requires_ready_plan(self):
-        tool, evidence, _ = self._tool("SELECT COUNT(*) AS order_count FROM orders")
-
-        with pytest.raises(DatusException, match="prepare_sql_modeling_plan"):
-            tool.require_plan_for_sql_request()
-
-        evidence.set_sql_modeling_plan("ready", "source")
-        assert tool.require_plan_for_sql_request() is True
-
-    def test_all_sql_statements_must_be_submitted_together(self):
-        first_sql = "SELECT COUNT(*) AS order_count FROM orders"
-        second_sql = "SELECT SUM(amount) AS revenue FROM orders"
-        tool, evidence, accepted = self._tool(f"First:\n```sql\n{first_sql}\n```\nSecond:\n```sql\n{second_sql}\n```")
+    def test_invalid_entries_mark_the_invoked_preflight_unresolved(self):
+        tool, evidence, accepted = self._tool()
 
         result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "order_count"}])
 
         assert result.success == 0
-        assert "missing source_index=[2]" in result.error
+        assert "Invalid sql_entries" in result.error
         assert evidence.sql_modeling_plan_status == "unresolved"
         assert accepted == []
 
+    def test_whitespace_only_sql_is_rejected(self):
+        tool, evidence, accepted = self._tool()
+
+        result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "order_count", "sql": "  \n"}])
+
+        assert result.success == 0
+        assert "sql must not be empty" in result.error
+        assert evidence.sql_modeling_plan_status == "unresolved"
+        assert accepted == []
+
+    def test_sql_read_from_a_user_specified_file_can_be_submitted(self):
+        sql = "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region;"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "regional_revenue", "sql": sql}])
+
+        assert result.success == 1
+        assert planner.call_args.args[0][0].sql == sql
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_source_index_controls_planner_order(self):
+        first_sql = "SELECT COUNT(*) AS order_count FROM orders"
+        second_sql = "SELECT SUM(amount) AS revenue FROM orders"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan(
+                [
+                    {"source_index": 2, "name": "revenue", "sql": second_sql},
+                    {"source_index": 1, "name": "order_count", "sql": first_sql},
+                ]
+            )
+
+        assert result.success == 1
+        assert [source.sql for source in planner.call_args.args[0]] == [first_sql, second_sql]
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_collects_multiple_batches_and_plans_once_on_finalize(self):
+        first_sql = "SELECT COUNT(*) AS order_count FROM orders"
+        second_sql = "SELECT SUM(amount) AS revenue FROM orders"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            collecting = tool.prepare_sql_modeling_plan(
+                [{"source_index": 1, "name": "order_count", "sql": first_sql}],
+                finalize=False,
+            )
+            ready = tool.prepare_sql_modeling_plan(
+                [{"source_index": 2, "name": "revenue", "sql": second_sql}],
+                finalize=True,
+            )
+
+        assert collecting.result == {"status": "collecting", "received_count": 1, "source_indexes": [1]}
+        assert ready.success == 1
+        assert [source.sql for source in planner.call_args.args[0]] == [first_sql, second_sql]
+        planner.assert_called_once()
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_empty_final_batch_finalizes_collected_entries(self):
+        sql = "SELECT COUNT(*) AS order_count FROM orders"
+        tool, evidence, _ = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            tool.prepare_sql_modeling_plan(
+                [{"source_index": 10, "name": "order_count", "sql": sql}],
+                finalize=False,
+            )
+            result = tool.prepare_sql_modeling_plan([], finalize=True)
+
+        assert result.success == 1
+        assert planner.call_args.args[0][0].sql == sql
+        assert evidence.sql_modeling_plan_status == "ready"
+
+    def test_conflicting_source_index_does_not_overwrite_an_earlier_batch(self):
+        first_sql = "SELECT COUNT(*) AS order_count FROM orders"
+        second_sql = "SELECT COUNT(*) AS customer_count FROM customers"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            tool.prepare_sql_modeling_plan(
+                [{"source_index": 1, "name": "order_count", "sql": first_sql}],
+                finalize=False,
+            )
+            conflict = tool.prepare_sql_modeling_plan(
+                [{"source_index": 1, "name": "customer_count", "sql": second_sql}],
+                finalize=True,
+            )
+            ready = tool.prepare_sql_modeling_plan(
+                [{"source_index": 2, "name": "customer_count", "sql": second_sql}],
+                finalize=True,
+            )
+
+        assert conflict.success == 0
+        assert conflict.result["conflicting_source_indexes"] == [1]
+        assert [source.sql for source in planner.call_args.args[0]] == [first_sql, second_sql]
+        planner.assert_called_once()
+        assert ready.success == 1
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_identical_source_index_retry_can_finalize_the_collection(self):
+        entry = {
+            "source_index": 1,
+            "name": "order_count",
+            "sql": "SELECT COUNT(*) AS order_count FROM orders",
+        }
+        tool, evidence, _ = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            tool.prepare_sql_modeling_plan([entry], finalize=False)
+            result = tool.prepare_sql_modeling_plan([entry], finalize=True)
+
+        assert result.success == 1
+        assert len(planner.call_args.args[0]) == 1
+        assert evidence.sql_modeling_plan_status == "ready"
+
+    def test_submitted_sql_preserves_leading_optimizer_hint(self):
+        sql = "/*+ SET_VAR(query_timeout = 10) */\nSELECT COUNT(*) AS order_count FROM orders;"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "order_count", "sql": sql}])
+
+        assert result.success == 1
+        assert planner.call_args.args[0][0].sql == sql
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_identical_sql_in_distinct_request_positions_keeps_both_entries(self):
+        sql = "SELECT COUNT(*) AS order_count FROM orders;"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan(
+                [
+                    {"source_index": 1, "name": "first_order_count", "sql": sql},
+                    {"source_index": 2, "name": "second_order_count", "sql": sql},
+                ]
+            )
+
+        assert result.success == 1
+        assert [source.sql for source in planner.call_args.args[0]] == [sql, sql]
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_exact_non_select_sql_does_not_depend_on_extractor_support(self):
+        sql = "SHOW TABLES;"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "available_tables", "sql": sql}])
+
+        assert result.success == 1
+        assert planner.call_args.args[0][0].sql == sql
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
     def test_complete_cte_is_copied_and_business_name_is_preserved(self):
         sql = "WITH daily AS (SELECT user_id FROM logins) SELECT COUNT(*) AS users FROM daily;"
-        tool, evidence, accepted = self._tool(f"Question: Count active users\n```sql\n{sql}\n```")
+        tool, evidence, accepted = self._tool()
         plan = SqlModelingPlan(
             source_fingerprint="source",
             metric_catalog_fingerprint="catalog",
@@ -125,7 +337,14 @@ class TestSqlModelingPlanTools:
             return_value=plan,
         ):
             result = tool.prepare_sql_modeling_plan(
-                [{"source_index": 1, "name": "Active Users", "question": "Count active users"}]
+                [
+                    {
+                        "source_index": 1,
+                        "name": "Active Users",
+                        "question": "Count active users",
+                        "sql": sql,
+                    }
+                ]
             )
 
         assert result.success == 1
@@ -139,30 +358,67 @@ class TestSqlModelingPlanTools:
 
     def test_reuses_fixed_plan_without_reloading_catalog(self):
         sql = "SELECT COUNT(*) AS order_count FROM orders"
-        tool, evidence, accepted = self._tool(sql)
-        source = SourceQueryEvidence(
-            source_sql_name="order_count",
-            question="Count orders",
-            sql=sql,
-            source_type="prompt",
-        )
+        tool, evidence, accepted = self._tool()
         fixed_plan = SqlModelingPlan(
-            source_fingerprint=_fingerprint_sources([source]),
+            source_fingerprint="source",
             metric_catalog_fingerprint="catalog",
-            source_queries=[source],
             candidate_plan={"available": True},
         )
-        tool._plan = fixed_plan
-        evidence.set_sql_modeling_plan("ready", fixed_plan.source_fingerprint)
 
-        with patch("datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan") as planner:
-            result = tool.prepare_sql_modeling_plan(
-                [{"source_index": 1, "name": "order_count", "question": "Count orders"}]
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=fixed_plan,
+        ) as planner:
+            entries = [{"source_index": 1, "name": "order_count", "question": "Count orders", "sql": sql}]
+            first = tool.prepare_sql_modeling_plan(entries)
+            repeated = tool.prepare_sql_modeling_plan(entries)
+
+        assert first.success == 1
+        assert repeated.success == 1
+        planner.assert_called_once()
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [fixed_plan]
+
+    def test_changed_sql_after_a_fixed_plan_is_ignored_without_downgrading_it(self):
+        original_sql = "SELECT COUNT(*) AS order_count FROM orders"
+        changed_sql = "SELECT COUNT(*) AS customer_count FROM customers"
+        tool, evidence, accepted = self._tool()
+        fixed_plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+        original_entries = [
+            {
+                "source_index": 1,
+                "name": "order_count",
+                "question": "Count orders",
+                "sql": original_sql,
+            }
+        ]
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=fixed_plan,
+        ):
+            tool.prepare_sql_modeling_plan(original_entries)
+            changed = tool.prepare_sql_modeling_plan(
+                [
+                    {
+                        "source_index": 1,
+                        "name": "customer_count",
+                        "question": "Count customers",
+                        "sql": changed_sql,
+                    }
+                ]
             )
+            repeated = tool.prepare_sql_modeling_plan(original_entries)
 
-        assert result.success == 1
-        planner.assert_not_called()
-        assert accepted == []
+        assert changed.success == 0
+        assert changed.result["status"] == "ready"
+        assert repeated.success == 1
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [fixed_plan]
 
     def test_sql_plan_includes_automatic_semantic_source_inspection(self):
         sql = "SELECT SUM(amount) AS revenue FROM orders"
@@ -172,7 +428,7 @@ class TestSqlModelingPlanTools:
             "relationships": [],
         }
         inspector = MagicMock(return_value=inspected)
-        tool, _, accepted = self._tool(sql, semantic_source_inspector=inspector)
+        tool, _, accepted = self._tool(semantic_source_inspector=inspector)
         plan = SqlModelingPlan(
             source_fingerprint="source",
             metric_catalog_fingerprint="catalog",
@@ -184,26 +440,16 @@ class TestSqlModelingPlanTools:
             "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
             return_value=plan,
         ):
-            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "revenue"}])
+            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "revenue", "sql": sql}])
 
         assert result.success == 1
         assert result.result["semantic_source_evidence"] == inspected
         inspector.assert_called_once_with(plan)
         assert accepted == [plan]
 
-    def test_unknown_source_index_is_rejected(self):
-        tool, evidence, accepted = self._tool("SELECT COUNT(*) AS orders FROM orders")
-
-        result = tool.prepare_sql_modeling_plan([{"source_index": 2, "name": "order_count"}])
-
-        assert result.success == 0
-        assert result.result["status"] == "unresolved"
-        assert evidence.sql_modeling_plan_status == "unresolved"
-        assert accepted == []
-
-    def test_tool_preserves_literal_whitespace_and_statement_terminator(self):
-        raw_sql = "SELECT 'a  b' AS label;"
-        tool, evidence, accepted = self._tool(f"Use this SQL:\n{raw_sql}")
+    def test_sparse_source_indexes_are_allowed(self):
+        sql = "SELECT COUNT(*) AS orders FROM orders"
+        tool, evidence, accepted = self._tool()
         plan = SqlModelingPlan(
             source_fingerprint="source",
             metric_catalog_fingerprint="catalog",
@@ -214,7 +460,27 @@ class TestSqlModelingPlanTools:
             "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
             return_value=plan,
         ) as planner:
-            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "label_value"}])
+            result = tool.prepare_sql_modeling_plan([{"source_index": 20, "name": "order_count", "sql": sql}])
+
+        assert result.success == 1
+        assert planner.call_args.args[0][0].sql == sql
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
+
+    def test_tool_preserves_literal_whitespace_and_statement_terminator(self):
+        raw_sql = "SELECT 'a  b' AS label;"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "label_value", "sql": raw_sql}])
 
         assert result.success == 1
         assert planner.call_args.args[0][0].sql == raw_sql
@@ -223,9 +489,9 @@ class TestSqlModelingPlanTools:
 
     def test_generic_sql_index_is_not_a_business_name(self):
         raw_sql = "SELECT COUNT(*) AS order_count FROM orders"
-        tool, evidence, accepted = self._tool(raw_sql)
+        tool, evidence, accepted = self._tool()
 
-        result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "sql_1"}])
+        result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "sql_1", "sql": raw_sql}])
 
         assert result.success == 0
         assert "meaningful English snake_case" in result.error

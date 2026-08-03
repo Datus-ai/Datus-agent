@@ -66,7 +66,7 @@ class GenerationEvidence:
     metric_kb_sync_metrics: Set[str] = field(default_factory=set)
     generic_kb_sync_passed: bool = False
     validated_semantic_artifacts: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    sql_modeling_plan_status: str = "pending"
+    sql_modeling_preflight_attempted: bool = False
     sql_modeling_plan_fingerprint: str = ""
     mutated_artifact_paths: Set[str] = field(default_factory=set)
 
@@ -78,7 +78,7 @@ class GenerationEvidence:
         self.required_metric_output_ids.clear()
         self.required_query_backed_sql.clear()
         self.query_backed_dataset_bindings.clear()
-        self.sql_modeling_plan_status = "pending"
+        self.sql_modeling_preflight_attempted = False
         self.sql_modeling_plan_fingerprint = ""
         self.mutated_artifact_paths.clear()
 
@@ -108,25 +108,42 @@ class GenerationEvidence:
             if path != metric_path and "/metrics/" not in path.replace("\\", "/")
         )
 
-    def set_sql_modeling_plan(self, status: str, source_fingerprint: str = "") -> None:
-        """Record the request-local SQL preflight result."""
-        normalized_status = str(status or "").strip().lower()
-        if normalized_status not in {"ready", "unresolved"}:
+    @property
+    def sql_modeling_plan_status(self) -> str:
+        """Expose a derived status without maintaining a mutable state machine."""
+        if self.sql_modeling_plan_fingerprint:
+            return "ready"
+        return "unresolved" if self.sql_modeling_preflight_attempted else "pending"
+
+    def mark_sql_modeling_preflight_attempted(self) -> None:
+        """Remember that this request entered SQL preflight."""
+        self.sql_modeling_preflight_attempted = True
+
+    def mark_sql_modeling_plan_ready(self, source_fingerprint: str) -> None:
+        """Record the immutable SQL plan accepted for this request."""
+        fingerprint = str(source_fingerprint or "").strip()
+        if not fingerprint:
             raise DatusException(
                 ErrorCode.TOOL_INVALID_INPUT,
-                message=f"Unsupported SQL modeling plan status: {status!r}",
+                message="A ready SQL modeling plan requires a source fingerprint.",
             )
-        self.sql_modeling_plan_status = normalized_status
-        self.sql_modeling_plan_fingerprint = str(source_fingerprint or "").strip()
+        self.sql_modeling_preflight_attempted = True
+        self.sql_modeling_plan_fingerprint = fingerprint
 
     def require_sql_modeling_plan(self) -> None:
         """Reject authoring publication before the shared preflight completes."""
-        if self.sql_modeling_plan_status == "ready":
+        if self.sql_modeling_plan_fingerprint:
             return
         raise DatusException(
             ErrorCode.TOOL_INVALID_INPUT,
             message="prepare_sql_modeling_plan must complete before publishing generated semantic artifacts.",
         )
+
+    def ensure_sql_modeling_plan_resolved(self) -> bool:
+        """Reject a failed preflight and report whether one completed successfully."""
+        if self.sql_modeling_preflight_attempted and not self.sql_modeling_plan_fingerprint:
+            self.require_sql_modeling_plan()
+        return bool(self.sql_modeling_plan_fingerprint)
 
     def invalidate_artifact_evidence(self) -> None:
         """Discard validation, dry-run, and sync evidence after a file mutation."""

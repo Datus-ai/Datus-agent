@@ -12,6 +12,8 @@ Mocks get_prompt_manager().render_template / get_raw_template to avoid template 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # TestCompareSqlWithMcp
 # ---------------------------------------------------------------------------
@@ -309,6 +311,52 @@ class TestGenMetricsV12Template:
 
         assert len(result) > 100, "Template should render substantial content"
         assert "metric" in result.lower()
+        assert "explicitly names a readable SQL file" in result
+        assert "call `read_file` first" in result
+        assert "use `finalize=false` batches for a large input" in result
+        assert "Do not parse or extract candidates from the SQL independently" in result
+        assert "Do not call a second extraction path" in result
+
+    @pytest.mark.parametrize(
+        "template_name",
+        [
+            "gen_metrics_system_1.1.j2",
+            "gen_metrics_system_1.2.j2",
+            "gen_metrics_system_2.0.j2",
+        ],
+    )
+    def test_sql_file_preflight_reads_before_planning(self, template_name):
+        from jinja2 import Environment, FileSystemLoader
+
+        from datus.prompts.prompt_manager import PromptManager
+
+        pm = PromptManager()
+        env = Environment(
+            loader=FileSystemLoader([str(pm.default_templates_dir)]),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        result = env.get_template(template_name).render(
+            native_tools=[],
+            mcp_tools=[],
+            has_ask_user_tool=False,
+            semantic_model_dir="/tmp/test_models",
+            knowledge_base_dir="/tmp/test_kb",
+            kind_subdir="subject/semantic_models/test",
+            authoring_format="metricflow",
+            current_datasource="test",
+            current_datasource_dialect="duckdb",
+            has_subject_tree=False,
+            subject_tree=[],
+            existing_subject_trees=[],
+        )
+
+        read_instruction = "call `read_file` first"
+        planner_instruction = "`prepare_sql_modeling_plan`"
+        assert read_instruction in result
+        assert planner_instruction in result
+        assert result.index(read_instruction) < result.index(planner_instruction)
+        assert "CSV file" not in result
 
     def test_v12_template_mentions_skill(self):
         """v1.2 template should reference skills and gen-metrics."""

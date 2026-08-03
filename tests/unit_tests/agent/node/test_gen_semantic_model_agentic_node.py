@@ -133,6 +133,7 @@ class TestGenSemanticModelAgenticNodeInit:
         assert {"write_file", "delete_file", "upsert_osi_metrics", "bash"}.isdisjoint(tool_names)
         assert "publish_semantic_model" in tool_names
         node._populate_tool_registry()
+        assert node.tool_registry.get("prepare_sql_modeling_plan") == "semantic_tools"
         assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("plan_osi_semantic_model_target") == "semantic_tools"
 
@@ -191,13 +192,14 @@ class TestGenSemanticModelAgenticNodeInit:
         assert node.generation_evidence.sql_modeling_plan_status == "pending"
         assert "prepare_sql_modeling_plan" in {tool.name for tool in node.tools}
 
-    def test_sql_result_cannot_bypass_preflight(self, real_agent_config, mock_llm_create):
+    def test_failed_sql_preflight_cannot_be_bypassed(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_semantic_model_agentic_node import GenSemanticModelAgenticNode
         from datus.agent.node.stream_run_context import StreamRunContext
         from datus.utils.exceptions import DatusException
 
         node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.mark_sql_modeling_preflight_attempted()
         ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
         ctx.response_content = "not json"
 
@@ -210,7 +212,7 @@ class TestGenSemanticModelAgenticNodeInit:
 
         node = GenSemanticModelAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
-        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        node.generation_evidence.mark_sql_modeling_plan_ready("source")
         ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
         ctx.response_content = "not json"
 

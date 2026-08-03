@@ -5,7 +5,7 @@ tags:
   - semantic-model
   - metrics
   - sql
-version: "1.1.0"
+version: "1.3.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -15,17 +15,21 @@ allowed_agents:
 
 # SQL Modeling Preflight
 
-Run this phase only when the current request contains SQL. Existing-artifact
-maintenance and natural-language-only authoring skip this skill's tool call.
+Run this phase when the current request contains SQL or explicitly names a
+readable SQL file. Existing-artifact maintenance and natural-language-only
+authoring skip this skill's tool call.
 
-1. Inspect the complete current user request and count every SQL statement in request order.
-2. If the request contains no SQL, do not call `prepare_sql_modeling_plan`; continue with the active authoring workflow.
-3. If the request contains SQL, call `prepare_sql_modeling_plan` exactly once with one metadata entry per statement:
+1. Inspect the complete current user request. If it explicitly names one or more SQL files, call `read_file` for those paths before preflight and use their complete contents. This is the only artifact read allowed before preflight; do not discover unrelated SQL files.
+2. If the request neither contains SQL nor explicitly names a SQL file, do not call `prepare_sql_modeling_plan`; continue with the active authoring workflow.
+3. If SQL was provided directly or loaded from a named file, submit one entry per statement to `prepare_sql_modeling_plan`:
    - `source_index`: its 1-based position in the request.
    - `name`: a concise, meaningful English snake_case business name inferred from the question and SQL.
    - `question`: preserve the supplied business question verbatim. Infer a concise question only when none was provided.
-   - Do not copy SQL into the tool call. The tool extracts and owns the exact request text.
-4. Do not write or edit files while the returned status is `pending` or `unresolved`. Fix the submitted evidence or report the blocker.
+   - `sql`: copy the complete statement verbatim from the current request or `read_file` result, including comments, hints, whitespace, and the statement terminator when present. Do not reformat, reconstruct, truncate, or invent SQL.
+   - Prefer one call. For a large input, use a few complete-statement batches with `finalize=false`, then set `finalize=true` on the last batch. Never split one SQL statement across batches.
+   - Keep `source_index` unique across batches and continue numbering from the complete input. Repeating the same index is accepted only when the complete entry is identical.
+   - Submit every statement once in source order. If the tool rejects an entry, re-check the source content; never add a placeholder entry merely to satisfy a count.
+4. Continue submitting batches while the tool returns `collecting`; proceed only when it returns `ready`. Fix an `unresolved` submission or report the blocker. Natural-language-only requests skip this phase entirely.
 5. Treat the returned `candidate_plan` as authoritative:
    - `output_contracts` define every final query output and classify it as `direct`, `query_backed`, `dimension`, or `non_metric`.
    - `metric_requirements` define the output-id-scoped metric completeness contract. Evaluate each requirement independently; one SQL statement may contain both direct and query-backed metric outputs.

@@ -90,17 +90,20 @@ class TestAvailableTools:
             tools = generation_tools.available_tools()
         assert len(tools) == 4
 
-    def test_sql_preflight_is_required_only_when_request_contains_sql(self, generation_tools):
-        generation_tools.sql_modeling_plan_required = lambda: False
-        generation_tools._require_sql_modeling_plan_if_needed()
+    def test_failed_sql_preflight_blocks_publication(self, generation_tools):
+        assert generation_tools.generation_evidence.ensure_sql_modeling_plan_resolved() is False
 
-        generation_tools.sql_modeling_plan_required = lambda: True
+        generation_tools.generation_evidence.mark_sql_modeling_preflight_attempted()
+        publish_result = generation_tools.publish_metrics("unused.yml")
+        assert publish_result.success == 0
+        assert "prepare_sql_modeling_plan" in publish_result.error
+
         with pytest.raises(DatusException, match="prepare_sql_modeling_plan") as exc_info:
-            generation_tools._require_sql_modeling_plan_if_needed()
+            generation_tools.generation_evidence.ensure_sql_modeling_plan_resolved()
         assert exc_info.value.code is ErrorCode.TOOL_INVALID_INPUT
 
-        generation_tools.generation_evidence.set_sql_modeling_plan("ready", "source")
-        generation_tools._require_sql_modeling_plan_if_needed()
+        generation_tools.generation_evidence.mark_sql_modeling_plan_ready("source")
+        assert generation_tools.generation_evidence.ensure_sql_modeling_plan_resolved() is True
 
 
 class TestCheckSemanticObjectExists:
