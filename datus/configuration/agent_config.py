@@ -361,6 +361,11 @@ class ServicesConfig:
     semantic_layer: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     bi_platforms: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     schedulers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # MCP servers in the `.mcp.json` shape, keyed by server name. A host that
+    # owns these definitions (the SaaS backend builds them from its database)
+    # passes them here instead of writing a file, so credentials stay in memory
+    # and a change to one is visible to config fingerprinting.
+    mcp_servers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def default_datasource(self) -> Optional[str]:
@@ -397,6 +402,7 @@ class ServicesConfig:
             semantic_layer=raw.get("semantic_layer", {}),
             bi_platforms=bi_platforms_raw or {},
             schedulers=raw.get("schedulers", {}),
+            mcp_servers=raw.get("mcp_servers") or {},
         )
 
 

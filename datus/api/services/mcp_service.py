@@ -5,7 +5,6 @@ Stateless per-request service that wraps MCPManager with a tenant-specific
 config path derived from the agent_config.
 """
 
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from datus.api.models.base_models import Result
@@ -36,24 +35,14 @@ class MCPService:
 
     @staticmethod
     def _create_manager(agent_config: AgentConfig) -> MCPManager:
-        """Create an MCPManager whose config_path points to the tenant's home."""
-        config_path = Path(agent_config.home) / "conf" / ".mcp.json"
-        config_path.parent.mkdir(parents=True, exist_ok=True)
+        """Create an MCPManager for this tenant's agent config.
 
-        manager = MCPManager.__new__(MCPManager)
-        # Replicate the fields that __init__ normally sets, but with our
-        # custom config_path instead of the global singleton path.
-        import threading
-
-        from datus.tools.mcp_tools.mcp_config import MCPConfig
-
-        manager.config_path = config_path
-        manager.config = MCPConfig()
-        manager._lock = threading.Lock()
-        manager.load_config()
-
-        logger.info(f"Created MCPManager with config path: {config_path}")
-        return manager
+        Handing it the config is enough: the manager takes the servers from
+        ``services.mcp_servers`` when the host supplies them in memory, and
+        otherwise falls back to ``{agent.home}/conf/.mcp.json`` — the same
+        tenant-scoped path this used to build by hand.
+        """
+        return MCPManager(agent_config=agent_config)
 
     # ------------------------------------------------------------------
     # Server CRUD

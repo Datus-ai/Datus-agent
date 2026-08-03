@@ -667,3 +667,77 @@ class TestSdkToolFilter:
         instance, _ = manager._create_server_instance(self._http_config(tf), with_tool_filter=False)
 
         assert instance.tool_filter is None
+
+
+# ---------------------------------------------------------------------------
+# In-memory servers supplied by the host (SaaS)
+# ---------------------------------------------------------------------------
+
+
+class TestServersFromAgentConfig:
+    """The host passes servers through AgentConfig; nothing touches the disk."""
+
+    SERVERS = {
+        "github": {
+            "type": "http",
+            "url": "https://api.example.com/mcp/",
+            "headers": {"Authorization": "Bearer tok"},
+        }
+    }
+
+    def _manager(self, tmp_path: Path, services) -> MCPManager:
+        mock_path_manager = MagicMock()
+        config_file = tmp_path / "conf" / ".mcp.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        mock_path_manager.mcp_config_path.return_value = config_file
+        mock_path_manager.ensure_dirs.return_value = None
+        agent_config = SimpleNamespace(services=services)
+
+        with patch("datus.utils.path_manager.get_path_manager", return_value=mock_path_manager):
+            return MCPManager(agent_config=agent_config)
+
+    def test_loads_servers_without_reading_the_file(self, tmp_path):
+        manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
+
+        assert manager.externally_managed is True
+        assert [s.name for s in manager.list_servers()] == ["github"]
+        assert manager.get_server_config("github").headers == {"Authorization": "Bearer tok"}
+        # The file was never created, so credentials never hit the volume.
+        assert not (tmp_path / "conf" / ".mcp.json").exists()
+
+    def test_in_memory_servers_win_over_a_file(self, tmp_path):
+        config_file = tmp_path / "conf" / ".mcp.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps({"mcpServers": {"stale": {"type": "http", "url": "https://old"}}}))
+
+        manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
+
+        assert [s.name for s in manager.list_servers()] == ["github"]
+
+    def test_empty_section_falls_back_to_the_file(self, tmp_path):
+        """An absent section means "this host doesn't manage MCP" — a CLI user's
+        own file must keep working."""
+        config_file = tmp_path / "conf" / ".mcp.json"
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        config_file.write_text(json.dumps({"mcpServers": {"local": {"type": "http", "url": "https://local"}}}))
+
+        manager = self._manager(tmp_path, {"mcp_servers": {}})
+
+        assert manager.externally_managed is False
+        assert [s.name for s in manager.list_servers()] == ["local"]
+
+    def test_writes_are_refused(self, tmp_path):
+        manager = self._manager(tmp_path, {"mcp_servers": self.SERVERS})
+
+        added, add_msg = manager.add_server(HTTPServerConfig(name="another", url="https://y/mcp"))
+        removed, remove_msg = manager.remove_server("github")
+        filtered, filter_msg = manager.set_tool_filter(
+            "github", ToolFilterConfig(enabled=True, allowed_tool_names=["a"])
+        )
+
+        # Persisting would write a file nothing reads back, so the edit would
+        # look like it worked and quietly disappear on the next request.
+        assert (added, removed, filtered) == (False, False, False)
+        for msg in (add_msg, remove_msg, filter_msg):
+            assert "managed by the host" in msg
+        assert [s.name for s in manager.list_servers()] == ["github"]

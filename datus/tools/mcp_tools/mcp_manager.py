@@ -81,8 +81,15 @@ class MCPManager:
     - Status monitoring and health checks
     - Config file persistence
 
-    Configuration path:
-    - Fixed at {agent.home}/conf/.mcp.json (default: ~/.datus/conf/.mcp.json)
+    Two configuration sources, in this order:
+
+    1. ``agent_config.services["mcp_servers"]`` — servers supplied in memory by
+       the host (the SaaS backend assembles them from its database). Nothing is
+       read from or written to disk, so credentials never land on a shared
+       volume and there is no file/state to drift out of sync. Mutating calls
+       are refused: the host owns the definitions.
+    2. ``{agent.home}/conf/.mcp.json`` — the standalone/CLI source, editable
+       through this manager as before.
     """
 
     def __init__(
@@ -94,9 +101,9 @@ class MCPManager:
         """
         Initialize the MCP manager.
 
-        MCP configuration is fixed at {agent.home}/conf/.mcp.json.
-        Configure agent.home in agent.yml to change the root directory.
-        The path cannot be overridden to ensure consistent configuration management.
+        The file path is fixed at {agent.home}/conf/.mcp.json — configure
+        agent.home to move it. It is only consulted when the agent config does
+        not carry MCP servers itself.
         """
         from datus.utils.path_manager import get_path_manager
 
@@ -107,8 +114,32 @@ class MCPManager:
         self.config: MCPConfig = MCPConfig()
         self._lock = threading.Lock()
 
-        # Load existing config
-        self.load_config()
+        servers = self._servers_from_agent_config(agent_config)
+        self.externally_managed = servers is not None
+        if self.externally_managed:
+            self.config = MCPConfig.from_config_format({"mcpServers": servers})
+            logger.info(f"Loaded {len(self.config.servers)} MCP server(s) from the agent config")
+        else:
+            self.load_config()
+
+    @staticmethod
+    def _servers_from_agent_config(agent_config: Optional[Any]) -> Optional[dict]:
+        """Servers the host passed in memory, or None to fall back to the file.
+
+        An empty/absent section means "this host does not manage MCP", not
+        "this host manages zero servers" — otherwise simply having an agent
+        config would hide a CLI user's own `.mcp.json`.
+        """
+        services = getattr(agent_config, "services", None)
+        if services is None:
+            return None
+
+        # ServicesConfig dataclass in a loaded config; a plain dict in tests and
+        # in any host that assembles the section by hand.
+        servers = services.get("mcp_servers") if isinstance(services, dict) else getattr(services, "mcp_servers", None)
+        if isinstance(servers, dict) and servers:
+            return servers
+        return None
 
     def load_config(self) -> bool:
         """
@@ -162,6 +193,21 @@ class MCPManager:
             logger.error(f"Error saving config: {e}")
             return False
 
+    _EXTERNALLY_MANAGED_MSG = (
+        "MCP servers are managed by the host application for this project and cannot be changed here"
+    )
+
+    def _refuse_if_externally_managed(self) -> Optional[Tuple[bool, str]]:
+        """Block writes when the servers came from the agent config.
+
+        Persisting them would write a file that nothing reads back — the host
+        rebuilds the in-memory section on every request — so the edit would
+        look like it worked and quietly disappear.
+        """
+        if self.externally_managed:
+            return False, self._EXTERNALLY_MANAGED_MSG
+        return None
+
     def add_server(self, config: AnyMCPServerConfig) -> Tuple[bool, str]:
         """
         Add a new MCP server config.
@@ -172,6 +218,10 @@ class MCPManager:
         Returns:
             Tuple of (success, message)
         """
+        refusal = self._refuse_if_externally_managed()
+        if refusal:
+            return refusal
+
         try:
             with self._lock:
                 if config.name in self.config.servers:
@@ -199,6 +249,10 @@ class MCPManager:
         Returns:
             Tuple of (success, message)
         """
+        refusal = self._refuse_if_externally_managed()
+        if refusal:
+            return refusal
+
         try:
             with self._lock:
                 if name not in self.config.servers:
@@ -343,6 +397,10 @@ class MCPManager:
 
     def set_tool_filter(self, server_name: str, tool_filter: ToolFilterConfig) -> Tuple[bool, str]:
         """Set tool filter configuration for a server."""
+        refusal = self._refuse_if_externally_managed()
+        if refusal:
+            return refusal
+
         try:
             with self._lock:
                 config = self.get_server_config(server_name)
