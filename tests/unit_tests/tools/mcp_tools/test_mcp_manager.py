@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from datus.tools.mcp_tools.mcp_config import (
+    HTTPServerConfig,
     MCPConfig,
     MCPServerType,
     SSEServerConfig,
@@ -610,3 +611,59 @@ class TestCleanup:
         # cleanup() is a no-op finalizer; verify manager state remains intact
         assert isinstance(manager.config, MCPConfig)
         assert manager.config_path.name == ".mcp.json"
+
+
+# ---------------------------------------------------------------------------
+# Runtime tool filtering
+# ---------------------------------------------------------------------------
+
+
+class TestSdkToolFilter:
+    """The filter has to reach the SDK server instance, not just list_tools."""
+
+    def _http_config(self, tool_filter=None):
+        return HTTPServerConfig(name="srv", url="https://mcp.example.com/mcp", tool_filter=tool_filter)
+
+    def test_returns_none_without_filter(self, tmp_path):
+        manager = _make_manager(tmp_path)
+        assert manager._sdk_tool_filter(self._http_config()) is None
+
+    def test_returns_none_when_disabled(self, tmp_path):
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=False, allowed_tool_names=["a"])
+        assert manager._sdk_tool_filter(self._http_config(tf)) is None
+
+    def test_returns_none_when_nothing_listed(self, tmp_path):
+        """enabled=True with no names is "no restriction", not "allow nothing"."""
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True)
+        assert manager._sdk_tool_filter(self._http_config(tf)) is None
+
+    def test_translates_to_the_sdk_shape(self, tmp_path):
+        """Must be the SDK's mapping — its own model would silently filter all."""
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True, allowed_tool_names=["a"], blocked_tool_names=["b"])
+
+        result = manager._sdk_tool_filter(self._http_config(tf))
+
+        assert isinstance(result, dict)
+        assert result["allowed_tool_names"] == ["a"]
+        assert result["blocked_tool_names"] == ["b"]
+
+    def test_agent_facing_instance_carries_the_filter(self, tmp_path):
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True, allowed_tool_names=["a"])
+
+        instance, _ = manager._create_server_instance(self._http_config(tf))
+
+        assert instance.tool_filter == {"allowed_tool_names": ["a"]}
+
+    def test_management_instance_sees_the_full_surface(self, tmp_path):
+        """list_tools/connectivity must report every tool, or a blocked one
+        could never be re-enabled from the UI."""
+        manager = _make_manager(tmp_path)
+        tf = ToolFilterConfig(enabled=True, allowed_tool_names=["a"])
+
+        instance, _ = manager._create_server_instance(self._http_config(tf), with_tool_filter=False)
+
+        assert instance.tool_filter is None

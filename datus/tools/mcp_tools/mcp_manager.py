@@ -17,6 +17,10 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agents import Agent, RunContextWrapper, Usage
 from agents.mcp import MCPServerStdioParams
+
+# Aliased on purpose: this module defines its own ``create_static_tool_filter``
+# returning Datus' pydantic model, which the SDK does not understand.
+from agents.mcp import create_static_tool_filter as sdk_static_tool_filter
 from agents.mcp.server import MCPServerSse, MCPServerSseParams, MCPServerStreamableHttp, MCPServerStreamableHttpParams
 
 from datus.tools.mcp_tools.mcp_config import (
@@ -246,7 +250,7 @@ class MCPManager:
             return False, error_msg, {}
 
         # Create server instance
-        server_instance, connectivity_details = self._create_server_instance(config)
+        server_instance, connectivity_details = self._create_server_instance(config, with_tool_filter=False)
         if not server_instance:
             error_msg = connectivity_details.get("error", "Failed to create server instance")
             return False, f"Failed to create server instance for '{name}': {error_msg}", connectivity_details
@@ -270,7 +274,7 @@ class MCPManager:
                 return False, error_msg, []
 
             # Create server instance
-            server_instance, details = self._create_server_instance(config)
+            server_instance, details = self._create_server_instance(config, with_tool_filter=False)
             if not server_instance:
                 error_msg = details.get("error", "Failed to create server instance")
                 return False, f"Failed to connect to server '{server_name}': {error_msg}", []
@@ -371,26 +375,58 @@ class MCPManager:
             logger.error(f"Error getting tool filter for server {server_name}: {e}")
             return False, f"Error getting tool filter: {e}", None
 
-    def _create_server_instance(self, config: AnyMCPServerConfig) -> Tuple[Any, Dict[str, Any]]:
-        """Create MCP server instance based on config type."""
+    def _create_server_instance(
+        self, config: AnyMCPServerConfig, with_tool_filter: bool = True
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Create MCP server instance based on config type.
+
+        ``with_tool_filter`` binds the configured filter to the instance so an
+        agent handed this server can only ever see the allowed tools. The
+        management APIs pass ``False``: they must be able to report the
+        server's full surface (and do their own filtering afterwards), or a
+        blocked tool could never be re-enabled from the UI.
+        """
         try:
             # Expand environment variables in config
             config_dict = config.model_dump()
             expanded_config = expand_config_env_vars(config_dict)
 
+            tool_filter = self._sdk_tool_filter(config) if with_tool_filter else None
+
             if config.type == MCPServerType.STDIO:
-                return self._create_stdio_server(config, expanded_config)
+                return self._create_stdio_server(config, expanded_config, tool_filter)
             elif config.type == MCPServerType.SSE:
-                return self._create_sse_server(expanded_config)
+                return self._create_sse_server(expanded_config, tool_filter)
             elif config.type == MCPServerType.HTTP:
-                return self._create_http_server(expanded_config)
+                return self._create_http_server(expanded_config, tool_filter)
             else:
                 return None, {"error": f"Unsupported server type: {config.type}"}
         except Exception as e:
             logger.error(f"Failed to create server instance: {e}")
             return None, {"error": str(e)}
 
-    def _create_stdio_server(self, config: STDIOServerConfig, expanded_config: Dict[str, Any]):
+    def _sdk_tool_filter(self, config: AnyMCPServerConfig):
+        """Translate our ``ToolFilterConfig`` into the SDK's static filter.
+
+        Without this the filter is only honoured by ``MCPManager.list_tools``
+        — i.e. by the management API — while an agent handed the raw server
+        instance still sees, and can call, every tool the server exposes.
+        """
+        tool_filter = getattr(config, "tool_filter", None)
+        if not tool_filter or not tool_filter.enabled:
+            return None
+
+        allowed = tool_filter.allowed_tool_names
+        blocked = tool_filter.blocked_tool_names
+        if allowed is None and blocked is None:
+            return None
+
+        # ``sdk_static_tool_filter``, not this module's same-named helper: the
+        # SDK only understands its own TypedDict (or a callable) and silently
+        # ends up exposing zero tools when handed anything else.
+        return sdk_static_tool_filter(allowed_tool_names=allowed, blocked_tool_names=blocked)
+
+    def _create_stdio_server(self, config: STDIOServerConfig, expanded_config: Dict[str, Any], tool_filter=None):
         """Create STDIO server instance."""
         env_vars = config.env or {}
 
@@ -400,7 +436,11 @@ class MCPManager:
             env=env_vars,
         )
 
-        server_instance = SilentMCPServerStdio(params=server_params, client_session_timeout_seconds=60)
+        server_instance = SilentMCPServerStdio(
+            params=server_params,
+            client_session_timeout_seconds=60,
+            tool_filter=tool_filter,
+        )
         details = {
             "command": expanded_config.get("command"),
             "args": expanded_config.get("args", []),
@@ -408,7 +448,7 @@ class MCPManager:
         }
         return server_instance, details
 
-    def _create_sse_server(self, expanded_config: Dict[str, Any]):
+    def _create_sse_server(self, expanded_config: Dict[str, Any], tool_filter=None):
         """Create SSE server instance."""
         url = expanded_config.get("url")
         if not url:
@@ -419,11 +459,11 @@ class MCPManager:
         headers["Accept"] = "text/event-stream"
 
         server_params = MCPServerSseParams(url=url, headers=headers, timeout=timeout, sse_read_timeout=timeout)
-        server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60)
+        server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60, tool_filter=tool_filter)
         details = {"url": url, "headers_count": len(headers) if headers else 0, "timeout": timeout}
         return server_instance, details
 
-    def _create_http_server(self, expanded_config: Dict[str, Any]):
+    def _create_http_server(self, expanded_config: Dict[str, Any], tool_filter=None):
         """Create HTTP server instance."""
         url = expanded_config.get("url")
         if not url:
@@ -442,7 +482,9 @@ class MCPManager:
             sse_read_timeout=timeout,
             terminate_on_close=True,
         )
-        server_instance = MCPServerStreamableHttp(params=server_params, client_session_timeout_seconds=60)
+        server_instance = MCPServerStreamableHttp(
+            params=server_params, client_session_timeout_seconds=60, tool_filter=tool_filter
+        )
         details = {"url": url, "headers_count": len(merged_headers), "timeout": timeout}
         return server_instance, details
 
