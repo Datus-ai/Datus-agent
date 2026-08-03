@@ -33,6 +33,7 @@ from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
 from datus.schemas.base import BaseInput, BaseResult
 from datus.utils.exceptions import DatusException, ErrorCode
+from datus.utils.language_utils import resolve_language_name as _resolve_language_name
 from datus.utils.loggings import get_logger
 from datus.utils.message_utils import build_structured_content
 from datus.utils.node_utils import build_database_context
@@ -46,33 +47,6 @@ if TYPE_CHECKING:
     from datus.tools.skill_tools.skill_manager import SkillManager
 
 logger = get_logger(__name__)
-
-
-_LANGUAGE_NAME_MAP: Dict[str, str] = {
-    "en": "English",
-    "zh": "Chinese",
-    "zh-cn": "Chinese",
-    "zh-tw": "Traditional Chinese",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "es": "Spanish",
-    "fr": "French",
-    "de": "German",
-    "pt": "Portuguese",
-    "ru": "Russian",
-    "it": "Italian",
-}
-
-
-def _resolve_language_name(code: str) -> str:
-    """Map a language code (e.g. ``"zh"``) to a human-readable name.
-
-    Unknown codes are returned as-is so operators can plug in custom values
-    without a code change.
-    """
-    if not code:
-        return "English"
-    return _LANGUAGE_NAME_MAP.get(code.strip().lower(), code)
 
 
 class AgenticNode(Node):

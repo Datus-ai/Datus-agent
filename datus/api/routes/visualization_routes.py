@@ -38,6 +38,7 @@ async def data_visualization(
         chart_type=request.chart_type,
         sql=request.sql,
         user_question=request.user_question,
+        language=request.language,
     )
 
     if not result["success"]:

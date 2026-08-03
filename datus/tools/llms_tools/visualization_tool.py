@@ -23,6 +23,7 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput, VisualizationWithContextOutput
 from datus.tools.base import BaseTool
+from datus.utils.language_utils import resolve_language_name
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -77,8 +78,12 @@ class VisualizationTool(BaseTool):
             logger.debug(f"Lazy visualization model resolution failed: {exc}")
             return None
 
-    def execute(self, input_data: VisualizationInput) -> VisualizationOutput:
-        """Generate visualization recommendation using LLM if available, otherwise heuristics."""
+    def execute(self, input_data: VisualizationInput, language: Optional[str] = None) -> VisualizationOutput:
+        """Generate visualization recommendation using LLM if available, otherwise heuristics.
+
+        ``language`` pins the human-readable output (``reason``) to a language
+        code; it falls back to ``agent_config.language`` when unset.
+        """
         if not isinstance(input_data, VisualizationInput):
             raise TypeError("VisualizationTool expects VisualizationInput as input data.")
 
@@ -96,7 +101,7 @@ class VisualizationTool(BaseTool):
         result = None
         if self.model:
             try:
-                result = self._llm_based_recommendation(dataframe)
+                result = self._llm_based_recommendation(dataframe, language=language)
             except Exception as exc:
                 logger.warning(f"LLM visualization recommendation failed, falling back to heuristics: {exc}")
 
@@ -110,11 +115,16 @@ class VisualizationTool(BaseTool):
         input_data: VisualizationInput,
         sql: Optional[str] = None,
         user_question: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> VisualizationWithContextOutput:
         """Generate visualization with data context (showing, period, filters, insight).
 
         Uses a single merged LLM call. Falls back to rule-based heuristics
         (without context metadata) if the LLM call fails.
+
+        ``language`` pins the human-readable output (``reason``, ``filters``,
+        ``insight``) to a language code; it falls back to
+        ``agent_config.language`` when unset.
         """
         if not isinstance(input_data, VisualizationInput):
             raise TypeError("VisualizationTool expects VisualizationInput as input data.")
@@ -147,7 +157,7 @@ class VisualizationTool(BaseTool):
         # Try context-aware LLM call
         if self.model:
             try:
-                result = self._llm_with_context(dataframe, sql, user_question)
+                result = self._llm_with_context(dataframe, sql, user_question, language=language)
                 if result is not None:
                     return result
             except Exception as exc:
@@ -172,6 +182,7 @@ class VisualizationTool(BaseTool):
         df: pd.DataFrame,
         sql: Optional[str],
         user_question: Optional[str],
+        language: Optional[str] = None,
     ) -> Optional[VisualizationWithContextOutput]:
         """Single LLM call returning chart config + context metadata."""
         prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
@@ -181,6 +192,7 @@ class VisualizationTool(BaseTool):
             data_preview=self._format_data_preview(df),
             sql=sql or "",
             user_question=user_question or "",
+            language_directive=self._language_directive(language),
         )
 
         response = self.model.generate_with_json_output(prompt)
@@ -229,6 +241,35 @@ class VisualizationTool(BaseTool):
         )
 
     # ------------------------------------------------------------------ #
+    # Response language
+    # ------------------------------------------------------------------ #
+    def _language_directive(self, language: Optional[str]) -> str:
+        """Render the ``response_language`` section, or ``""`` when unpinned.
+
+        This tool is a standalone LLM call with no system prompt, so the
+        directive every agentic node gets injected has to be restated in the
+        prompt itself — otherwise an English template is answered in English
+        regardless of the language the caller asked for.
+        """
+        raw = language or getattr(self.agent_config, "language", None)
+        code = str(raw).strip() if raw else ""
+        if not code:
+            return ""
+        language_name = resolve_language_name(code)
+        try:
+            section = get_prompt_manager(agent_config=self.agent_config).render_template(
+                "response_language",
+                version=None,
+                language_code=code,
+                language_name=language_name,
+            )
+        except Exception as exc:
+            # A render failure must not silently drop a pinned language.
+            logger.warning(f"Failed to render response_language template: {exc}")
+            return f"# Response Language\n- Use: {language_name} ({code})"
+        return section.strip() or f"# Response Language\n- Use: {language_name} ({code})"
+
+    # ------------------------------------------------------------------ #
     # Data preparation
     # ------------------------------------------------------------------ #
     def _convert_to_dataframe(self, data: Any) -> Optional[pd.DataFrame]:
@@ -253,13 +294,16 @@ class VisualizationTool(BaseTool):
     # ------------------------------------------------------------------ #
     # LLM recommendation
     # ------------------------------------------------------------------ #
-    def _llm_based_recommendation(self, df: pd.DataFrame) -> Optional[VisualizationOutput]:
+    def _llm_based_recommendation(
+        self, df: pd.DataFrame, language: Optional[str] = None
+    ) -> Optional[VisualizationOutput]:
         """Use LLM to recommend visualization configuration."""
         prompt = get_prompt_manager(agent_config=self.agent_config).render_template(
             self.PROMPT_TEMPLATE,
             version=self.prompt_version,
             columns_info=self._format_columns_info(df),
             data_preview=self._format_data_preview(df),
+            language_directive=self._language_directive(language),
         )
 
         response = self.model.generate_with_json_output(prompt)

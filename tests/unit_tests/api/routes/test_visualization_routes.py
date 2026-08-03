@@ -165,12 +165,14 @@ class TestServiceDelegation:
         valid_payload["chart_type"] = "Bar"
         valid_payload["sql"] = "SELECT date, sales FROM t"
         valid_payload["user_question"] = "Show me sales"
+        valid_payload["language"] = "zh-CN"
         client.post("/api/v1/data_visualization", json=valid_payload)
 
         kw = svc.visualization.generate.call_args.kwargs
         assert kw["chart_type"] == "Bar"
         assert kw["sql"] == "SELECT date, sales FROM t"
         assert kw["user_question"] == "Show me sales"
+        assert kw["language"] == "zh-CN"
 
     def test_optional_params_default_to_none(self, valid_payload):
         from datus.api.deps import get_datus_service
@@ -186,3 +188,4 @@ class TestServiceDelegation:
         assert kw["chart_type"] is None
         assert kw["sql"] is None
         assert kw["user_question"] is None
+        assert kw["language"] is None

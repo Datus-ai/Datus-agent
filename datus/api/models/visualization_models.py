@@ -21,6 +21,13 @@ class DataVisualizationRequest(BaseModel):
     chart_type: Optional[ChartType] = Field(None, description="Desired chart type; omit for auto-recommendation")
     sql: Optional[str] = Field(None, description="SQL query that produced the data (enables metadata extraction)")
     user_question: Optional[str] = Field(None, description="User's original question (improves insight quality)")
+    language: Optional[str] = Field(
+        None,
+        description=(
+            "Response language override for the generated text (reason / filters / insight), "
+            "e.g. 'en', 'zh'. Falls back to agent.language from yaml when unset."
+        ),
+    )
 
 
 # ── Response payloads ────────────────────────────────────────────────

@@ -16,3 +16,8 @@ Rules:
 - If comparing categories, use "Bar Chart".
 - If checking correlation between two numbers, use "Scatter plot".
 - If it cannot be confirmed, "chart_type" returns Unknown.
+{% if language_directive %}
+
+{{ language_directive }}
+- The value of "reason" must follow this language; column names and JSON keys stay as-is.
+{% endif %}

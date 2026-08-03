@@ -64,6 +64,7 @@ class DataVisualizationService:
         chart_type: Optional[str],
         sql: Optional[str],
         user_question: Optional[str],
+        language: Optional[str],
     ) -> str:
         """Compute a stable hash for the request payload."""
         payload = json.dumps(
@@ -73,6 +74,7 @@ class DataVisualizationService:
                 "chart_type": chart_type,
                 "sql": sql,
                 "user_question": user_question,
+                "language": language,
             },
             sort_keys=True,
             default=str,
@@ -96,16 +98,21 @@ class DataVisualizationService:
         chart_type: Optional[str] = None,
         sql: Optional[str] = None,
         user_question: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Return a chart recommendation dict, using cache when available."""
-        key = self._cache_key(csv_data, chart_type, sql, user_question)
+        """Return a chart recommendation dict, using cache when available.
+
+        ``language`` is part of the cache key: the same dataset asked for in
+        two languages must not share one cached answer.
+        """
+        key = self._cache_key(csv_data, chart_type, sql, user_question, language)
 
         cached = self._cache.get(key)
         if cached is not None:
             self._cache.move_to_end(key)
             return cached
 
-        result = self._generate_uncached(csv_data, chart_type, sql, user_question)
+        result = self._generate_uncached(csv_data, chart_type, sql, user_question, language)
         self._cache_set(key, result)
         return result
 
@@ -119,6 +126,7 @@ class DataVisualizationService:
         chart_type: Optional[str],
         sql: Optional[str],
         user_question: Optional[str],
+        language: Optional[str] = None,
     ) -> Dict[str, Any]:
         # ── Build DataFrame ───────────────────────────────────────
         try:
@@ -151,9 +159,9 @@ class DataVisualizationService:
         try:
             viz_input = VisualizationInput(data=df)
             if has_context:
-                result = tool.execute_with_context(viz_input, sql=sql, user_question=user_question)
+                result = tool.execute_with_context(viz_input, sql=sql, user_question=user_question, language=language)
             else:
-                result = tool.execute(viz_input)
+                result = tool.execute(viz_input, language=language)
         except Exception as exc:
             logger.error(f"Visualization tool execution failed: {exc}")
             return {
