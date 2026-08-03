@@ -16,7 +16,12 @@ import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agents import Agent, RunContextWrapper, Usage
-from agents.mcp import MCPServerStdioParams
+
+# ``create_static_tool_filter`` is aliased on purpose: this module defines its
+# own function of that name returning Datus' pydantic model, which the SDK does
+# not understand. ``ToolFilter`` is the SDK's own union and already covers None.
+from agents.mcp import MCPServerStdioParams, ToolFilter
+from agents.mcp import create_static_tool_filter as sdk_static_tool_filter
 from agents.mcp.server import MCPServerSse, MCPServerSseParams, MCPServerStreamableHttp, MCPServerStreamableHttpParams
 
 from datus.tools.mcp_tools.mcp_config import (
@@ -77,8 +82,15 @@ class MCPManager:
     - Status monitoring and health checks
     - Config file persistence
 
-    Configuration path:
-    - Fixed at {agent.home}/conf/.mcp.json (default: ~/.datus/conf/.mcp.json)
+    Two configuration sources, in this order:
+
+    1. ``agent_config.services["mcp_servers"]`` — servers supplied in memory by
+       the host (the SaaS backend assembles them from its database). Nothing is
+       read from or written to disk, so credentials never land on a shared
+       volume and there is no file/state to drift out of sync. Mutating calls
+       are refused: the host owns the definitions.
+    2. ``{agent.home}/conf/.mcp.json`` — the standalone/CLI source, editable
+       through this manager as before.
     """
 
     def __init__(
@@ -90,9 +102,9 @@ class MCPManager:
         """
         Initialize the MCP manager.
 
-        MCP configuration is fixed at {agent.home}/conf/.mcp.json.
-        Configure agent.home in agent.yml to change the root directory.
-        The path cannot be overridden to ensure consistent configuration management.
+        The file path is fixed at {agent.home}/conf/.mcp.json — configure
+        agent.home to move it. It is only consulted when the agent config does
+        not carry MCP servers itself.
         """
         from datus.utils.path_manager import get_path_manager
 
@@ -103,8 +115,32 @@ class MCPManager:
         self.config: MCPConfig = MCPConfig()
         self._lock = threading.Lock()
 
-        # Load existing config
-        self.load_config()
+        servers = self._servers_from_agent_config(agent_config)
+        self.externally_managed = servers is not None
+        if self.externally_managed:
+            self.config = MCPConfig.from_config_format({"mcpServers": servers})
+            logger.info(f"Loaded {len(self.config.servers)} MCP server(s) from the agent config")
+        else:
+            self.load_config()
+
+    @staticmethod
+    def _servers_from_agent_config(agent_config: Optional[Any]) -> Optional[dict]:
+        """Servers the host passed in memory, or None to fall back to the file.
+
+        An empty/absent section means "this host does not manage MCP", not
+        "this host manages zero servers" — otherwise simply having an agent
+        config would hide a CLI user's own `.mcp.json`.
+        """
+        services = getattr(agent_config, "services", None)
+        if services is None:
+            return None
+
+        # ServicesConfig dataclass in a loaded config; a plain dict in tests and
+        # in any host that assembles the section by hand.
+        servers = services.get("mcp_servers") if isinstance(services, dict) else getattr(services, "mcp_servers", None)
+        if isinstance(servers, dict) and servers:
+            return servers
+        return None
 
     def load_config(self) -> bool:
         """
@@ -158,6 +194,21 @@ class MCPManager:
             logger.error(f"Error saving config: {e}")
             return False
 
+    _EXTERNALLY_MANAGED_MSG = (
+        "MCP servers are managed by the host application for this project and cannot be changed here"
+    )
+
+    def _refuse_if_externally_managed(self) -> Optional[Tuple[bool, str]]:
+        """Block writes when the servers came from the agent config.
+
+        Persisting them would write a file that nothing reads back — the host
+        rebuilds the in-memory section on every request — so the edit would
+        look like it worked and quietly disappear.
+        """
+        if self.externally_managed:
+            return False, self._EXTERNALLY_MANAGED_MSG
+        return None
+
     def add_server(self, config: AnyMCPServerConfig) -> Tuple[bool, str]:
         """
         Add a new MCP server config.
@@ -168,6 +219,10 @@ class MCPManager:
         Returns:
             Tuple of (success, message)
         """
+        refusal = self._refuse_if_externally_managed()
+        if refusal:
+            return refusal
+
         try:
             with self._lock:
                 if config.name in self.config.servers:
@@ -195,6 +250,10 @@ class MCPManager:
         Returns:
             Tuple of (success, message)
         """
+        refusal = self._refuse_if_externally_managed()
+        if refusal:
+            return refusal
+
         try:
             with self._lock:
                 if name not in self.config.servers:
@@ -246,7 +305,7 @@ class MCPManager:
             return False, error_msg, {}
 
         # Create server instance
-        server_instance, connectivity_details = self._create_server_instance(config)
+        server_instance, connectivity_details = self._create_server_instance(config, with_tool_filter=False)
         if not server_instance:
             error_msg = connectivity_details.get("error", "Failed to create server instance")
             return False, f"Failed to create server instance for '{name}': {error_msg}", connectivity_details
@@ -270,7 +329,7 @@ class MCPManager:
                 return False, error_msg, []
 
             # Create server instance
-            server_instance, details = self._create_server_instance(config)
+            server_instance, details = self._create_server_instance(config, with_tool_filter=False)
             if not server_instance:
                 error_msg = details.get("error", "Failed to create server instance")
                 return False, f"Failed to connect to server '{server_name}': {error_msg}", []
@@ -339,6 +398,10 @@ class MCPManager:
 
     def set_tool_filter(self, server_name: str, tool_filter: ToolFilterConfig) -> Tuple[bool, str]:
         """Set tool filter configuration for a server."""
+        refusal = self._refuse_if_externally_managed()
+        if refusal:
+            return refusal
+
         try:
             with self._lock:
                 config = self.get_server_config(server_name)
@@ -371,26 +434,60 @@ class MCPManager:
             logger.error(f"Error getting tool filter for server {server_name}: {e}")
             return False, f"Error getting tool filter: {e}", None
 
-    def _create_server_instance(self, config: AnyMCPServerConfig) -> Tuple[Any, Dict[str, Any]]:
-        """Create MCP server instance based on config type."""
+    def _create_server_instance(
+        self, config: AnyMCPServerConfig, with_tool_filter: bool = True
+    ) -> Tuple[Any, Dict[str, Any]]:
+        """Create MCP server instance based on config type.
+
+        ``with_tool_filter`` binds the configured filter to the instance so an
+        agent handed this server can only ever see the allowed tools. The
+        management APIs pass ``False``: they must be able to report the
+        server's full surface (and do their own filtering afterwards), or a
+        blocked tool could never be re-enabled from the UI.
+        """
         try:
             # Expand environment variables in config
             config_dict = config.model_dump()
             expanded_config = expand_config_env_vars(config_dict)
 
+            tool_filter = self._sdk_tool_filter(config) if with_tool_filter else None
+
             if config.type == MCPServerType.STDIO:
-                return self._create_stdio_server(config, expanded_config)
+                return self._create_stdio_server(config, expanded_config, tool_filter)
             elif config.type == MCPServerType.SSE:
-                return self._create_sse_server(expanded_config)
+                return self._create_sse_server(expanded_config, tool_filter)
             elif config.type == MCPServerType.HTTP:
-                return self._create_http_server(expanded_config)
+                return self._create_http_server(expanded_config, tool_filter)
             else:
                 return None, {"error": f"Unsupported server type: {config.type}"}
         except Exception as e:
             logger.error(f"Failed to create server instance: {e}")
             return None, {"error": str(e)}
 
-    def _create_stdio_server(self, config: STDIOServerConfig, expanded_config: Dict[str, Any]):
+    def _sdk_tool_filter(self, config: AnyMCPServerConfig) -> ToolFilter:
+        """Translate our ``ToolFilterConfig`` into the SDK's static filter.
+
+        Without this the filter is only honoured by ``MCPManager.list_tools``
+        — i.e. by the management API — while an agent handed the raw server
+        instance still sees, and can call, every tool the server exposes.
+        """
+        tool_filter = getattr(config, "tool_filter", None)
+        if not tool_filter or not tool_filter.enabled:
+            return None
+
+        allowed = tool_filter.allowed_tool_names
+        blocked = tool_filter.blocked_tool_names
+        if allowed is None and blocked is None:
+            return None
+
+        # ``sdk_static_tool_filter``, not this module's same-named helper: the
+        # SDK only understands its own TypedDict (or a callable) and silently
+        # ends up exposing zero tools when handed anything else.
+        return sdk_static_tool_filter(allowed_tool_names=allowed, blocked_tool_names=blocked)
+
+    def _create_stdio_server(
+        self, config: STDIOServerConfig, expanded_config: Dict[str, Any], tool_filter: ToolFilter = None
+    ):
         """Create STDIO server instance."""
         env_vars = config.env or {}
 
@@ -400,7 +497,11 @@ class MCPManager:
             env=env_vars,
         )
 
-        server_instance = SilentMCPServerStdio(params=server_params, client_session_timeout_seconds=60)
+        server_instance = SilentMCPServerStdio(
+            params=server_params,
+            client_session_timeout_seconds=60,
+            tool_filter=tool_filter,
+        )
         details = {
             "command": expanded_config.get("command"),
             "args": expanded_config.get("args", []),
@@ -408,7 +509,7 @@ class MCPManager:
         }
         return server_instance, details
 
-    def _create_sse_server(self, expanded_config: Dict[str, Any]):
+    def _create_sse_server(self, expanded_config: Dict[str, Any], tool_filter: ToolFilter = None):
         """Create SSE server instance."""
         url = expanded_config.get("url")
         if not url:
@@ -419,11 +520,11 @@ class MCPManager:
         headers["Accept"] = "text/event-stream"
 
         server_params = MCPServerSseParams(url=url, headers=headers, timeout=timeout, sse_read_timeout=timeout)
-        server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60)
+        server_instance = MCPServerSse(params=server_params, client_session_timeout_seconds=60, tool_filter=tool_filter)
         details = {"url": url, "headers_count": len(headers) if headers else 0, "timeout": timeout}
         return server_instance, details
 
-    def _create_http_server(self, expanded_config: Dict[str, Any]):
+    def _create_http_server(self, expanded_config: Dict[str, Any], tool_filter: ToolFilter = None):
         """Create HTTP server instance."""
         url = expanded_config.get("url")
         if not url:
@@ -442,7 +543,9 @@ class MCPManager:
             sse_read_timeout=timeout,
             terminate_on_close=True,
         )
-        server_instance = MCPServerStreamableHttp(params=server_params, client_session_timeout_seconds=60)
+        server_instance = MCPServerStreamableHttp(
+            params=server_params, client_session_timeout_seconds=60, tool_filter=tool_filter
+        )
         details = {"url": url, "headers_count": len(merged_headers), "timeout": timeout}
         return server_instance, details
 
