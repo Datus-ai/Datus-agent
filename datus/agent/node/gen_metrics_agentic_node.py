@@ -635,7 +635,7 @@ class GenMetricsAgenticNode(AgenticNode):
             )
         normalized_status = status
         if normalized_status == "blocked":
-            if metric_file or self.osi_target_state.authored_metric_names:
+            if metric_file or self.osi_target_state.touched_metric_names:
                 raise RuntimeError(
                     "status='blocked' is only valid before metric authoring and with metric_file set to null."
                 )
@@ -660,7 +660,7 @@ class GenMetricsAgenticNode(AgenticNode):
             bound = target_state.bound if target_state is not None else None
             final_metric_file = (
                 str(bound["semantic_model_file"])
-                if bound is not None and target_state.authored_metric_names
+                if bound is not None and target_state.touched_metric_names
                 else metric_file
             )
             if normalized_status is None:
@@ -900,8 +900,9 @@ class GenMetricsAgenticNode(AgenticNode):
         self.generation_evidence.bind_metric_output_names(bindings)
 
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
-        if self.osi_target_state.authored_metric_names:
-            metric_names = list(self.osi_target_state.authored_metric_names)
+        if self.osi_target_state.touched_metric_names:
+            current_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
+            metric_names, _ = self.osi_target_state.partition_touched_metrics(current_names)
         else:
             metric_names = self.generation_tools._extract_metric_names_from_file(abs_metric_file)
             metric_definitions = self.generation_tools._extract_metric_definitions_from_file(abs_metric_file)
@@ -1072,12 +1073,12 @@ class GenMetricsAgenticNode(AgenticNode):
         del semantic_model_files
         normalized_status = status.strip().lower() if isinstance(status, str) else status
         bound = self.osi_target_state.bound
-        metric_names = list(self.osi_target_state.authored_metric_names)
+        touched_metric_names = list(self.osi_target_state.touched_metric_names)
 
         if normalized_status == "skipped":
-            if metric_file or metric_names:
+            if metric_file or touched_metric_names:
                 raise RuntimeError(
-                    "Metric generation cannot return status='skipped' after authoring metrics "
+                    "Metric generation cannot return status='skipped' after changing metrics "
                     "or with a non-null metric_file."
                 )
             if skip_reason != "not_a_metric":
@@ -1095,10 +1096,10 @@ class GenMetricsAgenticNode(AgenticNode):
             raise RuntimeError(
                 "OSI metric generation must bind an existing semantic model or return a supported blocked result."
             )
-        if not metric_names:
+        if not touched_metric_names:
             raise RuntimeError(
-                "No metrics were authored or scheduled for idempotent publish in the bound OSI semantic model. "
-                "Pass every requested metric through upsert_osi_metrics, including unchanged existing definitions."
+                "No metrics were changed or scheduled for idempotent publish in the bound OSI "
+                "semantic model. Pass requested changes through upsert_osi_metrics or delete_osi_metrics."
             )
 
         abs_metric_file = str(bound["absolute_path"])
@@ -1111,7 +1112,7 @@ class GenMetricsAgenticNode(AgenticNode):
             bound["semantic_model_name"],
             abs_metric_file,
         )
-        if self.generation_evidence.has_metric_kb_sync(metric_names) and artifact_validated:
+        if self.generation_evidence.has_metric_kb_sync(touched_metric_names) and artifact_validated:
             return
 
         if metric_file:
@@ -1127,19 +1128,24 @@ class GenMetricsAgenticNode(AgenticNode):
                 )
 
         if not self.generation_tools:
-            raise RuntimeError("Metrics were authored in a bound OSI target, but generation tools are unavailable.")
+            raise RuntimeError("Metrics were changed in a bound OSI target, but generation tools are unavailable.")
         self._set_metric_queryability_contracts_from_input(getattr(self, "input", None))
         self.generation_evidence.bind_metric_output_names(metric_output_bindings)
 
         if not getattr(self, "semantic_tools", None):
-            raise RuntimeError("Metrics were authored in a bound OSI target, but validate_semantic is unavailable.")
+            raise RuntimeError("Metrics were changed in a bound OSI target, but validate_semantic is unavailable.")
         model_names = self.generation_tools.extract_osi_model_names(abs_metric_file)
         if model_names != [bound["semantic_model_name"]]:
             raise RuntimeError("The bound OSI artifact no longer declares the selected semantic model.")
+        _, absent_metric_names = self.osi_target_state.partition_touched_metrics(
+            self.generation_tools.extract_osi_metric_names(abs_metric_file)
+        )
+        has_absent_touched_metric = bool(absent_metric_names)
         if not artifact_validated:
-            validation_result = self.semantic_tools.validate_semantic(
-                semantic_model_name=bound["semantic_model_name"],
-            )
+            validation_kwargs = {"semantic_model_name": bound["semantic_model_name"]}
+            if has_absent_touched_metric:
+                validation_kwargs["scope"] = "semantic_model"
+            validation_result = self.semantic_tools.validate_semantic(**validation_kwargs)
             self.generation_evidence.record_validation_result(validation_result)
             if not self._tool_succeeded(validation_result):
                 raise RuntimeError(

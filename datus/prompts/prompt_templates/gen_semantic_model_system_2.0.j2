@@ -49,6 +49,7 @@ The authoritative document shape you author against, including the Datus executi
 
 2. **Resolve the stable semantic model target**{% if authoring_format == "osi" %}
    - Classify involved tables into fact tables and dimension tables. Put the core fact table first.
+   - For an existing-YAML maintenance request, especially deletion when the exact model name or file is not supplied, call `list_existing_osi_semantic_models` first. Match the requested dataset against the complete live inventory by dataset name, source, description, and business meaning. If one model matches, pass its exact name to the planner; if several remain plausible, ask instead of guessing.
    - Call `plan_osi_semantic_model_target(semantic_model_name, business_domain, fact_tables, dimension_tables)` before any file mutation.
    - Naming priority is: explicit `semantic_model_name`; reuse an existing model containing the core fact table; inferred business domain; core fact table fallback.
    - Dimension tables never participate in the name. Adding a dimension to an existing model MUST reuse its current name and file.
@@ -68,14 +69,15 @@ The authoritative document shape you author against, including the Datus executi
 4. **Author the semantic model YAML**
    - Follow the `<required_skill>` authoring specification for document structure, field classification, descriptions, and time-dimension rules.
 {% if authoring_format == "osi" %}   - Call `upsert_osi_datasets` with the first non-empty dataset batch. It creates a missing target as a complete valid document and updates an existing target while preserving unrelated datasets, relationships, metrics, and model metadata.
-   - Read an existing target before mutation. Use `edit_file` only for relationships or model metadata that `upsert_osi_datasets` does not own. Never create an empty semantic-model shell or replace an existing model with a partial document.
+   - For an explicit request to remove named datasets, call `delete_osi_datasets`. Missing names are a successful `already_absent` cleanup. Delete only the requested datasets: do not infer cascade deletion of relationships or metrics. Use validation results and the user's intent to decide whether to edit relationships, restore or replace a dataset, or require dependent metric changes through `gen_metrics`. The final YAML is authoritative.
+   - Read an existing target before mutation. Use `edit_file` only for relationships or model metadata that the dataset tools do not own. Never create an empty semantic-model shell or replace an existing model with a partial document. To replace the last dataset, upsert its replacement before deleting the old one.
 {% else %}   - Save files with `write_file` under the path convention defined in the specification. If you forget the `{{ kind_subdir }}/` prefix the host silently normalizes it, but always include it so subsequent `read_file` / `edit_file` use the same path.
 {% endif %}
 
 5. **Validate (MANDATORY — DO NOT SKIP)**
 {% if authoring_format == "osi" %}   - Call `validate_semantic(scope="semantic_model", semantic_model_name="<semantic_model_name returned by plan_osi_semantic_model_target>")` without a custom `checks` subset. This runs the adapter's complete default profile on only the planned target model; never merge or rewrite another model to satisfy validation.
 {% else %}   - Call `validate_semantic(scope="semantic_model")`.
-{% endif %}   - If validation fails: analyze the error and actually fix the target before retrying the same targeted `validate_semantic`. In OSI mode, repair datasets and fields through `upsert_osi_datasets`; use `edit_file` only for relationships or model metadata while preserving the planned target. In MetricFlow mode, repair the target YAML with `edit_file`. Repeat until validation passes.
+{% endif %}   - If validation fails: analyze the error and actually fix the target before retrying the same targeted `validate_semantic`. In OSI mode, repair datasets and fields through `upsert_osi_datasets` or `delete_osi_datasets` according to user intent; use `edit_file` only for relationships or model metadata while preserving the planned target. In MetricFlow mode, repair the target YAML with `edit_file`. Repeat until validation passes.
    - **ABSOLUTE RULE**: You MUST NOT return the final JSON response until `validate_semantic` returns success.
 
 6. **Publish (ONLY AFTER VALIDATION PASSES)**

@@ -102,7 +102,7 @@ class TestGenMetricsAgenticNodeInit:
         node._get_system_prompt(template_context=node._prepare_template_context(node.input))
         tool_names = {tool.name for tool in node.tools}
 
-        assert {"read_file", "upsert_osi_metrics", "glob", "grep"}.issubset(tool_names)
+        assert {"read_file", "upsert_osi_metrics", "delete_osi_metrics", "glob", "grep"}.issubset(tool_names)
         assert {"write_file", "edit_file", "delete_file", "publish_semantic_model", "bash"}.isdisjoint(tool_names)
         assert "task" not in tool_names
         assert node.sub_agent_task_tool is None
@@ -113,6 +113,7 @@ class TestGenMetricsAgenticNodeInit:
         node._populate_tool_registry()
         assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("bind_osi_semantic_model_target") == "semantic_tools"
+        assert node.tool_registry.get("delete_osi_metrics") == "filesystem_tools"
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -225,7 +226,7 @@ class TestGenMetricsAgenticNodeExecution:
             },
             mode="bound",
         )
-        node.osi_target_state.authored_metric_names = ["old_metric"]
+        node.osi_target_state.touched_metric_names = ["old_metric", "old_deleted_metric"]
         node.generation_evidence.validation_passed = True
         node.generation_evidence.metric_kb_sync_passed = True
         evidence = node.generation_evidence
@@ -234,7 +235,7 @@ class TestGenMetricsAgenticNodeExecution:
         await node._before_stream(ctx)
 
         assert node.osi_target_state.bound is None
-        assert node.osi_target_state.authored_metric_names == []
+        assert node.osi_target_state.touched_metric_names == []
         assert node.generation_evidence is evidence
         assert node.generation_evidence == type(evidence)()
         assert node.generation_tools.generation_evidence is evidence
@@ -1491,7 +1492,7 @@ class TestExecuteStreamGenMetricsError:
             f"      - name: {metric_name}\n"
         )
         target.write_text(authored, encoding="utf-8")
-        node.osi_target_state.record_metric_write(target, authored.encode("utf-8"), [metric_name])
+        node.osi_target_state.record_metric_touch(target, authored.encode("utf-8"), [metric_name])
         return target
 
     def test_osi_finalizer_publishes_only_the_bound_target(self, real_agent_config, mock_llm_create):
@@ -1530,6 +1531,54 @@ class TestExecuteStreamGenMetricsError:
         node.generation_tools.publish_metrics.assert_called_once_with(
             metric_file=str(target),
         )
+
+    def test_osi_finalizer_validates_and_publishes_pure_deletion(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+
+        _set_global_semantic_adapter(real_agent_config, "osi")
+        model_dir = real_agent_config.path_manager.semantic_model_path(real_agent_config.current_datasource)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        target = model_dir / "shop.yml"
+        target.write_text(
+            json.dumps(
+                {
+                    "version": "0.2.0.dev0",
+                    "semantic_model": [
+                        {
+                            "name": "shop",
+                            "datasets": [{"name": "orders", "source": "commerce.orders"}],
+                            "metrics": [
+                                {
+                                    "name": "old_metric",
+                                    "description": "Old metric",
+                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "COUNT(*)"}]},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Delete old_metric")
+        assert node.osi_target_tools.bind_osi_semantic_model_target(str(target), "shop").success == 1
+        assert node.filesystem_func_tool.delete_osi_metrics(str(target), ["old_metric"]).success == 1
+
+        node.semantic_tools = MagicMock()
+        node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
+        node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        node._finalize_metric_generation(None, None, "generated")
+
+        node.semantic_tools.validate_semantic.assert_called_once_with(
+            semantic_model_name="shop",
+            scope="semantic_model",
+        )
+        node.semantic_tools.query_metrics.assert_not_called()
+        node.generation_tools.publish_metrics.assert_called_once_with(metric_file=str(target))
 
     def test_osi_retry_republishes_an_identical_existing_metric(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
@@ -1642,7 +1691,7 @@ class TestExecuteStreamGenMetricsError:
         node.generation_evidence.mark_kb_sync("metric", ["order_count"])
 
         assert node.filesystem_func_tool.upsert_osi_metrics(str(target), json.dumps([metrics[1]])).success == 1
-        assert node.osi_target_state.authored_metric_names == ["order_count", "revenue"]
+        assert node.osi_target_state.touched_metric_names == ["order_count", "revenue"]
         node.semantic_tools = MagicMock()
         node.semantic_tools.query_metrics = MagicMock(
             return_value=FuncToolResult(
@@ -1798,7 +1847,7 @@ class TestExecuteStreamGenMetricsError:
         assert result.status == "blocked"
         assert result.blocker_code == "semantic_model_target_invalid"
 
-    def test_osi_generated_result_requires_an_authored_metric(self, real_agent_config, mock_llm_create):
+    def test_osi_generated_result_requires_a_touched_metric(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         _set_global_semantic_adapter(real_agent_config, "osi")
@@ -1810,7 +1859,7 @@ class TestExecuteStreamGenMetricsError:
         result = node.osi_target_tools.bind_osi_semantic_model_target(str(target), "shop")
         assert result.success == 1
 
-        with pytest.raises(RuntimeError, match="No metrics were authored"):
+        with pytest.raises(RuntimeError, match="No metrics were changed"):
             node._finalize_metric_generation(None, None, "generated")
 
     def test_osi_finalizer_rejects_a_stale_bound_revision(self, real_agent_config, mock_llm_create):

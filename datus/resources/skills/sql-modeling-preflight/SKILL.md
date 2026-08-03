@@ -5,7 +5,7 @@ tags:
   - semantic-model
   - metrics
   - sql
-version: "1.0.0"
+version: "1.1.0"
 user_invocable: false
 disable_model_invocation: false
 allowed_agents:
@@ -35,7 +35,7 @@ maintenance and natural-language-only authoring skip this skill's tool call.
    - Reusable candidates and the existing metric catalog may reduce duplicate dependencies, but never remove a required final output.
    - For SQL-backed authoring, use returned `semantic_source_evidence` as the combined physical schema, relationship, and request-SQL field-usage inspection. Call `inspect_semantic_sources` only when this evidence is partial or additional physical tables are required.
 6. Use authored business names for datasets and metrics. Fingerprints and requirement identifiers are internal identities and must never become artifact names.
-7. For a query-backed requirement, pass its `dataset_requirement_id` to `upsert_osi_datasets` and omit `source`; the tool injects the exact SQL. Reuse an existing dataset only when its complete source SQL exactly matches. A same-named dataset with different SQL is a conflict; choose another meaningful name rather than overwriting it.
+7. For a query-backed requirement, pass its `dataset_requirement_id` to `upsert_osi_datasets` and omit `source`; the tool injects the exact SQL. Prefer reusing an existing dataset whose complete source SQL exactly matches. A valid current-request requirement may update a same-named query-backed dataset to the planner-owned SQL; without that evidence, different SQL remains a naming conflict.
 8. Follow only the active format's authoring skill. If the plan requires a capability that the active format cannot execute, return a concrete blocker instead of emitting instructions or artifacts for another format.
 
 The preflight is request-local. Do not depend on another node run or a cache created by `gen_semantic_model`, `gen_metrics`, `/build-kb`, CLI, or bootstrap.

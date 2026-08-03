@@ -105,6 +105,10 @@ _NORMAL_RULES = [
     _rule("filesystem_tools", "read_*", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "glob", PermissionLevel.ALLOW),
     _rule("filesystem_tools", "grep", PermissionLevel.ALLOW),
+    # Object-scoped deletes remain individually confirmable even in auto;
+    # unlike a general file delete they are exposed directly to authoring LLMs.
+    _rule("filesystem_tools", "delete_osi_metrics", PermissionLevel.ASK),
+    _rule("filesystem_tools", "delete_osi_datasets", PermissionLevel.ASK),
     # persistent memory: ALLOW. add_memory/edit_memory only touch a single
     # hidden, 2000-byte-capped MEMORY.md with no external reach — gating
     # benign self-notes behind a prompt would fire on routine "remember this"

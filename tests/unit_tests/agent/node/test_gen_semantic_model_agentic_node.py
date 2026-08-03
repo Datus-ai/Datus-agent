@@ -127,11 +127,13 @@ class TestGenSemanticModelAgenticNodeInit:
             "upsert_osi_datasets",
             "glob",
             "grep",
+            "list_existing_osi_semantic_models",
             "plan_osi_semantic_model_target",
         }.issubset(tool_names)
         assert {"write_file", "delete_file", "upsert_osi_metrics", "bash"}.isdisjoint(tool_names)
         assert "publish_semantic_model" in tool_names
         node._populate_tool_registry()
+        assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("plan_osi_semantic_model_target") == "semantic_tools"
 
     @pytest.mark.asyncio

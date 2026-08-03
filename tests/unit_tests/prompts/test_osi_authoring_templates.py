@@ -60,11 +60,15 @@ def test_semantic_model_template_osi_mode():
     assert "Semantic model target is not planned yet" in text
     assert "create it with `write_file`" not in text
     assert "Call `upsert_osi_datasets` with the first non-empty dataset batch" in text
+    assert "call `delete_osi_datasets`" in text
+    assert "do not infer cascade deletion" in text
     assert "It creates a missing target as a complete valid document" in text
     assert "Use `edit_file` only for relationships or model metadata" in text
     assert "repair datasets and fields through `upsert_osi_datasets`" in text
     assert "Never create an empty semantic-model shell" in text
     assert "Dimension tables never participate in the name" in text
+    assert "call `list_existing_osi_semantic_models` first" in text
+    assert "dataset name, source, description, and business meaning" in text
     assert "without a custom `checks` subset" in text
     assert "check_semantic_object_exists" not in text
     assert '"semantic_model_files"' in text  # same publish contract as metricflow
@@ -141,6 +145,9 @@ def test_metrics_template_osi_mode_contract():
     assert "OSI (Open Semantic Interchange) core semantic model" in text
     assert '"semantic_model_files": []' in text
     assert "upsert_osi_metrics" in text
+    assert "delete_osi_metrics" in text
+    assert "already_absent" in text
+    assert "deletion-only publication omit bindings" in text
     assert "subject_path" in text
     assert "locked_metadata.tags" not in text.split("Record the classification")[1].split("\n")[0]
     assert "Covered by an existing base metric" in text
