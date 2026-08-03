@@ -278,6 +278,25 @@ class TestAskMetricsAgenticNode:
         assert text_node.subject_tree_prompt_limit == text_node.SUBJECT_TREE_PROMPT_LIMIT
         assert bool_node.subject_tree_prompt_limit == bool_node.SUBJECT_TREE_PROMPT_LIMIT
 
+    def test_mcp_servers_attached_from_node_config(self, real_agent_config, mock_llm_create):
+        """A custom agent's ``mcp`` selection is attached by the AgenticNode base."""
+        tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
+        mock_server = MagicMock()
+
+        with patch(
+            "datus.agent.node.agentic_node.AgenticNode._setup_mcp_server_from_config",
+            return_value=mock_server,
+        ) as mock_setup:
+            node, _, _ = _make_node(
+                real_agent_config,
+                tree=tree,
+                node_config={"type": "ask_metrics", "mcp": "test_server"},
+                node_name="mcp_metric_agent",
+            )
+
+        mock_setup.assert_called_once_with("test_server")
+        assert node.mcp_servers == {"test_server": mock_server}
+
     def test_tools_follow_custom_configuration(self, real_agent_config, mock_llm_create):
         tree = {"Sales": {"Orders": {"metrics": ["revenue"]}}}
 

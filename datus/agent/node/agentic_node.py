@@ -197,6 +197,12 @@ class AgenticNode(Node):
         # Parse node configuration from agent.yml (available to all agentic nodes)
         self.node_config = self._parse_node_config(agent_config, self.get_node_name())
 
+        # Attach the MCP servers named in node_config["mcp"] unless the caller
+        # supplied explicit instances. Done here so every agentic node honors
+        # its configured selection — subclasses must not re-implement this.
+        if not self.mcp_servers:
+            self.mcp_servers = self._setup_mcp_servers()
+
         # Setup permission manager (after node_config is available)
         self._setup_permission_manager()
 
@@ -2178,6 +2184,59 @@ class AgenticNode(Node):
 
         logger.info(f"Parsed node configuration for '{node_name}': {config}")
         return config
+
+    def _setup_mcp_servers(self) -> Dict[str, Any]:
+        """Build MCP server instances from the comma-separated ``node_config["mcp"]``."""
+        mcp_servers = {}
+
+        config_value = self.node_config.get("mcp", "")
+        if not config_value:
+            return mcp_servers
+
+        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
+
+        for server_name in mcp_server_names:
+            try:
+                server = self._setup_mcp_server_from_config(server_name)
+                if server:
+                    mcp_servers[server_name] = server
+
+            except Exception as e:
+                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
+
+        logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
+        return mcp_servers
+
+    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
+        """Build one MCP server instance via MCPManager.
+
+        MCPManager resolves definitions from the in-memory
+        ``agent_config.services["mcp_servers"]`` first (SaaS host) and falls
+        back to ``{agent.home}/conf/.mcp.json`` (CLI/standalone).
+        """
+        try:
+            from datus.tools.mcp_tools.mcp_manager import MCPManager
+
+            mcp_manager = MCPManager(agent_config=self.agent_config)
+            server_config = mcp_manager.get_server_config(server_name)
+
+            if not server_config:
+                logger.warning(f"MCP server '{server_name}' not found in configuration")
+                return None
+
+            server_instance, details = mcp_manager._create_server_instance(server_config)
+
+            if server_instance:
+                logger.debug(f"Added MCP server '{server_name}' from configuration: {details}")
+                return server_instance
+            else:
+                error_msg = details.get("error", "Unknown error")
+                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
+            return None
 
     def _setup_permission_manager(self) -> None:
         """

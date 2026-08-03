@@ -10,7 +10,7 @@ chat interactions with markdown output, database/filesystem tool support,
 skills, and permissions. This node is fully independent from GenSQLAgenticNode.
 """
 
-from typing import Any, Dict, Literal, Optional
+from typing import Dict, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.gen_sql_agentic_node import prepare_template_context
@@ -115,9 +115,6 @@ class ChatAgenticNode(AgenticNode):
         # Execution mode: "interactive" enables ask_user tool; "workflow"
         # disables it so the agent never pauses for user input.
         self.execution_mode = execution_mode
-
-        # Initialize MCP servers based on configuration
-        self.mcp_servers = self._setup_mcp_servers()
 
         # Setup tools
         self.setup_tools()
@@ -339,56 +336,6 @@ class ChatAgenticNode(AgenticNode):
             return {"chat": chat_config["permissions"]}
 
         return {}
-
-    # ── MCP Servers ─────────────────────────────────────────────────────
-
-    def _setup_mcp_servers(self) -> Dict[str, Any]:
-        """Set up MCP servers based on configuration."""
-        mcp_servers = {}
-
-        config_value = self.node_config.get("mcp", "")
-        if not config_value:
-            return mcp_servers
-
-        mcp_server_names = [p.strip() for p in config_value.split(",") if p.strip()]
-
-        for server_name in mcp_server_names:
-            try:
-                server = self._setup_mcp_server_from_config(server_name)
-                if server:
-                    mcp_servers[server_name] = server
-
-            except Exception as e:
-                logger.error(f"Failed to setup MCP server '{server_name}': {e}")
-
-        logger.debug(f"Setup {len(mcp_servers)} MCP servers: {list(mcp_servers.keys())}")
-        return mcp_servers
-
-    def _setup_mcp_server_from_config(self, server_name: str) -> Optional[Any]:
-        """Setup MCP server from {agent.home}/conf/.mcp.json using mcp_manager."""
-        try:
-            from datus.tools.mcp_tools.mcp_manager import MCPManager
-
-            mcp_manager = MCPManager(agent_config=self.agent_config)
-            server_config = mcp_manager.get_server_config(server_name)
-
-            if not server_config:
-                logger.warning(f"MCP server '{server_name}' not found in configuration")
-                return None
-
-            server_instance, details = mcp_manager._create_server_instance(server_config)
-
-            if server_instance:
-                logger.debug(f"Added MCP server '{server_name}' from configuration: {details}")
-                return server_instance
-            else:
-                error_msg = details.get("error", "Unknown error")
-                logger.warning(f"Failed to create MCP server '{server_name}': {error_msg}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Failed to setup MCP server '{server_name}' from config: {e}")
-            return None
 
     # ── System Prompt ───────────────────────────────────────────────────
 
