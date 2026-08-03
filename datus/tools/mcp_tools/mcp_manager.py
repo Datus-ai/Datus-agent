@@ -16,10 +16,11 @@ import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agents import Agent, RunContextWrapper, Usage
-from agents.mcp import MCPServerStdioParams
 
-# Aliased on purpose: this module defines its own ``create_static_tool_filter``
-# returning Datus' pydantic model, which the SDK does not understand.
+# ``create_static_tool_filter`` is aliased on purpose: this module defines its
+# own function of that name returning Datus' pydantic model, which the SDK does
+# not understand. ``ToolFilter`` is the SDK's own union and already covers None.
+from agents.mcp import MCPServerStdioParams, ToolFilter
 from agents.mcp import create_static_tool_filter as sdk_static_tool_filter
 from agents.mcp.server import MCPServerSse, MCPServerSseParams, MCPServerStreamableHttp, MCPServerStreamableHttpParams
 
@@ -463,7 +464,7 @@ class MCPManager:
             logger.error(f"Failed to create server instance: {e}")
             return None, {"error": str(e)}
 
-    def _sdk_tool_filter(self, config: AnyMCPServerConfig):
+    def _sdk_tool_filter(self, config: AnyMCPServerConfig) -> ToolFilter:
         """Translate our ``ToolFilterConfig`` into the SDK's static filter.
 
         Without this the filter is only honoured by ``MCPManager.list_tools``
@@ -484,7 +485,9 @@ class MCPManager:
         # ends up exposing zero tools when handed anything else.
         return sdk_static_tool_filter(allowed_tool_names=allowed, blocked_tool_names=blocked)
 
-    def _create_stdio_server(self, config: STDIOServerConfig, expanded_config: Dict[str, Any], tool_filter=None):
+    def _create_stdio_server(
+        self, config: STDIOServerConfig, expanded_config: Dict[str, Any], tool_filter: ToolFilter = None
+    ):
         """Create STDIO server instance."""
         env_vars = config.env or {}
 
@@ -506,7 +509,7 @@ class MCPManager:
         }
         return server_instance, details
 
-    def _create_sse_server(self, expanded_config: Dict[str, Any], tool_filter=None):
+    def _create_sse_server(self, expanded_config: Dict[str, Any], tool_filter: ToolFilter = None):
         """Create SSE server instance."""
         url = expanded_config.get("url")
         if not url:
@@ -521,7 +524,7 @@ class MCPManager:
         details = {"url": url, "headers_count": len(headers) if headers else 0, "timeout": timeout}
         return server_instance, details
 
-    def _create_http_server(self, expanded_config: Dict[str, Any], tool_filter=None):
+    def _create_http_server(self, expanded_config: Dict[str, Any], tool_filter: ToolFilter = None):
         """Create HTTP server instance."""
         url = expanded_config.get("url")
         if not url:

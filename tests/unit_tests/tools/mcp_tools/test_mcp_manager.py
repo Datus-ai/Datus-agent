@@ -363,6 +363,45 @@ class TestMCPManagerAsync:
         assert tools == []
 
     @pytest.mark.asyncio
+    async def test_check_connectivity_asks_for_the_unfiltered_surface(self, tmp_path):
+        """Connectivity reports a tool count, so it must see every tool."""
+        manager = _make_manager(tmp_path)
+        config = STDIOServerConfig(name="srv", command="python")
+        manager.config.add_server(config)
+
+        with patch.object(manager, "_create_server_instance", return_value=(None, {"error": "fail"})) as create:
+            await manager.check_connectivity("srv")
+
+        create.assert_called_once_with(config, with_tool_filter=False)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_asks_for_the_unfiltered_surface(self, tmp_path):
+        """It filters afterwards, and `apply_filter=False` callers (the picker
+        UI) must be able to see a blocked tool — otherwise it could never be
+        re-enabled."""
+        manager = _make_manager(tmp_path)
+        config = STDIOServerConfig(name="srv", command="python")
+        manager.config.add_server(config)
+
+        with patch.object(manager, "_create_server_instance", return_value=(None, {"error": "fail"})) as create:
+            await manager.list_tools("srv")
+
+        create.assert_called_once_with(config, with_tool_filter=False)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_keeps_the_filter_bound(self, tmp_path):
+        """Defence in depth: call_tool already refuses a blocked name, and the
+        instance stays filtered on top of that."""
+        manager = _make_manager(tmp_path)
+        config = STDIOServerConfig(name="srv", command="python")
+        manager.config.add_server(config)
+
+        with patch.object(manager, "_create_server_instance", return_value=(None, {"error": "fail"})) as create:
+            await manager.call_tool("srv", "some_tool", {})
+
+        create.assert_called_once_with(config)
+
+    @pytest.mark.asyncio
     async def test_list_tools_success_with_filter(self, tmp_path):
         manager = _make_manager(tmp_path)
         tf = ToolFilterConfig(allowed_tool_names=["read"])
