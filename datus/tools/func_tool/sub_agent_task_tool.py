@@ -288,7 +288,11 @@ class SubAgentTaskTool:
             "properties": {
                 "type": {
                     "type": "string",
-                    "description": "The subagent type to delegate to",
+                    "description": (
+                        "Required. Select exactly one subagent name from the Available types "
+                        "listed in this tool description. Never omit this argument, even when "
+                        "the intended subagent is obvious from context."
+                    ),
                 },
                 "prompt": {
                     "type": "string",
@@ -349,9 +353,9 @@ class SubAgentTaskTool:
         from disk so the new ``prompt`` is appended to existing turn history.
         """
         if not type:
-            return FuncToolResult(success=0, error="Missing required parameter: type")
+            return FuncToolResult(success=0, error=self._missing_parameter_retry("type"))
         if not prompt:
-            return FuncToolResult(success=0, error="Missing required parameter: prompt")
+            return FuncToolResult(success=0, error=self._missing_parameter_retry("prompt"))
 
         try:
             return await self._execute_node(
@@ -360,6 +364,18 @@ class SubAgentTaskTool:
         except Exception as e:
             logger.error(f"Task tool execution error (type={type}): {e}")
             return FuncToolResult(success=0, error=f"Task execution failed: {str(e)}")
+
+    def _missing_parameter_retry(self, parameter: str) -> str:
+        """Build an actionable retry message for a missing required argument."""
+        available = self._get_available_types()
+        available_text = ", ".join(available) or "(none currently available)"
+        example_type = "gen_sql" if "gen_sql" in available else (available[0] if available else "<available type>")
+        return (
+            f"Missing required parameter: {parameter}. Retry task() with all required arguments. "
+            f"Set `type` to exactly one of these Available types: {available_text}. "
+            f'Example: task(type="{example_type}", prompt="<task or question>", '
+            'description="<short one-line goal>").'
+        )
 
     # ── node creation ─────────────────────────────────────────────────
 
@@ -1411,6 +1427,13 @@ class SubAgentTaskTool:
         available = self._get_available_types()
 
         lines = [
+            "Required call contract:",
+            "- Every task() call MUST include `type`, `prompt`, and `description`.",
+            "- `type` MUST be exactly one name from the Available types below. Never omit it, "
+            "even when the intended subagent is obvious from context.",
+            '- Call format: task(type="<available type>", prompt="<task or question>", '
+            'description="<short one-line goal>")',
+            "",
             "Delegate work to a specialized subagent when the requested deliverable belongs to that "
             "subagent's owning workflow or platform. Task complexity is not the deciding factor: "
             "a simple scheduled job, dashboard, persisted table, semantic model, metric definition, "
