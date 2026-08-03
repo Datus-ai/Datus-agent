@@ -167,6 +167,42 @@ class TestParseNodeConfig:
 
 
 # ---------------------------------------------------------------------------
+# TestSetupMcpServerFromConfig
+# ---------------------------------------------------------------------------
+
+
+class TestSetupMcpServerFromConfig:
+    @staticmethod
+    def _manager(server_config, instance, details):
+        manager = MagicMock()
+        manager.get_server_config.return_value = server_config
+        manager._create_server_instance.return_value = (instance, details)
+        return manager
+
+    def test_returns_instance_on_success(self):
+        node = _make_node()
+        server = MagicMock()
+        manager = self._manager(MagicMock(), server, {"transport": "http"})
+
+        with patch("datus.tools.mcp_tools.mcp_manager.MCPManager", return_value=manager):
+            assert node._setup_mcp_server_from_config("srv") is server
+        manager.get_server_config.assert_called_once_with("srv")
+
+    def test_returns_none_when_instance_creation_fails(self):
+        node = _make_node()
+        manager = self._manager(MagicMock(), None, {"error": "connect refused"})
+
+        with patch("datus.tools.mcp_tools.mcp_manager.MCPManager", return_value=manager):
+            assert node._setup_mcp_server_from_config("srv") is None
+
+    def test_returns_none_when_manager_raises(self):
+        node = _make_node()
+
+        with patch("datus.tools.mcp_tools.mcp_manager.MCPManager", side_effect=RuntimeError("bad config")):
+            assert node._setup_mcp_server_from_config("srv") is None
+
+
+# ---------------------------------------------------------------------------
 # TestResolveWorkspaceRoot
 # ---------------------------------------------------------------------------
 
