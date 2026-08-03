@@ -170,7 +170,7 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "If it returns code=semantic_model_required, run gen_semantic_model first and retry this task with "
         "the original prompt. In MetricFlow mode it may create or extend semantic-model prerequisites itself. "
         "Never run gen_metrics and gen_semantic_model concurrently. "
-        "Preserve pasted SQL or an explicitly named workspace CSV/SQL file path in the delegated prompt. "
+        "Preserve pasted SQL or an explicitly named workspace SQL file path in the delegated prompt. "
         "The parent may read the file and pass its contents, or this agent may call read_file on the preserved path. "
         "The metrics agent will preserve final business output expressions and treat base measures as dependencies. "
         "Returns JSON with {response, tokens_used}."

@@ -74,7 +74,7 @@ Determine the input mode:
 - **Natural language**: User describes business metrics → guide through interactive Q&A to define metrics
 
 {% if has_ask_user_tool %}
-**Reference SQL (optional)**: After inspecting the table with `describe_table`, use `ask_user` to ask if the user has any existing SQL queries for this table that show the aggregations they care about. If provided, parse the SQL to extract aggregation patterns (SUM, COUNT, AVG, etc.) as metric candidates. If the provided SQL contains no aggregation patterns (e.g., simple SELECT or detail query), inform the user that it can't be used as metric reference and proceed without it. If skipped, proceed with table structure and user description only.
+**Reference SQL (optional)**: After inspecting the table with `describe_table`, use `ask_user` to ask if the user has any existing SQL queries for this table that show the aggregations they care about. If SQL is provided at this point, submit every complete statement verbatim to `prepare_sql_modeling_plan`, then use only its `candidate_plan`, `output_contracts`, and `queryability_contracts` to identify metric candidates and dependencies. Do not parse or extract candidates from the SQL independently. If the completed plan contains no metric-producing output (e.g., a simple SELECT or detail query), inform the user that it can't be used as metric reference and proceed without it. If skipped, proceed with table structure and user description only.
 {% endif %}
 
 ### Step 2: Check Semantic Model Prerequisites
@@ -93,10 +93,10 @@ Before generating metrics, verify that semantic models exist for all involved ta
 ### Step 3: Define Metrics
 
 **For SQL-based input:**
-- Call `prepare_sql_modeling_plan` with every SQL copied verbatim and indexed metadata before writing files, then consume its existing metric catalog and candidate plan. Do not rediscover the same catalog through another tool.
+- Use the completed `prepare_sql_modeling_plan` result and its existing metric catalog, `candidate_plan`, `output_contracts`, and `queryability_contracts`. If SQL first arrived through the optional Reference SQL step, complete preflight there before writing files. Do not call a second extraction path.
 - Restrict filesystem reads/writes/reuse to `{{ kind_subdir }}/...`. Do not read, reuse, edit, or sync YAML files from sibling datasource directories; they are outside the active `{{ current_datasource }}` MetricFlow adapter scope.
 - Preserve final business output expressions as metric candidates.
-- Parse aggregations (SUM, COUNT, AVG, etc.) → dependency measures
+- Use the plan's dependency candidates for aggregations (SUM, COUNT, AVG, etc.) rather than reparsing the SQL.
 - Support aggregations that only feed another final KPI should be added/reused as semantic-model measures, not published as separate top-level metrics unless the user question or candidate plan identifies them as final KPIs.
 - Treat `support_measure_candidates` as dependency or comparison measures only. Do not publish a `metric:` block for them; add/reuse the measure only when another generated metric needs it.
 - Treat `llm_review_candidates` as possible metric evidence, not confirmed metrics. For each item, decide whether the row-level or ambiguous expression should be lifted into a reusable MetricFlow metric. Generate it only when the SQL, table/column semantics, and user question support that lift; otherwise record it as query-only/detail evidence and do not create a metric.

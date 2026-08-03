@@ -38,6 +38,7 @@ from datus.agent.node.gen_sql_agentic_node import GenSQLAgenticNode
 from datus.agent.node.sql_summary_agentic_node import SqlSummaryAgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
 from datus.schemas.action_history import ActionHistory, ActionHistoryManager, ActionRole, ActionStatus
+from datus.tools.func_tool.generation_evidence import GenerationEvidence
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -322,7 +323,12 @@ class TestGenSemanticModelBuildSuccessResultFallback:
 
     def test_falls_back_to_raw_output_dict(self):
         # ``raw_output`` is a dict — taken verbatim, then stringified for output.
-        node = _bare_node(GenSemanticModelAgenticNode, agent_config=None, sql_modeling_tools=None)
+        node = _bare_node(
+            GenSemanticModelAgenticNode,
+            agent_config=None,
+            sql_modeling_tools=None,
+            generation_evidence=GenerationEvidence(),
+        )
         ctx = self._build_ctx_with_input(last_successful_output={"raw_output": {"semantic_model_files": []}})
 
         # Stub the parser + storage side effect so the test focuses on the
@@ -336,7 +342,12 @@ class TestGenSemanticModelBuildSuccessResultFallback:
 
     def test_falls_back_to_str_of_last_successful_output(self):
         # ``raw_output`` falsy and not a dict — ``str(last_successful_output)``.
-        node = _bare_node(GenSemanticModelAgenticNode, agent_config=None, sql_modeling_tools=None)
+        node = _bare_node(
+            GenSemanticModelAgenticNode,
+            agent_config=None,
+            sql_modeling_tools=None,
+            generation_evidence=GenerationEvidence(),
+        )
         ctx = self._build_ctx_with_input(last_successful_output={"raw_output": ""})
         node._extract_semantic_model_and_output_from_response = lambda payload: ([], None)  # type: ignore[assignment]
         node._finalize_semantic_model_generation = lambda **_kw: None  # type: ignore[assignment]
@@ -352,7 +363,12 @@ class TestGenSemanticModelBuildSuccessResultFallback:
 
 class TestGenMetricsBuildSuccessResultFallback:
     def test_falls_back_to_raw_output_dict(self):
-        node = _bare_node(GenMetricsAgenticNode, agent_config=None, sql_modeling_tools=None)
+        node = _bare_node(
+            GenMetricsAgenticNode,
+            agent_config=None,
+            sql_modeling_tools=None,
+            generation_evidence=GenerationEvidence(),
+        )
         node._extract_metric_and_output_from_response = lambda payload: (  # type: ignore[assignment]
             None,
             None,
@@ -367,7 +383,12 @@ class TestGenMetricsBuildSuccessResultFallback:
         assert "metric_file" in result.response
 
     def test_falls_back_to_str_of_last_successful_output(self):
-        node = _bare_node(GenMetricsAgenticNode, agent_config=None, sql_modeling_tools=None)
+        node = _bare_node(
+            GenMetricsAgenticNode,
+            agent_config=None,
+            sql_modeling_tools=None,
+            generation_evidence=GenerationEvidence(),
+        )
         node._extract_metric_and_output_from_response = lambda payload: (  # type: ignore[assignment]
             None,
             None,

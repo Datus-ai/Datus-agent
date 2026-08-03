@@ -94,6 +94,10 @@ class TestAvailableTools:
         assert generation_tools.generation_evidence.ensure_sql_modeling_plan_resolved() is False
 
         generation_tools.generation_evidence.mark_sql_modeling_preflight_attempted()
+        publish_result = generation_tools.publish_metrics("unused.yml")
+        assert publish_result.success == 0
+        assert "prepare_sql_modeling_plan" in publish_result.error
+
         with pytest.raises(DatusException, match="prepare_sql_modeling_plan") as exc_info:
             generation_tools.generation_evidence.ensure_sql_modeling_plan_resolved()
         assert exc_info.value.code is ErrorCode.TOOL_INVALID_INPUT

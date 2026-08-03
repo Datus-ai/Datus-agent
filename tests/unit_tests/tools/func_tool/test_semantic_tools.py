@@ -562,18 +562,6 @@ class TestSemanticToolsGenerationEvidence:
         assert contracts[1]["dimension_hints"] == ["y"]
         assert contracts[1]["metric_hints"] == ["n"]
 
-    def test_extracts_contracts_from_structured_success_story_sources(self):
-        contracts = _queryability_contracts(
-            "SELECT a AS x, SUM(b) AS m FROM t GROUP BY a",
-            "SELECT c AS y, SUM(d) AS n FROM u GROUP BY c",
-        )
-
-        assert len(contracts) == 2
-        assert contracts[0]["dimension_hints"] == ["x"]
-        assert contracts[0]["metric_hints"] == ["m"]
-        assert contracts[1]["dimension_hints"] == ["y"]
-        assert contracts[1]["metric_hints"] == ["n"]
-
     def test_extracts_contract_from_final_select_not_grouped_cte(self):
         contracts = _queryability_contracts(
             """

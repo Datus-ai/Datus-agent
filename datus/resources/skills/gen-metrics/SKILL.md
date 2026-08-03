@@ -17,7 +17,7 @@ Guide the user through metric generation using natural language business descrip
 
 ## Phase 0: SQL Modeling Preflight
 
-For requests that directly contain SQL or explicitly name a readable SQL/CSV file, follow the required `sql-modeling-preflight` skill and call `prepare_sql_modeling_plan` before other artifact reads or any writes. Reading an explicitly named input file is allowed before preflight: call `read_file`, then copy every complete SQL statement from its result into the tool call. Existing-YAML maintenance and natural-language-only authoring skip this tool call. For SQL-backed requests, use the returned existing metric catalog and authoritative candidate plan throughout the remaining phases to:
+For requests that directly contain SQL or explicitly name a readable workspace SQL file, follow the required `sql-modeling-preflight` skill and call `prepare_sql_modeling_plan` before other artifact reads or any writes. Reading an explicitly named SQL file is allowed before preflight: the parent may read it and pass its contents, or this agent may call `read_file`; then copy every complete SQL statement from that content into the tool call. Existing-YAML maintenance and natural-language-only authoring skip this tool call. For SQL-backed requests, use the returned existing metric catalog and authoritative candidate plan throughout the remaining phases to:
 - **Skip redundant work** — don't recreate metrics that already exist. "Already exists" requires the same aggregation AND the same window/offset semantics: a cumulative/window/period-over-period variant (e.g. `running_x`, `moving_n_x`, `previous_period_x`) is a new metric even when its base metric `x` is already published
 - **Reuse existing measures** — reference measures from existing models instead of creating duplicates
 - **Detect conflicts** — warn the user if a proposed metric name collides with an existing one
@@ -32,7 +32,7 @@ Analyze the user's request and confirm the generation scope before proceeding. W
 ### Input Mode Detection
 
 - **Single mode**: User describes one metric or provides one SQL → follow Step 1a–1d below
-- **Batch mode**: The current task directly contains multiple SQL queries or explicitly names a readable CSV/SQL file → follow Step 1-batch below
+- **Batch mode**: The current task directly contains multiple SQL queries or explicitly names a readable workspace SQL file → follow Step 1-batch below
 
 ### Single Mode: Step 1a–1d
 
@@ -43,7 +43,7 @@ Analyze the user's request and confirm the generation scope before proceeding. W
 
 When `ask_user` is not available, skip this question and infer SQL/aggregation context from the user's request, attached files, or discovered query/table evidence. If that is not enough, stop and explain the missing information instead of calling `ask_user`.
 
-If the user provides SQL, parse it to extract:
+If the user provides SQL, use only the completed preflight's `candidate_plan`, `output_contracts`, and `queryability_contracts` to identify:
 - Final business output expressions (e.g., `SUM(amount) / COUNT(DISTINCT user_id) AS arppu` → candidate metric `arppu`)
 - Aggregation functions + columns that the final metric depends on (e.g., `SUM(amount)` → candidate measure `total_amount`, `COUNT(*)` → candidate measure `record_count`)
 - GROUP BY columns → recommended dimensions
@@ -59,9 +59,9 @@ If the user skips, proceed to Step 1c using only table structure and the user's 
 
 ### Batch Mode: Step 1-batch
 
-**Step 1-batch-a: Parse SQL queries**
-- SQL statements may be pasted directly or stored in a CSV/SQL file explicitly named by the user.
-- For a named input file inside the filesystem sandbox, call `read_file` before preflight. If the path is outside this agent's sandbox, the caller must include the file content in the delegated task instead.
+**Step 1-batch-a: Collect SQL queries**
+- SQL statements may be pasted directly or stored in a workspace SQL file explicitly named by the user.
+- For a named workspace SQL file, the parent may read it and pass its contents, or this agent may call `read_file` on the preserved path before preflight.
 - Copy every complete SQL statement from the request or `read_file` result verbatim into the preflight tool. Prefer one call; use `finalize=false` batches only when the input is large, then finalize the last batch. Do not rewrite, normalize, or split a statement across batches.
 - Call `describe_table` for each unique table found in the SQL queries
 
