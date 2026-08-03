@@ -470,6 +470,44 @@ class TestSemanticFormatters:
         assert out == "selected region,platform,channel; warnings UNEQUAL_WINDOWS"
         assert len(out) > SUMMARY_TEXT_MAX_CHARS
 
+    def test_attribution_analyze_partial_dimensions(self):
+        out = _summarize(
+            "attribution_analyze",
+            {
+                "success": 1,
+                "result": {
+                    "candidate_dimensions": ["organization", "channel", "product"],
+                    "per_dimension": {
+                        "organization": {"error": {"code": "DIMENSION_QUERY_FAILED"}},
+                        "channel": {"contributions": []},
+                        "product": {"truncated": True},
+                    },
+                    "warnings": [
+                        {"code": "DIMENSION_ANALYSIS_FAILED"},
+                        {"code": "HIGH_CARDINALITY_DIMENSION"},
+                    ],
+                    "dimension_analysis_status": "partial",
+                },
+            },
+        )
+
+        assert out == "1/3 dimensions analyzed, 1 failed, 1 truncated, 2 warnings"
+
+    def test_attribution_analyze_totals_only(self):
+        out = _summarize(
+            "attribution_analyze",
+            {
+                "success": 1,
+                "result": {
+                    "candidate_dimensions": [],
+                    "per_dimension": {},
+                    "dimension_analysis_status": "not_requested",
+                },
+            },
+        )
+
+        assert out == "totals compared"
+
 
 class TestGenerationFormatters:
     def test_check_object_exists_true(self):

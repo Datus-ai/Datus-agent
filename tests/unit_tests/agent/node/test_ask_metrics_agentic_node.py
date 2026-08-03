@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from datus.configuration.node_type import NodeType
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 
 
 def _fake_function_tool(method):
@@ -116,6 +116,14 @@ class TestAskMetricsAgenticNode:
         assert "## Attribution Playbook" in prompt
         assert "typed `filter_hint`" in prompt
         assert "Read contribution details only from `per_dimension`" in prompt
+        assert "OSI half-open `[start, end)` semantics" in prompt
+        assert "`query_metrics.time_end` is inclusive" not in prompt
+        assert "Read `dimension_analysis_status`" in prompt
+        assert "`error` set to null and `truncated` set to false" in prompt
+        assert "disclose every failed or truncated dimension" in prompt
+        assert "With `unavailable`, report the total change" in prompt
+        assert "failed or was truncated is not a low-scoring dimension" in prompt
+        assert "`DIMENSION_ANALYSIS_FAILED`" in prompt
         assert "Do not invent helper metrics" in prompt
         assert "do not add a `where` filter that enumerates dimension values" in prompt
         assert "Query complete metric results by default" in prompt
@@ -130,6 +138,18 @@ class TestAskMetricsAgenticNode:
         assert "`extra.time_granularities`" in prompt
         assert "Never pass a `time_granularity` outside" in prompt
         assert node.subject_tree_prompt_limit == 100
+
+    def test_query_metrics_tool_schema_exposes_osi_half_open_time_range(self):
+        from datus.agent.node.ask_metrics_agentic_node import AskMetricsAgenticNode
+
+        node = object.__new__(AskMetricsAgenticNode)
+        schema = trans_to_function_tool(node.query_metrics).params_json_schema
+
+        start_description = schema["properties"]["time_start"]["description"].lower()
+        end_description = schema["properties"]["time_end"]["description"].lower()
+        assert "inclusive" in start_description
+        assert "exclusive" in end_description
+        assert "2024-02-01" in end_description
 
     def test_reference_date_is_injected_into_runtime_context(self, real_agent_config, mock_llm_create):
         from datus.schemas.ask_metrics_agentic_node_models import AskMetricsNodeInput

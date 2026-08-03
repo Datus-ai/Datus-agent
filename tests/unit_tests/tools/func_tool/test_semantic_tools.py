@@ -749,6 +749,15 @@ def mock_adapter(semantic_tools):
 class TestQueryMetricsCompression:
     """Test cases for query_metrics with DataCompressor integration."""
 
+    def test_tool_schema_exposes_osi_half_open_time_range(self, semantic_tools):
+        schema = trans_to_function_tool(semantic_tools.query_metrics).params_json_schema
+
+        start_description = schema["properties"]["time_start"]["description"].lower()
+        end_description = schema["properties"]["time_end"]["description"].lower()
+        assert "inclusive" in start_description
+        assert "exclusive" in end_description
+        assert "2024-02-01" in end_description
+
     def test_query_metrics_success_with_compression(self, semantic_tools, mock_adapter):
         """Test that query_metrics returns compressed data on success."""
         query_result = QueryResult(
@@ -1282,7 +1291,7 @@ class TestQueryMetricsCompression:
                 dimensions=["region"],
                 path=["Finance"],
                 time_start="2024-01-01",
-                time_end="2024-01-31",
+                time_end="2024-02-01",
                 time_granularity="day",
                 where="region = 'US'",
                 limit=100,
@@ -1296,7 +1305,7 @@ class TestQueryMetricsCompression:
                 dimensions=["region"],
                 path=["Finance"],
                 time_start="2024-01-01",
-                time_end="2024-01-31",
+                time_end="2024-02-01",
                 time_granularity="day",
                 where="region = 'US'",
                 limit=100,
@@ -2378,24 +2387,27 @@ class TestAttributionAnalyze:
         schema = trans_to_function_tool(tool.attribution_analyze).params_json_schema
 
         assert {"where", "path", "max_dimension_values"}.issubset(schema["properties"])
+        assert "exclusive" in schema["properties"]["baseline_end"]["description"].lower()
+        assert "exclusive" in schema["properties"]["current_end"]["description"].lower()
 
     def test_tool_description_is_explicitly_non_causal(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter
 
-        description = trans_to_function_tool(tool.attribution_analyze).description.lower()
+        description = " ".join(trans_to_function_tool(tool.attribution_analyze).description.lower().split())
 
         assert "descriptive dimension analysis" in description
         assert "do not establish causation" in description
         assert "root cause analysis" not in description
+        assert "failed and truncated dimensions are excluded" in description
 
     def test_no_attribution_tool_returns_error(self, semantic_tools_ext):
         result = semantic_tools_ext.attribution_analyze(
             metric_name="revenue",
             candidate_dimensions=["region"],
             baseline_start="2024-01-01",
-            baseline_end="2024-01-07",
+            baseline_end="2024-01-08",
             current_start="2024-01-08",
-            current_end="2024-01-14",
+            current_end="2024-01-15",
         )
         assert result.success == 0
         assert "semantic adapter" in result.error.lower()
@@ -2418,9 +2430,9 @@ class TestAttributionAnalyze:
                 metric_name="revenue",
                 candidate_dimensions=["region"],
                 baseline_start="2024-01-01",
-                baseline_end="2024-01-07",
+                baseline_end="2024-01-08",
                 current_start="2024-01-08",
-                current_end="2024-01-14",
+                current_end="2024-01-15",
                 anomaly_context={"rule": "3sigma", "observed_change_pct": 20.0},
                 where="region = 'US'",
                 path=["sales"],
@@ -2433,9 +2445,9 @@ class TestAttributionAnalyze:
             metric_name="revenue",
             candidate_dimensions=["region"],
             baseline_start="2024-01-01",
-            baseline_end="2024-01-07",
+            baseline_end="2024-01-08",
             current_start="2024-01-08",
-            current_end="2024-01-14",
+            current_end="2024-01-15",
             anomaly_context={"rule": "3sigma", "observed_change_pct": 20.0},
             max_selected_dimensions=3,
             top_n_values=10,
@@ -2450,20 +2462,36 @@ class TestAttributionAnalyze:
         tool._attribution_tool = mock_attribution
 
         mock_result = Mock()
-        mock_result.model_dump.return_value = {"dimension_ranking": []}
+        mock_result.model_dump.return_value = {
+            "dimension_ranking": [],
+            "dimension_analysis_status": "unavailable",
+            "per_dimension": {
+                "region": {
+                    "error": {
+                        "code": "DIMENSION_QUERY_FAILED",
+                        "message": "region query failed",
+                    }
+                }
+            },
+        }
 
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=mock_result):
             result = tool.attribution_analyze(
                 metric_name="revenue",
                 candidate_dimensions=["region"],
                 baseline_start="2024-01-01",
-                baseline_end="2024-01-07",
+                baseline_end="2024-01-08",
                 current_start="2024-01-08",
-                current_end="2024-01-14",
+                current_end="2024-01-15",
                 anomaly_context=None,
             )
 
         assert result.success == 1
+        assert result.result["dimension_analysis_status"] == "unavailable"
+        assert result.result["per_dimension"]["region"]["error"] == {
+            "code": "DIMENSION_QUERY_FAILED",
+            "message": "region query failed",
+        }
 
     def test_exception_returns_failure(self, semantic_tools_with_adapter):
         tool, mock_adapter = semantic_tools_with_adapter
@@ -2475,9 +2503,9 @@ class TestAttributionAnalyze:
                 metric_name="revenue",
                 candidate_dimensions=["region"],
                 baseline_start="2024-01-01",
-                baseline_end="2024-01-07",
+                baseline_end="2024-01-08",
                 current_start="2024-01-08",
-                current_end="2024-01-14",
+                current_end="2024-01-15",
             )
 
         assert result.success == 0
@@ -2502,9 +2530,9 @@ class TestAttributionAnalyze:
                 metric_name="revenue",
                 candidate_dimensions=["region"],
                 baseline_start="2024-01-01",
-                baseline_end="2024-01-07",
+                baseline_end="2024-01-08",
                 current_start="2024-01-08",
-                current_end="2024-01-14",
+                current_end="2024-01-15",
             )
 
         assert result.success == 0

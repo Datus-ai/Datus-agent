@@ -35,7 +35,7 @@ Use the narrow metric workflow below:
 - Use the `Current date` from the runtime context as the reference date for relative or year-omitted time expressions.
 - For date periods without an explicit year, use the year from `Current date` unless the user explicitly states another year or a relative year.
 - Prefer closed calendar periods for standalone period mentions. Use open-ended ranges only when the user explicitly asks for cumulative or since-style results.
-- `query_metrics.time_end` is inclusive. For a closed calendar period, pass the inclusive final date of that period.
+- `query_metrics` time ranges use OSI half-open `[start, end)` semantics: `time_start` is inclusive and `time_end` is exclusive. For example, query June with `[2026-06-01, 2026-07-01)`, and query the June 30 snapshot with `[2026-06-30, 2026-07-01)`. Never use the same start and end for a single day.
 - Choose grouping and filtering dimensions by semantic meaning. If the user names a concrete field, ID, code, or dimension key, pass that exact dimension and do not add sibling display/name/label dimensions. Use display or descriptive dimensions only when the user's wording explicitly asks for a display value, name, or label.
 - When the user asks to group by all values of a dimension, do not add a `where` filter that enumerates dimension values unless the user explicitly asks for a subset. The grouped metric query already returns all dimension values.
 - Grouping by a joined dimension always uses matched-rows join semantics: fact rows that cannot match the requested dimension are excluded. No other join semantics are available:
@@ -59,8 +59,10 @@ Use the narrow metric workflow below:
 - Before attribution, use `query_metrics` at an appropriate time grain to confirm the comparison windows, observed change, and data coverage.
 - Treat attribution as descriptive change decomposition; it does not establish causation.
 - Use `get_dimensions` to choose 3-5 low-cardinality categorical candidates. Exclude time dimensions and numeric measures, IDs, or high-cardinality fields unless the user explicitly needs one.
+- `attribution_analyze` uses the same OSI half-open `[start, end)` time-range contract as `query_metrics`.
 - Use equal-length baseline and current windows. If the result contains `UNEQUAL_WINDOWS`, disclose that values were not normalized before comparing them.
 - Read contribution details only from `per_dimension`. Never compare or add contribution percentages across different dimensions. `top_dimension_values` is a legacy compatibility field and must not be used for analysis.
+- Read `dimension_analysis_status` before interpreting dimensions. With `partial`, use only dimensions whose `per_dimension` entry has `error` set to null and `truncated` set to false, and disclose every failed or truncated dimension. With `unavailable`, report the total change but do not give a dimension-attribution conclusion. A dimension omitted from `dimension_ranking` because it failed or was truncated is not a low-scoring dimension.
 - To drill into a top value, construct `where` only from its typed `filter_hint` and retain every parent filter from prior drill-down calls:
   - `operator: "is_null"` means `<dimension> IS NULL`.
   - Numeric values are not quoted.
@@ -70,6 +72,7 @@ Use the narrow metric workflow below:
   - With `NO_DATA_*`, `NULL_TOTAL_*`, or `ZERO_OR_NO_DATA_*`, do not give an attribution conclusion; first confirm coverage with `query_metrics`.
   - With `ZERO_TOTAL_DELTA_WITH_COMPONENT_CHANGES`, explain the structural change using absolute component deltas, not contribution percentages.
   - With `HIGH_CARDINALITY_DIMENSION`, attribute a coarser dimension first and use `where` to narrow the follow-up query.
+  - With `DIMENSION_ANALYSIS_FAILED`, disclose the affected dimension and its structured error; continue with successful dimensions only.
 
 ## Period-Over-Period Metric Queries
 
