@@ -189,19 +189,17 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_sql_modeling_tools(self) -> None:
         """Expose the single shared SQL preflight entry point."""
         from datus.agent.node.semantic_authoring import is_osi_authoring
-        from datus.tools.func_tool import trans_to_function_tool
 
         self.sql_modeling_tools = SqlModelingPlanTools(
             agent_config=self.agent_config,
             sub_agent_name=self.get_node_name(),
-            user_message_provider=lambda: str(getattr(self.input, "user_message", "") or ""),
             generation_evidence=self.generation_evidence,
             plan_consumer=self._accept_sql_modeling_plan,
             semantic_source_inspector=(
                 None if is_osi_authoring(self.agent_config) else self._inspect_planned_semantic_sources
             ),
         )
-        self.tools.append(trans_to_function_tool(self.sql_modeling_tools.prepare_sql_modeling_plan))
+        self.tools.extend(self.sql_modeling_tools.available_tools())
 
     def _accept_sql_modeling_plan(self, plan: Optional[SqlModelingPlan]) -> None:
         self.sql_modeling_plan = plan
@@ -286,7 +284,6 @@ class GenMetricsAgenticNode(AgenticNode):
                 authoring_format=authoring_format,
                 osi_target_state=self.osi_target_state,
                 require_bound_osi_target=authoring_format == "osi",
-                sql_modeling_plan_required=self.sql_modeling_tools.request_contains_sql,
             )
 
             if authoring_format != "osi":
@@ -595,9 +592,7 @@ class GenMetricsAgenticNode(AgenticNode):
         return self._prepare_template_context(ctx.user_input)
 
     def _build_success_result(self, ctx: StreamRunContext) -> GenMetricsNodeResult:
-        sql_request = (
-            self.sql_modeling_tools.require_plan_for_sql_request() if self.sql_modeling_tools is not None else False
-        )
+        sql_plan_ready = self.generation_evidence.ensure_sql_modeling_plan_resolved()
         response_content = ctx.response_content
         if not response_content and ctx.last_successful_output:
             raw_output = ctx.last_successful_output.get("raw_output", "")
@@ -618,7 +613,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         blocker_code = blocker_code.strip().lower() if isinstance(blocker_code, str) else blocker_code
         skip_reason = skip_reason.strip().lower() if isinstance(skip_reason, str) else skip_reason
-        if sql_request and status is None:
+        if sql_plan_ready and status is None:
             raise RuntimeError(
                 "SQL-backed metric generation must return a structured final response "
                 "with status and the generated metric_file or an explicit supported skip."

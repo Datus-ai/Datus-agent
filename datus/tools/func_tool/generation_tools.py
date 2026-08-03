@@ -10,7 +10,7 @@ import tempfile
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import yaml
 from agents import Tool
@@ -172,7 +172,6 @@ class GenerationTools:
         authoring_format: Optional[str] = None,
         osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
         require_bound_osi_target: bool = False,
-        sql_modeling_plan_required: Optional[Callable[[], bool]] = None,
     ):
         self.agent_config = agent_config
         self.generation_evidence = generation_evidence or GenerationEvidence()
@@ -194,12 +193,6 @@ class GenerationTools:
         self._semantic_table_object_index: Optional[Dict[str, Dict[str, object]]] = None
         self.osi_target_state = osi_target_state
         self.require_bound_osi_target = require_bound_osi_target
-        self.sql_modeling_plan_required = sql_modeling_plan_required
-
-    def _require_sql_modeling_plan_if_needed(self) -> None:
-        """Enforce SQL preflight only for requests that actually contain SQL."""
-        if self.sql_modeling_plan_required is not None and self.sql_modeling_plan_required():
-            self.generation_evidence.require_sql_modeling_plan()
 
     def _is_osi_authoring(self) -> bool:
         return self.authoring_format == "osi"
@@ -459,7 +452,7 @@ class GenerationTools:
             dict: Result containing completion message and semantic_model_files
         """
         try:
-            self._require_sql_modeling_plan_if_needed()
+            self.generation_evidence.ensure_sql_modeling_plan_resolved()
             if not self._is_osi_authoring() and not semantic_model_files:
                 return FuncToolResult(
                     success=0,
@@ -603,7 +596,7 @@ class GenerationTools:
             dict: Result containing completion message, file paths, metric SQLs, and sync status
         """
         try:
-            self._require_sql_modeling_plan_if_needed()
+            self.generation_evidence.ensure_sql_modeling_plan_resolved()
             metric_sqls = dict(self.generation_evidence.metric_sqls)
             # OSI gen_metrics owns only the metrics collection. Semantic
             # objects are authored and synced by gen_semantic_model.

@@ -155,7 +155,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "Use when asked to create or update semantic models, define entities, relationships, or dimensions. "
         "For OSI metric generation, run this task first when the target domain semantic model does not exist, "
         "wait for it to finish, and only then run gen_metrics; never run both tasks concurrently. "
-        "Prompt MUST contain table name(s), e.g. 'orders' or 'orders, customers, products'. "
+        "Preserve table names, pasted SQL, or an explicitly named workspace SQL file path in the delegated prompt. "
+        "The parent may read the file and pass its contents, or this agent may call read_file on the preserved path. "
         "Returns JSON with {response, semantic_models (list of file paths), tokens_used}."
     ),
     "gen_metrics": (
@@ -169,8 +170,8 @@ BUILTIN_SUBAGENT_DESCRIPTIONS = {
         "If it returns code=semantic_model_required, run gen_semantic_model first and retry this task with "
         "the original prompt. In MetricFlow mode it may create or extend semantic-model prerequisites itself. "
         "Never run gen_metrics and gen_semantic_model concurrently. "
-        "For batch input, if the user provides a CSV file path, YOU (the parent agent) must read the file content first "
-        "and include the full content in the prompt — the metrics agent cannot access files outside its workspace. "
+        "Preserve pasted SQL or an explicitly named workspace CSV/SQL file path in the delegated prompt. "
+        "The parent may read the file and pass its contents, or this agent may call read_file on the preserved path. "
         "The metrics agent will preserve final business output expressions and treat base measures as dependencies. "
         "Returns JSON with {response, tokens_used}."
     ),

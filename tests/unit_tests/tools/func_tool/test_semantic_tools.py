@@ -15,13 +15,19 @@ from datus.tools.func_tool.attribution_utils import (
 )
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.tools.func_tool.metric_queryability import extract_metric_queryability_contracts
+from datus.tools.func_tool.metric_queryability import extract_metric_queryability_contracts_from_sources
 from datus.tools.func_tool.semantic_tools import _run_async
 from datus.tools.semantic_tools.models import QueryResult, ValidationResult
 
 
 class _Severity(Enum):
     ERROR = "error"
+
+
+def _queryability_contracts(*sql_queries):
+    return extract_metric_queryability_contracts_from_sources(
+        [{"source_sql_name": f"sql_{index}", "sql": sql} for index, sql in enumerate(sql_queries, 1)]
+    )
 
 
 class TestSemanticToolsGenerationEvidence:
@@ -495,15 +501,12 @@ class TestSemanticToolsGenerationEvidence:
         assert evidence.has_required_queryability_dry_runs(["revenue"]) is True
 
     def test_extracts_grouped_metric_queryability_contract_from_sql(self):
-        contracts = extract_metric_queryability_contracts(
-            """
-            SQL:
-            SELECT n.n_name AS supplier_nation, SUM(l.l_extendedprice) AS shipped_revenue
+        contracts = _queryability_contracts(
+            """SELECT n.n_name AS supplier_nation, SUM(l.l_extendedprice) AS shipped_revenue
             FROM lineitem l
             JOIN supplier s ON l.l_suppkey = s.s_suppkey
             JOIN nation n ON s.s_nationkey = n.n_nationkey
-            GROUP BY n.n_name;
-            """
+            GROUP BY n.n_name;"""
         )
 
         assert contracts == [
@@ -523,15 +526,11 @@ class TestSemanticToolsGenerationEvidence:
             }
         ]
 
-    def test_extracts_grouped_contract_from_dialect_fenced_sql(self):
-        contracts = extract_metric_queryability_contracts(
-            """
-            ```snowflake
-            SELECT customer_segment, SUM(revenue) AS revenue_total
+    def test_extracts_grouped_contract_from_structured_sql_source(self):
+        contracts = _queryability_contracts(
+            """SELECT customer_segment, SUM(revenue) AS revenue_total
             FROM orders
-            GROUP BY customer_segment;
-            ```
-            """
+            GROUP BY customer_segment;"""
         )
 
         assert contracts == [
@@ -551,23 +550,10 @@ class TestSemanticToolsGenerationEvidence:
             }
         ]
 
-    def test_extracts_contracts_from_multiple_labeled_sql_blocks_without_semicolons(self):
-        contracts = extract_metric_queryability_contracts(
-            """
-            Analyze the following SQL queries and extract core metrics:
-
-            Query 1:
-            Question: q1
-            SQL:
-            SELECT a AS x, SUM(b) AS m FROM t GROUP BY a
-
-            ---
-
-            Query 2:
-            Question: q2
-            SQL:
-            SELECT c AS y, SUM(d) AS n FROM u GROUP BY c
-            """
+    def test_extracts_contracts_from_multiple_structured_sources_without_semicolons(self):
+        contracts = _queryability_contracts(
+            "SELECT a AS x, SUM(b) AS m FROM t GROUP BY a",
+            "SELECT c AS y, SUM(d) AS n FROM u GROUP BY c",
         )
 
         assert len(contracts) == 2
@@ -576,12 +562,10 @@ class TestSemanticToolsGenerationEvidence:
         assert contracts[1]["dimension_hints"] == ["y"]
         assert contracts[1]["metric_hints"] == ["n"]
 
-    def test_extracts_contracts_from_success_story_csv_text(self):
-        contracts = extract_metric_queryability_contracts(
-            """question,sql
-"q1","SELECT a AS x, SUM(b) AS m FROM t GROUP BY a"
-"q2","SELECT c AS y, SUM(d) AS n FROM u GROUP BY c"
-"""
+    def test_extracts_contracts_from_structured_success_story_sources(self):
+        contracts = _queryability_contracts(
+            "SELECT a AS x, SUM(b) AS m FROM t GROUP BY a",
+            "SELECT c AS y, SUM(d) AS n FROM u GROUP BY c",
         )
 
         assert len(contracts) == 2
@@ -591,7 +575,7 @@ class TestSemanticToolsGenerationEvidence:
         assert contracts[1]["metric_hints"] == ["n"]
 
     def test_extracts_contract_from_final_select_not_grouped_cte(self):
-        contracts = extract_metric_queryability_contracts(
+        contracts = _queryability_contracts(
             """
             WITH daily AS (
                 SELECT order_date, customer_segment, SUM(revenue) AS day_revenue
@@ -611,15 +595,12 @@ class TestSemanticToolsGenerationEvidence:
         assert contracts[0]["contract_source"] == "query_backed_output_grain"
 
     def test_extracts_date_trunc_grouped_metric_queryability_contract(self):
-        contracts = extract_metric_queryability_contracts(
-            """
-            SQL:
-            SELECT DATE_TRUNC('MONTH', L_SHIPDATE) AS ship_month,
+        contracts = _queryability_contracts(
+            """SELECT DATE_TRUNC('MONTH', L_SHIPDATE) AS ship_month,
                    SUM(L_EXTENDEDPRICE * (1 - L_DISCOUNT)) AS discounted_revenue,
                    SUM(L_QUANTITY) AS shipped_quantity
             FROM LINEITEM
-            GROUP BY 1;
-            """
+            GROUP BY 1;"""
         )
 
         assert len(contracts) == 1
@@ -634,23 +615,19 @@ class TestSemanticToolsGenerationEvidence:
         ]
 
     def test_extracts_generic_date_trunc_group_by_alias_and_expression_contracts(self):
-        contracts = extract_metric_queryability_contracts(
-            """
-            SELECT DATE_TRUNC('WEEK', o.created_at) AS created_week,
+        contracts = _queryability_contracts(
+            """SELECT DATE_TRUNC('WEEK', o.created_at) AS created_week,
                    SUM(o.amount) AS revenue
             FROM orders o
-            GROUP BY created_week;
-
-            SELECT DATE_TRUNC('QUARTER', events.event_ts) AS event_quarter,
+            GROUP BY created_week;""",
+            """SELECT DATE_TRUNC('QUARTER', events.event_ts) AS event_quarter,
                    COUNT(*) AS event_count
             FROM events
-            GROUP BY DATE_TRUNC('QUARTER', events.event_ts);
-
-            SELECT DATE_TRUNC(created_at, MONTH) AS created_month,
+            GROUP BY DATE_TRUNC('QUARTER', events.event_ts);""",
+            """SELECT DATE_TRUNC(created_at, MONTH) AS created_month,
                    SUM(amount) AS order_revenue
             FROM orders
-            GROUP BY created_month;
-            """
+            GROUP BY created_month;""",
         )
 
         assert len(contracts) == 3
@@ -683,7 +660,7 @@ class TestSemanticToolsGenerationEvidence:
         ]
 
     def test_ignores_nested_group_when_final_select_is_ungrouped(self):
-        contracts = extract_metric_queryability_contracts(
+        contracts = _queryability_contracts(
             """
             WITH grouped AS (
                 SELECT customer_segment, SUM(revenue) AS revenue

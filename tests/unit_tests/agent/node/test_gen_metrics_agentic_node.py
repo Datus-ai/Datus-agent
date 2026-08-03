@@ -35,6 +35,9 @@ from datus.tools.func_tool.database import DBFuncTool
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_tools import GenerationTools
 from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
+from datus.tools.permission.permission_config import PermissionLevel
+from datus.tools.permission.permission_manager import PermissionManager
+from datus.tools.permission.profiles import get_profile
 from tests.unit_tests.mock_llm_model import MockToolCall, build_simple_response, build_tool_then_response
 
 
@@ -111,6 +114,7 @@ class TestGenMetricsAgenticNodeInit:
         assert "plan_osi_semantic_model_target" not in tool_names
         assert "publish_metrics" in tool_names
         node._populate_tool_registry()
+        assert node.tool_registry.get("prepare_sql_modeling_plan") == "semantic_tools"
         assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("bind_osi_semantic_model_target") == "semantic_tools"
         assert node.tool_registry.get("delete_osi_metrics") == "filesystem_tools"
@@ -154,11 +158,22 @@ class TestGenMetricsAgenticNodeInit:
         )
         node._populate_tool_registry()
         registry = node.tool_registry.to_dict()
+        assert registry.get("prepare_sql_modeling_plan") == "semantic_tools"
         assert registry.get("publish_metrics") == "semantic_tools"
         assert registry.get("check_semantic_object_exists") == "semantic_tools"
         assert registry.get("execute_sql") == "db_tools"
         assert "read_query" not in registry
         assert registry.get("write_file") == "filesystem_tools"
+
+        auto_permissions = PermissionManager(global_config=get_profile("auto"))
+        assert (
+            auto_permissions.check_permission(
+                registry["prepare_sql_modeling_plan"],
+                "prepare_sql_modeling_plan",
+                node.get_node_name(),
+            )
+            == PermissionLevel.ALLOW
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -263,13 +278,14 @@ class TestGenMetricsAgenticNodeExecution:
         assert node.generation_evidence.required_metric_output_ids == []
         assert "prepare_sql_modeling_plan" in {tool.name for tool in node.tools}
 
-    def test_sql_result_cannot_bypass_preflight(self, real_agent_config, mock_llm_create):
+    def test_failed_sql_preflight_cannot_be_bypassed(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
         from datus.agent.node.stream_run_context import StreamRunContext
         from datus.utils.exceptions import DatusException
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
+        node.generation_evidence.mark_sql_modeling_preflight_attempted()
         ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
         ctx.response_content = "not json"
 
@@ -282,7 +298,7 @@ class TestGenMetricsAgenticNodeExecution:
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
-        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        node.generation_evidence.mark_sql_modeling_plan_ready("source")
         ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
         ctx.response_content = json.dumps({"metric_file": "metrics/orders.yml"})
 
@@ -295,7 +311,7 @@ class TestGenMetricsAgenticNodeExecution:
 
         node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="SELECT COUNT(*) AS order_count FROM orders")
-        node.generation_evidence.set_sql_modeling_plan("ready", "source")
+        node.generation_evidence.mark_sql_modeling_plan_ready("source")
         node.generation_evidence.set_required_metric_outputs([{"output_id": "orders:output_1"}])
         ctx = StreamRunContext(user_input=node.input, action_history_manager=ActionHistoryManager())
         ctx.response_content = json.dumps(

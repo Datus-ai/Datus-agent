@@ -386,6 +386,15 @@ class TestResolveNodeType:
         assert node_type == NodeType.TYPE_ASK_METRICS
         assert node_name == "ask_metrics"
 
+    def test_semantic_authoring_descriptions_preserve_workspace_sql_input(self):
+        for agent_name in ("gen_semantic_model", "gen_metrics"):
+            description = BUILTIN_SUBAGENT_DESCRIPTIONS[agent_name]
+            assert "workspace" in description
+            assert "SQL file path" in description
+            assert "parent may read" in description
+            assert "agent may call read_file" in description
+            assert "outside its workspace" not in description
+
     def test_gen_visual_report_constructs_and_builds_input(self, task_tool, tmp_path):
         """Mirror of ``test_gen_visual_dashboard_constructs_and_builds_input``
         for the report subagent — ``_create_builtin_node`` + the

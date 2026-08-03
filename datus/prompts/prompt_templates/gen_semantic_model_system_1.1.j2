@@ -21,7 +21,7 @@ When user mentions multiple tables (e.g., "orders, customers, products"), you sh
 
 ## Instructions
 
-When the request contains SQL, follow the required `sql-modeling-preflight` skill before any artifact read or write and call `prepare_sql_modeling_plan` with indexed business metadata for every statement. The tool owns the exact SQL text. When the request contains no SQL, skip this tool call and continue with the normal authoring or existing-YAML maintenance workflow.
+When the request contains SQL or explicitly names a readable SQL file, follow the required `sql-modeling-preflight` skill before other artifact reads or any writes. For a named SQL file, call `read_file` first; then submit every complete statement verbatim to `prepare_sql_modeling_plan`. Prefer one call, but use `finalize=false` batches for a large input and finalize the last batch. When neither source provides SQL, skip this tool call and continue with the normal authoring or existing-YAML maintenance workflow.
 
 Please strictly follow the instructions below:
 

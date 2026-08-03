@@ -170,17 +170,14 @@ class GenSemanticModelAgenticNode(AgenticNode):
 
     def _setup_sql_modeling_tools(self) -> None:
         """Expose the single shared SQL preflight entry point."""
-        from datus.tools.func_tool import trans_to_function_tool
-
         self.sql_modeling_tools = SqlModelingPlanTools(
             agent_config=self.agent_config,
             sub_agent_name=self.get_node_name(),
-            user_message_provider=lambda: str(getattr(self.input, "user_message", "") or ""),
             generation_evidence=self.generation_evidence,
             plan_consumer=self._accept_sql_modeling_plan,
             semantic_source_inspector=self._inspect_planned_semantic_sources,
         )
-        self.tools.append(trans_to_function_tool(self.sql_modeling_tools.prepare_sql_modeling_plan))
+        self.tools.extend(self.sql_modeling_tools.available_tools())
 
     def _accept_sql_modeling_plan(self, plan: Optional[SqlModelingPlan]) -> None:
         self.sql_modeling_plan = plan
@@ -367,7 +364,6 @@ class GenSemanticModelAgenticNode(AgenticNode):
                 generation_evidence=self.generation_evidence,
                 authoring_format=authoring_format,
                 osi_target_state=self.osi_target_state,
-                sql_modeling_plan_required=self.sql_modeling_tools.request_contains_sql,
             )
 
             if authoring_format != "osi":
@@ -569,9 +565,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         return self._prepare_template_context(ctx.user_input)
 
     def _build_success_result(self, ctx: StreamRunContext) -> SemanticNodeResult:
-        sql_request = (
-            self.sql_modeling_tools.require_plan_for_sql_request() if self.sql_modeling_tools is not None else False
-        )
+        sql_plan_ready = self.generation_evidence.ensure_sql_modeling_plan_resolved()
         response_content = ctx.response_content
         if not response_content and ctx.last_successful_output:
             raw_output = ctx.last_successful_output.get("raw_output", "")
@@ -587,7 +581,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
         planned = target_state.planned if target_state is not None else None
         if planned is not None:
             semantic_model_files = [str(planned["semantic_model_file"])]
-        if sql_request and not semantic_model_files:
+        if sql_plan_ready and not semantic_model_files:
             raise RuntimeError(
                 "SQL-backed semantic model generation must return the generated or reused semantic_model_files."
             )

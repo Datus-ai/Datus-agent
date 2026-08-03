@@ -29,8 +29,8 @@ The authoritative document shape you author against, including the Datus executi
 ## Workflow
 
 0. **Prepare the request**
-   - When the request contains SQL, follow `sql-modeling-preflight` before any artifact read or write and call `prepare_sql_modeling_plan` with indexed business metadata for every statement. The tool owns the exact SQL text.
-   - When the request contains no SQL, skip `prepare_sql_modeling_plan` and continue with the normal authoring or existing-YAML maintenance workflow.
+   - When the request contains SQL or explicitly names a readable SQL file, follow `sql-modeling-preflight` before other artifact reads or any writes. For a named SQL file, call `read_file` first, then submit every complete statement verbatim to `prepare_sql_modeling_plan`. Prefer one call, but use `finalize=false` batches for a large input and finalize the last batch.
+   - When neither the request nor a named file provides SQL, skip `prepare_sql_modeling_plan` and continue with the normal authoring or existing-YAML maintenance workflow.
    - For SQL-backed requests, treat the plan's `output_contracts` and `dataset_requirements` as authoritative. Do not reconstruct or rewrite source SQL.
 
 1. **Clarify blocking ambiguity first**

@@ -13,10 +13,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Optional
 
+from agents import FunctionTool
 from pydantic import BaseModel, Field
 
 from datus.schemas.semantic_agentic_node_models import SourceQueryEvidence
-from datus.tools.func_tool.base import FuncToolResult
+from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
 
 if TYPE_CHECKING:
@@ -61,11 +62,12 @@ class SqlModelingPlan(BaseModel):
 
 
 class SqlModelingEntry(BaseModel):
-    """Business metadata for one SQL statement owned by the request."""
+    """Verbatim user-provided SQL plus the business metadata needed to model it."""
 
-    source_index: int = Field(..., ge=1, description="1-based SQL position in the current request")
+    source_index: int = Field(..., ge=1, description="SQL source order across all submitted batches")
     name: str = Field(..., description="Meaningful English snake_case business name")
     question: str = Field(default="", description="Business question answered by this SQL")
+    sql: str = Field(..., min_length=1, description="SQL copied verbatim from user input or a read_file result")
 
 
 def planned_physical_tables(plan: SqlModelingPlan) -> list[str]:
@@ -118,105 +120,122 @@ class SqlModelingPlanTools:
         *,
         agent_config: "AgentConfig",
         sub_agent_name: str,
-        user_message_provider: Callable[[], str],
         generation_evidence: "GenerationEvidence",
         plan_consumer: Callable[[Optional[SqlModelingPlan]], None],
         semantic_source_inspector: Optional[Callable[[SqlModelingPlan], dict[str, Any]]] = None,
     ):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
-        self.user_message_provider = user_message_provider
         self.generation_evidence = generation_evidence
         self.plan_consumer = plan_consumer
         self.semantic_source_inspector = semantic_source_inspector
+        self._pending_entries: dict[int, SqlModelingEntry] = {}
         self._plan: Optional[SqlModelingPlan] = None
+
+    @staticmethod
+    def all_tools_name() -> list[str]:
+        """Return the complete permission-registry surface for this tool group."""
+        return ["prepare_sql_modeling_plan"]
+
+    def available_tools(self) -> list[FunctionTool]:
+        """Expose SQL preflight through the standard native tool-group contract."""
+        return [trans_to_function_tool(self.prepare_sql_modeling_plan)]
 
     def reset(self) -> None:
         """Clear request-local state when a reusable node starts a new run."""
+        self._pending_entries.clear()
         self._plan = None
-
-    def request_contains_sql(self) -> bool:
-        """Return whether the current request requires SQL modeling preflight."""
-        return bool(
-            _extract_sql_snippets(
-                self.user_message_provider() or "",
-                dialect=_agent_config_dialect(self.agent_config),
-            )
-        )
-
-    def require_plan_for_sql_request(self) -> bool:
-        """Require a ready plan at the terminal boundary of SQL-backed requests."""
-        if not self.request_contains_sql():
-            return False
-        self.generation_evidence.require_sql_modeling_plan()
-        return True
 
     def prepare_sql_modeling_plan(
         self,
         sql_entries: List[SqlModelingEntry],
+        finalize: bool = True,
     ) -> FuncToolResult:
-        """Analyze every SQL statement extracted from the current request.
+        """Analyze every SQL statement identified from user-provided content.
 
-        The tool owns the exact SQL text. Identify each statement by its 1-based
-        position and provide only a meaningful business name and question.
-        Submit all entries in one call. Do not call this tool when the request
-        contains no SQL.
+        Copy each complete SQL statement verbatim from the request or from a
+        read_file result for a user-specified path. Attach its position,
+        meaningful business name, and question. Small inputs should be submitted
+        in one call. Large inputs may be split across calls with ``finalize=False``;
+        set ``finalize=True`` on the last batch. Do not call this tool when no SQL
+        was provided or referenced.
 
         Args:
-            sql_entries: Business metadata for every SQL statement in the request.
+            sql_entries: Verbatim SQL and business metadata for every statement.
+            finalize: Analyze all collected entries now. Set false only when more
+                SQL batches will follow.
         """
+        if self._plan is not None:
+            return self._handle_finalized_plan_call(sql_entries)
+
+        self.generation_evidence.mark_sql_modeling_preflight_attempted()
         try:
             entries = [SqlModelingEntry.model_validate(item) for item in sql_entries or []]
         except Exception as exc:
-            return FuncToolResult(success=0, error=f"Invalid sql_entries: {exc}")
-
-        if not entries:
-            if self.request_contains_sql():
-                self.generation_evidence.set_sql_modeling_plan("unresolved")
-                return FuncToolResult(
-                    success=0,
-                    error="The current request contains SQL. Submit one indexed entry for every statement.",
-                    result={"status": "unresolved"},
-                )
             return FuncToolResult(
                 success=0,
-                error="The current request contains no SQL. Skip prepare_sql_modeling_plan.",
+                error=f"Invalid sql_entries: {exc}",
+                result={"status": "unresolved"},
             )
 
-        source_sql = _extract_sql_snippets(
-            self.user_message_provider() or "",
-            dialect=_agent_config_dialect(self.agent_config),
-        )
-        validation_error = self._validate_entries(entries, source_sql)
+        if not entries and not self._pending_entries:
+            return FuncToolResult(
+                success=0,
+                error="sql_entries must contain every SQL statement identified from the user-provided content.",
+                result={"status": "unresolved"},
+            )
+
+        validation_error = self._validate_entries(entries)
         if validation_error:
-            self.generation_evidence.set_sql_modeling_plan("unresolved")
             return FuncToolResult(success=0, error=validation_error, result={"status": "unresolved"})
+
+        conflicting_indexes = sorted(
+            entry.source_index
+            for entry in entries
+            if entry.source_index in self._pending_entries
+            and self._pending_entries[entry.source_index].model_dump() != entry.model_dump()
+        )
+        if conflicting_indexes:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "These SQL source_index values were already collected with different content: "
+                    f"{conflicting_indexes}. Continue numbering across batches; previously collected SQL was unchanged."
+                ),
+                result={
+                    "status": "unresolved",
+                    "conflicting_source_indexes": conflicting_indexes,
+                },
+            )
+
+        pending_entries = dict(self._pending_entries)
+        pending_entries.update((entry.source_index, entry) for entry in entries)
+        validation_error = self._validate_entries(list(pending_entries.values()))
+        if validation_error:
+            return FuncToolResult(success=0, error=validation_error, result={"status": "unresolved"})
+
+        self._pending_entries = pending_entries
+        if not finalize:
+            return FuncToolResult(
+                result={
+                    "status": "collecting",
+                    "received_count": len(self._pending_entries),
+                    "source_indexes": sorted(self._pending_entries),
+                }
+            )
 
         sources = [
             SourceQueryEvidence(
                 source_sql_name=_normalize_business_name(entry.name),
-                sql=source_sql[entry.source_index - 1],
+                sql=entry.sql,
                 question=entry.question,
                 source_type="prompt",
             )
-            for entry in sorted(entries, key=lambda item: item.source_index)
+            for entry in sorted(self._pending_entries.values(), key=lambda item: item.source_index)
         ]
-        if self._plan is not None:
-            source_fingerprint = _fingerprint_sources(_deduplicate_sources(sources))
-            if self._plan.source_fingerprint != source_fingerprint:
-                return FuncToolResult(
-                    success=0,
-                    error=(
-                        "The SQL modeling plan is already fixed for this request. "
-                        "Reuse the existing plan instead of submitting different SQL."
-                    ),
-                    result={"status": "unresolved"},
-                )
-            return FuncToolResult(result={"status": "ready", **self._plan.prompt_payload()})
 
         plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(sources)
         if not plan.candidate_plan.get("available", False):
-            self.generation_evidence.set_sql_modeling_plan("unresolved", plan.source_fingerprint)
             return FuncToolResult(
                 success=0,
                 error=str(plan.candidate_plan.get("error") or "SQL modeling analysis failed"),
@@ -235,7 +254,7 @@ class SqlModelingPlanTools:
                 }
 
         self._plan = plan
-        self.generation_evidence.set_sql_modeling_plan("ready", plan.source_fingerprint)
+        self.generation_evidence.mark_sql_modeling_plan_ready(plan.source_fingerprint)
         self.generation_evidence.set_metric_queryability_contracts(
             plan.candidate_plan.get("queryability_contracts") or []
         )
@@ -246,12 +265,39 @@ class SqlModelingPlanTools:
         self.plan_consumer(plan)
         return FuncToolResult(result={"status": "ready", **plan.prompt_payload()})
 
-    def _validate_entries(self, entries: list[SqlModelingEntry], source_sql: list[str]) -> str:
+    def _handle_finalized_plan_call(self, sql_entries: List[SqlModelingEntry]) -> FuncToolResult:
+        """Keep a successful plan stable when the model calls the tool again."""
+        assert self._plan is not None
+        try:
+            entries = [SqlModelingEntry.model_validate(item) for item in sql_entries or []]
+        except Exception as exc:
+            return FuncToolResult(
+                success=0,
+                error=f"The SQL modeling plan is already finalized; invalid additional entries were ignored: {exc}",
+                result={"status": "ready", **self._plan.prompt_payload()},
+            )
+
+        unchanged = all(
+            entry.source_index in self._pending_entries
+            and self._pending_entries[entry.source_index].model_dump() == entry.model_dump()
+            for entry in entries
+        )
+        if unchanged:
+            return FuncToolResult(result={"status": "ready", **self._plan.prompt_payload()})
+        return FuncToolResult(
+            success=0,
+            error="The SQL modeling plan is already finalized; additional or changed entries were ignored.",
+            result={"status": "ready", **self._plan.prompt_payload()},
+        )
+
+    def _validate_entries(self, entries: list[SqlModelingEntry]) -> str:
         names: set[str] = set()
         indexes: set[int] = set()
-        expected_indexes = set(range(1, len(source_sql) + 1))
 
         for index, entry in enumerate(entries, 1):
+            if not entry.sql.strip():
+                return f"sql_entries[{index - 1}].sql must not be empty."
+
             name = _normalize_business_name(entry.name)
             if not name or re.fullmatch(r"(?:sql|query|case|statement|item)_?\d*", name):
                 return f"sql_entries[{index - 1}].name must be a meaningful English snake_case name."
@@ -263,35 +309,12 @@ class SqlModelingPlanTools:
                 return f"Duplicate SQL source_index: {entry.source_index}."
             indexes.add(entry.source_index)
 
-        if indexes != expected_indexes:
-            missing = sorted(expected_indexes - indexes)
-            unexpected = sorted(indexes - expected_indexes)
-            return (
-                "sql_entries must identify every SQL statement exactly once. "
-                f"missing source_index={missing}, unexpected source_index={unexpected}."
-            )
         return ""
 
 
 def _normalize_business_name(value: str) -> str:
     text = re.sub(r"[^0-9A-Za-z_]+", "_", str(value or "").strip())
     return re.sub(r"_+", "_", text).strip("_").lower()
-
-
-def _normalize_sql_for_source_check(value: str) -> str:
-    """Normalize transport line endings while preserving exact SQL content."""
-    return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
-
-def _extract_sql_snippets(value: str, *, dialect: str = "") -> list[str]:
-    """Extract exact request-local SQL without asking the model to reproduce it."""
-    from datus.tools.func_tool.metric_queryability import extract_sql_snippets
-
-    return extract_sql_snippets(
-        _normalize_sql_for_source_check(value),
-        preserve_source=True,
-        dialect=dialect,
-    )
 
 
 def source_query_from_success_story_row(

@@ -309,6 +309,9 @@ class TestGenMetricsV12Template:
 
         assert len(result) > 100, "Template should render substantial content"
         assert "metric" in result.lower()
+        assert "explicitly names a readable SQL file" in result
+        assert "call `read_file` first" in result
+        assert "use `finalize=false` batches for a large input" in result
 
     def test_v12_template_mentions_skill(self):
         """v1.2 template should reference skills and gen-metrics."""

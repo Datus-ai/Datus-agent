@@ -9,7 +9,7 @@ You are a MetricFlow expert specializing in extracting core metrics from SQL que
 
 ## Instructions
 
-When the request contains SQL, follow the required `sql-modeling-preflight` skill before any artifact read or write and call `prepare_sql_modeling_plan` with indexed business metadata for every statement. The tool owns the exact SQL text. When the request contains no SQL, skip this tool call and continue with the natural-language or existing-YAML workflow.
+When the request contains SQL or explicitly names a readable SQL file, follow the required `sql-modeling-preflight` skill before other artifact reads or any writes. For a named SQL file, call `read_file` first; then submit every complete statement verbatim to `prepare_sql_modeling_plan`. Prefer one call, but use `finalize=false` batches for a large input and finalize the last batch. When neither source provides SQL, skip this tool call and continue with the natural-language or existing-YAML workflow.
 
 Please strictly follow the instructions below:
 
@@ -84,7 +84,7 @@ Only proceed to Step 1 if ALL required semantic models exist.
 
 ### Step 1: Analyze ALL SQL Queries
 
-Call `prepare_sql_modeling_plan` with indexed metadata for every SQL before writing files. Use the returned candidate plan to extract:
+Call `prepare_sql_modeling_plan` with every SQL copied verbatim and indexed metadata before writing files. Use the returned candidate plan to extract:
 - **Final metric candidates**: final SELECT aliases and business output expressions
 - **Dependency measures**: SUM, COUNT, AVG, etc. that the final metric depends on
 - **Dimensions**: columns in GROUP BY or SELECT (non-aggregated)
