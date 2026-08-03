@@ -368,8 +368,15 @@ class SubAgentTaskTool:
     def _missing_parameter_retry(self, parameter: str) -> str:
         """Build an actionable retry message for a missing required argument."""
         available = self._get_available_types()
-        available_text = ", ".join(available) or "(none currently available)"
-        example_type = "gen_sql" if "gen_sql" in available else (available[0] if available else "<available type>")
+        if not available:
+            return (
+                f"Missing required parameter: {parameter}. "
+                "No subagent types are currently available. "
+                "Update the subagent allowlist or agent configuration before retrying."
+            )
+
+        available_text = ", ".join(available)
+        example_type = "gen_sql" if "gen_sql" in available else available[0]
         return (
             f"Missing required parameter: {parameter}. Retry task() with all required arguments. "
             f"Set `type` to exactly one of these Available types: {available_text}. "
@@ -1428,7 +1435,7 @@ class SubAgentTaskTool:
 
         lines = [
             "Required call contract:",
-            "- Every task() call MUST include `type`, `prompt`, and `description`.",
+            "- Every task tool call MUST include `type`, `prompt`, and `description`.",
             "- `type` MUST be exactly one name from the Available types below. Never omit it, "
             "even when the intended subagent is obvious from context.",
             '- Call format: task(type="<available type>", prompt="<task or question>", '
