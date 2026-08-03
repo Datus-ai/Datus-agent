@@ -323,3 +323,67 @@ class TestCaching:
                 assert mock_cls.return_value.execute.call_count == 4
         finally:
             viz_mod._MAX_CACHE_SIZE = original
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 6. Response language
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestResponseLanguage:
+    def test_language_forwarded_to_tool(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, language="zh-CN")
+
+        assert mock_cls.return_value.execute.call_args.kwargs["language"] == "zh-CN"
+
+    def test_language_forwarded_to_tool_with_context(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls, patch(_TOOL_PROMPT_PATH):
+            mock_cls.return_value.execute_with_context.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, sql="SELECT a", language="zh-CN")
+
+        assert mock_cls.return_value.execute_with_context.call_args.kwargs["language"] == "zh-CN"
+
+    def test_different_language_not_cached(self, mock_agent_config, csv_data):
+        """The same dataset asked for in two languages must not share one cached answer."""
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data, language="en")
+            svc.generate(csv_data, language="zh-CN")
+
+        assert mock_cls.return_value.execute.call_count == 2
+
+    def test_same_language_hits_cache(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            first = svc.generate(csv_data, language="zh-CN")
+            second = svc.generate(csv_data, language="zh-CN")
+
+        assert first is second
+        mock_cls.return_value.execute.assert_called_once()
+
+    def test_agent_config_language_change_busts_the_cache(self, mock_agent_config, csv_data):
+        """Without an override the tool resolves agent_config.language — so must the key."""
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+
+            mock_agent_config.language = "en"
+            svc.generate(csv_data)
+            mock_agent_config.language = "zh-CN"
+            svc.generate(csv_data)
+
+        assert mock_cls.return_value.execute.call_count == 2
+
+    def test_language_defaults_to_none(self, mock_agent_config, csv_data):
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+            svc.generate(csv_data)
+
+        assert mock_cls.return_value.execute.call_args.kwargs["language"] is None

@@ -28,8 +28,8 @@ Based on ALL the information above, return ONLY a **JSON** object with the follo
 
 ### Data Context (required when SQL or User Question is provided)
 - "period": The time range extracted from WHERE conditions, formatted as "YYYY-MM-DD ~ YYYY-MM-DD" or a readable period like "Q4 2025". Return null if no time condition exists or no SQL is provided.
-- "filters": A list of human-readable filter descriptions extracted from WHERE conditions (exclude time range conditions). Use the user's question language to describe filters when possible, e.g. "BP购买" instead of "purchasesource = BATTLEPASS_PROGRESS". Return an empty list if no filters or no SQL is provided.
-- "insight": A concise analytical summary (2-4 sentences) of the data. Highlight key findings, comparisons, anomalies, or trends. Use the same language as the user's question. Focus on what the data reveals, not how it was queried.
+- "filters": A list of human-readable filter descriptions extracted from WHERE conditions (exclude time range conditions). Describe filters in natural language, e.g. "Battle Pass purchase" instead of "purchasesource = BATTLEPASS_PROGRESS". Return an empty list if no filters or no SQL is provided.
+- "insight": A concise analytical summary (2-4 sentences) of the data. Highlight key findings, comparisons, anomalies, or trends. Focus on what the data reveals, not how it was queried.
 
 ### Rules
 - If there is a date/time column, prioritize "Line Chart" or "Bar Chart" and use date as x_col.
@@ -39,3 +39,10 @@ Based on ALL the information above, return ONLY a **JSON** object with the follo
 - For "filters", translate technical SQL conditions into user-friendly descriptions.
 - For "insight", analyze the actual data values, not just describe the query structure.
 - If neither SQL nor User Question is provided, omit "period", "filters", and "insight" from the response.
+{% if language_directive %}
+
+{{ language_directive }}
+- The values of "reason", "filters" and "insight" must follow this language; column names, SQL and JSON keys stay as-is.
+{% else %}
+- Write "reason", "filters" and "insight" in the same language as the User Question; fall back to English when no question is provided.
+{% endif %}
