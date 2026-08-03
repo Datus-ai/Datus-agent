@@ -251,8 +251,11 @@ class VisualizationTool(BaseTool):
         prompt itself — otherwise an English template is answered in English
         regardless of the language the caller asked for.
         """
-        raw = language or getattr(self.agent_config, "language", None)
-        code = str(raw).strip() if raw else ""
+        # A blank explicit override is "unset", not "no language" — otherwise a
+        # caller sending an empty field would suppress the configured default.
+        explicit = str(language).strip() if language else ""
+        fallback = getattr(self.agent_config, "language", None)
+        code = explicit or (str(fallback).strip() if fallback else "")
         if not code:
             return ""
         language_name = resolve_language_name(code)

@@ -367,6 +367,19 @@ class TestResponseLanguage:
         assert first is second
         mock_cls.return_value.execute.assert_called_once()
 
+    def test_agent_config_language_change_busts_the_cache(self, mock_agent_config, csv_data):
+        """Without an override the tool resolves agent_config.language — so must the key."""
+        with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
+            mock_cls.return_value.execute.return_value = _mock_tool_result()
+            svc = DataVisualizationService(agent_config=mock_agent_config)
+
+            mock_agent_config.language = "en"
+            svc.generate(csv_data)
+            mock_agent_config.language = "zh-CN"
+            svc.generate(csv_data)
+
+        assert mock_cls.return_value.execute.call_count == 2
+
     def test_language_defaults_to_none(self, mock_agent_config, csv_data):
         with patch(_LLM_PATH), patch(_VIZ_TOOL_PATH) as mock_cls:
             mock_cls.return_value.execute.return_value = _mock_tool_result()

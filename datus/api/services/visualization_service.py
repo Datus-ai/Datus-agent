@@ -102,10 +102,14 @@ class DataVisualizationService:
     ) -> Dict[str, Any]:
         """Return a chart recommendation dict, using cache when available.
 
-        ``language`` is part of the cache key: the same dataset asked for in
-        two languages must not share one cached answer.
+        The language is part of the cache key: the same dataset asked for in
+        two languages must not share one cached answer. It has to be the
+        *effective* language — an omitted override resolves to
+        ``agent_config.language`` inside the tool, so keying on the raw ``None``
+        would serve the old answer after that default changes.
         """
-        key = self._cache_key(csv_data, chart_type, sql, user_question, language)
+        effective_language = language or getattr(self._agent_config, "language", None)
+        key = self._cache_key(csv_data, chart_type, sql, user_question, effective_language)
 
         cached = self._cache.get(key)
         if cached is not None:

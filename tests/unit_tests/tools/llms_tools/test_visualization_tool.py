@@ -446,6 +446,19 @@ class TestLanguageDirective:
 
         assert mock_gpm.return_value.render_template.call_args.kwargs["language_name"] == "Japanese"
 
+    def test_blank_explicit_language_falls_back_to_agent_config(self):
+        """A blank override is 'unset' — it must not suppress the configured default."""
+        config = MagicMock()
+        config.language = "ja"
+        tool = VisualizationTool(agent_config=config, model=MagicMock())
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "directive"
+            tool._language_directive("   ")
+
+        kw = mock_gpm.return_value.render_template.call_args.kwargs
+        assert kw["language_code"] == "ja"
+        assert kw["language_name"] == "Japanese"
+
     def test_explicit_language_wins_over_agent_config(self):
         config = MagicMock()
         config.language = "ja"
