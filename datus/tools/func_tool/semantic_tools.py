@@ -495,7 +495,9 @@ class SemanticTools:
 
     def _semantic_model_artifact_evidence(self, semantic_model_name: str) -> Dict[str, str]:
         """Return exact Ossie artifact identity for target-bound validation evidence."""
-        if str(self.adapter_type or "").strip().lower() != "osi" or not semantic_model_name:
+        from datus.agent.node.semantic_authoring import is_osi_semantic_adapter
+
+        if not is_osi_semantic_adapter(self.adapter_type) or not semantic_model_name:
             return {}
         try:
             from datus.agent.node.semantic_authoring import discover_osi_semantic_models

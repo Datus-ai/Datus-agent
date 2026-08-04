@@ -410,6 +410,7 @@ flow_groups:
           - docs/adapters/bi_adapters.md
           - docs/adapters/scheduler_adapters.md
           - docs/adapters/semantic_adapters.md
+          - docs/adapters/dosi_semantic_adapter.md
         entrypoints:
           - DB adapters
           - BI adapters
@@ -547,6 +548,7 @@ flow_groups:
           - docs/configuration/semantic_layer.md
           - docs/adapters/metricflow_semantic_adapter.md
           - docs/adapters/osi_semantic_adapter.md
+          - docs/adapters/dosi_semantic_adapter.md
         entrypoints:
           - CLI bootstrap
           - Gen semantic model subagent

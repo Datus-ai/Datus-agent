@@ -23,6 +23,10 @@ agent:
       osi:
         # execution_backend defaults to metricflow and normally does not need
         # to be configured.
+
+      dosi:
+        # Native Dosi execution; semantic_model_path is only needed when the
+        # datasource directory contains more than one OSI model file.
 ```
 
 ## Selection Rules
@@ -61,6 +65,13 @@ Comparison is case-insensitive and trims surrounding whitespace.
 - The current OSI execution backend is MetricFlow by default. You normally do not need to set `execution_backend`.
 - Configure `services.semantic_layer.osi` and mark it `default: true` to select this path globally when other adapters are also configured. An empty `osi: {}` entry is selected automatically only when it is the sole semantic adapter, or when the current project pins `semantic: osi`.
 
+## Dosi Notes
+
+- Dosi uses the same OSI authoring format and DATUS `custom_extensions` workflow.
+- `datus-semantic-dosi` executes directly through the native engine; it does not set `execution_backend: metricflow`.
+- The adapter loads one OSI document per instance. If the datasource model directory contains several files, configure `semantic_model_path` explicitly.
+- `pip install datus-semantic-dosi` installs the adapter and `dosi-engine` together.
+
 ## Configuring through the CLI (`/services`)
 
 Run `/services semantic` inside the Datus REPL (or press `Tab` from any
@@ -68,10 +79,10 @@ other tab) to enter the configuration TUI on the **Semantic** tab. The
 tab lets you:
 
 - Add a new semantic layer by pressing `Enter` on the trailing `+ Add
-  new semantic` row. Choose the adapter type, such as `metricflow` or
-  `osi`. If the adapter package isn't installed, install the matching
+  new semantic` row. Choose the adapter type, such as `metricflow`, `osi`, or
+  `dosi`. If the adapter package isn't installed, install the matching
   package first, for example `datus-semantic-metricflow` or
-  `datus-semantic-osi`.
+  `datus-semantic-dosi`.
 - Delete an entry with `x` and run a registration probe with `t`.
 - Toggle the **global** `default: true` flag with `d`. Pressing `d`
   marks the current row as default and clears the flag from every other

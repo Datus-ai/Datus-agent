@@ -6,6 +6,7 @@ This page is the adapter overview. For adapter-specific behavior, use:
 
 - [MetricFlow Semantic Adapter](metricflow_semantic_adapter.md)
 - [OSI Semantic Adapter](osi_semantic_adapter.md)
+- [Dosi Semantic Adapter](dosi_semantic_adapter.md)
 
 ## Overview
 
@@ -17,17 +18,19 @@ Semantic adapters provide a unified interface for:
 - validating semantic assets before publishing
 - syncing validated semantic assets into the Datus Knowledge Base
 
-Two adapters are currently supported:
+Three adapters are currently supported:
 
 | Adapter | Package | Authoring format | Execution backend | Status |
 |---------|---------|------------------|-------------------|--------|
 | MetricFlow | `datus-semantic-metricflow` | MetricFlow YAML | MetricFlow | Ready |
 | OSI | `datus-semantic-osi` | strict OSI core YAML + DATUS custom extensions | MetricFlow by default | Ready |
+| Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | Native Dosi engine | Ready |
 
 MetricFlow and OSI are peer semantic adapters. The difference is what users and generation agents author:
 
 - MetricFlow mode authors MetricFlow YAML directly.
 - OSI mode authors OSI core YAML and lets `datus-semantic-osi` compile it to Datus Semantic IR before lowering to MetricFlow.
+- Dosi mode authors the same OSI format but compiles, plans, and executes it directly in the Rust engine.
 
 ## Architecture
 
@@ -44,8 +47,10 @@ datus-agent
 └── Adapter packages
     ├── datus-semantic-metricflow
     │   └── MetricFlowAdapter
-    └── datus-semantic-osi
-        └── DatusOSIAdapter
+    ├── datus-semantic-osi
+    │   └── DatusOSIAdapter
+    └── datus-semantic-dosi
+        └── DosiAdapter
 ```
 
 Adapters are discovered through Python entry points under `datus.semantic_adapters`.
@@ -63,9 +68,11 @@ agent:
 
       osi:
         execution_backend: metricflow
+
+      dosi: {}
 ```
 
-The key under `services.semantic_layer` must equal the adapter type, for example `metricflow` or `osi`. If a `type:` field is present, it must match the key.
+The key under `services.semantic_layer` must equal the adapter type, for example `metricflow`, `osi`, or `dosi`. If a `type:` field is present, it must match the key.
 The selected semantic adapter is global. Legacy node-level `semantic_adapter` and `authoring_format` fields are ignored.
 
 See [Semantic Layer Configuration](../configuration/semantic_layer.md) for selection rules, defaults, and project-level pins.
@@ -97,6 +104,12 @@ Use OSI when:
 - you want Datus-specific execution hints isolated in `custom_extensions`
 - you want LLM generation to avoid backend YAML fields such as `measure_proxy`, `type_params`, and `data_source`
 - you still want to execute through MetricFlow today
+
+Use Dosi when:
+
+- you want the same strict OSI authoring workflow
+- aggregate, ratio, and expression metrics cover the model
+- you want native join planning, fan-out protection, and execution without MetricFlow
 
 ## Implementing a Custom Adapter
 

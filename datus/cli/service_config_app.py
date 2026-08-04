@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 _BUILTIN_TYPES: Dict[str, Tuple[str, ...]] = {
     "bi_platforms": ("superset", "grafana"),
     "schedulers": ("airflow",),
-    "semantic_layer": ("metricflow", "osi"),
+    "semantic_layer": ("metricflow", "osi", "dosi"),
 }
 
 

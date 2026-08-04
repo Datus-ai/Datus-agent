@@ -51,6 +51,12 @@ def test_expected_sources_include_new_database_adapters():
     assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-hologres"] == "datus-db-adapters/datus-hologres"
 
 
+def test_expected_sources_include_dosi_semantic_adapter():
+    assert verify_sources.EXPECTED_LOCAL_PACKAGES["datus-semantic-dosi"] == (
+        "datus-semantic-adapter/datus-semantic-dosi"
+    )
+
+
 def test_verify_database_adapter_imports_accepts_registered_hooks(monkeypatch):
     registry = SimpleNamespace(
         get_metadata=lambda db_type: SimpleNamespace(db_type=db_type),
@@ -149,6 +155,8 @@ def test_verify_semantic_adapter_imports_requires_shared_contract(monkeypatch):
     modules = {
         "datus_semantic_core.models": SimpleNamespace(),
         "datus_semantic_metricflow": SimpleNamespace(),
+        "datus_semantic_osi": SimpleNamespace(),
+        "datus_semantic_dosi": SimpleNamespace(),
     }
     monkeypatch.setattr(verify_sources.importlib, "import_module", modules.__getitem__)
 

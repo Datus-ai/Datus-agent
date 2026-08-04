@@ -2293,6 +2293,26 @@ class TestValidateSemantic:
         assert result["semantic_model_file"] == str(artifact.resolve())
         assert len(result["semantic_model_file_sha256"]) == 64
 
+    def test_dosi_resolves_osi_target_artifact_evidence(self, semantic_tools_with_adapter, tmp_path):
+        tool, _ = semantic_tools_with_adapter
+        artifact = tmp_path / "commerce.yml"
+        artifact.write_text("semantic_model: commerce\n", encoding="utf-8")
+        tool.adapter_type = "dosi"
+
+        with patch(
+            "datus.agent.node.semantic_authoring.discover_osi_semantic_models",
+            return_value=[
+                {
+                    "semantic_model_name": "commerce",
+                    "absolute_path": str(artifact),
+                }
+            ],
+        ):
+            result = tool._semantic_model_artifact_evidence("commerce")
+
+        assert result["semantic_model_name"] == "commerce"
+        assert result["semantic_model_file"] == str(artifact.resolve())
+
     def test_rejects_target_when_adapter_does_not_support_it(self, semantic_tools_with_adapter):
         tool, _ = semantic_tools_with_adapter
 

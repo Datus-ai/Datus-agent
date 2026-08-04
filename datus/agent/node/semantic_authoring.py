@@ -36,6 +36,7 @@ import yaml
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
+OSI_AUTHORING_ADAPTERS = frozenset({"osi", "dosi"})
 
 _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
@@ -77,6 +78,11 @@ def _resolve_semantic_adapter(agent_config: Any = None) -> Optional[str]:
     return resolver(None)
 
 
+def is_osi_semantic_adapter(adapter_type: Any) -> bool:
+    """Return whether an adapter consumes the shared OSI authoring format."""
+    return str(adapter_type or "").strip().lower() in OSI_AUTHORING_ADAPTERS
+
+
 def resolve_authoring_format(
     agent_config: Any = None,
     node_config: Optional[Dict[str, Any]] = None,
@@ -86,7 +92,7 @@ def resolve_authoring_format(
 
     adapter = _resolve_semantic_adapter(agent_config)
 
-    if adapter and str(adapter).strip().lower() == AUTHORING_FORMAT_OSI:
+    if is_osi_semantic_adapter(adapter):
         return AUTHORING_FORMAT_OSI
     return AUTHORING_FORMAT_METRICFLOW
 

@@ -6,6 +6,7 @@ Datus Agent 通过语义层适配器，把指标生成、校验、发现和查�
 
 - [MetricFlow 语义适配器](metricflow_semantic_adapter.zh.md)
 - [OSI 语义适配器](osi_semantic_adapter.zh.md)
+- [Dosi 语义适配器](dosi_semantic_adapter.zh.md)
 
 ## 概述
 
@@ -17,17 +18,19 @@ Datus Agent 通过语义层适配器，把指标生成、校验、发现和查�
 - 发布前校验语义资产
 - 将已校验的语义资产同步到 Datus Knowledge Base
 
-当前支持两个适配器：
+当前支持三个适配器：
 
 | 适配器 | 包名 | Authoring format | 执行后端 | 状态 |
 |--------|------|------------------|----------|------|
 | MetricFlow | `datus-semantic-metricflow` | MetricFlow YAML | MetricFlow | 可用 |
 | OSI | `datus-semantic-osi` | strict OSI core YAML + DATUS custom extensions | 默认 MetricFlow | 可用 |
+| Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | 原生 Dosi engine | 可用 |
 
 MetricFlow 和 OSI 是并列的 semantic adapter。区别在于用户和生成 agent 维护的源格式：
 
 - MetricFlow 模式直接编写 MetricFlow YAML。
 - OSI 模式编写 OSI core YAML，由 `datus-semantic-osi` 编译到 Datus Semantic IR，再降低到 MetricFlow。
+- Dosi 模式编写相同的 OSI 格式，但由 Rust engine 直接编译、规划和执行。
 
 ## 架构
 
@@ -44,8 +47,10 @@ datus-agent
 └── Adapter packages
     ├── datus-semantic-metricflow
     │   └── MetricFlowAdapter
-    └── datus-semantic-osi
-        └── DatusOSIAdapter
+    ├── datus-semantic-osi
+    │   └── DatusOSIAdapter
+    └── datus-semantic-dosi
+        └── DosiAdapter
 ```
 
 适配器通过 `datus.semantic_adapters` Python entry point 自动发现。
@@ -63,9 +68,11 @@ agent:
 
       osi:
         execution_backend: metricflow
+
+      dosi: {}
 ```
 
-`services.semantic_layer` 下的 key 必须等于 adapter type，例如 `metricflow` 或 `osi`。如果同时写了 `type:` 字段，其值必须与 key 一致。
+`services.semantic_layer` 下的 key 必须等于 adapter type，例如 `metricflow`、`osi` 或 `dosi`。如果同时写了 `type:` 字段，其值必须与 key 一致。
 语义适配器选择是全局的。旧的 node 级 `semantic_adapter` 和 `authoring_format` 字段会被忽略。
 
 选择规则、默认适配器和项目级 pin 见 [语义层配置](../configuration/semantic_layer.zh.md)。
@@ -97,6 +104,12 @@ agent:
 - 希望 Datus 执行提示隔离在 `custom_extensions` 中
 - 希望 LLM 生成时避免 `measure_proxy`、`type_params`、`data_source` 等后端 YAML 字段
 - 当前仍希望通过 MetricFlow 执行
+
+适合使用 Dosi 的情况：
+
+- 希望继续使用相同的 strict OSI authoring 流程
+- 模型以 aggregate、ratio 和 expression 指标为主
+- 希望使用原生 Join 规划、fan-out 防护和执行，不依赖 MetricFlow
 
 ## 实现自定义适配器
 
