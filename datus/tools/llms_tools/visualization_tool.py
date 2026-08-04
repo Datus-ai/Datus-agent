@@ -23,6 +23,7 @@ from datus.models.base import LLMBaseModel
 from datus.prompts.prompt_manager import get_prompt_manager
 from datus.schemas.visualization import VisualizationInput, VisualizationOutput, VisualizationWithContextOutput
 from datus.tools.base import BaseTool
+from datus.tools.llms_tools.visualization_messages import empty_dataset_reason, reason_for_chart
 from datus.utils.language_utils import resolve_language_name
 from datus.utils.loggings import get_logger
 
@@ -96,7 +97,9 @@ class VisualizationTool(BaseTool):
         if dataframe.empty or dataframe.shape[1] == 0:
             error_msg = "Provided dataset is empty or has no columns."
             logger.error(error_msg)
-            return self._error_output(error_msg, "Unknown", reason="Dataset does not contain any records")
+            return self._error_output(
+                error_msg, "Unknown", reason=empty_dataset_reason(self._effective_language(language))
+            )
 
         result = None
         if self.model:
@@ -106,7 +109,7 @@ class VisualizationTool(BaseTool):
                 logger.warning(f"LLM visualization recommendation failed, falling back to heuristics: {exc}")
 
         if result is None:
-            result = self._rule_based_recommendation(dataframe)
+            result = self._rule_based_recommendation(dataframe, language=language)
 
         return result
 
@@ -151,7 +154,7 @@ class VisualizationTool(BaseTool):
                 chart_type="Unknown",
                 x_col="",
                 y_cols=[],
-                reason="Dataset does not contain any records",
+                reason=empty_dataset_reason(self._effective_language(language)),
             )
 
         # Try context-aware LLM call
@@ -164,7 +167,7 @@ class VisualizationTool(BaseTool):
                 logger.warning(f"Context-aware LLM call failed, falling back to heuristics: {exc}")
 
         # Fall back directly to rule-based heuristics (no second LLM call)
-        base = self._rule_based_recommendation(dataframe)
+        base = self._rule_based_recommendation(dataframe, language=language)
         return VisualizationWithContextOutput(
             success=base.success,
             error=base.error,
@@ -212,7 +215,7 @@ class VisualizationTool(BaseTool):
 
         reason = (response.get("reason") or "").strip()
         if not reason:
-            reason = self._default_reason(chart_type, x_col, y_cols)
+            reason = self._default_reason(chart_type, x_col, y_cols, language=language)
 
         # ── Parse context metadata ────────────────────────────────
         period = response.get("period")
@@ -243,6 +246,14 @@ class VisualizationTool(BaseTool):
     # ------------------------------------------------------------------ #
     # Response language
     # ------------------------------------------------------------------ #
+    def _effective_language(self, language: Optional[str]) -> str:
+        """Resolve the pinned language code, or ``""`` when none is configured."""
+        # A blank explicit override is "unset", not "no language" — otherwise a
+        # caller sending an empty field would suppress the configured default.
+        explicit = str(language).strip() if language else ""
+        fallback = getattr(self.agent_config, "language", None)
+        return explicit or (str(fallback).strip() if fallback else "")
+
     def _language_directive(self, language: Optional[str]) -> str:
         """Render the ``response_language`` section, or ``""`` when unpinned.
 
@@ -251,11 +262,7 @@ class VisualizationTool(BaseTool):
         prompt itself — otherwise an English template is answered in English
         regardless of the language the caller asked for.
         """
-        # A blank explicit override is "unset", not "no language" — otherwise a
-        # caller sending an empty field would suppress the configured default.
-        explicit = str(language).strip() if language else ""
-        fallback = getattr(self.agent_config, "language", None)
-        code = explicit or (str(fallback).strip() if fallback else "")
+        code = self._effective_language(language)
         if not code:
             return ""
         language_name = resolve_language_name(code)
@@ -325,7 +332,7 @@ class VisualizationTool(BaseTool):
         y_cols = self._sanitize_y_cols(df, y_cols, exclude={x_col})
 
         if not reason:
-            reason = self._default_reason(chart_type, x_col, y_cols)
+            reason = self._default_reason(chart_type, x_col, y_cols, language=language)
 
         return VisualizationOutput(
             success=True,
@@ -339,8 +346,13 @@ class VisualizationTool(BaseTool):
     # ------------------------------------------------------------------ #
     # Heuristic recommendation fallback
     # ------------------------------------------------------------------ #
-    def _rule_based_recommendation(self, df: pd.DataFrame) -> VisualizationOutput:
-        """Recommend visualization using lightweight heuristics."""
+    def _rule_based_recommendation(self, df: pd.DataFrame, language: Optional[str] = None) -> VisualizationOutput:
+        """Recommend visualization using lightweight heuristics.
+
+        ``reason`` comes from a static translation table rather than an f-string:
+        this path is reached exactly when no LLM is available, so the wording
+        cannot be generated — but the caller still asked for a language.
+        """
         numeric_cols = [col for col in df.columns if self._is_numeric(df[col])]
         datetime_cols = [col for col in df.columns if is_datetime64_any_dtype(df[col])]
         categorical_cols = [col for col in df.columns if self._is_categorical(df[col])]
@@ -348,7 +360,6 @@ class VisualizationTool(BaseTool):
         chart_type = "Unknown"
         x_col = ""
         y_cols: List[str] = []
-        reason = "Unable to determine an ideal visualization for the provided data."
 
         pie_candidate = (
             len(categorical_cols) == 1
@@ -360,34 +371,18 @@ class VisualizationTool(BaseTool):
             x_col = datetime_cols[0]
             y_cols = self._select_numeric_metrics(numeric_cols, exclude={x_col})
             chart_type = "Line Chart"
-            reason = (
-                f"Detected datetime column '{x_col}' with {len(y_cols)} numeric metric(s), "
-                "suggesting a line chart to highlight trends."
-            )
         elif pie_candidate:
             x_col = categorical_cols[0]
             y_cols = [numeric_cols[0]]
             chart_type = "Pie Chart"
-            reason = (
-                f"Categorical column '{x_col}' has only {df[x_col].nunique(dropna=True)} distinct values "
-                f"with numeric metric '{y_cols[0]}', making it suitable for a pie chart."
-            )
         elif categorical_cols and numeric_cols:
             x_col = categorical_cols[0]
             y_cols = self._select_numeric_metrics(numeric_cols, exclude=set())
             chart_type = "Bar Chart"
-            reason = (
-                f"Categorical column '{x_col}' paired with numeric metrics {y_cols} "
-                "is best represented using a bar chart to compare categories."
-            )
         elif len(numeric_cols) >= 2:
             x_col = numeric_cols[0]
             y_cols = [numeric_cols[1]]
             chart_type = "Scatter Plot"
-            reason = (
-                f"Multiple numeric columns detected ({numeric_cols[:2]}), "
-                "indicating a scatter plot is suitable for correlation analysis."
-            )
 
         return VisualizationOutput(
             success=True,
@@ -395,7 +390,7 @@ class VisualizationTool(BaseTool):
             chart_type=chart_type,
             x_col=x_col,
             y_cols=y_cols,
-            reason=reason,
+            reason=self._default_reason(chart_type, x_col, y_cols, language=language),
         )
 
     # ------------------------------------------------------------------ #
@@ -453,16 +448,16 @@ class VisualizationTool(BaseTool):
         }
         return mapping.get(normalized, "Unknown")
 
-    def _default_reason(self, chart_type: str, x_col: str, y_cols: Sequence[str]) -> str:
-        if chart_type == "Line Chart":
-            return f"Line chart illustrates how {', '.join(y_cols) or 'metrics'} evolve over {x_col or 'time'}."
-        if chart_type == "Bar Chart":
-            return f"Bar chart compares numeric metrics {y_cols or ['values']} across categories in {x_col}."
-        if chart_type == "Scatter Plot" and y_cols:
-            return f"Scatter plot reveals the relationship between numeric fields {y_cols[0]} and {x_col}."
-        if chart_type == "Pie Chart" and y_cols:
-            return f"Pie chart shows the share of {y_cols[0]} across categories in {x_col}."
-        return "Unable to determine the best visualization due to insufficient information."
+    def _default_reason(
+        self, chart_type: str, x_col: str, y_cols: Sequence[str], language: Optional[str] = None
+    ) -> str:
+        """Localized wording for a chart pick the LLM didn't explain itself."""
+        return reason_for_chart(
+            chart_type,
+            language=self._effective_language(language),
+            x_col=x_col,
+            y_cols=list(y_cols),
+        )
 
     def _select_dimension(self, df: pd.DataFrame, exclude: Optional[set[str]] = None) -> str:
         exclude = exclude or set()
