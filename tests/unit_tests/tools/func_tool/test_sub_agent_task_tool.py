@@ -80,6 +80,13 @@ class TestAvailableTools:
         assert "prompt" in schema["properties"]
         assert set(schema["required"]) == {"type", "prompt", "description"}
 
+    def test_type_schema_description_requires_available_type(self, task_tool):
+        schema = task_tool.available_tools()[0].params_json_schema
+        type_description = schema["properties"]["type"]["description"]
+        assert "Required" in type_description
+        assert "Available types" in type_description
+        assert "Never omit" in type_description
+
     @pytest.mark.asyncio
     async def test_repairs_arguments_for_replay_without_executing(self, task_tool):
         tool = task_tool.available_tools()[0]
@@ -635,6 +642,13 @@ class TestResolveNodeType:
 
 @pytest.mark.ci
 class TestBuildTaskDescription:
+    def test_starts_with_required_call_contract(self, task_tool):
+        desc = task_tool._build_task_description()
+        assert desc.startswith("Required call contract:")
+        assert "Every task tool call MUST include `type`, `prompt`, and `description`." in desc
+        assert "`type` MUST be exactly one name from the Available types below" in desc
+        assert 'task(type="<available type>"' in desc
+
     def test_contains_all_types(self, task_tool):
         desc = task_tool._build_task_description()
         assert "gen_sql" in desc
@@ -1075,12 +1089,30 @@ class TestTaskExecution:
         result = await task_tool.task(type="", prompt="test")
         assert result.success == 0
         assert "Missing required parameter: type" in result.error
+        assert "Retry task() with all required arguments" in result.error
+        assert "sales_analyst" in result.error
+        assert 'task(type="gen_sql"' in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_missing_type_when_no_subagents_are_available(self, mock_agent_config):
+        task_tool = SubAgentTaskTool(agent_config=mock_agent_config, allowed_subagents=[])
+
+        result = await task_tool.task(type="", prompt="test")
+
+        assert result.success == 0
+        assert "Missing required parameter: type" in result.error
+        assert "No subagent types are currently available" in result.error
+        assert "Update the subagent allowlist or agent configuration" in result.error
+        assert "Example:" not in result.error
 
     @pytest.mark.asyncio
     async def test_execute_missing_prompt(self, task_tool):
         result = await task_tool.task(type="gen_sql", prompt="")
         assert result.success == 0
         assert "Missing required parameter: prompt" in result.error
+        assert "Retry task() with all required arguments" in result.error
+        assert "Available types" in result.error
+        assert 'prompt="<task or question>"' in result.error
 
     @pytest.mark.asyncio
     async def test_execute_custom_subagent(self, task_tool):
