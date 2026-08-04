@@ -27,31 +27,15 @@ def artifact_revision(content: bytes) -> str:
 
 @contextmanager
 def semantic_artifact_lock(target_path: Path) -> Iterator[None]:
-    """Serialize one semantic artifact across threads and shared workers.
-
-    The process-local lock covers platforms without ``fcntl``. On Unix, the
-    adjacent lock file also coordinates workers that share the project files.
-    """
+    """Serialize one semantic artifact across threads in this process."""
 
     target_path = target_path.resolve(strict=False)
     key = str(target_path)
     with _ARTIFACT_LOCKS_GUARD:
         thread_lock = _ARTIFACT_LOCKS.setdefault(key, threading.RLock())
 
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = target_path.parent / f".{target_path.name}.lock"
-    with thread_lock, lock_path.open("a+b") as lock_file:
-        try:
-            import fcntl
-        except ImportError:  # pragma: no cover - Windows fallback
-            fcntl = None
-        if fcntl is not None:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            if fcntl is not None:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    with thread_lock:
+        yield
 
 
 def atomic_write_bytes(target_path: Path, content: bytes, *, mode: Optional[int] = None) -> None:
