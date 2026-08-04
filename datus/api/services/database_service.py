@@ -534,11 +534,12 @@ class DatasourceService:
         root = self._semantic_models_root()
         if root is None:
             raise ValueError("The project semantic-model directory is unavailable")
+        # Only the canonical project-relative form is stripped; anything else is
+        # taken as-is under the root. Accepting a bare ``semantic_models/`` alias
+        # too would be ambiguous for a datasource named ``semantic_models``.
         parts = raw_path.parts
         if parts[:2] == ("subject", "semantic_models"):
             parts = parts[2:]
-        elif parts[:1] == ("semantic_models",):
-            parts = parts[1:]
         if not parts:
             raise ValueError("semantic_model_file must identify a YAML file")
 
@@ -556,6 +557,38 @@ class DatasourceService:
         except (OSError, ValueError) as exc:
             raise ValueError("semantic_model_file resolves outside the semantic-model directory") from exc
         return candidate
+
+    def _semantic_model_datasource(self, path: Path) -> str:
+        """Return the datasource directory a resolved artifact sits under."""
+
+        root = self._semantic_models_root()
+        if root is None:
+            return ""
+        relative = path.resolve(strict=False).relative_to(root)
+        return relative.parts[0] if len(relative.parts) > 1 else ""
+
+    def _resolve_writable_semantic_model_file(self, semantic_model_file: str) -> Path:
+        """Resolve a save/validate target, refusing another datasource's model.
+
+        Reads span the whole tree, but every write-side stage is built around
+        ``current_datasource``: metricflow validation takes it as an argument,
+        the OSI adapter resolves the target inside the active datasource's
+        inventory, and the knowledge-base sync stamps its rows with it. Writing
+        another datasource's artifact would therefore file its rows under the
+        wrong datasource, so reject it with a message that says what to do.
+        Threading a per-request datasource through those stages is the real
+        fix and needs its own change.
+        """
+
+        path = self._resolve_semantic_model_file(semantic_model_file)
+        datasource = self._semantic_model_datasource(path)
+        active = str(getattr(self.agent_config, "current_datasource", "") or "").strip()
+        if datasource and active and datasource != active:
+            raise ValueError(
+                f"semantic_model_file belongs to datasource {datasource!r}, but {active!r} is active; "
+                "switch the active datasource before saving this model"
+            )
+        return path
 
     @staticmethod
     def _osi_candidate_identity(yaml_content: str) -> tuple[Optional[str], bool, Optional[str]]:
@@ -701,7 +734,7 @@ class DatasourceService:
 
     def _save_semantic_model_sync(self, request: SaveSemanticModelInput) -> Result[SaveSemanticModelData]:
         try:
-            semantic_model_path = self._resolve_semantic_model_file(request.semantic_model_file)
+            semantic_model_path = self._resolve_writable_semantic_model_file(request.semantic_model_file)
         except ValueError as exc:
             return Result[SaveSemanticModelData](
                 success=False,
@@ -924,7 +957,10 @@ class DatasourceService:
         """Validate submitted SemanticModel YAML without changing the live artifact."""
         logger.info("Validating semantic model YAML")
         try:
-            semantic_model_path = self._resolve_semantic_model_file(request.semantic_model_file)
+            # Same addressing rule as save: validating a file you would not be
+            # allowed to save is a confusing asymmetry, and the metricflow
+            # validator is itself scoped to the active datasource.
+            semantic_model_path = self._resolve_writable_semantic_model_file(request.semantic_model_file)
             is_valid, error_messages, _model_name, _has_metrics = self._validate_semantic_content(
                 request,
                 semantic_model_path,

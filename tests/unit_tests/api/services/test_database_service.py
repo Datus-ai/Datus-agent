@@ -484,6 +484,36 @@ class TestGetSemanticModel:
         assert result.success is True
         assert result.data.semantic_model_file == "subject/semantic_models/lakehouse/orders.yml"
 
+    @pytest.mark.asyncio
+    async def test_save_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
+        """Reads span every datasource; writes must stay on the active one.
+
+        The validators and the knowledge-base sync are all scoped to
+        ``current_datasource``, so saving another datasource's artifact would
+        file its rows under the wrong datasource.
+        """
+        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
+
+        result = await svc.save_semantic_model(SaveSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml()))
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+        assert "lakehouse" in result.errorMessage
+        assert "warehouse" in result.errorMessage
+
+    @pytest.mark.asyncio
+    async def test_validate_semantic_model_rejects_a_non_active_datasource(self, tmp_path):
+        svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
+        _yaml_file, selector = _write_model(tmp_path, _osi_yaml(), datasource="lakehouse")
+
+        result = await svc.validate_semantic_model(
+            ValidateSemanticModelInput(semantic_model_file=selector, yaml=_osi_yaml())
+        )
+
+        assert result.success is False
+        assert result.errorCode == "INVALID_PARAMETERS"
+
     def test_get_semantic_model_accepts_a_selector_without_the_subject_prefix(self, tmp_path):
         svc = _service_with_semantic_adapter("osi", models_root=tmp_path)
         _yaml_file, _selector = _write_model(tmp_path, _osi_yaml())
