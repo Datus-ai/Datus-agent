@@ -6,8 +6,15 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any, cast
+
+from datus.observability.manager import get_observability_manager
+from datus.schemas.tool_summary import detect_tool_failure
+
+_TOOL_ERROR_MESSAGE_MAX_CHARS = 500
+_TOOL_ERROR_MESSAGE_FALLBACK = "Tool returned an unsuccessful result"
 
 
 class DatusOpenAIAgentsInstrumentor:
@@ -137,6 +144,13 @@ class DatusOpenInferenceTracingProcessor(_OpenInferenceTracingProcessorBase):  #
             tool_call_id = mcp_data.get("tool_call_id")
             if tool_call_id:
                 otel_span.set_attribute("tool.id", str(tool_call_id))
+            if detect_tool_failure(data.output):
+                span.set_error(
+                    {
+                        "message": _tool_failure_message(data.output),
+                        "data": {"exception.type": "ToolError"},
+                    }
+                )
 
     def shutdown(self) -> None:
         self._merged_root_agent_span_ids.clear()
@@ -160,3 +174,34 @@ def _set_numeric_attribute(span: Any, key: str, value: Any) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return
     span.set_attribute(key, value)
+
+
+def _tool_failure_message(output: Any) -> str:
+    payload = _tool_result_mapping(output)
+    error = payload.get("error") if payload is not None else None
+    if not isinstance(error, str) or not error.strip():
+        nested = _tool_result_mapping(payload.get("raw_output")) if payload is not None else None
+        error = nested.get("error") if nested is not None else None
+    if not isinstance(error, str) or not error.strip():
+        return _TOOL_ERROR_MESSAGE_FALLBACK
+
+    try:
+        redacted = get_observability_manager().redact(error)
+    except Exception:  # pragma: no cover - redaction is best-effort and must not break tool execution.
+        return _TOOL_ERROR_MESSAGE_FALLBACK
+    message = " ".join(str(redacted).split()) or _TOOL_ERROR_MESSAGE_FALLBACK
+    if len(message) <= _TOOL_ERROR_MESSAGE_MAX_CHARS:
+        return message
+    return message[: _TOOL_ERROR_MESSAGE_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _tool_result_mapping(output: Any) -> Mapping[str, Any] | None:
+    if isinstance(output, Mapping):
+        return output
+    if not isinstance(output, str):
+        return None
+    try:
+        parsed = json.loads(output)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
