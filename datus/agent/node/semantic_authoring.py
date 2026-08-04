@@ -140,6 +140,29 @@ def osi_semantic_model_directory(agent_config: Any = None) -> Optional[Path]:
     return _osi_semantic_model_dir(agent_config)
 
 
+def osi_semantic_models_root(agent_config: Any = None) -> Optional[Path]:
+    """Return the semantic-model root shared by every datasource.
+
+    File-addressed APIs resolve against this root rather than the active
+    datasource's subdirectory, so a project with several datasources can reach
+    all of their models.
+    """
+    if agent_config is None:
+        return None
+
+    path_manager = getattr(agent_config, "path_manager", None)
+    models_dir = getattr(path_manager, "semantic_models_dir", None)
+    if models_dir is not None:
+        return Path(str(models_dir)).expanduser()
+
+    project_root = getattr(agent_config, "project_root", None)
+    if not isinstance(project_root, (str, Path)):
+        project_root = getattr(path_manager, "project_root", None)
+    if project_root:
+        return Path(str(project_root)).expanduser() / "subject" / "semantic_models"
+    return None
+
+
 def _table_lookup_names(value: Any) -> set[str]:
     """Return stable lookup keys for a logical or fully-qualified table name."""
     parts = [part.strip().strip('`"[]') for part in re.split(r"[./]", str(value or "").strip())]

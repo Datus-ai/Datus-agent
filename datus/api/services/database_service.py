@@ -26,11 +26,12 @@ from datus.api.models.table_models import (
     GetTableDetailData,
     GetTablesColumnsData,
     SaveSemanticModelData,
-    SemanticModelInput,
+    SaveSemanticModelInput,
     TableColumnBrief,
     TableColumns,
     TableDetailData,
     ValidateSemanticModelData,
+    ValidateSemanticModelInput,
 )
 from datus.cli.generation_hooks import GenerationHooks
 from datus.configuration.agent_config_loader import AgentConfig
@@ -39,7 +40,6 @@ from datus.storage.semantic_model.artifact_file import (
     atomic_write_bytes,
     semantic_artifact_lock,
 )
-from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.tools.db_tools.capabilities import supports_namespace
 from datus.tools.db_tools.db_manager import DBManager
 from datus.utils.loggings import get_logger
@@ -69,7 +69,6 @@ class DatasourceService:
 
         self.db_manager = DBManager(agent_config.datasource_configs)
         self.current_datasource = agent_config.current_datasource
-        self.semantic_rag = SemanticModelRAG(self.agent_config) if self.current_datasource else None
 
         self.current_db_connector = None
         self.current_db_name = None
@@ -80,23 +79,6 @@ class DatasourceService:
         self._columns_cache: dict[str, list[ColumnInfo]] = {}
         self._schema_lock = threading.Lock()
         self._initialize_connection()
-
-    def _ensure_semantic_rag(self) -> SemanticModelRAG:
-        """Create semantic model storage only after a datasource is selected."""
-
-        if self.semantic_rag is not None:
-            return self.semantic_rag
-        self.current_datasource = self.agent_config.current_datasource
-        if not self.current_datasource:
-            from datus.utils.exceptions import DatusException
-            from datus.utils.exceptions import ErrorCode as StorageErrorCode
-
-            raise DatusException(
-                StorageErrorCode.STORAGE_INVALID_ARGUMENT,
-                message_args={"error_message": "No datasource is selected"},
-            )
-        self.semantic_rag = SemanticModelRAG(self.agent_config, datasource_id=self.current_datasource)
-        return self.semantic_rag
 
     def _active_semantic_adapter(self) -> str:
         resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
@@ -517,73 +499,46 @@ class DatasourceService:
                 results.append(TableColumns(table=full_path, columns=columns))
         return Result(success=True, data=GetTablesColumnsData(tables=results))
 
-    def _get_semantic_model(
-        self,
-        full_name: str,
-        *,
-        catalog: Optional[str] = None,
-        database: Optional[str] = None,
-        db_schema: Optional[str] = None,
-        semantic_model_name: Optional[str] = None,
-    ):
-        # Parse table name parts
-        name_parts = parse_table_name_parts(full_name, self.current_db_connector.get_type())
-        current_db_config = self.agent_config.current_db_config()
-        catalog_name = catalog or name_parts["catalog_name"] or current_db_config.catalog
-        database_name = database or name_parts["database_name"] or self.current_db_name or current_db_config.database
-        schema_name = db_schema or name_parts["schema_name"] or current_db_config.schema
-        table_name = name_parts["table_name"]
+    def _semantic_models_root(self) -> Optional[Path]:
+        """Return the semantic-model root shared by every datasource."""
 
-        # Get semantic model using SemanticMetricsRAG
-        lookup_kwargs = dict(
-            catalog_name=catalog_name,
-            database_name=database_name,
-            schema_name=schema_name,
-            table_name=table_name,
-        )
-        if semantic_model_name:
-            lookup_kwargs["semantic_model_name"] = semantic_model_name
-        semantic_model = self._ensure_semantic_rag().get_semantic_model(**lookup_kwargs)
-        return semantic_model
+        from datus.agent.node.semantic_authoring import osi_semantic_models_root
 
-    def _semantic_model_root(self) -> Optional[Path]:
-        """Return the canonical semantic-model root for the active datasource."""
-
-        from datus.agent.node.semantic_authoring import osi_semantic_model_directory
-
-        root = osi_semantic_model_directory(self.agent_config)
+        root = osi_semantic_models_root(self.agent_config)
         return root.expanduser().resolve(strict=False) if root is not None else None
 
     def _semantic_model_display_path(self, path: Path) -> str:
-        """Return the stable datasource-scoped path exposed by the API."""
+        """Return the stable project-relative path exposed by the API."""
 
-        root = self._semantic_model_root()
+        root = self._semantic_models_root()
         if root is None:
             return str(path)
         relative = path.resolve(strict=False).relative_to(root)
-        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default").strip() or "default"
-        return (Path("subject") / "semantic_models" / datasource / relative).as_posix()
+        return (Path("subject") / "semantic_models" / relative).as_posix()
 
-    def _resolve_explicit_semantic_model_file(self, semantic_model_file: str) -> Path:
-        """Resolve an API file selector without trusting client absolute paths."""
+    def _resolve_semantic_model_file(self, semantic_model_file: str) -> Path:
+        """Resolve an API file selector without trusting client absolute paths.
+
+        The selector is resolved against the whole ``subject/semantic_models``
+        tree rather than the active datasource's subdirectory, so every
+        datasource configured for the project is addressable.
+        """
 
         selector = str(semantic_model_file or "").strip()
         if not selector:
             raise ValueError("semantic_model_file is required")
         raw_path = Path(selector).expanduser()
         if raw_path.is_absolute():
-            raise ValueError("semantic_model_file must be a datasource-scoped relative path")
+            raise ValueError("semantic_model_file must be a project-relative path")
 
-        root = self._semantic_model_root()
+        root = self._semantic_models_root()
         if root is None:
-            raise ValueError("The active datasource semantic-model directory is unavailable")
-        datasource = str(getattr(self.agent_config, "current_datasource", "") or "default").strip() or "default"
+            raise ValueError("The project semantic-model directory is unavailable")
         parts = raw_path.parts
-        prefix = ("subject", "semantic_models", datasource)
-        if parts[: len(prefix)] == prefix:
-            parts = parts[len(prefix) :]
-        elif parts[:2] == ("semantic_models", datasource):
+        if parts[:2] == ("subject", "semantic_models"):
             parts = parts[2:]
+        elif parts[:1] == ("semantic_models",):
+            parts = parts[1:]
         if not parts:
             raise ValueError("semantic_model_file must identify a YAML file")
 
@@ -591,7 +546,7 @@ class DatasourceService:
         try:
             candidate.relative_to(root)
         except ValueError as exc:
-            raise ValueError("semantic_model_file escapes the active datasource directory") from exc
+            raise ValueError("semantic_model_file escapes the semantic-model directory") from exc
         if candidate.suffix.lower() not in {".yml", ".yaml"}:
             raise ValueError("semantic_model_file must be a .yml or .yaml file")
         if not candidate.is_file():
@@ -599,66 +554,8 @@ class DatasourceService:
         try:
             candidate.resolve(strict=True).relative_to(root)
         except (OSError, ValueError) as exc:
-            raise ValueError("semantic_model_file resolves outside the active datasource directory") from exc
+            raise ValueError("semantic_model_file resolves outside the semantic-model directory") from exc
         return candidate
-
-    def _validated_storage_semantic_model_path(self, raw_path: str) -> Path:
-        """Validate a trusted storage lookup against the live datasource root."""
-
-        candidate = Path(str(raw_path or "")).expanduser().resolve(strict=False)
-        if not str(raw_path or "").strip():
-            raise ValueError("Stored semantic model path is empty")
-        root = self._semantic_model_root()
-        if root is not None:
-            try:
-                candidate.relative_to(root)
-            except ValueError as exc:
-                raise ValueError("Stored semantic model path escapes the active datasource directory") from exc
-        return candidate
-
-    def _resolve_semantic_model_path(
-        self,
-        full_name: str = "",
-        *,
-        catalog: Optional[str] = None,
-        database: Optional[str] = None,
-        db_schema: Optional[str] = None,
-        semantic_model_name: Optional[str] = None,
-        semantic_model_file: Optional[str] = None,
-    ) -> Optional[Path]:
-        """Resolve a stable file first, then filesystem model name, then legacy KB lookup."""
-
-        if semantic_model_file:
-            return self._resolve_explicit_semantic_model_file(semantic_model_file)
-
-        requested_name = str(semantic_model_name or "").strip()
-        if requested_name and self._is_osi_semantic_layer():
-            from datus.agent.node.semantic_authoring import inspect_osi_semantic_model_inventory
-
-            inventory = inspect_osi_semantic_model_inventory(self.agent_config)
-            matches = [
-                model
-                for model in [*(inventory.get("models") or []), *(inventory.get("recoverable_models") or [])]
-                if str(model.get("semantic_model_name") or "").strip() == requested_name
-            ]
-            unique_paths = {str(model.get("absolute_path") or "") for model in matches if model.get("absolute_path")}
-            if len(unique_paths) > 1:
-                raise ValueError(f"Semantic model name is ambiguous: {requested_name}")
-            if unique_paths:
-                return self._validated_storage_semantic_model_path(unique_paths.pop())
-
-        if not str(full_name or "").strip():
-            return None
-        semantic_model = self._get_semantic_model(
-            full_name,
-            catalog=catalog,
-            database=database,
-            db_schema=db_schema,
-            semantic_model_name=semantic_model_name,
-        )
-        if not semantic_model:
-            return None
-        return self._validated_storage_semantic_model_path(semantic_model.get("yaml_path", ""))
 
     @staticmethod
     def _osi_candidate_identity(yaml_content: str) -> tuple[Optional[str], bool, Optional[str]]:
@@ -690,7 +587,7 @@ class DatasourceService:
 
     def _validate_semantic_content(
         self,
-        request: SemanticModelInput,
+        request: ValidateSemanticModelInput,
         semantic_model_path: Path,
     ) -> tuple[bool, List[str], Optional[str], bool]:
         """Validate submitted content without mutating the live artifact."""
@@ -717,9 +614,6 @@ class DatasourceService:
             file_path=str(semantic_model_path),
             datus_home=self.agent_config.home,
             datasource=self.agent_config.current_datasource,
-            catalog=request.catalog,
-            database=request.database,
-            db_schema=request.db_schema,
         )
         return is_valid, errors, request.semantic_model_name, False
 
@@ -741,45 +635,29 @@ class DatasourceService:
         payload = result.result if isinstance(result.result, dict) else {}
         return bool(result.success and payload.get("valid", False)), payload, str(result.error or "")
 
-    def get_semantic_model(
-        self,
-        full_name: str,
-        *,
-        catalog: Optional[str] = None,
-        database: Optional[str] = None,
-        db_schema: Optional[str] = None,
-        semantic_model_name: Optional[str] = None,
-    ) -> Result[GetSemanticModelData]:
-        """Get SemanticModel YAML.
-
-        Business logic:
-        1. Parse table name to get catalog, database, schema, table components
-        2. Use SemanticMetricsRAG.get_semantic_model() to retrieve semantic model by table_name
-        3. Get semantic_file_path from the result
-        4. Return the raw YAML file content
+    def get_semantic_model(self, semantic_model_file: str) -> Result[GetSemanticModelData]:
+        """Read one SemanticModel YAML artifact.
 
         Args:
-            full_name: Full table name: [catalog.][database.][schema.]table
+            semantic_model_file: Project-relative path under ``subject/semantic_models``.
 
         Returns:
-            Result[GetSemanticModelData] with YAML content
+            Result[GetSemanticModelData] with the YAML plus the identity and
+            revision a later save needs.
         """
         try:
-            semantic_model_path = self._resolve_semantic_model_path(
-                full_name,
-                catalog=catalog,
-                database=database,
-                db_schema=db_schema,
-                semantic_model_name=semantic_model_name,
+            semantic_model_path = self._resolve_semantic_model_file(semantic_model_file)
+        except ValueError as exc:
+            return Result[GetSemanticModelData](
+                success=False,
+                errorCode=ErrorCode.INVALID_PARAMETERS,
+                errorMessage=str(exc),
             )
-            if semantic_model_path is None:
-                return Result[GetSemanticModelData](
-                    success=True,
-                )
 
+        try:
             content = semantic_model_path.read_bytes()
             yaml_content = content.decode("utf-8")
-            declared_name = str(semantic_model_name or "").strip() or None
+            declared_name = None
             try:
                 document = yaml.safe_load(yaml_content)
                 declared = document.get("semantic_model") if isinstance(document, dict) else None
@@ -808,7 +686,7 @@ class DatasourceService:
                 errorMessage=str(e),
             )
 
-    async def save_semantic_model(self, request: SemanticModelInput) -> Result[SaveSemanticModelData]:
+    async def save_semantic_model(self, request: SaveSemanticModelInput) -> Result[SaveSemanticModelData]:
         """Atomically save and reconcile one semantic model artifact."""
 
         try:
@@ -821,27 +699,14 @@ class DatasourceService:
                 errorMessage=str(exc),
             )
 
-    def _save_semantic_model_sync(self, request: SemanticModelInput) -> Result[SaveSemanticModelData]:
+    def _save_semantic_model_sync(self, request: SaveSemanticModelInput) -> Result[SaveSemanticModelData]:
         try:
-            semantic_model_path = self._resolve_semantic_model_path(
-                request.table,
-                catalog=request.catalog,
-                database=request.database,
-                db_schema=request.db_schema,
-                semantic_model_name=request.semantic_model_name,
-                semantic_model_file=request.semantic_model_file,
-            )
+            semantic_model_path = self._resolve_semantic_model_file(request.semantic_model_file)
         except ValueError as exc:
             return Result[SaveSemanticModelData](
                 success=False,
                 errorCode=ErrorCode.INVALID_PARAMETERS,
                 errorMessage=str(exc),
-            )
-        if semantic_model_path is None:
-            return Result[SaveSemanticModelData](
-                success=False,
-                errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                errorMessage=f"Semantic model not found for target: {request.semantic_model_name or request.table}",
             )
 
         display_path = self._semantic_model_display_path(semantic_model_path)
@@ -1055,24 +920,11 @@ class DatasourceService:
                 ),
             )
 
-    async def validate_semantic_model(self, request: SemanticModelInput) -> Result[ValidateSemanticModelData]:
+    async def validate_semantic_model(self, request: ValidateSemanticModelInput) -> Result[ValidateSemanticModelData]:
         """Validate submitted SemanticModel YAML without changing the live artifact."""
         logger.info("Validating semantic model YAML")
         try:
-            semantic_model_path = self._resolve_semantic_model_path(
-                request.table,
-                catalog=request.catalog,
-                database=request.database,
-                db_schema=request.db_schema,
-                semantic_model_name=request.semantic_model_name,
-                semantic_model_file=request.semantic_model_file,
-            )
-            if semantic_model_path is None:
-                return Result[ValidateSemanticModelData](
-                    success=False,
-                    errorCode=ErrorCode.PROVIDER_CONFIG_ERROR,
-                    errorMessage=f"Semantic model not found for target: {request.semantic_model_name or request.table}",
-                )
+            semantic_model_path = self._resolve_semantic_model_file(request.semantic_model_file)
             is_valid, error_messages, _model_name, _has_metrics = self._validate_semantic_content(
                 request,
                 semantic_model_path,

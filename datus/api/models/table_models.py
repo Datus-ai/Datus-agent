@@ -84,31 +84,40 @@ class GetTablesColumnsData(BaseModel):
 # ========== SemanticModel Models ==========
 
 
+SEMANTIC_MODEL_FILE_DESCRIPTION = (
+    "Project-relative semantic model file, e.g. subject/semantic_models/<datasource>/<name>.yml"
+)
+
+
 class GetSemanticModelData(BaseModel):
     """Get semantic model result data."""
 
     yaml: str = Field(..., description="SemanticModel YAML content")
-    semantic_model_name: Optional[str] = Field(None, description="Stable semantic model name")
-    semantic_model_file: Optional[str] = Field(None, description="Datasource-scoped semantic model file")
-    revision: Optional[str] = Field(None, description="SHA-256 revision of the YAML content")
+    semantic_model_name: Optional[str] = Field(None, description="Semantic model name declared by the YAML")
+    semantic_model_file: str = Field(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION)
+    revision: str = Field(..., description="SHA-256 revision of the YAML content")
 
 
-class SemanticModelInput(BaseModel):
+class ValidateSemanticModelInput(BaseModel):
+    """Validate semantic model input."""
+
+    semantic_model_file: str = Field(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION)
+    yaml: str = Field(..., description="SemanticModel YAML content")
+    semantic_model_name: Optional[str] = Field(
+        None,
+        description="Optional assertion that the YAML declares this semantic model",
+    )
+
+
+class SaveSemanticModelInput(ValidateSemanticModelInput):
     """Save semantic model input."""
 
-    table: str = Field("", description="Full table name; retained as a legacy target selector")
-    yaml: str = Field(..., description="SemanticModel YAML content")
-    catalog: Optional[str] = Field(None, description="Current catalog context")
-    database: Optional[str] = Field(None, description="Current database context")
-    db_schema: Optional[str] = Field(None, description="Current schema context")
-    semantic_model_name: Optional[str] = Field(None, description="Semantic model owning a shared physical table")
-    semantic_model_file: Optional[str] = Field(
-        None,
-        description="Datasource-scoped semantic model file returned by GET /semantic_model",
-    )
     expected_revision: Optional[str] = Field(
         None,
-        description="Optional SHA-256 revision used to reject concurrent overwrites",
+        description=(
+            "SHA-256 revision returned by the last GET. Omit to skip the concurrency "
+            "check; supply it to reject overwrites of a file changed since it loaded."
+        ),
     )
 
 
