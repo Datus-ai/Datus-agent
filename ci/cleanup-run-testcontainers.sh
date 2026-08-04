@@ -41,12 +41,15 @@ for container_id in "${container_ids[@]}"; do
   docker rm -fv "$container_id" || cleanup_failed=1
 done
 
-remaining="$(
+if ! remaining="$(
   docker ps -aq \
     --filter "label=org.testcontainers=true" \
     --filter "label=com.datus.ci.run-id=${run_id}" \
     | wc -l
-)"
+)"; then
+  echo "Failed to list remaining Testcontainers for run ${run_id}" >&2
+  cleanup_failed=1
+fi
 if [ "$remaining" -ne 0 ]; then
   echo "Failed to remove ${remaining} Testcontainers for run ${run_id}" >&2
   cleanup_failed=1

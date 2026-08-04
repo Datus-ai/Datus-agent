@@ -5,6 +5,8 @@ discovered backends so that store-level tests automatically repeat on every
 available rdb+vector combination.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
 
@@ -12,6 +14,7 @@ from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.registry import clear_storage_registry
 from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
 from tests.unit_tests.storage._backend_discovery import (
+    BackendTestConfig,
     discover_test_backends,
     setup_test_backend,
     teardown_test_backend,
@@ -21,7 +24,7 @@ _BACKEND_SPECS = discover_test_backends()
 
 
 @pytest.fixture(scope="session", params=_BACKEND_SPECS, ids=lambda backend: backend.id)
-def _storage_backend_environment(request):
+def _storage_backend_environment(request) -> Iterator[BackendTestConfig]:
     """Own one backend environment for the lifetime of its parameterized test session."""
     try:
         backend = setup_test_backend(request.param)
@@ -47,7 +50,7 @@ def storage_test_project():
 
 
 @pytest.fixture(autouse=True)
-def _init_storage_backends(_storage_backend_environment, tmp_path, storage_test_project):
+def _init_storage_backends(_storage_backend_environment, tmp_path, storage_test_project) -> Iterator[BackendTestConfig]:
     """Ensure storage backends are configured with a valid data_dir for every storage test."""
     backend = _storage_backend_environment
     config = StorageBackendConfig(

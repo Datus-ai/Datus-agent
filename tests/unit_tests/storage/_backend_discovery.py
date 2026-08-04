@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from datus_storage_base.testing import RdbTestEnv, TestEnvConfig, VectorTestEnv
 
@@ -60,8 +61,8 @@ class BackendTestSpec:
 
     rdb_type: str = _DEFAULT_RDB
     vector_type: str = _DEFAULT_VECTOR
-    rdb_factory: Optional[RdbTestEnvFactory] = field(default=None, repr=False)
-    vector_factory: Optional[VectorTestEnvFactory] = field(default=None, repr=False)
+    rdb_factory: RdbTestEnvFactory | None = field(default=None, repr=False)
+    vector_factory: VectorTestEnvFactory | None = field(default=None, repr=False)
 
     @property
     def id(self) -> str:
@@ -74,19 +75,19 @@ class BackendTestConfig:
 
     rdb_type: str = _DEFAULT_RDB
     vector_type: str = _DEFAULT_VECTOR
-    rdb_params: Dict[str, Any] = field(default_factory=dict)
-    vector_params: Dict[str, Any] = field(default_factory=dict)
-    rdb_test_env: Optional[RdbTestEnv] = field(default=None, repr=False)
-    vector_test_env: Optional[VectorTestEnv] = field(default=None, repr=False)
+    rdb_params: dict[str, Any] = field(default_factory=dict)
+    vector_params: dict[str, Any] = field(default_factory=dict)
+    rdb_test_env: RdbTestEnv | None = field(default=None, repr=False)
+    vector_test_env: VectorTestEnv | None = field(default=None, repr=False)
 
     @property
     def id(self) -> str:
         return f"{self.rdb_type}+{self.vector_type}"
 
 
-def _load_entry_points(group: str) -> Dict[str, Any]:
+def _load_entry_points(group: str) -> dict[str, Any]:
     """Load entry points for the given group, returning {name: loaded_object}."""
-    results: Dict[str, Any] = {}
+    results: dict[str, Any] = {}
     try:
         from importlib.metadata import entry_points
 
@@ -101,11 +102,11 @@ def _load_entry_points(group: str) -> Dict[str, Any]:
     return results
 
 
-def _discover_via_entry_points() -> List[BackendTestSpec]:
+def _discover_via_entry_points() -> list[BackendTestSpec]:
     """Discover backend factories without constructing or starting environments."""
     rdb_factories = _load_entry_points("datus.storage.rdb.testing")
     vector_factories = _load_entry_points("datus.storage.vector.testing")
-    specs: List[BackendTestSpec] = []
+    specs: list[BackendTestSpec] = []
 
     for name in sorted(set(rdb_factories) | set(vector_factories)):
         rdb_factory = rdb_factories.get(name)
@@ -125,7 +126,7 @@ def _discover_via_entry_points() -> List[BackendTestSpec]:
     return specs
 
 
-def discover_test_backends() -> List[BackendTestSpec]:
+def discover_test_backends() -> list[BackendTestSpec]:
     """Return backend specifications without starting external resources."""
     backends = [
         BackendTestSpec(
@@ -137,7 +138,7 @@ def discover_test_backends() -> List[BackendTestSpec]:
     return backends
 
 
-def _teardown_environments(environments: List[RdbTestEnv | VectorTestEnv]) -> None:
+def _teardown_environments(environments: list[RdbTestEnv | VectorTestEnv]) -> None:
     for env in reversed(environments):
         try:
             env.teardown()
@@ -147,9 +148,9 @@ def _teardown_environments(environments: List[RdbTestEnv | VectorTestEnv]) -> No
 
 def setup_test_backend(spec: BackendTestSpec) -> BackendTestConfig:
     """Provision one backend specification and clean partial setup on failure."""
-    started: List[RdbTestEnv | VectorTestEnv] = []
-    rdb_env: Optional[RdbTestEnv] = None
-    vector_env: Optional[VectorTestEnv] = None
+    started: list[RdbTestEnv | VectorTestEnv] = []
+    rdb_env: RdbTestEnv | None = None
+    vector_env: VectorTestEnv | None = None
     try:
         if spec.rdb_factory is not None:
             rdb_env = spec.rdb_factory()
@@ -166,7 +167,7 @@ def setup_test_backend(spec: BackendTestSpec) -> BackendTestConfig:
             vector_config = vector_env.get_config()
         else:
             vector_config = TestEnvConfig(backend_type=spec.vector_type, params={})
-    except Exception:
+    except BaseException:
         _teardown_environments(started)
         raise
 

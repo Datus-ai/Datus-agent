@@ -22,3 +22,9 @@ def test_nightly_exports_and_cleans_the_same_run_id():
     assert '"$REPO_ROOT/ci/cleanup-run-testcontainers.sh"' in nightly
     assert "cleanup_status=$?" in nightly
     assert 'exit "$cleanup_status"' in nightly
+
+    cleanup_start = workflow.index("- name: Stop nightly services")
+    cleanup_end = workflow.index("\n      - name:", cleanup_start + 1)
+    cleanup_step = workflow[cleanup_start:cleanup_end]
+    assert "if: always()" in cleanup_step
+    assert "ci/run-nightly-tests.sh --cleanup-only" in cleanup_step

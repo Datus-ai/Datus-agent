@@ -91,8 +91,11 @@ class TestDiscoverTestBackends:
 
 class TestBackendLifecycle:
     def test_setup_and_teardown_paired_backend(self):
+        teardown_order = []
         rdb_env = _make_mock_rdb_env()
         vector_env = _make_mock_vector_env()
+        rdb_env.teardown.side_effect = lambda: teardown_order.append("rdb")
+        vector_env.teardown.side_effect = lambda: teardown_order.append("vector")
         spec = BackendTestSpec(
             rdb_type="postgresql",
             vector_type="postgresql",
@@ -107,12 +110,16 @@ class TestBackendLifecycle:
         vector_env.setup.assert_called_once()
         rdb_env.teardown.assert_called_once()
         vector_env.teardown.assert_called_once()
+        assert teardown_order == ["vector", "rdb"]
         assert backend.id == "postgresql+postgresql"
 
     def test_partial_setup_failure_tears_down_started_environments(self):
+        teardown_order = []
         rdb_env = _make_mock_rdb_env()
         vector_env = _make_mock_vector_env()
         vector_env.setup.side_effect = RuntimeError("Docker unavailable")
+        rdb_env.teardown.side_effect = lambda: teardown_order.append("rdb")
+        vector_env.teardown.side_effect = lambda: teardown_order.append("vector")
         spec = BackendTestSpec(
             rdb_type="postgresql",
             vector_type="postgresql",
@@ -125,6 +132,28 @@ class TestBackendLifecycle:
 
         rdb_env.teardown.assert_called_once()
         vector_env.teardown.assert_called_once()
+        assert teardown_order == ["vector", "rdb"]
+
+    def test_keyboard_interrupt_tears_down_started_environments(self):
+        teardown_order = []
+        rdb_env = _make_mock_rdb_env()
+        vector_env = _make_mock_vector_env()
+        vector_env.setup.side_effect = KeyboardInterrupt
+        rdb_env.teardown.side_effect = lambda: teardown_order.append("rdb")
+        vector_env.teardown.side_effect = lambda: teardown_order.append("vector")
+        spec = BackendTestSpec(
+            rdb_type="postgresql",
+            vector_type="postgresql",
+            rdb_factory=MagicMock(return_value=rdb_env),
+            vector_factory=MagicMock(return_value=vector_env),
+        )
+
+        with pytest.raises(KeyboardInterrupt):
+            setup_test_backend(spec)
+
+        rdb_env.teardown.assert_called_once()
+        vector_env.teardown.assert_called_once()
+        assert teardown_order == ["vector", "rdb"]
 
     def test_factory_failure_does_not_leak_previous_environment(self):
         rdb_env = _make_mock_rdb_env()
@@ -141,15 +170,23 @@ class TestBackendLifecycle:
         rdb_env.teardown.assert_called_once()
 
     def test_teardown_exception_does_not_stop_other_cleanup(self):
+        teardown_order = []
         rdb_env = _make_mock_rdb_env()
         vector_env = _make_mock_vector_env()
-        vector_env.teardown.side_effect = RuntimeError("teardown failed")
+
+        def fail_vector_teardown():
+            teardown_order.append("vector")
+            raise RuntimeError("teardown failed")
+
+        rdb_env.teardown.side_effect = lambda: teardown_order.append("rdb")
+        vector_env.teardown.side_effect = fail_vector_teardown
         backend = BackendTestConfig(rdb_test_env=rdb_env, vector_test_env=vector_env)
 
         teardown_test_backend(backend)
 
         vector_env.teardown.assert_called_once()
         rdb_env.teardown.assert_called_once()
+        assert teardown_order == ["vector", "rdb"]
 
 
 class TestBackendTestConfig:
