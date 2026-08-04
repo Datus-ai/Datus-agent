@@ -9,13 +9,15 @@ from fastapi import APIRouter, Query
 from datus.api.deps import ServiceDep
 from datus.api.models.base_models import Result
 from datus.api.models.table_models import (
+    SEMANTIC_MODEL_FILE_DESCRIPTION,
     GetSemanticModelData,
     GetTableDetailData,
     GetTablesColumnsData,
     GetTablesColumnsInput,
     SaveSemanticModelData,
-    SemanticModelInput,
+    SaveSemanticModelInput,
     ValidateSemanticModelData,
+    ValidateSemanticModelInput,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["table"])
@@ -63,28 +65,14 @@ async def get_tables_columns(
     "/semantic_model",
     response_model=Result[GetSemanticModelData],
     summary="Get Semantic Model",
-    description="Get SemanticModel YAML configuration for a specific table",
+    description="Read one SemanticModel YAML artifact together with its stable identity and revision",
 )
 async def get_semantic_model(
     svc: ServiceDep,
-    table: str = Query(
-        ...,
-        description="Full table name e.g. 'production_db.public.frpm' or 'db.schema.table'",
-    ),
-    catalog: str | None = Query(None, description="Current catalog context"),
-    database: str | None = Query(None, description="Current database context"),
-    db_schema: str | None = Query(None, description="Current schema context"),
-    semantic_model_name: str | None = Query(None, description="Semantic model owning a shared physical table"),
+    semantic_model_file: str = Query(..., description=SEMANTIC_MODEL_FILE_DESCRIPTION),
 ) -> Result[GetSemanticModelData]:
     """Get SemanticModel YAML."""
-    return await asyncio.to_thread(
-        svc.datasource.get_semantic_model,
-        table,
-        catalog=catalog,
-        database=database,
-        db_schema=db_schema,
-        semantic_model_name=semantic_model_name,
-    )
+    return await asyncio.to_thread(svc.datasource.get_semantic_model, semantic_model_file)
 
 
 @router.post(
@@ -94,7 +82,7 @@ async def get_semantic_model(
     description="Atomically save and reconcile one SemanticModel YAML artifact",
 )
 async def save_semantic_model(
-    request: SemanticModelInput,
+    request: SaveSemanticModelInput,
     svc: ServiceDep,
 ) -> Result[SaveSemanticModelData]:
     """Save SemanticModel YAML and reconcile its Knowledge Base rows."""
@@ -105,10 +93,10 @@ async def save_semantic_model(
     "/semantic_model/validate",
     response_model=Result[ValidateSemanticModelData],
     summary="Validate Semantic Model",
-    description="Validate SemanticModel YAML structure and syntax",
+    description="Validate SemanticModel YAML structure and syntax without writing it",
 )
 async def validate_semantic_model(
-    request: SemanticModelInput,
+    request: ValidateSemanticModelInput,
     svc: ServiceDep,
 ) -> Result[ValidateSemanticModelData]:
     """Validate SemanticModel YAML."""
