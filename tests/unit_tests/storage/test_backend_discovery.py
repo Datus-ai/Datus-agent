@@ -188,6 +188,26 @@ class TestBackendLifecycle:
         rdb_env.teardown.assert_called_once()
         assert teardown_order == ["vector", "rdb"]
 
+    def test_teardown_interrupt_does_not_stop_other_cleanup(self):
+        teardown_order = []
+        rdb_env = _make_mock_rdb_env()
+        vector_env = _make_mock_vector_env()
+
+        def interrupt_vector_teardown():
+            teardown_order.append("vector")
+            raise KeyboardInterrupt
+
+        rdb_env.teardown.side_effect = lambda: teardown_order.append("rdb")
+        vector_env.teardown.side_effect = interrupt_vector_teardown
+        backend = BackendTestConfig(rdb_test_env=rdb_env, vector_test_env=vector_env)
+
+        with pytest.raises(KeyboardInterrupt):
+            teardown_test_backend(backend)
+
+        vector_env.teardown.assert_called_once()
+        rdb_env.teardown.assert_called_once()
+        assert teardown_order == ["vector", "rdb"]
+
 
 class TestBackendTestConfig:
     def test_default_values(self):

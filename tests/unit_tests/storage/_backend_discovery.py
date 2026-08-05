@@ -139,11 +139,17 @@ def discover_test_backends() -> list[BackendTestSpec]:
 
 
 def _teardown_environments(environments: list[RdbTestEnv | VectorTestEnv]) -> None:
+    interruption: BaseException | None = None
     for env in reversed(environments):
         try:
             env.teardown()
         except Exception as e:
             logger.debug(f"Test environment teardown failed: {e}")
+        except BaseException as exc:
+            if interruption is None:
+                interruption = exc
+    if interruption is not None:
+        raise interruption
 
 
 def setup_test_backend(spec: BackendTestSpec) -> BackendTestConfig:
