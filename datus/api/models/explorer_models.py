@@ -151,15 +151,32 @@ class MetricDimensionsData(BaseModel):
 
 
 class MetricDimensionPreflight(BaseModel):
-    """Why the requested dimensions are not all supported by the metric."""
+    """Why the adapter rejected the preview before compiling any SQL.
+
+    Covers both rejection shapes: unsupported dimensions (``invalid_dimensions``
+    / ``common_dimensions``), and the adapter's structured query validation
+    (``code`` plus the ``required_*`` / ``suggested_retry`` fields, mirroring
+    ``SemanticValidationError``). Fields irrelevant to a given rejection stay
+    empty, so a client renders whichever it finds.
+    """
 
     message: str = Field(..., description="Human-readable explanation")
+    code: Optional[str] = Field(None, description="Validation category when known, e.g. 'time_grain_required'")
     invalid_dimensions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Requested dimensions the metric does not support"
     )
     common_dimensions: List[str] = Field(default_factory=list, description="Dimensions the metric does support")
     suggested_metric_groups: List[Dict[str, Any]] = Field(
         default_factory=list, description="Compatible metric/dimension groupings"
+    )
+    required_dimensions: List[str] = Field(
+        default_factory=list, description="Dimensions the caller must add for the query to compile"
+    )
+    required_time_granularity: Optional[str] = Field(
+        None, description="Required or corrected time granularity, e.g. 'day'"
+    )
+    suggested_retry: Optional[Dict[str, Any]] = Field(
+        None, description="Concrete preview arguments the caller can retry with"
     )
 
 
@@ -170,7 +187,7 @@ class MetricPreviewData(BaseModel):
     sql: Optional[str] = Field(None, description="Runnable SQL compiled from the metric definition")
     database: Optional[str] = Field(None, description="Physical database the SQL should run against")
     preflight_error: Optional[MetricDimensionPreflight] = Field(
-        None, description="Set instead of sql when the requested dimensions are invalid"
+        None, description="Set instead of sql when the adapter rejected the query"
     )
 
 

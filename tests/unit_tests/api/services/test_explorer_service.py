@@ -979,10 +979,79 @@ class TestExplorerServicePreviewMetric:
         assert result.success is True
         assert result.data.sql is None
         pf = result.data.preflight_error
-        assert pf is not None
         assert pf.common_dimensions == ["metric_time", "region"]
         assert pf.invalid_dimensions[0]["name"] == "country"
         assert pf.suggested_metric_groups[0]["dimensions"] == ["region"]
+
+    async def test_query_validation_rejection_is_structured(self, real_agent_config, monkeypatch):
+        """A validation rejection keeps its code and retry hint instead of collapsing
+        into an error string. Built from the producer's own model so the field names
+        stay in sync with datus_semantic_core."""
+        from datus_semantic_core.models import SemanticValidationError
+
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        payload = SemanticValidationError(
+            code="time_grain_required",
+            metrics=["revenue"],
+            required_dimensions=["raw_orders.order_date"],
+            required_time_granularity="day",
+            suggested_retry={
+                "metrics": ["revenue"],
+                "dimensions": ["raw_orders.id", "raw_orders.order_date"],
+                "time_granularity": "day",
+            },
+            message="time_granularity was given but no requested dimension is a time dimension",
+        )
+        query_metrics = MagicMock(
+            return_value=self._func_result(success=0, error=payload.message, result=payload.model_dump())
+        )
+        self._patch_tools(monkeypatch, adapter=MagicMock(), query_metrics=query_metrics)
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(
+            MetricPreviewInput(
+                subject_path=["revenue"],
+                dimensions=["raw_orders.id"],
+                time_granularity="day",
+            )
+        )
+
+        assert result.success is True
+        assert result.data.sql is None
+        pf = result.data.preflight_error
+        assert pf.code == "time_grain_required"
+        assert pf.required_dimensions == ["raw_orders.order_date"]
+        assert pf.required_time_granularity == "day"
+        assert pf.suggested_retry["dimensions"] == ["raw_orders.id", "raw_orders.order_date"]
+        assert pf.message == payload.message
+        # Dimension-preflight fields stay empty for this rejection shape.
+        assert pf.invalid_dimensions == []
+        assert pf.common_dimensions == []
+
+    async def test_dimension_preflight_keeps_validation_fields_empty(self, real_agent_config, monkeypatch):
+        """The dimension-preflight shape carries no code/retry hint, and must not
+        invent one."""
+        from datus.api.models.explorer_models import MetricPreviewInput
+
+        preflight = {
+            "metrics": ["revenue"],
+            "invalid_dimensions": [{"name": "country"}],
+            "common_dimensions": ["region"],
+        }
+        query_metrics = MagicMock(
+            return_value=self._func_result(success=0, error="dimension preflight failed", result=preflight)
+        )
+        self._patch_tools(monkeypatch, adapter=MagicMock(), query_metrics=query_metrics)
+
+        svc = ExplorerService(agent_config=real_agent_config)
+        result = await svc.preview_metric(MetricPreviewInput(subject_path=["revenue"], dimensions=["country"]))
+
+        pf = result.data.preflight_error
+        assert pf.code is None
+        assert pf.required_dimensions == []
+        assert pf.required_time_granularity is None
+        assert pf.suggested_retry is None
 
     async def test_no_sql_compiled_fails(self, real_agent_config, monkeypatch):
         """When neither metadata nor data carry SQL, report a clean failure."""
