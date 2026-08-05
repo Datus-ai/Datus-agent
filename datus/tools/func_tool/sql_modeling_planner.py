@@ -122,12 +122,14 @@ class SqlModelingPlanTools:
         generation_evidence: "GenerationEvidence",
         plan_consumer: Callable[[Optional[SqlModelingPlan]], None],
         semantic_source_inspector: Optional[Callable[[SqlModelingPlan], dict[str, Any]]] = None,
+        metric_catalog_loader: Optional[Callable[["AgentConfig"], list[dict[str, Any]]]] = None,
     ):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.generation_evidence = generation_evidence
         self.plan_consumer = plan_consumer
         self.semantic_source_inspector = semantic_source_inspector
+        self.metric_catalog_loader = metric_catalog_loader or load_existing_metric_catalog
         self._pending_entries: dict[int, SqlModelingEntry] = {}
         self._plan: Optional[SqlModelingPlan] = None
         self._baseline_output_ids: list[str] = []
@@ -251,7 +253,11 @@ class SqlModelingPlanTools:
                 )
             )
 
-        plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(sources)
+        metric_catalog = self.metric_catalog_loader(self.agent_config)
+        plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(
+            sources,
+            existing_metric_catalog=metric_catalog,
+        )
         if not plan.candidate_plan.get("available", False):
             return FuncToolResult(
                 success=0,
@@ -367,8 +373,8 @@ class SqlModelingPlanTools:
         self._baseline_contract_ids = _queryability_contract_ids(plan.candidate_plan)
 
     def _normalize_revised_candidate_plan(self, candidate_plan: Dict[str, Any]) -> Dict[str, Any]:
-        if candidate_plan.get("available") is False:
-            raise ValueError("candidate_plan.available must remain true for an update.")
+        if candidate_plan.get("available") is not True:
+            raise ValueError("candidate_plan.available must be true for an update.")
         outputs = candidate_plan.get("outputs")
         if not isinstance(outputs, list):
             raise ValueError("candidate_plan.outputs must be a JSON array.")
@@ -458,10 +464,13 @@ class SqlModelingPlanTools:
             seen_contract_ids.add(contract_id)
             if source_id not in known_sources:
                 raise ValueError(f"Queryability contract {contract_id!r} has unknown source_id {source_id!r}.")
+            raw_metric_output_ids = raw_contract.get("metric_output_ids")
+            if not isinstance(raw_metric_output_ids, list):
+                raise ValueError(
+                    f"candidate_plan.queryability_contracts[{index}].metric_output_ids must be a JSON array."
+                )
             metric_output_ids = [
-                str(output_id).strip()
-                for output_id in raw_contract.get("metric_output_ids") or []
-                if str(output_id).strip()
+                str(output_id).strip() for output_id in raw_metric_output_ids if str(output_id).strip()
             ]
             unknown_outputs = sorted(set(metric_output_ids) - known_outputs)
             if unknown_outputs:
@@ -476,9 +485,10 @@ class SqlModelingPlanTools:
                     f"Queryability contract {contract_id!r} references non-metric output_ids: "
                     f"{', '.join(non_metric_outputs)}."
                 )
-            dimensions = [
-                str(dimension).strip() for dimension in raw_contract.get("dimensions") or [] if str(dimension).strip()
-            ]
+            raw_dimensions = raw_contract.get("dimensions")
+            if not isinstance(raw_dimensions, list):
+                raise ValueError(f"candidate_plan.queryability_contracts[{index}].dimensions must be a JSON array.")
+            dimensions = [str(dimension).strip() for dimension in raw_dimensions if str(dimension).strip()]
             if not dimensions:
                 raise ValueError(f"Queryability contract {contract_id!r} requires a complete dimensions list.")
             contract: Dict[str, Any] = {
@@ -713,10 +723,11 @@ class SqlModelingPlanner:
             }
         analysis = dict(result.result or {})
         parse_errors = [item for item in analysis.get("parse_errors") or [] if isinstance(item, dict)]
-        failed_sources = [
-            str(item.get("source") or item.get("source_sql_name") or "<unknown>") for item in parse_errors
-        ]
-        if parse_errors and len(set(failed_sources)) >= len(sources):
+        source_ids = {source.source_sql_name for source in sources}
+        failed_sources = sorted(
+            {str(item.get("source") or item.get("source_sql_name") or "").strip() for item in parse_errors} & source_ids
+        )
+        if parse_errors and set(failed_sources) == source_ids:
             return {
                 "available": False,
                 "outputs": [],

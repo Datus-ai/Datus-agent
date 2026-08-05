@@ -4,6 +4,7 @@
 
 """Tests for the shared SQL modeling preflight."""
 
+import copy
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -22,7 +23,7 @@ from datus.tools.func_tool.sql_modeling_planner import (
 
 class TestSqlModelingPlanTools:
     @staticmethod
-    def _tool(semantic_source_inspector=None):
+    def _tool(semantic_source_inspector=None, metric_catalog_loader=None):
         evidence = GenerationEvidence()
         accepted = []
         tool = SqlModelingPlanTools(
@@ -31,6 +32,7 @@ class TestSqlModelingPlanTools:
             generation_evidence=evidence,
             plan_consumer=accepted.append,
             semantic_source_inspector=semantic_source_inspector,
+            metric_catalog_loader=metric_catalog_loader or (lambda _agent_config: []),
         )
         return tool, evidence, accepted
 
@@ -118,6 +120,27 @@ class TestSqlModelingPlanTools:
         assert [source.sql for source in planner.call_args.args[0]] == [first_sql, second_sql]
         assert evidence.sql_modeling_plan_status == "ready"
         assert accepted == [plan]
+
+    def test_existing_metric_catalog_is_passed_to_planner(self):
+        sql = "SELECT SUM(amount) AS revenue FROM orders"
+        catalog = [{"name": "revenue", "type": "simple"}]
+        loader = MagicMock(return_value=catalog)
+        tool, _, _ = self._tool(metric_catalog_loader=loader)
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "revenue", "sql": sql}])
+
+        assert result.success == 1
+        loader.assert_called_once_with(tool.agent_config)
+        assert planner.call_args.kwargs["existing_metric_catalog"] == catalog
 
     def test_collects_multiple_batches_and_plans_once_on_finalize(self):
         first_sql = "SELECT COUNT(*) AS order_count FROM orders"
@@ -637,6 +660,57 @@ class TestSqlModelingPlanTools:
         assert result.success == 1
         assert result.result["candidate_plan"]["queryability_contracts"][-1]["metric_output_ids"] == ["orders:output_2"]
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("available", "true"),
+            ("metric_output_ids", "orders:output_1"),
+            ("dimensions", "region"),
+        ],
+    )
+    def test_plan_update_rejects_malformed_candidate_field_types(self, field, value):
+        sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
+        tool, _, _ = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            source_queries=[SourceQueryEvidence(source_sql_name="orders", sql=sql)],
+            candidate_plan={
+                "available": True,
+                "outputs": [
+                    {
+                        "output_id": "orders:output_1",
+                        "source_id": "orders",
+                        "name": "order_count",
+                        "role": "metric",
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "orders:group_1",
+                        "source_id": "orders",
+                        "metric_output_ids": ["orders:output_1"],
+                        "dimensions": ["region"],
+                    }
+                ],
+            },
+        )
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ):
+            tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "orders", "sql": sql}])
+        revised = copy.deepcopy(plan.candidate_plan)
+        if field == "available":
+            revised[field] = value
+        else:
+            revised["queryability_contracts"][0][field] = value
+
+        result = tool.update_sql_modeling_plan(revised)
+
+        assert result.success == 0
+        assert "must" in result.error
+
     def test_plan_update_is_rejected_after_publish(self):
         sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
         tool, evidence, _ = self._tool()
@@ -881,6 +955,33 @@ class TestSqlModelingPlanner:
                 "reason": "cannot parse",
             }
         ]
+
+    def test_unknown_parse_error_does_not_make_mixed_request_unavailable(self):
+        sources = [
+            SourceQueryEvidence(source_sql_name="valid_revenue", sql="SELECT SUM(amount) AS revenue FROM orders"),
+            SourceQueryEvidence(source_sql_name="broken_query", sql="SELECT FROM"),
+        ]
+        analyzer_result = SimpleNamespace(
+            success=True,
+            result={
+                "parse_errors": [
+                    {"source": "broken_query", "error": "cannot parse"},
+                    {"error": "unattributed parser warning"},
+                ],
+            },
+            error=None,
+        )
+        agent_config = MagicMock()
+        agent_config.current_db_config.return_value = SimpleNamespace(type="duckdb")
+
+        with patch(
+            "datus.tools.func_tool.semantic_discovery_tools.analyze_metric_candidate_entries",
+            return_value=analyzer_result,
+        ):
+            plan = SqlModelingPlanner(agent_config, "gen_metrics").plan(sources, existing_metric_catalog=[])
+
+        assert plan.candidate_plan["available"] is True
+        assert plan.candidate_plan["planning_status"] == "partial"
 
     def test_all_parse_errors_make_the_request_plan_unavailable(self):
         sources = [
