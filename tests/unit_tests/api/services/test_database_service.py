@@ -122,7 +122,7 @@ class TestSemanticLayerServiceBranches:
         assert svc._active_semantic_adapter() == "osi"
         assert svc._is_osi_semantic_layer() is True
 
-    def test_dosi_uses_osi_authoring_and_sync(self):
+    def test_dosi_is_classified_as_osi_semantic_layer(self):
         svc = _service_with_semantic_adapter(" DOSI ")
 
         assert svc._active_semantic_adapter() == "dosi"

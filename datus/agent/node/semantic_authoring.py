@@ -36,7 +36,7 @@ import yaml
 
 AUTHORING_FORMAT_METRICFLOW = "metricflow"
 AUTHORING_FORMAT_OSI = "osi"
-OSI_AUTHORING_ADAPTERS = frozenset({"osi", "dosi"})
+OSI_AUTHORING_ADAPTERS: frozenset[str] = frozenset({"osi", "dosi"})
 
 _SEMANTIC_AUTHORING_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 

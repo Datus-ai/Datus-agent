@@ -26,7 +26,7 @@ Datus Agent 通过语义层适配器，把指标生成、校验、发现和查�
 | OSI | `datus-semantic-osi` | strict OSI core YAML + DATUS custom extensions | 默认 MetricFlow | 可用 |
 | Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | 原生 Dosi engine | 可用 |
 
-MetricFlow 和 OSI 是并列的 semantic adapter。区别在于用户和生成 agent 维护的源格式：
+MetricFlow、OSI 和 Dosi 是并列的 semantic adapter。区别在于用户和生成 agent 维护的源格式，以及模型的执行方式：
 
 - MetricFlow 模式直接编写 MetricFlow YAML。
 - OSI 模式编写 OSI core YAML，由 `datus-semantic-osi` 编译到 Datus Semantic IR，再降低到 MetricFlow。

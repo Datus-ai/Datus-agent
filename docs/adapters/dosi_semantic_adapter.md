@@ -38,7 +38,7 @@ selects the only YAML or JSON model in that directory. Configure
 
 Dosi currently executes aggregate, ratio, and expression metrics; dimensions;
 many-to-one relationships; composite joins; query-backed datasets; filters;
-and day through year time grains. Its planner rejects ambiguous join paths and
+and day-through-year time grains. Its planner rejects ambiguous join paths and
 fan-out-prone queries rather than silently double-counting.
 
 Derived metrics, cumulative or rolling windows, metric offsets, and

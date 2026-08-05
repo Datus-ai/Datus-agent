@@ -26,7 +26,7 @@ Three adapters are currently supported:
 | OSI | `datus-semantic-osi` | strict OSI core YAML + DATUS custom extensions | MetricFlow by default | Ready |
 | Dosi | `datus-semantic-dosi` | strict OSI core YAML + DATUS custom extensions | Native Dosi engine | Ready |
 
-MetricFlow and OSI are peer semantic adapters. The difference is what users and generation agents author:
+MetricFlow, OSI, and Dosi are peer semantic adapters. They differ in what users and generation agents author and how the authored model is executed:
 
 - MetricFlow mode authors MetricFlow YAML directly.
 - OSI mode authors OSI core YAML and lets `datus-semantic-osi` compile it to Datus Semantic IR before lowering to MetricFlow.
