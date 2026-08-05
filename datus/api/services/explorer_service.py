@@ -808,8 +808,9 @@ class ExplorerService:
         Uses dry-run so nothing executes here: the frontend hands the returned
         SQL to the existing SQL-result panel, which runs it and renders the
         table / chart. Only already-saved (registered) metrics are supported.
-        When requested dimensions aren't supported, returns a structured
-        ``preflight_error`` (with the metric's valid dimensions) instead of SQL.
+        When the adapter rejects the query — unsupported dimensions, or a
+        validation failure such as a grain with no time dimension to hang it on
+        — returns a structured ``preflight_error`` instead of SQL.
         """
         from datus.api.models.config_models import ErrorCode
 
@@ -879,19 +880,29 @@ class ExplorerService:
                     data=MetricPreviewData(metric=metric_name, sql=sql, database=database),
                 )
 
-            # A dimension preflight failure carries structured detail; surface it
-            # so the UI can guide the user instead of showing a raw error.
+            # A structured rejection — unsupported dimensions, or the adapter's
+            # query validation (e.g. a grain with no time dimension in the
+            # group-by) — carries fields the UI can act on. Surface them instead
+            # of flattening the whole thing into an error string.
             detail = func_result.result
-            if isinstance(detail, dict) and detail.get("invalid_dimensions") is not None:
+            if isinstance(detail, dict) and (
+                detail.get("invalid_dimensions") is not None or detail.get("code") is not None
+            ):
                 return Result[MetricPreviewData](
                     success=True,
                     data=MetricPreviewData(
                         metric=metric_name,
                         preflight_error=MetricDimensionPreflight(
-                            message=func_result.error or "Some dimensions are not supported by this metric.",
+                            message=func_result.error
+                            or detail.get("message")
+                            or "This metric cannot be previewed with the requested arguments.",
+                            code=detail.get("code"),
                             invalid_dimensions=detail.get("invalid_dimensions") or [],
                             common_dimensions=detail.get("common_dimensions") or [],
                             suggested_metric_groups=detail.get("suggested_metric_groups") or [],
+                            required_dimensions=detail.get("required_dimensions") or [],
+                            required_time_granularity=detail.get("required_time_granularity"),
+                            suggested_retry=detail.get("suggested_retry"),
                         ),
                     ),
                 )
