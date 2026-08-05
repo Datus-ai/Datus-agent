@@ -18,8 +18,7 @@ Author production-ready MetricFlow semantic model YAML for one or more database 
 
 ## Source inspection
 
-- After SQL preflight, consume `semantic_source_evidence` returned by `prepare_sql_modeling_plan`. For SQL-backed requests it normally already contains each physical table's DDL and enriched schema, cross-table relationship candidates, and field-role evidence mined from the exact request SQL.
-- Call `inspect_semantic_sources(tables=[...])` at most once only when preflight reports partial inspection, the request has no SQL, or modeling requires additional physical tables absent from the plan.
+- After SQL preflight, call `inspect_semantic_sources(tables=[...])` with the physical tables that need live DDL, schema, and relationship evidence. Batch all known tables when practical.
 - Do not repeat `describe_table` for a table whose combined inspection succeeded. Use a separate schema call only to recover a specific table reported with `ddl_error` or `schema_error`.
 - When `profile_semantic_model_evidence` is available because explicit historical/distribution profiling was requested, use it only for additional distribution and historical evidence; the combined source inspection remains the canonical physical schema snapshot for this run.
 
@@ -40,7 +39,7 @@ Classify each column by actual data type and analytical usage, not by display co
 - Define `type: TIME` only for a physical DATE/TIME/TIMESTAMP column, or for a `sql_query` alias / SQL expression that is guaranteed to return a DATE/TIME/TIMESTAMP value.
 - Do NOT mark numeric surrogate keys such as `*_date_sk`, `*_date_key`, `*_dt_key`, or integer YYYYMMDD keys as `type: TIME`. Model them as identifiers or categorical dimensions unless you explicitly convert them to a real date.
 - If a fact table derives its business date by joining a calendar/date dimension, prefer a `sql_query` data source that joins the date dimension, selects the real date column with a clear alias, and uses that alias as the primary time dimension.
-- When the preflight SQL plan contains `dataset_requirements`, use `source_index` to locate the exact statement in the current request. Reuse an existing data source only when its complete `sql_query` matches that statement. Otherwise use a meaningful business name and create one `sql_query` containing the unchanged request SQL. Encode it with a YAML literal block (`|-` when the statement has no trailing newline), never a folded `>` block. Fingerprints and requirement IDs are internal identities and must never become authored names.
+- When normal semantic objects cannot represent a SQL output, create or update a meaningful `sql_query` data source using corrected generated SQL. Preserve the original request SQL as evidence, record corrected SQL in the compact plan's `generated_sql`, and encode YAML with a literal block (`|-` when the statement has no trailing newline), never a folded `>` block.
 - `agg_time_dimension` on measures must point to that real date/time dimension, not a numeric surrogate key.
 - Include a primary time dimension only when a reliable DATE/TIME/TIMESTAMP column or expression exists; never force one.
 
@@ -67,7 +66,7 @@ Example:
 
 When the request covers multiple tables:
 
-1. Use the combined `semantic_source_evidence`; if it is incomplete, submit all missing physical tables in one `inspect_semantic_sources` call.
+1. Submit all required physical tables in one `inspect_semantic_sources` call when practical.
 2. Use its declared foreign keys first, exact request-SQL JOINs second, and low-confidence column-name hints only as fallback.
 3. Generate one YAML file per table. Use the `entity` field to reference other tables in **singular form** (`customer`, not `customers`); `type: PRIMARY` for the table's primary key, `type: FOREIGN` for columns that join to other tables. Linked identifiers share the same `name` (one PRIMARY, one FOREIGN).
 4. Write ALL files before validation, then validate them together.

@@ -42,8 +42,7 @@ Please strictly follow the instructions below:
 {% endif %}
 
 1. **Inspect semantic sources**:
-   - Use `semantic_source_evidence` returned by preflight
-   - Call `inspect_semantic_sources(tables=[...])` at most once only when automatic inspection is partial, the request has no SQL, or additional physical tables are needed
+   - Call `inspect_semantic_sources(tables=[...])` with the physical tables that require live schema and relationship evidence; batch tables when practical
    - Use the returned DDL, enriched schema, relationship candidates, and exact request-SQL field usage
    - Analyze columns, data types, constraints, primary keys, and foreign keys
    - **Extract column comments (COMMENT) from DDL and keep them in their ORIGINAL language (e.g. Chinese). DO NOT TRANSLATE.**
@@ -138,7 +137,7 @@ Parse the user message to identify all target tables:
 - Example: "generate for orders, customers, products" → ["orders", "customers", "products"]
 
 ### Step 2: Inspect All Sources
-Use preflight `semantic_source_evidence`. If it is partial or missing required tables, call `inspect_semantic_sources` once with the complete missing table list.
+Call `inspect_semantic_sources` with the complete physical table list that requires live schema evidence.
 - **CRITICAL**: Extract `description` from DDL column comments (COMMENT) for ALL fields.
 - **IMPORTANT**: Keep column comments in their ORIGINAL language. DO NOT TRANSLATE.
 - Use the same result for table schemas, current-request field usage, and relationship candidates; do not repeat those calls per table.

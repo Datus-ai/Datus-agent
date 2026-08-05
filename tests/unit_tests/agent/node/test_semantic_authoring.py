@@ -12,6 +12,7 @@ from datus.agent.node.semantic_authoring import (
     AUTHORING_FORMAT_OSI,
     default_optional_skills,
     discover_osi_semantic_models,
+    is_osi_semantic_adapter,
     plan_osi_semantic_model_target,
     required_authoring_skills,
     resolve_authoring_format,
@@ -88,7 +89,14 @@ def test_legacy_node_config_fields_are_ignored():
 
 def test_derives_from_active_semantic_adapter():
     assert resolve_authoring_format(_agent_config("osi"), None) == AUTHORING_FORMAT_OSI
+    assert resolve_authoring_format(_agent_config("dosi"), None) == AUTHORING_FORMAT_OSI
     assert resolve_authoring_format(_agent_config("metricflow"), None) == AUTHORING_FORMAT_METRICFLOW
+
+
+def test_osi_authoring_adapter_classification():
+    assert is_osi_semantic_adapter("osi") is True
+    assert is_osi_semantic_adapter(" DOSI ") is True
+    assert is_osi_semantic_adapter("metricflow") is False
 
 
 def test_legacy_node_semantic_adapter_is_ignored():
@@ -362,7 +370,7 @@ def test_default_optional_skills_derive_from_format(node_name, adapter, expected
     assert default_optional_skills(_agent_config(adapter), node_name) == expected
 
 
-@pytest.mark.parametrize("adapter", ["metricflow", "osi"])
+@pytest.mark.parametrize("adapter", ["metricflow", "osi", "dosi"])
 def test_node_skill_defaults_follow_authoring_format(monkeypatch, adapter):
     """Both nodes default node_config['skills'] from the format, then defer to the base setup."""
     from datus.agent.node.agentic_node import AgenticNode

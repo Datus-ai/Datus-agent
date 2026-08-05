@@ -4,18 +4,13 @@
 
 """Unit tests for datus.tools.func_tool.generation_evidence."""
 
-import pytest
-
 from datus.tools.func_tool.generation_evidence import (
     GenerationEvidence,
     _deduplicate_preserve_order,
     _metadata_from_result,
-    _normalized_metric_alias_map,
     _result_payload,
     _result_success,
-    _sql_contains_base_expr_text,
 )
-from datus.utils.exceptions import DatusException, ErrorCode
 
 
 class TestResultSuccess:
@@ -109,24 +104,6 @@ class TestDeduplicatePreserveOrder:
         assert _deduplicate_preserve_order([]) == []
 
 
-class TestNormalizedMetricAliasMap:
-    def test_maps_alias_to_canonical(self):
-        result = _normalized_metric_alias_map({"rev_total": "revenue_total"})
-        assert result["rev_total"] == "revenue_total"
-
-    def test_also_maps_normalized_alias(self):
-        result = _normalized_metric_alias_map({"Rev Total": "revenue_total"})
-        assert result.get("rev_total") == "revenue_total"
-
-    def test_skips_non_string_entries(self):
-        result = _normalized_metric_alias_map({1: "canonical", "alias": 2})
-        assert result == {}
-
-    def test_skips_empty_entries(self):
-        result = _normalized_metric_alias_map({"": "canonical", "alias": ""})
-        assert result == {}
-
-
 class TestGenerationEvidence:
     def test_initial_state(self):
         ev = GenerationEvidence()
@@ -165,16 +142,8 @@ class TestGenerationEvidence:
             metric_dry_run_metrics={"revenue"},
             metric_dry_run_queries=[{"metrics": ["revenue"]}],
             metric_sqls={"revenue": "select 1"},
-            metric_queryability_contracts=[{"dimension_hints": ["country"]}],
-            metric_aliases={"rev": "revenue"},
+            metric_queryability_contracts=[{"dimensions": ["sales.country"]}],
             required_metric_output_ids=["sales:output"],
-            required_query_backed_sql={"query_dataset:sales": "SELECT * FROM sales"},
-            query_backed_dataset_bindings={
-                "query_dataset:sales": {
-                    "semantic_model_file": str(artifact.resolve()),
-                    "dataset_name": "daily_sales",
-                }
-            },
             semantic_kb_sync_passed=True,
             metric_kb_sync_passed=True,
             metric_kb_sync_metrics={"revenue"},
@@ -195,16 +164,8 @@ class TestGenerationEvidence:
             metric_dry_run_metrics={"revenue"},
             metric_dry_run_queries=[{"metrics": ["revenue"]}],
             metric_sqls={"revenue": "select 1"},
-            metric_queryability_contracts=[{"dimension_hints": ["country"]}],
-            metric_aliases={"rev": "revenue"},
+            metric_queryability_contracts=[{"dimensions": ["sales.country"]}],
             required_metric_output_ids=["sales:output"],
-            required_query_backed_sql={"query_dataset:sales": "SELECT * FROM sales"},
-            query_backed_dataset_bindings={
-                "query_dataset:sales": {
-                    "semantic_model_file": str(artifact.resolve()),
-                    "dataset_name": "daily_sales",
-                }
-            },
             semantic_kb_sync_passed=True,
             metric_kb_sync_passed=True,
             metric_kb_sync_metrics={"revenue"},
@@ -221,49 +182,8 @@ class TestGenerationEvidence:
         assert ev.validated_semantic_artifacts == {}
         assert ev.kb_sync_passed is False
         assert ev.metric_kb_sync_metrics == set()
-        assert ev.metric_queryability_contracts == [{"dimension_hints": ["country"]}]
-        assert ev.metric_aliases == {"rev": "revenue"}
+        assert ev.metric_queryability_contracts == [{"dimensions": ["sales.country"]}]
         assert ev.required_metric_output_ids == ["sales:output"]
-        assert ev.required_query_backed_sql == {"query_dataset:sales": "SELECT * FROM sales"}
-        assert ev.query_backed_dataset_bindings["query_dataset:sales"]["dataset_name"] == "daily_sales"
-
-    def test_records_query_backed_sql_by_requirement_identity(self):
-        ev = GenerationEvidence()
-
-        ev.set_required_query_backed_datasets(
-            [
-                {"requirement_id": "query_dataset:daily_sales", "sql": "SELECT * FROM daily_sales"},
-                {"requirement_id": "query_dataset:empty", "sql": ""},
-            ]
-        )
-
-        assert ev.required_query_backed_sql == {"query_dataset:daily_sales": "SELECT * FROM daily_sales"}
-
-    def test_query_backed_dataset_binding_is_stable_within_request(self, tmp_path):
-        ev = GenerationEvidence()
-
-        ev.bind_query_backed_dataset(
-            "query_dataset:daily_sales",
-            semantic_model_file=tmp_path / "sales.yml",
-            dataset_name="daily_sales",
-        )
-        ev.bind_query_backed_dataset(
-            "query_dataset:daily_sales",
-            semantic_model_file=tmp_path / "sales.yml",
-            dataset_name="daily_sales",
-        )
-
-        assert ev.query_backed_dataset_binding("query_dataset:daily_sales") == {
-            "semantic_model_file": str((tmp_path / "sales.yml").resolve()),
-            "dataset_name": "daily_sales",
-        }
-        with pytest.raises(DatusException, match="already bound") as exc_info:
-            ev.bind_query_backed_dataset(
-                "query_dataset:daily_sales",
-                semantic_model_file=tmp_path / "sales.yml",
-                dataset_name="daily_sales_v2",
-            )
-        assert exc_info.value.code is ErrorCode.TOOL_INVALID_INPUT
 
     def test_record_validation_result_success(self):
         ev = GenerationEvidence()
@@ -374,77 +294,59 @@ class TestGenerationEvidence:
         ev.metric_dry_run_metrics = {"a"}
         assert ev.has_metric_dry_run(["a"]) is False
 
-    def test_set_metric_queryability_contracts_filters_invalid(self):
+    def test_set_metric_queryability_contracts_normalizes_compact_fields(self):
         ev = GenerationEvidence()
-        contracts = [
-            {"source": "s1", "dimension_hints": ["col_a"], "metric_hints": ["m1"]},
-            {"source": "s2"},  # no dimension_hints or time_group_hints — filtered
+        ev.set_metric_queryability_contracts(
+            [
+                {
+                    "contract_id": "sales:group_1",
+                    "source_id": "sales",
+                    "metric_output_ids": ["sales:revenue", "sales:revenue"],
+                    "dimensions": ["sales.country", "sales.country"],
+                    "time_grain": "MONTH",
+                    "legacy_field": "ignored",
+                },
+                {"contract_id": "empty", "source_id": "sales"},
+            ]
+        )
+
+        assert ev.metric_queryability_contracts == [
+            {
+                "contract_id": "sales:group_1",
+                "source_id": "sales",
+                "metric_output_ids": ["sales:revenue"],
+                "dimensions": ["sales.country"],
+                "time_grain": "month",
+            }
         ]
-        ev.set_metric_queryability_contracts(contracts)
-        assert len(ev.metric_queryability_contracts) == 1
-        assert ev.metric_queryability_contracts[0]["source"] == "s1"
 
-    def test_set_metric_queryability_contracts_deduplicates_metric_hints(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts([{"dimension_hints": ["col_a"], "metric_hints": ["m1", "m1", "m2"]}])
-        assert ev.metric_queryability_contracts[0]["metric_hints"] == ["m1", "m2"]
-
-    def test_set_metric_queryability_contracts_applies_alias_rewrites(self):
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts(
-            [{"dimension_hints": ["col_a"], "metric_hints": ["rev_alias"]}],
-            metric_aliases={"rev_alias": "revenue_total"},
-        )
-        hints = ev.metric_queryability_contracts[0]["metric_hints"]
-        assert "revenue_total" in hints
-        alias_rewrites = ev.metric_queryability_contracts[0].get("metric_alias_rewrites", {})
-        assert alias_rewrites.get("rev_alias") == "revenue_total"
-
-    def test_output_binding_prevents_english_metric_name_from_bypassing_dimensions(self):
-        output_id = "sql_1:statement_1:output_2:iusernum"
+    def test_output_binding_requires_bound_metric_and_exact_dimensions(self):
+        output_id = "sales:revenue"
         ev = GenerationEvidence()
         ev.set_metric_queryability_contracts(
             [
                 {
-                    "source": "sql_1",
-                    "dimension_hints": ["week_start"],
-                    "metric_hints": ["iusernum"],
+                    "contract_id": "sales:group_1",
+                    "source_id": "sales",
                     "metric_output_ids": [output_id],
+                    "dimensions": ["sales.country"],
                 }
             ]
         )
-        ev.bind_metric_output_names([{"output_id": output_id, "metric_name": "first_week_retained_users"}])
+        ev.bind_metric_output_names([{"output_id": output_id, "metric_name": "revenue_total"}])
+
         ev.record_metric_dry_run(
-            ["first_week_retained_users"],
+            ["revenue_total"],
             {"success": 1, "result": {"metadata": {}}},
         )
+        assert ev.has_required_queryability_dry_runs(["revenue_total"]) is False
 
-        contract = ev.metric_queryability_contracts[0]
-        assert contract["source_metric_hints"] == ["iusernum"]
-        assert contract["metric_hints"] == ["first_week_retained_users"]
-        assert ev.has_required_queryability_dry_runs(["first_week_retained_users"]) is False
-
-    def test_output_binding_accepts_renamed_metric_with_required_dimensions(self):
-        output_id = "sql_1:statement_1:output_2:iusernum"
-        ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "sql_1",
-                    "dimension_hints": ["week_start"],
-                    "metric_hints": ["iusernum"],
-                    "metric_output_ids": [output_id],
-                }
-            ]
-        )
-        ev.bind_metric_output_names([{"output_id": output_id, "metric_name": "first_week_retained_users"}])
         ev.record_metric_dry_run(
-            ["first_week_retained_users"],
+            ["revenue_total"],
             {"success": 1, "result": {"metadata": {}}},
-            dimensions=["week_start"],
+            dimensions=["sales.country"],
         )
-
-        assert ev.has_required_queryability_dry_runs(["first_week_retained_users"]) is True
+        assert ev.has_required_queryability_dry_runs(["revenue_total"]) is True
 
     def test_has_required_queryability_dry_runs_no_contracts(self):
         ev = GenerationEvidence()
@@ -452,18 +354,18 @@ class TestGenerationEvidence:
 
     def test_missing_queryability_contracts_empty_when_satisfied(self):
         ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts([{"dimension_hints": ["col_a"], "metric_hints": ["revenue_total"]}])
+        ev.set_metric_queryability_contracts([{"contract_id": "c1", "source_id": "s1", "dimensions": ["s1.col_a"]}])
         ev.record_metric_dry_run(
             ["revenue_total"],
             {"success": 1, "result": {"metadata": {}}},
-            dimensions=["col_a"],
+            dimensions=["s1.col_a"],
         )
         missing = ev.missing_queryability_contracts(["revenue_total"])
         assert missing == []
 
     def test_missing_queryability_contracts_nonempty_when_unsatisfied(self):
         ev = GenerationEvidence()
-        ev.set_metric_queryability_contracts([{"dimension_hints": ["col_a"], "metric_hints": ["revenue_total"]}])
+        ev.set_metric_queryability_contracts([{"contract_id": "c1", "source_id": "s1", "dimensions": ["s1.col_a"]}])
         ev.metric_dry_run_passed = True
         ev.metric_dry_run_metrics.add("revenue_total")
         # No dry_run_queries at all -> contract not matched
@@ -501,7 +403,7 @@ class TestGenerationEvidence:
 
 
 class TestMetricTimeCanonicalizationContract:
-    """Regression: a day-grain dry-run must satisfy a metric_date time-group contract."""
+    """The compact contract requires its exact dimension combination and time grain."""
 
     # MetricFlow day-grain output: groups by metric_time via CAST, no date_trunc.
     COMPILED_SQL = (
@@ -525,12 +427,16 @@ class TestMetricTimeCanonicalizationContract:
         ev.set_metric_queryability_contracts(
             [
                 {
-                    "source": "sql_1",
-                    "dimension_hints": ["metric_date"],
-                    "metric_hints": ["average_gross_order_value"],
-                    "time_group_hints": [{"alias": "metric_date", "base_expr": "ordered_at", "grain": "day"}],
+                    "contract_id": "sql_1:group_1",
+                    "source_id": "sql_1",
+                    "dimensions": ["orders.metric_date"],
+                    "time_grain": "day",
+                    "metric_output_ids": ["sql_1:average_gross_order_value"],
                 }
             ]
+        )
+        ev.bind_metric_output_names(
+            [{"output_id": "sql_1:average_gross_order_value", "metric_name": "average_gross_order_value"}]
         )
         return ev
 
@@ -539,33 +445,8 @@ class TestMetricTimeCanonicalizationContract:
         ev.record_metric_dry_run(
             ["average_gross_order_value"],
             {"success": 1, "result": {"metadata": {"explain": True, "sql": self.COMPILED_SQL}}},
-            dimensions=["metric_date"],
+            dimensions=["orders.metric_date"],
             time_granularity="day",
         )
         assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is True
         assert ev.missing_queryability_contracts(["average_gross_order_value"]) == []
-
-    def test_grain_dry_run_does_not_satisfy_unrelated_time_column(self):
-        # A metric_time dry-run built from a different base column must not match.
-        ev = self._evidence_with_contract()
-        unrelated_sql = self.COMPILED_SQL.replace("ordered_at", "shipped_at")
-        ev.record_metric_dry_run(
-            ["average_gross_order_value"],
-            {"success": 1, "result": {"metadata": {"explain": True, "sql": unrelated_sql}}},
-            dimensions=["metric_date"],
-            time_granularity="day",
-        )
-        assert ev.has_required_queryability_dry_runs(["average_gross_order_value"]) is False
-
-
-class TestSqlContainsBaseExprText:
-    def test_bare_identifier_matches_standalone_occurrence(self):
-        assert _sql_contains_base_expr_text("SELECT CAST(ordered_at AS DATETIME) AS m", "ordered_at") is True
-
-    def test_bare_identifier_does_not_match_partial_identifier(self):
-        assert _sql_contains_base_expr_text("SELECT preordered_at AS m", "ordered_at") is False
-        assert _sql_contains_base_expr_text("SELECT ordered_at_utc AS m", "ordered_at") is False
-
-    def test_complex_expression_matches_via_substring(self):
-        sql = "SELECT CAST(ordered_at AS DATETIME) AS metric_time GROUP BY metric_time"
-        assert _sql_contains_base_expr_text(sql, "CAST(ordered_at AS DATETIME)") is True

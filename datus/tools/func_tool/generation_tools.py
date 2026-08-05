@@ -5,7 +5,6 @@
 # -*- coding: utf-8 -*-
 import json
 import os
-import re
 import tempfile
 from collections.abc import Iterable
 from datetime import datetime
@@ -43,7 +42,7 @@ class MetricOutputBinding(BaseModel):
     """Bind one request-local SQL output to its published metric name."""
 
     output_id: str = Field(..., description="Output identity returned by prepare_sql_modeling_plan")
-    metric_name: str = Field(..., description="Unique metric name published for that output")
+    metric_name: str = Field(..., description="Published metric that resolves this output; may be reused")
 
 
 def _rows_to_dicts(rows: Any) -> List[Dict[str, Any]]:
@@ -85,74 +84,6 @@ def _rag_scope_conditions(rag: Any) -> List[Any]:
     except Exception:
         return []
     return conditions if isinstance(conditions, list) else []
-
-
-def _normalized_semantic_name(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
-
-
-def _canonical_sql_expression(value: Any, dialect: str = "") -> str:
-    """Normalize one scalar SQL expression without changing its semantics."""
-    expression = str(value or "").strip()
-    if not expression:
-        return ""
-    try:
-        import sqlglot
-        from sqlglot import expressions as exp
-
-        from datus.utils.sql_utils import parse_read_dialect
-
-        read_dialect = parse_read_dialect(dialect) if dialect else None
-        parsed = sqlglot.parse_one(f"SELECT {expression}", read=read_dialect)
-        projection = parsed.expressions[0]
-        if isinstance(projection, exp.Alias):
-            projection = projection.this
-        for column in projection.find_all(exp.Column):
-            column.set("catalog", None)
-            column.set("db", None)
-            column.set("table", None)
-            if isinstance(column.this, exp.Identifier):
-                column.this.set("quoted", False)
-        return re.sub(r"\s+", "", projection.sql(comments=False, normalize=True)).lower()
-    except Exception:
-        return re.sub(r"\s+", "", expression).lower()
-
-
-def _osi_dimension_fields(path: str | Path) -> List[Dict[str, Any]]:
-    """Read executable OSI dimension names and dialect expressions."""
-    document = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    models = document.get("semantic_model") if isinstance(document, dict) else None
-    fields: List[Dict[str, Any]] = []
-    for model in models if isinstance(models, list) else []:
-        if not isinstance(model, dict):
-            continue
-        datasets = model.get("datasets")
-        for dataset in datasets if isinstance(datasets, list) else []:
-            if not isinstance(dataset, dict):
-                continue
-            dataset_fields = dataset.get("fields")
-            for field in dataset_fields if isinstance(dataset_fields, list) else []:
-                if not isinstance(field, dict) or "dimension" not in field:
-                    continue
-                raw_expression = field.get("expression")
-                expressions: List[str] = []
-                if isinstance(raw_expression, str):
-                    expressions.append(raw_expression)
-                elif isinstance(raw_expression, dict):
-                    dialects = raw_expression.get("dialects")
-                    for dialect_expression in dialects if isinstance(dialects, list) else []:
-                        if not isinstance(dialect_expression, dict):
-                            continue
-                        expression = dialect_expression.get("expression")
-                        if isinstance(expression, str) and expression.strip():
-                            expressions.append(expression)
-                fields.append(
-                    {
-                        "name": str(field.get("name") or "").strip(),
-                        "expressions": expressions,
-                    }
-                )
-    return fields
 
 
 class GenerationTools:
@@ -484,26 +415,6 @@ class GenerationTools:
             if self._is_osi_authoring():
                 assert osi_target is not None
                 resolved, _model_name = osi_target
-                query_backed_error = self._validate_required_query_backed_sources(
-                    [resolved],
-                    include_active_root=False,
-                )
-                if query_backed_error:
-                    return FuncToolResult(
-                        success=0,
-                        error=query_backed_error,
-                        result={"semantic_model_files": semantic_model_files},
-                    )
-                dimension_error, missing_dimensions = self._validate_required_osi_group_by_dimensions(resolved)
-                if dimension_error:
-                    return FuncToolResult(
-                        success=0,
-                        error=dimension_error,
-                        result={
-                            "semantic_model_files": semantic_model_files,
-                            "missing_group_by_dimensions": missing_dimensions,
-                        },
-                    )
                 sync_result = self.sync_osi_to_db(
                     resolved,
                     include_semantic_objects=True,
@@ -538,14 +449,6 @@ class GenerationTools:
                         result={"semantic_model_files": semantic_model_files},
                     )
                 resolved_semantic_files.append(resolved)
-            query_backed_error = self._validate_required_query_backed_sources(resolved_semantic_files)
-            if query_backed_error:
-                return FuncToolResult(
-                    success=0,
-                    error=query_backed_error,
-                    result={"semantic_model_files": semantic_model_files},
-                )
-
             sync_results = []
             for resolved in resolved_semantic_files:
                 sync_result = GenerationHooks._sync_semantic_to_db(
@@ -598,8 +501,10 @@ class GenerationTools:
         try:
             self.generation_evidence.ensure_sql_modeling_plan_resolved()
             metric_sqls = dict(self.generation_evidence.metric_sqls)
-            # OSI gen_metrics owns only the metrics collection. Semantic
-            # objects are authored and synced by gen_semantic_model.
+            # OSI gen_metrics normally owns the metrics collection. When it
+            # narrowly repairs a dataset for the requested metrics, publish
+            # the same bound artifact as semantic input so KB profiles stay in
+            # sync with the final YAML.
             semantic_model_files = (
                 [] if self._is_osi_authoring() else self.generation_evidence.semantic_model_mutations(metric_file)
             )
@@ -649,6 +554,8 @@ class GenerationTools:
                         success=0,
                         error="No metrics were touched in the bound OSI semantic model during this run.",
                     )
+                if state.touched_dataset_names:
+                    semantic_model_files = [metric_file]
                 current_metric_names = self.extract_osi_metric_names(abs_bound_metric)
                 present_metric_names, absent_metric_names = state.partition_touched_metrics(current_metric_names)
                 osi_touched_metric_names = set(state.touched_metric_names)
@@ -795,20 +702,6 @@ class GenerationTools:
                         "metric_sqls": metric_sqls,
                     },
                 )
-            query_backed_error = None
-            if not exact_osi_target_required or osi_metric_names_to_sync:
-                query_backed_error = self._validate_required_query_backed_sources([abs_metric, *abs_semantic_files])
-            if query_backed_error:
-                return FuncToolResult(
-                    success=0,
-                    error=query_backed_error,
-                    result={
-                        "metric_file": metric_file,
-                        "semantic_model_files": semantic_model_files,
-                        "metric_sqls": metric_sqls,
-                    },
-                )
-
             if self._is_osi_authoring():
                 if osi_metric_names_to_sync is None:
                     osi_metric_names_to_sync = set(self.extract_osi_metric_names(abs_metric))
@@ -1014,7 +907,12 @@ class GenerationTools:
         raw_bindings: Optional[Iterable[Dict[str, str]]],
         published_metric_names: Iterable[str],
     ) -> tuple[Optional[str], List[Dict[str, str]]]:
-        """Require a one-to-one binding for every planned final SELECT output."""
+        """Require every planned output to resolve to a published metric.
+
+        Output identity preserves source provenance; it does not imply metric
+        identity. Multiple equivalent SQL outputs may therefore resolve to the
+        same reusable business metric.
+        """
         expected = list(self.generation_evidence.required_metric_output_ids)
         if not expected:
             return None, []
@@ -1046,22 +944,14 @@ class GenerationTools:
             )
 
         output_counts: Dict[str, int] = {}
-        metric_counts: Dict[str, int] = {}
         for binding in bindings:
             output_id = binding["output_id"]
             output_counts[output_id] = output_counts.get(output_id, 0) + 1
-            normalized_metric = normalize_metric_name(binding["metric_name"])
-            metric_counts[normalized_metric] = metric_counts.get(normalized_metric, 0) + 1
 
         expected_set = set(expected)
         missing = [output_id for output_id in expected if output_id not in output_counts]
         unknown = sorted(output_id for output_id in output_counts if output_id not in expected_set)
         duplicate_outputs = sorted(output_id for output_id, count in output_counts.items() if count > 1)
-        duplicate_metrics = sorted(
-            binding["metric_name"]
-            for binding in bindings
-            if metric_counts.get(normalize_metric_name(binding["metric_name"]), 0) > 1
-        )
         published = {
             normalize_metric_name(name)
             for name in published_metric_names
@@ -1081,8 +971,6 @@ class GenerationTools:
             errors.append(f"unknown output_ids: {', '.join(unknown)}")
         if duplicate_outputs:
             errors.append(f"duplicate output_ids: {', '.join(duplicate_outputs)}")
-        if duplicate_metrics:
-            errors.append(f"metrics bound to multiple outputs: {', '.join(sorted(set(duplicate_metrics)))}")
         if unpublished_metrics:
             errors.append(f"metric names not published from metric_file: {', '.join(unpublished_metrics)}")
         if errors:
@@ -1416,164 +1304,6 @@ class GenerationTools:
                 continue
             docs.extend(doc for doc in loaded if isinstance(doc, dict))
         return docs
-
-    def _validate_required_query_backed_sources(
-        self,
-        extra_paths: Optional[List[str]] = None,
-        *,
-        include_active_root: bool = True,
-    ) -> Optional[str]:
-        """Require every planned query-backed SQL to exist in the active YAML tree."""
-        required = self.generation_evidence.required_query_backed_sql
-        if not required:
-            return None
-
-        path_manager = get_path_manager(agent_config=self.agent_config)
-        datasource = getattr(self.agent_config, "current_datasource", "")
-        semantic_model_path = getattr(path_manager, "semantic_model_path", None)
-        if isinstance(datasource, str) and datasource.strip() and callable(semantic_model_path):
-            active_semantic_root = Path(semantic_model_path(datasource))
-        else:
-            active_semantic_root = Path(path_manager.subject_dir) / "semantic_models"
-
-        search_paths = [active_semantic_root] if include_active_root else []
-        active_root_resolved = active_semantic_root.expanduser().resolve(strict=False)
-        for path in extra_paths or []:
-            if not path:
-                continue
-            candidate = Path(path).expanduser().resolve(strict=False)
-            try:
-                candidate.relative_to(active_root_resolved)
-            except ValueError:
-                continue
-            search_paths.append(candidate)
-        seen_paths: set[str] = set()
-        authored_sources: set[str] = set()
-        for search_path in search_paths:
-            normalized_path = str(search_path.expanduser().resolve(strict=False))
-            if normalized_path in seen_paths:
-                continue
-            seen_paths.add(normalized_path)
-            for document in self._iter_yaml_docs(normalized_path):
-                data_sources = document.get("data_source")
-                if isinstance(data_sources, dict):
-                    data_sources = [data_sources]
-                for data_source in data_sources or []:
-                    if not isinstance(data_source, dict):
-                        continue
-                    sql_query = data_source.get("sql_query")
-                    if isinstance(sql_query, str) and sql_query.strip():
-                        authored_sources.add(self._normalize_query_source(sql_query))
-
-                semantic_models = document.get("semantic_model")
-                for semantic_model in semantic_models if isinstance(semantic_models, list) else []:
-                    if not isinstance(semantic_model, dict):
-                        continue
-                    for dataset in semantic_model.get("datasets") or []:
-                        if not isinstance(dataset, dict):
-                            continue
-                        source = dataset.get("source")
-                        if isinstance(source, str) and source.strip():
-                            authored_sources.add(self._normalize_query_source(source))
-
-        missing = [
-            requirement_id
-            for requirement_id, sql in required.items()
-            if self._normalize_query_source(sql) not in authored_sources
-        ]
-        if not missing:
-            return None
-        return (
-            "Every query-backed dataset must preserve the exact SQL returned by prepare_sql_modeling_plan. "
-            "Missing or rewritten dataset requirements: "
-            f"{', '.join(missing)}."
-        )
-
-    @staticmethod
-    def _normalize_query_source(value: str) -> str:
-        """Normalize transport-only whitespace while preserving SQL content."""
-        return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-
-    def _validate_required_osi_group_by_dimensions(
-        self,
-        semantic_model_file: str | Path,
-    ) -> tuple[str, List[Dict[str, str]]]:
-        """Require executable OSI dimensions for every non-time GROUP BY expression."""
-        try:
-            db_config = self.agent_config.current_db_config()
-        except Exception:
-            db_config = None
-        configured_type = getattr(db_config, "type", "") if db_config is not None else ""
-        dialect = configured_type if isinstance(configured_type, str) else ""
-
-        required: List[Dict[str, str]] = []
-        seen: set[tuple[str, str, str]] = set()
-        for contract in self.generation_evidence.metric_queryability_contracts:
-            for hint in contract.get("dimension_expr_hints") or []:
-                if not isinstance(hint, dict):
-                    continue
-                normalized = {
-                    "source": str(contract.get("source") or "source SQL").strip(),
-                    "alias": str(hint.get("alias") or "").strip(),
-                    "expr": str(hint.get("expr") or "").strip(),
-                    "column": str(hint.get("column") or "").strip(),
-                }
-                identity = (
-                    _normalized_semantic_name(normalized["alias"]),
-                    _canonical_sql_expression(normalized["expr"], dialect),
-                    _normalized_semantic_name(normalized["column"]),
-                )
-                if not identity[0] or not identity[1] or identity in seen:
-                    continue
-                seen.add(identity)
-                required.append(normalized)
-        if not required:
-            return "", []
-
-        dimensions = _osi_dimension_fields(semantic_model_file)
-        missing: List[Dict[str, str]] = []
-        for hint in required:
-            required_expression = _canonical_sql_expression(hint["expr"], dialect)
-            required_column = _canonical_sql_expression(hint["column"], dialect)
-            is_direct_column = bool(required_column and required_expression == required_column)
-            matched = False
-            for field in dimensions:
-                field_name = _normalized_semantic_name(field.get("name"))
-                field_expressions = {
-                    canonical
-                    for expression in field.get("expressions") or []
-                    if (canonical := _canonical_sql_expression(expression, dialect))
-                }
-                if is_direct_column:
-                    accepted_names = {
-                        _normalized_semantic_name(hint["alias"]),
-                        _normalized_semantic_name(hint["column"]),
-                    }
-                    matched = field_name in accepted_names and required_expression in field_expressions
-                else:
-                    matched = (
-                        field_name == _normalized_semantic_name(hint["alias"])
-                        and required_expression in field_expressions
-                    )
-                if matched:
-                    break
-            if not matched:
-                missing.append(hint)
-
-        if not missing:
-            return "", []
-
-        fixes = "; ".join(
-            f"{hint['source']}: add dimension field `{hint['alias']}` with expression `{hint['expr']}`"
-            for hint in missing
-        )
-        return (
-            "The OSI semantic model does not expose every non-time source SQL GROUP BY expression "
-            f"as an executable dimension. {fixes}. A raw dependency column or description text does "
-            "not satisfy a derived expression. Update the dataset, run validate_semantic again, then "
-            "retry publish_semantic_model.",
-            missing,
-        )
 
     def extract_osi_metric_names(self, metric_path: str) -> List[str]:
         """Return metric names from OSI core documents or compatibility metric docs."""
@@ -2441,34 +2171,65 @@ class GenerationTools:
                     ),
                 }
 
+            semantic_replacements: List[tuple[str, List[dict], List[dict]]] = []
+            semantic_replacement_plans = []
             synced_semantic_files: List[str] = []
             for current_semantic_file in semantic_model_files:
-                sem_result = self._sync_osi_semantic_objects_to_db(current_semantic_file)
+                sem_result = self._sync_osi_semantic_objects_to_db(
+                    current_semantic_file,
+                    prepare_only=True,
+                )
                 if not sem_result.get("success"):
                     return sem_result
+                semantic_objects = list(sem_result.get("semantic_objects") or [])
+                table_profiles = list(sem_result.get("table_semantic_profiles") or [])
+                semantic_replacements.append((current_semantic_file, semantic_objects, table_profiles))
+                semantic_replacement_plans.append((self.semantic_rag, current_semantic_file, semantic_objects))
+                if table_profiles and self.table_semantic_profile_rag is not None:
+                    semantic_replacement_plans.append(
+                        (self.table_semantic_profile_rag, current_semantic_file, table_profiles)
+                    )
                 synced_semantic_files.append(current_semantic_file)
 
             metric_plan = (self.metric_rag, metric_file, metric_objects)
-            snapshots = snapshot_artifact_replacements([metric_plan])
-            self._preserve_existing_metric_sql(metric_objects, snapshots[0][2])
+            replacement_plans = [*semantic_replacement_plans, metric_plan]
+            snapshots = snapshot_artifact_replacements(replacement_plans)
+            metric_snapshot = next(
+                (rows for rag, path, rows in snapshots if rag is self.metric_rag and path == metric_file),
+                [],
+            )
+            self._preserve_existing_metric_sql(metric_objects, metric_snapshot)
             if full_artifact_sync:
-                for row in _rows_to_dicts(snapshots[0][2]):
+                for row in _rows_to_dicts(metric_snapshot):
                     previous_name = str(row.get("name") or "").strip()
                     if previous_name and normalize_metric_name(previous_name) not in declared_metric_names_by_key:
                         absent_metric_names.add(previous_name)
             keep_metric_ids = [build_metric_id([], name) for name in declared_metric_names]
             try:
+                for _semantic_file, semantic_objects, table_profiles in semantic_replacements:
+                    if semantic_objects:
+                        self.semantic_rag.upsert_batch(semantic_objects)
+                        self.semantic_rag.create_indices()
+                    if table_profiles and self.table_semantic_profile_rag is not None:
+                        self.table_semantic_profile_rag.upsert_batch(table_profiles)
+                        self.table_semantic_profile_rag.create_indices()
                 if metric_objects:
                     self.metric_rag.upsert_batch(metric_objects)
                     self.metric_rag.create_indices()
+                delete_stale_artifact_rows(semantic_replacement_plans)
                 self.metric_rag.delete_artifact_rows_except(metric_file, keep_metric_ids)
             except Exception as sync_exc:
                 restore_failures = restore_artifact_replacements(snapshots)
                 if restore_failures:
                     raise RuntimeError(
-                        f"OSI metric replacement failed and rollback was incomplete for: {', '.join(restore_failures)}"
+                        "OSI semantic and metric replacement failed and rollback was incomplete for: "
+                        f"{', '.join(restore_failures)}"
                     ) from sync_exc
                 raise
+            for _semantic_file, semantic_objects, _table_profiles in semantic_replacements:
+                if semantic_objects:
+                    # Post-commit, best-effort cleanup; never raises.
+                    self.semantic_rag.delete_shadowed_table_rows(semantic_objects)
             return {
                 "success": True,
                 "message": (

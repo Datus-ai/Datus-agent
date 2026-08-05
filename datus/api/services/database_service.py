@@ -87,7 +87,9 @@ class DatasourceService:
         return ""
 
     def _is_osi_semantic_layer(self) -> bool:
-        return self._active_semantic_adapter() == "osi"
+        from datus.agent.node.semantic_authoring import is_osi_semantic_adapter
+
+        return is_osi_semantic_adapter(self._active_semantic_adapter())
 
     @staticmethod
     def _validate_osi_semantic_yaml(yaml_content: str, file_path: str) -> tuple[bool, List[str]]:

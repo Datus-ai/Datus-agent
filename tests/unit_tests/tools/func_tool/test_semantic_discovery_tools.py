@@ -1877,10 +1877,7 @@ class TestMetricCandidateAnalyzer:
         assert result.result["direct_metric_candidates"] == []
         assert len(result.result["non_metric_evidence"]) == 1
         assert result.result["non_metric_evidence"][0]["source_sql_name"] == "sql_2"
-        assert result.result["source_classifications"] == [
-            {"source_sql_name": "sql_1", "classification": "llm_review_candidate", "reason": ""},
-            {"source_sql_name": "sql_2", "classification": "cohort_or_dataset_only", "reason": ""},
-        ]
+        assert "source_classifications" not in result.result
 
     def test_raw_division_without_rate_context_becomes_llm_review_candidate(self):
         tools = _make_tools()
@@ -2000,7 +1997,7 @@ class TestMetricCandidateAnalyzer:
 
         assert tools._metric_candidate_merge_key(candidate) != tools._metric_candidate_merge_key(alternate)
 
-    def test_repeated_blocked_candidates_do_not_reappear_as_direct_candidates(self):
+    def test_repeated_complex_outputs_keep_reusable_candidate_and_source_preservation(self):
         tools = _make_tools()
         ranked_sql = """
             WITH f_data AS (
@@ -2028,10 +2025,10 @@ class TestMetricCandidateAnalyzer:
         """
         result = tools._analyze_metric_candidates(sql_queries=[ranked_sql, ranked_sql])
 
-        assert result.result["query_classification"] == "metric_plus_derived_datasource"
         assert result.result["metric_candidates"][0]["source_sql_name"] == "sql_1, sql_2"
-        assert result.result["direct_metric_candidates"] == []
-        assert len(result.result["blocked_direct_metric_candidates"]) == 2
+        assert result.result["direct_metric_candidates"][0]["name"] == "time_count"
+        assert len(result.result["metric_requirements"]) == 2
+        assert all(item["preserve_source_sql"] is True for item in result.result["metric_requirements"])
 
     def test_invalid_sql_does_not_block_other_queries(self):
         tools = _make_tools()
@@ -2058,7 +2055,7 @@ class TestMetricCandidateAnalyzer:
         assert candidate["name_source"] == "expression_fallback"
         assert candidate["name"] == "count_distinct_user_id"
 
-    def test_ranked_window_blocks_direct_metric_and_recommends_datasource(self):
+    def test_ranked_window_preserves_source_sql_without_semantic_routing(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(
             sql_queries=[
@@ -2091,34 +2088,11 @@ class TestMetricCandidateAnalyzer:
             ]
         )
 
-        assert result.result["query_classification"] == "metric_plus_derived_datasource"
-        assert result.result["direct_metric_candidates"] == []
-        assert result.result["blocked_direct_metric_candidates"][0]["name"] == "time_count"
-        assert result.result["metric_generation_skips"] == [
-            {
-                "source_sql_name": "sql_1",
-                "reason": (
-                    "rank/window TopN query returns row-level or post-window results; skip during metric generation"
-                ),
-                "sql_shape": "ranked_window",
-                "window": {
-                    "function": "RANK",
-                    "partition_by": ["f.dt", "f.module"],
-                    "order_by": [{"expr": "f.sell_hitrate", "direction": "ASC"}],
-                },
-                "rank_alias": "rank_no",
-                "rank_filters": ["rank_no <= 10"],
-            }
-        ]
-        recommendation = result.result["derived_datasource_recommendations"][0]
-        assert recommendation["source_cte"] == "rank_data"
-        assert recommendation["rank_alias"] == "rank_no"
-        assert recommendation["window"]["function"] == "RANK"
-        assert recommendation["window"]["partition_by"] == ["f.dt", "f.module"]
-        assert recommendation["window"]["order_by"] == [{"expr": "f.sell_hitrate", "direction": "ASC"}]
-        assert recommendation["ordering_metric_evidence"] == [
-            {"name": "sell_hitrate", "expression": "SUM(product_count) / SUM(non_prime_tc)"}
-        ]
+        assert result.result["direct_metric_candidates"][0]["name"] == "time_count"
+        requirement = result.result["metric_requirements"][0]
+        assert requirement["preserve_source_sql"] is True
+        assert requirement["dataset_requirement_id"] == result.result["dataset_requirements"][0]["requirement_id"]
+        assert "query_classification" not in result.result
         assert result.result["post_aggregation_constraints"] == [
             {
                 "source_sql_name": "sql_1",
@@ -2128,7 +2102,7 @@ class TestMetricCandidateAnalyzer:
             }
         ]
 
-    def test_inline_ranked_subquery_blocks_direct_metric_and_recommends_datasource(self):
+    def test_inline_ranked_subquery_preserves_source_sql(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(
             sql_queries=[
@@ -2150,16 +2124,11 @@ class TestMetricCandidateAnalyzer:
             ]
         )
 
-        assert result.result["query_classification"] == "metric_plus_derived_datasource"
-        assert result.result["direct_metric_candidates"] == []
-        assert result.result["blocked_direct_metric_candidates"][0]["name"] == "time_count"
-        recommendation = result.result["derived_datasource_recommendations"][0]
-        assert recommendation["source_cte"] == "ranked"
-        assert recommendation["rank_alias"] == "rn"
-        assert recommendation["window"]["function"] == "ROW_NUMBER"
-        assert recommendation["rank_filters"] == ["rn = 1"]
+        assert result.result["direct_metric_candidates"][0]["name"] == "time_count"
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
+        assert len(result.result["dataset_requirements"]) == 1
 
-    def test_row_number_main_entity_distribution_recommends_datasource(self):
+    def test_row_number_main_entity_distribution_preserves_source_sql(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(
             sql_queries=[
@@ -2187,14 +2156,9 @@ class TestMetricCandidateAnalyzer:
             ]
         )
 
-        assert result.result["query_classification"] == "metric_plus_derived_datasource"
-        assert result.result["blocked_direct_metric_candidates"][0]["source_alias"] == "***"
-        assert result.result["blocked_direct_metric_candidates"][0]["requires_name_translation"] is True
-        recommendation = result.result["derived_datasource_recommendations"][0]
-        assert recommendation["source_cte"] == "customer_preferred_category"
-        assert recommendation["rank_alias"] == "rn"
-        assert recommendation["window"]["function"] == "ROW_NUMBER"
-        assert recommendation["rank_filters"] == ["rn = 1"]
+        assert result.result["direct_metric_candidates"][0]["source_alias"] == "***"
+        assert result.result["direct_metric_candidates"][0]["requires_name_translation"] is True
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
 
     def test_simple_aggregation_stays_direct_metric(self):
         tools = _make_tools()
@@ -2202,10 +2166,9 @@ class TestMetricCandidateAnalyzer:
             sql_queries=["SELECT dt, SUM(amount) AS revenue FROM orders GROUP BY dt"]
         )
 
-        assert result.result["query_classification"] == "direct_metric"
-        assert result.result["derived_datasource_recommendations"] == []
-        assert result.result["blocked_direct_metric_candidates"] == []
         assert result.result["direct_metric_candidates"][0]["name"] == "revenue"
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is False
+        assert result.result["dataset_requirements"] == []
         assert result.result["queryability_contracts"] == [
             {
                 "source": "sql_1",
@@ -2222,6 +2185,17 @@ class TestMetricCandidateAnalyzer:
                 ],
             }
         ]
+
+    def test_root_top_n_aggregation_preserves_source_sql(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region ORDER BY revenue DESC LIMIT 10"
+            ]
+        )
+
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
+        assert len(result.result["dataset_requirements"]) == 1
 
     def test_queryability_contract_reuses_scope_lineage_for_cte_aliases(self):
         tools = _make_tools()
@@ -2283,16 +2257,16 @@ class TestMetricCandidateAnalyzer:
         )
 
         assert [
-            (item["output_name"], item["output_role"], item["lowering_status"])
+            (item["output_name"], item["output_role"], item["preserve_source_sql"])
             for item in result.result["output_contracts"]
         ] == [
-            ("region", "dimension", "dimension"),
-            ("revenue", "metric", "direct"),
-            ("ranking", "non_metric", "non_metric"),
+            ("region", "dimension", False),
+            ("revenue", "metric", False),
+            ("ranking", "non_metric", False),
         ]
-        assert [(item["preferred_name"], item["target_mode"]) for item in result.result["metric_requirements"]] == [
-            ("revenue", "direct_metric")
-        ]
+        assert [
+            (item["preferred_name"], item["preserve_source_sql"]) for item in result.result["metric_requirements"]
+        ] == [("revenue", False)]
         assert result.result["dataset_requirements"] == []
 
     def test_top_level_union_is_preserved_as_query_backed_output_contract(self):
@@ -2315,7 +2289,7 @@ class TestMetricCandidateAnalyzer:
             ("dt", "dimension"),
             ("revenue", "metric"),
         ]
-        assert result.result["metric_requirements"][0]["target_mode"] == "query_backed_metric"
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
         assert result.result["dataset_requirements"][0]["output_grain"] == ["dt"]
         assert result.result["queryability_contracts"][0]["contract_source"] == "query_backed_output_grain"
 
@@ -2348,7 +2322,7 @@ class TestMetricCandidateAnalyzer:
             "metric",
         ]
         assert [item["preferred_name"] for item in result.result["metric_requirements"]] == ["day_count"]
-        assert result.result["query_classification"] == "query_backed_then_metric"
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
         dataset_requirement = result.result["dataset_requirements"][0]
         assert dataset_requirement["sql"] == sql
         assert dataset_requirement["question"] == "Count grouped days for each daily revenue value"
@@ -2434,12 +2408,31 @@ class TestMetricCandidateAnalyzer:
             ]
         )
 
-        assert result.result["query_classification"] == "direct_metric"
         assert result.result["dataset_requirements"] == []
-        assert [item["target_mode"] for item in result.result["metric_requirements"]] == [
-            "direct_metric",
-            "direct_metric",
+        assert [item["preserve_source_sql"] for item in result.result["metric_requirements"]] == [
+            False,
+            False,
         ]
+
+    def test_nested_projection_and_filter_ctes_can_stay_direct(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                """
+                WITH filtered AS (
+                    SELECT amount, region FROM orders WHERE status = 'paid'
+                ), projected AS (
+                    SELECT amount, region FROM filtered
+                )
+                SELECT region, SUM(amount) AS revenue
+                FROM projected
+                GROUP BY region
+                """
+            ]
+        )
+
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is False
+        assert result.result["dataset_requirements"] == []
 
     def test_passthrough_union_of_aligned_aggregates_preserves_query_boundary(self):
         tools = _make_tools()
@@ -2460,11 +2453,9 @@ class TestMetricCandidateAnalyzer:
             ]
         )
 
-        assert result.result["query_classification"] == "query_backed_then_metric"
         assert len(result.result["dataset_requirements"]) == 1
-        assert result.result["dataset_requirements"][0]["modeling_mode"] == "query_backed"
         assert result.result["metric_requirements"][0]["preferred_name"] == "metric_value"
-        assert result.result["metric_requirements"][0]["target_mode"] == "query_backed_metric"
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
 
     def test_cte_star_expands_final_metric_outputs(self):
         tools = _make_tools()

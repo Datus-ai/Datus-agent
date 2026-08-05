@@ -367,6 +367,7 @@ class TestCursor:
         ("bi_platforms", "grafana"),
         ("schedulers", "airflow"),
         ("semantic_layer", "osi"),
+        ("semantic_layer", "dosi"),
         ("semantic_layer", "metricflow"),
     ],
 )
@@ -388,7 +389,7 @@ def test_schedulers_currently_only_airflow():
 def test_semantic_layer_lists_supported_builtin_adapters():
     from datus.cli.service_config_app import _BUILTIN_TYPES
 
-    assert _BUILTIN_TYPES["semantic_layer"] == ("metricflow", "osi")
+    assert _BUILTIN_TYPES["semantic_layer"] == ("metricflow", "osi", "dosi")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -426,7 +427,7 @@ class TestSemanticTab:
         app = _build_app()
         app._tab = _Tab.SEMANTIC
         app._enter_type_picker()
-        assert app._type_choices == ["metricflow", "osi"]
+        assert app._type_choices == ["metricflow", "osi", "dosi"]
 
     def test_type_picker_enter_emits_save_without_form(self):
         app = _build_app()

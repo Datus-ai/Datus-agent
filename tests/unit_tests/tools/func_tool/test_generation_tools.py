@@ -20,6 +20,7 @@ def _bind_osi_target(
     *,
     model_name="orders_model",
     touched_metric_names=None,
+    touched_dataset_names=None,
 ):
     from datus.tools.func_tool.osi_target_tools import OsiSemanticModelTargetState
 
@@ -35,6 +36,7 @@ def _bind_osi_target(
         mode="bound",
     )
     state.touched_metric_names = list(touched_metric_names or [])
+    state.touched_dataset_names = list(touched_dataset_names or [])
     generation_tools.authoring_format = "osi"
     generation_tools.osi_target_state = state
     generation_tools.require_bound_osi_target = True
@@ -308,7 +310,7 @@ class TestEndSemanticModelGeneration:
         assert result.result["semantic_model_files"] == [str(model_file)]
         assert "1 semantic model file(s)" in result.result["message"]
 
-    def test_rejects_rewritten_query_backed_source_before_sync(self, generation_tools, tmp_path):
+    def test_accepts_revised_query_backed_source_before_sync(self, generation_tools, tmp_path):
         self._mark_validated(generation_tools)
         model_file = tmp_path / "semantic_models" / "daily_sales.yml"
         model_file.parent.mkdir(parents=True)
@@ -321,12 +323,6 @@ class TestEndSemanticModelGeneration:
             "    GROUP BY sale_date\n",
             encoding="utf-8",
         )
-        generation_tools.generation_evidence.required_query_backed_sql = {
-            "query_dataset:daily_sales": (
-                "WITH scoped AS (SELECT * FROM sales)\n"
-                "SELECT sale_date, SUM(amount) AS revenue FROM scoped GROUP BY sale_date"
-            )
-        }
         mock_pm = Mock(subject_dir=str(tmp_path))
         with (
             patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
@@ -337,11 +333,10 @@ class TestEndSemanticModelGeneration:
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
-        assert result.success == 0
-        assert "Missing or rewritten dataset requirements" in result.error
-        sync_mock.assert_not_called()
+        assert result.success == 1
+        sync_mock.assert_called_once()
 
-    def test_osi_rejects_rewritten_query_backed_source_before_sync(self, generation_tools, tmp_path):
+    def test_osi_accepts_revised_query_backed_source_before_sync(self, generation_tools, tmp_path):
         model_file = tmp_path / "subject" / "semantic_models" / "warehouse" / "daily_sales.yml"
         model_file.parent.mkdir(parents=True)
         model_file.write_text(
@@ -355,46 +350,6 @@ class TestEndSemanticModelGeneration:
         )
         _plan_osi_target(generation_tools, model_file, model_name="daily_sales")
         generation_tools.generation_evidence.record_semantic_artifact_validation("daily_sales", model_file)
-        generation_tools.generation_evidence.required_query_backed_sql = {
-            "query_dataset:daily_sales": (
-                "WITH scoped AS (SELECT * FROM sales)\n"
-                "SELECT sale_date, SUM(amount) AS revenue FROM scoped GROUP BY sale_date"
-            )
-        }
-        mock_pm = Mock(
-            subject_dir=model_file.parents[2],
-            semantic_model_path=Mock(return_value=model_file.parent),
-        )
-
-        with (
-            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch.object(generation_tools, "sync_osi_to_db", return_value={"success": True}) as sync_mock,
-        ):
-            result = generation_tools.publish_semantic_model([str(model_file)])
-
-        assert result.success == 0
-        assert "Missing or rewritten dataset requirements" in result.error
-        sync_mock.assert_not_called()
-
-    def test_osi_accepts_exact_query_backed_source(self, generation_tools, tmp_path):
-        sql = (
-            "WITH scoped AS (SELECT * FROM sales)\n"
-            "SELECT sale_date, SUM(amount) AS revenue FROM scoped GROUP BY sale_date"
-        )
-        model_file = tmp_path / "subject" / "semantic_models" / "warehouse" / "daily_sales.yml"
-        model_file.parent.mkdir(parents=True)
-        model_file.write_text(
-            "version: 0.2.0\n"
-            "semantic_model:\n"
-            "  - name: daily_sales\n"
-            "    datasets:\n"
-            "      - name: daily_sales\n"
-            "        source: |-\n" + "\n".join(f"          {line}" for line in sql.splitlines()) + "\n",
-            encoding="utf-8",
-        )
-        _plan_osi_target(generation_tools, model_file, model_name="daily_sales")
-        generation_tools.generation_evidence.record_semantic_artifact_validation("daily_sales", model_file)
-        generation_tools.generation_evidence.required_query_backed_sql = {"query_dataset:daily_sales": sql}
         mock_pm = Mock(
             subject_dir=model_file.parents[2],
             semantic_model_path=Mock(return_value=model_file.parent),
@@ -408,60 +363,6 @@ class TestEndSemanticModelGeneration:
 
         assert result.success == 1
         sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
-
-    def test_accepts_exact_query_backed_source_with_transport_whitespace(self, generation_tools, tmp_path):
-        self._mark_validated(generation_tools)
-        model_file = tmp_path / "semantic_models" / "daily_sales.yml"
-        model_file.parent.mkdir(parents=True)
-        sql = (
-            "WITH scoped AS (SELECT * FROM sales)\n"
-            "SELECT sale_date, SUM(amount) AS revenue FROM scoped GROUP BY sale_date"
-        )
-        model_file.write_text(
-            "data_source:\n"
-            "  name: daily_sales\n"
-            "  sql_query: |-\n" + "\n".join(f"    {line}" for line in sql.splitlines()) + "\n",
-            encoding="utf-8",
-        )
-        generation_tools.generation_evidence.required_query_backed_sql = {"query_dataset:daily_sales": f"\r\n{sql}\r\n"}
-        mock_pm = Mock(subject_dir=str(tmp_path))
-        with (
-            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
-            patch(
-                "datus.cli.generation_hooks.GenerationHooks._sync_semantic_to_db",
-                return_value={"success": True},
-            ) as sync_mock,
-        ):
-            result = generation_tools.publish_semantic_model([str(model_file)])
-
-        assert result.success == 1
-        sync_mock.assert_called_once_with(
-            str(model_file), generation_tools.agent_config, include_semantic_objects=True, include_metrics=False
-        )
-
-    def test_query_backed_source_check_is_scoped_to_current_datasource(self, generation_tools, tmp_path):
-        sql = "SELECT sale_date, SUM(amount) AS revenue FROM sales GROUP BY sale_date"
-        subject_dir = tmp_path / "subject"
-        active_dir = subject_dir / "semantic_models" / "active"
-        sibling_dir = subject_dir / "semantic_models" / "sibling"
-        active_dir.mkdir(parents=True)
-        sibling_dir.mkdir(parents=True)
-        sibling_file = sibling_dir / "daily_sales.yml"
-        sibling_file.write_text(
-            f"data_source:\n  name: daily_sales\n  sql_query: |-\n    {sql}\n",
-            encoding="utf-8",
-        )
-        generation_tools.agent_config.current_datasource = "active"
-        generation_tools.generation_evidence.required_query_backed_sql = {"query_dataset:daily_sales": sql}
-        mock_pm = Mock(
-            subject_dir=subject_dir,
-            semantic_model_path=Mock(side_effect=lambda datasource: subject_dir / "semantic_models" / datasource),
-        )
-
-        with patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm):
-            error = generation_tools._validate_required_query_backed_sources([str(sibling_file)])
-
-        assert "query_dataset:daily_sales" in error
 
     def test_success_multiple_files(self, generation_tools, tmp_path):
         self._mark_validated(generation_tools)
@@ -553,7 +454,7 @@ class TestEndSemanticModelGeneration:
         assert result.success == 1
         sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
 
-    def test_osi_rejects_raw_dimension_for_derived_group_by_expression(self, generation_tools, tmp_path):
+    def test_osi_semantic_publish_does_not_apply_metric_queryability_contracts(self, generation_tools, tmp_path):
         model_file = tmp_path / "semantic_models" / "warehouse" / "events.yml"
         model_file.parent.mkdir(parents=True)
         model_file.write_text(
@@ -578,14 +479,10 @@ class TestEndSemanticModelGeneration:
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
-                    "source": "grouped_events",
-                    "dimension_hints": ["normalized_label"],
-                    "dimension_expr_hints": [
-                        {
-                            "alias": "normalized_label",
-                            "expr": "LOWER(raw_label)",
-                        }
-                    ],
+                    "contract_id": "events:group_1",
+                    "source_id": "events",
+                    "metric_output_ids": ["events:event_count"],
+                    "dimensions": ["events.normalized_label"],
                 }
             ]
         )
@@ -595,158 +492,12 @@ class TestEndSemanticModelGeneration:
                 "datus.tools.func_tool.generation_tools.get_path_manager",
                 return_value=Mock(subject_dir=tmp_path),
             ),
-            patch.object(generation_tools, "sync_osi_to_db") as sync_mock,
-        ):
-            result = generation_tools.publish_semantic_model([str(model_file)])
-
-        assert result.success == 0
-        assert "add dimension field `normalized_label` with expression `LOWER(raw_label)`" in result.error
-        assert result.result["missing_group_by_dimensions"][0]["alias"] == "normalized_label"
-        sync_mock.assert_not_called()
-
-    def test_osi_accepts_executable_derived_group_by_dimension(self, generation_tools, tmp_path):
-        generation_tools.agent_config.current_db_config.return_value = SimpleNamespace(type="mysql")
-        model_file = tmp_path / "semantic_models" / "warehouse" / "events.yml"
-        model_file.parent.mkdir(parents=True)
-        model_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: events\n"
-            "    datasets:\n"
-            "      - name: events\n"
-            "        source: events\n"
-            "        fields:\n"
-            "          - name: normalized_label\n"
-            "            expression:\n"
-            "              dialects:\n"
-            "                - dialect: ANSI_SQL\n"
-            "                  expression: LOWER(`events`.raw_label)\n"
-            "            dimension: {}\n",
-            encoding="utf-8",
-        )
-        _plan_osi_target(generation_tools, model_file, model_name="events")
-        generation_tools.generation_evidence.record_semantic_artifact_validation("events", model_file)
-        generation_tools.generation_evidence.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "grouped_events",
-                    "dimension_hints": ["normalized_label"],
-                    "dimension_expr_hints": [
-                        {
-                            "alias": "normalized_label",
-                            "expr": "LOWER(raw_label)",
-                        }
-                    ],
-                }
-            ]
-        )
-
-        with (
-            patch(
-                "datus.tools.func_tool.generation_tools.get_path_manager",
-                return_value=Mock(subject_dir=tmp_path),
-            ),
-            patch.object(
-                generation_tools,
-                "sync_osi_to_db",
-                return_value={"success": True},
-            ) as sync_mock,
+            patch.object(generation_tools, "sync_osi_to_db", return_value={"success": True}) as sync_mock,
         ):
             result = generation_tools.publish_semantic_model([str(model_file)])
 
         assert result.success == 1
         sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
-
-    def test_osi_accepts_source_dimension_for_pure_column_alias(self, generation_tools, tmp_path):
-        model_file = tmp_path / "semantic_models" / "warehouse" / "events.yml"
-        model_file.parent.mkdir(parents=True)
-        model_file.write_text(
-            "version: 0.2.0.dev0\n"
-            "semantic_model:\n"
-            "  - name: events\n"
-            "    datasets:\n"
-            "      - name: events\n"
-            "        source: events\n"
-            "        fields:\n"
-            "          - name: raw_region\n"
-            "            expression:\n"
-            "              dialects:\n"
-            "                - dialect: ANSI_SQL\n"
-            "                  expression: raw_region\n"
-            "            dimension: {}\n",
-            encoding="utf-8",
-        )
-        _plan_osi_target(generation_tools, model_file, model_name="events")
-        generation_tools.generation_evidence.record_semantic_artifact_validation("events", model_file)
-        generation_tools.generation_evidence.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "grouped_events",
-                    "dimension_hints": ["reporting_region"],
-                    "dimension_expr_hints": [
-                        {
-                            "alias": "reporting_region",
-                            "expr": "raw_region",
-                            "column": "raw_region",
-                        }
-                    ],
-                }
-            ]
-        )
-
-        with (
-            patch(
-                "datus.tools.func_tool.generation_tools.get_path_manager",
-                return_value=Mock(subject_dir=tmp_path),
-            ),
-            patch.object(
-                generation_tools,
-                "sync_osi_to_db",
-                return_value={"success": True},
-            ) as sync_mock,
-        ):
-            result = generation_tools.publish_semantic_model([str(model_file)])
-
-        assert result.success == 1
-        sync_mock.assert_called_once_with(str(model_file), include_semantic_objects=True, include_metrics=False)
-
-    def test_osi_rejects_pure_column_alias_bound_to_a_different_column(self, generation_tools, tmp_path):
-        model_file = tmp_path / "events.yml"
-        model_file.write_text(
-            "semantic_model:\n"
-            "  - name: events\n"
-            "    datasets:\n"
-            "      - name: events\n"
-            "        source: events\n"
-            "        fields:\n"
-            "          - name: reporting_region\n"
-            "            expression:\n"
-            "              dialects:\n"
-            "                - dialect: ANSI_SQL\n"
-            "                  expression: fallback_region\n"
-            "            dimension: {}\n",
-            encoding="utf-8",
-        )
-        generation_tools.generation_evidence.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "grouped_events",
-                    "dimension_hints": ["reporting_region"],
-                    "dimension_expr_hints": [
-                        {
-                            "alias": "reporting_region",
-                            "expr": "raw_region",
-                            "column": "raw_region",
-                        }
-                    ],
-                }
-            ]
-        )
-
-        error, missing = generation_tools._validate_required_osi_group_by_dimensions(model_file)
-
-        assert "add dimension field `reporting_region` with expression `raw_region`" in error
-        assert missing[0]["column"] == "raw_region"
 
     def test_osi_rejects_file_whose_model_name_differs_from_plan(self, generation_tools, tmp_path):
         model_file = tmp_path / "semantic_models" / "warehouse" / "orders.yml"
@@ -873,6 +624,52 @@ class TestEndMetricGeneration:
         assert generation_tools.generation_evidence.has_metric_kb_sync(["order_count"])
         assert state.metric_snapshot_content is None
 
+    def test_osi_publishes_dataset_repairs_with_touched_metrics(self, generation_tools, tmp_path):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            "semantic_model:\n"
+            "  - name: orders_model\n"
+            "    datasets:\n"
+            "      - name: orders\n"
+            "        source: analytics.orders\n"
+            "    metrics:\n"
+            "      - name: order_count\n",
+            encoding="utf-8",
+        )
+        _bind_osi_target(
+            generation_tools,
+            target,
+            touched_metric_names=["order_count"],
+            touched_dataset_names=["orders"],
+        )
+        generation_tools.generation_evidence.record_semantic_artifact_validation("orders_model", target)
+        generation_tools.generation_evidence.record_metric_dry_run(
+            ["order_count"],
+            {"success": 1, "result": {"metadata": {}}},
+        )
+        mock_pm = Mock(subject_dir=str(tmp_path / "subject"))
+
+        with (
+            patch("datus.tools.func_tool.generation_tools.get_path_manager", return_value=mock_pm),
+            patch.object(
+                generation_tools,
+                "_sync_osi_metric_to_db",
+                return_value={"success": True, "message": "synced", "semantic_synced": True},
+            ) as sync_mock,
+        ):
+            result = generation_tools.publish_metrics(metric_file=str(target))
+
+        assert result.success == 1
+        sync_mock.assert_called_once_with(
+            str(target),
+            [str(target)],
+            {},
+            metric_names_to_sync={"order_count"},
+            metric_names_to_reconcile={"order_count"},
+        )
+        assert generation_tools.generation_evidence.semantic_kb_sync_passed is True
+
     def test_osi_publishes_pure_deletion_without_metric_dry_run(self, generation_tools, tmp_path):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "orders.yml"
         target.parent.mkdir(parents=True)
@@ -950,9 +747,10 @@ class TestEndMetricGeneration:
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
-                    "metric_hints": ["order_count"],
-                    "dimension_hints": ["customer_id"],
-                    "time_group_hints": [],
+                    "contract_id": "orders:group_1",
+                    "source_id": "orders",
+                    "metric_output_ids": ["orders:order_count"],
+                    "dimensions": ["orders.customer_id"],
                 }
             ]
         )
@@ -993,9 +791,10 @@ class TestEndMetricGeneration:
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
-                    "metric_hints": ["iusernum"],
+                    "contract_id": "retention:group_1",
+                    "source_id": "retention",
                     "metric_output_ids": [output_id],
-                    "dimension_hints": ["week_start"],
+                    "dimensions": ["retention.week_start"],
                 }
             ]
         )
@@ -1189,7 +988,7 @@ class TestMetricOutputCoverage:
         assert error is None
         assert bindings == []
 
-    def test_accepts_complete_one_to_one_bindings(self, generation_tools):
+    def test_accepts_complete_bindings(self, generation_tools):
         generation_tools.generation_evidence.set_required_metric_outputs(
             [{"output_id": "sql_1:stmt_1:output_1:revenue"}, {"output_id": "sql_1:stmt_1:output_2:orders"}]
         )
@@ -1204,6 +1003,25 @@ class TestMetricOutputCoverage:
 
         assert error is None
         assert len(bindings) == 2
+
+    def test_accepts_multiple_outputs_bound_to_one_metric(self, generation_tools):
+        generation_tools.generation_evidence.set_required_metric_outputs(
+            [{"output_id": "output_1"}, {"output_id": "output_2"}]
+        )
+
+        error, bindings = generation_tools._validate_metric_output_bindings(
+            [
+                {"output_id": "output_1", "metric_name": "revenue"},
+                {"output_id": "output_2", "metric_name": "revenue"},
+            ],
+            ["revenue"],
+        )
+
+        assert error is None
+        assert bindings == [
+            {"output_id": "output_1", "metric_name": "revenue"},
+            {"output_id": "output_2", "metric_name": "revenue"},
+        ]
 
     def test_publish_gate_rejects_missing_binding_before_sync(self, generation_tools, tmp_path):
         metric_file = tmp_path / "semantic_models" / "metrics" / "orders.yml"
@@ -1248,14 +1066,6 @@ class TestMetricOutputCoverage:
                 ],
                 ["revenue", "orders", "margin"],
                 "duplicate output_ids: output_1",
-            ),
-            (
-                [
-                    {"output_id": "output_1", "metric_name": "revenue"},
-                    {"output_id": "output_2", "metric_name": "revenue"},
-                ],
-                ["revenue"],
-                "metrics bound to multiple outputs: revenue",
             ),
             (
                 [
@@ -1384,22 +1194,6 @@ class TestEndMetricGenerationPreflight:
     def test_metric_sqls_scope_excludes_existing_file_metrics(self, generation_tools, tmp_path):
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.add("new_metric")
-        generation_tools.generation_evidence.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "sql_1",
-                    "metric_hints": ["existing_metric"],
-                    "dimension_hints": ["start_month"],
-                    "time_group_hints": [
-                        {
-                            "alias": "start_month",
-                            "base_expr": "created_at",
-                            "grain": "month",
-                        }
-                    ],
-                }
-            ]
-        )
         metric_file = tmp_path / "semantic_models" / "mixed_metrics.yml"
         metric_file.parent.mkdir(parents=True, exist_ok=True)
         metric_file.write_text(
@@ -1439,15 +1233,6 @@ class TestEndMetricGenerationPreflight:
         self._mark_ready_to_publish(generation_tools)
         generation_tools.generation_evidence.metric_dry_run_metrics.update(
             {"existing_metric", "new_metric", "other_new_metric"}
-        )
-        generation_tools.generation_evidence.set_metric_queryability_contracts(
-            [
-                {
-                    "source": "sql_1",
-                    "metric_hints": ["existing_metric"],
-                    "dimension_hints": ["start_month"],
-                }
-            ]
         )
         metric_file = tmp_path / "semantic_models" / "combined_metrics.yml"
         metric_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1495,9 +1280,10 @@ class TestEndMetricGenerationPreflight:
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
-                    "source": "sql_1",
-                    "metric_hints": ["revenue_total"],
-                    "dimension_hints": ["customer_segment"],
+                    "contract_id": "sql_1:group_1",
+                    "source_id": "sql_1",
+                    "metric_output_ids": ["sql_1:revenue_total"],
+                    "dimensions": ["orders.customer_segment"],
                 }
             ]
         )
@@ -1511,7 +1297,7 @@ class TestEndMetricGenerationPreflight:
             result = generation_tools.publish_metrics(metric_file=str(good))
         assert result.success == 0
         assert "source SQL group-by dimensions" in result.error
-        assert result.result["queryability_contracts"][0]["dimension_hints"] == ["customer_segment"]
+        assert result.result["queryability_contracts"][0]["dimensions"] == ["orders.customer_segment"]
         sync_mock.assert_not_called()
 
     def test_accepts_grouped_queryability_dry_run(self, generation_tools, tmp_path):
@@ -1519,16 +1305,17 @@ class TestEndMetricGenerationPreflight:
         generation_tools.generation_evidence.set_metric_queryability_contracts(
             [
                 {
-                    "source": "sql_1",
-                    "metric_hints": ["revenue_total"],
-                    "dimension_hints": ["customer_segment"],
+                    "contract_id": "sql_1:group_1",
+                    "source_id": "sql_1",
+                    "metric_output_ids": ["sql_1:revenue_total"],
+                    "dimensions": ["orders.customer_segment"],
                 }
             ]
         )
         generation_tools.generation_evidence.record_metric_dry_run(
             ["revenue_total"],
             FuncToolResult(success=1, result={"metadata": {"sql": "SELECT 1"}}),
-            dimensions=["customer_segment"],
+            dimensions=["orders.customer_segment"],
         )
         good = tmp_path / "semantic_models" / "good_metric.yml"
         good.parent.mkdir(parents=True, exist_ok=True)
@@ -2199,7 +1986,20 @@ class TestOsiSync:
         with (
             patch.object(generation_tools, "_load_osi_document", return_value=doc),
             patch.object(
-                generation_tools, "_sync_osi_semantic_objects_to_db", return_value={"success": True}
+                generation_tools,
+                "_sync_osi_semantic_objects_to_db",
+                side_effect=[
+                    {
+                        "success": True,
+                        "semantic_objects": [{"id": "table:shop:orders"}],
+                        "table_semantic_profiles": [],
+                    },
+                    {
+                        "success": True,
+                        "semantic_objects": [{"id": "table:shop:customers"}],
+                        "table_semantic_profiles": [],
+                    },
+                ],
             ) as sync_mock,
         ):
             result = generation_tools._sync_osi_metric_to_db(
@@ -2211,6 +2011,101 @@ class TestOsiSync:
         assert result["semantic_synced"] is True
         assert result["semantic_model_files_synced"] == [str(orders_file), str(customers_file)]
         assert [call.args[0] for call in sync_mock.call_args_list] == [str(orders_file), str(customers_file)]
+        assert all(call.kwargs == {"prepare_only": True} for call in sync_mock.call_args_list)
+
+    def test_sync_osi_metric_to_db_restores_semantic_profile_and_metric_rows_on_metric_failure(
+        self, generation_tools, tmp_path
+    ):
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
+        )
+        semantic_file = tmp_path / "orders.yml"
+        semantic_file.write_text("datasets:\n  - name: orders\n")
+        semantic_snapshot = [{"id": "table:shop:old_orders", "yaml_path": str(semantic_file)}]
+        profile_snapshot = [{"id": "profile:shop:old_orders", "yaml_path": str(semantic_file)}]
+        metric_snapshot = [{"id": "metric:old_metric", "name": "old_metric", "yaml_path": str(metric_file)}]
+        generation_tools.table_semantic_profile_rag = Mock()
+        generation_tools.semantic_rag.list_artifact_rows.return_value = semantic_snapshot
+        generation_tools.table_semantic_profile_rag.list_artifact_rows.return_value = profile_snapshot
+        generation_tools.metric_rag.list_artifact_rows.return_value = metric_snapshot
+        generation_tools.metric_rag.delete_artifact_rows_except.side_effect = RuntimeError("metric delete failed")
+        metric = SimpleNamespace(
+            name="order_count",
+            description="Number of orders",
+            expression="COUNT(*)",
+            dataset="orders",
+            subject_path=None,
+            kind="aggregate",
+            inputs=[],
+            measures=[],
+        )
+        doc = SimpleNamespace(name="shop", datasets=[], relationships=[], metrics=[metric])
+        prepared_semantic = {
+            "success": True,
+            "semantic_objects": [{"id": "table:shop:orders", "yaml_path": str(semantic_file)}],
+            "table_semantic_profiles": [{"id": "profile:shop:orders", "yaml_path": str(semantic_file)}],
+        }
+
+        with (
+            patch.object(generation_tools, "_load_osi_document", return_value=doc),
+            patch.object(
+                generation_tools,
+                "_sync_osi_semantic_objects_to_db",
+                return_value=prepared_semantic,
+            ),
+        ):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file), str(semantic_file))
+
+        assert result["success"] is False
+        assert "metric delete failed" in result["error"]
+        generation_tools.semantic_rag.restore_artifact_rows.assert_called_once_with(
+            str(semantic_file), semantic_snapshot
+        )
+        generation_tools.table_semantic_profile_rag.restore_artifact_rows.assert_called_once_with(
+            str(semantic_file), profile_snapshot
+        )
+        generation_tools.metric_rag.restore_artifact_rows.assert_called_once_with(str(metric_file), metric_snapshot)
+
+    def test_sync_osi_metric_to_db_does_not_write_metrics_when_semantic_write_fails(self, generation_tools, tmp_path):
+        metric_file = tmp_path / "orders_metrics.yml"
+        metric_file.write_text(
+            "version: 0.2.0.dev0\nsemantic_model:\n  - name: shop\n    metrics:\n      - name: order_count\n"
+        )
+        semantic_file = tmp_path / "orders.yml"
+        semantic_file.write_text("datasets:\n  - name: orders\n")
+        generation_tools.semantic_rag.upsert_batch.side_effect = RuntimeError("semantic write failed")
+        metric = SimpleNamespace(
+            name="order_count",
+            description="Number of orders",
+            expression="COUNT(*)",
+            dataset="orders",
+            subject_path=None,
+            kind="aggregate",
+            inputs=[],
+            measures=[],
+        )
+        doc = SimpleNamespace(name="shop", datasets=[], relationships=[], metrics=[metric])
+        prepared_semantic = {
+            "success": True,
+            "semantic_objects": [{"id": "table:shop:orders", "yaml_path": str(semantic_file)}],
+            "table_semantic_profiles": [],
+        }
+
+        with (
+            patch.object(generation_tools, "_load_osi_document", return_value=doc),
+            patch.object(
+                generation_tools,
+                "_sync_osi_semantic_objects_to_db",
+                return_value=prepared_semantic,
+            ),
+        ):
+            result = generation_tools._sync_osi_metric_to_db(str(metric_file), str(semantic_file))
+
+        assert result["success"] is False
+        assert "semantic write failed" in result["error"]
+        generation_tools.metric_rag.upsert_batch.assert_not_called()
+        generation_tools.metric_rag.delete_artifact_rows_except.assert_not_called()
 
     def test_sync_osi_metric_to_db_reconciles_metric_file_without_metrics(self, generation_tools, tmp_path):
         metric_file = tmp_path / "empty_metrics.yml"

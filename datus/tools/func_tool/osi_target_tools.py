@@ -30,6 +30,7 @@ class OsiSemanticModelTargetState:
     mode: str = ""
     artifact_sha256: str = ""
     touched_metric_names: List[str] = field(default_factory=list)
+    touched_dataset_names: List[str] = field(default_factory=list)
     target_mutated: bool = False
     last_error_code: str = ""
     metric_snapshot_path: str = ""
@@ -44,6 +45,7 @@ class OsiSemanticModelTargetState:
     def reset(self) -> None:
         self.clear_target()
         self.touched_metric_names = []
+        self.touched_dataset_names = []
         self.last_error_code = ""
         self.metric_snapshot_path = ""
         self.metric_snapshot_content = None
@@ -58,7 +60,9 @@ class OsiSemanticModelTargetState:
         )
 
     def select(self, candidate: Dict[str, Any], *, mode: str) -> None:
-        if (self.target_mutated or self.touched_metric_names) and not self._matches_selected_target(candidate):
+        if (
+            self.target_mutated or self.touched_metric_names or self.touched_dataset_names
+        ) and not self._matches_selected_target(candidate):
             raise ValueError("The OSI target cannot change after authoring started.")
         self.selected = dict(candidate)
         self.mode = mode
@@ -136,6 +140,18 @@ class OsiSemanticModelTargetState:
         self.artifact_sha256 = hashlib.sha256(content).hexdigest()
         self._record_touched_metric_names(metric_names)
 
+    def record_dataset_touch(self, path: str | Path, content: bytes, dataset_names: List[str]) -> None:
+        """Record a narrow dataset change made while authoring bound metrics."""
+        self.require_bound_path(path)
+        self.artifact_sha256 = hashlib.sha256(content).hexdigest()
+        self.target_mutated = True
+        for name in dataset_names:
+            normalized_name = str(name or "").strip().casefold()
+            if normalized_name and not any(
+                str(touched or "").strip().casefold() == normalized_name for touched in self.touched_dataset_names
+            ):
+                self.touched_dataset_names.append(str(name).strip())
+
     def partition_touched_metrics(self, current_metric_names: Iterable[str]) -> tuple[List[str], List[str]]:
         """Split touched names by presence in the final YAML, preserving canonical names."""
         current_names_by_key = {
@@ -178,6 +194,8 @@ class OsiSemanticModelTargetState:
         """Reset request-local mutation state after restoring the original artifact."""
         self.artifact_sha256 = hashlib.sha256(content).hexdigest()
         self.touched_metric_names = []
+        self.touched_dataset_names = []
+        self.target_mutated = False
         self.clear_metric_snapshot()
 
 

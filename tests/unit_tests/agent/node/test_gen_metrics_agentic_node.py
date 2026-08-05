@@ -94,8 +94,8 @@ class TestGenMetricsAgenticNodeInit:
         assert isinstance(node.filesystem_func_tool, FilesystemFuncTool)
         assert isinstance(node.generation_tools, GenerationTools)
 
-    def test_osi_metrics_has_only_metric_mutation_tools(self, real_agent_config, mock_llm_create):
-        """OSI metrics cannot invoke general filesystem or semantic-model authoring tools."""
+    def test_osi_metrics_has_narrow_metric_and_dataset_mutation_tools(self, real_agent_config, mock_llm_create):
+        """OSI metrics can repair datasets without general filesystem writes."""
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
 
         _set_global_semantic_adapter(real_agent_config, "osi")
@@ -105,7 +105,15 @@ class TestGenMetricsAgenticNodeInit:
         node._get_system_prompt(template_context=node._prepare_template_context(node.input))
         tool_names = {tool.name for tool in node.tools}
 
-        assert {"read_file", "upsert_osi_metrics", "delete_osi_metrics", "glob", "grep"}.issubset(tool_names)
+        assert {
+            "read_file",
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
+            "glob",
+            "grep",
+        }.issubset(tool_names)
         assert {"write_file", "edit_file", "delete_file", "publish_semantic_model", "bash"}.isdisjoint(tool_names)
         assert "task" not in tool_names
         assert node.sub_agent_task_tool is None
@@ -118,6 +126,8 @@ class TestGenMetricsAgenticNodeInit:
         assert node.tool_registry.get("list_existing_osi_semantic_models") == "semantic_tools"
         assert node.tool_registry.get("bind_osi_semantic_model_target") == "semantic_tools"
         assert node.tool_registry.get("delete_osi_metrics") == "filesystem_tools"
+        assert node.tool_registry.get("upsert_osi_datasets") == "filesystem_tools"
+        assert node.tool_registry.get("delete_osi_datasets") == "filesystem_tools"
 
     def test_metrics_max_turns(self, real_agent_config, mock_llm_create):
         """Test max_turns is read from agentic_nodes config."""
@@ -952,28 +962,24 @@ class TestPrepareTemplateContext:
             source_fingerprint="source",
             metric_catalog_fingerprint="catalog",
             candidate_plan={
-                "metric_requirements": [
+                "outputs": [
                     {
                         "output_id": "output_1",
-                        "dataset_requirement_id": "query_dataset:abc",
-                        "dataset_name_hint": "retained_users_query_dataset",
+                        "source_id": "retention",
+                        "name": "retained_users",
+                        "role": "metric",
                     }
                 ],
-                "dataset_requirements": [
-                    {
-                        "requirement_id": "query_dataset:abc",
-                        "sql": "SELECT 1",
-                    }
-                ],
+                "generated_sql": {"retention": "SELECT 1"},
             },
         )
 
         enhanced = node._build_enhanced_message(SemanticNodeInput(user_message="Generate retention metrics"))
 
         assert "Generate retention metrics" in enhanced
-        assert "dataset_requirement_id" not in enhanced
-        assert "retained_users_query_dataset" not in enhanced
-        assert node.sql_modeling_plan.candidate_plan["dataset_requirements"][0]["sql"] == "SELECT 1"
+        assert "output_1" not in enhanced
+        assert "retained_users" not in enhanced
+        assert node.sql_modeling_plan.candidate_plan["generated_sql"]["retention"] == "SELECT 1"
 
     def test_query_backed_plan_uses_final_output_grain_for_queryability(
         self,
@@ -990,29 +996,20 @@ class TestPrepareTemplateContext:
                 source_fingerprint="source",
                 metric_catalog_fingerprint="catalog",
                 candidate_plan={
-                    "metric_requirements": [
+                    "outputs": [
                         {
                             "output_id": output_id,
-                            "preferred_name": "retained_players",
+                            "source_id": "retention_metrics",
+                            "name": "retained_players",
+                            "role": "metric",
                         }
                     ],
-                    "dataset_requirements": [
+                    "queryability_contracts": [
                         {
-                            "source_sql_name": "retention_metrics",
-                            "output_grain": ["cohort_date", "retention_day"],
+                            "contract_id": "retention_metrics:group_1",
+                            "source_id": "retention_metrics",
                             "metric_output_ids": [output_id],
-                        }
-                    ],
-                    "source_classifications": [
-                        {
-                            "source_sql_name": "retention_metrics",
-                            "classification": "metric_plus_derived_datasource",
-                        }
-                    ],
-                    "blocked_direct_metric_candidates": [
-                        {
-                            "source_sql_name": "retention_metrics",
-                            "name": "intermediate_count",
+                            "dimensions": ["retention_query.cohort_date", "retention_query.retention_day"],
                         }
                     ],
                 },
@@ -1021,11 +1018,10 @@ class TestPrepareTemplateContext:
 
         assert node.generation_evidence.metric_queryability_contracts == [
             {
-                "source": "retention_metrics",
-                "dimension_hints": ["cohort_date", "retention_day"],
-                "metric_hints": ["retained_players"],
+                "contract_id": "retention_metrics:group_1",
+                "source_id": "retention_metrics",
                 "metric_output_ids": [output_id],
-                "contract_source": "query_backed_output_grain",
+                "dimensions": ["retention_query.cohort_date", "retention_query.retention_day"],
             }
         ]
 
@@ -1282,38 +1278,26 @@ class TestExecuteStreamGenMetricsError:
                 candidate_plan={
                     "queryability_contracts": [
                         {
-                            "source": "revenue_by_customer_segment",
-                            "dimension_hints": ["metric_time__day", "reporting_region"],
-                            "dimension_expr_hints": [
-                                {
-                                    "alias": "reporting_region",
-                                    "expr": "raw_region",
-                                    "column": "raw_region",
-                                }
-                            ],
-                            "time_group_hints": [
-                                {
-                                    "alias": "metric_time__day",
-                                    "base_expr": "event_date",
-                                    "grain": "day",
-                                }
-                            ],
-                            "metric_hints": ["revenue_total"],
+                            "contract_id": "revenue_by_customer_segment:group_1",
+                            "source_id": "revenue_by_customer_segment",
+                            "metric_output_ids": ["revenue:output_1"],
+                            "dimensions": ["orders.event_date", "orders.raw_region"],
+                            "time_grain": "day",
                         }
-                    ]
+                    ],
+                    "outputs": [
+                        {
+                            "output_id": "revenue:output_1",
+                            "source_id": "revenue_by_customer_segment",
+                            "name": "revenue_total",
+                            "role": "metric",
+                        }
+                    ],
                 },
             )
         )
         node.semantic_tools = MagicMock()
         node.semantic_tools.validate_semantic = MagicMock(return_value=FuncToolResult(result={"valid": True}))
-        node.semantic_tools.get_dimensions = MagicMock(
-            return_value=FuncToolResult(
-                result={
-                    "items": [{"name": "event_date"}, {"name": "raw_region"}],
-                    "extra": {"time_dimension": "event_date", "time_granularities": ["day"]},
-                }
-            )
-        )
         node.semantic_tools.query_metrics = MagicMock(
             return_value=FuncToolResult(
                 result={
@@ -1326,16 +1310,23 @@ class TestExecuteStreamGenMetricsError:
         )
         node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
 
-        node._finalize_metric_generation(reported_semantic_path, reported_metric_path, "generated")
+        node._finalize_metric_generation(
+            reported_semantic_path,
+            reported_metric_path,
+            "generated",
+            metric_output_bindings=[{"output_id": "revenue:output_1", "metric_name": "revenue_total"}],
+        )
 
-        node.semantic_tools.get_dimensions.assert_called_once_with(metric_name="revenue_total")
         node.semantic_tools.query_metrics.assert_called_once_with(
             metrics=["revenue_total"],
-            dimensions=["event_date", "raw_region"],
+            dimensions=["orders.event_date", "orders.raw_region"],
             time_granularity="day",
             dry_run=True,
         )
-        node.generation_tools.publish_metrics.assert_called_once_with(metric_file=str(metric_path))
+        node.generation_tools.publish_metrics.assert_called_once_with(
+            metric_file=str(metric_path),
+            metric_output_bindings=[{"output_id": "revenue:output_1", "metric_name": "revenue_total"}],
+        )
 
     def test_metric_publish_requires_warehouse_dry_run_evidence(self, real_agent_config, mock_llm_create):
         from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode

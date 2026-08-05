@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional
 
 from agents import FunctionTool
 from pydantic import BaseModel, Field
@@ -41,23 +41,19 @@ class SqlModelingPlan(BaseModel):
     semantic_source_evidence: dict[str, Any] = Field(default_factory=dict)
 
     def prompt_payload(self) -> dict[str, Any]:
-        """Return the stable subset that the authoring model must consume."""
-        candidate_plan = copy.deepcopy(self.candidate_plan)
-        source_indexes = {source.source_sql_name: index for index, source in enumerate(self.source_queries, 1)}
-        for requirement in candidate_plan.get("dataset_requirements") or []:
-            if not isinstance(requirement, dict):
-                continue
-            requirement.pop("sql", None)
-            source_index = source_indexes.get(str(requirement.get("source_sql_name") or ""))
-            if source_index is not None:
-                requirement["source_index"] = source_index
+        """Return only source evidence and the editable output plan to the model."""
         return {
             "planner_version": self.planner_version,
-            "source_fingerprint": self.source_fingerprint,
-            "metric_catalog_fingerprint": self.metric_catalog_fingerprint,
-            "candidate_plan": candidate_plan,
-            "existing_metric_catalog": self.existing_metric_catalog,
-            "semantic_source_evidence": self.semantic_source_evidence,
+            "sources": [
+                {
+                    "source_id": source.source_sql_name,
+                    "source_index": index,
+                    "question": source.question,
+                    "source_sql": source.sql,
+                }
+                for index, source in enumerate(self.source_queries, 1)
+            ],
+            "candidate_plan": copy.deepcopy(self.candidate_plan),
         }
 
 
@@ -65,7 +61,10 @@ class SqlModelingEntry(BaseModel):
     """Verbatim user-provided SQL plus the business metadata needed to model it."""
 
     source_index: int = Field(..., ge=1, description="SQL source order across all submitted batches")
-    name: str = Field(..., description="Meaningful English snake_case business name")
+    name: str = Field(
+        default="",
+        description="Optional business label; a stable source name is generated when omitted or repeated",
+    )
     question: str = Field(default="", description="Business question answered by this SQL")
     sql: str = Field(..., min_length=1, description="SQL copied verbatim from user input or a read_file result")
 
@@ -123,28 +122,37 @@ class SqlModelingPlanTools:
         generation_evidence: "GenerationEvidence",
         plan_consumer: Callable[[Optional[SqlModelingPlan]], None],
         semantic_source_inspector: Optional[Callable[[SqlModelingPlan], dict[str, Any]]] = None,
+        metric_catalog_loader: Optional[Callable[["AgentConfig"], list[dict[str, Any]]]] = None,
     ):
         self.agent_config = agent_config
         self.sub_agent_name = sub_agent_name
         self.generation_evidence = generation_evidence
         self.plan_consumer = plan_consumer
         self.semantic_source_inspector = semantic_source_inspector
+        self.metric_catalog_loader = metric_catalog_loader or load_existing_metric_catalog
         self._pending_entries: dict[int, SqlModelingEntry] = {}
         self._plan: Optional[SqlModelingPlan] = None
+        self._baseline_output_ids: list[str] = []
+        self._baseline_contract_ids: list[str] = []
 
     @staticmethod
     def all_tools_name() -> list[str]:
         """Return the complete permission-registry surface for this tool group."""
-        return ["prepare_sql_modeling_plan"]
+        return ["prepare_sql_modeling_plan", "update_sql_modeling_plan"]
 
     def available_tools(self) -> list[FunctionTool]:
         """Expose SQL preflight through the standard native tool-group contract."""
-        return [trans_to_function_tool(self.prepare_sql_modeling_plan)]
+        return [
+            trans_to_function_tool(self.prepare_sql_modeling_plan),
+            trans_to_function_tool(self.update_sql_modeling_plan, strict_mode=False),
+        ]
 
     def reset(self) -> None:
         """Clear request-local state when a reusable node starts a new run."""
         self._pending_entries.clear()
         self._plan = None
+        self._baseline_output_ids = []
+        self._baseline_contract_ids = []
 
     def prepare_sql_modeling_plan(
         self,
@@ -154,9 +162,9 @@ class SqlModelingPlanTools:
         """Analyze every SQL statement identified from user-provided content.
 
         Copy each complete SQL statement verbatim from the request or from a
-        read_file result for a user-specified path. Attach its position,
-        meaningful business name, and question. Small inputs should be submitted
-        in one call. Large inputs may be split across calls with ``finalize=False``;
+        read_file result for a user-specified path. Attach its position and optional
+        business name and question. Small inputs should be submitted in one call.
+        Large inputs may be split across calls with ``finalize=False``;
         set ``finalize=True`` on the last batch. Do not call this tool when no SQL
         was provided or referenced.
 
@@ -224,17 +232,32 @@ class SqlModelingPlanTools:
                 }
             )
 
-        sources = [
-            SourceQueryEvidence(
-                source_sql_name=_normalize_business_name(entry.name),
-                sql=entry.sql,
-                question=entry.question,
-                source_type="prompt",
+        sources = []
+        used_source_names: set[str] = set()
+        for entry in sorted(self._pending_entries.values(), key=lambda item: item.source_index):
+            source_name = _normalize_business_name(entry.name)
+            if not source_name or source_name in used_source_names:
+                source_name = f"sql_{entry.source_index}"
+            suffix = 2
+            unique_name = source_name
+            while unique_name in used_source_names:
+                unique_name = f"{source_name}_{suffix}"
+                suffix += 1
+            used_source_names.add(unique_name)
+            sources.append(
+                SourceQueryEvidence(
+                    source_sql_name=unique_name,
+                    sql=entry.sql,
+                    question=entry.question,
+                    source_type="prompt",
+                )
             )
-            for entry in sorted(self._pending_entries.values(), key=lambda item: item.source_index)
-        ]
 
-        plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(sources)
+        metric_catalog = self.metric_catalog_loader(self.agent_config)
+        plan = SqlModelingPlanner(self.agent_config, self.sub_agent_name).plan(
+            sources,
+            existing_metric_catalog=metric_catalog,
+        )
         if not plan.candidate_plan.get("available", False):
             return FuncToolResult(
                 success=0,
@@ -254,16 +277,235 @@ class SqlModelingPlanTools:
                 }
 
         self._plan = plan
+        self._capture_plan_baseline(plan)
         self.generation_evidence.mark_sql_modeling_plan_ready(plan.source_fingerprint)
         self.generation_evidence.set_metric_queryability_contracts(
             plan.candidate_plan.get("queryability_contracts") or []
         )
-        self.generation_evidence.set_required_metric_outputs(plan.candidate_plan.get("metric_requirements") or [])
-        self.generation_evidence.set_required_query_backed_datasets(
-            plan.candidate_plan.get("dataset_requirements") or []
-        )
+        self.generation_evidence.set_required_metric_outputs(plan.candidate_plan.get("outputs") or [])
         self.plan_consumer(plan)
-        return FuncToolResult(result={"status": "ready", **plan.prompt_payload()})
+        status = str(plan.candidate_plan.get("planning_status") or "ready")
+        return FuncToolResult(result={"status": status, **plan.prompt_payload()})
+
+    def update_sql_modeling_plan(self, candidate_plan: Dict[str, Any]) -> FuncToolResult:
+        """Replace the publish-pending candidate plan while retaining source SQL.
+
+        Use this after authoring, semantic compilation, or warehouse preflight
+        reveals a wrong dataset choice, field qualification, time grain, metric
+        reuse decision, output binding, or queryability contract. The submitted
+        candidate plan is a complete replacement, not a patch. Every original
+        ``output_id`` must remain, while its role, expression, status, generated
+        SQL, and later metric binding may change. Original SQL remains immutable
+        source evidence.
+
+        Args:
+            candidate_plan: Complete revised candidate plan returned from the
+                initial preflight, with any required corrections applied.
+        """
+        if self._plan is None:
+            return FuncToolResult(
+                success=0,
+                error="prepare_sql_modeling_plan must complete before the plan can be updated.",
+                result={"status": "unresolved"},
+            )
+        if self.generation_evidence.kb_sync_passed:
+            return FuncToolResult(
+                success=0,
+                error="The SQL modeling plan cannot change after generated artifacts were published.",
+                result={"status": "published", **self._plan.prompt_payload()},
+            )
+        if not isinstance(candidate_plan, dict):
+            return FuncToolResult(
+                success=0,
+                error="candidate_plan must be a complete JSON object.",
+                result={"status": "unresolved", **self._plan.prompt_payload()},
+            )
+
+        try:
+            revised_candidate = self._normalize_revised_candidate_plan(candidate_plan)
+        except ValueError as exc:
+            return FuncToolResult(
+                success=0,
+                error=str(exc),
+                result={"status": "unresolved", **self._plan.prompt_payload()},
+            )
+
+        revised_output_ids = _metric_output_ids(revised_candidate)
+        missing_output_ids = [
+            output_id for output_id in self._baseline_output_ids if output_id not in set(revised_output_ids)
+        ]
+        if missing_output_ids:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "A revised SQL modeling plan cannot silently remove original metric outputs. "
+                    f"Missing output_ids: {', '.join(missing_output_ids)}."
+                ),
+                result={"status": "unresolved", **self._plan.prompt_payload()},
+            )
+        revised_contract_ids = _queryability_contract_ids(revised_candidate)
+        missing_contract_ids = [
+            contract_id for contract_id in self._baseline_contract_ids if contract_id not in set(revised_contract_ids)
+        ]
+        if missing_contract_ids:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "A revised SQL modeling plan cannot remove required GROUP BY checks. "
+                    f"Missing contract_ids: {', '.join(missing_contract_ids)}."
+                ),
+                result={"status": "unresolved", **self._plan.prompt_payload()},
+            )
+
+        revised_plan = self._plan.model_copy(update={"candidate_plan": revised_candidate}, deep=True)
+        self.generation_evidence.invalidate_plan_evidence()
+        self.generation_evidence.set_metric_queryability_contracts(
+            revised_candidate.get("queryability_contracts") or []
+        )
+        self.generation_evidence.set_required_metric_outputs(revised_candidate.get("outputs") or [])
+        self._plan = revised_plan
+        self.plan_consumer(revised_plan)
+        status = str(revised_candidate.get("planning_status") or "ready")
+        return FuncToolResult(result={"status": status, "updated": True, **revised_plan.prompt_payload()})
+
+    def _capture_plan_baseline(self, plan: SqlModelingPlan) -> None:
+        self._baseline_output_ids = _metric_output_ids(plan.candidate_plan)
+        self._baseline_contract_ids = _queryability_contract_ids(plan.candidate_plan)
+
+    def _normalize_revised_candidate_plan(self, candidate_plan: Dict[str, Any]) -> Dict[str, Any]:
+        if candidate_plan.get("available") is not True:
+            raise ValueError("candidate_plan.available must be true for an update.")
+        outputs = candidate_plan.get("outputs")
+        if not isinstance(outputs, list):
+            raise ValueError("candidate_plan.outputs must be a JSON array.")
+        normalized_outputs = []
+        seen_output_ids: set[str] = set()
+        known_sources = {source.source_sql_name for source in self._plan.source_queries}
+        for index, raw_output in enumerate(outputs):
+            if not isinstance(raw_output, dict):
+                raise ValueError(f"candidate_plan.outputs[{index}] must be a JSON object.")
+            output = {
+                key: copy.deepcopy(raw_output[key])
+                for key in ("output_id", "source_id", "name", "expression", "role", "status", "reason")
+                if key in raw_output
+            }
+            output_id = str(output.get("output_id") or "").strip()
+            if not output_id:
+                raise ValueError(f"candidate_plan.outputs[{index}].output_id is required.")
+            if output_id in seen_output_ids:
+                raise ValueError(f"candidate_plan.outputs contains duplicate output_id {output_id!r}.")
+            seen_output_ids.add(output_id)
+            output["output_id"] = output_id
+            output["role"] = str(output.get("role") or "metric").strip().lower()
+            source_id = str(output.get("source_id") or "").strip()
+            if source_id and source_id not in known_sources:
+                raise ValueError(f"Output {output_id!r} has unknown source_id {source_id!r}.")
+            if source_id:
+                output["source_id"] = source_id
+            normalized_outputs.append(output)
+
+        revised = {
+            "available": True,
+            "planning_status": str(candidate_plan.get("planning_status") or "ready"),
+            "outputs": normalized_outputs,
+            "queryability_contracts": self._normalize_revised_queryability_contracts(
+                candidate_plan.get("queryability_contracts"),
+                normalized_outputs,
+            ),
+        }
+        generated_sql = candidate_plan.get("generated_sql")
+        if generated_sql is not None:
+            if not isinstance(generated_sql, dict):
+                raise ValueError("candidate_plan.generated_sql must be a JSON object keyed by source_id.")
+            known_sources = {source.source_sql_name for source in self._plan.source_queries}
+            unknown_sources = sorted(str(key) for key in generated_sql if str(key) not in known_sources)
+            if unknown_sources:
+                raise ValueError(f"candidate_plan.generated_sql has unknown source_ids: {', '.join(unknown_sources)}.")
+            revised["generated_sql"] = {
+                str(source_id): str(sql) for source_id, sql in generated_sql.items() if str(sql).strip()
+            }
+        for key in ("parse_errors", "unresolved_sources", "summary"):
+            if key in candidate_plan:
+                revised[key] = copy.deepcopy(candidate_plan[key])
+        return revised
+
+    def _normalize_revised_queryability_contracts(
+        self,
+        raw_contracts: Any,
+        outputs: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(raw_contracts, list):
+            raise ValueError("candidate_plan.queryability_contracts must be a JSON array.")
+        known_sources = {source.source_sql_name for source in self._plan.source_queries}
+        known_outputs = {
+            str(output.get("output_id") or "").strip()
+            for output in outputs
+            if str(output.get("output_id") or "").strip()
+        }
+        metric_outputs = {
+            str(output.get("output_id") or "").strip()
+            for output in outputs
+            if str(output.get("role") or "metric").strip().lower() == "metric"
+            and str(output.get("status") or "").strip().lower() not in {"ignored", "skipped", "blocked"}
+        }
+        normalized = []
+        seen_contract_ids: set[str] = set()
+        for index, raw_contract in enumerate(raw_contracts):
+            if not isinstance(raw_contract, dict):
+                raise ValueError(f"candidate_plan.queryability_contracts[{index}] must be a JSON object.")
+            contract_id = str(raw_contract.get("contract_id") or "").strip()
+            source_id = str(raw_contract.get("source_id") or "").strip()
+            if not contract_id or not source_id:
+                raise ValueError(f"candidate_plan.queryability_contracts[{index}] requires contract_id and source_id.")
+            if contract_id in seen_contract_ids:
+                raise ValueError(
+                    f"candidate_plan.queryability_contracts contains duplicate contract_id {contract_id!r}."
+                )
+            seen_contract_ids.add(contract_id)
+            if source_id not in known_sources:
+                raise ValueError(f"Queryability contract {contract_id!r} has unknown source_id {source_id!r}.")
+            raw_metric_output_ids = raw_contract.get("metric_output_ids")
+            if not isinstance(raw_metric_output_ids, list):
+                raise ValueError(
+                    f"candidate_plan.queryability_contracts[{index}].metric_output_ids must be a JSON array."
+                )
+            metric_output_ids = [
+                str(output_id).strip() for output_id in raw_metric_output_ids if str(output_id).strip()
+            ]
+            unknown_outputs = sorted(set(metric_output_ids) - known_outputs)
+            if unknown_outputs:
+                raise ValueError(
+                    f"Queryability contract {contract_id!r} has unknown output_ids: {', '.join(unknown_outputs)}."
+                )
+            if not metric_output_ids:
+                raise ValueError(f"Queryability contract {contract_id!r} requires metric_output_ids.")
+            non_metric_outputs = sorted(set(metric_output_ids) - metric_outputs)
+            if non_metric_outputs:
+                raise ValueError(
+                    f"Queryability contract {contract_id!r} references non-metric output_ids: "
+                    f"{', '.join(non_metric_outputs)}."
+                )
+            raw_dimensions = raw_contract.get("dimensions")
+            if not isinstance(raw_dimensions, list):
+                raise ValueError(f"candidate_plan.queryability_contracts[{index}].dimensions must be a JSON array.")
+            dimensions = [str(dimension).strip() for dimension in raw_dimensions if str(dimension).strip()]
+            if not dimensions:
+                raise ValueError(f"Queryability contract {contract_id!r} requires a complete dimensions list.")
+            contract: Dict[str, Any] = {
+                "contract_id": contract_id,
+                "source_id": source_id,
+                "metric_output_ids": list(dict.fromkeys(metric_output_ids)),
+                "dimensions": list(dict.fromkeys(dimensions)),
+            }
+            time_grain = str(raw_contract.get("time_grain") or "").strip().lower()
+            if time_grain:
+                if time_grain not in {"day", "week", "month", "quarter", "year"}:
+                    raise ValueError(
+                        f"Queryability contract {contract_id!r} has unsupported time_grain {time_grain!r}."
+                    )
+                contract["time_grain"] = time_grain
+            normalized.append(contract)
+        return normalized
 
     def _handle_finalized_plan_call(self, sql_entries: List[SqlModelingEntry]) -> FuncToolResult:
         """Keep a successful plan stable when the model calls the tool again."""
@@ -274,7 +516,10 @@ class SqlModelingPlanTools:
             return FuncToolResult(
                 success=0,
                 error=f"The SQL modeling plan is already finalized; invalid additional entries were ignored: {exc}",
-                result={"status": "ready", **self._plan.prompt_payload()},
+                result={
+                    "status": str(self._plan.candidate_plan.get("planning_status") or "ready"),
+                    **self._plan.prompt_payload(),
+                },
             )
 
         unchanged = all(
@@ -283,27 +528,23 @@ class SqlModelingPlanTools:
             for entry in entries
         )
         if unchanged:
-            return FuncToolResult(result={"status": "ready", **self._plan.prompt_payload()})
+            status = str(self._plan.candidate_plan.get("planning_status") or "ready")
+            return FuncToolResult(result={"status": status, **self._plan.prompt_payload()})
         return FuncToolResult(
             success=0,
             error="The SQL modeling plan is already finalized; additional or changed entries were ignored.",
-            result={"status": "ready", **self._plan.prompt_payload()},
+            result={
+                "status": str(self._plan.candidate_plan.get("planning_status") or "ready"),
+                **self._plan.prompt_payload(),
+            },
         )
 
     def _validate_entries(self, entries: list[SqlModelingEntry]) -> str:
-        names: set[str] = set()
         indexes: set[int] = set()
 
         for index, entry in enumerate(entries, 1):
             if not entry.sql.strip():
                 return f"sql_entries[{index - 1}].sql must not be empty."
-
-            name = _normalize_business_name(entry.name)
-            if not name or re.fullmatch(r"(?:sql|query|case|statement|item)_?\d*", name):
-                return f"sql_entries[{index - 1}].name must be a meaningful English snake_case name."
-            if name in names:
-                return f"Duplicate SQL business name: {name!r}."
-            names.add(name)
 
             if entry.source_index in indexes:
                 return f"Duplicate SQL source_index: {entry.source_index}."
@@ -315,6 +556,32 @@ class SqlModelingPlanTools:
 def _normalize_business_name(value: str) -> str:
     text = re.sub(r"[^0-9A-Za-z_]+", "_", str(value or "").strip())
     return re.sub(r"_+", "_", text).strip("_").lower()
+
+
+def _metric_output_ids(candidate_plan: Dict[str, Any]) -> list[str]:
+    output_ids = []
+    seen = set()
+    for output in candidate_plan.get("outputs") or []:
+        if not isinstance(output, dict):
+            continue
+        output_id = str(output.get("output_id") or "").strip()
+        if output_id and output_id not in seen:
+            seen.add(output_id)
+            output_ids.append(output_id)
+    return output_ids
+
+
+def _queryability_contract_ids(candidate_plan: Dict[str, Any]) -> list[str]:
+    contract_ids = []
+    seen = set()
+    for contract in candidate_plan.get("queryability_contracts") or []:
+        if not isinstance(contract, dict):
+            continue
+        contract_id = str(contract.get("contract_id") or "").strip()
+        if contract_id and contract_id not in seen:
+            seen.add(contract_id)
+            contract_ids.append(contract_id)
+    return contract_ids
 
 
 def source_query_from_success_story_row(
@@ -421,11 +688,10 @@ class SqlModelingPlanner:
     ) -> SqlModelingPlan:
         """Analyze source SQL and return a versioned request-local plan."""
         sources = _deduplicate_sources(source_queries)
-        metric_catalog = (
-            load_existing_metric_catalog(self.agent_config)
-            if existing_metric_catalog is None
-            else list(existing_metric_catalog)
-        )
+        # Catalog and schema discovery remain available as live tools. Keeping
+        # their snapshots out of the authoring plan prevents stale suggestions
+        # from constraining later LLM corrections.
+        metric_catalog = list(existing_metric_catalog or [])
         candidate_plan = self._analyze_metric_candidates(sources, metric_catalog)
         return SqlModelingPlan(
             source_fingerprint=_fingerprint_sources(sources),
@@ -453,23 +719,104 @@ class SqlModelingPlanner:
             return {
                 "available": False,
                 "error": result.error or "SQL modeling analysis failed",
-                "sql_to_table_lineage": self._sql_to_table_lineage(entries),
+                "outputs": [],
             }
-        plan = dict(result.result or {})
-        parse_errors = [item for item in plan.get("parse_errors") or [] if isinstance(item, dict)]
-        if parse_errors:
-            failed_sources = [
-                str(item.get("source") or item.get("source_sql_name") or "<unknown>") for item in parse_errors
-            ]
-            plan["available"] = False
-            plan["error"] = (
-                "SQL modeling analysis could not parse every submitted statement. "
-                f"Unresolved sources: {', '.join(failed_sources)}."
+        analysis = dict(result.result or {})
+        parse_errors = [item for item in analysis.get("parse_errors") or [] if isinstance(item, dict)]
+        source_ids = {source.source_sql_name for source in sources}
+        failed_sources = sorted(
+            {str(item.get("source") or item.get("source_sql_name") or "").strip() for item in parse_errors} & source_ids
+        )
+        if parse_errors and set(failed_sources) == source_ids:
+            return {
+                "available": False,
+                "outputs": [],
+                "parse_errors": parse_errors,
+                "error": (
+                    "SQL modeling analysis could not parse any submitted statement. "
+                    f"Unresolved sources: {', '.join(failed_sources)}."
+                ),
+            }
+
+        outputs = []
+        for contract in analysis.get("output_contracts") or []:
+            if not isinstance(contract, dict):
+                continue
+            output_id = str(contract.get("output_id") or "").strip()
+            if not output_id:
+                continue
+            outputs.append(
+                {
+                    "output_id": output_id,
+                    "source_id": str(contract.get("source_sql_name") or "").strip(),
+                    "name": str(contract.get("output_name") or "").strip(),
+                    "expression": str(contract.get("expression") or "").strip(),
+                    "role": str(contract.get("output_role") or "metric").strip().lower(),
+                }
             )
-            plan["sql_to_table_lineage"] = self._sql_to_table_lineage(entries)
-            return plan
-        plan["available"] = True
-        plan["sql_to_table_lineage"] = self._sql_to_table_lineage(entries)
+
+        queryability_contracts = []
+        contract_counts: Dict[str, int] = {}
+        for raw_contract in analysis.get("queryability_contracts") or []:
+            if not isinstance(raw_contract, dict):
+                continue
+            source_id = str(raw_contract.get("source") or "").strip()
+            dimensions = [
+                str(dimension).strip()
+                for dimension in raw_contract.get("dimension_hints") or []
+                if str(dimension).strip()
+            ]
+            metric_output_ids = [
+                str(output_id).strip()
+                for output_id in raw_contract.get("metric_output_ids") or []
+                if str(output_id).strip()
+            ]
+            if not source_id or not dimensions or not metric_output_ids:
+                continue
+            contract_counts[source_id] = contract_counts.get(source_id, 0) + 1
+            contract: Dict[str, Any] = {
+                "contract_id": f"{source_id}:group_{contract_counts[source_id]}",
+                "source_id": source_id,
+                "metric_output_ids": list(dict.fromkeys(metric_output_ids)),
+                "dimensions": list(dict.fromkeys(dimensions)),
+            }
+            grains = list(
+                dict.fromkeys(
+                    str(hint.get("grain") or "").strip().lower()
+                    for hint in raw_contract.get("time_group_hints") or []
+                    if isinstance(hint, dict) and str(hint.get("grain") or "").strip()
+                )
+            )
+            if not grains:
+                grains = list(
+                    dict.fromkeys(
+                        match.group(1).lower()
+                        for dimension in dimensions
+                        for match in [re.search(r"(?:^|_)(day|week|month|quarter|year)(?:$|_)", dimension, re.I)]
+                        if match is not None
+                    )
+                )
+            if len(grains) == 1:
+                contract["time_grain"] = grains[0]
+            queryability_contracts.append(contract)
+
+        plan = {
+            "available": True,
+            "planning_status": "partial" if parse_errors else "ready",
+            "outputs": outputs,
+            "queryability_contracts": queryability_contracts,
+            "summary": f"Found {len(outputs)} final SQL outputs from {len(sources)} source queries",
+        }
+        if parse_errors:
+            plan["parse_errors"] = parse_errors
+            plan["unresolved_sources"] = [
+                {
+                    "source_sql_name": str(item.get("source") or item.get("source_sql_name") or "<unknown>"),
+                    "status": "blocked",
+                    "reason": str(item.get("error") or "SQL parsing failed"),
+                }
+                for item in parse_errors
+            ]
         return plan
 
     def _sql_to_table_lineage(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -10,7 +10,6 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
-import re
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
 
 from datus.agent.node.agentic_node import AgenticNode
@@ -22,16 +21,12 @@ from datus.tools.func_tool.base import FuncToolResult
 from datus.tools.func_tool.filesystem_tools import FilesystemFuncTool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
 from datus.tools.func_tool.generation_tools import GenerationTools, MetricOutputBinding
-from datus.tools.func_tool.metric_queryability import (
-    query_backed_queryability_contracts,
-    summarize_queryability_contracts,
-)
+from datus.tools.func_tool.metric_queryability import summarize_queryability_contracts
 from datus.tools.func_tool.sql_modeling_planner import (
     SqlModelingPlan,
     SqlModelingPlanTools,
     inspect_planned_semantic_sources,
 )
-from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
@@ -261,7 +256,12 @@ class GenMetricsAgenticNode(AgenticNode):
     def _setup_filesystem_tools(self):
         """Setup filesystem tools."""
         try:
-            self.filesystem_func_tool = self._make_filesystem_tool()
+            from datus.agent.node.semantic_authoring import is_osi_authoring
+
+            filesystem_kwargs = {}
+            if is_osi_authoring(self.agent_config):
+                filesystem_kwargs["mutation_guard"] = self.osi_target_state.require_bound_path
+            self.filesystem_func_tool = self._make_filesystem_tool(**filesystem_kwargs)
 
             filesystem_tools = [
                 tool for tool in self.filesystem_func_tool.available_tools() if tool.name != "delete_file"
@@ -712,106 +712,25 @@ class GenMetricsAgenticNode(AgenticNode):
         warehouse = metadata.get("warehouse_dry_run") if isinstance(metadata, dict) else None
         return isinstance(warehouse, dict) and warehouse.get("status") == "success"
 
-    @staticmethod
-    def _normalized_query_name(value: Any) -> str:
-        return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
-
-    @classmethod
-    def _matching_dimension_name(cls, available: List[str], candidates: List[str]) -> Optional[str]:
-        normalized_candidates = {
-            cls._normalized_query_name(candidate) for candidate in candidates if cls._normalized_query_name(candidate)
-        }
-        for name in available:
-            normalized = cls._normalized_query_name(name)
-            leaf = cls._normalized_query_name(str(name).split("__")[-1])
-            if normalized in normalized_candidates or leaf in normalized_candidates:
-                return name
-        return None
-
-    def _metric_dimension_capabilities(self, metric_name: str) -> tuple[List[str], Optional[str]]:
-        result = self.semantic_tools.get_dimensions(metric_name=metric_name)
-        if not self._tool_succeeded(result):
-            raise RuntimeError(
-                f"get_dimensions failed for generated metric `{metric_name}`: {self._tool_error(result)}"
-            )
-        payload = self._tool_result_payload(result)
-        names = [
-            str(item.get("name")).strip()
-            for item in payload.get("items") or []
-            if isinstance(item, dict) and str(item.get("name") or "").strip()
-        ]
-        extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
-        time_dimension = str(extra.get("time_dimension") or "").strip() or None
-        return names, time_dimension
-
     def _queryability_dry_run_args(
         self,
         contract: Dict[str, Any],
         metric_names: List[str],
-        dimension_cache: Dict[str, tuple[List[str], Optional[str]]],
     ) -> tuple[List[str], List[str], Optional[str]]:
         metric_hints = {str(name).strip() for name in contract.get("metric_hints") or [] if str(name).strip()}
+        metric_output_ids = [
+            str(output_id).strip() for output_id in contract.get("metric_output_ids") or [] if str(output_id).strip()
+        ]
+        if metric_output_ids and not metric_hints:
+            return [], [], None
         contract_metrics = [name for name in metric_names if not metric_hints or name in metric_hints]
         if not contract_metrics:
             return [], [], None
-
-        capabilities = []
-        for name in contract_metrics:
-            if name not in dimension_cache:
-                dimension_cache[name] = self._metric_dimension_capabilities(name)
-            capabilities.append(dimension_cache[name])
-        common_dimensions = [
-            name for name in capabilities[0][0] if all(name in available for available, _ in capabilities[1:])
+        dimensions = [
+            str(dimension).strip() for dimension in contract.get("dimensions") or [] if str(dimension).strip()
         ]
-        time_dimensions = [time_dimension for _, time_dimension in capabilities]
-        common_time_dimensions = {time_dimension for time_dimension in time_dimensions if time_dimension}
-        primary_time_dimension = (
-            next(iter(common_time_dimensions)) if all(time_dimensions) and len(common_time_dimensions) == 1 else None
-        )
-
-        resolved_dimensions: List[str] = []
-        time_granularity: Optional[str] = None
-        expr_hints = [hint for hint in contract.get("dimension_expr_hints") or [] if isinstance(hint, dict)]
-        time_hints = [hint for hint in contract.get("time_group_hints") or [] if isinstance(hint, dict)]
-        for dimension_hint in contract.get("dimension_hints") or []:
-            if not isinstance(dimension_hint, str) or not dimension_hint.strip():
-                continue
-            matching_time_hint = next(
-                (
-                    hint
-                    for hint in time_hints
-                    if self._normalized_query_name(dimension_hint)
-                    in {
-                        self._normalized_query_name(hint.get("alias")),
-                        self._normalized_query_name(hint.get("base_expr")),
-                    }
-                ),
-                None,
-            )
-            candidates = [dimension_hint]
-            for expr_hint in expr_hints:
-                if self._normalized_query_name(dimension_hint) not in {
-                    self._normalized_query_name(expr_hint.get("alias")),
-                    self._normalized_query_name(expr_hint.get("expr")),
-                }:
-                    continue
-                candidates.extend([expr_hint.get("expr", ""), expr_hint.get("column", "")])
-            if matching_time_hint:
-                candidates.append(str(matching_time_hint.get("base_expr") or ""))
-                time_granularity = str(matching_time_hint.get("grain") or "").strip() or time_granularity
-            resolved = self._matching_dimension_name(common_dimensions, candidates)
-            if resolved is None and matching_time_hint:
-                resolved = primary_time_dimension
-            if resolved is None:
-                raise DatusException(
-                    ErrorCode.COMMON_VALIDATION_FAILED,
-                    "Cannot map source SQL GROUP BY dimension "
-                    f"`{dimension_hint}` to a queryable semantic dimension for "
-                    f"{', '.join(contract_metrics)}.",
-                )
-            if resolved not in resolved_dimensions:
-                resolved_dimensions.append(resolved)
-        return contract_metrics, resolved_dimensions, time_granularity
+        time_granularity = str(contract.get("time_grain") or "").strip() or None
+        return contract_metrics, list(dict.fromkeys(dimensions)), time_granularity
 
     def _ensure_metric_dry_runs(self, metric_names: List[str]) -> None:
         """Run fresh contract and warehouse dry-runs before every publication."""
@@ -819,13 +738,11 @@ class GenMetricsAgenticNode(AgenticNode):
         if not callable(query_metrics):
             raise RuntimeError("Metric generation produced metrics, but query_metrics is unavailable.")
 
-        dimension_cache: Dict[str, tuple[List[str], Optional[str]]] = {}
         covered_metrics = set()
         for contract in self.generation_evidence.metric_queryability_contracts:
             contract_metrics, dimensions, time_granularity = self._queryability_dry_run_args(
                 contract,
                 metric_names,
-                dimension_cache,
             )
             if not contract_metrics:
                 continue
@@ -845,13 +762,15 @@ class GenMetricsAgenticNode(AgenticNode):
             )
             if not self._tool_succeeded(result):
                 raise RuntimeError(
-                    "query_metrics(dry_run=True) failed for source SQL GROUP BY contract "
-                    f"{contract.get('source') or 'unknown'}: {self._tool_error(result)}"
+                    "query_metrics(dry_run=True) failed for queryability contract "
+                    f"{contract.get('contract_id') or contract.get('source_id') or 'unknown'}: "
+                    f"{self._tool_error(result)}"
                 )
             if not self._warehouse_dry_run_succeeded(result):
                 raise RuntimeError(
-                    "query_metrics(dry_run=True) compiled the source SQL GROUP BY contract "
-                    f"{contract.get('source') or 'unknown'}, but did not complete a warehouse dry-run."
+                    "query_metrics(dry_run=True) compiled queryability contract "
+                    f"{contract.get('contract_id') or contract.get('source_id') or 'unknown'}, "
+                    "but did not complete a warehouse dry-run."
                 )
             covered_metrics.update(contract_metrics)
 
@@ -872,8 +791,7 @@ class GenMetricsAgenticNode(AgenticNode):
 
         missing_contracts = self.generation_evidence.missing_queryability_contracts(metric_names)
         if missing_contracts:
-            raise DatusException(
-                ErrorCode.COMMON_VALIDATION_FAILED,
+            raise RuntimeError(
                 "query_metrics(dry_run=True) must pass with every source SQL GROUP BY dimension "
                 "before publishing metrics. "
                 f"Missing: {summarize_queryability_contracts(missing_contracts)}",
@@ -937,53 +855,8 @@ class GenMetricsAgenticNode(AgenticNode):
             for contract in candidate_plan.get("queryability_contracts") or []
             if isinstance(contract, dict)
         ]
-        if not contracts:
-            # Compatibility for request plans created before queryability
-            # contracts became a first-class planner output.
-            contracts = query_backed_queryability_contracts(candidate_plan)
-        metric_aliases = self._metric_aliases_from_candidate_plan(candidate_plan)
-        self.generation_evidence.set_metric_queryability_contracts(contracts, metric_aliases=metric_aliases)
-
-    @staticmethod
-    def _metric_aliases_from_candidate_plan(candidate_plan: Dict[str, Any]) -> Dict[str, str]:
-        aliases: Dict[str, str] = {}
-
-        def add(alias: Any, canonical: Any) -> None:
-            if not isinstance(alias, str) or not isinstance(canonical, str):
-                return
-            alias = alias.strip()
-            canonical = canonical.strip()
-            if alias and canonical and alias != canonical:
-                aliases[alias] = canonical
-
-        for item in candidate_plan.get("metric_aliases") or []:
-            if not isinstance(item, dict):
-                continue
-            canonical = item.get("canonical_name") or item.get("name")
-            add(item.get("source_alias"), canonical)
-            add(item.get("candidate_name"), canonical)
-
-        for key in (
-            "direct_metric_candidates",
-            "derived_metric_candidates",
-            "metric_candidates",
-            "identity_metric_references",
-        ):
-            for candidate in candidate_plan.get(key) or []:
-                if not isinstance(candidate, dict):
-                    continue
-                canonical = candidate.get("name")
-                add(candidate.get("source_alias"), canonical)
-                for source_alias in candidate.get("source_aliases") or []:
-                    add(source_alias, canonical)
-                for candidate_name in candidate.get("candidate_names") or []:
-                    add(candidate_name, canonical)
-                for mapping in candidate.get("source_alias_mappings") or []:
-                    if not isinstance(mapping, dict):
-                        continue
-                    add(mapping.get("source_alias"), canonical)
-                    add(mapping.get("candidate_name"), canonical)
-        return aliases
+        self.generation_evidence.set_metric_queryability_contracts(contracts)
+        self.generation_evidence.set_required_metric_outputs(candidate_plan.get("outputs") or [])
 
     def _finalize_metric_generation(
         self,

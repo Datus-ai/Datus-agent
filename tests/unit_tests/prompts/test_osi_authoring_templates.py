@@ -74,6 +74,14 @@ def test_semantic_model_template_osi_mode():
     assert '"semantic_model_files"' in text  # same publish contract as metricflow
 
 
+def test_metrics_template_osi_mode_allows_narrow_dataset_repairs():
+    text = _render("gen_metrics_system", "osi")
+
+    assert "call `upsert_osi_datasets` with the complete final definition" in text
+    assert "Use `delete_osi_datasets` only to remove a named dataset" in text
+    assert "General filesystem writes and relationship/model-metadata edits remain unavailable" in text
+
+
 @pytest.mark.parametrize("template_name", ["gen_semantic_model_system", "gen_metrics_system"])
 @pytest.mark.parametrize(
     "datasource, expected_dialect",
@@ -150,7 +158,7 @@ def test_metrics_template_osi_mode_contract():
     assert "deletion-only publication omit bindings" in text
     assert "subject_path" in text
     assert "locked_metadata.tags" not in text.split("Record the classification")[1].split("\n")[0]
-    assert "Covered by an existing base metric" in text
+    assert "Every metric-role output from the current compact plan" in text
     assert "bind_osi_semantic_model_target" in text
     assert "list_existing_osi_semantic_models" in text
     assert "request SQL tables, dataset names/sources/descriptions, and business meaning" in text

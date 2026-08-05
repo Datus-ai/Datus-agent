@@ -17,6 +17,10 @@ agent:
 
       osi:
         # execution_backend 默认是 metricflow，通常不需要配置。
+
+      dosi:
+        # 使用原生 Dosi 执行。仅当数据源目录中有多个 OSI 文件时，
+        # 才需要显式配置 semantic_model_path。
 ```
 
 ## 选择规则
@@ -47,11 +51,18 @@ agent:
 - 当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 `execution_backend`。
 - 配置 `services.semantic_layer.osi` 并标记 `default: true`，可在同时配置其他 adapter 时全局选择 OSI。空的 `osi: {}` 只有在它是唯一 semantic adapter，或当前项目 pin 到 `semantic: osi` 时才会被选中。
 
+## Dosi 说明
+
+- Dosi 复用相同的 OSI authoring 格式和 DATUS `custom_extensions` 流程。
+- `datus-semantic-dosi` 直接通过原生 engine 执行，不设置 `execution_backend: metricflow`。
+- 每个 adapter 实例加载一个 OSI 文档。如果数据源语义模型目录包含多个文件，需要显式配置 `semantic_model_path`。
+- `pip install datus-semantic-dosi` 会同时安装 adapter 和 `dosi-engine`。
+
 ## 通过 CLI 配置（`/services`）
 
 在 Datus REPL 中运行 `/services semantic`（或者从其他 tab 按 `Tab` 切过来）会进入配置 TUI 的 **Semantic** tab。该 tab 支持：
 
-- 在尾部的 `+ Add new semantic` 行按 `Enter` 新增一个语义层。选择 adapter type，例如 `metricflow` 或 `osi`。如果适配器包尚未安装，请先安装对应包，例如 `datus-semantic-metricflow` 或 `datus-semantic-osi`。
+- 在尾部的 `+ Add new semantic` 行按 `Enter` 新增一个语义层。选择 adapter type，例如 `metricflow`、`osi` 或 `dosi`。如果适配器包尚未安装，CLI 会安装对应包，例如 `datus-semantic-dosi`。
 - 用 `x` 删除条目；用 `t` 触发一次注册探测。
 - `d` 切换**全局** `default: true`:按 `d` 把光标项设为默认,并自动清掉其他条目的 default。
 - `p` 设置**项目级** default:值写入 `./.datus/config.yml` 的 `semantic: <name>`,只对当前项目生效,优先级高于全局标记。在已 pin 的行上再按一次 `p` 清除。
