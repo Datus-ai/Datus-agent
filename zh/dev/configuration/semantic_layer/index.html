@@ -3226,6 +3226,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dosi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dosi 说明
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cli-services" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3476,6 +3487,8 @@
       
         
       
+        
+      
     
     
     
@@ -3590,6 +3603,34 @@
     
   
     OSI 语义适配器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adapters/dosi_semantic_adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dosi Semantic Adapter
   
 
     
@@ -4241,6 +4282,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dosi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dosi 说明
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cli-services" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4290,6 +4342,10 @@
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># execution_backend 默认是 metricflow，通常不需要配置。</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">        </span><span class="c1"># 使用原生 Dosi 执行。仅当数据源目录中有多个 OSI 文件时，</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="c1"># 才需要显式配置 semantic_model_path。</span>
 </span></code></pre></div>
 <h2 id="_2">选择规则<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p><code>AgentConfig.resolve_semantic_adapter</code> 解析活动语义适配器的顺序与 BI Dashboard / Scheduler 完全一致:</p>
@@ -4316,10 +4372,17 @@
 <li>当前 OSI 执行后端默认是 MetricFlow，通常不需要设置 <code>execution_backend</code>。</li>
 <li>配置 <code>services.semantic_layer.osi</code> 并标记 <code>default: true</code>，可在同时配置其他 adapter 时全局选择 OSI。空的 <code>osi: {}</code> 只有在它是唯一 semantic adapter，或当前项目 pin 到 <code>semantic: osi</code> 时才会被选中。</li>
 </ul>
+<h2 id="dosi">Dosi 说明<a class="headerlink" href="#dosi" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Dosi 复用相同的 OSI authoring 格式和 DATUS <code>custom_extensions</code> 流程。</li>
+<li><code>datus-semantic-dosi</code> 直接通过原生 engine 执行，不设置 <code>execution_backend: metricflow</code>。</li>
+<li>每个 adapter 实例加载一个 OSI 文档。如果数据源语义模型目录包含多个文件，需要显式配置 <code>semantic_model_path</code>。</li>
+<li><code>pip install datus-semantic-dosi</code> 会同时安装 adapter 和 <code>dosi-engine</code>。</li>
+</ul>
 <h2 id="cli-services">通过 CLI 配置（<code>/services</code>）<a class="headerlink" href="#cli-services" title="Permanent link">&para;</a></h2>
 <p>在 Datus REPL 中运行 <code>/services semantic</code>（或者从其他 tab 按 <code>Tab</code> 切过来）会进入配置 TUI 的 <strong>Semantic</strong> tab。该 tab 支持：</p>
 <ul>
-<li>在尾部的 <code>+ Add new semantic</code> 行按 <code>Enter</code> 新增一个语义层。选择 adapter type，例如 <code>metricflow</code> 或 <code>osi</code>。如果适配器包尚未安装，请先安装对应包，例如 <code>datus-semantic-metricflow</code> 或 <code>datus-semantic-osi</code>。</li>
+<li>在尾部的 <code>+ Add new semantic</code> 行按 <code>Enter</code> 新增一个语义层。选择 adapter type，例如 <code>metricflow</code>、<code>osi</code> 或 <code>dosi</code>。如果适配器包尚未安装，CLI 会安装对应包，例如 <code>datus-semantic-dosi</code>。</li>
 <li>用 <code>x</code> 删除条目；用 <code>t</code> 触发一次注册探测。</li>
 <li><code>d</code> 切换<strong>全局</strong> <code>default: true</code>:按 <code>d</code> 把光标项设为默认,并自动清掉其他条目的 default。</li>
 <li><code>p</code> 设置<strong>项目级</strong> default:值写入 <code>./.datus/config.yml</code> 的 <code>semantic: &lt;name&gt;</code>,只对当前项目生效,优先级高于全局标记。在已 pin 的行上再按一次 <code>p</code> 清除。</li>

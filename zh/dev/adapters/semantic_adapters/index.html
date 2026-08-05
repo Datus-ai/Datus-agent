@@ -3374,6 +3374,8 @@
       
         
       
+        
+      
     
     
     
@@ -3601,6 +3603,34 @@
     
   
     OSI 语义适配器
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dosi_semantic_adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dosi Semantic Adapter
   
 
     
@@ -4304,6 +4334,7 @@
 <ul>
 <li><a href="../metricflow_semantic_adapter/">MetricFlow 语义适配器</a></li>
 <li><a href="../osi_semantic_adapter/">OSI 语义适配器</a></li>
+<li><a href="../dosi_semantic_adapter/">Dosi 语义适配器</a></li>
 </ul>
 <h2 id="_2">概述<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h2>
 <p>语义层适配器提供统一接口，用于：</p>
@@ -4314,7 +4345,7 @@
 <li>发布前校验语义资产</li>
 <li>将已校验的语义资产同步到 Datus Knowledge Base</li>
 </ul>
-<p>当前支持两个适配器：</p>
+<p>当前支持三个适配器：</p>
 <table>
 <thead>
 <tr>
@@ -4340,12 +4371,20 @@
 <td>默认 MetricFlow</td>
 <td>可用</td>
 </tr>
+<tr>
+<td>Dosi</td>
+<td><code>datus-semantic-dosi</code></td>
+<td>strict OSI core YAML + DATUS custom extensions</td>
+<td>原生 Dosi engine</td>
+<td>可用</td>
+</tr>
 </tbody>
 </table>
-<p>MetricFlow 和 OSI 是并列的 semantic adapter。区别在于用户和生成 agent 维护的源格式：</p>
+<p>MetricFlow、OSI 和 Dosi 是并列的 semantic adapter。区别在于用户和生成 agent 维护的源格式，以及模型的执行方式：</p>
 <ul>
 <li>MetricFlow 模式直接编写 MetricFlow YAML。</li>
 <li>OSI 模式编写 OSI core YAML，由 <code>datus-semantic-osi</code> 编译到 Datus Semantic IR，再降低到 MetricFlow。</li>
+<li>Dosi 模式编写相同的 OSI 格式，但由 Rust engine 直接编译、规划和执行。</li>
 </ul>
 <h2 id="_3">架构<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-agent
@@ -4360,8 +4399,10 @@
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>└── Adapter packages
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    ├── datus-semantic-metricflow
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    │   └── MetricFlowAdapter
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    └── datus-semantic-osi
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        └── DatusOSIAdapter
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    ├── datus-semantic-osi
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    │   └── DatusOSIAdapter
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    └── datus-semantic-dosi
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        └── DosiAdapter
 </span></code></pre></div>
 <p>适配器通过 <code>datus.semantic_adapters</code> Python entry point 自动发现。</p>
 <h2 id="_4">配置<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
@@ -4374,8 +4415,10 @@
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">execution_backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 </span></code></pre></div>
-<p><code>services.semantic_layer</code> 下的 key 必须等于 adapter type，例如 <code>metricflow</code> 或 <code>osi</code>。如果同时写了 <code>type:</code> 字段，其值必须与 key 一致。
+<p><code>services.semantic_layer</code> 下的 key 必须等于 adapter type，例如 <code>metricflow</code>、<code>osi</code> 或 <code>dosi</code>。如果同时写了 <code>type:</code> 字段，其值必须与 key 一致。
 语义适配器选择是全局的。旧的 node 级 <code>semantic_adapter</code> 和 <code>authoring_format</code> 字段会被忽略。</p>
 <p>选择规则、默认适配器和项目级 pin 见 <a href="../../configuration/semantic_layer/">语义层配置</a>。</p>
 <h2 id="_5">核心接口<a class="headerlink" href="#_5" title="Permanent link">&para;</a></h2>
@@ -4420,6 +4463,12 @@
 <li>希望 Datus 执行提示隔离在 <code>custom_extensions</code> 中</li>
 <li>希望 LLM 生成时避免 <code>measure_proxy</code>、<code>type_params</code>、<code>data_source</code> 等后端 YAML 字段</li>
 <li>当前仍希望通过 MetricFlow 执行</li>
+</ul>
+<p>适合使用 Dosi 的情况：</p>
+<ul>
+<li>希望继续使用相同的 strict OSI authoring 流程</li>
+<li>模型以 aggregate、ratio 和 expression 指标为主</li>
+<li>希望使用原生 Join 规划、fan-out 防护和执行，不依赖 MetricFlow</li>
 </ul>
 <h2 id="_7">实现自定义适配器<a class="headerlink" href="#_7" title="Permanent link">&para;</a></h2>
 <p>可以通过继承 <code>BaseSemanticAdapter</code> 并注册 entry point 来实现自定义语义层适配器：</p>
