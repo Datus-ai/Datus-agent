@@ -37,8 +37,11 @@ class TestSqlModelingPlanTools:
     def test_exposes_the_standard_native_tool_group_contract(self):
         tool, _, _ = self._tool()
 
-        assert tool.all_tools_name() == ["prepare_sql_modeling_plan"]
-        assert [item.name for item in tool.available_tools()] == ["prepare_sql_modeling_plan"]
+        assert tool.all_tools_name() == ["prepare_sql_modeling_plan", "update_sql_modeling_plan"]
+        assert [item.name for item in tool.available_tools()] == [
+            "prepare_sql_modeling_plan",
+            "update_sql_modeling_plan",
+        ]
 
     def test_empty_entries_mark_the_invoked_preflight_unresolved(self):
         tool, evidence, accepted = self._tool()
@@ -309,24 +312,21 @@ class TestSqlModelingPlanTools:
             ],
             candidate_plan={
                 "available": True,
-                "metric_requirements": [{"output_id": "active_users:output"}],
-                "queryability_contracts": [
+                "outputs": [
                     {
-                        "source": "active_users",
-                        "dimension_hints": ["user_group"],
-                        "dimension_expr_hints": [
-                            {
-                                "alias": "user_group",
-                                "expr": "LOWER(raw_group)",
-                            }
-                        ],
+                        "output_id": "active_users:output",
+                        "source_id": "active_users",
+                        "name": "users",
+                        "expression": "COUNT(*)",
+                        "role": "metric",
                     }
                 ],
-                "dataset_requirements": [
+                "queryability_contracts": [
                     {
-                        "requirement_id": "query_dataset:active_users",
-                        "source_sql_name": "active_users",
-                        "sql": sql,
+                        "contract_id": "active_users:group_1",
+                        "source_id": "active_users",
+                        "metric_output_ids": ["active_users:output"],
+                        "dimensions": ["user_group"],
                     }
                 ],
             },
@@ -348,12 +348,22 @@ class TestSqlModelingPlanTools:
             )
 
         assert result.success == 1
-        assert "sql" not in result.result["candidate_plan"]["dataset_requirements"][0]
-        assert result.result["candidate_plan"]["dataset_requirements"][0]["source_index"] == 1
+        assert result.result["sources"] == [
+            {
+                "source_id": "active_users",
+                "source_index": 1,
+                "question": "Count active users",
+                "source_sql": sql,
+            }
+        ]
+        assert set(result.result["candidate_plan"]) == {
+            "available",
+            "outputs",
+            "queryability_contracts",
+        }
         assert evidence.sql_modeling_plan_status == "ready"
         assert evidence.required_metric_output_ids == ["active_users:output"]
-        assert evidence.required_query_backed_sql == {"query_dataset:active_users": sql}
-        assert evidence.metric_queryability_contracts[0]["dimension_hints"] == ["user_group"]
+        assert evidence.metric_queryability_contracts[0]["dimensions"] == ["user_group"]
         assert accepted == [plan]
 
     def test_reuses_fixed_plan_without_reloading_catalog(self):
@@ -443,9 +453,167 @@ class TestSqlModelingPlanTools:
             result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "revenue", "sql": sql}])
 
         assert result.success == 1
-        assert result.result["semantic_source_evidence"] == inspected
+        assert "semantic_source_evidence" not in result.result
+        assert plan.semantic_source_evidence == inspected
         inspector.assert_called_once_with(plan)
         assert accepted == [plan]
+
+    def test_plan_update_keeps_source_sql_and_invalidates_old_evidence(self):
+        sql = "SELECT ac_channel, COUNT(*) AS activity_count FROM activity_info GROUP BY ac_channel"
+        tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            source_queries=[SourceQueryEvidence(source_sql_name="activity", sql=sql)],
+            candidate_plan={
+                "available": True,
+                "planning_status": "ready",
+                "outputs": [
+                    {
+                        "output_id": "activity:output_1",
+                        "source_id": "activity",
+                        "name": "activity_count",
+                        "expression": "COUNT(*)",
+                        "role": "metric",
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "activity:group_1",
+                        "source_id": "activity",
+                        "metric_output_ids": ["activity:output_1"],
+                        "dimensions": ["ac_channel"],
+                    }
+                ],
+            },
+        )
+
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ):
+            prepared = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "activity", "sql": sql}])
+
+        evidence.validation_passed = True
+        evidence.record_metric_dry_run(
+            ["activity_count"],
+            {"success": 1, "result": {"metadata": {"sql": "SELECT 1"}}},
+            dimensions=["ac_channel"],
+        )
+        updated = tool.update_sql_modeling_plan(
+            {
+                "available": True,
+                "planning_status": "ready",
+                "outputs": prepared.result["candidate_plan"]["outputs"],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "activity:group_1",
+                        "source_id": "activity",
+                        "metric_output_ids": ["activity:output_1"],
+                        "dimensions": ["activity_info.ac_channel"],
+                    }
+                ],
+                "generated_sql": {
+                    "activity": "SELECT ac_channel, COUNT(*) AS activity_count FROM activity_info GROUP BY 1"
+                },
+            }
+        )
+
+        assert updated.success == 1
+        assert updated.result["sources"][0]["source_sql"] == sql
+        assert updated.result["candidate_plan"]["generated_sql"]["activity"].endswith("GROUP BY 1")
+        assert updated.result["candidate_plan"]["queryability_contracts"][0]["dimensions"] == [
+            "activity_info.ac_channel"
+        ]
+        assert evidence.validation_passed is False
+        assert evidence.metric_dry_run_passed is False
+        assert evidence.metric_queryability_contracts[0]["dimensions"] == ["activity_info.ac_channel"]
+        assert len(accepted) == 2
+
+    @pytest.mark.parametrize("missing_key", ["outputs", "queryability_contracts"])
+    def test_plan_update_cannot_drop_original_coverage(self, missing_key):
+        sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
+        tool, _, _ = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            source_queries=[SourceQueryEvidence(source_sql_name="orders", sql=sql)],
+            candidate_plan={
+                "available": True,
+                "outputs": [
+                    {
+                        "output_id": "orders:output_1",
+                        "source_id": "orders",
+                        "name": "order_count",
+                        "role": "metric",
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "orders:group_1",
+                        "source_id": "orders",
+                        "metric_output_ids": ["orders:output_1"],
+                        "dimensions": ["region"],
+                    }
+                ],
+            },
+        )
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ):
+            tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "orders", "sql": sql}])
+
+        revised = {
+            "available": True,
+            "outputs": list(plan.candidate_plan["outputs"]),
+            "queryability_contracts": list(plan.candidate_plan["queryability_contracts"]),
+        }
+        revised[missing_key] = []
+
+        result = tool.update_sql_modeling_plan(revised)
+
+        assert result.success == 0
+        assert any(token in result.error.lower() for token in ("cannot", "requires", "non-metric"))
+
+    def test_plan_update_is_rejected_after_publish(self):
+        sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
+        tool, evidence, _ = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            source_queries=[SourceQueryEvidence(source_sql_name="orders", sql=sql)],
+            candidate_plan={
+                "available": True,
+                "outputs": [
+                    {
+                        "output_id": "orders:output_1",
+                        "source_id": "orders",
+                        "name": "order_count",
+                        "role": "metric",
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "orders:group_1",
+                        "source_id": "orders",
+                        "metric_output_ids": ["orders:output_1"],
+                        "dimensions": ["region"],
+                    }
+                ],
+            },
+        )
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ):
+            tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "orders", "sql": sql}])
+        evidence.mark_kb_sync("metric", ["order_count"])
+
+        result = tool.update_sql_modeling_plan(plan.candidate_plan)
+
+        assert result.success == 0
+        assert result.result["status"] == "published"
 
     def test_sparse_source_indexes_are_allowed(self):
         sql = "SELECT COUNT(*) AS orders FROM orders"
@@ -487,16 +655,31 @@ class TestSqlModelingPlanTools:
         assert evidence.sql_modeling_plan_status == "ready"
         assert accepted == [plan]
 
-    def test_generic_sql_index_is_not_a_business_name(self):
+    def test_missing_and_repeated_names_get_stable_source_names(self):
         raw_sql = "SELECT COUNT(*) AS order_count FROM orders"
         tool, evidence, accepted = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            candidate_plan={"available": True},
+        )
 
-        result = tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "sql_1", "sql": raw_sql}])
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ) as planner:
+            result = tool.prepare_sql_modeling_plan(
+                [
+                    {"source_index": 1, "name": "orders", "sql": raw_sql},
+                    {"source_index": 2, "name": "orders", "sql": raw_sql},
+                    {"source_index": 7, "sql": raw_sql},
+                ]
+            )
 
-        assert result.success == 0
-        assert "meaningful English snake_case" in result.error
-        assert evidence.sql_modeling_plan_status == "unresolved"
-        assert accepted == []
+        assert result.success == 1
+        assert [item.source_sql_name for item in planner.call_args.args[0]] == ["orders", "sql_2", "sql_7"]
+        assert evidence.sql_modeling_plan_status == "ready"
+        assert accepted == [plan]
 
 
 class TestSqlModelingPlanner:
@@ -508,7 +691,24 @@ class TestSqlModelingPlanner:
         )
         analyzer_result = SimpleNamespace(
             success=True,
-            result={"direct_metric_candidates": [{"name": "order_count"}]},
+            result={
+                "output_contracts": [
+                    {
+                        "output_id": "sql_1:output_1",
+                        "source_sql_name": "sql_1",
+                        "output_name": "order_count",
+                        "expression": "COUNT(*)",
+                        "output_role": "metric",
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "source": "sql_1",
+                        "metric_output_ids": ["sql_1:output_1"],
+                        "dimension_hints": ["orders.region"],
+                    }
+                ],
+            },
             error=None,
         )
         agent_config = MagicMock()
@@ -530,8 +730,24 @@ class TestSqlModelingPlanner:
             )
 
         assert plan.candidate_plan["available"] is True
-        assert plan.candidate_plan["direct_metric_candidates"] == [{"name": "order_count"}]
-        assert plan.candidate_plan["sql_to_table_lineage"] == [{"source_sql_name": "sql_1", "tables": ["orders"]}]
+        assert plan.candidate_plan["outputs"] == [
+            {
+                "output_id": "sql_1:output_1",
+                "source_id": "sql_1",
+                "name": "order_count",
+                "expression": "COUNT(*)",
+                "role": "metric",
+            }
+        ]
+        assert plan.candidate_plan["queryability_contracts"] == [
+            {
+                "contract_id": "sql_1:group_1",
+                "source_id": "sql_1",
+                "metric_output_ids": ["sql_1:output_1"],
+                "dimensions": ["orders.region"],
+            }
+        ]
+        assert "sql_to_table_lineage" not in plan.candidate_plan
         assert len(plan.source_fingerprint) == 64
         assert len(plan.metric_catalog_fingerprint) == 64
         entries = analyze.call_args.args[0]
@@ -561,7 +777,7 @@ class TestSqlModelingPlanner:
 
         assert first.source_fingerprint == second.source_fingerprint
 
-    def test_any_parse_error_makes_the_request_plan_unavailable(self):
+    def test_parse_error_keeps_successful_sources_in_partial_plan(self):
         sources = [
             SourceQueryEvidence(
                 source_sql_name="valid_revenue",
@@ -595,8 +811,46 @@ class TestSqlModelingPlanner:
                 existing_metric_catalog=[],
             )
 
+        assert plan.candidate_plan["available"] is True
+        assert plan.candidate_plan["planning_status"] == "partial"
+        assert plan.candidate_plan["unresolved_sources"] == [
+            {
+                "source_sql_name": "broken_query",
+                "status": "blocked",
+                "reason": "cannot parse",
+            }
+        ]
+
+    def test_all_parse_errors_make_the_request_plan_unavailable(self):
+        sources = [
+            SourceQueryEvidence(source_sql_name="broken_one", sql="SELECT FROM"),
+            SourceQueryEvidence(source_sql_name="broken_two", sql="SELECT WHERE"),
+        ]
+        analyzer_result = SimpleNamespace(
+            success=True,
+            result={
+                "parse_errors": [
+                    {"source": "broken_one", "error": "cannot parse"},
+                    {"source": "broken_two", "error": "cannot parse"},
+                ]
+            },
+            error=None,
+        )
+        agent_config = MagicMock()
+        agent_config.current_db_config.return_value = SimpleNamespace(type="duckdb")
+
+        with (
+            patch(
+                "datus.tools.func_tool.semantic_discovery_tools.analyze_metric_candidate_entries",
+                return_value=analyzer_result,
+            ),
+            patch("datus.utils.sql_utils.extract_table_names", return_value=set()),
+        ):
+            plan = SqlModelingPlanner(agent_config, "gen_metrics").plan(sources, existing_metric_catalog=[])
+
         assert plan.candidate_plan["available"] is False
-        assert "broken_query" in plan.candidate_plan["error"]
+        assert "broken_one" in plan.candidate_plan["error"]
+        assert "broken_two" in plan.candidate_plan["error"]
 
     @pytest.mark.parametrize("dialect", ["mysql", "starrocks", "sqlite"])
     def test_reads_dialect_from_db_config_type(self, dialect):

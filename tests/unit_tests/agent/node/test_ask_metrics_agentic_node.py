@@ -136,7 +136,8 @@ class TestAskMetricsAgenticNode:
         assert "do not add sibling display/name/label dimensions" in prompt
         assert "`extra.time_dimension`" in prompt
         assert "`extra.time_granularities`" in prompt
-        assert "Never pass a `time_granularity` outside" in prompt
+        assert "advisory defaults, not an exhaustive allowlist" in prompt
+        assert "let the semantic adapter validate it" in prompt
         assert node.subject_tree_prompt_limit == 100
 
     def test_query_metrics_tool_schema_exposes_osi_half_open_time_range(self):

@@ -64,7 +64,7 @@ def osi_schema_validator(monkeypatch):
 
 
 class TestMetricFilesystemFuncTool:
-    def test_osi_available_tools_are_metrics_only(self, tmp_path):
+    def test_osi_available_tools_include_narrow_dataset_mutations(self, tmp_path):
         tool = MetricFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_metrics",
@@ -73,7 +73,83 @@ class TestMetricFilesystemFuncTool:
 
         tool_names = {tool.name for tool in tool.available_tools()}
 
-        assert tool_names == {"read_file", "upsert_osi_metrics", "delete_osi_metrics", "glob", "grep"}
+        assert tool_names == {
+            "read_file",
+            "upsert_osi_metrics",
+            "delete_osi_metrics",
+            "upsert_osi_datasets",
+            "delete_osi_datasets",
+            "glob",
+            "grep",
+        }
+
+    def test_bound_dataset_repair_can_be_followed_by_metric_upsert(self, tmp_path, osi_schema_validator):
+        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
+        target.parent.mkdir(parents=True)
+        original_document = {
+            "version": "0.2.0.dev0",
+            "semantic_model": [
+                {
+                    "name": "sales",
+                    "datasets": [
+                        {
+                            "name": "orders",
+                            "source": "analytics.orders",
+                            "fields": [
+                                {
+                                    "name": "ordered_at",
+                                    "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "ordered_at"}]},
+                                    "dimension": {"is_time": True},
+                                }
+                            ],
+                        },
+                        {"name": "obsolete_orders_query", "source": "SELECT 1 AS unused"},
+                    ],
+                    "relationships": [],
+                    "metrics": [],
+                }
+            ],
+        }
+        target.write_text(yaml.safe_dump(original_document, sort_keys=False), encoding="utf-8")
+        original_content = target.read_bytes()
+        state = _bound_state(target)
+        tool = MetricFilesystemFuncTool(
+            root_path=str(tmp_path),
+            current_node="gen_metrics",
+            authoring_format="osi",
+            mutation_guard=state.require_bound_path,
+            osi_target_state=state,
+        )
+        repaired_dataset = dict(original_document["semantic_model"][0]["datasets"][0])
+        repaired_dataset["fields"] = [
+            *repaired_dataset["fields"],
+            {
+                "name": "order_id",
+                "expression": {"dialects": [{"dialect": "ANSI_SQL", "expression": "order_id"}]},
+            },
+        ]
+
+        dataset_result = tool.upsert_osi_datasets(str(target.relative_to(tmp_path)), json.dumps([repaired_dataset]))
+        delete_result = tool.delete_osi_datasets(
+            str(target.relative_to(tmp_path)),
+            ["obsolete_orders_query"],
+        )
+        metric_result = tool.upsert_osi_metrics(
+            str(target.relative_to(tmp_path)),
+            json.dumps([_osi_metric("order_count", "COUNT(DISTINCT orders.order_id)")]),
+        )
+
+        assert dataset_result.success == 1
+        assert delete_result.success == 1
+        assert metric_result.success == 1
+        assert state.touched_dataset_names == ["orders", "obsolete_orders_query"]
+        assert state.touched_metric_names == ["order_count"]
+        assert state.metric_snapshot_content == original_content
+        model = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]
+        assert [dataset["name"] for dataset in model["datasets"]] == ["orders"]
+        assert [field["name"] for field in model["datasets"][0]["fields"]] == ["ordered_at", "order_id"]
+        assert [metric["name"] for metric in model["metrics"]] == ["order_count"]
+        assert osi_schema_validator.call_count == 3
 
     def test_osi_semantic_model_dataset_upsert_preserves_metrics_and_relationships(
         self,
@@ -134,7 +210,11 @@ class TestMetricFilesystemFuncTool:
         model = document["semantic_model"][0]
         assert model["relationships"] == [{"name": "orders_to_customers"}]
         assert model["metrics"] == [_osi_metric("revenue", "SUM(orders.amount)")]
-        assert model["datasets"][-1] == query_dataset
+        authored_query_dataset = model["datasets"][-1]
+        assert {key: value for key, value in authored_query_dataset.items() if key != "custom_extensions"} == {
+            key: value for key, value in query_dataset.items() if key != "custom_extensions"
+        }
+        assert json.loads(authored_query_dataset["custom_extensions"][0]["data"]) == {"source_type": "query"}
         assert state.target_mutated is True
         assert set(tool.name for tool in tool.available_tools()) == {
             "read_file",
@@ -340,7 +420,7 @@ class TestMetricFilesystemFuncTool:
         assert target.read_text(encoding="utf-8") == original
         validator.assert_called_once()
 
-    def test_query_backed_dataset_upsert_rejects_same_name_with_different_sql(
+    def test_query_backed_dataset_upsert_updates_same_name_with_revised_sql(
         self,
         tmp_path,
         osi_schema_validator,
@@ -366,7 +446,6 @@ class TestMetricFilesystemFuncTool:
             ),
             encoding="utf-8",
         )
-        original = target.read_text(encoding="utf-8")
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_semantic_model",
@@ -381,11 +460,12 @@ class TestMetricFilesystemFuncTool:
             json.dumps([conflicting_dataset]),
         )
 
-        assert result.success == 0
-        assert result.result["code"] == "query_dataset_name_conflict"
-        assert "choose a new semantic dataset name" in result.error
-        assert target.read_text(encoding="utf-8") == original
-        osi_schema_validator.assert_not_called()
+        assert result.success == 1
+        assert result.result["updated"] == ["retained_users"]
+        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        assert authored["source"] == "SELECT user_id FROM newly_retained_users"
+        assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
+        osi_schema_validator.assert_called_once()
 
     def test_query_backed_dataset_source_identity_normalizes_line_endings(
         self,
@@ -424,7 +504,7 @@ class TestMetricFilesystemFuncTool:
         assert result.result["updated"] == ["retained_users"]
         osi_schema_validator.assert_called_once()
 
-    def test_query_backed_dataset_upsert_rejects_source_already_used_by_another_model(
+    def test_query_backed_dataset_upsert_allows_source_used_by_another_model(
         self,
         tmp_path,
         osi_schema_validator,
@@ -455,7 +535,7 @@ class TestMetricFilesystemFuncTool:
         )
         target = model_dir / "sales.yml"
         state = _planned_state(target)
-        evidence = GenerationEvidence(required_query_backed_sql={"query_dataset:orders": source_sql})
+        evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_semantic_model",
@@ -470,21 +550,21 @@ class TestMetricFilesystemFuncTool:
             json.dumps(
                 [
                     {
-                        "dataset_requirement_id": "query_dataset:orders",
                         "name": "regional_order_counts",
+                        "source": source_sql,
                     }
                 ]
             ),
         )
 
-        assert result.success == 0
-        assert result.result["code"] == "query_dataset_source_conflict"
-        assert result.result["existing_semantic_model_name"] == "regional_orders"
-        assert result.result["existing_dataset_name"] == "orders_by_region"
-        assert not target.exists()
-        osi_schema_validator.assert_not_called()
+        assert result.success == 1
+        assert result.result["created"] == ["regional_order_counts"]
+        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        assert authored["source"] == source_sql
+        assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
+        osi_schema_validator.assert_called_once()
 
-    def test_query_backed_dataset_upsert_injects_request_local_sql(
+    def test_query_backed_dataset_upsert_accepts_generated_sql(
         self,
         tmp_path,
         osi_schema_validator,
@@ -496,7 +576,7 @@ class TestMetricFilesystemFuncTool:
             encoding="utf-8",
         )
         exact_sql = "WITH scoped AS (SELECT * FROM sales)\nSELECT COUNT(*) AS sale_count FROM scoped;"
-        evidence = GenerationEvidence(required_query_backed_sql={"query_dataset:abc": exact_sql})
+        evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_semantic_model",
@@ -508,10 +588,10 @@ class TestMetricFilesystemFuncTool:
             json.dumps(
                 [
                     {
-                        "dataset_requirement_id": "query_dataset:abc",
                         "name": "scoped_sales",
+                        "source": exact_sql,
                         "description": "One row containing the scoped sale count.",
-                        "ai_context": {"instructions": "Use for the exact scoped result."},
+                        "ai_context": {"instructions": "Use for the generated scoped result."},
                     }
                 ]
             ),
@@ -520,11 +600,10 @@ class TestMetricFilesystemFuncTool:
         assert result.success == 1
         dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
         assert dataset["source"] == exact_sql
-        assert "dataset_requirement_id" not in dataset
         extension_data = json.loads(dataset["custom_extensions"][0]["data"])
         assert extension_data == {"source_type": "query"}
 
-    def test_query_backed_requirement_can_replace_same_named_dataset_source(
+    def test_generated_query_can_replace_same_named_dataset_source(
         self,
         tmp_path,
         osi_schema_validator,
@@ -551,9 +630,8 @@ class TestMetricFilesystemFuncTool:
             ),
             encoding="utf-8",
         )
-        requirement_id = "query_dataset:retained_users"
         exact_sql = "SELECT user_id FROM retained_users WHERE cohort = 'current'"
-        evidence = GenerationEvidence(required_query_backed_sql={requirement_id: exact_sql})
+        evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_semantic_model",
@@ -565,8 +643,8 @@ class TestMetricFilesystemFuncTool:
             json.dumps(
                 [
                     {
-                        "dataset_requirement_id": requirement_id,
                         "name": "retained_users",
+                        "source": exact_sql,
                         "description": "Current retained-user cohort.",
                     }
                 ]
@@ -578,7 +656,6 @@ class TestMetricFilesystemFuncTool:
         dataset = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
         assert dataset["source"] == exact_sql
         assert json.loads(dataset["custom_extensions"][0]["data"])["source_type"] == "query"
-        assert evidence.query_backed_dataset_binding(requirement_id)["dataset_name"] == "retained_users"
         osi_schema_validator.assert_called_once()
 
     def test_query_source_extension_always_serializes_data_as_json(self, tmp_path):
@@ -595,82 +672,7 @@ class TestMetricFilesystemFuncTool:
             "source_type": "query",
         }
 
-    def test_query_backed_requirement_reuses_first_dataset_name_during_retry(
-        self,
-        tmp_path,
-        osi_schema_validator,
-    ):
-        target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
-        target.parent.mkdir(parents=True)
-        target.write_text(
-            "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
-            encoding="utf-8",
-        )
-        requirement_id = "query_dataset:stable"
-        evidence = GenerationEvidence(
-            required_query_backed_sql={
-                requirement_id: "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region;"
-            }
-        )
-        tool = OsiSemanticModelFilesystemFuncTool(
-            root_path=str(tmp_path),
-            current_node="gen_semantic_model",
-            generation_evidence=evidence,
-        )
-        relative_path = str(target.relative_to(tmp_path))
-
-        first = tool.upsert_osi_datasets(
-            relative_path,
-            json.dumps(
-                [
-                    {
-                        "dataset_requirement_id": requirement_id,
-                        "name": "regional_orders",
-                        "fields": [{"name": "region"}],
-                    }
-                ]
-            ),
-        )
-        retry = tool.upsert_osi_datasets(
-            relative_path,
-            json.dumps(
-                [
-                    {
-                        "dataset_requirement_id": requirement_id,
-                        "name": "regional_orders_v2",
-                        "fields": [{"name": "region"}],
-                    }
-                ]
-            ),
-        )
-
-        assert first.success == 1
-        assert retry.success == 1
-        assert retry.result["canonicalized_names"] == {"regional_orders_v2": "regional_orders"}
-        datasets = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"]
-        assert [dataset["name"] for dataset in datasets] == ["regional_orders"]
-
-    def test_query_backed_dataset_upsert_rejects_unknown_requirement(
-        self,
-        tmp_path,
-    ):
-        target = tmp_path / "model.yml"
-        target.write_text("semantic_model:\n  - name: sales\n    datasets: []\n", encoding="utf-8")
-        tool = OsiSemanticModelFilesystemFuncTool(
-            root_path=str(tmp_path),
-            current_node="gen_semantic_model",
-            generation_evidence=GenerationEvidence(),
-        )
-
-        result = tool.upsert_osi_datasets(
-            "model.yml",
-            json.dumps([{"dataset_requirement_id": "query_dataset:missing", "name": "missing"}]),
-        )
-
-        assert result.success == 0
-        assert result.result["code"] == "dataset_requirement_not_found"
-
-    def test_existing_query_backed_dataset_cannot_be_overwritten_by_omitting_extension(
+    def test_existing_query_backed_dataset_can_be_replaced_with_physical_source(
         self,
         tmp_path,
         osi_schema_validator,
@@ -689,7 +691,6 @@ class TestMetricFilesystemFuncTool:
             ),
             encoding="utf-8",
         )
-        original = target.read_text(encoding="utf-8")
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),
             current_node="gen_semantic_model",
@@ -707,10 +708,11 @@ class TestMetricFilesystemFuncTool:
             ),
         )
 
-        assert result.success == 0
-        assert result.result["code"] == "query_dataset_name_conflict"
-        assert target.read_text(encoding="utf-8") == original
-        osi_schema_validator.assert_not_called()
+        assert result.success == 1
+        assert result.result["updated"] == ["retained_users"]
+        authored = yaml.safe_load(target.read_text(encoding="utf-8"))["semantic_model"][0]["datasets"][0]
+        assert authored == {"name": "retained_users", "source": "analytics.retained_users"}
+        osi_schema_validator.assert_called_once()
 
     def test_upsert_osi_metrics_preserves_semantic_objects(self, tmp_path, osi_schema_validator):
         project = tmp_path / "project"

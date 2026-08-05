@@ -57,10 +57,7 @@ class GenerationEvidence:
     metric_dry_run_queries: List[Dict[str, Any]] = field(default_factory=list)
     metric_sqls: Dict[str, str] = field(default_factory=dict)
     metric_queryability_contracts: List[Dict[str, Any]] = field(default_factory=list)
-    metric_aliases: Dict[str, str] = field(default_factory=dict)
     required_metric_output_ids: List[str] = field(default_factory=list)
-    required_query_backed_sql: Dict[str, str] = field(default_factory=dict)
-    query_backed_dataset_bindings: Dict[str, Dict[str, str]] = field(default_factory=dict)
     semantic_kb_sync_passed: bool = False
     metric_kb_sync_passed: bool = False
     metric_kb_sync_metrics: Set[str] = field(default_factory=set)
@@ -74,10 +71,7 @@ class GenerationEvidence:
         """Clear evidence before reusing a node for another request."""
         self.invalidate_artifact_evidence()
         self.metric_queryability_contracts.clear()
-        self.metric_aliases.clear()
         self.required_metric_output_ids.clear()
-        self.required_query_backed_sql.clear()
-        self.query_backed_dataset_bindings.clear()
         self.sql_modeling_preflight_attempted = False
         self.sql_modeling_plan_fingerprint = ""
         self.mutated_artifact_paths.clear()
@@ -120,7 +114,7 @@ class GenerationEvidence:
         self.sql_modeling_preflight_attempted = True
 
     def mark_sql_modeling_plan_ready(self, source_fingerprint: str) -> None:
-        """Record the immutable SQL plan accepted for this request."""
+        """Record the immutable source fingerprint for a completed preflight."""
         fingerprint = str(source_fingerprint or "").strip()
         if not fingerprint:
             raise DatusException(
@@ -157,6 +151,12 @@ class GenerationEvidence:
         self.metric_kb_sync_metrics.clear()
         self.generic_kb_sync_passed = False
         self.validated_semantic_artifacts.clear()
+
+    def invalidate_plan_evidence(self) -> None:
+        """Discard plan-derived and downstream evidence before accepting a revised plan."""
+        self.invalidate_artifact_evidence()
+        self.metric_queryability_contracts.clear()
+        self.required_metric_output_ids.clear()
 
     @property
     def kb_sync_passed(self) -> bool:
@@ -220,29 +220,31 @@ class GenerationEvidence:
     def set_metric_queryability_contracts(
         self,
         contracts: Optional[Iterable[Dict[str, Any]]],
-        metric_aliases: Optional[Dict[str, str]] = None,
     ) -> None:
-        self.metric_aliases = _normalized_metric_alias_map(metric_aliases or {})
         self.metric_queryability_contracts = []
         for contract in contracts or []:
-            if not isinstance(contract, dict) or not (
-                contract.get("dimension_hints") or contract.get("time_group_hints")
-            ):
+            if not isinstance(contract, dict):
                 continue
-            normalized_contract = dict(contract)
-            metric_hints = []
-            alias_rewrites = {}
-            for hint in contract.get("metric_hints") or []:
-                if not isinstance(hint, str) or not hint.strip():
-                    continue
-                canonical = _canonical_metric_hint(hint, self.metric_aliases)
-                metric_hints.append(canonical)
-                if canonical != hint:
-                    alias_rewrites[hint] = canonical
-            if metric_hints:
-                normalized_contract["metric_hints"] = _deduplicate_preserve_order(metric_hints)
-            if alias_rewrites:
-                normalized_contract["metric_alias_rewrites"] = alias_rewrites
+            dimensions = [
+                str(dimension).strip() for dimension in contract.get("dimensions") or [] if str(dimension).strip()
+            ]
+            if not dimensions:
+                continue
+            normalized_contract = {
+                "contract_id": str(contract.get("contract_id") or "").strip(),
+                "source_id": str(contract.get("source_id") or "").strip(),
+                "metric_output_ids": _deduplicate_preserve_order(
+                    [
+                        str(output_id).strip()
+                        for output_id in contract.get("metric_output_ids") or []
+                        if str(output_id).strip()
+                    ]
+                ),
+                "dimensions": _deduplicate_preserve_order(dimensions),
+            }
+            time_grain = _normalize_time_grain(contract.get("time_grain"))
+            if time_grain:
+                normalized_contract["time_grain"] = time_grain
             self.metric_queryability_contracts.append(normalized_contract)
 
     def set_required_metric_outputs(self, requirements: Optional[Iterable[Dict[str, Any]]]) -> None:
@@ -252,69 +254,16 @@ class GenerationEvidence:
         for requirement in requirements or []:
             if not isinstance(requirement, dict):
                 continue
+            role = str(requirement.get("role") or "metric").strip().lower()
+            status = str(requirement.get("status") or "").strip().lower()
+            if role != "metric" or status in {"ignored", "skipped", "blocked"}:
+                continue
             output_id = str(requirement.get("output_id") or "").strip()
             if not output_id or output_id in seen:
                 continue
             seen.add(output_id)
             output_ids.append(output_id)
         self.required_metric_output_ids = output_ids
-
-    def set_required_query_backed_datasets(self, requirements: Optional[Iterable[Dict[str, Any]]]) -> None:
-        """Record exact SQL required to exist as authored query-backed datasets."""
-        required: Dict[str, str] = {}
-        for index, requirement in enumerate(requirements or [], 1):
-            if not isinstance(requirement, dict):
-                continue
-            requirement_id = str(requirement.get("requirement_id") or f"query_dataset_{index}").strip()
-            sql = str(requirement.get("sql") or "")
-            if requirement_id and sql.strip():
-                required[requirement_id] = sql
-        self.required_query_backed_sql = required
-
-    def query_backed_sql(self, requirement_id: str) -> str:
-        """Resolve exact request-local SQL for one query-backed requirement."""
-        return self.required_query_backed_sql.get(str(requirement_id or "").strip(), "")
-
-    def query_backed_dataset_binding(self, requirement_id: str) -> Dict[str, str]:
-        """Return the request-local dataset identity already chosen for a requirement."""
-        return dict(
-            self.query_backed_dataset_bindings.get(
-                str(requirement_id or "").strip(),
-                {},
-            )
-        )
-
-    def bind_query_backed_dataset(
-        self,
-        requirement_id: str,
-        *,
-        semantic_model_file: str | Path,
-        dataset_name: str,
-    ) -> None:
-        """Keep one query-backed requirement on one dataset throughout a request."""
-        normalized_id = str(requirement_id or "").strip()
-        normalized_name = str(dataset_name or "").strip()
-        normalized_file = str(Path(semantic_model_file).expanduser().resolve(strict=False))
-        if not normalized_id or not normalized_name:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message="requirement_id and dataset_name are required",
-            )
-
-        candidate = {
-            "semantic_model_file": normalized_file,
-            "dataset_name": normalized_name,
-        }
-        existing = self.query_backed_dataset_bindings.get(normalized_id)
-        if existing is not None and existing != candidate:
-            raise DatusException(
-                ErrorCode.TOOL_INVALID_INPUT,
-                message=(
-                    f"Query-backed requirement {normalized_id!r} is already bound to dataset "
-                    f"{existing['dataset_name']!r}."
-                ),
-            )
-        self.query_backed_dataset_bindings[normalized_id] = candidate
 
     def bind_metric_output_names(self, bindings: Optional[Iterable[Dict[str, Any]]]) -> None:
         """Rewrite queryability contracts from SQL aliases to final published metric names."""
@@ -427,42 +376,30 @@ class GenerationEvidence:
         if not required_metrics and not metric_hints:
             required_metrics = generated_metrics
 
-        covered_metrics: Set[str] = set()
         for dry_run in self.metric_dry_run_queries:
             dry_run_metrics = {m for m in dry_run.get("metrics", []) if isinstance(m, str)}
             if required_metrics and not required_metrics.issubset(dry_run_metrics):
-                if required_metrics and self._dimensions_satisfy_contract(dry_run, contract):
-                    covered_metrics.update(required_metrics & dry_run_metrics)
                 continue
             if self._dimensions_satisfy_contract(dry_run, contract):
                 return True
-        if required_metrics and required_metrics.issubset(covered_metrics):
-            return True
         return False
 
     def _dimensions_satisfy_contract(self, dry_run: Dict[str, Any], contract: Dict[str, Any]) -> bool:
-        dimensions = [d for d in dry_run.get("dimensions", []) if isinstance(d, str)]
+        dimensions = {
+            str(dimension).strip()
+            for dimension in dry_run.get("dimensions", [])
+            if isinstance(dimension, str) and dimension.strip()
+        }
+        required_dimensions = {
+            str(dimension).strip()
+            for dimension in contract.get("dimensions") or []
+            if isinstance(dimension, str) and dimension.strip()
+        }
         time_granularity = dry_run.get("time_granularity")
-        for hint in contract.get("dimension_hints") or []:
-            if not isinstance(hint, str) or not hint.strip():
-                continue
-            if _time_group_hint_satisfies(hint, dry_run, contract):
-                continue
-            if _has_time_group_hint_for_hint(hint, contract):
-                return False
-            if _dimension_expr_hint_satisfies(hint, dry_run, contract):
-                continue
-            if any(_dimension_matches_hint(dimension, hint) for dimension in dimensions):
-                continue
-            if (
-                _looks_time_dimension(hint)
-                and time_granularity
-                and dry_run.get("time_granularity_explicit") is True
-                and any(_is_metric_time_dimension(dimension) for dimension in dimensions)
-            ):
-                continue
+        required_time_grain = _normalize_time_grain(contract.get("time_grain"))
+        if required_time_grain and _normalize_time_grain(time_granularity) != required_time_grain:
             return False
-        return True
+        return dimensions == required_dimensions
 
     def has_metric_kb_sync(self, metric_names: Optional[Iterable[str]] = None) -> bool:
         names = {str(name).strip() for name in (metric_names or []) if str(name).strip()}
@@ -480,30 +417,7 @@ class GenerationEvidence:
             self.generic_kb_sync_passed = True
 
 
-_GENERIC_DIMENSION_TOKENS = {"id", "key", "name", "dim", "dimension", "value"}
 _TIME_GRAINS = {"day", "week", "month", "quarter", "year"}
-_TIME_DIMENSION_TOKENS = _TIME_GRAINS | {"date", "time", "ds"}
-_SQL_PARSE_DIALECTS = (
-    "snowflake",
-    "bigquery",
-    "duckdb",
-    "mysql",
-    "postgres",
-    "postgresql",
-    "sqlite",
-    "starrocks",
-    "trino",
-    None,
-)
-_SQLGLOT_DIALECT_ALIASES = {"postgresql": "postgres"}
-
-
-def _name_tokens(value: str) -> Set[str]:
-    return {token for token in re.split(r"[^a-z0-9]+", str(value).lower()) if token}
-
-
-def _normalize_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
 
 
 def _deduplicate_preserve_order(values: Iterable[str]) -> List[str]:
@@ -515,136 +429,6 @@ def _deduplicate_preserve_order(values: Iterable[str]) -> List[str]:
         seen.add(value)
         result.append(value)
     return result
-
-
-def _normalized_metric_alias_map(metric_aliases: Dict[str, str]) -> Dict[str, str]:
-    normalized: Dict[str, str] = {}
-    for alias, canonical in metric_aliases.items():
-        if not isinstance(alias, str) or not isinstance(canonical, str):
-            continue
-        alias = alias.strip()
-        canonical = canonical.strip()
-        if not alias or not canonical:
-            continue
-        normalized[alias] = canonical
-        normalized[_normalize_name(alias)] = canonical
-    return normalized
-
-
-def _canonical_metric_hint(hint: str, metric_aliases: Dict[str, str]) -> str:
-    return metric_aliases.get(hint) or metric_aliases.get(_normalize_name(hint)) or hint
-
-
-def _semantic_tokens(value: str) -> Set[str]:
-    tokens = _name_tokens(value)
-    reduced = {token for token in tokens if token not in _GENERIC_DIMENSION_TOKENS}
-    return reduced or tokens
-
-
-def _looks_time_dimension(value: str) -> bool:
-    return bool(_name_tokens(value) & _TIME_DIMENSION_TOKENS)
-
-
-def _is_metric_time_dimension(value: str) -> bool:
-    return str(value).strip().lower().startswith("metric_time")
-
-
-def _time_group_hint_satisfies(hint: str, dry_run: Dict[str, Any], contract: Dict[str, Any]) -> bool:
-    for time_hint in contract.get("time_group_hints") or []:
-        if not isinstance(time_hint, dict):
-            continue
-        alias = time_hint.get("alias", "")
-        base_expr = time_hint.get("base_expr", "")
-        if not any(_dimension_matches_hint(candidate, hint) for candidate in (alias, base_expr) if candidate):
-            continue
-        if _dry_run_satisfies_time_group(dry_run, time_hint):
-            return True
-    return False
-
-
-def _has_time_group_hint_for_hint(hint: str, contract: Dict[str, Any]) -> bool:
-    for time_hint in contract.get("time_group_hints") or []:
-        if not isinstance(time_hint, dict):
-            continue
-        alias = time_hint.get("alias", "")
-        base_expr = time_hint.get("base_expr", "")
-        if any(_dimension_matches_hint(candidate, hint) for candidate in (alias, base_expr) if candidate):
-            return True
-    return False
-
-
-def _dimension_expr_hint_satisfies(hint: str, dry_run: Dict[str, Any], contract: Dict[str, Any]) -> bool:
-    for expr_hint in contract.get("dimension_expr_hints") or []:
-        if not isinstance(expr_hint, dict):
-            continue
-        alias = expr_hint.get("alias", "")
-        expression = expr_hint.get("expr", "")
-        if not _dimension_expr_hint_matches_hint(hint, alias, expression):
-            continue
-        if _dry_run_satisfies_dimension_expr(dry_run, expr_hint):
-            return True
-    return False
-
-
-def _dimension_expr_hint_matches_hint(hint: str, alias: str, expression: str) -> bool:
-    if alias and _dimension_matches_hint(alias, hint):
-        return True
-    if expression and _dimension_matches_hint(expression, hint):
-        return True
-    return False
-
-
-def _dry_run_satisfies_dimension_expr(dry_run: Dict[str, Any], expr_hint: Dict[str, str]) -> bool:
-    dimensions = [d for d in dry_run.get("dimensions", []) if isinstance(d, str)]
-    if any(_dimension_matches_expr_hint(dimension, expr_hint) for dimension in dimensions):
-        return True
-
-    sql = dry_run.get("sql", "")
-    expression = expr_hint.get("expr", "")
-    return isinstance(sql, str) and _sql_contains_expression(sql, expression)
-
-
-def _dimension_matches_expr_hint(dimension: str, expr_hint: Dict[str, str]) -> bool:
-    normalized_dimension = _normalize_name(dimension)
-    if not normalized_dimension:
-        return False
-    candidates = {
-        _normalize_name(expr_hint.get("expr", "")),
-        _normalize_name(expr_hint.get("column", "")),
-    }
-    return normalized_dimension in {candidate for candidate in candidates if candidate}
-
-
-def _dry_run_satisfies_time_group(dry_run: Dict[str, Any], time_hint: Dict[str, str]) -> bool:
-    grain = _normalize_time_grain(time_hint.get("grain", ""))
-    dimensions = [d for d in dry_run.get("dimensions", []) if isinstance(d, str)]
-    dry_run_grain = _normalize_time_grain(dry_run.get("time_granularity")) or _time_grain_from_dimensions(dimensions)
-    if not grain or dry_run_grain != grain:
-        return False
-
-    base_expr = time_hint.get("base_expr", "")
-    if base_expr and any(_time_base_dimension_matches(dimension, base_expr) for dimension in dimensions):
-        return True
-
-    sql = dry_run.get("sql", "")
-    # MetricFlow canonicalizes the time dimension to metric_time, so accept it from
-    # either the recorded dimensions or the compiled SQL.
-    if (
-        isinstance(sql, str)
-        and base_expr
-        and dimensions
-        and _sql_contains_base_expr_text(sql, base_expr)
-        and (any(_is_metric_time_dimension(dimension) for dimension in dimensions) or _sql_references_metric_time(sql))
-    ):
-        return True
-    if not isinstance(sql, str) or not _sql_contains_time_group(sql, base_expr, grain):
-        return False
-    return True
-
-
-def _sql_references_metric_time(sql: str) -> bool:
-    """True when the compiled SQL references MetricFlow's metric_time column (any grain)."""
-    return bool(re.search(r"\bmetric_time(?:__\w+)?\b", str(sql or ""), flags=re.IGNORECASE))
 
 
 def _normalize_time_grain(value: Any) -> str:
@@ -666,146 +450,3 @@ def _dimension_time_grain(dimension: str) -> str:
         return ""
     grain = re.sub(r"[^a-z0-9]+", "", text.rsplit("__", 1)[-1])
     return grain if grain in _TIME_GRAINS else ""
-
-
-def _time_base_dimension_matches(dimension: str, base_expr: str) -> bool:
-    if _dimension_matches_hint(dimension, base_expr):
-        return True
-    leaf_name = _last_identifier(base_expr)
-    return bool(leaf_name and _dimension_matches_hint(dimension, leaf_name))
-
-
-def _last_identifier(value: str) -> str:
-    identifiers = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", str(value or ""))
-    return identifiers[-1] if identifiers else ""
-
-
-def _sql_contains_time_group(sql: str, base_expr: str, grain: str) -> bool:
-    normalized_base = _normalize_sql_text(base_expr)
-    if not normalized_base:
-        return False
-    for select in _parse_select_candidates(sql):
-        for node in select.walk():
-            expr = node[0] if isinstance(node, tuple) else node
-            if _time_trunc_expression_matches(expr, normalized_base, grain):
-                return True
-    return False
-
-
-def _sql_contains_base_expr_text(sql: str, base_expr: str) -> bool:
-    normalized_sql = _normalize_sql_text(sql)
-    normalized_base = _normalize_sql_text(base_expr)
-    if normalized_base:
-        # A bare identifier must match on identifier boundaries (against the
-        # whitespace-preserving SQL, since _normalize_sql_text would fuse it with
-        # the next token) so e.g. ``ordered_at`` matches a real column reference
-        # but not ``preordered_at`` / ``ordered_at_utc``. Richer expressions
-        # (containing parens/operators) are safe to match as a substring.
-        if re.fullmatch(r"[a-z_][a-z0-9_]*", normalized_base):
-            if re.search(rf"\b{re.escape(normalized_base)}\b", str(sql or "").lower()):
-                return True
-        elif normalized_base in normalized_sql:
-            return True
-    leaf = _last_identifier(base_expr)
-    normalized_leaf = _normalize_sql_text(leaf)
-    return bool(
-        normalized_leaf and re.search(rf"(?<![a-z0-9_]){re.escape(normalized_leaf)}(?![a-z0-9_])", normalized_sql)
-    )
-
-
-def _sql_contains_expression(sql: str, expression: str) -> bool:
-    normalized_expression = _normalize_sql_text(expression)
-    if not normalized_expression:
-        return False
-    for select in _parse_select_candidates(sql):
-        group = select.args.get("group")
-        if group and any(_sql_expression_matches(expr, normalized_expression) for expr in group.expressions):
-            return True
-        for projection in select.expressions:
-            expr = projection.this if projection.__class__.__name__ == "Alias" else projection
-            if _sql_expression_matches(expr, normalized_expression):
-                return True
-    return False
-
-
-def _parse_select_candidates(sql: str) -> Iterable[Any]:
-    try:
-        import sqlglot
-        from sqlglot import expressions as exp
-
-        seen = set()
-        for dialect in _SQL_PARSE_DIALECTS:
-            read_dialect = _SQLGLOT_DIALECT_ALIASES.get(dialect, dialect)
-            try:
-                parsed = sqlglot.parse_one(sql, read=read_dialect) if read_dialect else sqlglot.parse_one(sql)
-            except Exception:
-                continue
-            select = parsed if isinstance(parsed, exp.Select) else parsed.find(exp.Select)
-            if select is None:
-                continue
-            key = _normalize_sql_text(select.sql(dialect="snowflake"))
-            if key in seen:
-                continue
-            seen.add(key)
-            yield select
-    except Exception:
-        return
-
-
-def _time_trunc_expression_matches(expr: Any, normalized_base: str, grain: str) -> bool:
-    try:
-        from sqlglot import expressions as exp
-
-        if not isinstance(expr, (exp.DateTrunc, exp.DatetimeTrunc, exp.TimeTrunc, exp.TimestampTrunc)):
-            return False
-        expr_grain = _normalize_time_grain(expr.args.get("unit"))
-        if expr_grain != grain:
-            return False
-        base_expr = expr.args.get("this")
-        return _sql_base_expression_matches(base_expr, normalized_base)
-    except Exception:
-        return False
-
-
-def _sql_base_expression_matches(expr: Any, normalized_base: str) -> bool:
-    normalized_expr = _normalize_sql_expression(expr)
-    if normalized_expr == normalized_base:
-        return True
-    expr_leaf = _normalize_name(_last_identifier(normalized_expr))
-    base_leaf = _normalize_name(_last_identifier(normalized_base))
-    return bool(expr_leaf and base_leaf and expr_leaf == base_leaf)
-
-
-def _sql_expression_matches(expr: Any, normalized_expression: str) -> bool:
-    return _normalize_sql_expression(expr) == normalized_expression
-
-
-def _normalize_sql_expression(expr: Any) -> str:
-    if expr is None:
-        return ""
-    try:
-        text = expr.sql(dialect="snowflake")
-    except Exception:
-        try:
-            text = expr.sql()
-        except Exception:
-            text = str(expr)
-    return _normalize_sql_text(text)
-
-
-def _normalize_sql_text(value: str) -> str:
-    return re.sub(r"\s+", "", str(value or "")).strip().lower()
-
-
-def _dimension_matches_hint(dimension: str, hint: str) -> bool:
-    normalized_dimension = _normalize_name(dimension)
-    normalized_hint = _normalize_name(hint)
-    if normalized_dimension == normalized_hint:
-        return True
-    dimension_tokens = _semantic_tokens(dimension)
-    hint_tokens = _semantic_tokens(hint)
-    if not dimension_tokens or not hint_tokens:
-        return False
-    if len(hint_tokens) > 1:
-        return hint_tokens.issubset(dimension_tokens)
-    return bool(dimension_tokens & hint_tokens)

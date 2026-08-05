@@ -775,10 +775,6 @@ class SemanticDiscoveryTools:
             identity_metric_references: List[Dict[str, Any]] = []
             support_measure_candidates: List[Dict[str, Any]] = []
             parse_errors: List[Dict[str, Any]] = []
-            source_classifications: List[Dict[str, Any]] = []
-            derived_datasource_recommendations: List[Dict[str, Any]] = []
-            blocked_direct_metric_candidates: List[Dict[str, Any]] = []
-            metric_generation_skips: List[Dict[str, Any]] = []
             literal_mappings: List[Dict[str, Any]] = []
             time_grain_evidence: List[Dict[str, Any]] = []
             post_aggregation_constraints: List[Dict[str, Any]] = []
@@ -800,11 +796,8 @@ class SemanticDiscoveryTools:
                     parse_errors.append({"source": source_name, "index": idx, "error": str(exc)})
                     continue
 
-                entry_candidates: List[Dict[str, Any]] = []
-                entry_has_non_metric_evidence = False
                 entry_has_metric_evidence = False
                 found_candidate = False
-                modeling_analysis = self._analyze_query_modeling(parsed_expressions, source_name)
                 output_analysis = self._analyze_final_output_contracts(
                     parsed_expressions=parsed_expressions,
                     source_name=source_name,
@@ -817,9 +810,6 @@ class SemanticDiscoveryTools:
                 if output_analysis["dataset_requirement"]:
                     dataset_requirements.append(output_analysis["dataset_requirement"])
                 queryability_contracts.extend(output_analysis["queryability_contracts"])
-                if modeling_analysis["derived_datasource_recommendations"]:
-                    derived_datasource_recommendations.extend(modeling_analysis["derived_datasource_recommendations"])
-                    metric_generation_skips.extend(modeling_analysis["metric_generation_skips"])
                 preservation_evidence = self._extract_semantic_preservation_evidence(
                     parsed_expressions,
                     source_name,
@@ -836,14 +826,12 @@ class SemanticDiscoveryTools:
                 for candidate in pop_candidates["base_metric_candidates"]:
                     entry_has_metric_evidence = True
                     found_candidate = True
-                    entry_candidates.append(candidate)
                     self._merge_metric_candidate(metric_candidates, candidate)
                     for measure in candidate.get("base_measures", []):
                         self._merge_base_measure(base_measures, measure)
                 for candidate in pop_candidates["period_metric_candidates"]:
                     entry_has_metric_evidence = True
                     found_candidate = True
-                    entry_candidates.append(candidate)
                     self._merge_metric_candidate(metric_candidates, candidate)
                 window_candidates = self._window_aggregate_metric_candidates(
                     parsed_expressions,
@@ -854,14 +842,12 @@ class SemanticDiscoveryTools:
                 for candidate in window_candidates["base_metric_candidates"]:
                     entry_has_metric_evidence = True
                     found_candidate = True
-                    entry_candidates.append(candidate)
                     self._merge_metric_candidate(metric_candidates, candidate)
                     for measure in candidate.get("base_measures", []):
                         self._merge_base_measure(base_measures, measure)
                 for candidate in window_candidates["window_metric_candidates"]:
                     entry_has_metric_evidence = True
                     found_candidate = True
-                    entry_candidates.append(candidate)
                     self._merge_metric_candidate(metric_candidates, candidate)
                     for measure in candidate.get("base_measures", []):
                         self._merge_base_measure(base_measures, measure)
@@ -903,7 +889,6 @@ class SemanticDiscoveryTools:
                                     self._merge_base_measure(base_measures, measure)
                                 continue
                             found_candidate = True
-                            entry_candidates.append(candidate)
                             self._merge_metric_candidate(metric_candidates, candidate)
                             for measure in candidate.get("base_measures", []):
                                 self._merge_base_measure(base_measures, measure)
@@ -913,7 +898,6 @@ class SemanticDiscoveryTools:
                             and not entry_has_metric_evidence
                             and (filters or dimensions or select_tables)
                         ):
-                            entry_has_non_metric_evidence = True
                             non_metric_evidence.append(
                                 {
                                     "source_sql_name": source_name,
@@ -923,38 +907,6 @@ class SemanticDiscoveryTools:
                                     "reason": "detail query without aggregate output",
                                 }
                             )
-
-                entry_has_llm_review_candidates = any(
-                    candidate.get("candidate_classification") == "llm_review_candidate"
-                    for candidate in entry_candidates
-                )
-                entry_has_direct_candidates = any(
-                    candidate.get("candidate_classification") != "llm_review_candidate"
-                    for candidate in entry_candidates
-                )
-                classification = self._classify_source_query(
-                    has_direct_candidates=entry_has_direct_candidates,
-                    has_llm_review_candidates=entry_has_llm_review_candidates,
-                    has_non_metric_evidence=entry_has_non_metric_evidence,
-                    derived_datasource_recommendations=modeling_analysis["derived_datasource_recommendations"],
-                    requires_query_backed=output_analysis["requires_query_backed"],
-                    has_required_metric_outputs=bool(output_analysis["metric_requirements"]),
-                )
-                source_classifications.append(
-                    {
-                        "source_sql_name": source_name,
-                        "classification": classification,
-                        "reason": modeling_analysis["classification_reason"]
-                        or output_analysis["classification_reason"],
-                    }
-                )
-                if classification == "metric_plus_derived_datasource":
-                    for candidate in entry_candidates:
-                        blocked = dict(candidate)
-                        blocked["block_reason"] = modeling_analysis["classification_reason"] or (
-                            "aggregation over ranked/windowed result; create the recommended derived data source first"
-                        )
-                        blocked_direct_metric_candidates.append(blocked)
 
             candidates = sorted(
                 metric_candidates.values(), key=lambda item: (-item.get("source_count", 1), item["name"])
@@ -970,16 +922,8 @@ class SemanticDiscoveryTools:
                 for candidate in candidates
                 if candidate.get("metric_type") != "derived"
                 and candidate.get("candidate_classification") != "llm_review_candidate"
-                and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
             ]
-            derived_candidates = [
-                candidate
-                for candidate in candidates
-                if candidate.get("metric_type") == "derived"
-                and not self._is_blocked_direct_candidate(candidate, blocked_direct_metric_candidates)
-            ]
-            modeling_plan = self._build_modeling_plan(derived_datasource_recommendations)
-            modeling_plan.extend(self._build_query_backed_modeling_plan(dataset_requirements))
+            derived_candidates = [candidate for candidate in candidates if candidate.get("metric_type") == "derived"]
             return FuncToolResult(
                 result={
                     "metric_candidates": candidates,
@@ -991,14 +935,6 @@ class SemanticDiscoveryTools:
                     "non_metric_evidence": non_metric_evidence,
                     "identity_metric_references": identity_metric_references,
                     "parse_errors": parse_errors,
-                    "query_classification": self._overall_query_classification(
-                        source_classifications=source_classifications,
-                        parse_errors=parse_errors,
-                    ),
-                    "source_classifications": source_classifications,
-                    "derived_datasource_recommendations": derived_datasource_recommendations,
-                    "blocked_direct_metric_candidates": blocked_direct_metric_candidates,
-                    "metric_generation_skips": metric_generation_skips,
                     "literal_mappings": literal_mappings,
                     "time_grain_evidence": time_grain_evidence,
                     "post_aggregation_constraints": post_aggregation_constraints,
@@ -1006,7 +942,6 @@ class SemanticDiscoveryTools:
                     "metric_requirements": metric_requirements,
                     "dataset_requirements": dataset_requirements,
                     "queryability_contracts": queryability_contracts,
-                    "modeling_plan": modeling_plan,
                     "summary": (
                         f"Found {len(metric_requirements)} required metric outputs, "
                         f"{len(candidates)} reusable metric candidates, and {len(measures)} base measures "
@@ -2274,180 +2209,6 @@ class SemanticDiscoveryTools:
                     continue
         return None
 
-    def _classify_source_query(
-        self,
-        has_direct_candidates: bool,
-        has_llm_review_candidates: bool,
-        has_non_metric_evidence: bool,
-        derived_datasource_recommendations: List[Dict[str, Any]],
-        requires_query_backed: bool = False,
-        has_required_metric_outputs: bool = False,
-    ) -> str:
-        """Classify how a SQL query should be modeled."""
-        if derived_datasource_recommendations:
-            return "metric_plus_derived_datasource"
-        if requires_query_backed and (
-            has_required_metric_outputs or has_direct_candidates or has_llm_review_candidates
-        ):
-            return "query_backed_then_metric"
-        if requires_query_backed:
-            return "query_backed_dataset"
-        if has_required_metric_outputs or has_direct_candidates:
-            return "direct_metric"
-        if has_llm_review_candidates:
-            return "llm_review_candidate"
-        if has_non_metric_evidence:
-            return "cohort_or_dataset_only"
-        return "manual_review_required"
-
-    def _overall_query_classification(
-        self,
-        source_classifications: List[Dict[str, Any]],
-        parse_errors: List[Dict[str, Any]],
-    ) -> str:
-        """Summarize per-source classifications for the whole tool call."""
-        classifications = {item.get("classification") for item in source_classifications}
-        if "metric_plus_derived_datasource" in classifications:
-            return "metric_plus_derived_datasource"
-        if "query_backed_then_metric" in classifications:
-            return "query_backed_then_metric"
-        if "query_backed_dataset" in classifications:
-            return "query_backed_dataset"
-        if "direct_metric" in classifications:
-            return "direct_metric"
-        if "llm_review_candidate" in classifications:
-            return "llm_review_candidate"
-        if classifications == {"cohort_or_dataset_only"}:
-            return "cohort_or_dataset_only"
-        if parse_errors and not source_classifications:
-            return "manual_review_required"
-        return "manual_review_required"
-
-    def _build_modeling_plan(self, recommendations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Build high-level modeling steps for complex SQL patterns."""
-        plans = []
-        for rec in recommendations:
-            rank_alias = rec.get("rank_alias") or "rank_value"
-            rank_filter = rec.get("rank_filters") or []
-            plans.append(
-                {
-                    "source_sql_name": rec.get("source_sql_name", ""),
-                    "classification": "metric_plus_derived_datasource",
-                    "steps": [
-                        {
-                            "step": "define_base_metrics",
-                            "description": "Define reusable metrics/measures used before the ranking step.",
-                            "metric_evidence": rec.get("ordering_metric_evidence", []),
-                        },
-                        {
-                            "step": "create_derived_datasource",
-                            "description": (
-                                "Create a sql_query data source or materialized view that computes the ranked rows."
-                            ),
-                            "datasource": rec.get("name", ""),
-                            "window": rec.get("window", {}),
-                        },
-                        {
-                            "step": "define_final_metric",
-                            "description": (
-                                f"Define a metric over a generated flag such as `{rank_alias}_selected` "
-                                "instead of using the final aggregation directly."
-                            ),
-                            "rank_filters": rank_filter,
-                        },
-                    ],
-                }
-            )
-        return plans
-
-    def _build_query_backed_modeling_plan(
-        self,
-        dataset_requirements: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
-        """Build executable authoring steps for SQL-defined dataset boundaries."""
-        plans = []
-        for requirement in dataset_requirements:
-            steps = [
-                {
-                    "step": "create_query_backed_dataset",
-                    "description": (
-                        "Create one SQL-backed semantic dataset from the exact source SQL before defining metrics."
-                    ),
-                    "dataset_requirement_id": requirement.get("requirement_id", ""),
-                    "dataset_name_hint": requirement.get("suggested_name", ""),
-                    "output_grain": requirement.get("output_grain", []),
-                }
-            ]
-            if requirement.get("metric_output_ids"):
-                steps.append(
-                    {
-                        "step": "define_metrics_from_output_contracts",
-                        "description": (
-                            "Define every required metric output against the query-backed dataset; "
-                            "preserve output identity and do not replace it with intermediate aggregates."
-                        ),
-                        "metric_output_ids": requirement.get("metric_output_ids", []),
-                    }
-                )
-            plans.append(
-                {
-                    "source_sql_name": requirement.get("source_sql_name", ""),
-                    "classification": "query_backed_then_metric",
-                    "steps": steps,
-                }
-            )
-        return plans
-
-    def _analyze_query_modeling(self, parsed_expressions: List[Any], source_name: str) -> Dict[str, Any]:
-        """Detect complex SQL shapes that need more than direct metric extraction."""
-        recommendations: List[Dict[str, Any]] = []
-        for parsed in parsed_expressions:
-            cte_projection_map = self._cte_projection_map(parsed)
-            for cte_name, select in self._iter_cte_selects(parsed):
-                recommendations.extend(
-                    self._ranked_datasource_recommendations(
-                        source_name=source_name,
-                        cte_name=cte_name,
-                        select=select,
-                        parsed=parsed,
-                        cte_projection_map=cte_projection_map,
-                    )
-                )
-            for subquery_name, select in self._iter_inline_subquery_selects(parsed):
-                recommendations.extend(
-                    self._ranked_datasource_recommendations(
-                        source_name=source_name,
-                        cte_name=subquery_name,
-                        select=select,
-                        parsed=parsed,
-                        cte_projection_map=cte_projection_map,
-                    )
-                )
-
-        reason = ""
-        metric_generation_skips: List[Dict[str, Any]] = []
-        if recommendations:
-            reason = "rank/window output is filtered or aggregated downstream; model it as a derived data source first"
-            for rec in recommendations:
-                metric_generation_skips.append(
-                    {
-                        "source_sql_name": rec.get("source_sql_name", source_name),
-                        "reason": (
-                            "rank/window TopN query returns row-level or post-window results; "
-                            "skip during metric generation"
-                        ),
-                        "sql_shape": "ranked_window",
-                        "window": rec.get("window", {}),
-                        "rank_alias": rec.get("rank_alias", ""),
-                        "rank_filters": rec.get("rank_filters", []),
-                    }
-                )
-        return {
-            "derived_datasource_recommendations": recommendations,
-            "metric_generation_skips": metric_generation_skips,
-            "classification_reason": reason,
-        }
-
     def _analyze_final_output_contracts(
         self,
         parsed_expressions: List[Any],
@@ -2464,8 +2225,7 @@ class SemanticDiscoveryTools:
         output_contracts: List[Dict[str, Any]] = []
         metric_requirements: List[Dict[str, Any]] = []
         queryability_contracts: List[Dict[str, Any]] = []
-        requires_query_backed = False
-        classification_reason = ""
+        has_preserved_metric_output = False
         sql_fingerprint = hashlib.sha256(sql_text.encode("utf-8")).hexdigest()
         dataset_requirement_id = f"query_dataset:{sql_fingerprint}"
 
@@ -2513,47 +2273,32 @@ class SemanticDiscoveryTools:
                     "expression": expression.sql(comments=False),
                     "aggregate_lineage": aggregate_lineage,
                     "dependencies": dependencies,
-                    "lowering_status": (
-                        "non_metric"
-                        if output_role == "non_metric"
-                        else "dimension"
-                        if output_role == "dimension"
-                        else "pending"
-                    ),
+                    "preserve_source_sql": False,
                 }
                 output_contracts.append(contract)
                 statement_contracts.append(contract)
                 if output_role != "metric":
                     continue
-                output_requires_query_backed, output_reason = self._metric_output_requires_query_backed(
+                preserve_source_sql = self._must_preserve_source_sql(
                     root_scope=root_scope,
                     expression=expression,
-                    force_query_backed=bool(output.get("force_query_backed")),
+                    force_preservation=bool(output.get("force_preservation")),
                 )
-                target_mode = "query_backed_metric" if output_requires_query_backed else "direct_metric"
                 requirement = {
                     "output_id": output_id,
                     "source_sql_name": source_name,
                     "source_context_id": source_context_id,
                     "preferred_name": output_name,
                     "source_expression": expression.sql(comments=False),
-                    "metric_kind": (
-                        "derived_metric" if self._is_derived_metric_output(expression) else "aggregate_metric"
-                    ),
-                    "target_mode": target_mode,
-                    "lowering_status": "query_backed" if output_requires_query_backed else "direct",
-                    "lowering_reason": output_reason,
-                    "required_capabilities": self._required_output_capabilities(expression, root_scope),
-                    "dataset_requirement_id": dataset_requirement_id if output_requires_query_backed else "",
+                    "preserve_source_sql": preserve_source_sql,
+                    "dataset_requirement_id": dataset_requirement_id if preserve_source_sql else "",
                     "requires_name_translation": self._requires_name_translation(output_name),
                 }
-                contract["lowering_status"] = requirement["lowering_status"]
-                contract["lowering_reason"] = requirement["lowering_reason"]
+                contract["preserve_source_sql"] = preserve_source_sql
                 metric_requirements.append(requirement)
                 statement_requirements.append(requirement)
-                if output_requires_query_backed:
-                    requires_query_backed = True
-                    classification_reason = classification_reason or output_reason
+                if preserve_source_sql:
+                    has_preserved_metric_output = True
 
             queryability_contracts.extend(
                 self._statement_queryability_contracts(
@@ -2565,12 +2310,12 @@ class SemanticDiscoveryTools:
             )
 
         dataset_requirement: Optional[Dict[str, Any]] = None
-        if requires_query_backed:
+        if has_preserved_metric_output:
             source_contracts = [contract for contract in output_contracts if contract["source_sql_name"] == source_name]
             query_backed_output_ids = {
                 requirement["output_id"]
                 for requirement in metric_requirements
-                if requirement.get("target_mode") == "query_backed_metric"
+                if requirement.get("preserve_source_sql") is True
             }
             suggested_name = self._query_dataset_name_hint(
                 source_name=source_name,
@@ -2590,8 +2335,6 @@ class SemanticDiscoveryTools:
                 "source_sql_name": source_name,
                 "source_context_id": source_context_id,
                 "question": question,
-                "modeling_mode": "query_backed",
-                "reason": classification_reason,
                 "sql": sql_text,
                 "output_grain": [
                     contract["output_name"] for contract in source_contracts if contract["output_role"] == "dimension"
@@ -2608,8 +2351,6 @@ class SemanticDiscoveryTools:
             "output_contracts": output_contracts,
             "metric_requirements": metric_requirements,
             "dataset_requirement": dataset_requirement,
-            "requires_query_backed": requires_query_backed,
-            "classification_reason": classification_reason,
             "queryability_contracts": queryability_contracts,
         }
 
@@ -2661,40 +2402,35 @@ class SemanticDiscoveryTools:
                     "scope": branches[0],
                     "aggregate_lineage": bool(aggregate_flags) and all(aggregate_flags),
                     "dependencies": dependencies,
-                    "force_query_backed": True,
+                    "force_preservation": True,
                 }
             )
         return outputs
 
-    def _metric_output_requires_query_backed(
+    def _must_preserve_source_sql(
         self,
         *,
         root_scope: Any,
         expression: Any,
-        force_query_backed: bool,
-    ) -> tuple[bool, str]:
-        """Classify one output from its own dependency slice."""
+        force_preservation: bool,
+    ) -> bool:
+        """Return whether direct lowering would lose SQL result semantics."""
         from sqlglot import expressions as exp
         from sqlglot.optimizer.scope import Scope
 
-        if force_query_backed or not isinstance(root_scope.expression, exp.Select):
-            return True, "set operations must be preserved as a query-backed dataset"
-
-        if self._is_inlineable_row_projection(root_scope):
-            return False, "row-level projections can be lowered into direct metric expressions"
+        if force_preservation or not isinstance(root_scope.expression, exp.Select):
+            return True
 
         derived_sources = [
             source for _node, source in root_scope.selected_sources.values() if isinstance(source, Scope)
         ]
-        if derived_sources:
-            return True, "derived-relation joins or pre-aggregation must be preserved as a query-backed dataset"
+        if any(not self._is_row_preserving_scope(source) for source in derived_sources):
+            return True
 
         windows = list(expression.find_all(exp.Window))
         if windows and not all(self._is_supported_metric_window(window) for window in windows):
-            return True, "the output contains a window expression that has no direct metric lowering"
-        if windows:
-            return False, "the output window maps to a supported metric capability"
-        return False, "the output aggregate can be lowered directly"
+            return True
+        return False
 
     @staticmethod
     def _is_non_metric_window_output(expression: Any) -> bool:
@@ -2713,27 +2449,6 @@ class SemanticDiscoveryTools:
         )
         return any(isinstance(window.this, positional_functions) for window in expression.find_all(exp.Window))
 
-    def _required_output_capabilities(self, expression: Any, root_scope: Any) -> List[str]:
-        """Describe SQL operator capabilities required by one output."""
-        from sqlglot import expressions as exp
-
-        capabilities = set()
-        if any(True for _node in expression.find_all(exp.AggFunc)):
-            capabilities.add("aggregate")
-        if any(True for _node in expression.find_all(exp.Distinct)):
-            capabilities.add("distinct")
-        if any(True for _node in expression.find_all(exp.Case)):
-            capabilities.add("case")
-        if any(True for _node in expression.find_all(exp.Window)):
-            capabilities.add("window")
-        if any(isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div)) for node in expression.walk()):
-            capabilities.add("arithmetic")
-        if self._time_grain_for_expr(expression):
-            capabilities.add("time_bucket")
-        if isinstance(root_scope.expression, exp.Select) and root_scope.expression.args.get("joins"):
-            capabilities.add("join")
-        return sorted(capabilities)
-
     def _statement_queryability_contracts(
         self,
         *,
@@ -2745,12 +2460,10 @@ class SemanticDiscoveryTools:
         """Build direct and query-backed validation contracts from one AST scope."""
         contracts: List[Dict[str, Any]] = []
         direct_requirements = [
-            requirement for requirement in statement_requirements if requirement.get("target_mode") == "direct_metric"
+            requirement for requirement in statement_requirements if requirement.get("preserve_source_sql") is not True
         ]
         query_backed_requirements = [
-            requirement
-            for requirement in statement_requirements
-            if requirement.get("target_mode") == "query_backed_metric"
+            requirement for requirement in statement_requirements if requirement.get("preserve_source_sql") is True
         ]
 
         if direct_requirements:
@@ -3167,44 +2880,39 @@ class SemanticDiscoveryTools:
                     return True
         return False
 
-    def _is_derived_metric_output(self, expression: Any) -> bool:
-        """Identify arithmetic formulas whose final output is a derived metric."""
-        from sqlglot import expressions as exp
-
-        return any(isinstance(node, (exp.Add, exp.Sub, exp.Mul, exp.Div)) for node in expression.walk())
-
     def _is_supported_metric_window(self, window: Any) -> bool:
         """Return whether an analytic window maps to an existing metric type."""
         from sqlglot import expressions as exp
 
         return isinstance(window.this, (exp.AggFunc, exp.Lag))
 
-    def _is_inlineable_row_projection(self, root_scope: Any) -> bool:
-        """Recognize one row-level projection that can be folded into outer aggregates."""
+    def _is_row_preserving_scope(self, scope: Any, seen: Optional[set[int]] = None) -> bool:
+        """Return whether a derived scope can be folded into direct metrics safely."""
         from sqlglot import expressions as exp
         from sqlglot.optimizer.scope import Scope
 
-        root_select = root_scope.expression
-        if not isinstance(root_select, exp.Select):
+        seen = set(seen or set())
+        if id(scope) in seen:
             return False
-        if not any(True for _aggregate in root_select.find_all(exp.AggFunc)):
+        seen.add(id(scope))
+
+        select = scope.expression
+        if not isinstance(select, exp.Select):
             return False
-        if root_select.args.get("joins"):
+        if select.args.get("joins") or select.args.get("group") or select.args.get("distinct"):
             return False
-        sources = list(root_scope.selected_sources.values())
-        if len(sources) != 1 or not isinstance(sources[0][1], Scope):
+        if any(select.args.get(key) for key in ("having", "qualify", "limit", "offset")):
             return False
-        source_scope = sources[0][1]
-        source_select = source_scope.expression
-        if not isinstance(source_select, exp.Select):
+        if any(True for _aggregate in select.find_all(exp.AggFunc)):
             return False
-        if source_select.args.get("joins") or source_select.args.get("group"):
+        if any(True for _window in select.find_all(exp.Window)):
             return False
-        if any(True for _aggregate in source_select.find_all(exp.AggFunc)):
+
+        sources = list(scope.selected_sources.values())
+        if len(sources) != 1:
             return False
-        if any(True for _window in source_select.find_all(exp.Window)):
-            return False
-        return all(not isinstance(source, Scope) for _node, source in source_scope.selected_sources.values())
+        source = sources[0][1]
+        return not isinstance(source, Scope) or self._is_row_preserving_scope(source, seen)
 
     def _period_over_period_metric_candidates(
         self,
@@ -4449,77 +4157,6 @@ class SemanticDiscoveryTools:
             subquery_selects.append((subquery_name, subquery.this))
         return subquery_selects
 
-    def _cte_projection_map(self, parsed: Any) -> Dict[str, Dict[str, str]]:
-        """Map CTE output aliases to their SQL expressions."""
-        from sqlglot import expressions as exp
-
-        cte_map: Dict[str, Dict[str, str]] = {}
-        for cte_name, select in self._iter_cte_selects(parsed):
-            projections: Dict[str, str] = {}
-            for projection in select.expressions:
-                expr = projection.this if isinstance(projection, exp.Alias) else projection
-                alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
-                if alias:
-                    projections[self._normalize_identifier(alias)] = expr.sql()
-            cte_map[cte_name] = projections
-        return cte_map
-
-    def _ranked_datasource_recommendations(
-        self,
-        source_name: str,
-        cte_name: str,
-        select: Any,
-        parsed: Any,
-        cte_projection_map: Dict[str, Dict[str, str]],
-    ) -> List[Dict[str, Any]]:
-        """Recommend derived data sources for rank-like window outputs."""
-        from sqlglot import expressions as exp
-
-        recommendations = []
-        for projection in select.expressions:
-            expr = projection.this if isinstance(projection, exp.Alias) else projection
-            rank_alias = projection.alias if isinstance(projection, exp.Alias) else projection.alias_or_name
-            if not rank_alias:
-                continue
-
-            for window in expr.find_all(exp.Window):
-                if not self._is_rank_like_window(window):
-                    continue
-
-                rank_filters = self._filters_referencing_alias(parsed, rank_alias)
-                if not rank_filters:
-                    continue
-
-                order_by = self._window_order_by(window)
-                recommendations.append(
-                    {
-                        "source_sql_name": source_name,
-                        "name": cte_name,
-                        "source_cte": cte_name,
-                        "reason": "rank-like window output is filtered downstream",
-                        "rank_alias": self._safe_name(rank_alias),
-                        "rank_filters": rank_filters,
-                        "window": {
-                            "function": self._window_function_name(window),
-                            "partition_by": [expr.sql() for expr in window.args.get("partition_by") or []],
-                            "order_by": order_by,
-                        },
-                        "ordering_metric_evidence": self._ordering_metric_evidence(order_by, cte_projection_map),
-                        "generated_columns": [
-                            self._safe_name(proj.alias or proj.alias_or_name)
-                            for proj in select.expressions
-                            if (proj.alias or proj.alias_or_name)
-                        ],
-                    }
-                )
-        return recommendations
-
-    def _is_rank_like_window(self, window: Any) -> bool:
-        """Return true for ranking windows that should become derived data sources."""
-        from sqlglot import expressions as exp
-
-        return isinstance(window.this, (exp.Rank, exp.DenseRank, exp.RowNumber))
-
     def _window_function_name(self, window: Any) -> str:
         """Return the SQL window function name."""
         function_name = getattr(window.this, "key", window.this.__class__.__name__).upper()
@@ -4542,46 +4179,6 @@ class SemanticDiscoveryTools:
                 }
             )
         return order_by
-
-    def _filters_referencing_alias(self, parsed: Any, alias: str) -> List[str]:
-        """Collect WHERE/HAVING predicates that reference an output alias."""
-        filters = []
-        alias_normalized = self._normalize_identifier(alias)
-        for select in self._iter_selects(parsed) + [select for _, select in self._iter_cte_selects(parsed)]:
-            for key in ("where", "having"):
-                clause = select.args.get(key)
-                predicate = getattr(clause, "this", None)
-                if predicate is None:
-                    continue
-                if self._expression_references_column(predicate, alias_normalized):
-                    predicate_sql = predicate.sql()
-                    if predicate_sql not in filters:
-                        filters.append(predicate_sql)
-        return filters
-
-    def _expression_references_column(self, expr: Any, column_name: str) -> bool:
-        """Return true if an expression references a column by normalized name."""
-        from sqlglot import expressions as exp
-
-        return any(self._normalize_identifier(col.name) == column_name for col in expr.find_all(exp.Column))
-
-    def _ordering_metric_evidence(
-        self,
-        order_by: List[Dict[str, Any]],
-        cte_projection_map: Dict[str, Dict[str, str]],
-    ) -> List[Dict[str, str]]:
-        """Link window ordering columns back to upstream projection expressions when possible."""
-        evidence = []
-        for item in order_by:
-            order_expr = item.get("expr", "")
-            order_name = self._normalize_identifier(order_expr.split(".")[-1])
-            match = ""
-            for projections in cte_projection_map.values():
-                if order_name in projections:
-                    match = projections[order_name]
-                    break
-            evidence.append({"name": self._safe_name(order_name), "expression": match or order_expr})
-        return evidence
 
     def _extract_foreign_keys_from_ddl(
         self,
@@ -5628,29 +5225,6 @@ class SemanticDiscoveryTools:
         key = tuple(item.get(field) for field in key_fields)
         if all(tuple(existing.get(field) for field in key_fields) != key for existing in items):
             items.append(dict(item))
-
-    def _is_blocked_direct_candidate(
-        self,
-        candidate: Dict[str, Any],
-        blocked_candidates: List[Dict[str, Any]],
-    ) -> bool:
-        """Return true if any source merged into the candidate requires derived modeling first."""
-        candidate_sources = self._source_sql_name_set(candidate.get("source_sql_name", ""))
-        for blocked in blocked_candidates:
-            if blocked.get("name") != candidate.get("name") or blocked.get("metric_type") != candidate.get(
-                "metric_type"
-            ):
-                continue
-            if self._metric_candidate_formula_signature(blocked) != self._metric_candidate_formula_signature(candidate):
-                continue
-            blocked_sources = self._source_sql_name_set(blocked.get("source_sql_name", ""))
-            if candidate_sources & blocked_sources:
-                return True
-        return False
-
-    def _source_sql_name_set(self, source_sql_name: str) -> set:
-        """Split display source names back into comparable source identifiers."""
-        return {name.strip() for name in (source_sql_name or "").split(",") if name.strip()}
 
     def _infer_from_column_names(
         self,

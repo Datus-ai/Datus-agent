@@ -31,7 +31,7 @@ The authoritative document shape you author against, including the Datus executi
 0. **Prepare the request**
    - When the request contains SQL or explicitly names a readable SQL file, follow `sql-modeling-preflight` before other artifact reads or any writes. For a named SQL file, call `read_file` first, then submit every complete statement verbatim to `prepare_sql_modeling_plan`. Prefer one call, but use `finalize=false` batches for a large input and finalize the last batch.
    - When neither the request nor a named file provides SQL, skip `prepare_sql_modeling_plan` and continue with the normal authoring or existing-YAML maintenance workflow.
-   - For SQL-backed requests, treat the plan's `output_contracts` and `dataset_requirements` as authoritative. Do not reconstruct or rewrite source SQL.
+   - For SQL-backed requests, preserve the plan's source SQL as immutable evidence. Its compact `outputs`, `generated_sql`, and `queryability_contracts` may be corrected with `update_sql_modeling_plan` before publication.
 
 1. **Clarify blocking ambiguity first**
 {% if has_ask_user_tool %}   - If the request does not clearly specify the target table(s), intended scope, or another critical modeling choice that would change the generated YAML (e.g. which column is the grain or the primary time dimension), call `ask_user` before proceeding.
@@ -40,8 +40,7 @@ The authoritative document shape you author against, including the Datus executi
 {% else %}   - If critical requirements are missing, stop guessing and explain what information is needed.
 {% endif %}
 1. **Inspect the tables**
-   - Use `semantic_source_evidence` returned by preflight. For SQL-backed requests it normally already contains complete DDL/schema details, relationships, and current-request SQL field usage.
-   - Call `inspect_semantic_sources(tables=[...])` at most once only when automatic inspection is partial, the request has no SQL, or additional physical tables are required.
+   - Call `inspect_semantic_sources(tables=[...])` with the physical tables that require live schema and relationship evidence. Batch tables into one call when practical.
    - Extract column comments (COMMENT) from DDL and keep them in their ORIGINAL language (e.g. Chinese). DO NOT TRANSLATE.
    - Do not repeat individual schema or relationship discovery calls when the combined inspection succeeded.
 

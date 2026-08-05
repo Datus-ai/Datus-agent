@@ -746,6 +746,8 @@ class TestGetSystemPrompt:
 
         assert '<required_skill name="osi-semantic-authoring">' in prompt
         assert "OSI core semantics only" in prompt
+        assert "Every physical column referenced by a requested metric expression" in prompt
+        assert "`ac_code` in `COUNT(DISTINCT ac_code)` is a plain field" in prompt
         assert '<required_skill name="metricflow-semantic-authoring">' not in prompt
 
     def test_metricflow_authoring_injects_metricflow_required_skill(self, real_agent_config, mock_llm_create):
