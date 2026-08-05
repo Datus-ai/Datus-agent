@@ -544,3 +544,82 @@ class TestLanguageDirective:
             tool.execute(_make_input(df))
 
         assert mock_gpm.return_value.render_template.call_args.kwargs["language_directive"] == ""
+
+
+class TestHeuristicLanguage:
+    """No LLM means no generated wording — the fallback still has to honour the language."""
+
+    def _bar_df(self):
+        # More distinct categories than max_pie_categories, so the heuristic
+        # lands on Bar rather than Pie.
+        return pd.DataFrame({"region": list("ABCDEFGHI"), "sales": list(range(9))})
+
+    def test_rule_based_reason_is_localized(self):
+        tool = _make_tool(model=None)
+        reason = tool._rule_based_recommendation(self._bar_df(), language="zh-CN").reason
+        assert "region" in reason
+        assert "sales" in reason
+        assert not reason.isascii()
+
+    def test_rule_based_reason_defaults_to_english(self):
+        tool = _make_tool(model=None)
+        assert tool._rule_based_recommendation(self._bar_df()).reason.isascii()
+
+    def test_execute_without_model_localizes_the_fallback(self):
+        tool = _make_tool(model=None)
+        result = tool.execute(_make_input(self._bar_df()), language="zh-CN")
+        assert result.chart_type == "Bar Chart"
+        assert not result.reason.isascii()
+
+    def test_execute_with_context_localizes_the_fallback(self):
+        tool = _make_tool(model=None)
+        result = tool.execute_with_context(_make_input(self._bar_df()), sql="SELECT 1", language="zh")
+        assert result.chart_type == "Bar Chart"
+        assert not result.reason.isascii()
+
+    def test_llm_failure_falls_back_in_the_requested_language(self):
+        mock_model = MagicMock()
+        mock_model.generate_with_json_output.side_effect = Exception("LLM error")
+        tool = _make_tool(model=mock_model)
+
+        with patch("datus.tools.llms_tools.visualization_tool.get_prompt_manager") as mock_gpm:
+            mock_gpm.return_value.render_template.return_value = "prompt"
+            result = tool.execute(_make_input(self._bar_df()), language="zh")
+
+        assert result.success is True
+        assert not result.reason.isascii()
+
+    def test_agent_config_language_applies_without_an_explicit_override(self):
+        config = MagicMock()
+        config.language = "zh"
+        tool = VisualizationTool(agent_config=config, model=None)
+        assert not tool._rule_based_recommendation(self._bar_df()).reason.isascii()
+
+    def test_explicit_language_wins_over_agent_config(self):
+        config = MagicMock()
+        config.language = "zh"
+        tool = VisualizationTool(agent_config=config, model=None)
+        assert tool._rule_based_recommendation(self._bar_df(), language="en").reason.isascii()
+
+    def test_reason_survives_non_string_column_labels(self):
+        """A DataFrame can carry int labels (``pd.DataFrame([[1,2]])``). Rendering
+        the reason must not be what breaks on them — VisualizationOutput's own
+        ``x_col: str`` contract is the layer that rejects such a frame."""
+        tool = _make_tool(model=None)
+        reason = tool._default_reason("Scatter Plot", 0, [1], language="zh")
+        assert "0" in reason and "1" in reason
+
+    def test_empty_dataset_reason_is_localized(self):
+        tool = _make_tool(model=None)
+        result = tool.execute(_make_input(pd.DataFrame()), language="zh")
+        assert result.success is False
+        assert not result.reason.isascii()
+        # The developer-facing error stays English; only the user-facing reason moves.
+        assert result.error.isascii()
+
+    def test_empty_dataset_reason_is_localized_with_context(self):
+        tool = _make_tool(model=None)
+        result = tool.execute_with_context(_make_input(pd.DataFrame()), sql="SELECT 1", language="zh")
+        assert result.success is False
+        assert not result.reason.isascii()
+        assert result.error.isascii()

@@ -804,12 +804,14 @@ cleanup_all() {
     rm -rf "$NIGHTLY_PYTEST_BASETEMP"
   fi
   cleanup_all_compose
+  "$REPO_ROOT/ci/cleanup-run-testcontainers.sh"
 }
 
 if [ "${1:-}" = "--cleanup-only" ]; then
   NIGHTLY_SKIP_MANIFEST_FINALIZE=1
   cleanup_all
-  exit 0
+  cleanup_status=$?
+  exit "$cleanup_status"
 fi
 
 handle_interrupt() {

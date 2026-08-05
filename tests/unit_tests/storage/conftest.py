@@ -5,15 +5,37 @@ discovered backends so that store-level tests automatically repeat on every
 available rdb+vector combination.
 """
 
+from collections.abc import Iterator
+
 import pytest
 from datus_storage_base.backend_config import RdbBackendConfig, StorageBackendConfig, VectorBackendConfig
 
 from datus.storage.backend_holder import init_backends, reset_backends
 from datus.storage.registry import clear_storage_registry
 from datus.utils.path_manager import DatusPathManager, reset_path_manager, set_current_path_manager
-from tests.unit_tests.storage._backend_discovery import discover_test_backends
+from tests.unit_tests.storage._backend_discovery import (
+    BackendTestConfig,
+    discover_test_backends,
+    setup_test_backend,
+    teardown_test_backend,
+)
 
-_BACKENDS = discover_test_backends()
+_BACKEND_SPECS = discover_test_backends()
+
+
+@pytest.fixture(scope="session", params=_BACKEND_SPECS, ids=lambda backend: backend.id)
+def _storage_backend_environment(request) -> Iterator[BackendTestConfig]:
+    """Own one backend environment for the lifetime of its parameterized test session."""
+    try:
+        backend = setup_test_backend(request.param)
+    except Exception as exc:
+        pytest.skip(  # audit-noqa: try_except_skip - external backend availability is optional
+            f"Storage backend {request.param.id} is unavailable: {exc}"
+        )
+    try:
+        yield backend
+    finally:
+        teardown_test_backend(backend)
 
 
 @pytest.fixture
@@ -27,10 +49,10 @@ def storage_test_project():
     return "test"
 
 
-@pytest.fixture(autouse=True, params=_BACKENDS, ids=lambda b: b.id)
-def _init_storage_backends(request, tmp_path, storage_test_project):
+@pytest.fixture(autouse=True)
+def _init_storage_backends(_storage_backend_environment, tmp_path, storage_test_project) -> Iterator[BackendTestConfig]:
     """Ensure storage backends are configured with a valid data_dir for every storage test."""
-    backend = request.param
+    backend = _storage_backend_environment
     config = StorageBackendConfig(
         rdb=RdbBackendConfig(type=backend.rdb_type, params=backend.rdb_params),
         vector=VectorBackendConfig(type=backend.vector_type, params=backend.vector_params),
@@ -76,22 +98,14 @@ def agent_project_name(storage_test_project):
     return storage_test_project
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """Clean up backend test environments at session end."""
-    from tests.unit_tests.storage._backend_discovery import cleanup_test_environments
-
-    cleanup_test_environments()
-
-
 def pytest_runtest_setup(item):
     """Skip tests based on backend_specific marker."""
     for marker in item.iter_markers("backend_specific"):
         required = marker.args[0] if marker.args else None
         if not required:
             continue
-        # Find the backend config from the _init_storage_backends param
-        backend = None
-        if hasattr(item, "callspec") and "_init_storage_backends" in item.callspec.params:
-            backend = item.callspec.params["_init_storage_backends"]
-        if backend and required != backend.rdb_type and required != backend.vector_type:
+        backend_spec = None
+        if hasattr(item, "callspec") and "_storage_backend_environment" in item.callspec.params:
+            backend_spec = item.callspec.params["_storage_backend_environment"]
+        if backend_spec and required != backend_spec.rdb_type and required != backend_spec.vector_type:
             pytest.skip(f"Requires {required} backend")
