@@ -431,7 +431,11 @@ class SqlModelingPlanTools:
         if not isinstance(raw_contracts, list):
             raise ValueError("candidate_plan.queryability_contracts must be a JSON array.")
         known_sources = {source.source_sql_name for source in self._plan.source_queries}
-        known_outputs = set(self._baseline_output_ids)
+        known_outputs = {
+            str(output.get("output_id") or "").strip()
+            for output in outputs
+            if str(output.get("output_id") or "").strip()
+        }
         metric_outputs = {
             str(output.get("output_id") or "").strip()
             for output in outputs

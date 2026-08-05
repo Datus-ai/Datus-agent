@@ -2421,6 +2421,9 @@ class SemanticDiscoveryTools:
         if force_preservation or not isinstance(root_scope.expression, exp.Select):
             return True
 
+        if any(root_scope.expression.args.get(key) for key in ("having", "qualify", "limit", "offset")):
+            return True
+
         derived_sources = [
             source for _node, source in root_scope.selected_sources.values() if isinstance(source, Scope)
         ]

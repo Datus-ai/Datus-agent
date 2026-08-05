@@ -314,8 +314,8 @@ class TestGenMetricsV12Template:
         assert "explicitly names a readable SQL file" in result
         assert "call `read_file` first" in result
         assert "use `finalize=false` batches for a large input" in result
-        assert "Do not parse or extract candidates from the SQL independently" in result
-        assert "Do not call a second extraction path" in result
+        assert "Treat metric-role outputs as an editable draft" in result
+        assert "call `update_sql_modeling_plan` and retry validation" in result
 
     @pytest.mark.parametrize(
         "template_name",
@@ -356,6 +356,7 @@ class TestGenMetricsV12Template:
         assert read_instruction in result
         assert planner_instruction in result
         assert result.index(read_instruction) < result.index(planner_instruction)
+        assert "`update_sql_modeling_plan`" in result
         assert "CSV file" not in result
 
     def test_v12_template_mentions_skill(self):

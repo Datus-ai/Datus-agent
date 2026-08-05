@@ -564,10 +564,18 @@ class TestMetricFilesystemFuncTool:
         assert json.loads(authored["custom_extensions"][0]["data"])["source_type"] == "query"
         osi_schema_validator.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "exact_sql",
+        [
+            "WITH\r\nscoped AS (SELECT * FROM sales)\nSELECT COUNT(*) AS sale_count FROM scoped;",
+            "SELECT\tCOUNT(*) AS sale_count FROM sales;",
+        ],
+    )
     def test_query_backed_dataset_upsert_accepts_generated_sql(
         self,
         tmp_path,
         osi_schema_validator,
+        exact_sql,
     ):
         target = tmp_path / "subject" / "semantic_models" / "warehouse" / "sales.yml"
         target.parent.mkdir(parents=True)
@@ -575,7 +583,6 @@ class TestMetricFilesystemFuncTool:
             "version: 0.2.0.dev0\nsemantic_model:\n  - name: sales\n    datasets: []\n",
             encoding="utf-8",
         )
-        exact_sql = "WITH scoped AS (SELECT * FROM sales)\nSELECT COUNT(*) AS sale_count FROM scoped;"
         evidence = GenerationEvidence()
         tool = OsiSemanticModelFilesystemFuncTool(
             root_path=str(tmp_path),

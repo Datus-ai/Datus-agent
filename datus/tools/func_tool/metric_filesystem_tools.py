@@ -3,6 +3,7 @@
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
@@ -117,7 +118,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
                 return FuncToolResult(success=0, error=f"datasets_json[{index}] must be a JSON object")
             dataset = dict(dataset)
             source = str(dataset.get("source") or "").lstrip().lower()
-            if source.startswith(("select ", "select\n", "with ", "with\n")):
+            if re.match(r"^(?:select|with)\s", source):
                 dataset["custom_extensions"] = self._query_source_extensions(dataset.get("custom_extensions"))
             name = str(dataset.get("name") or "").strip()
             if not name:
@@ -131,6 +132,7 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             if guard_error is not None:
                 return guard_error
             creating = not target_path.exists()
+            original_content = b""
             if creating:
                 planned = self.osi_target_state.planned if self.osi_target_state is not None else None
                 planned_name = str((planned or {}).get("semantic_model_name") or "").strip()

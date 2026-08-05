@@ -2194,7 +2194,10 @@ class GenerationTools:
             metric_plan = (self.metric_rag, metric_file, metric_objects)
             replacement_plans = [*semantic_replacement_plans, metric_plan]
             snapshots = snapshot_artifact_replacements(replacement_plans)
-            metric_snapshot = snapshots[-1][2]
+            metric_snapshot = next(
+                (rows for rag, path, rows in snapshots if rag is self.metric_rag and path == metric_file),
+                [],
+            )
             self._preserve_existing_metric_sql(metric_objects, metric_snapshot)
             if full_artifact_sync:
                 for row in _rows_to_dicts(metric_snapshot):

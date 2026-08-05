@@ -574,7 +574,68 @@ class TestSqlModelingPlanTools:
         result = tool.update_sql_modeling_plan(revised)
 
         assert result.success == 0
-        assert any(token in result.error.lower() for token in ("cannot", "requires", "non-metric"))
+        assert any(token in result.error.lower() for token in ("cannot", "requires", "non-metric", "unknown output"))
+
+    def test_plan_update_accepts_new_output_with_matching_contract(self):
+        sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
+        tool, _, _ = self._tool()
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            source_queries=[SourceQueryEvidence(source_sql_name="orders", sql=sql)],
+            candidate_plan={
+                "available": True,
+                "outputs": [
+                    {
+                        "output_id": "orders:output_1",
+                        "source_id": "orders",
+                        "name": "order_count",
+                        "role": "metric",
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "orders:group_1",
+                        "source_id": "orders",
+                        "metric_output_ids": ["orders:output_1"],
+                        "dimensions": ["region"],
+                    }
+                ],
+            },
+        )
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ):
+            tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "orders", "sql": sql}])
+
+        revised = {
+            "available": True,
+            "outputs": [
+                *plan.candidate_plan["outputs"],
+                {
+                    "output_id": "orders:output_2",
+                    "source_id": "orders",
+                    "name": "revenue",
+                    "expression": "SUM(amount)",
+                    "role": "metric",
+                },
+            ],
+            "queryability_contracts": [
+                *plan.candidate_plan["queryability_contracts"],
+                {
+                    "contract_id": "orders:group_2",
+                    "source_id": "orders",
+                    "metric_output_ids": ["orders:output_2"],
+                    "dimensions": ["region"],
+                },
+            ],
+        }
+
+        result = tool.update_sql_modeling_plan(revised)
+
+        assert result.success == 1
+        assert result.result["candidate_plan"]["queryability_contracts"][-1]["metric_output_ids"] == ["orders:output_2"]
 
     def test_plan_update_is_rejected_after_publish(self):
         sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"

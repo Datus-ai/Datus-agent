@@ -114,7 +114,7 @@ Only include dimensions that are actually used in the SQL queries.
 
 ### Step 4: Preserve SQL Semantics
 
-Use the original `source_sql` as evidence when deciding dependencies, literals, filters, joins, windows, HAVING behavior, output grain, and business names. Preserve those semantics in authored metrics or corrected query-backed SQL. Put corrected query-backed definitions in `generated_sql`, update the compact plan, and leave the original SQL unchanged.
+Use the original `source_sql` as evidence when deciding dependencies, literals, filters, joins, windows, HAVING behavior, output grain, and business names. Preserve those semantics in authored metrics or corrected query-backed SQL. Put corrected query-backed definitions in `generated_sql`, submit the corrected plan with `update_sql_modeling_plan`, and leave the original SQL unchanged.
 
 ### Step 5: Find or Create Semantic Model
 

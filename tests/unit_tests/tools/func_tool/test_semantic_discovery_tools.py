@@ -2186,6 +2186,17 @@ class TestMetricCandidateAnalyzer:
             }
         ]
 
+    def test_root_top_n_aggregation_preserves_source_sql(self):
+        tools = _make_tools()
+        result = tools._analyze_metric_candidates(
+            sql_queries=[
+                "SELECT region, SUM(amount) AS revenue FROM orders GROUP BY region ORDER BY revenue DESC LIMIT 10"
+            ]
+        )
+
+        assert result.result["metric_requirements"][0]["preserve_source_sql"] is True
+        assert len(result.result["dataset_requirements"]) == 1
+
     def test_queryability_contract_reuses_scope_lineage_for_cte_aliases(self):
         tools = _make_tools()
         result = tools._analyze_metric_candidates(
