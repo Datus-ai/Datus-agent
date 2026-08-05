@@ -3374,6 +3374,8 @@
       
         
       
+        
+      
     
     
     
@@ -3601,6 +3603,34 @@
     
   
     OSI Semantic Adapter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dosi_semantic_adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dosi Semantic Adapter
   
 
     
@@ -4304,6 +4334,7 @@
 <ul>
 <li><a href="../metricflow_semantic_adapter/">MetricFlow Semantic Adapter</a></li>
 <li><a href="../osi_semantic_adapter/">OSI Semantic Adapter</a></li>
+<li><a href="../dosi_semantic_adapter/">Dosi Semantic Adapter</a></li>
 </ul>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
 <p>Semantic adapters provide a unified interface for:</p>
@@ -4314,7 +4345,7 @@
 <li>validating semantic assets before publishing</li>
 <li>syncing validated semantic assets into the Datus Knowledge Base</li>
 </ul>
-<p>Two adapters are currently supported:</p>
+<p>Three adapters are currently supported:</p>
 <table>
 <thead>
 <tr>
@@ -4340,12 +4371,20 @@
 <td>MetricFlow by default</td>
 <td>Ready</td>
 </tr>
+<tr>
+<td>Dosi</td>
+<td><code>datus-semantic-dosi</code></td>
+<td>strict OSI core YAML + DATUS custom extensions</td>
+<td>Native Dosi engine</td>
+<td>Ready</td>
+</tr>
 </tbody>
 </table>
-<p>MetricFlow and OSI are peer semantic adapters. The difference is what users and generation agents author:</p>
+<p>MetricFlow, OSI, and Dosi are peer semantic adapters. They differ in what users and generation agents author and how the authored model is executed:</p>
 <ul>
 <li>MetricFlow mode authors MetricFlow YAML directly.</li>
 <li>OSI mode authors OSI core YAML and lets <code>datus-semantic-osi</code> compile it to Datus Semantic IR before lowering to MetricFlow.</li>
+<li>Dosi mode authors the same OSI format but compiles, plans, and executes it directly in the Rust engine.</li>
 </ul>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>datus-agent
@@ -4360,8 +4399,10 @@
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>└── Adapter packages
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    ├── datus-semantic-metricflow
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    │   └── MetricFlowAdapter
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    └── datus-semantic-osi
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        └── DatusOSIAdapter
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    ├── datus-semantic-osi
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    │   └── DatusOSIAdapter
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    └── datus-semantic-dosi
+</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        └── DosiAdapter
 </span></code></pre></div>
 <p>Adapters are discovered through Python entry points under <code>datus.semantic_adapters</code>.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
@@ -4374,8 +4415,10 @@
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
 </span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
 </span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">execution_backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">metricflow</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
 </span></code></pre></div>
-<p>The key under <code>services.semantic_layer</code> must equal the adapter type, for example <code>metricflow</code> or <code>osi</code>. If a <code>type:</code> field is present, it must match the key.
+<p>The key under <code>services.semantic_layer</code> must equal the adapter type, for example <code>metricflow</code>, <code>osi</code>, or <code>dosi</code>. If a <code>type:</code> field is present, it must match the key.
 The selected semantic adapter is global. Legacy node-level <code>semantic_adapter</code> and <code>authoring_format</code> fields are ignored.</p>
 <p>See <a href="../../configuration/semantic_layer/">Semantic Layer Configuration</a> for selection rules, defaults, and project-level pins.</p>
 <h2 id="core-interface">Core Interface<a class="headerlink" href="#core-interface" title="Permanent link">&para;</a></h2>
@@ -4420,6 +4463,12 @@ The selected semantic adapter is global. Legacy node-level <code>semantic_adapte
 <li>you want Datus-specific execution hints isolated in <code>custom_extensions</code></li>
 <li>you want LLM generation to avoid backend YAML fields such as <code>measure_proxy</code>, <code>type_params</code>, and <code>data_source</code></li>
 <li>you still want to execute through MetricFlow today</li>
+</ul>
+<p>Use Dosi when:</p>
+<ul>
+<li>you want the same strict OSI authoring workflow</li>
+<li>aggregate, ratio, and expression metrics cover the model</li>
+<li>you want native join planning, fan-out protection, and execution without MetricFlow</li>
 </ul>
 <h2 id="implementing-a-custom-adapter">Implementing a Custom Adapter<a class="headerlink" href="#implementing-a-custom-adapter" title="Permanent link">&para;</a></h2>
 <p>Implement a semantic adapter by extending <code>BaseSemanticAdapter</code> and registering it through an entry point:</p>

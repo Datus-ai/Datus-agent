@@ -3226,6 +3226,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dosi-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dosi Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configuring-through-the-cli-services" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3476,6 +3487,8 @@
       
         
       
+        
+      
     
     
     
@@ -3590,6 +3603,34 @@
     
   
     OSI Semantic Adapter
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../adapters/dosi_semantic_adapter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dosi Semantic Adapter
   
 
     
@@ -4241,6 +4282,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#dosi-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dosi Notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#configuring-through-the-cli-services" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4296,6 +4348,10 @@ format explicitly.</p>
 </span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">osi</span><span class="p">:</span>
 </span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">        </span><span class="c1"># execution_backend defaults to metricflow and normally does not need</span>
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">        </span><span class="c1"># to be configured.</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">      </span><span class="nt">dosi</span><span class="p">:</span>
+</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">        </span><span class="c1"># Native Dosi execution; semantic_model_path is only needed when the</span>
+</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">        </span><span class="c1"># datasource directory contains more than one OSI model file.</span>
 </span></code></pre></div>
 <h2 id="selection-rules">Selection Rules<a class="headerlink" href="#selection-rules" title="Permanent link">&para;</a></h2>
 <p><code>AgentConfig.resolve_semantic_adapter</code> resolves the active semantic
@@ -4330,16 +4386,23 @@ Comparison is case-insensitive and trims surrounding whitespace.</p>
 <li>The current OSI execution backend is MetricFlow by default. You normally do not need to set <code>execution_backend</code>.</li>
 <li>Configure <code>services.semantic_layer.osi</code> and mark it <code>default: true</code> to select this path globally when other adapters are also configured. An empty <code>osi: {}</code> entry is selected automatically only when it is the sole semantic adapter, or when the current project pins <code>semantic: osi</code>.</li>
 </ul>
+<h2 id="dosi-notes">Dosi Notes<a class="headerlink" href="#dosi-notes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Dosi uses the same OSI authoring format and DATUS <code>custom_extensions</code> workflow.</li>
+<li><code>datus-semantic-dosi</code> executes directly through the native engine; it does not set <code>execution_backend: metricflow</code>.</li>
+<li>The adapter loads one OSI document per instance. If the datasource model directory contains several files, configure <code>semantic_model_path</code> explicitly.</li>
+<li><code>pip install datus-semantic-dosi</code> installs the adapter and <code>dosi-engine</code> together.</li>
+</ul>
 <h2 id="configuring-through-the-cli-services">Configuring through the CLI (<code>/services</code>)<a class="headerlink" href="#configuring-through-the-cli-services" title="Permanent link">&para;</a></h2>
 <p>Run <code>/services semantic</code> inside the Datus REPL (or press <code>Tab</code> from any
 other tab) to enter the configuration TUI on the <strong>Semantic</strong> tab. The
 tab lets you:</p>
 <ul>
 <li>Add a new semantic layer by pressing <code>Enter</code> on the trailing <code>+ Add
-  new semantic</code> row. Choose the adapter type, such as <code>metricflow</code> or
-  <code>osi</code>. If the adapter package isn't installed, install the matching
+  new semantic</code> row. Choose the adapter type, such as <code>metricflow</code>, <code>osi</code>, or
+  <code>dosi</code>. If the adapter package isn't installed, install the matching
   package first, for example <code>datus-semantic-metricflow</code> or
-  <code>datus-semantic-osi</code>.</li>
+  <code>datus-semantic-dosi</code>.</li>
 <li>Delete an entry with <code>x</code> and run a registration probe with <code>t</code>.</li>
 <li>Toggle the <strong>global</strong> <code>default: true</code> flag with <code>d</code>. Pressing <code>d</code>
   marks the current row as default and clears the flag from every other

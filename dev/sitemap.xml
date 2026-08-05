@@ -61,6 +61,12 @@
         <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/adapters/db_adapters/"/>
     </url>
     <url>
+        <loc>https://docs.datus.ai/dev/dev/adapters/dosi_semantic_adapter/</loc>
+        <lastmod>2026-08-05</lastmod>
+        <changefreq>daily</changefreq>
+        <xhtml:link rel="alternate" hreflang="en" href="https://docs.datus.ai/dev/dev/adapters/dosi_semantic_adapter/"/>
+    </url>
+    <url>
         <loc>https://docs.datus.ai/dev/dev/adapters/metricflow_semantic_adapter/</loc>
         <lastmod>2026-08-05</lastmod>
         <changefreq>daily</changefreq>
