@@ -86,6 +86,9 @@ _DIST_JS_NAME = "index.umd.js"
 # ``${VAR}`` / ``${VAR:-default}`` — the whole-value placeholder shape that
 # ``resolve_env`` (agent_config.py) expands at load time.
 _PLACEHOLDER_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}$")
+# Non-anchored variant for harvesting placeholders embedded inside larger
+# strings (URIs, header values, …).
+_PLACEHOLDER_ANY_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}")
 
 # Key names treated as secret-bearing wherever they appear in config trees.
 # Base list mirrors ``observability.config.RedactConfig`` and is extended for
@@ -966,8 +969,28 @@ def generate_agent_yml(
             data.pop("agentic_nodes", None)
 
     _sanitize_agent_tree(data, alloc, warnings)
+    # Non-secret fields also carry ``${VAR}`` placeholders (datasource host/
+    # port/database, base URLs, …). They never pass through the secret-path
+    # rewriters, but the receiver still has to export them — harvest every
+    # remaining placeholder so the README env table is complete.
+    _harvest_placeholders(data, "", alloc)
     text = yaml.safe_dump({"agent": data}, allow_unicode=True, sort_keys=False)
     return text.encode("utf-8"), warnings
+
+
+def _harvest_placeholders(tree: Any, config_path: str, alloc: _PlaceholderAllocator) -> None:
+    """Record every ``${VAR}`` occurrence (whole-value or embedded) as a binding."""
+    if isinstance(tree, dict):
+        for key, value in tree.items():
+            child = f"{config_path}.{key}" if config_path else str(key)
+            _harvest_placeholders(value, child, alloc)
+    elif isinstance(tree, list):
+        for idx, item in enumerate(tree):
+            _harvest_placeholders(item, f"{config_path}[{idx}]", alloc)
+    elif isinstance(tree, str):
+        for var in _PLACEHOLDER_ANY_RE.findall(tree):
+            if var not in alloc._used:
+                alloc._record(var, config_path, preexisting=True)
 
 
 def generate_mcp_json(source_home: Path, alloc: _PlaceholderAllocator) -> Optional[bytes]:
@@ -1001,6 +1024,7 @@ def generate_mcp_json(source_home: Path, alloc: _PlaceholderAllocator) -> Option
             env = entry.get("env")
             if isinstance(env, dict):
                 _rewrite_secret_named_keys(env, f"{prefix}_ENV", f".mcp.json:{name}.env", alloc)
+    _harvest_placeholders(payload, ".mcp.json", alloc)
     return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 

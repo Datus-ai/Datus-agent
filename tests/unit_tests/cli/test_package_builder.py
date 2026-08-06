@@ -46,7 +46,8 @@ def _agent_yaml(fake_home: Path) -> dict:
                 "datasources": {
                     "sales_db": {
                         "type": "starrocks",
-                        "host": "localhost",
+                        "host": "${SR_HOST}",
+                        "port": "${SR_PORT:-9030}",
                         "username": "admin",
                         "password": "hunter2",
                         "private_key": "-----BEGIN PRIVATE KEY-----\nxyz\n-----END PRIVATE KEY-----",
@@ -272,6 +273,17 @@ class TestAgentYmlGeneration:
         assert {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TAVILY_API_KEY"} <= vars_seen
         preexisting = {binding.var for binding in result.env_vars if binding.preexisting}
         assert "ANTHROPIC_API_KEY" in preexisting and "AIRFLOW_PASSWORD" in preexisting
+
+    def test_non_secret_placeholders_harvested_for_readme(self, project):
+        """Placeholders on NON-secret fields (host/port/…) never pass through
+        the secret rewriters, but the receiver still must export them — they
+        must land in the env bindings and the README table."""
+        result = _build(project)
+        by_var = {binding.var: binding for binding in result.env_vars}
+        assert "SR_HOST" in by_var and by_var["SR_HOST"].preexisting is True
+        assert "SR_PORT" in by_var  # ${VAR:-default} form is harvested too
+        readme = _member(result, "README.md").decode("utf-8")
+        assert "SR_HOST" in readme
 
     def test_uri_password_component_rewritten(self, project):
         agent = self._generated(_build(project))
