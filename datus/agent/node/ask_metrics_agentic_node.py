@@ -445,11 +445,12 @@ class AskMetricsAgenticNode(AgenticNode):
         metrics, AskMetrics expands the request to include related executable
         metrics when they are already present in the catalog.
 
-        Joined dimensions always use matched-rows join semantics: fact rows
-        that cannot match the requested dimension are excluded. Unmatched-fact
-        audits and zero-filled dimension enumeration are not supported; state
-        the limitation to the user instead of emulating those shapes with
-        where filters.
+        How a joined dimension treats facts that match no dimension row is
+        declared in the semantic model per relationship. They may therefore
+        come back grouped under an empty dimension value, or be excluded — read
+        the result and the `join_policy_filtered_rows` metadata instead of
+        assuming either. Dimension values that appear in no fact row are never
+        returned.
 
         Args:
             metrics: Metric names to query.
