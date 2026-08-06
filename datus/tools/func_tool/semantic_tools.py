@@ -151,10 +151,11 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
     return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
 
 
-# `metric_datasets` pages through the catalog until a page comes back short.
-# The cap bounds an adapter that ignores `offset` and keeps returning full pages.
+# Defaults for `metric_datasets` paging; override per adapter under
+# `services.semantic_layer.<adapter>` with `metric_catalog_page_size` /
+# `metric_catalog_max_pages`.
 _METRIC_DATASETS_PAGE_SIZE = 500
-_METRIC_DATASETS_MAX_PAGES = 200
+_METRIC_DATASETS_MAX_PAGES = 2000
 
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
@@ -444,25 +445,49 @@ class SemanticTools:
                 str(name): [str(ds) for ds in datasets or []] for name, datasets in _run_async(lightweight()).items()
             }
 
+        page_size, max_pages = self._metric_catalog_paging()
         mapping: Dict[str, List[str]] = {}
         offset = 0
-        for _ in range(_METRIC_DATASETS_MAX_PAGES):
-            page = list(_run_async(adapter.list_metrics(limit=_METRIC_DATASETS_PAGE_SIZE, offset=offset)))
+        for _ in range(max_pages):
+            page = list(_run_async(adapter.list_metrics(limit=page_size, offset=offset)))
+            if not page:
+                return mapping
             for metric in page:
                 name = str(getattr(metric, "name", "") or "")
                 if not name:
                     continue
                 metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
                 mapping[name] = [str(dataset) for dataset in (metadata.get("datasets") or [])]
-            if len(page) < _METRIC_DATASETS_PAGE_SIZE:
-                return mapping
             offset += len(page)
 
         logger.warning(
-            "Metric catalog exceeded %d pages; dataset mapping may be incomplete.",
-            _METRIC_DATASETS_MAX_PAGES,
+            "Metric catalog still returning rows after %d pages; reporting the mapping as unavailable.",
+            max_pages,
         )
         return None
+
+    def _metric_catalog_paging(self) -> Tuple[int, int]:
+        """Page size and page cap for `metric_datasets`, from the adapter's config."""
+        config: Dict[str, Any] = {}
+        getter = getattr(self.agent_config, "get_semantic_layer_config", None)
+        if callable(getter):
+            try:
+                config = getter(self.adapter_type) or {}
+            except Exception as e:  # noqa: BLE001 - a bad config must not break tool calls
+                logger.warning("Could not read semantic layer config for metric paging: %s", e)
+
+        def _positive(key: str, default: int) -> int:
+            try:
+                value = int(config.get(key) or default)
+            except (TypeError, ValueError):
+                logger.warning("Invalid %s=%r; using %d", key, config.get(key), default)
+                return default
+            return value if value > 0 else default
+
+        return (
+            _positive("metric_catalog_page_size", _METRIC_DATASETS_PAGE_SIZE),
+            _positive("metric_catalog_max_pages", _METRIC_DATASETS_MAX_PAGES),
+        )
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""

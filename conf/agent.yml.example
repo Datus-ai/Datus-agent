@@ -286,6 +286,8 @@ agent:
       metricflow: {}
       # metricflow:                 # alternative: pin as global default
       #   default: true
+      #   metric_catalog_page_size: 500   # rows per list_metrics request when
+      #   metric_catalog_max_pages: 2000  # building the metric->dataset map
     bi_platforms:
       superset:
         type: superset
