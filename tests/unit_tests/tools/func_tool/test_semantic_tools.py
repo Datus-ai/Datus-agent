@@ -705,6 +705,41 @@ class TestQueryMetricsCompression:
         ):
             assert semantic_tools.metric_datasets() is None
 
+    def test_metric_datasets_accepts_a_catalog_that_exactly_fills_the_bound(self, semantic_tools):
+        """Filling the page bound is not the same as exceeding it."""
+        max_pages = 3
+
+        def list_metrics(limit, offset):
+            if offset >= max_pages:
+                return []
+            return [SimpleNamespace(name=f"m{offset}", metadata={"datasets": ["orders"]})]
+
+        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(1, max_pages)),
+        ):
+            mapping = semantic_tools.metric_datasets()
+
+        assert sorted(mapping) == ["m0", "m1", "m2"]
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("orders", ["orders"]),
+            (["orders", "users"], ["orders", "users"]),
+            (["orders", "", "  "], ["orders"]),
+            (None, []),
+            (42, []),
+        ],
+    )
+    def test_metric_datasets_normalizes_the_reported_shape(self, semantic_tools, raw, expected):
+        """A lone string names one dataset; iterating it would yield characters."""
+        metrics = [SimpleNamespace(name="revenue", metadata={"datasets": raw})]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": expected}
+
     def test_metric_catalog_paging_reads_the_adapter_config(self, semantic_tools):
         semantic_tools.agent_config.get_semantic_layer_config = lambda adapter_type=None: {
             "metric_catalog_page_size": 50,

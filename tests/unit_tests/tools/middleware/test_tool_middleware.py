@@ -365,6 +365,21 @@ class TestApplyToolTransformers:
         assert seen == [{"revenue": ["orders"]}, {"revenue": ["orders"], "signups": ["users"]}]
 
     @pytest.mark.asyncio
+    async def test_metric_datasets_of_unexpected_type_is_dropped(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: "not a mapping")
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] is None
+
+    @pytest.mark.asyncio
     async def test_unreadable_metric_catalog_yields_none(self):
         seen = {}
 

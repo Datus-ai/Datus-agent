@@ -80,6 +80,19 @@ def _normalize_metric_metadata(raw) -> dict:
     return safe_metadata
 
 
+def _normalize_dataset_names(raw) -> List[str]:
+    """Dataset names an adapter reports for a metric, as a list of non-empty strings.
+
+    A lone string names one dataset; iterating it would yield characters.
+    """
+    if isinstance(raw, str):
+        name = raw.strip()
+        return [name] if name else []
+    if isinstance(raw, (list, tuple, set)):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    return []
+
+
 def _normalize_name_list(value) -> List[str]:
     """Normalize LLM-provided string/list arguments into a clean list of names."""
     value = normalize_null(value)
@@ -153,9 +166,10 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
 
 # Defaults for `metric_datasets` paging; override per adapter under
 # `services.semantic_layer.<adapter>` with `metric_catalog_page_size` /
-# `metric_catalog_max_pages`.
-_METRIC_DATASETS_PAGE_SIZE = 500
-_METRIC_DATASETS_MAX_PAGES = 2000
+# `metric_catalog_max_pages`. The page is large because an adapter may rebuild
+# its whole catalog per request, making each extra page cost a full pass.
+_METRIC_DATASETS_PAGE_SIZE = 5000
+_METRIC_DATASETS_MAX_PAGES = 200
 
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
@@ -442,7 +456,7 @@ class SemanticTools:
         lightweight = getattr(adapter, "metric_datasets", None)
         if callable(lightweight):
             return {
-                str(name): [str(ds) for ds in datasets or []] for name, datasets in _run_async(lightweight()).items()
+                str(name): _normalize_dataset_names(datasets) for name, datasets in _run_async(lightweight()).items()
             }
 
         page_size, max_pages = self._metric_catalog_paging()
@@ -457,8 +471,12 @@ class SemanticTools:
                 if not name:
                     continue
                 metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
-                mapping[name] = [str(dataset) for dataset in (metadata.get("datasets") or [])]
+                mapping[name] = _normalize_dataset_names(metadata.get("datasets"))
             offset += len(page)
+
+        # A catalog that fills the bound exactly is complete; one more request tells them apart.
+        if not list(_run_async(adapter.list_metrics(limit=page_size, offset=offset))):
+            return mapping
 
         logger.warning(
             "Metric catalog still returning rows after %d pages; reporting the mapping as unavailable.",

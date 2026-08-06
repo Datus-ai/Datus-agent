@@ -173,10 +173,14 @@ def _metric_datasets(node: Any) -> Optional[Dict[str, List[str]]]:
     if not callable(getter):
         return None
     try:
-        return getter()
+        mapping = getter()
     except Exception as e:  # noqa: BLE001 - an unreadable catalog must not break tool calls
         logger.warning("Could not read metric datasets for transformer context: %s", e)
         return None
+    if mapping is not None and not isinstance(mapping, dict):
+        logger.warning("Ignoring metric datasets of unexpected type %s", type(mapping).__name__)
+        return None
+    return mapping
 
 
 def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]]) -> int:
