@@ -972,6 +972,26 @@ class ActionRenderer:
             return Text.from_markup(f"[dim]  \u23bf  {body}[/dim]")
         return Text.from_markup(body)
 
+    def render_running_tool(self, action: ActionHistory, frame: str, verbose: bool) -> List[RenderableType]:
+        """Render a still-running tool as permanent (non-Live) output.
+
+        The blinking frame lives in the pinned region, which is torn down
+        whenever the screen is rebuilt (Ctrl+O verbose snapshot). Re-emitting
+        the running tool here keeps an in-flight call visible instead of
+        letting it vanish from the transcript until it completes.
+
+        Verbose mode appends the same argument block
+        :meth:`_render_main_tool` prints for a completed call; the output
+        block is necessarily absent because the tool has not returned yet.
+        """
+        from datus.cli.action_display.tool_content import extract_args_markup
+
+        result: List[RenderableType] = [self.render_processing(action, frame)]
+        if verbose:
+            result.extend(Text.from_markup(f"    {line}") for line in extract_args_markup(action))
+        result.append(Text(""))
+        return result
+
     # -- utility renderables ------------------------------------------------
 
     def render_user_header(self, message: str) -> RenderableType:
