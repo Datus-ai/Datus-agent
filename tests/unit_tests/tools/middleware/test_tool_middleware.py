@@ -329,6 +329,73 @@ class TestApplyToolTransformers:
         assert seen["principal"] == {"tenant": {"id": "t1"}}
         assert seen["project_root"] == "/proj"
         assert seen["agent_config"] is node.agent_config
+        assert seen["metric_datasets"] is None
+
+    @pytest.mark.asyncio
+    async def test_context_carries_metric_datasets_from_semantic_tools(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: {"revenue": ["orders"]})
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] == {"revenue": ["orders"]}
+
+    @pytest.mark.asyncio
+    async def test_metric_datasets_read_fresh_per_call(self):
+        seen = []
+        catalog = {"revenue": ["orders"]}
+
+        def transformer(tool_name, args, context):
+            seen.append(context["metric_datasets"])
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: dict(catalog))
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+        catalog["signups"] = ["users"]
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen == [{"revenue": ["orders"]}, {"revenue": ["orders"], "signups": ["users"]}]
+
+    @pytest.mark.asyncio
+    async def test_metric_datasets_of_unexpected_type_is_dropped(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: "not a mapping")
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] is None
+
+    @pytest.mark.asyncio
+    async def test_unreadable_metric_catalog_yields_none(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        def boom():
+            raise RuntimeError("catalog unavailable")
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_tools = SimpleNamespace(metric_datasets=boom)
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] is None
 
     @pytest.mark.asyncio
     async def test_principal_read_fresh_per_call(self):

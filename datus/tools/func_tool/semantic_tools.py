@@ -80,6 +80,21 @@ def _normalize_metric_metadata(raw) -> dict:
     return safe_metadata
 
 
+def _normalize_dataset_names(raw: Any) -> List[str]:
+    """Dataset names an adapter reports for a metric, as a list of non-empty strings.
+
+    A lone string names one dataset; iterating it would yield characters. Only
+    string entries are kept — coercing anything else would invent names like
+    "None" that a policy could match on.
+    """
+    if isinstance(raw, str):
+        name = raw.strip()
+        return [name] if name else []
+    if isinstance(raw, (list, tuple, set)):
+        return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+    return []
+
+
 def _normalize_name_list(value) -> List[str]:
     """Normalize LLM-provided string/list arguments into a clean list of names."""
     value = normalize_null(value)
@@ -150,6 +165,13 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
     """Return true when a callable explicitly accepts ``name`` or arbitrary kwargs."""
     return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
 
+
+# Defaults for `metric_datasets` paging; override per adapter under
+# `services.semantic_layer.<adapter>` with `metric_catalog_page_size` /
+# `metric_catalog_max_pages`. The page is large because an adapter may rebuild
+# its whole catalog per request, making each extra page cost a full pass.
+_METRIC_DATASETS_PAGE_SIZE = 5000
+_METRIC_DATASETS_MAX_PAGES = 200
 
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
@@ -420,6 +442,82 @@ class SemanticTools:
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         return self._query_metrics_result_cache.get(cache_key)
+
+    def metric_datasets(self) -> Optional[Dict[str, List[str]]]:
+        """Metric name -> datasets it reads, for the tool-transformer context.
+
+        ``None`` when no adapter is configured; ``{}`` when the catalog is empty.
+        Consumers treat a name missing from the map as "no such metric", so every
+        page is read. Result is fresh on each call, making a metric added after a
+        model reload visible.
+        """
+        adapter = self.adapter
+        if adapter is None:
+            return None
+
+        lightweight = getattr(adapter, "metric_datasets", None)
+        if callable(lightweight):
+            reported = _run_async(lightweight())
+            if not isinstance(reported, Mapping):
+                logger.warning(
+                    "Adapter metric_datasets returned %s; reporting the mapping as unavailable.",
+                    type(reported).__name__,
+                )
+                return None
+            mapping = {}
+            for name, datasets in reported.items():
+                metric_name = str(name or "").strip()
+                if metric_name:
+                    mapping[metric_name] = _normalize_dataset_names(datasets)
+            return mapping
+
+        page_size, max_pages = self._metric_catalog_paging()
+        mapping: Dict[str, List[str]] = {}
+        offset = 0
+        for _ in range(max_pages):
+            page = list(_run_async(adapter.list_metrics(limit=page_size, offset=offset)))
+            if not page:
+                return mapping
+            for metric in page:
+                name = str(getattr(metric, "name", "") or "")
+                if not name:
+                    continue
+                metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
+                mapping[name] = _normalize_dataset_names(metadata.get("datasets"))
+            offset += len(page)
+
+        # A catalog that fills the bound exactly is complete; one more request tells them apart.
+        if not list(_run_async(adapter.list_metrics(limit=page_size, offset=offset))):
+            return mapping
+
+        logger.warning(
+            "Metric catalog still returning rows after %d pages; reporting the mapping as unavailable.",
+            max_pages,
+        )
+        return None
+
+    def _metric_catalog_paging(self) -> Tuple[int, int]:
+        """Page size and page cap for `metric_datasets`, from the adapter's config."""
+        config: Dict[str, Any] = {}
+        getter = getattr(self.agent_config, "get_semantic_layer_config", None)
+        if callable(getter):
+            try:
+                config = getter(self.adapter_type) or {}
+            except Exception as e:  # noqa: BLE001 - a bad config must not break tool calls
+                logger.warning("Could not read semantic layer config for metric paging: %s", e)
+
+        def _positive(key: str, default: int) -> int:
+            try:
+                value = int(config.get(key) or default)
+            except (TypeError, ValueError):
+                logger.warning("Invalid %s=%r; using %d", key, config.get(key), default)
+                return default
+            return value if value > 0 else default
+
+        return (
+            _positive("metric_catalog_page_size", _METRIC_DATASETS_PAGE_SIZE),
+            _positive("metric_catalog_max_pages", _METRIC_DATASETS_MAX_PAGES),
+        )
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""

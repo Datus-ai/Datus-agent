@@ -15,7 +15,7 @@ from datus.tools.func_tool.attribution_utils import (
 )
 from datus.tools.func_tool.base import FuncToolResult, normalize_null, trans_to_function_tool
 from datus.tools.func_tool.generation_evidence import GenerationEvidence
-from datus.tools.func_tool.semantic_tools import _run_async
+from datus.tools.func_tool.semantic_tools import SemanticTools, _run_async
 from datus.tools.semantic_tools.models import QueryResult, ValidationResult
 
 
@@ -646,6 +646,157 @@ class TestQueryMetricsCompression:
         assert result.success == 1
         assert result.result["metadata"]["join_policy"] == "match_only"
         assert result.result["metadata"]["join_policy_filtered_rows"] == 3
+
+    def test_metric_datasets_maps_names_from_catalog_metadata(self, semantic_tools):
+        """The adapter reports which datasets each metric reads."""
+        metrics = [
+            SimpleNamespace(name="revenue", metadata={"datasets": ["orders"]}),
+            SimpleNamespace(name="signups", metadata={"datasets": ["users"]}),
+        ]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": ["orders"], "signups": ["users"]}
+
+    def test_metric_datasets_reads_until_an_empty_page(self, semantic_tools):
+        """A truncated read would hide metrics from a policy that scopes by dataset."""
+        pages = [
+            [SimpleNamespace(name="a", metadata={"datasets": ["orders"]})],
+            [SimpleNamespace(name="b", metadata={"datasets": ["users"]})],
+            [],
+        ]
+        offsets = []
+
+        def list_metrics(limit, offset):
+            offsets.append(offset)
+            return pages[len(offsets) - 1]
+
+        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            mapping = semantic_tools.metric_datasets()
+
+        assert offsets == [0, 1, 2]
+        assert mapping == {"a": ["orders"], "b": ["users"]}
+
+    def test_metric_datasets_keeps_paging_when_the_adapter_caps_the_page(self, semantic_tools):
+        """An adapter may honour offset while returning fewer rows than requested."""
+        served = []
+
+        def list_metrics(limit, offset):
+            served.append((limit, offset))
+            if offset >= 3:
+                return []
+            return [SimpleNamespace(name=f"m{offset}", metadata={"datasets": ["orders"]})]
+
+        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            mapping = semantic_tools.metric_datasets()
+
+        assert [offset for _, offset in served] == [0, 1, 2, 3]
+        assert sorted(mapping) == ["m0", "m1", "m2"]
+
+    def test_metric_datasets_gives_up_on_an_adapter_that_ignores_offset(self, semantic_tools):
+        """An incomplete map must not look like a complete one."""
+        semantic_tools._adapter = SimpleNamespace(
+            list_metrics=lambda limit, offset: [SimpleNamespace(name="m", metadata={"datasets": ["orders"]})]
+        )
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(500, 3)),
+        ):
+            assert semantic_tools.metric_datasets() is None
+
+    def test_metric_datasets_accepts_a_catalog_that_exactly_fills_the_bound(self, semantic_tools):
+        """Filling the page bound is not the same as exceeding it."""
+        max_pages = 3
+
+        def list_metrics(limit, offset):
+            if offset >= max_pages:
+                return []
+            return [SimpleNamespace(name=f"m{offset}", metadata={"datasets": ["orders"]})]
+
+        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        with (
+            patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro),
+            patch.object(SemanticTools, "_metric_catalog_paging", return_value=(1, max_pages)),
+        ):
+            mapping = semantic_tools.metric_datasets()
+
+        assert sorted(mapping) == ["m0", "m1", "m2"]
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("orders", ["orders"]),
+            (["orders", "users"], ["orders", "users"]),
+            (["orders", "", "  "], ["orders"]),
+            (["orders", None, 1], ["orders"]),
+            (None, []),
+            (42, []),
+        ],
+    )
+    def test_metric_datasets_normalizes_the_reported_shape(self, semantic_tools, raw, expected):
+        """A lone string names one dataset; iterating it would yield characters."""
+        metrics = [SimpleNamespace(name="revenue", metadata={"datasets": raw})]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": expected}
+
+    def test_metric_catalog_paging_reads_the_adapter_config(self, semantic_tools):
+        semantic_tools.agent_config.get_semantic_layer_config = lambda adapter_type=None: {
+            "metric_catalog_page_size": 50,
+            "metric_catalog_max_pages": 10,
+        }
+        assert semantic_tools._metric_catalog_paging() == (50, 10)
+
+    @pytest.mark.parametrize("bad", [0, -1, "abc", None])
+    def test_metric_catalog_paging_falls_back_on_bad_values(self, semantic_tools, bad):
+        from datus.tools.func_tool.semantic_tools import _METRIC_DATASETS_PAGE_SIZE
+
+        semantic_tools.agent_config.get_semantic_layer_config = lambda adapter_type=None: {
+            "metric_catalog_page_size": bad
+        }
+        assert semantic_tools._metric_catalog_paging()[0] == _METRIC_DATASETS_PAGE_SIZE
+
+    def test_metric_datasets_keeps_metrics_without_dataset_information(self, semantic_tools):
+        """A metric reported without dataset information maps to an empty list."""
+        metrics = [SimpleNamespace(name="orphan", metadata={})]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: metrics if offset == 0 else [])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"orphan": []}
+
+    def test_metric_datasets_without_an_adapter_is_none(self, semantic_tools):
+        """An unavailable catalog is distinct from a readable empty one."""
+        with patch.object(type(semantic_tools), "adapter", property(lambda self: None)):
+            assert semantic_tools.metric_datasets() is None
+
+    @pytest.mark.parametrize("reported", [None, ["orders"], "orders"])
+    def test_metric_datasets_rejects_a_non_mapping_from_the_accessor(self, semantic_tools, reported):
+        """An invalid provider result must not reach the transformer context."""
+        semantic_tools._adapter = SimpleNamespace(metric_datasets=lambda: reported, list_metrics=lambda **kwargs: [])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() is None
+
+    def test_metric_datasets_skips_unnamed_metrics_from_the_accessor(self, semantic_tools):
+        """Both read paths drop metrics without a usable name."""
+        semantic_tools._adapter = SimpleNamespace(
+            metric_datasets=lambda: {None: ["x"], "": ["y"], " revenue ": ["orders"]},
+            list_metrics=lambda **kwargs: [],
+        )
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": ["orders"]}
+
+    def test_metric_datasets_prefers_the_adapter_lightweight_accessor(self, semantic_tools):
+        """Adapters may skip building a MetricDefinition per metric."""
+
+        def fail_list_metrics(**kwargs):
+            raise AssertionError("should not fall back to list_metrics")
+
+        semantic_tools._adapter = SimpleNamespace(
+            metric_datasets=lambda: {"revenue": ["orders"]},
+            list_metrics=fail_list_metrics,
+        )
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": ["orders"]}
 
 
 # ---------------------------------------------------------------------------
