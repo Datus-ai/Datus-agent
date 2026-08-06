@@ -182,6 +182,25 @@ class DatasourceService:
                 last_accessed=now,
             )
 
+        def _listing_failed(db_name: str, error: str, schema: Optional[str] = None) -> DatabaseInfo:
+            """The connection works but its objects could not be enumerated.
+
+            Reporting this as ``disconnected`` used to hide the real cause and contradict
+            the agent, which keeps querying the same database successfully.
+            """
+            return DatabaseInfo(
+                name=db_name,
+                uri=_get_uri(connector),
+                type=dialect,
+                current=(db_name == connector.database_name),
+                catalog_name=catalog_name,
+                schema_name=schema,
+                connection_status="connected",
+                tables_count=None,
+                last_accessed=now,
+                error=error,
+            )
+
         try:
             if not connector.test_connection():
                 return [_disconnected(connector.database_name)]
@@ -211,14 +230,14 @@ class DatasourceService:
                 db_names = []
         except Exception as e:
             logger.warning("Failed to enumerate databases for %s: %s", connector.database_name, e)
-            return [_disconnected(connector.database_name)]
+            return [_listing_failed(connector.database_name, str(e))]
 
         db_infos: List[DatabaseInfo] = []
         for db_name in db_names:
             if has_schema:
                 # 2) Resolve schemas for this db — a single failing db must not
-                # abort the whole listing. Report the db as disconnected and
-                # keep going.
+                # abort the whole listing. Report the db with its listing error
+                # and keep going.
                 if request.schema_name:
                     schemas = [request.schema_name]
                 elif hasattr(connector, "get_schemas"):
@@ -235,7 +254,7 @@ class DatasourceService:
                             dialect,
                             e,
                         )
-                        db_infos.append(_disconnected(db_name))
+                        db_infos.append(_listing_failed(db_name, str(e)))
                         continue
                 else:
                     schemas = ["public"]
@@ -255,19 +274,7 @@ class DatasourceService:
                             schema,
                             e,
                         )
-                        db_infos.append(
-                            DatabaseInfo(
-                                name=db_name,
-                                uri=_get_uri(connector),
-                                type=dialect,
-                                current=(db_name == connector.database_name),
-                                catalog_name=catalog_name,
-                                schema_name=schema,
-                                connection_status="disconnected",
-                                tables_count=None,
-                                last_accessed=now,
-                            )
-                        )
+                        db_infos.append(_listing_failed(db_name, str(e), schema=schema))
                         continue
 
                     db_infos.append(
@@ -293,7 +300,7 @@ class DatasourceService:
                     tables.sort()
                 except Exception as e:
                     logger.warning("Failed to get tables for db=%s: %s", db_name, e)
-                    db_infos.append(_disconnected(db_name))
+                    db_infos.append(_listing_failed(db_name, str(e)))
                     continue
 
                 db_infos.append(
