@@ -162,7 +162,7 @@ def _build(root: Path, **kwargs) -> pb.PackageResult:
 
 
 def _namelist(result: pb.PackageResult) -> set:
-    assert result.ok, result.error
+    assert result.ok is True, result.error
     with zipfile.ZipFile(result.zip_path) as zf:
         return set(zf.namelist())
 
@@ -229,7 +229,7 @@ class TestCollection:
 
     def test_output_zip_not_packaged_into_itself(self, project):
         first = _build(project)
-        assert first.ok
+        assert first.ok is True, first.error
         second = _build(project)
         names = _namelist(second)
         assert not any(name.endswith(".zip") for name in names)
@@ -405,7 +405,7 @@ class TestGeneratedFiles:
         declined = pb.build_package(pb.PackageOptions(root=project, assume_yes=False, confirm_cb=lambda _msg: False))
         assert not declined.ok and "aborted" in declined.error
         accepted = pb.build_package(pb.PackageOptions(root=project, assume_yes=False, confirm_cb=lambda _msg: True))
-        assert accepted.ok
+        assert accepted.ok is True and accepted.error is None
 
     def test_assume_yes_skips_editable_confirmation(self, project, monkeypatch):
         monkeypatch.setattr(
@@ -416,7 +416,7 @@ class TestGeneratedFiles:
         result = pb.build_package(
             pb.PackageOptions(root=project, assume_yes=True, confirm_cb=lambda _msg: pytest.fail("must not prompt"))
         )
-        assert result.ok
+        assert result.ok is True and result.error is None
 
     def test_install_plugins_script(self, project, monkeypatch):
         (project / ".datus" / "config.yml").write_text(
@@ -478,7 +478,8 @@ class TestSecretScan:
 
     def test_binary_files_skipped(self, project):
         (project / "knowledge" / "blob.bin").write_bytes(b"\x00\x01ghp_abcdefghijklmnopqrstuv123456")
-        assert _build(project).ok
+        result = _build(project)
+        assert result.ok is True and result.secret_findings == []
 
     def test_generated_yaml_self_check_catches_missed_section(self, project):
         # Simulate a future config section the sanitizer table doesn't know:
@@ -494,7 +495,8 @@ class TestSecretScan:
         )
 
     def test_clean_project_passes(self, project):
-        assert _build(project).ok
+        result = _build(project)
+        assert result.ok is True and result.secret_findings == [] and result.error is None
 
 
 # --------------------------------------------------------------------------- #
