@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -725,6 +726,148 @@ class TestGetConnectionInfoScoping:
 
         assert [i.name for i in infos] == ["ga4"]
         assert connector.get_databases_calls == 0
+
+
+class _FakeSchemaConnector:
+    """Schema-capable connector whose per-database and per-schema listings can
+    each be made to fail independently."""
+
+    dialect = "postgresql"
+    catalog_name = None
+    connection_string = "postgresql://u:p@host:5432/warehouse"
+
+    def __init__(self, database_name: str, failing_schemas_db: str = "", failing_tables_schema: str = ""):
+        self.database_name = database_name
+        self._failing_schemas_db = failing_schemas_db
+        self._failing_tables_schema = failing_tables_schema
+
+    def get_effective_capabilities(self) -> set[str]:
+        return {"database", "schema"}
+
+    def test_connection(self) -> bool:  # audit-noqa: zero_assert_test — connector API stub, not a test
+        return True
+
+    def get_databases(self, catalog_name: str = "", include_sys: bool = False) -> list[str]:
+        return ["warehouse", "staging"]
+
+    def get_schemas(self, catalog_name: str = "", database_name: str = "", include_sys: bool = False) -> list[str]:
+        if database_name == self._failing_schemas_db:
+            raise RuntimeError("schema enumeration timed out")
+        return ["public", "reporting"]
+
+    def get_tables(self, catalog_name: str = "", database_name: str = "", schema_name: str = "") -> list[str]:
+        if schema_name == self._failing_tables_schema:
+            raise RuntimeError("table enumeration timed out")
+        return ["t2", "t1"]
+
+
+class TestGetConnectionInfoListingFailure:
+    """A reachable database whose objects cannot be listed is not a disconnected one."""
+
+    def test_table_listing_failure_stays_connected_and_reports_the_error(self, real_agent_config, _no_schema_dialect):
+        """Reporting ``disconnected`` hid the real cause and contradicted the agent,
+        which keeps querying the same database successfully."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+
+        def _raise(catalog_name: str = "", database_name: str = "", schema_name: str = "") -> NoReturn:
+            raise RuntimeError("THRIFT_EAGAIN (timed out)")
+
+        connector.get_tables = _raise
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["benchmark"]
+        assert infos[0].connection_status == "connected"
+        assert infos[0].schema_name is None
+        assert infos[0].tables is None
+        assert infos[0].tables_count is None
+        assert "THRIFT_EAGAIN" in infos[0].error
+
+    def test_database_enumeration_failure_reports_the_error(self, real_agent_config, _no_schema_dialect):
+        """Without a configured database there is nothing left to iterate, so the
+        datasource is reported once — connected, with the reason attached."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="")
+
+        def _raise(catalog_name: str = "", include_sys: bool = False) -> NoReturn:
+            raise RuntimeError("SHOW DATABASES timed out")
+
+        connector.get_databases = _raise
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        assert len(infos) == 1
+        assert infos[0].connection_status == "connected"
+        assert infos[0].schema_name is None
+        assert infos[0].tables is None
+        assert infos[0].tables_count is None
+        assert "SHOW DATABASES timed out" in infos[0].error
+
+    def test_schema_resolution_failure_does_not_abort_sibling_databases(self, real_agent_config):
+        """One database that cannot resolve its schemas must not cost the others
+        their listing."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeSchemaConnector(database_name="", failing_schemas_db="staging")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        failed = [i for i in infos if i.name == "staging"]
+        assert len(failed) == 1
+        assert failed[0].connection_status == "connected"
+        assert failed[0].schema_name is None
+        assert failed[0].tables is None
+        assert failed[0].tables_count is None
+        assert "schema enumeration timed out" in failed[0].error
+
+        healthy = [i for i in infos if i.name == "warehouse"]
+        assert [i.schema_name for i in healthy] == ["public", "reporting"]
+        assert all(i.connection_status == "connected" and i.error is None for i in healthy)
+        assert all(i.tables == ["t1", "t2"] and i.tables_count == 2 for i in healthy)
+
+    def test_table_fetch_failure_is_scoped_to_its_schema(self, real_agent_config):
+        """A failing schema is reported with its own name; sibling schemas still list."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeSchemaConnector(database_name="warehouse", failing_tables_schema="reporting")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput())
+
+        assert [i.name for i in infos] == ["warehouse", "warehouse"]
+        assert [i.schema_name for i in infos] == ["public", "reporting"]
+
+        assert infos[0].error is None
+        assert infos[0].tables == ["t1", "t2"]
+        assert infos[0].tables_count == 2
+
+        assert infos[1].connection_status == "connected"
+        assert infos[1].tables is None
+        assert infos[1].tables_count is None
+        assert "table enumeration timed out" in infos[1].error
+
+    def test_requested_schema_filter_is_honoured_when_its_tables_fail(self, real_agent_config):
+        """An explicit schema_name skips resolution, so the filter is what fails."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeSchemaConnector(database_name="warehouse", failing_tables_schema="reporting")
+
+        infos = svc._get_connection_info(connector, "ds", ListDatabasesInput(schema_name="reporting"))
+
+        assert len(infos) == 1
+        assert infos[0].name == "warehouse"
+        assert infos[0].schema_name == "reporting"
+        assert infos[0].connection_status == "connected"
+        assert infos[0].tables is None
+        assert "table enumeration timed out" in infos[0].error
+
+    def test_failed_connection_test_is_still_disconnected(self, real_agent_config, _no_schema_dialect):
+        """The disconnected status stays reserved for an unusable connection."""
+        svc = DatasourceService(agent_config=real_agent_config)
+        connector = _FakeServerConnector(database_name="benchmark")
+        connector.test_connection = lambda: False
+
+        infos = svc._get_connection_info(connector, "benchmark", ListDatabasesInput())
+
+        assert infos[0].connection_status == "disconnected"
+        assert infos[0].error is None
 
 
 class TestGetTableSchema:

@@ -19,6 +19,9 @@ class DatabaseInfo(BaseModel):
     tables_count: Optional[int] = Field(None, description="Number of tables in the database")
     last_accessed: Optional[str] = Field(None, description="Last access timestamp")
     tables: Optional[List[str]] = Field(None, description="List of table names")
+    error: Optional[str] = Field(
+        None, description="Why the object listing is unavailable, when the connection itself is usable"
+    )
 
 
 class ListDatabasesInput(BaseModel):
