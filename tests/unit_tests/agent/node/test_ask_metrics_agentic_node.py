@@ -523,7 +523,14 @@ class TestAskMetricsAgenticNode:
             dry_run=False,
         )
 
-    def test_query_metrics_expands_rolling_average_metric_bundle(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_forwards_requested_metrics_unchanged(self, real_agent_config, mock_llm_create):
+        """The node no longer derives companion metrics from catalog metadata.
+
+        Which metrics a derived metric depends on belongs to the semantic model,
+        not to naming conventions and free-text metadata read back by the agent.
+        A caller that wants the underlying series or a window row count asks for
+        those metrics explicitly.
+        """
         node, semantic_tools, _ = _make_node(
             real_agent_config,
             tree={"Commerce": {"Orders": {"metrics": ["moving_3_month_order_count_avg"]}}},
@@ -531,39 +538,9 @@ class TestAskMetricsAgenticNode:
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={
                 "items": [
-                    {
-                        "name": "order_count",
-                        "measures": ["orders.order_id"],
-                        "metadata": {
-                            "dataset": "orders",
-                            "expr": "COUNT(DISTINCT order_id)",
-                            "metric_kind": "aggregate",
-                            "measure": "order_id",
-                        },
-                    },
-                    {
-                        "name": "moving_window_month_count",
-                        "metadata": {
-                            "dataset": "orders",
-                            "time_dimension": "metric_time__month",
-                            "window": "3 months",
-                            "window_aggregation": "row_count",
-                            "metric_kind": "cumulative",
-                        },
-                    },
-                    {
-                        "name": "moving_3_month_order_count_avg",
-                        "measures": ["orders.order_id"],
-                        "metadata": {
-                            "dataset": "orders",
-                            "time_dimension": "metric_time__month",
-                            "window": "3 months",
-                            "window_aggregation": "avg",
-                            "metric_kind": "cumulative",
-                            "expr": "COUNT(DISTINCT order_id)",
-                            "measure": "order_id",
-                        },
-                    },
+                    {"name": "order_count", "metadata": {}},
+                    {"name": "moving_window_month_count", "metadata": {}},
+                    {"name": "moving_3_month_order_count_avg", "metadata": {}},
                 ],
                 "has_more": False,
             }
@@ -572,10 +549,8 @@ class TestAskMetricsAgenticNode:
 
         node.query_metrics(metrics=["moving_3_month_order_count_avg"], dimensions=[])
 
-        # The node still expands the executable metric bundle; metric_time grouping
-        # is delegated to the semantic adapter and no longer injected here.
         semantic_tools.query_metrics.assert_called_once_with(
-            metrics=["order_count", "moving_window_month_count", "moving_3_month_order_count_avg"],
+            metrics=["moving_3_month_order_count_avg"],
             dimensions=[],
             path=None,
             time_start=None,
@@ -587,60 +562,13 @@ class TestAskMetricsAgenticNode:
             dry_run=False,
         )
 
-    def test_query_metrics_expands_running_extrema_metric_bundle(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_forwards_multiple_metrics_in_order(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
-            tree={
-                "Commerce": {
-                    "Orders": {
-                        "metrics": [
-                            "average_order_amount",
-                            "running_min_average_order_amount",
-                            "running_max_average_order_amount",
-                        ]
-                    }
-                }
-            },
+            tree={"Commerce": {"Orders": {"metrics": ["average_order_amount"]}}},
         )
         semantic_tools.list_metrics.return_value = FuncToolResult(
-            result={
-                "items": [
-                    {
-                        "name": "average_order_amount",
-                        "metadata": {
-                            "dataset": "orders",
-                            "expr": "AVG(order_amount)",
-                            "metric_kind": "aggregate",
-                            "measure": "order_amount",
-                        },
-                    },
-                    {
-                        "name": "running_min_average_order_amount",
-                        "metadata": {
-                            "dataset": "orders",
-                            "grain_to_date": "month",
-                            "time_dimension": "metric_time__month",
-                            "window_aggregation": "min",
-                            "metric_kind": "cumulative",
-                            "expr": "AVG(order_amount)",
-                            "measure": "order_amount",
-                        },
-                    },
-                    {
-                        "name": "running_max_average_order_amount",
-                        "metadata": {
-                            "dataset": "orders",
-                            "grain_to_date": "month",
-                            "time_dimension": "metric_time__month",
-                            "window_aggregation": "max",
-                            "metric_kind": "cumulative",
-                            "expr": "AVG(order_amount)",
-                            "measure": "order_amount",
-                        },
-                    },
-                ],
-                "has_more": False,
-            }
+            result={"items": [{"name": "average_order_amount", "metadata": {}}], "has_more": False}
         )
         semantic_tools.query_metrics.return_value = FuncToolResult(result={"columns": [], "data": []})
 
@@ -649,14 +577,8 @@ class TestAskMetricsAgenticNode:
             dimensions=["metric_time__month"],
         )
 
-        # Metric bundle expansion is preserved; caller-supplied dimensions pass
-        # through unchanged and grain injection is left to the semantic adapter.
         semantic_tools.query_metrics.assert_called_once_with(
-            metrics=[
-                "average_order_amount",
-                "running_min_average_order_amount",
-                "running_max_average_order_amount",
-            ],
+            metrics=["running_min_average_order_amount", "running_max_average_order_amount"],
             dimensions=["metric_time__month"],
             path=None,
             time_start=None,

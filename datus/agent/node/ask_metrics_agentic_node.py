@@ -87,7 +87,6 @@ class AskMetricsAgenticNode(AgenticNode):
         self.subject_tree_metric_entries: List[Dict[str, Any]] = []
         self.subject_tree_mode: str = "none"
         self.subject_tree_prompt: str = ""
-        self._metric_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._selected_final_metric_result_id: Optional[str] = None
         self.startup_error: Optional[str] = None
 
@@ -439,10 +438,10 @@ class AskMetricsAgenticNode(AgenticNode):
         When using limit for Top N/Bottom N, also pass order_by so the
         truncation has stable business meaning.
 
-        For fixed period-over-period metrics such as month-over-month or
-        year-over-year, query the dedicated catalog metric directly. For window
-        metrics, AskMetrics expands the request to include related executable
-        metrics when they are already present in the catalog.
+        For derived metrics such as month-over-month, year-over-year or moving
+        averages, query the dedicated catalog metric directly. When the answer
+        also needs the underlying series or the window's row count, request
+        those metrics explicitly alongside it.
 
         Joined dimensions always use matched-rows join semantics: fact rows
         that cannot match the requested dimension are excluded. Unmatched-fact
@@ -466,8 +465,8 @@ class AskMetricsAgenticNode(AgenticNode):
         if not self.semantic_tools:
             return FuncToolResult(success=0, error="semantic tools unavailable")
 
-        expanded_metrics = self._expand_metric_dependencies(metrics)
-        if not expanded_metrics:
+        normalized_metrics = self._normalize_string_list(metrics)
+        if not normalized_metrics:
             return FuncToolResult(
                 success=0,
                 error=(
@@ -481,7 +480,7 @@ class AskMetricsAgenticNode(AgenticNode):
         # applied by the semantic adapter; the node no longer injects it here.
 
         query_kwargs = {
-            "metrics": expanded_metrics,
+            "metrics": normalized_metrics,
             "dimensions": normalized_dimensions,
             "path": path,
             "time_start": time_start,
@@ -514,220 +513,6 @@ class AskMetricsAgenticNode(AgenticNode):
 
         self._selected_final_metric_result_id = result_id
         return FuncToolResult(result={"result_id": result_id})
-
-    def _expand_metric_dependencies(self, metrics: Optional[List[str]]) -> List[str]:
-        return self._expand_window_metrics(metrics)
-
-    def _expand_window_metrics(self, metrics: Optional[List[str]]) -> List[str]:
-        requested_metrics = self._normalize_string_list(metrics)
-        if not requested_metrics:
-            return []
-
-        catalog = self._metric_catalog()
-        if not catalog:
-            return requested_metrics
-
-        expanded: List[str] = []
-        for metric_name in requested_metrics:
-            metric = catalog.get(metric_name)
-            if not metric:
-                self._append_unique(expanded, metric_name)
-                continue
-
-            for bundled_metric in self._window_metric_bundle(metric_name, metric, catalog):
-                self._append_unique(expanded, bundled_metric)
-
-        return expanded
-
-    @classmethod
-    def _window_metric_bundle(
-        cls,
-        metric_name: str,
-        metric: Dict[str, Any],
-        catalog: Dict[str, Dict[str, Any]],
-    ) -> List[str]:
-        metadata = cls._metric_metadata(metric)
-        if not cls._is_window_metric(metadata):
-            return [metric_name]
-
-        if cls._metadata_text(metadata, "window_aggregation").lower() == "row_count":
-            return [metric_name]
-
-        bundle: List[str] = []
-        base_metric = cls._find_window_base_metric(metric_name, metric, catalog)
-        if base_metric:
-            cls._append_unique(bundle, base_metric)
-
-        if cls._window_metric_needs_window_count(metadata):
-            for count_metric in cls._matching_window_count_metrics(metric_name, metadata, catalog):
-                cls._append_unique(bundle, count_metric)
-
-        cls._append_unique(bundle, metric_name)
-        return bundle
-
-    def _metric_catalog(self) -> Dict[str, Dict[str, Any]]:
-        if self._metric_catalog_cache is not None:
-            return self._metric_catalog_cache
-        if not self.semantic_tools:
-            return {}
-
-        catalog: Dict[str, Dict[str, Any]] = {}
-        offset = 0
-        limit = 500
-        for _ in range(10):
-            try:
-                result = self.semantic_tools.list_metrics(limit=limit, offset=offset)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("Unable to load ask_metrics metric catalog: %s", exc)
-                break
-
-            if not isinstance(result, FuncToolResult) or result.success == 0:
-                logger.debug("Unable to load ask_metrics metric catalog: %s", getattr(result, "error", None))
-                break
-
-            payload = result.result if isinstance(result.result, dict) else {}
-            items = payload.get("items", []) if isinstance(payload, dict) else []
-            for item in items:
-                if isinstance(item, dict) and item.get("name"):
-                    catalog[str(item["name"])] = item
-
-            if not isinstance(payload, dict) or not payload.get("has_more"):
-                break
-            extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}
-            next_offset = extra.get("next_offset")
-            if not isinstance(next_offset, int) or next_offset <= offset:
-                break
-            offset = next_offset
-
-        self._metric_catalog_cache = catalog
-        return catalog
-
-    @classmethod
-    def _find_window_base_metric(
-        cls,
-        metric_name: str,
-        metric: Dict[str, Any],
-        catalog: Dict[str, Dict[str, Any]],
-    ) -> Optional[str]:
-        metadata = cls._metric_metadata(metric)
-        explicit_name = cls._first_metadata_text(
-            metadata,
-            ("base_metric", "base_metric_name", "source_metric", "source_metric_name"),
-        )
-        if explicit_name and explicit_name in catalog and explicit_name != metric_name:
-            return explicit_name
-
-        metric_signature = cls._metric_measure_signature(metric)
-        if not metric_signature:
-            return None
-
-        dataset = cls._metadata_text(metadata, "dataset")
-        for candidate_name, candidate in catalog.items():
-            if candidate_name == metric_name:
-                continue
-            candidate_metadata = cls._metric_metadata(candidate)
-            if cls._is_window_metric(candidate_metadata):
-                continue
-            if not cls._is_base_metric_candidate(candidate_metadata):
-                continue
-            candidate_dataset = cls._metadata_text(candidate_metadata, "dataset")
-            if dataset and candidate_dataset and dataset != candidate_dataset:
-                continue
-            if metric_signature.intersection(cls._metric_measure_signature(candidate)):
-                return candidate_name
-
-        return None
-
-    @classmethod
-    def _matching_window_count_metrics(
-        cls,
-        metric_name: str,
-        metadata: Dict[str, Any],
-        catalog: Dict[str, Dict[str, Any]],
-    ) -> List[str]:
-        matches: List[str] = []
-        dataset = cls._metadata_text(metadata, "dataset")
-        time_dimension = cls._metadata_text(metadata, "time_dimension")
-        window = cls._metadata_text(metadata, "window")
-        grain_to_date = cls._metadata_text(metadata, "grain_to_date")
-
-        for candidate_name, candidate in catalog.items():
-            if candidate_name == metric_name:
-                continue
-            candidate_metadata = cls._metric_metadata(candidate)
-            if cls._metadata_text(candidate_metadata, "window_aggregation").lower() != "row_count":
-                continue
-            if dataset and cls._metadata_text(candidate_metadata, "dataset") != dataset:
-                continue
-            if time_dimension and cls._metadata_text(candidate_metadata, "time_dimension") != time_dimension:
-                continue
-            if window and cls._metadata_text(candidate_metadata, "window") != window:
-                continue
-            if grain_to_date and cls._metadata_text(candidate_metadata, "grain_to_date") != grain_to_date:
-                continue
-            cls._append_unique(matches, candidate_name)
-
-        return matches
-
-    @classmethod
-    def _window_metric_needs_window_count(cls, metadata: Dict[str, Any]) -> bool:
-        aggregation = cls._metadata_text(metadata, "window_aggregation").lower()
-        return aggregation in {"avg", "average", "mean"}
-
-    @classmethod
-    def _is_window_metric(cls, metadata: Dict[str, Any]) -> bool:
-        if not metadata:
-            return False
-        if cls._metadata_text(metadata, "window") or cls._metadata_text(metadata, "grain_to_date"):
-            return True
-        return bool(cls._metadata_text(metadata, "window_aggregation"))
-
-    @classmethod
-    def _is_base_metric_candidate(cls, metadata: Dict[str, Any]) -> bool:
-        metric_kind = cls._metadata_text(metadata, "metric_kind").lower()
-        if not metric_kind:
-            return True
-        return metric_kind in {"aggregate", "measure_proxy", "simple"}
-
-    @staticmethod
-    def _metric_metadata(metric: Dict[str, Any]) -> Dict[str, Any]:
-        metadata = metric.get("metadata") if isinstance(metric, dict) else {}
-        return metadata if isinstance(metadata, dict) else {}
-
-    @classmethod
-    def _metric_measure_signature(cls, metric: Dict[str, Any]) -> set[str]:
-        metadata = cls._metric_metadata(metric)
-        values: List[str] = []
-        for key in ("measure", "measure_expr", "expr"):
-            value = metadata.get(key)
-            if isinstance(value, str):
-                values.append(value)
-
-        for key in ("measures", "base_measures"):
-            value = metric.get(key)
-            if isinstance(value, list):
-                values.extend(str(item) for item in value if str(item).strip())
-            elif isinstance(value, str):
-                values.append(value)
-
-        return {cls._normalize_metric_expression(value) for value in values if cls._normalize_metric_expression(value)}
-
-    @staticmethod
-    def _normalize_metric_expression(value: str) -> str:
-        return "".join(str(value or "").lower().split())
-
-    @staticmethod
-    def _metadata_text(metadata: Dict[str, Any], key: str) -> str:
-        value = metadata.get(key)
-        return value.strip() if isinstance(value, str) else ""
-
-    @classmethod
-    def _first_metadata_text(cls, metadata: Dict[str, Any], keys: tuple[str, ...]) -> str:
-        for key in keys:
-            value = cls._metadata_text(metadata, key)
-            if value:
-                return value
-        return ""
 
     @staticmethod
     def _normalize_string_list(value: Optional[List[str]]) -> List[str]:
@@ -831,11 +616,6 @@ class AskMetricsAgenticNode(AgenticNode):
         writer.writerow(aliased_header)
         writer.writerows(reader)
         return buf.getvalue()
-
-    @staticmethod
-    def _append_unique(values: List[str], value: str) -> None:
-        if value not in values:
-            values.append(value)
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         if self.startup_error:
