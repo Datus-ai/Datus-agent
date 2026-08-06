@@ -286,8 +286,13 @@ agent:
       metricflow: {}
       # metricflow:                 # alternative: pin as global default
       #   default: true
-      #   metric_catalog_page_size: 500   # rows per list_metrics request when
-      #   metric_catalog_max_pages: 2000  # building the metric->dataset map
+      #   metric_catalog_page_size: 5000  # rows per list_metrics request when
+      #   metric_catalog_max_pages: 200   # building the metric->dataset map.
+      #                                   # Together they bound how many metrics
+      #                                   # are readable (1M by default); the
+      #                                   # real ceiling is rows the adapter
+      #                                   # actually returns per page x pages.
+      #                                   # Exceeding it denies metric queries.
     bi_platforms:
       superset:
         type: superset

@@ -729,6 +729,7 @@ class TestQueryMetricsCompression:
             ("orders", ["orders"]),
             (["orders", "users"], ["orders", "users"]),
             (["orders", "", "  "], ["orders"]),
+            (["orders", None, 1], ["orders"]),
             (None, []),
             (42, []),
         ],
@@ -767,6 +768,22 @@ class TestQueryMetricsCompression:
         """An unavailable catalog is distinct from a readable empty one."""
         with patch.object(type(semantic_tools), "adapter", property(lambda self: None)):
             assert semantic_tools.metric_datasets() is None
+
+    @pytest.mark.parametrize("reported", [None, ["orders"], "orders"])
+    def test_metric_datasets_rejects_a_non_mapping_from_the_accessor(self, semantic_tools, reported):
+        """An invalid provider result must not reach the transformer context."""
+        semantic_tools._adapter = SimpleNamespace(metric_datasets=lambda: reported, list_metrics=lambda **kwargs: [])
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() is None
+
+    def test_metric_datasets_skips_unnamed_metrics_from_the_accessor(self, semantic_tools):
+        """Both read paths drop metrics without a usable name."""
+        semantic_tools._adapter = SimpleNamespace(
+            metric_datasets=lambda: {None: ["x"], "": ["y"], " revenue ": ["orders"]},
+            list_metrics=lambda **kwargs: [],
+        )
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": ["orders"]}
 
     def test_metric_datasets_prefers_the_adapter_lightweight_accessor(self, semantic_tools):
         """Adapters may skip building a MetricDefinition per metric."""

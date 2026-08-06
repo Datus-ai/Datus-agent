@@ -80,16 +80,18 @@ def _normalize_metric_metadata(raw) -> dict:
     return safe_metadata
 
 
-def _normalize_dataset_names(raw) -> List[str]:
+def _normalize_dataset_names(raw: Any) -> List[str]:
     """Dataset names an adapter reports for a metric, as a list of non-empty strings.
 
-    A lone string names one dataset; iterating it would yield characters.
+    A lone string names one dataset; iterating it would yield characters. Only
+    string entries are kept — coercing anything else would invent names like
+    "None" that a policy could match on.
     """
     if isinstance(raw, str):
         name = raw.strip()
         return [name] if name else []
     if isinstance(raw, (list, tuple, set)):
-        return [str(item).strip() for item in raw if str(item).strip()]
+        return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
     return []
 
 
@@ -455,9 +457,19 @@ class SemanticTools:
 
         lightweight = getattr(adapter, "metric_datasets", None)
         if callable(lightweight):
-            return {
-                str(name): _normalize_dataset_names(datasets) for name, datasets in _run_async(lightweight()).items()
-            }
+            reported = _run_async(lightweight())
+            if not isinstance(reported, Mapping):
+                logger.warning(
+                    "Adapter metric_datasets returned %s; reporting the mapping as unavailable.",
+                    type(reported).__name__,
+                )
+                return None
+            mapping = {}
+            for name, datasets in reported.items():
+                metric_name = str(name or "").strip()
+                if metric_name:
+                    mapping[metric_name] = _normalize_dataset_names(datasets)
+            return mapping
 
         page_size, max_pages = self._metric_catalog_paging()
         mapping: Dict[str, List[str]] = {}
