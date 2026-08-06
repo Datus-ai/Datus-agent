@@ -28,33 +28,23 @@ logger = get_logger(__name__)
 
 
 class FilesystemConfig:
-    """Configuration for filesystem operations"""
+    """Configuration for filesystem operations.
+
+    There is intentionally no extension whitelist: the agent works on real
+    repositories that contain shell scripts, Terraform, Scala, notebooks,
+    dotfiles and so on, and a whitelist only ever produced the asymmetric
+    "``write_file`` succeeded but ``read_file`` refuses to read it back"
+    failure mode. Access is gated by zone (see :class:`FilesystemFuncTool`),
+    read-only anchors and the permission layer instead. Binary content is
+    still rejected naturally, via the UTF-8 decode error.
+    """
 
     def __init__(
         self,
         root_path: str = None,
-        allowed_extensions: List[str] = None,
         max_file_size: int = 200 * 1024,
     ):
         self.root_path = root_path or os.getcwd()
-        self.allowed_extensions = allowed_extensions or [
-            ".txt",
-            ".md",
-            ".py",
-            ".js",
-            ".jsx",
-            ".ts",
-            ".tsx",
-            ".json",
-            ".yaml",
-            ".yml",
-            ".csv",
-            ".sql",
-            ".j2",
-            ".html",
-            ".css",
-            ".xml",
-        ]
         self.max_file_size = max_file_size
 
 
@@ -250,12 +240,6 @@ class FilesystemFuncTool(BaseTool):
             return None
         return resolved.resolved
 
-    def _is_allowed_file(self, file_path: Path) -> bool:
-        """Check if file extension is allowed"""
-        if not self.config.allowed_extensions:
-            return True
-        return file_path.suffix.lower() in self.config.allowed_extensions
-
     # ------------------------------------------------------------- read/write
 
     def read_file(self, path: str, offset: int = 0, limit: int = 0) -> FuncToolResult:
@@ -293,9 +277,6 @@ class FilesystemFuncTool(BaseTool):
 
             if not target_path.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
-
-            if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
             max_bytes = self.config.max_file_size
             use_slice = offset > 0 or limit > 0
@@ -372,9 +353,6 @@ class FilesystemFuncTool(BaseTool):
             if resolved.read_only:
                 return self._read_only_reject(resolved)
 
-            # write_file intentionally skips the extension whitelist: the agent
-            # must be able to emit any text artifact (shell/infra/scala/etc.).
-            # Zone, read-only and strict-external gating above still apply.
             target_path = resolved.resolved
             guard_error = self._mutation_guard_error(target_path)
             if guard_error is not None:
@@ -438,9 +416,6 @@ class FilesystemFuncTool(BaseTool):
             if not target_path.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a regular file: {resolved.display}")
 
-            if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
-
             try:
                 target_path.unlink()
                 self._notify_mutation(target_path)
@@ -490,9 +465,6 @@ class FilesystemFuncTool(BaseTool):
 
             if not target_path.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
-
-            if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
 
             try:
                 content = target_path.read_text(encoding="utf-8")
@@ -853,8 +825,6 @@ class FilesystemFuncTool(BaseTool):
                 report_relative_to = self._root_resolved
 
             def _search_file(file_path: Path, reported_file: str) -> List[dict]:
-                if not self._is_allowed_file(file_path):
-                    return []
                 try:
                     if file_path.stat().st_size > self.config.max_file_size:
                         return []

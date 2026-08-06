@@ -39,18 +39,13 @@ class TestFilesystemConfig:
         cfg = FilesystemConfig(root_path=str(tmp_path))
         assert cfg.root_path == str(tmp_path)
 
-    def test_default_allowed_extensions(self):
+    def test_default_max_file_size(self):
         cfg = FilesystemConfig()
-        assert ".py" in cfg.allowed_extensions
-        assert ".txt" in cfg.allowed_extensions
-        assert ".json" in cfg.allowed_extensions
-        # Dashboard artifact templates land as ``<slug>.sql.j2`` — Path.suffix
-        # returns ``.j2`` only, so the bare ``.j2`` entry is what gates them.
-        assert ".j2" in cfg.allowed_extensions
+        assert cfg.max_file_size == 200 * 1024
 
-    def test_custom_allowed_extensions(self):
-        cfg = FilesystemConfig(allowed_extensions=[".py"])
-        assert cfg.allowed_extensions == [".py"]
+    def test_custom_max_file_size(self):
+        cfg = FilesystemConfig(max_file_size=1024)
+        assert cfg.max_file_size == 1024
 
 
 class TestMutationCallback:
@@ -107,23 +102,56 @@ class TestGetSafePath:
 
 
 # ---------------------------------------------------------------------------
-# FilesystemFuncTool - _is_allowed_file
+# FilesystemFuncTool - extension-agnostic access
 # ---------------------------------------------------------------------------
 
 
-class TestIsAllowedFile:
-    def test_allowed_extension(self, tmp_path):
-        tool = _make_tool(str(tmp_path))
-        assert tool._is_allowed_file(Path("file.py")) is True
+class TestAnyExtensionIsAccessible:
+    """No operation gates on the file extension. Real repositories carry shell
+    scripts, Terraform, notebooks and extension-less dotfiles, and the agent
+    must be able to read back anything it can write.
+    """
 
-    def test_disallowed_extension(self, tmp_path):
+    @pytest.mark.parametrize(
+        "name",
+        ["deploy.sh", "main.tf", "app.scala", "pyproject.toml", "notebook.ipynb", "Dockerfile", ".env"],
+    )
+    def test_read_edit_delete_roundtrip(self, tmp_path, name):
         tool = _make_tool(str(tmp_path))
-        assert tool._is_allowed_file(Path("file.exe")) is False
 
-    def test_no_extension_filter(self, tmp_path):
-        tool = FilesystemFuncTool(root_path=str(tmp_path))
-        tool.config.allowed_extensions = []
-        assert tool._is_allowed_file(Path("file.exe")) is True
+        assert tool.write_file(name, "token here\n").success == 1
+
+        read = tool.read_file(name)
+        assert read.success == 1
+        assert read.result == "token here\n"
+
+        assert tool.edit_file(name, "token", "value").success == 1
+        assert (tmp_path / name).read_text() == "value here\n"
+
+        assert tool.delete_file(name).success == 1
+        assert not (tmp_path / name).exists()
+
+    def test_grep_matches_non_source_extensions(self, tmp_path):
+        (tmp_path / "deploy.sh").write_text("export TARGET=prod\n")
+        (tmp_path / "main.tf").write_text('variable "TARGET" {}\n')
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.grep("TARGET")
+
+        assert result.success == 1
+        files = {m["file"] for m in result.result["matches"]}
+        assert files == {"deploy.sh", "main.tf"}
+
+    def test_binary_read_still_rejected(self, tmp_path):
+        """Undecodable content is rejected by the UTF-8 guard, not by a
+        suffix whitelist — so the rejection follows the bytes, not the name."""
+        (tmp_path / "payload.bin").write_bytes(b"\xff\xfe\x00\x01")
+        tool = _make_tool(str(tmp_path))
+
+        result = tool.read_file("payload.bin")
+
+        assert result.success == 0
+        assert "binary" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -153,14 +181,6 @@ class TestReadFile:
         result = tool.read_file("mydir")
         assert result.success == 0
         assert "not a file" in result.error.lower()
-
-    def test_read_disallowed_extension(self, tmp_path):
-        f = tmp_path / "binary.exe"
-        f.write_bytes(b"\x00\x01\x02")
-        tool = _make_tool(str(tmp_path))
-        result = tool.read_file("binary.exe")
-        assert result.success == 0
-        assert "not allowed" in result.error.lower()
 
     def test_read_file_too_large(self, tmp_path):
         f = tmp_path / "big.txt"
@@ -263,20 +283,12 @@ class TestWriteFile:
         assert result.success == 1
         assert (tmp_path / "subdir" / "nested" / "file.txt").exists()
 
-    def test_write_skips_extension_whitelist(self, tmp_path):
-        """write_file accepts any text artifact regardless of extension; the
-        whitelist only gates read/edit/delete, not creation."""
+    def test_write_arbitrary_extension(self, tmp_path):
+        """write_file accepts any text artifact regardless of extension."""
         tool = _make_tool(str(tmp_path))
         result = tool.write_file("infra/deploy.sh", "#!/bin/sh\necho hi\n")
         assert result.success == 1
         assert (tmp_path / "infra" / "deploy.sh").read_text() == "#!/bin/sh\necho hi\n"
-
-    def test_write_non_whitelisted_extension_in_zone(self, tmp_path):
-        """A previously-rejected extension (.exe) now writes successfully."""
-        tool = _make_tool(str(tmp_path))
-        result = tool.write_file("file.exe", "binary")
-        assert result.success == 1
-        assert (tmp_path / "file.exe").read_text() == "binary"
 
     def test_write_path_traversal_classified_external(self, tmp_path):
         """Write with ``../`` escape also classifies EXTERNAL — gating lives
@@ -377,12 +389,13 @@ class TestEditFile:
         result = tool.edit_file("missing.py", "x", "y")
         assert result.success == 0
 
-    def test_edit_disallowed_extension(self, tmp_path):
-        f = tmp_path / "file.exe"
-        f.write_bytes(b"binary")
+    def test_edit_binary_file_rejected(self, tmp_path):
+        f = tmp_path / "payload.bin"
+        f.write_bytes(b"\xff\xfe\x00\x01")
         tool = _make_tool(str(tmp_path))
-        result = tool.edit_file("file.exe", "x", "y")
+        result = tool.edit_file("payload.bin", "x", "y")
         assert result.success == 0
+        assert "binary" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------
