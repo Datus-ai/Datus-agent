@@ -59,7 +59,7 @@ MANIFEST_FORMAT_VERSION = 1
 
 # Subcommand tokens owned by built-in handlers; a plugin must never claim one.
 # Keep in sync with ``datus.cli.main._RESERVED_SUBCOMMANDS``.
-RESERVED_PLUGIN_NAMES = frozenset({"upgrade", "skill", "plugin"})
+RESERVED_PLUGIN_NAMES = frozenset({"upgrade", "skill", "plugin", "package"})
 
 
 class StoreError(DatusException):

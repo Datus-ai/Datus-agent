@@ -67,7 +67,7 @@ def test_is_valid_name_accepts_safe(name):
     assert store.is_valid_name(name)
 
 
-@pytest.mark.parametrize("name", ["upgrade", "skill", "plugin"])
+@pytest.mark.parametrize("name", ["upgrade", "skill", "plugin", "package"])
 def test_reserved_names_rejected(name):
     assert not store.is_valid_name(name)
     with pytest.raises(store.StoreError):

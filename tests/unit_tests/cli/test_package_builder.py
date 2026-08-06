@@ -1,0 +1,534 @@
+# Copyright 2025-present DatusAI, Inc.
+# Licensed under the Apache License, Version 2.0.
+# See http://www.apache.org/licenses/LICENSE-2.0 for details.
+
+"""Unit tests for ``datus.cli.package_builder`` (project → self-contained zip).
+
+CI-level: no network, no real ``~/.datus`` — HOME is redirected into
+``tmp_path`` and dependency enumeration is mocked. Fixture projects are
+built on disk and results are verified by re-opening the produced zip
+(cross-component: the consumer sees what the packer wrote, not mock echoes).
+"""
+
+import json
+import zipfile
+from pathlib import Path
+
+import pytest
+import yaml
+
+from datus.cli import package_builder as pb
+
+# --------------------------------------------------------------------------- #
+# Fixtures                                                                    #
+# --------------------------------------------------------------------------- #
+
+_PLAINTEXT_KEY = "sk-plaintextsecret1234567890abcdef"
+
+
+def _agent_yaml(fake_home: Path) -> dict:
+    """Kitchen-sink raw config covering every secret-bearing section."""
+    return {
+        "agent": {
+            "home": str(fake_home / ".datus"),
+            "providers": {
+                "openai": {"api_key": _PLAINTEXT_KEY},
+                "claude": {"api_key": "${ANTHROPIC_API_KEY}"},
+            },
+            "models": {
+                "internal": {
+                    "type": "openai",
+                    "api_key": "plain-model-key",
+                    "default_headers": {"Authorization": "Bearer abc123token"},
+                }
+            },
+            "services": {
+                "datasources": {
+                    "sales_db": {
+                        "type": "starrocks",
+                        "host": "localhost",
+                        "username": "admin",
+                        "password": "hunter2",
+                        "private_key": "-----BEGIN PRIVATE KEY-----\nxyz\n-----END PRIVATE KEY-----",
+                    },
+                    "pg_main": {"type": "postgres", "uri": "postgresql://svc:p4ss@db.example.com/warehouse"},
+                    "local_lite": {"type": "sqlite", "uri": "sqlite:///data.db"},
+                },
+                "bi_platforms": {
+                    "superset": {
+                        "type": "superset",
+                        "username": "admin",
+                        "password": "admin",
+                        "extra": {"provider": "db"},
+                    }
+                },
+                "schedulers": {"airflow": {"type": "airflow", "password": "${AIRFLOW_PASSWORD}"}},
+                "mcp_servers": {"jira": {"headers": {"Authorization": "Bearer tok"}, "env": {"JIRA_TOKEN": "t0k"}}},
+            },
+            "document": {"tavily_api_key": "tvly-plain"},
+            "custom_future_section": {"foo": "bar", "nested": {"keep": "me"}},
+            "agentic_nodes": {
+                "sales_helper": {
+                    "agent_description": "Sales Q&A",
+                    "system_prompt": "sales_helper",
+                    "prompt_version": "1.0",
+                },
+                "ops_helper": {"agent_description": "Ops Q&A"},
+            },
+        }
+    }
+
+
+@pytest.fixture
+def project(tmp_path, monkeypatch):
+    """A packaged-project fixture rooted in an isolated CWD + HOME."""
+    fake_home = tmp_path / "fakehome"
+    root = tmp_path / "proj"
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.chdir(root_prepare(root, fake_home))
+    monkeypatch.setattr(
+        pb,
+        "enumerate_datus_packages",
+        lambda: [pb.DatusPackage(name="datus-agent", version="0.9.9", editable=False)],
+    )
+    return root
+
+
+def root_prepare(root: Path, fake_home: Path) -> Path:
+    (root / "conf").mkdir(parents=True)
+    (root / "conf" / "agent.yml").write_text(yaml.safe_dump(_agent_yaml(fake_home), sort_keys=False), encoding="utf-8")
+    (root / ".datus").mkdir()
+    (root / ".datus" / "config.yml").write_text("project_name: fixture_proj\n", encoding="utf-8")
+
+    # Generic project files.
+    (root / "knowledge").mkdir()
+    (root / "knowledge" / "notes.md").write_text("domain knowledge", encoding="utf-8")
+    deep = root / "docs" / "guides" / "internal"
+    deep.mkdir(parents=True)
+    (deep / "deep.md").write_text("deep file", encoding="utf-8")
+
+    # Runtime state that must never ship.
+    for dirname in ("sessions", "data", "logs", "run", "cache", "save", "trajectory", "output_v1", ".venv", ".git"):
+        (root / dirname).mkdir(exist_ok=True)
+        (root / dirname / "junk.txt").write_text("junk", encoding="utf-8")
+    (root / "__pycache__").mkdir()
+    (root / "__pycache__" / "m.pyc").write_text("x", encoding="utf-8")
+    (root / ".env").write_text("SECRET=leak", encoding="utf-8")
+    (root / "db.duckdb.wal").write_text("wal", encoding="utf-8")
+    (root / ".datus" / "memory").mkdir()
+    (root / ".datus" / "memory" / "private.md").write_text("private memory", encoding="utf-8")
+    (root / ".datus" / "plans").mkdir()
+    (root / ".datus" / "plans" / "draft.md").write_text("draft", encoding="utf-8")
+
+    # Skills: one project, one global (same name to test precedence) + one global-only.
+    for base, marker in ((root / ".datus" / "skills", "project"), (fake_home / ".datus" / "skills", "global")):
+        skill = base / "shared-skill"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text(f"# {marker}", encoding="utf-8")
+    only_global = fake_home / ".datus" / "skills" / "global-only"
+    only_global.mkdir(parents=True)
+    (only_global / "SKILL.md").write_text("# global only", encoding="utf-8")
+
+    # Subagent template in the source home.
+    template_dir = fake_home / ".datus" / "template"
+    template_dir.mkdir(parents=True)
+    (template_dir / "sales_helper_system_1.0.j2").write_text("prompt {{x}}", encoding="utf-8")
+
+    # Metrics for two datasources.
+    for ds in ("sales_db", "pg_main"):
+        ds_dir = root / "subject" / "semantic_models" / ds
+        (ds_dir / "metrics").mkdir(parents=True)
+        (ds_dir / "orders.yml").write_text("data_source:\n  name: orders\n", encoding="utf-8")
+        (ds_dir / "metrics" / "orders_metrics.yml").write_text("metric:\n  name: gmv\n", encoding="utf-8")
+    (root / "subject" / "sql_summaries").mkdir(parents=True)
+    (root / "subject" / "sql_summaries" / "summary.md").write_text("sql summary", encoding="utf-8")
+
+    # One report + one dashboard artifact.
+    for kind_dir, slug in (("reports", "daily_gmv"), ("dashboards", "ops_view")):
+        art = root / kind_dir / slug
+        for sub in ("analysis", "queries", "render"):
+            (art / sub).mkdir(parents=True)
+        (art / "manifest.json").write_text(json.dumps({"slug": slug, "kind": kind_dir[:-1]}), encoding="utf-8")
+        (art / "analysis" / "intent.md").write_text("## intent", encoding="utf-8")
+        (art / "render" / "app.jsx").write_text("export default 1", encoding="utf-8")
+        (art / "render" / "scratch.tmp").write_text("stray", encoding="utf-8")
+    (root / "reports" / "daily_gmv" / "queries" / "q.sql").write_text("SELECT 1", encoding="utf-8")
+    return root
+
+
+def _build(root: Path, **kwargs) -> pb.PackageResult:
+    kwargs.setdefault("assume_yes", True)
+    return pb.build_package(pb.PackageOptions(root=root, **kwargs))
+
+
+def _namelist(result: pb.PackageResult) -> set:
+    assert result.ok, result.error
+    with zipfile.ZipFile(result.zip_path) as zf:
+        return set(zf.namelist())
+
+
+def _member(result: pb.PackageResult, name: str) -> bytes:
+    with zipfile.ZipFile(result.zip_path) as zf:
+        return zf.read(name)
+
+
+# --------------------------------------------------------------------------- #
+# Collection & filtering                                                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestCollection:
+    def test_builtin_exclusions(self, project):
+        names = _namelist(_build(project))
+        for banned in (
+            "sessions/junk.txt",
+            "data/junk.txt",
+            "logs/junk.txt",
+            "run/junk.txt",
+            "cache/junk.txt",
+            "save/junk.txt",
+            "trajectory/junk.txt",
+            "output_v1/junk.txt",
+            ".venv/junk.txt",
+            ".git/junk.txt",
+            "__pycache__/m.pyc",
+            ".env",
+            "db.duckdb.wal",
+            ".datus/memory/private.md",
+            ".datus/plans/draft.md",
+        ):
+            assert banned not in names, banned
+        assert "knowledge/notes.md" in names
+        assert "docs/guides/internal/deep.md" in names
+        # Generated files present; the source agent.yml was never copied.
+        assert {
+            "conf/agent.yml",
+            ".datus/config.yml",
+            "requirements.txt",
+            "README.md",
+            "package_manifest.json",
+        } <= names
+
+    def test_include_restricts_generic_walk(self, project):
+        names = _namelist(_build(project, include=(r"^knowledge/",)))
+        assert "knowledge/notes.md" in names
+        assert "docs/guides/internal/deep.md" not in names
+        # Selector-owned + generated content is not subject to user includes.
+        assert "conf/agent.yml" in names
+        assert "reports/daily_gmv/manifest.json" in names
+
+    def test_exclude_drops_matches(self, project):
+        names = _namelist(_build(project, exclude=(r"deep\.md$",)))
+        assert "docs/guides/internal/deep.md" not in names
+        assert "knowledge/notes.md" in names
+
+    def test_invalid_regex_fails_cleanly(self, project):
+        result = _build(project, include=("[unclosed",))
+        assert not result.ok
+        assert "invalid" in result.error and "[unclosed" in result.error
+
+    def test_output_zip_not_packaged_into_itself(self, project):
+        first = _build(project)
+        assert first.ok
+        second = _build(project)
+        names = _namelist(second)
+        assert not any(name.endswith(".zip") for name in names)
+
+    def test_symlink_escaping_root_dropped(self, project, tmp_path):
+        outside = tmp_path / "outside.txt"
+        outside.write_text("outside", encoding="utf-8")
+        (project / "knowledge" / "link.txt").symlink_to(outside)
+        result = _build(project)
+        names = _namelist(result)
+        assert "knowledge/link.txt" not in names
+        assert any("escaping project root" in warning for warning in result.warnings)
+
+
+# --------------------------------------------------------------------------- #
+# agent.yml generation                                                        #
+# --------------------------------------------------------------------------- #
+
+
+class TestAgentYmlGeneration:
+    def _generated(self, result: pb.PackageResult) -> dict:
+        return yaml.safe_load(_member(result, "conf/agent.yml"))["agent"]
+
+    def test_home_and_project_name_pinned(self, project):
+        agent = self._generated(_build(project))
+        assert agent["home"] == "."
+        assert agent["project_name"] == "fixture_proj"
+        assert "project_root" not in agent
+
+    def test_all_secrets_replaced_with_placeholders(self, project):
+        result = _build(project)
+        text = _member(result, "conf/agent.yml").decode("utf-8")
+        for secret in (_PLAINTEXT_KEY, "hunter2", "plain-model-key", "abc123token", "p4ss", "t0k", "tvly-plain"):
+            assert secret not in text, secret
+        agent = self._generated(result)
+        assert agent["providers"]["openai"]["api_key"] == "${OPENAI_API_KEY}"
+        assert agent["providers"]["claude"]["api_key"] == "${ANTHROPIC_API_KEY}"
+        assert agent["services"]["schedulers"]["airflow"]["password"] == "${AIRFLOW_PASSWORD}"
+        vars_seen = {binding.var for binding in result.env_vars}
+        assert {"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "TAVILY_API_KEY"} <= vars_seen
+        preexisting = {binding.var for binding in result.env_vars if binding.preexisting}
+        assert "ANTHROPIC_API_KEY" in preexisting and "AIRFLOW_PASSWORD" in preexisting
+
+    def test_uri_password_component_rewritten(self, project):
+        agent = self._generated(_build(project))
+        uri = agent["services"]["datasources"]["pg_main"]["uri"]
+        assert uri.startswith("postgresql://svc:${DATUS_DS_PG_MAIN_URI_PASSWORD}@db.example.com")
+        assert agent["services"]["datasources"]["local_lite"]["uri"] == "sqlite:///data.db"
+
+    def test_non_secret_extras_untouched(self, project):
+        agent = self._generated(_build(project))
+        assert agent["services"]["bi_platforms"]["superset"]["extra"]["provider"] == "db"
+
+    def test_unknown_sections_pass_through(self, project):
+        agent = self._generated(_build(project))
+        assert agent["custom_future_section"] == {"foo": "bar", "nested": {"keep": "me"}}
+
+    def test_subagent_filtering(self, project):
+        result = _build(project, subagents=("sales_helper",))
+        agent = self._generated(result)
+        assert set(agent["agentic_nodes"]) == {"sales_helper"}
+
+    def test_same_value_reuses_var_and_collision_suffixes(self, tmp_path, monkeypatch):
+        alloc = pb._PlaceholderAllocator()
+        first = alloc.allocate("samesecret", "DATUS_X_KEY", "a.key")
+        second = alloc.allocate("samesecret", "DATUS_Y_KEY", "b.key")
+        assert first == second == "${DATUS_X_KEY}"
+        third = alloc.allocate("othersecret", "DATUS_X_KEY", "c.key")
+        assert third == "${DATUS_X_KEY_2}"
+
+
+# --------------------------------------------------------------------------- #
+# Component selectors                                                         #
+# --------------------------------------------------------------------------- #
+
+
+class TestSelectors:
+    def test_unknown_subagent_fails(self, project):
+        result = _build(project, subagents=("ghost",))
+        assert not result.ok and "unknown subagent" in result.error
+
+    def test_subagent_template_staged(self, project):
+        names = _namelist(_build(project, subagents=("sales_helper",)))
+        assert "template/sales_helper_system_1.0.j2" in names
+
+    def test_skills_project_wins_and_global_materialized(self, project):
+        result = _build(project)
+        names = _namelist(result)
+        assert ".datus/skills/shared-skill/SKILL.md" in names
+        assert ".datus/skills/global-only/SKILL.md" in names
+        assert _member(result, ".datus/skills/shared-skill/SKILL.md") == b"# project"
+
+    def test_unknown_skill_fails(self, project):
+        result = _build(project, skills=("nope",))
+        assert not result.ok and "unknown skill" in result.error
+
+    def test_metrics_selection_and_rebuild_script(self, project):
+        result = _build(project, metrics=("sales_db",))
+        names = _namelist(result)
+        assert "subject/semantic_models/sales_db/orders.yml" in names
+        assert "subject/semantic_models/pg_main/orders.yml" not in names
+        assert "subject/sql_summaries/summary.md" in names
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        semantic_pos = script.index("--components semantic_model")
+        metrics_pos = script.index("--components metrics")
+        assert semantic_pos < metrics_pos
+        assert '--semantic_yaml "subject/semantic_models/sales_db/metrics/orders_metrics.yml"' in script
+        assert script.count("bootstrap-kb") == 2
+        assert "-y" in script and "--datasource sales_db" in script
+
+    def test_no_metrics_no_rebuild_script(self, project):
+        names = _namelist(_build(project, metrics=()))
+        assert "scripts/rebuild_kb.sh" not in names
+        assert not any(name.startswith("subject/semantic_models/") for name in names)
+
+    def test_artifact_allowlist_filters_stray_files(self, project):
+        names = _namelist(_build(project))
+        assert "reports/daily_gmv/render/app.jsx" in names
+        assert "reports/daily_gmv/render/scratch.tmp" not in names
+        assert "reports/daily_gmv/manifest.json" in names
+        assert "dashboards/ops_view/render/app.jsx" in names
+
+    def test_unknown_report_slug_fails(self, project):
+        result = _build(project, reports=("ghost_slug",))
+        assert not result.ok and "unknown report" in result.error
+
+    def test_report_selection_excludes_others(self, project):
+        names = _namelist(_build(project, reports=()))
+        assert not any(name.startswith("reports/") for name in names)
+        assert any(name.startswith("dashboards/") for name in names)
+
+    def test_report_dist_rewrites_index_html(self, project, tmp_path):
+        from datus.agent.node.visual_artifact._artifact_html_renderer import CDN_BUNDLE_CSS, CDN_BUNDLE_JS
+
+        index = project / "reports" / "daily_gmv" / "index.html"
+        index.write_text(f'<link href="{CDN_BUNDLE_CSS}"><script src="{CDN_BUNDLE_JS}">', encoding="utf-8")
+        dist = tmp_path / "dist"
+        dist.mkdir()
+        (dist / "index.css").write_text("css", encoding="utf-8")
+        (dist / "index.umd.js").write_text("js", encoding="utf-8")
+
+        result = _build(project, report_dist=dist)
+        names = _namelist(result)
+        assert "reports/daily_gmv/_assets/index.css" in names
+        assert "reports/daily_gmv/_assets/index.umd.js" in names
+        html = _member(result, "reports/daily_gmv/index.html").decode("utf-8")
+        assert "_assets/index.css" in html and "_assets/index.umd.js" in html
+        assert "unpkg.com" not in html
+
+    def test_index_html_kept_as_is_without_dist(self, project):
+        index = project / "reports" / "daily_gmv" / "index.html"
+        index.write_text("<html>cdn</html>", encoding="utf-8")
+        result = _build(project)
+        assert _member(result, "reports/daily_gmv/index.html") == b"<html>cdn</html>"
+
+
+# --------------------------------------------------------------------------- #
+# Generated deliverables                                                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestGeneratedFiles:
+    def test_requirements_pins(self, project):
+        result = _build(project)
+        assert _member(result, "requirements.txt").decode("utf-8") == "datus-agent==0.9.9\n"
+
+    def test_editable_requires_confirmation(self, project, monkeypatch):
+        monkeypatch.setattr(
+            pb,
+            "enumerate_datus_packages",
+            lambda: [pb.DatusPackage(name="datus-agent", version="0.9.9", editable=True)],
+        )
+        declined = pb.build_package(pb.PackageOptions(root=project, assume_yes=False, confirm_cb=lambda _msg: False))
+        assert not declined.ok and "aborted" in declined.error
+        accepted = pb.build_package(pb.PackageOptions(root=project, assume_yes=False, confirm_cb=lambda _msg: True))
+        assert accepted.ok
+
+    def test_assume_yes_skips_editable_confirmation(self, project, monkeypatch):
+        monkeypatch.setattr(
+            pb,
+            "enumerate_datus_packages",
+            lambda: [pb.DatusPackage(name="datus-agent", version="0.9.9", editable=True)],
+        )
+        result = pb.build_package(
+            pb.PackageOptions(root=project, assume_yes=True, confirm_cb=lambda _msg: pytest.fail("must not prompt"))
+        )
+        assert result.ok
+
+    def test_install_plugins_script(self, project, monkeypatch):
+        (project / ".datus" / "config.yml").write_text(
+            "project_name: fixture_proj\nplugins:\n  alpha:\n    enabled: true\n  beta:\n    enabled: false\n",
+            encoding="utf-8",
+        )
+        import datus.plugins.store as store
+
+        monkeypatch.setattr(
+            store, "iter_installed", lambda: [{"name": "alpha", "distribution": "datus-alpha", "version": "1.2.3"}]
+        )
+        result = _build(project)
+        script = _member(result, "scripts/install_plugins.sh").decode("utf-8")
+        assert "datus plugin install datus-alpha==1.2.3" in script
+        assert "beta" not in script
+
+    def test_no_plugins_no_script(self, project):
+        names = _namelist(_build(project))
+        assert "scripts/install_plugins.sh" not in names
+
+    def test_project_config_pins_name(self, project):
+        result = _build(project)
+        payload = yaml.safe_load(_member(result, ".datus/config.yml"))
+        assert payload["project_name"] == "fixture_proj"
+
+    def test_readme_lists_env_vars(self, project):
+        readme = _member(_build(project), "README.md").decode("utf-8")
+        assert "OPENAI_API_KEY" in readme
+        assert "pip install -r requirements.txt" in readme
+        assert ".env" in readme
+
+    def test_scripts_are_executable_in_zip(self, project):
+        result = _build(project)
+        with zipfile.ZipFile(result.zip_path) as zf:
+            info = zf.getinfo("scripts/rebuild_kb.sh")
+            assert (info.external_attr >> 16) & 0o111, "rebuild_kb.sh must carry the executable bit"
+
+
+# --------------------------------------------------------------------------- #
+# Final secret scan                                                           #
+# --------------------------------------------------------------------------- #
+
+
+class TestSecretScan:
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param("token ghp_abcdefghijklmnopqrstuv123456 in text", id="github_token"),
+            pytest.param("aws AKIAIOSFODNN7EXAMPLE key", id="aws_key_id"),
+            pytest.param("-----BEGIN RSA PRIVATE KEY-----\nabc\n", id="pem"),
+            pytest.param("slack xoxb-123456789012-abcdef token", id="slack_token"),
+        ],
+    )
+    def test_secret_material_in_project_file_fails_build(self, project, payload):
+        (project / "knowledge" / "leak.md").write_text(payload, encoding="utf-8")
+        result = _build(project)
+        assert not result.ok
+        assert any(finding.arcname == "knowledge/leak.md" for finding in result.secret_findings)
+
+    def test_binary_files_skipped(self, project):
+        (project / "knowledge" / "blob.bin").write_bytes(b"\x00\x01ghp_abcdefghijklmnopqrstuv123456")
+        assert _build(project).ok
+
+    def test_generated_yaml_self_check_catches_missed_section(self, project):
+        # Simulate a future config section the sanitizer table doesn't know:
+        # the value-driven self-check must fail the build rather than leak.
+        raw = yaml.safe_load((project / "conf" / "agent.yml").read_text(encoding="utf-8"))
+        raw["agent"]["future_section"] = {"service_password": "plaintext-oops"}
+        (project / "conf" / "agent.yml").write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+        result = _build(project)
+        assert not result.ok
+        assert any(
+            finding.kind == "plaintext_secret_key" and "future_section" in finding.locator
+            for finding in result.secret_findings
+        )
+
+    def test_clean_project_passes(self, project):
+        assert _build(project).ok
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end layout                                                           #
+# --------------------------------------------------------------------------- #
+
+
+class TestEndToEnd:
+    def test_layout_and_manifest_integrity(self, project, tmp_path):
+        result = _build(project)
+        names = _namelist(result)
+        assert not any(".." in name or name.startswith("/") or "\\" in name for name in names)
+
+        manifest = json.loads(_member(result, "package_manifest.json"))
+        assert manifest["format"] == "datus-project-package"
+        assert manifest["project_name"] == "fixture_proj"
+        assert set(manifest["selections"]) >= {"subagents", "skills", "metrics", "reports", "dashboards"}
+        listed = {entry["path"] for entry in manifest["files"]}
+        assert listed == names - {"package_manifest.json"}
+
+        # sha256 integrity spot-check against the extracted bytes.
+        import hashlib
+
+        by_path = {entry["path"]: entry["sha256"] for entry in manifest["files"]}
+        body = _member(result, "conf/agent.yml")
+        assert hashlib.sha256(body).hexdigest() == by_path["conf/agent.yml"]
+
+        # The unzipped tree parses as a valid agent config shape.
+        extract = tmp_path / "unpacked"
+        with zipfile.ZipFile(result.zip_path) as zf:
+            zf.extractall(extract)
+        agent = yaml.safe_load((extract / "conf" / "agent.yml").read_text(encoding="utf-8"))["agent"]
+        assert agent["home"] == "." and agent["project_name"] == "fixture_proj"
+
+
+if __name__ == "__main__":  # pragma: no cover
+    pytest.main([__file__, "-v"])

@@ -28,7 +28,8 @@ class ArgumentParser:
             epilog=(
                 "subcommands:\n"
                 "  upgrade            Upgrade datus-agent and installed datus-* packages to the latest release\n"
-                "  upgrade --check    Report the latest version without installing"
+                "  upgrade --check    Report the latest version without installing\n"
+                "  package            Pack this project into a self-contained zip (interactive; -y for defaults)"
             ),
         )
         self._setup_arguments()
@@ -561,7 +562,7 @@ class Application:
 # adapter/plugin must never shadow these via the ``datus.cli_commands`` /
 # ``datus.plugins`` entry-point groups. Kept in one place so the reserved set
 # is easy to extend.
-_RESERVED_SUBCOMMANDS = frozenset({"upgrade", "skill", "plugin"})
+_RESERVED_SUBCOMMANDS = frozenset({"upgrade", "skill", "plugin", "package"})
 
 
 def _coerce_exit_code(rc: object, name: str) -> int:
@@ -791,6 +792,14 @@ def main():
 
         configure_logging(False, console_output=False)
         sys.exit(run_plugin_command(sys.argv[2:]))
+
+    # Intercept 'package' — export the current project as a self-contained
+    # zip. Interactive wizard; handled before the REPL like plugin/upgrade.
+    if len(sys.argv) > 1 and sys.argv[1] == "package":
+        from datus.cli.package_cli import run_package_command
+
+        configure_logging(False, console_output=False)
+        sys.exit(run_package_command(sys.argv[2:]))
 
     # Intercept 'skill' subcommand and delegate to datus.main's skill handler
     if len(sys.argv) > 1 and sys.argv[1] == "skill":
