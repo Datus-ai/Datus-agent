@@ -255,11 +255,7 @@ class AskMetricsAgenticNode(AgenticNode):
             logger.warning("Ignoring unsupported ask_metrics tool: %s.%s", category, method_name)
             return
 
-        method = (
-            self.query_metrics
-            if category == "semantic_tools" and method_name == "query_metrics"
-            else getattr(tool_instance, method_name)
-        )
+        method = getattr(tool_instance, method_name)
         if category == "db_tools" and callable(getattr(tool_instance, "to_function_tool", None)):
             tool = tool_instance.to_function_tool(method)
         else:
@@ -318,8 +314,6 @@ class AskMetricsAgenticNode(AgenticNode):
         if not callable(available_tools):
             return
         for tool in available_tools():
-            if tool_instance is self.semantic_tools and getattr(tool, "name", "") == "query_metrics":
-                tool = trans_to_function_tool(self.query_metrics)
             self._append_tool(tool)
 
     def _add_available_context_tools(self) -> None:
@@ -414,87 +408,6 @@ class AskMetricsAgenticNode(AgenticNode):
             }
         )
 
-    def query_metrics(
-        self,
-        metrics: Optional[List[str]] = None,
-        dimensions: Optional[List[str]] = None,
-        path: Optional[List[str]] = None,
-        time_start: Optional[str] = None,
-        time_end: Optional[str] = None,
-        time_granularity: Optional[str] = None,
-        where: Optional[str] = None,
-        limit: Optional[int] = None,
-        order_by: Optional[List[str]] = None,
-        dry_run: bool = False,
-    ) -> FuncToolResult:
-        """
-        Query metric values.
-
-        Return complete metric results by default. Do not pass limit just to
-        preview data, reduce output size, or be conservative; the visible tool
-        output is compressed while the full result is cached and used for the
-        final output. Use limit only when the user explicitly asks for Top N,
-        first N, maximum N rows, a preview, or another row-count restriction.
-        When using limit for Top N/Bottom N, also pass order_by so the
-        truncation has stable business meaning.
-
-        For derived metrics such as month-over-month, year-over-year or moving
-        averages, query the dedicated catalog metric directly. When the answer
-        also needs the underlying series or the window's row count, request
-        those metrics explicitly alongside it.
-
-        How a joined dimension treats facts that match no dimension row is
-        declared in the semantic model per relationship. They may therefore
-        come back grouped under an empty dimension value, or be excluded — read
-        the result and the `join_policy_filtered_rows` metadata instead of
-        assuming either. Dimension values that appear in no fact row are never
-        returned.
-
-        Args:
-            metrics: Metric names to query.
-            dimensions: Optional grouping dimensions.
-            path: Optional subject-tree path for metric scoping.
-            time_start: Optional inclusive start of an OSI half-open range.
-            time_end: Optional exclusive end of an OSI half-open range. For example,
-                use 2024-02-01 to include all of January.
-            time_granularity: Optional supported aggregation grain.
-            where: Optional SQL boolean expression without the WHERE keyword.
-            limit: Optional maximum row count when the question requests truncation.
-            order_by: Optional ordered columns, using a leading minus for descending order.
-            dry_run: Compile and validate the query without executing it when true.
-        """
-        if not self.semantic_tools:
-            return FuncToolResult(success=0, error="semantic tools unavailable")
-
-        normalized_metrics = self._normalize_string_list(metrics)
-        if not normalized_metrics:
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "query_metrics requires at least one metric name. "
-                    "Call list_metrics first and pass one or more metric names exactly as returned."
-                ),
-            )
-        normalized_dimensions = None if dimensions is None else self._normalize_string_list(dimensions)
-        normalized_order_by = None if order_by is None else self._normalize_string_list(order_by)
-        # metric_time grouping is derived from each metric's definition and
-        # applied by the semantic adapter; the node no longer injects it here.
-
-        query_kwargs = {
-            "metrics": normalized_metrics,
-            "dimensions": normalized_dimensions,
-            "path": path,
-            "time_start": time_start,
-            "time_end": time_end,
-            "time_granularity": time_granularity,
-            "where": where,
-            "limit": limit,
-            "order_by": normalized_order_by,
-            "dry_run": dry_run,
-        }
-        result = self.semantic_tools.query_metrics(**query_kwargs)
-        return self._apply_query_result_column_aliases(result)
-
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
         Select the query_metrics result that should be stored as the final structured result.
@@ -526,97 +439,6 @@ class AskMetricsAgenticNode(AgenticNode):
         else:
             return []
         return [str(item).strip() for item in values if str(item).strip()]
-
-    @staticmethod
-    def _is_joined_dimension(dimension: str) -> bool:
-        return "__" in dimension and not str(dimension).startswith("metric_time__")
-
-    @classmethod
-    def _apply_query_result_column_aliases(cls, result: FuncToolResult) -> FuncToolResult:
-        if not isinstance(result, FuncToolResult) or result.success == 0 or not isinstance(result.result, dict):
-            return result
-
-        payload = result.result
-        columns = payload.get("columns")
-        if not isinstance(columns, list):
-            return result
-
-        aliases = cls._query_metric_column_aliases(columns)
-        if not aliases:
-            return result
-
-        payload["columns"] = cls._apply_column_aliases_to_columns(columns, aliases)
-        metadata = payload.get("metadata")
-        if not isinstance(metadata, dict):
-            metadata = {}
-        metadata["_display_column_aliases"] = aliases
-        payload["metadata"] = metadata
-
-        data = payload.get("data")
-        if isinstance(data, dict) and isinstance(data.get("compressed_data"), str):
-            aliased_data = dict(data)
-            aliased_data["compressed_data"] = cls._apply_column_aliases_to_csv(
-                aliased_data["compressed_data"],
-                aliases,
-            )
-            payload["data"] = aliased_data
-        return result
-
-    @classmethod
-    def _query_metric_column_aliases(cls, columns: List[Any]) -> Dict[str, str]:
-        normalized_columns = [str(column) for column in columns]
-        suffix_counts: Dict[str, int] = {}
-        for column in normalized_columns:
-            if not cls._is_joined_dimension(column):
-                continue
-            suffix = column.rsplit("__", 1)[-1]
-            if suffix:
-                suffix_counts[suffix] = suffix_counts.get(suffix, 0) + 1
-
-        existing_columns = set(normalized_columns)
-        aliases: Dict[str, str] = {}
-        for column in normalized_columns:
-            if not cls._is_joined_dimension(column):
-                continue
-            suffix = column.rsplit("__", 1)[-1]
-            if not suffix or suffix_counts.get(suffix) != 1 or suffix in existing_columns:
-                continue
-            aliases[column] = suffix
-        return aliases
-
-    @staticmethod
-    def _column_aliases_from_metadata(metadata: Dict[str, Any]) -> Dict[str, str]:
-        raw_aliases = metadata.get("_display_column_aliases")
-        if not isinstance(raw_aliases, dict):
-            return {}
-        return {str(source): str(target) for source, target in raw_aliases.items() if source and target}
-
-    @staticmethod
-    def _apply_column_aliases_to_columns(columns: List[Any], aliases: Dict[str, str]) -> List[str]:
-        if not aliases:
-            return [str(column) for column in columns]
-        return [aliases.get(str(column), str(column)) for column in columns]
-
-    @classmethod
-    def _apply_column_aliases_to_csv(cls, csv_text: str, aliases: Dict[str, str]) -> str:
-        if not aliases or not isinstance(csv_text, str) or not csv_text:
-            return csv_text
-
-        reader = csv.reader(io.StringIO(csv_text))
-        try:
-            header = next(reader)
-        except StopIteration:
-            return csv_text
-
-        aliased_header = cls._apply_column_aliases_to_columns(header, aliases)
-        if aliased_header == header:
-            return csv_text
-
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(aliased_header)
-        writer.writerows(reader)
-        return buf.getvalue()
 
     async def _before_stream(self, ctx: StreamRunContext) -> None:
         if self.startup_error:
@@ -839,7 +661,6 @@ class AskMetricsAgenticNode(AgenticNode):
                 return super().update_context(workflow)
 
             metadata = result.get("metadata", {}) or {}
-            column_aliases = self._column_aliases_from_metadata(metadata)
             cached_result = None
             cache_key = metadata.get("_full_result_cache_key")
             if cache_key and self.semantic_tools and hasattr(self.semantic_tools, "get_cached_query_metrics_result"):
@@ -850,14 +671,12 @@ class AskMetricsAgenticNode(AgenticNode):
                 if isinstance(cached_result, dict) and cached_result.get("csv"):
                     sql_return = cached_result["csv"]
                     row_count = cached_result.get("row_count", row_count)
-                    sql_return = self._apply_column_aliases_to_csv(sql_return, column_aliases)
                 else:
                     sql_return = data["compressed_data"]
-                    sql_return = self._apply_column_aliases_to_csv(sql_return, column_aliases)
             elif isinstance(data, list):
                 buf = io.StringIO()
                 writer = csv.writer(buf)
-                writer.writerow(self._apply_column_aliases_to_columns(columns, column_aliases))
+                writer.writerow([str(column) for column in columns])
                 writer.writerows(data)
                 sql_return = buf.getvalue()
                 row_count = len(data)
