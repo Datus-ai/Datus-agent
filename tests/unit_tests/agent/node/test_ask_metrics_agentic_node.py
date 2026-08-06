@@ -668,7 +668,7 @@ class TestAskMetricsAgenticNode:
             dry_run=False,
         )
 
-    def test_query_metrics_dedupes_deterministic_validation_failure(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_forwards_repeated_validation_failures(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
             tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
@@ -676,7 +676,7 @@ class TestAskMetricsAgenticNode:
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
         )
-        semantic_tools.query_metrics.return_value = FuncToolResult(
+        rejection = FuncToolResult(
             success=0,
             error="cumulative metric requires metric_time",
             result={
@@ -684,18 +684,21 @@ class TestAskMetricsAgenticNode:
                 "code": "cumulative_requires_metric_time",
             },
         )
+        semantic_tools.query_metrics.return_value = rejection
 
         first = node.query_metrics(metrics=["order_count"], dimensions=["product_type"])
         assert first.success == 0
         assert semantic_tools.query_metrics.call_count == 1
 
-        # An identical retry after a deterministic validation failure is short-circuited.
+        # An identical retry reaches the adapter again and returns the adapter's own
+        # rejection: the node keeps no cross-call state, so a model reload that makes
+        # the query valid takes effect immediately.
         second = node.query_metrics(metrics=["order_count"], dimensions=["product_type"])
         assert second.success == 0
-        assert "already failed" in (second.error or "")
-        assert semantic_tools.query_metrics.call_count == 1
+        assert second.result["code"] == "cumulative_requires_metric_time"
+        assert semantic_tools.query_metrics.call_count == 2
 
-    def test_query_metrics_does_not_dedupe_transient_failure(self, real_agent_config, mock_llm_create):
+    def test_query_metrics_forwards_repeated_transient_failures(self, real_agent_config, mock_llm_create):
         node, semantic_tools, _ = _make_node(
             real_agent_config,
             tree={"Sales": {"Orders": {"metrics": ["order_count"]}}},
@@ -703,7 +706,6 @@ class TestAskMetricsAgenticNode:
         semantic_tools.list_metrics.return_value = FuncToolResult(
             result={"items": [{"name": "order_count", "metadata": {}}], "has_more": False}
         )
-        # A non-validation (infra) failure must not suppress a retry.
         semantic_tools.query_metrics.return_value = FuncToolResult(
             success=0, error="Failed to query metrics: connection lost"
         )

@@ -868,6 +868,14 @@ class SemanticTools:
         """
         Query metrics data (requires adapter).
 
+        Return complete metric results by default. Do not pass limit just to
+        preview data, reduce output size, or be conservative; the visible tool
+        output is compressed while the full result is cached and used for the
+        final output. Use limit only when the user explicitly asks for Top N,
+        first N, maximum N rows, a preview, or another row-count restriction.
+        When using limit for Top N/Bottom N, also pass order_by so the
+        truncation has stable business meaning.
+
         Args:
             metrics: List of metric names to query
             dimensions: Optional list of dimensions to group by (from get_dimensions)

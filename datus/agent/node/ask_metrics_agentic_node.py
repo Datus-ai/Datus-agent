@@ -88,7 +88,6 @@ class AskMetricsAgenticNode(AgenticNode):
         self.subject_tree_mode: str = "none"
         self.subject_tree_prompt: str = ""
         self._metric_catalog_cache: Optional[Dict[str, Dict[str, Any]]] = None
-        self._failed_query_signatures: set[tuple] = set()
         self._selected_final_metric_result_id: Optional[str] = None
         self.startup_error: Optional[str] = None
 
@@ -433,12 +432,12 @@ class AskMetricsAgenticNode(AgenticNode):
         Query metric values.
 
         Return complete metric results by default. Do not pass limit just to
-        preview data, reduce output size, or be conservative; the system
-        compresses visible tool output and caches the full result. Use limit
-        only when the user explicitly asks for Top N, first N, maximum N rows,
-        a preview, or another row-count restriction. When using limit for Top
-        N/Bottom N, also pass order_by so the truncation has stable business
-        meaning.
+        preview data, reduce output size, or be conservative; the visible tool
+        output is compressed while the full result is cached and used for the
+        final output. Use limit only when the user explicitly asks for Top N,
+        first N, maximum N rows, a preview, or another row-count restriction.
+        When using limit for Top N/Bottom N, also pass order_by so the
+        truncation has stable business meaning.
 
         For fixed period-over-period metrics such as month-over-month or
         year-over-year, query the dedicated catalog metric directly. For window
@@ -481,20 +480,6 @@ class AskMetricsAgenticNode(AgenticNode):
         # metric_time grouping is derived from each metric's definition and
         # applied by the semantic adapter; the node no longer injects it here.
 
-        # De-duplicate deterministic validation failures: once a metric/dimension/
-        # granularity combination has been rejected, do not re-issue the identical
-        # query — return actionable guidance so the planner adjusts instead of looping.
-        signature = self._query_signature(expanded_metrics, normalized_dimensions, time_granularity, where)
-        if signature in self._failed_query_signatures:
-            return FuncToolResult(
-                success=0,
-                error=(
-                    "query_metrics already failed for this metric/dimension/granularity "
-                    "combination. Adjust the metrics, dimensions, or granularity — or split "
-                    "the query into compatible metric groups — instead of retrying identical "
-                    "arguments."
-                ),
-            )
         query_kwargs = {
             "metrics": expanded_metrics,
             "dimensions": normalized_dimensions,
@@ -508,36 +493,7 @@ class AskMetricsAgenticNode(AgenticNode):
             "dry_run": dry_run,
         }
         result = self.semantic_tools.query_metrics(**query_kwargs)
-        if self._is_deterministic_validation_failure(result):
-            self._failed_query_signatures.add(signature)
         return self._apply_query_result_column_aliases(result)
-
-    @staticmethod
-    def _query_signature(
-        metrics: List[str],
-        dimensions: Optional[List[str]],
-        time_granularity: Optional[str],
-        where: Optional[str],
-    ) -> tuple:
-        """Stable key for a query_metrics invocation used to suppress identical retries."""
-        return (
-            tuple(sorted(metrics or [])),
-            tuple(sorted(dimensions or [])),
-            str(time_granularity or "").strip().lower(),
-            str(where or "").strip(),
-        )
-
-    @staticmethod
-    def _is_deterministic_validation_failure(result: FuncToolResult) -> bool:
-        """True when query_metrics failed for a deterministic semantic validation reason.
-
-        Transient/infra failures are excluded so a retry with the same arguments is
-        only suppressed when re-issuing it cannot succeed.
-        """
-        if not isinstance(result, FuncToolResult) or result.success != 0:
-            return False
-        payload = result.result if isinstance(result.result, dict) else {}
-        return payload.get("error_type") == "semantic_validation_error"
 
     def select_final_metric_result(self, result_id: str) -> FuncToolResult:
         """
