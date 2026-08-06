@@ -162,6 +162,23 @@ def wrap_tool_with_transformers(
     return FunctionTool(**carried)
 
 
+def _metric_datasets(node: Any) -> Optional[Dict[str, List[str]]]:
+    """Metric-to-datasets map from the node's semantic tools.
+
+    ``None`` when the node has no semantic tools or the catalog cannot be read;
+    ``{}`` when the adapter reports no metrics.
+    """
+    semantic_tools = getattr(node, "semantic_tools", None)
+    getter = getattr(semantic_tools, "metric_datasets", None)
+    if not callable(getter):
+        return None
+    try:
+        return getter()
+    except Exception as e:  # noqa: BLE001 - an unreadable catalog must not break tool calls
+        logger.warning("Could not read metric datasets for transformer context: %s", e)
+        return None
+
+
 def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[ToolTransformer]]) -> int:
     """Wrap matching tools on ``node`` with the given transformers, in place.
 
@@ -202,6 +219,9 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
             # plugin profile (``get_plugin_profile``) and datasource metadata.
             # Duck-typed access only — transformers must not import datus.*.
             "agent_config": agent_config,
+            # Metric name -> datasets it reads, so transformers enforcing read
+            # policies over metric queries know which physical data is touched.
+            "metric_datasets": _metric_datasets(node),
         }
 
     parsed_by_pattern = {pattern: parse_tool_patterns([pattern]) for pattern in transformers_by_pattern}

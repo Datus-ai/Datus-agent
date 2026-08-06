@@ -647,6 +647,51 @@ class TestQueryMetricsCompression:
         assert result.result["metadata"]["join_policy"] == "match_only"
         assert result.result["metadata"]["join_policy_filtered_rows"] == 3
 
+    def test_metric_datasets_maps_names_from_catalog_metadata(self, semantic_tools):
+        """The adapter reports which datasets each metric reads."""
+        metrics = [
+            SimpleNamespace(name="revenue", metadata={"datasets": ["orders"]}),
+            SimpleNamespace(name="signups", metadata={"datasets": ["users"]}),
+        ]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda **kwargs: metrics)
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics):
+            assert semantic_tools.metric_datasets() == {"revenue": ["orders"], "signups": ["users"]}
+
+    def test_metric_datasets_requests_every_metric_in_one_page(self, semantic_tools):
+        """The whole catalog arrives in one request."""
+        captured = {}
+
+        def list_metrics(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            semantic_tools.metric_datasets()
+
+        assert captured["offset"] == 0
+        assert captured["limit"] >= 1_000_000
+
+    def test_metric_datasets_keeps_metrics_without_dataset_information(self, semantic_tools):
+        """A metric reported without dataset information maps to an empty list."""
+        metrics = [SimpleNamespace(name="orphan", metadata={})]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda **kwargs: metrics)
+        with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics):
+            assert semantic_tools.metric_datasets() == {"orphan": []}
+
+    def test_metric_datasets_prefers_the_adapter_lightweight_accessor(self, semantic_tools):
+        """Adapters may skip building a MetricDefinition per metric."""
+
+        def fail_list_metrics(**kwargs):
+            raise AssertionError("should not fall back to list_metrics")
+
+        semantic_tools._adapter = SimpleNamespace(
+            metric_datasets=lambda: {"revenue": ["orders"]},
+            list_metrics=fail_list_metrics,
+        )
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() == {"revenue": ["orders"]}
+
 
 # ---------------------------------------------------------------------------
 # Extended fixtures (no adapter_type)

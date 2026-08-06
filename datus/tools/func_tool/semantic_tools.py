@@ -151,6 +151,9 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
     return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
 
 
+# `metric_datasets` fetches the whole catalog in one request.
+_METRIC_DATASETS_PAGE_SIZE = 1_000_000
+
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
 
@@ -420,6 +423,30 @@ class SemanticTools:
 
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         return self._query_metrics_result_cache.get(cache_key)
+
+    def metric_datasets(self) -> Dict[str, List[str]]:
+        """Metric name -> datasets it reads, for the tool-transformer context.
+
+        Read fresh on each call so a metric added after a model reload is visible.
+        """
+        adapter = self.adapter
+        if adapter is None:
+            return {}
+
+        lightweight = getattr(adapter, "metric_datasets", None)
+        if callable(lightweight):
+            return {
+                str(name): [str(ds) for ds in datasets or []] for name, datasets in _run_async(lightweight()).items()
+            }
+
+        mapping: Dict[str, List[str]] = {}
+        for metric in _run_async(adapter.list_metrics(limit=_METRIC_DATASETS_PAGE_SIZE, offset=0)):
+            name = str(getattr(metric, "name", "") or "")
+            if not name:
+                continue
+            metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
+            mapping[name] = [str(dataset) for dataset in (metadata.get("datasets") or [])]
+        return mapping
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""
