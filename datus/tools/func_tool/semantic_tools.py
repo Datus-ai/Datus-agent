@@ -151,8 +151,10 @@ def _signature_accepts_parameter(parameters, name: str) -> bool:
     return name in parameters or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
 
 
-# `metric_datasets` fetches the whole catalog in one request.
-_METRIC_DATASETS_PAGE_SIZE = 1_000_000
+# `metric_datasets` pages through the catalog until a page comes back short.
+# The cap bounds an adapter that ignores `offset` and keeps returning full pages.
+_METRIC_DATASETS_PAGE_SIZE = 500
+_METRIC_DATASETS_MAX_PAGES = 200
 
 _TIME_GRANULARITY_ORDER = ("day", "week", "month", "quarter", "year")
 _TIME_GRANULARITIES = set(_TIME_GRANULARITY_ORDER)
@@ -424,14 +426,17 @@ class SemanticTools:
     def get_cached_query_metrics_result(self, cache_key: str) -> Optional[dict]:
         return self._query_metrics_result_cache.get(cache_key)
 
-    def metric_datasets(self) -> Dict[str, List[str]]:
+    def metric_datasets(self) -> Optional[Dict[str, List[str]]]:
         """Metric name -> datasets it reads, for the tool-transformer context.
 
-        Read fresh on each call so a metric added after a model reload is visible.
+        ``None`` when no adapter is configured; ``{}`` when the catalog is empty.
+        Consumers treat a name missing from the map as "no such metric", so every
+        page is read. Result is fresh on each call, making a metric added after a
+        model reload visible.
         """
         adapter = self.adapter
         if adapter is None:
-            return {}
+            return None
 
         lightweight = getattr(adapter, "metric_datasets", None)
         if callable(lightweight):
@@ -440,13 +445,24 @@ class SemanticTools:
             }
 
         mapping: Dict[str, List[str]] = {}
-        for metric in _run_async(adapter.list_metrics(limit=_METRIC_DATASETS_PAGE_SIZE, offset=0)):
-            name = str(getattr(metric, "name", "") or "")
-            if not name:
-                continue
-            metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
-            mapping[name] = [str(dataset) for dataset in (metadata.get("datasets") or [])]
-        return mapping
+        offset = 0
+        for _ in range(_METRIC_DATASETS_MAX_PAGES):
+            page = list(_run_async(adapter.list_metrics(limit=_METRIC_DATASETS_PAGE_SIZE, offset=offset)))
+            for metric in page:
+                name = str(getattr(metric, "name", "") or "")
+                if not name:
+                    continue
+                metadata = _normalize_metric_metadata(getattr(metric, "metadata", None))
+                mapping[name] = [str(dataset) for dataset in (metadata.get("datasets") or [])]
+            if len(page) < _METRIC_DATASETS_PAGE_SIZE:
+                return mapping
+            offset += len(page)
+
+        logger.warning(
+            "Metric catalog exceeded %d pages; dataset mapping may be incomplete.",
+            _METRIC_DATASETS_MAX_PAGES,
+        )
+        return None
 
     def _configured_adapter_type(self) -> Optional[str]:
         """Return the configured adapter type without instantiating the adapter."""

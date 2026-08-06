@@ -657,20 +657,38 @@ class TestQueryMetricsCompression:
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics):
             assert semantic_tools.metric_datasets() == {"revenue": ["orders"], "signups": ["users"]}
 
-    def test_metric_datasets_requests_every_metric_in_one_page(self, semantic_tools):
-        """The whole catalog arrives in one request."""
-        captured = {}
+    def test_metric_datasets_reads_every_page(self, semantic_tools):
+        """A truncated read would hide metrics from a policy that scopes by dataset."""
+        from datus.tools.func_tool.semantic_tools import _METRIC_DATASETS_PAGE_SIZE
 
-        def list_metrics(**kwargs):
-            captured.update(kwargs)
-            return []
+        first = [
+            SimpleNamespace(name=f"m{i}", metadata={"datasets": ["orders"]}) for i in range(_METRIC_DATASETS_PAGE_SIZE)
+        ]
+        second = [SimpleNamespace(name="tail", metadata={"datasets": ["users"]})]
+        offsets = []
+
+        def list_metrics(limit, offset):
+            offsets.append(offset)
+            return first if offset == 0 else second
 
         semantic_tools._adapter = SimpleNamespace(list_metrics=list_metrics)
         with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
-            semantic_tools.metric_datasets()
+            mapping = semantic_tools.metric_datasets()
 
-        assert captured["offset"] == 0
-        assert captured["limit"] >= 1_000_000
+        assert offsets == [0, _METRIC_DATASETS_PAGE_SIZE]
+        assert mapping["tail"] == ["users"]
+        assert len(mapping) == _METRIC_DATASETS_PAGE_SIZE + 1
+
+    def test_metric_datasets_gives_up_on_an_adapter_that_ignores_offset(self, semantic_tools):
+        """An incomplete map must not look like a complete one."""
+        from datus.tools.func_tool.semantic_tools import _METRIC_DATASETS_PAGE_SIZE
+
+        page = [
+            SimpleNamespace(name=f"m{i}", metadata={"datasets": ["orders"]}) for i in range(_METRIC_DATASETS_PAGE_SIZE)
+        ]
+        semantic_tools._adapter = SimpleNamespace(list_metrics=lambda limit, offset: page)
+        with patch("datus.tools.func_tool.semantic_tools._run_async", side_effect=lambda coro: coro):
+            assert semantic_tools.metric_datasets() is None
 
     def test_metric_datasets_keeps_metrics_without_dataset_information(self, semantic_tools):
         """A metric reported without dataset information maps to an empty list."""
@@ -678,6 +696,11 @@ class TestQueryMetricsCompression:
         semantic_tools._adapter = SimpleNamespace(list_metrics=lambda **kwargs: metrics)
         with patch("datus.tools.func_tool.semantic_tools._run_async", return_value=metrics):
             assert semantic_tools.metric_datasets() == {"orphan": []}
+
+    def test_metric_datasets_without_an_adapter_is_none(self, semantic_tools):
+        """An unavailable catalog is distinct from a readable empty one."""
+        with patch.object(type(semantic_tools), "adapter", property(lambda self: None)):
+            assert semantic_tools.metric_datasets() is None
 
     def test_metric_datasets_prefers_the_adapter_lightweight_accessor(self, semantic_tools):
         """Adapters may skip building a MetricDefinition per metric."""
