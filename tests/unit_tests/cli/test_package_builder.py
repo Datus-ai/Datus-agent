@@ -351,6 +351,21 @@ class TestSelectors:
         assert '--semantic_yaml "subject/semantic_models/sales_db/metrics/orders_metrics.yml"' in script
         assert script.count("bootstrap-kb") == 2
         assert "-y" in script and "--datasource sales_db" in script
+        # The default ``check`` strategy ingests nothing — the script must
+        # pin strategies: first semantic call overwrites (fresh store),
+        # metrics calls are incremental.
+        assert "--components semantic_model" in script and "--kb_update_strategy overwrite" in script
+        assert script.count("--kb_update_strategy check") == 0
+        metrics_line = next(line for line in script.splitlines() if "--components metrics" in line)
+        assert "--kb_update_strategy incremental" in metrics_line
+
+    def test_rebuild_script_multi_datasource_truncates_once(self, project):
+        result = _build(project)  # both datasources selected by default
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        # Only ONE overwrite across the whole script — a second one would
+        # wipe the first datasource's freshly built entries.
+        assert script.count("--kb_update_strategy overwrite") == 1
+        assert script.count("--kb_update_strategy incremental") == 3  # 1 semantic + 2 metrics
 
     def test_no_metrics_no_rebuild_script(self, project):
         names = _namelist(_build(project, metrics=()))

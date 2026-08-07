@@ -1061,16 +1061,28 @@ def generate_rebuild_kb_script(per_ds: Dict[str, Tuple[List[str], List[str]]]) -
     ``--semantic_yaml`` accepts exactly one file, and the ``metrics``
     component only accepts files with ``metric:`` documents — hence one
     invocation per file, semantic before metrics per datasource.
+
+    Strategy flags matter: the default ``check`` strategy only reports
+    counts and ingests NOTHING. The very first semantic_model call uses
+    ``overwrite`` (which truncates the whole project-scoped semantic
+    store — safe exactly once, on a fresh unzip); every later call uses
+    ``incremental`` so multi-file / multi-datasource selections don't
+    wipe each other.
     """
     commands: List[str] = []
+    overwrite_used = False
     for ds, (semantic_files, metrics_files) in per_ds.items():
         for rel in semantic_files:
+            strategy = "incremental" if overwrite_used else "overwrite"
+            overwrite_used = True
             commands.append(
-                f'datus-agent bootstrap-kb --datasource {ds} --components semantic_model --semantic_yaml "{rel}" -y'
+                f"datus-agent bootstrap-kb --datasource {ds} --components semantic_model "
+                f'--semantic_yaml "{rel}" --kb_update_strategy {strategy} -y'
             )
         for rel in metrics_files:
             commands.append(
-                f'datus-agent bootstrap-kb --datasource {ds} --components metrics --semantic_yaml "{rel}" -y'
+                f"datus-agent bootstrap-kb --datasource {ds} --components metrics "
+                f'--semantic_yaml "{rel}" --kb_update_strategy incremental -y'
             )
     if not commands:
         return None
