@@ -20,6 +20,7 @@ from datus.tools.func_tool.report_artifact_tools import ReportArtifactTools, Rep
 from datus.tools.func_tool.semantic_discovery_tools import SemanticDiscoveryTools
 from datus.tools.func_tool.semantic_tools import SemanticTools
 from datus.tools.func_tool.sub_agent_task_tool import SubAgentTaskTool
+from datus.tools.func_tool.task_result_tools import PlanItem, TaskArtifact, TaskResultTool
 from datus.tools.func_tool.web_tool import WebTool
 
 __all__ = [
@@ -46,6 +47,9 @@ __all__ = [
     "SemanticDiscoveryTools",
     "PlatformDocSearchTool",
     "SubAgentTaskTool",
+    "TaskResultTool",
+    "PlanItem",
+    "TaskArtifact",
     "OrchestratorIssueTools",
     "OsiSemanticModelTargetState",
     "OsiSemanticModelTargetTools",

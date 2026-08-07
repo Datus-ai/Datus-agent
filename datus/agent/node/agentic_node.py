@@ -2517,6 +2517,29 @@ class AgenticNode(Node):
             logger.error(f"Failed to setup ask_user tool: {e}")
             self.ask_user_tool = None
 
+    def _setup_task_result_tool(self):
+        """Setup the structured task-outcome tool, for orchestrator-driven runs.
+
+        Only wired up when the request declared an orchestrator origin: an
+        ordinary IDE chat has a human reading the answer and no need to declare
+        an outcome. The caller reads the resulting tool call off the stream and
+        stops the run, so this is effectively how such a run ends.
+        """
+        if getattr(self.agent_config, "_request_origin", None) != "orchestrator":
+            self.task_result_tool = None
+            return
+
+        try:
+            from datus.tools.func_tool.task_result_tools import TaskResultTool
+
+            self.task_result_tool = TaskResultTool()
+            if self.tools is not None:
+                self.tools.extend(self.task_result_tool.available_tools())
+            logger.debug("Setup submit_task_result tool")
+        except Exception as e:
+            logger.error(f"Failed to setup task result tool: {e}")
+            self.task_result_tool = None
+
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.
 

@@ -135,6 +135,15 @@ class ChatInput(BaseModel):
     # Core message fields
     message: str = Field(..., description="Chat message")
     session_id: Optional[str] = Field(None, description="Session ID")
+    origin: Optional[str] = Field(
+        default=None,
+        description=(
+            "Who started this run. 'orchestrator' means an external orchestrator "
+            "dispatched it rather than a person typing, and the agent is given the "
+            "submit_task_result tool so it can declare a structured outcome the "
+            "caller can act on. Leave unset for ordinary chat."
+        ),
+    )
     model: Optional[str] = Field(
         default=None,
         description=(

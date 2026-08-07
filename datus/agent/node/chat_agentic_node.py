@@ -150,6 +150,8 @@ class ChatAgenticNode(AgenticNode):
         # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
+        # No-op unless the request declared an orchestrator origin.
+        self._setup_task_result_tool()
         self._rebuild_tools()
         self._setup_platform_doc_tools()
 
