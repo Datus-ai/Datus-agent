@@ -195,18 +195,64 @@ def wrap_tool_with_transformers(
     return FunctionTool(**carried)
 
 
+def _metric_catalog_providers(node: Any) -> List[Any]:
+    """Semantic tool groups on ``node`` that can report a metric-to-datasets map.
+
+    Found by what the object declares, not by the attribute holding it — the
+    same rule ``_iter_tool_groups`` uses to classify tools, and the reason a
+    node may hold its semantic tools under any name (``gen_semantic_model``
+    uses ``semantic_func_tool``). Aliases of one instance collapse to one
+    provider.
+    """
+    iter_groups = getattr(node, "_iter_tool_groups", None)
+    if callable(iter_groups):
+        try:
+            candidates = list(iter_groups())
+        except Exception as e:  # noqa: BLE001 - tool discovery must not break tool calls
+            logger.warning("Could not enumerate tool groups for transformer context: %s", e)
+            return []
+    else:
+        # Same shape test ``_iter_tool_groups`` applies, for objects that do not
+        # implement it (a type is a class, not a mounted group).
+        candidates = [
+            value
+            for value in (getattr(node, name, None) for name in sorted(vars(node)))
+            if not isinstance(value, type) and callable(getattr(value, "available_tools", None))
+        ]
+
+    providers: List[Any] = []
+    seen: set = set()
+    for candidate in candidates:
+        if candidate is None or id(candidate) in seen:
+            continue
+        if getattr(candidate, "permission_category", None) != "semantic_tools":
+            continue
+        if not callable(getattr(candidate, "metric_datasets", None)):
+            continue
+        seen.add(id(candidate))
+        providers.append(candidate)
+    return providers
+
+
 def _metric_datasets(node: Any) -> Optional[Dict[str, List[str]]]:
     """Metric-to-datasets map from the node's semantic tools.
 
-    ``None`` when the node has no semantic tools or the catalog cannot be read;
-    ``{}`` when the adapter reports no metrics.
+    ``None`` when no single provider can be identified or the catalog cannot be
+    read; ``{}`` when the adapter reports no metrics. Several providers means
+    several catalogs, and picking one would scope a policy against the wrong
+    metrics — the transformers reading this deny on ``None``.
     """
-    semantic_tools = getattr(node, "semantic_tools", None)
-    getter = getattr(semantic_tools, "metric_datasets", None)
-    if not callable(getter):
+    providers = _metric_catalog_providers(node)
+    if not providers:
+        return None
+    if len(providers) > 1:
+        logger.warning(
+            "Node exposes %d semantic tool groups; cannot pick one metric catalog for transformer context",
+            len(providers),
+        )
         return None
     try:
-        mapping = getter()
+        mapping = providers[0].metric_datasets()
     except Exception as e:  # noqa: BLE001 - an unreadable catalog must not break tool calls
         logger.warning("Could not read metric datasets for transformer context: %s", e)
         return None
@@ -245,9 +291,12 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
 
     def context_provider() -> Dict[str, Any]:
         # Read request-scoped values fresh on every tool call: the API layer
-        # sets ``db_func_tool.principal`` per request, after tools are wrapped.
-        principal = getattr(getattr(node, "db_func_tool", None), "principal", None)
+        # assigns ``principal`` onto a per-request clone of the config, which
+        # is also where ``DBFuncTool`` reads its own copy from. Reading the
+        # config directly covers nodes whose tool set excludes ``db_tools`` and
+        # therefore never build a DBFuncTool at all (``ask_metrics`` is one).
         agent_config = getattr(node, "agent_config", None)
+        principal = getattr(agent_config, "principal", None)
         return {
             "node_name": node_name,
             "principal": dict(principal) if isinstance(principal, dict) else {},

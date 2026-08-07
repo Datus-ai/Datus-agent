@@ -398,8 +398,17 @@ def _make_node(tools, registry_map=None, proxied=None):
         tool_registry=ToolRegistry(registry_map or {}),
         proxied_tool_names=proxied or set(),
         get_node_name=lambda: "chat",
-        db_func_tool=SimpleNamespace(principal={"tenant": {"id": "t1"}}),
-        agent_config=SimpleNamespace(project_root="/proj"),
+        db_func_tool=SimpleNamespace(),
+        agent_config=SimpleNamespace(project_root="/proj", principal={"tenant": {"id": "t1"}}),
+    )
+
+
+def _semantic_group(metric_datasets):
+    """A tool group shaped the way provider discovery looks for one."""
+    return SimpleNamespace(
+        permission_category="semantic_tools",
+        metric_datasets=metric_datasets,
+        available_tools=lambda: [],
     )
 
 
@@ -489,6 +498,41 @@ class TestApplyToolTransformers:
         assert seen["metric_datasets"] is None
 
     @pytest.mark.asyncio
+    async def test_principal_reaches_a_node_without_db_tools(self):
+        """``ask_metrics`` builds no DBFuncTool, and a metric policy still needs
+        the principal.
+        """
+        seen = []
+
+        def transformer(tool_name, args, context):
+            seen.append(context["principal"])
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.db_func_tool = None
+        node.agent_config.principal = {"store_ids": ["S001"]}
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen == [{"store_ids": ["S001"]}]
+
+    @pytest.mark.asyncio
+    async def test_principal_absent_from_the_config_stays_empty(self):
+        seen = []
+
+        def transformer(tool_name, args, context):
+            seen.append(context["principal"])
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.db_func_tool = None
+        node.agent_config = SimpleNamespace(project_root="/proj")
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen == [{}]
+
+    @pytest.mark.asyncio
     async def test_context_carries_metric_datasets_from_semantic_tools(self):
         seen = {}
 
@@ -497,7 +541,7 @@ class TestApplyToolTransformers:
             return args
 
         node = _make_node([_make_tool("query_metrics")])
-        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: {"revenue": ["orders"]})
+        node.semantic_tools = _semantic_group(lambda: {"revenue": ["orders"]})
         apply_tool_transformers(node, {"query_metrics": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
 
@@ -513,7 +557,7 @@ class TestApplyToolTransformers:
             return args
 
         node = _make_node([_make_tool("query_metrics")])
-        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: dict(catalog))
+        node.semantic_tools = _semantic_group(lambda: dict(catalog))
         apply_tool_transformers(node, {"query_metrics": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
         catalog["signups"] = ["users"]
@@ -530,7 +574,7 @@ class TestApplyToolTransformers:
             return args
 
         node = _make_node([_make_tool("query_metrics")])
-        node.semantic_tools = SimpleNamespace(metric_datasets=lambda: "not a mapping")
+        node.semantic_tools = _semantic_group(lambda: "not a mapping")
         apply_tool_transformers(node, {"query_metrics": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
 
@@ -548,11 +592,120 @@ class TestApplyToolTransformers:
             raise RuntimeError("catalog unavailable")
 
         node = _make_node([_make_tool("query_metrics")])
-        node.semantic_tools = SimpleNamespace(metric_datasets=boom)
+        node.semantic_tools = _semantic_group(boom)
         apply_tool_transformers(node, {"query_metrics": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen["metric_datasets"] is None
+
+    @pytest.mark.asyncio
+    async def test_catalog_found_under_an_aliased_attribute(self):
+        """``gen_semantic_model`` holds its semantic tools as ``semantic_func_tool``."""
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_func_tool = _semantic_group(lambda: {"revenue": ["orders"]})
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] == {"revenue": ["orders"]}
+
+    @pytest.mark.asyncio
+    async def test_catalog_found_under_any_attribute_name(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.whatever_we_call_it = _semantic_group(lambda: {"revenue": ["orders"]})
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] == {"revenue": ["orders"]}
+
+    @pytest.mark.asyncio
+    async def test_one_instance_under_two_names_is_one_provider(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        group = _semantic_group(lambda: {"revenue": ["orders"]})
+        node.semantic_tools = group
+        node.semantic_func_tool = group
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] == {"revenue": ["orders"]}
+
+    @pytest.mark.asyncio
+    async def test_two_distinct_providers_yield_none(self):
+        """Two catalogs, no way to tell which one scopes the query — deny."""
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.semantic_tools = _semantic_group(lambda: {"revenue": ["orders"]})
+        node.other_semantic_tools = _semantic_group(lambda: {"signups": ["users"]})
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_group_from_another_category_is_not_a_provider(self):
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.db_tools = SimpleNamespace(permission_category="db_tools", metric_datasets=lambda: {"x": ["y"]})
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen["metric_datasets"] is None
+
+    @pytest.mark.asyncio
+    async def test_iter_tool_groups_is_used_when_the_node_provides_it(self):
+        """Real nodes classify their own groups; discovery defers to that."""
+        seen = {}
+
+        def transformer(tool_name, args, context):
+            seen.update(context)
+            return args
+
+        calls = []
+        group = _semantic_group(lambda: {"revenue": ["orders"]})
+        node = _make_node([_make_tool("query_metrics")])
+        node._hidden = group
+        # Visible to a ``vars(node)`` scan but not mounted; the fallback would
+        # see two providers here and give up, so a passing assertion below can
+        # only come from the iterator.
+        node._excluded = _semantic_group(lambda: {"signups": ["users"]})
+
+        def iter_tool_groups():
+            calls.append(True)
+            return [group]
+
+        node._iter_tool_groups = iter_tool_groups
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert calls == [True]
+        assert seen["metric_datasets"] == {"revenue": ["orders"]}
 
     @pytest.mark.asyncio
     async def test_principal_read_fresh_per_call(self):
@@ -565,7 +718,7 @@ class TestApplyToolTransformers:
         node = _make_node([_make_tool("execute_sql")])
         apply_tool_transformers(node, {"execute_sql": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
-        node.db_func_tool.principal = {"tenant": {"id": "t2"}}
+        node.agent_config.principal = {"tenant": {"id": "t2"}}
         await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen == [{"tenant": {"id": "t1"}}, {"tenant": {"id": "t2"}}]

@@ -65,6 +65,24 @@ class DatasourceCaptureEnforcer:
         return EnforcementResult(allowed=True, sql=sql)
 
 
+class PrincipalCaptureEnforcer:
+    last_principal: dict[str, Any] | None = None
+
+    def __init__(self, config: SqlPolicyConfig) -> None:
+        self.config = config
+
+    def enforce_read(
+        self,
+        sql: str,
+        *,
+        datasource: str,
+        dialect: str,
+        principal: dict[str, Any] | None,
+    ) -> EnforcementResult:
+        PrincipalCaptureEnforcer.last_principal = principal
+        return EnforcementResult(allowed=True, sql=sql)
+
+
 class DenySqlPolicyEnforcer:
     def __init__(self, config: SqlPolicyConfig) -> None:
         self.config = config
@@ -235,6 +253,65 @@ def test_db_func_tool_applies_sql_policy_provider_before_query_execution():
     assert result.success == 1
     executed_sql = connector.execute_query.call_args.args[0]
     assert executed_sql == "SELECT * FROM orders WHERE store_id = 'S001'"
+
+
+def test_db_func_tool_principal_follows_the_config_after_construction():
+    """This tool and the plugin tool-transformers enforce the same policies, so
+    both resolve the principal from the config instead of caching a copy.
+    """
+    connector = Mock()
+    connector.dialect = "sqlite"
+    connector.get_databases.return_value = []
+    query_result = Mock()
+    query_result.success = True
+    query_result.sql_return = [{"order_id": 1}]
+    connector.execute_query.return_value = query_result
+
+    config = _provider_config().model_copy(
+        update={"provider": "tests.unit_tests.tools.test_sql_policy:PrincipalCaptureEnforcer"}
+    )
+    agent_config = SimpleNamespace(
+        active_model=lambda: SimpleNamespace(model="test-model"),
+        sql_policy_config=config,
+        principal={"store_ids": ["S001"]},
+    )
+
+    with (
+        patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+        patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+    ):
+        mock_rag.return_value.schema_store.table_size.return_value = 0
+        mock_sem.return_value.get_size.return_value = 0
+        tool = DBFuncTool(connector, agent_config=agent_config)
+
+    assert tool.principal == {"store_ids": ["S001"]}
+
+    agent_config.principal = {"store_ids": ["S002"]}
+    tool.read_query("SELECT * FROM orders", datasource="default")
+
+    assert tool.principal == {"store_ids": ["S002"]}
+    assert PrincipalCaptureEnforcer.last_principal == {"store_ids": ["S002"]}
+
+
+def test_db_func_tool_principal_is_empty_without_one_on_the_config():
+    connector = Mock()
+    connector.dialect = "sqlite"
+    connector.get_databases.return_value = []
+
+    agent_config = SimpleNamespace(
+        active_model=lambda: SimpleNamespace(model="test-model"),
+        sql_policy_config=_provider_config(),
+    )
+
+    with (
+        patch("datus.tools.func_tool.database.SchemaWithValueRAG") as mock_rag,
+        patch("datus.tools.func_tool.database.SemanticModelRAG") as mock_sem,
+    ):
+        mock_rag.return_value.schema_store.table_size.return_value = 0
+        mock_sem.return_value.get_size.return_value = 0
+        tool = DBFuncTool(connector, agent_config=agent_config)
+
+    assert tool.principal == {}
 
 
 def test_db_func_tool_ignores_mock_sql_policy_config():
