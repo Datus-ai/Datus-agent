@@ -99,7 +99,17 @@ def _as_strings(value: Any, field: str) -> Union[List[str], str]:
         value = parsed
     if not isinstance(value, list):
         return f"{field} must be a list of strings"
-    return [str(v) for v in value if str(v).strip()]
+
+    out: List[str] = []
+    for i, item in enumerate(value):
+        # Not str(): a dict here would become "{'reason': ...}" and be rendered
+        # to the requester verbatim as a gap reason. Rejecting by index tells
+        # the model which entry to fix, the same way _as_dicts does.
+        if not isinstance(item, str):
+            return f"{field}[{i}] must be a string"
+        if item.strip():
+            out.append(item)
+    return out
 
 
 class TaskResultTool:

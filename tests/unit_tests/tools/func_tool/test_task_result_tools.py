@@ -205,6 +205,24 @@ async def test_invoker_reports_a_malformed_item_instead_of_raising():
 
 
 @pytest.mark.asyncio
+async def test_invoker_rejects_a_non_string_gap_reason():
+    """str() on a dict yields "{'reason': ...}", which would be shown to the
+    requester verbatim as the reason a project could not answer."""
+    tool = TaskResultTool()
+
+    result = await _invoke(
+        tool,
+        outcome="blocked",
+        summary="Cannot help.",
+        gap_reasons=[{"reason": "no datasource"}],
+    )
+
+    assert not result["success"]
+    assert "gap_reasons[0]" in result["error"]
+    assert tool.submitted is None
+
+
+@pytest.mark.asyncio
 async def test_invoker_still_enforces_the_outcome_contract():
     tool = TaskResultTool()
 
