@@ -30,6 +30,8 @@ Transformer contract (duck-typed so plugin packages never import ``datus.*``):
 * ``context`` carries request-scoped data injected at wrap time (see
   :func:`apply_tool_transformers`): ``node_name``, ``principal``,
   ``project_root``.
+* A rewrite changes what executes, not what the conversation records: the
+  model's own arguments are restored onto the tool call afterwards.
 """
 
 from __future__ import annotations
@@ -76,6 +78,34 @@ def _denial_payload(tool_name: str, reason: str) -> dict:
         "error": f"Tool call '{tool_name}' was blocked by policy: {reason}",
         "result": None,
     }
+
+
+def _restore_tool_call_args(tool_ctx: Any, args_str: str) -> None:
+    """Put the model's own arguments back on the SDK tool call.
+
+    Tools canonicalise the arguments they received onto ``tool_ctx`` (see
+    ``write_back_tool_args``), and that is what session persistence and the
+    next turn's messages replay. A rewrite left there shows the model a call
+    it never made: it "corrects" itself back to its original query, which is
+    rewritten again — a loop that re-wraps the previous rewrite each round.
+
+    ``tool_call`` is the one the SDK persists and replays, so it is restored
+    on its own: a context that refuses ``tool_arguments`` still gets it back.
+    """
+    if tool_ctx is None:
+        return
+    try:
+        tool_ctx.tool_arguments = args_str
+    except Exception as e:  # noqa: BLE001 - a frozen or foreign context must not fail the call
+        logger.debug("Tool middleware: could not restore tool_arguments: %s", e)
+    try:
+        tool_call = getattr(tool_ctx, "tool_call", None)
+        if isinstance(tool_call, dict):
+            tool_call["arguments"] = args_str
+        elif tool_call is not None:
+            tool_call.arguments = args_str
+    except Exception as e:  # noqa: BLE001 - a frozen or foreign context must not fail the call
+        logger.debug("Tool middleware: could not restore the tool call arguments: %s", e)
 
 
 def wrap_tool_with_transformers(
@@ -141,7 +171,10 @@ def wrap_tool_with_transformers(
                 )
             args = result
 
-        return await original.on_invoke_tool(tool_ctx, json.dumps(args, ensure_ascii=False))
+        try:
+            return await original.on_invoke_tool(tool_ctx, json.dumps(args, ensure_ascii=False))
+        finally:
+            _restore_tool_call_args(tool_ctx, args_str)
 
     transforming_invoke._datus_tool_transformed = True  # type: ignore[attr-defined]
 

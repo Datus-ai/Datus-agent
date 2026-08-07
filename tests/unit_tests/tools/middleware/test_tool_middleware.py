@@ -235,6 +235,163 @@ class TestWrapToolWithTransformers:
         assert json.loads(record[0]) == {"sql": "SELECT '租户'"}
 
 
+def _add_scope(tool_name, args, context):
+    """Transformer standing in for a row-filter policy."""
+    args["sql"] = args["sql"] + " WHERE tenant_id = 't1'"
+    return args
+
+
+def _make_write_back_tool(record=None, raises=False, name="execute_sql"):
+    """A tool that canonicalises its arguments onto whatever the context accepts,
+    as datus tools do via ``write_back_tool_args``.
+    """
+
+    async def invoke(tool_ctx, args_str):
+        if record is not None:
+            record.append(args_str)
+        try:
+            tool_ctx.tool_arguments = args_str
+        except AttributeError:
+            pass
+        if isinstance(tool_ctx.tool_call, dict):
+            tool_ctx.tool_call["arguments"] = args_str
+        else:
+            tool_ctx.tool_call.arguments = args_str
+        if raises:
+            raise RuntimeError("boom")
+        return {"success": 1, "result": None, "error": None}
+
+    return FunctionTool(
+        name=name,
+        description="test tool",
+        params_json_schema={"type": "object", "properties": {"sql": {"type": "string"}}},
+        on_invoke_tool=invoke,
+        strict_json_schema=False,
+    )
+
+
+def _make_ctx(args_str, as_dict=False):
+    """A ToolContext stand-in carrying both writable argument slots."""
+    tool_call = {"arguments": args_str} if as_dict else SimpleNamespace(arguments=args_str)
+    return SimpleNamespace(tool_arguments=args_str, tool_call=tool_call)
+
+
+class TestOriginalArgumentsSurviveRewrite:
+    """Datus tools write the arguments they received back onto the SDK tool call,
+    which is what the session persists and the next turn replays. A rewrite left
+    there shows the model a call it never made.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tool_call_keeps_what_the_model_sent(self):
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+        ctx = _make_ctx(sent)
+        record = []
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(record=record), [_add_scope])
+
+        await wrapped.on_invoke_tool(ctx, sent)
+
+        assert json.loads(record[0])["sql"] == "SELECT * FROM orders WHERE tenant_id = 't1'"
+        assert ctx.tool_arguments == sent
+        assert ctx.tool_call.arguments == sent
+
+    @pytest.mark.asyncio
+    async def test_injected_argument_is_kept_out_too(self):
+        """Metric policies add a ``where`` the model never wrote; same rule applies."""
+        sent = json.dumps({"metrics": ["revenue"]})
+        ctx = _make_ctx(sent)
+        record = []
+
+        def add_where(tool_name, args, context):
+            args["where"] = "orders.store_id IN ('S001')"
+            return args
+
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(record=record, name="query_metrics"), [add_where])
+
+        await wrapped.on_invoke_tool(ctx, sent)
+
+        assert json.loads(record[0])["where"] == "orders.store_id IN ('S001')"
+        assert "where" not in json.loads(ctx.tool_call.arguments)
+
+    @pytest.mark.asyncio
+    async def test_dict_shaped_tool_call_is_restored(self):
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+        ctx = _make_ctx(sent, as_dict=True)
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(), [_add_scope])
+
+        await wrapped.on_invoke_tool(ctx, sent)
+
+        assert ctx.tool_call["arguments"] == sent
+
+    @pytest.mark.asyncio
+    async def test_restored_even_when_the_tool_raises(self):
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+        ctx = _make_ctx(sent)
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(raises=True), [_add_scope])
+
+        with pytest.raises(RuntimeError):
+            await wrapped.on_invoke_tool(ctx, sent)
+
+        assert ctx.tool_call.arguments == sent
+
+    @pytest.mark.asyncio
+    async def test_denied_call_leaves_the_tool_call_untouched(self):
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+        ctx = _make_ctx(sent)
+
+        def deny(tool_name, args, context):
+            raise PermissionError("no principal")
+
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(), [deny])
+        result = await wrapped.on_invoke_tool(ctx, sent)
+
+        assert result["success"] == 0
+        assert ctx.tool_call.arguments == sent
+
+    @pytest.mark.asyncio
+    async def test_context_without_a_tool_call_is_tolerated(self):
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+        record = []
+        wrapped = wrap_tool_with_transformers(_make_tool(record=record), [_add_scope])
+
+        result = await wrapped.on_invoke_tool(None, sent)
+
+        assert result["success"] == 1
+        assert json.loads(record[0])["sql"].endswith("WHERE tenant_id = 't1'")
+
+    @pytest.mark.asyncio
+    async def test_read_only_tool_arguments_still_restores_the_tool_call(self):
+        """``tool_call`` is what the SDK replays, so it is restored on its own."""
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+
+        class _ReadOnlyArguments:
+            def __init__(self):
+                self.tool_call = SimpleNamespace(arguments=sent)
+
+            @property
+            def tool_arguments(self):
+                return sent
+
+        ctx = _ReadOnlyArguments()
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(), [_add_scope])
+
+        await wrapped.on_invoke_tool(ctx, sent)
+
+        assert ctx.tool_call.arguments == sent
+
+    @pytest.mark.asyncio
+    async def test_unsettable_context_does_not_fail_the_call(self):
+        class _Frozen:
+            __slots__ = ()
+
+        record = []
+        wrapped = wrap_tool_with_transformers(_make_tool(record=record), [_add_scope])
+
+        result = await wrapped.on_invoke_tool(_Frozen(), json.dumps({"sql": "SELECT 1"}))
+
+        assert result["success"] == 1
+
+
 def _make_node(tools, registry_map=None, proxied=None):
     return SimpleNamespace(
         tools=tools,
