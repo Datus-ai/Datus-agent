@@ -116,7 +116,6 @@ class DBFuncTool:
         default_database: Optional[str] = None,
         sub_agent_name: Optional[str] = None,
         scoped_tables: Optional[Iterable[str]] = None,
-        principal: Optional[Dict[str, Any]] = None,
         connector_cache_size: int = DEFAULT_CONNECTOR_CACHE_SIZE,
         read_only: bool = False,
     ):
@@ -133,8 +132,6 @@ class DBFuncTool:
                               configured for its datasource); defaults to the datasource config's ``database``.
             sub_agent_name: Optional sub-agent name for scoped context
             scoped_tables: Optional explicit table scope patterns
-            principal: Request-scoped SQL policy attributes. When omitted,
-                       falls back to ``agent_config.principal`` if present.
             connector_cache_size: Max connectors to cache (LRU eviction), default 8
             read_only: When True, ``execute_sql`` hard-rejects any non-read
                        statement (INSERT/UPDATE/DELETE/DDL/MERGE/...) at the tool
@@ -169,8 +166,6 @@ class DBFuncTool:
         model_name = agent_config.active_model().model if agent_config else "gpt-3.5-turbo"
         self.compressor = DataCompressor(model_name=model_name)
         self.agent_config = agent_config
-        principal_source = principal if principal is not None else getattr(agent_config, "principal", {})
-        self.principal: Dict[str, Any] = dict(principal_source) if isinstance(principal_source, dict) else {}
         self.sub_agent_name = sub_agent_name
         self.read_only = read_only
         if agent_config and metadata_fts_enabled(agent_config):
@@ -197,6 +192,18 @@ class DBFuncTool:
         except Exception:
             self._table_semantic_profiles = None
             self.has_table_semantic_profiles = False
+
+    @property
+    def principal(self) -> Dict[str, Any]:
+        """Request-scoped SQL policy attributes, read from the config on access.
+
+        The API assigns this onto a per-request clone of the config. Resolving it
+        per access rather than caching it at construction keeps this tool and the
+        plugin tool-transformers on one value: they enforce the same policies and
+        must not disagree about who is asking.
+        """
+        principal = getattr(self.agent_config, "principal", None)
+        return dict(principal) if isinstance(principal, dict) else {}
 
     def _has_schema_storage(self) -> bool:
         if not self.schema_rag:
