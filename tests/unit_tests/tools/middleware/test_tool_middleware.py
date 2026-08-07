@@ -398,8 +398,8 @@ def _make_node(tools, registry_map=None, proxied=None):
         tool_registry=ToolRegistry(registry_map or {}),
         proxied_tool_names=proxied or set(),
         get_node_name=lambda: "chat",
-        db_func_tool=SimpleNamespace(principal={"tenant": {"id": "t1"}}),
-        agent_config=SimpleNamespace(project_root="/proj"),
+        db_func_tool=SimpleNamespace(),
+        agent_config=SimpleNamespace(project_root="/proj", principal={"tenant": {"id": "t1"}}),
     )
 
 
@@ -489,6 +489,41 @@ class TestApplyToolTransformers:
         assert seen["metric_datasets"] is None
 
     @pytest.mark.asyncio
+    async def test_principal_reaches_a_node_without_db_tools(self):
+        """``ask_metrics`` builds no DBFuncTool, and a metric policy still needs
+        the principal.
+        """
+        seen = []
+
+        def transformer(tool_name, args, context):
+            seen.append(context["principal"])
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.db_func_tool = None
+        node.agent_config.principal = {"store_ids": ["S001"]}
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen == [{"store_ids": ["S001"]}]
+
+    @pytest.mark.asyncio
+    async def test_principal_absent_from_the_config_stays_empty(self):
+        seen = []
+
+        def transformer(tool_name, args, context):
+            seen.append(context["principal"])
+            return args
+
+        node = _make_node([_make_tool("query_metrics")])
+        node.db_func_tool = None
+        node.agent_config = SimpleNamespace(project_root="/proj")
+        apply_tool_transformers(node, {"query_metrics": [transformer]})
+        await node.tools[0].on_invoke_tool(None, "{}")
+
+        assert seen == [{}]
+
+    @pytest.mark.asyncio
     async def test_context_carries_metric_datasets_from_semantic_tools(self):
         seen = {}
 
@@ -565,7 +600,7 @@ class TestApplyToolTransformers:
         node = _make_node([_make_tool("execute_sql")])
         apply_tool_transformers(node, {"execute_sql": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
-        node.db_func_tool.principal = {"tenant": {"id": "t2"}}
+        node.agent_config.principal = {"tenant": {"id": "t2"}}
         await node.tools[0].on_invoke_tool(None, "{}")
 
         assert seen == [{"tenant": {"id": "t1"}}, {"tenant": {"id": "t2"}}]

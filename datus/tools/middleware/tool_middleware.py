@@ -245,9 +245,12 @@ def apply_tool_transformers(node: Any, transformers_by_pattern: Dict[str, List[T
 
     def context_provider() -> Dict[str, Any]:
         # Read request-scoped values fresh on every tool call: the API layer
-        # sets ``db_func_tool.principal`` per request, after tools are wrapped.
-        principal = getattr(getattr(node, "db_func_tool", None), "principal", None)
+        # assigns ``principal`` onto a per-request clone of the config, which
+        # is also where ``DBFuncTool`` reads its own copy from. Reading the
+        # config directly covers nodes whose tool set excludes ``db_tools`` and
+        # therefore never build a DBFuncTool at all (``ask_metrics`` is one).
         agent_config = getattr(node, "agent_config", None)
+        principal = getattr(agent_config, "principal", None)
         return {
             "node_name": node_name,
             "principal": dict(principal) if isinstance(principal, dict) else {},
