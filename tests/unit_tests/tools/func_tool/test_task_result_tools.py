@@ -98,6 +98,24 @@ def test_blocked_needs_no_plan():
     assert tool.submitted["plan_items"] == []
 
 
+def test_blocked_rejects_a_plan():
+    """ "Blocked" means no build can be proposed either. A plan alongside it means
+    the model wanted 'needs_development' — say so instead of dropping the plan,
+    which is what the caller would otherwise do."""
+    tool = TaskResultTool()
+
+    result = tool.submit_task_result(
+        outcome="blocked",
+        summary="Billing is not connected.",
+        gap_reasons=["no datasource bound for billing"],
+        plan_items=[PlanItem(kind="table", name="stg_billing")],
+    )
+
+    assert not result.success
+    assert "needs_development" in result.error
+    assert tool.submitted is None
+
+
 def test_empty_summary_rejected():
     """The summary is what the caller reads instead of the transcript; a blank
     one silently drops everything the run learned."""

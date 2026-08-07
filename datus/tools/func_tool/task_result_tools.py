@@ -177,6 +177,19 @@ class TaskResultTool:
                 error="outcome 'needs_development' requires plan_items describing what to build",
             )
 
+        # A plan contradicts 'blocked' — that outcome means no build can be
+        # proposed either. Rejecting rather than dropping is what tells the model
+        # it picked the wrong outcome; the caller only renders a plan card for
+        # 'needs_development', so a silent accept would discard the work.
+        if outcome == "blocked" and plan_dicts:
+            return FuncToolResult(
+                success=0,
+                error=(
+                    "outcome 'blocked' cannot carry plan_items — if you can propose "
+                    "something to build, the outcome is 'needs_development'"
+                ),
+            )
+
         self.submitted = {
             "outcome": outcome,
             "summary": summary.strip(),
