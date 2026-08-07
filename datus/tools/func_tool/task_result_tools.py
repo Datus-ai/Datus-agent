@@ -18,10 +18,11 @@ ordinary IDE chat never sees it.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+import json
+from typing import Any, List, Literal, Optional, Type, Union
 
 from agents import FunctionTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.loggings import get_logger
@@ -50,6 +51,55 @@ class TaskArtifact(BaseModel):
     kind: str = Field(description="csv | report | dashboard | metric | table | file")
     ref: str = Field(description="Identifier or path the caller can resolve.")
     title: Optional[str] = Field(default=None, description="Human-readable label.")
+
+
+def _as_dicts(value: Any, model: Type[BaseModel], field: str) -> Union[List[dict], str]:
+    """Normalise a list-of-objects argument to plain dicts, or return an error string.
+
+    The invoker calls tool methods with the raw parsed JSON, so annotating a
+    parameter ``List[TaskArtifact]`` buys nothing at runtime — what arrives is a
+    list of dicts (and sometimes a JSON string, which some models emit for nested
+    arrays). Validating through the model here is what actually enforces the
+    schema, and keeps ``.model_dump()`` from blowing up on a dict.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return f"{field} must be a list (got unparseable string)"
+    if not isinstance(value, list):
+        return f"{field} must be a list"
+
+    out: List[dict] = []
+    for i, item in enumerate(value):
+        if isinstance(item, model):
+            out.append(item.model_dump())
+        elif isinstance(item, dict):
+            try:
+                out.append(model(**item).model_dump())
+            except ValidationError as exc:
+                return f"{field}[{i}] is invalid: {exc.errors()[0].get('msg', 'bad value')}"
+        else:
+            return f"{field}[{i}] must be an object"
+    return out
+
+
+def _as_strings(value: Any, field: str) -> Union[List[str], str]:
+    """Same normalisation for a list-of-strings argument."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            # A bare sentence is a reasonable thing for a model to send here.
+            return [value] if value.strip() else []
+        value = parsed
+    if not isinstance(value, list):
+        return f"{field} must be a list of strings"
+    return [str(v) for v in value if str(v).strip()]
 
 
 class TaskResultTool:
@@ -97,13 +147,31 @@ class TaskResultTool:
         if not summary or not summary.strip():
             return FuncToolResult(success=0, error="summary must not be empty")
 
-        if outcome in ("needs_development", "blocked") and not gap_reasons:
+        if outcome not in ("answered", "needs_development", "blocked"):
+            return FuncToolResult(
+                success=0,
+                error=f"outcome must be one of answered | needs_development | blocked (got '{outcome}')",
+            )
+
+        artifact_dicts = _as_dicts(artifacts, TaskArtifact, "artifacts")
+        if isinstance(artifact_dicts, str):
+            return FuncToolResult(success=0, error=artifact_dicts)
+
+        plan_dicts = _as_dicts(plan_items, PlanItem, "plan_items")
+        if isinstance(plan_dicts, str):
+            return FuncToolResult(success=0, error=plan_dicts)
+
+        reasons = _as_strings(gap_reasons, "gap_reasons")
+        if isinstance(reasons, str):
+            return FuncToolResult(success=0, error=reasons)
+
+        if outcome in ("needs_development", "blocked") and not reasons:
             return FuncToolResult(
                 success=0,
                 error=f"outcome '{outcome}' requires gap_reasons explaining what is missing",
             )
 
-        if outcome == "needs_development" and not plan_items:
+        if outcome == "needs_development" and not plan_dicts:
             return FuncToolResult(
                 success=0,
                 error="outcome 'needs_development' requires plan_items describing what to build",
@@ -112,9 +180,9 @@ class TaskResultTool:
         self.submitted = {
             "outcome": outcome,
             "summary": summary.strip(),
-            "artifacts": [a.model_dump() for a in artifacts or []],
-            "gap_reasons": list(gap_reasons or []),
-            "plan_items": [p.model_dump() for p in plan_items or []],
+            "artifacts": artifact_dicts,
+            "gap_reasons": reasons,
+            "plan_items": plan_dicts,
             "estimate": estimate,
         }
         logger.info(f"task result submitted: outcome={outcome} artifacts={len(self.submitted['artifacts'])}")

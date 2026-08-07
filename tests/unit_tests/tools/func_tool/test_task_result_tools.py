@@ -10,6 +10,10 @@ actionable is worse than no call at all — it looks successful and decides
 nothing.
 """
 
+import json
+
+import pytest
+
 from datus.tools.func_tool.task_result_tools import PlanItem, TaskArtifact, TaskResultTool
 
 
@@ -115,3 +119,78 @@ def test_result_tells_the_model_to_stop():
 
 def test_available_tools_exposes_one_function():
     assert len(TaskResultTool().available_tools()) == 1
+
+
+# ── The path production actually takes ──────────────────────────────────────
+#
+# Calling the bound method with pydantic instances, as the tests above do,
+# exercises a signature nothing invokes at runtime: the invoker built by
+# ``trans_to_function_tool`` calls ``method(**args_dict)`` with the raw parsed
+# JSON, so nested objects arrive as plain dicts. Every test below goes through
+# ``on_invoke_tool`` so that difference cannot hide again.
+
+
+async def _invoke(tool: TaskResultTool, **args) -> dict:
+    return await tool.available_tools()[0].on_invoke_tool(None, json.dumps(args))
+
+
+@pytest.mark.asyncio
+async def test_invoker_accepts_nested_objects_as_dicts():
+    tool = TaskResultTool()
+
+    result = await _invoke(
+        tool,
+        outcome="needs_development",
+        summary="Retention by market maker needs a dimension first.",
+        gap_reasons=["no market_maker dimension"],
+        plan_items=[{"kind": "dimension", "name": "dim_market_maker", "description": "42 addresses"}],
+        artifacts=[{"kind": "csv", "ref": "s3://run/1.csv", "title": "Draft"}],
+    )
+
+    assert result["success"]
+    assert tool.submitted["plan_items"][0]["name"] == "dim_market_maker"
+    assert tool.submitted["artifacts"][0]["kind"] == "csv"
+
+
+@pytest.mark.asyncio
+async def test_invoker_accepts_a_nested_array_sent_as_a_json_string():
+    """Some models serialise nested arrays rather than nesting them."""
+    tool = TaskResultTool()
+
+    result = await _invoke(
+        tool,
+        outcome="answered",
+        summary="Done.",
+        artifacts=json.dumps([{"kind": "report", "ref": "rpt_1"}]),
+    )
+
+    assert result["success"]
+    assert tool.submitted["artifacts"][0]["ref"] == "rpt_1"
+
+
+@pytest.mark.asyncio
+async def test_invoker_reports_a_malformed_item_instead_of_raising():
+    """A raise here aborts the whole interaction; an error string lets the model
+    correct itself in-turn."""
+    tool = TaskResultTool()
+
+    result = await _invoke(
+        tool,
+        outcome="answered",
+        summary="Done.",
+        artifacts=[{"ref": "missing-kind"}],
+    )
+
+    assert not result["success"]
+    assert "artifacts[0]" in result["error"]
+    assert tool.submitted is None
+
+
+@pytest.mark.asyncio
+async def test_invoker_still_enforces_the_outcome_contract():
+    tool = TaskResultTool()
+
+    result = await _invoke(tool, outcome="needs_development", summary="Something is missing.")
+
+    assert not result["success"]
+    assert "gap_reasons" in result["error"]

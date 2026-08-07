@@ -1701,6 +1701,40 @@ class TestChatAgenticNodeRebuildTools:
         tool_names = [t.name for t in node.tools]
         assert "ask_user" in tool_names
 
+    def test_orchestrator_origin_survives_rebuild(self, real_agent_config, mock_llm_create):
+        """setup_tools() ends in _rebuild_tools(), which clears the list — so a tool
+        only appended by its own _setup_* helper never reaches the model. That is
+        exactly how submit_task_result shipped inert."""
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config._request_origin = "orchestrator"
+        node = ChatAgenticNode(
+            node_id="test_rebuild_task_result",
+            description="Test rebuild with submit_task_result",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        assert "submit_task_result" in [t.name for t in node.tools]
+
+        # A mid-session rebuild (task-database switch, skill reload) must keep it.
+        node._rebuild_tools()
+        assert "submit_task_result" in [t.name for t in node.tools]
+
+    def test_ordinary_chat_never_sees_submit_task_result(self, real_agent_config, mock_llm_create):
+        from datus.agent.node.chat_agentic_node import ChatAgenticNode
+
+        real_agent_config._request_origin = None
+        node = ChatAgenticNode(
+            node_id="test_rebuild_no_task_result",
+            description="Test rebuild without submit_task_result",
+            node_type=NodeType.TYPE_CHAT,
+            agent_config=real_agent_config,
+        )
+
+        node._rebuild_tools()
+        assert "submit_task_result" not in [t.name for t in node.tools]
+
     def test_rebuild_tools_resets_transformer_flag(self, real_agent_config, mock_llm_create):
         """Rebuilding replaces wrapped FunctionTools with fresh unwrapped ones,
         so plugin tool transformers must re-apply on the next hook composition
