@@ -236,17 +236,23 @@ class TestWrapToolWithTransformers:
 
 
 def _add_scope(tool_name, args, context):
+    """Transformer standing in for a row-filter policy."""
     args["sql"] = args["sql"] + " WHERE tenant_id = 't1'"
     return args
 
 
 def _make_write_back_tool(record=None, raises=False, name="execute_sql"):
-    """A tool that canonicalises its arguments onto the context, as datus tools do."""
+    """A tool that canonicalises its arguments onto whatever the context accepts,
+    as datus tools do via ``write_back_tool_args``.
+    """
 
     async def invoke(tool_ctx, args_str):
         if record is not None:
             record.append(args_str)
-        tool_ctx.tool_arguments = args_str
+        try:
+            tool_ctx.tool_arguments = args_str
+        except AttributeError:
+            pass
         if isinstance(tool_ctx.tool_call, dict):
             tool_ctx.tool_call["arguments"] = args_str
         else:
@@ -265,6 +271,7 @@ def _make_write_back_tool(record=None, raises=False, name="execute_sql"):
 
 
 def _make_ctx(args_str, as_dict=False):
+    """A ToolContext stand-in carrying both writable argument slots."""
     tool_call = {"arguments": args_str} if as_dict else SimpleNamespace(arguments=args_str)
     return SimpleNamespace(tool_arguments=args_str, tool_call=tool_call)
 
@@ -351,6 +358,26 @@ class TestOriginalArgumentsSurviveRewrite:
 
         assert result["success"] == 1
         assert json.loads(record[0])["sql"].endswith("WHERE tenant_id = 't1'")
+
+    @pytest.mark.asyncio
+    async def test_read_only_tool_arguments_still_restores_the_tool_call(self):
+        """``tool_call`` is what the SDK replays, so it is restored on its own."""
+        sent = json.dumps({"sql": "SELECT * FROM orders"})
+
+        class _ReadOnlyArguments:
+            def __init__(self):
+                self.tool_call = SimpleNamespace(arguments=sent)
+
+            @property
+            def tool_arguments(self):
+                return sent
+
+        ctx = _ReadOnlyArguments()
+        wrapped = wrap_tool_with_transformers(_make_write_back_tool(), [_add_scope])
+
+        await wrapped.on_invoke_tool(ctx, sent)
+
+        assert ctx.tool_call.arguments == sent
 
     @pytest.mark.asyncio
     async def test_unsettable_context_does_not_fail_the_call(self):

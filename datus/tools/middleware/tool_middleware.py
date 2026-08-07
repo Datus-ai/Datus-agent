@@ -88,18 +88,24 @@ def _restore_tool_call_args(tool_ctx: Any, args_str: str) -> None:
     next turn's messages replay. A rewrite left there shows the model a call
     it never made: it "corrects" itself back to its original query, which is
     rewritten again — a loop that re-wraps the previous rewrite each round.
+
+    ``tool_call`` is the one the SDK persists and replays, so it is restored
+    on its own: a context that refuses ``tool_arguments`` still gets it back.
     """
     if tool_ctx is None:
         return
     try:
         tool_ctx.tool_arguments = args_str
+    except Exception as e:  # noqa: BLE001 - a frozen or foreign context must not fail the call
+        logger.debug("Tool middleware: could not restore tool_arguments: %s", e)
+    try:
         tool_call = getattr(tool_ctx, "tool_call", None)
         if isinstance(tool_call, dict):
             tool_call["arguments"] = args_str
         elif tool_call is not None:
             tool_call.arguments = args_str
     except Exception as e:  # noqa: BLE001 - a frozen or foreign context must not fail the call
-        logger.debug("Tool middleware: could not restore the original arguments: %s", e)
+        logger.debug("Tool middleware: could not restore the tool call arguments: %s", e)
 
 
 def wrap_tool_with_transformers(
