@@ -212,7 +212,13 @@ def _metric_catalog_providers(node: Any) -> List[Any]:
             logger.warning("Could not enumerate tool groups for transformer context: %s", e)
             return []
     else:
-        candidates = [getattr(node, name, None) for name in sorted(vars(node))]
+        # Same shape test ``_iter_tool_groups`` applies, for objects that do not
+        # implement it (a type is a class, not a mounted group).
+        candidates = [
+            value
+            for value in (getattr(node, name, None) for name in sorted(vars(node)))
+            if not isinstance(value, type) and callable(getattr(value, "available_tools", None))
+        ]
 
     providers: List[Any] = []
     seen: set = set()

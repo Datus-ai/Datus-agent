@@ -405,7 +405,11 @@ def _make_node(tools, registry_map=None, proxied=None):
 
 def _semantic_group(metric_datasets):
     """A tool group shaped the way provider discovery looks for one."""
-    return SimpleNamespace(permission_category="semantic_tools", metric_datasets=metric_datasets)
+    return SimpleNamespace(
+        permission_category="semantic_tools",
+        metric_datasets=metric_datasets,
+        available_tools=lambda: [],
+    )
 
 
 class TestApplyToolTransformers:
@@ -683,13 +687,24 @@ class TestApplyToolTransformers:
             seen.update(context)
             return args
 
+        calls = []
         group = _semantic_group(lambda: {"revenue": ["orders"]})
         node = _make_node([_make_tool("query_metrics")])
         node._hidden = group
-        node._iter_tool_groups = lambda: [group]
+        # Visible to a ``vars(node)`` scan but not mounted; the fallback would
+        # see two providers here and give up, so a passing assertion below can
+        # only come from the iterator.
+        node._excluded = _semantic_group(lambda: {"signups": ["users"]})
+
+        def iter_tool_groups():
+            calls.append(True)
+            return [group]
+
+        node._iter_tool_groups = iter_tool_groups
         apply_tool_transformers(node, {"query_metrics": [transformer]})
         await node.tools[0].on_invoke_tool(None, "{}")
 
+        assert calls == [True]
         assert seen["metric_datasets"] == {"revenue": ["orders"]}
 
     @pytest.mark.asyncio
