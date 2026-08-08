@@ -553,6 +553,55 @@ class TestSqlModelingPlanTools:
         assert evidence.metric_queryability_contracts[0]["dimensions"] == ["activity_info.ac_channel"]
         assert len(accepted) == 2
 
+    def test_plan_update_preserves_planner_native_window_hint(self):
+        sql = "SELECT order_month, order_count - previous_count AS order_count_delta FROM monthly_orders"
+        tool, _, _ = self._tool()
+        native_window = {
+            "type": "pop",
+            "offset": "1 month",
+            "calculation": "delta",
+            "base_expression": "COUNT(DISTINCT order_id)",
+            "time_dimension": "order_date",
+            "time_grain": "month",
+        }
+        plan = SqlModelingPlan(
+            source_fingerprint="source",
+            metric_catalog_fingerprint="catalog",
+            source_queries=[SourceQueryEvidence(source_sql_name="orders", sql=sql)],
+            candidate_plan={
+                "available": True,
+                "outputs": [
+                    {
+                        "output_id": "orders:output_1",
+                        "source_id": "orders",
+                        "name": "order_count_delta",
+                        "role": "metric",
+                        "native_window": native_window,
+                    }
+                ],
+                "queryability_contracts": [
+                    {
+                        "contract_id": "orders:group_1",
+                        "source_id": "orders",
+                        "metric_output_ids": ["orders:output_1"],
+                        "dimensions": ["order_date"],
+                    }
+                ],
+            },
+        )
+        with patch(
+            "datus.tools.func_tool.sql_modeling_planner.SqlModelingPlanner.plan",
+            return_value=plan,
+        ):
+            tool.prepare_sql_modeling_plan([{"source_index": 1, "name": "orders", "sql": sql}])
+
+        revised = copy.deepcopy(plan.candidate_plan)
+        revised["outputs"][0].pop("native_window")
+        result = tool.update_sql_modeling_plan(revised)
+
+        assert result.success == 1
+        assert result.result["candidate_plan"]["outputs"][0]["native_window"] == native_window
+
     @pytest.mark.parametrize("missing_key", ["outputs", "queryability_contracts"])
     def test_plan_update_cannot_drop_original_coverage(self, missing_key):
         sql = "SELECT region, COUNT(*) AS order_count FROM orders GROUP BY region"
@@ -888,6 +937,107 @@ class TestSqlModelingPlanner:
         entries = analyze.call_args.args[0]
         assert entries[0]["question"] == "Count orders"
         assert "external_knowledge" not in entries[0]
+
+    def test_dosi_plan_preserves_exact_native_window_candidates(self):
+        source = SourceQueryEvidence(
+            source_sql_name="sql_1",
+            sql="SELECT order_month, rolling_avg, running_total, order_delta, rank_value FROM monthly_orders",
+        )
+        output_names = ["Rolling Avg", "running_total", "order_delta", "rank_value"]
+        analyzer_result = SimpleNamespace(
+            success=True,
+            result={
+                "output_contracts": [
+                    {
+                        "output_id": f"sql_1:output_{index}",
+                        "source_sql_name": "sql_1",
+                        "output_name": name,
+                        "expression": name,
+                        "output_role": "metric",
+                    }
+                    for index, name in enumerate(output_names, 1)
+                ],
+                "metric_candidates": [
+                    {
+                        "candidate_classification": "exact_metric",
+                        "requires_validation": False,
+                        "source_sql_name": "sql_0, sql_1",
+                        "name": "rolling_avg",
+                        "metric_type": "cumulative",
+                        "expression": "AVG(order_total)",
+                        "window_aggregation": "avg",
+                        "window": "3 months",
+                        "time_grain": "month",
+                    },
+                    {
+                        "candidate_classification": "exact_metric",
+                        "requires_validation": False,
+                        "source_sql_name": "sql_1",
+                        "name": "running_total",
+                        "metric_type": "cumulative",
+                        "expression": "SUM(order_total)",
+                        "window_aggregation": "sum",
+                        "grain_to_date": "month",
+                        "time_grain": "month",
+                    },
+                    {
+                        "candidate_classification": "exact_metric",
+                        "requires_validation": False,
+                        "source_sql_name": "sql_1",
+                        "name": "order_delta",
+                        "metric_type": "period_over_period",
+                        "expression": "COUNT(DISTINCT order_id)",
+                        "time_dimension": "order_date",
+                        "period_over_period": {
+                            "time_grain": "month",
+                            "offset_window": "1 month",
+                            "calculation": "delta",
+                        },
+                    },
+                    {
+                        "candidate_classification": "exact_metric",
+                        "requires_validation": False,
+                        "source_sql_name": "sql_1",
+                        "name": "rank_value",
+                        "metric_type": "ranking",
+                        "expression": "RANK()",
+                    },
+                ],
+            },
+            error=None,
+        )
+        agent_config = MagicMock()
+        agent_config.resolve_semantic_adapter.return_value = "dosi"
+
+        with patch(
+            "datus.tools.func_tool.semantic_discovery_tools.analyze_metric_candidate_entries",
+            return_value=analyzer_result,
+        ):
+            plan = SqlModelingPlanner(agent_config, "gen_metrics").plan([source], existing_metric_catalog=[])
+
+        outputs = {output["name"]: output for output in plan.candidate_plan["outputs"]}
+        assert outputs["Rolling Avg"]["native_window"] == {
+            "type": "rolling",
+            "function": "avg",
+            "periods": 3,
+            "base_expression": "AVG(order_total)",
+            "time_grain": "month",
+        }
+        assert outputs["running_total"]["native_window"] == {
+            "type": "cumulative",
+            "function": "sum",
+            "base_expression": "SUM(order_total)",
+            "time_grain": "month",
+        }
+        assert outputs["order_delta"]["native_window"] == {
+            "type": "pop",
+            "offset": "1 month",
+            "calculation": "delta",
+            "base_expression": "COUNT(DISTINCT order_id)",
+            "time_dimension": "order_date",
+            "time_grain": "month",
+        }
+        assert "native_window" not in outputs["rank_value"]
 
     def test_source_fingerprint_is_stable_for_the_same_input(self):
         source = SourceQueryEvidence(

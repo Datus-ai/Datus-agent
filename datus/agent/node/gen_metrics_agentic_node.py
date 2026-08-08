@@ -10,7 +10,11 @@ metrics generation with support for filesystem tools, generation tools,
 hooks, and metricflow MCP server integration.
 """
 
+import re
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional
+
+import sqlglot
+from sqlglot import expressions as exp
 
 from datus.agent.node.agentic_node import AgenticNode
 from datus.agent.node.stream_run_context import StreamRunContext
@@ -30,6 +34,89 @@ from datus.tools.func_tool.sql_modeling_planner import (
 from datus.utils.loggings import get_logger
 
 logger = get_logger(__name__)
+
+
+def _normalized_window_offset(value: Any) -> str:
+    if isinstance(value, dict):
+        count = value.get("count")
+        granularity = str(value.get("granularity") or "").strip().lower().rstrip("s")
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            return ""
+        if count < 1 or granularity not in {"day", "week", "month", "quarter", "year"}:
+            return ""
+        return f"{count} {granularity}{'' if count == 1 else 's'}"
+
+    match = re.fullmatch(
+        r"\s*([1-9]\d*)\s+(day|week|month|quarter|year)s?\s*",
+        str(value or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    count = int(match.group(1))
+    granularity = match.group(2).lower()
+    return f"{count} {granularity}{'' if count == 1 else 's'}"
+
+
+def _normalized_native_window(value: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(value, dict):
+        return None
+    window_type = str(value.get("type") or ("pop" if "offset" in value else "")).strip().lower()
+    if window_type == "pop":
+        offset = _normalized_window_offset(value.get("offset"))
+        calculation = str(value.get("calculation") or "percent_change").strip().lower()
+        if not offset or calculation not in {"value", "delta", "percent_change", "ratio"}:
+            return None
+        return {"type": "pop", "offset": offset, "calculation": calculation}
+    if window_type == "rolling":
+        function = str(value.get("function") or "").strip().lower()
+        try:
+            periods = int(value.get("periods"))
+        except (TypeError, ValueError):
+            return None
+        require_full_window = value.get("require_full_window", False)
+        if (
+            function not in {"sum", "avg", "min", "max", "count"}
+            or periods < 1
+            or not isinstance(require_full_window, bool)
+        ):
+            return None
+        return {
+            "type": "rolling",
+            "function": function,
+            "periods": periods,
+            "require_full_window": require_full_window,
+        }
+    if window_type == "cumulative":
+        function = str(value.get("function") or "").strip().lower()
+        reset = str(value.get("reset") or "").strip().lower() or None
+        if function not in {"sum", "avg", "min", "max", "count"}:
+            return None
+        if reset not in {None, "week", "month", "quarter", "year"}:
+            return None
+        return {"type": "cumulative", "function": function, "reset": reset}
+    return None
+
+
+def _normalized_metric_expression(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        expression = sqlglot.parse_one(text)
+    except sqlglot.errors.ParseError:
+        return re.sub(r"\s+", "", text).lower()
+    for column in expression.find_all(exp.Column):
+        column.set("table", None)
+        column.set("db", None)
+        column.set("catalog", None)
+    return re.sub(r"\s+", "", expression.sql(normalize=True)).lower()
+
+
+def _normalized_field_reference(value: Any) -> str:
+    return str(value or "").strip().rsplit(".", 1)[-1].strip('"`[]').lower()
 
 
 class GenMetricsAgenticNode(AgenticNode):
@@ -239,6 +326,8 @@ class GenMetricsAgenticNode(AgenticNode):
             "mutation_callback",
             self.generation_evidence.record_artifact_mutation,
         )
+        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
         return MetricFilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
@@ -248,6 +337,7 @@ class GenMetricsAgenticNode(AgenticNode):
             session_data_dir=session_data_dir,
             mutation_callback=mutation_callback,
             authoring_format=resolve_authoring_format(self.agent_config),
+            semantic_adapter=resolve_semantic_adapter_type(self.agent_config),
             osi_target_state=self.osi_target_state,
             generation_evidence=self.generation_evidence,
             **kwargs,
@@ -813,6 +903,9 @@ class GenMetricsAgenticNode(AgenticNode):
         self.generation_evidence.bind_metric_output_names(bindings)
 
         abs_metric_file = self._resolve_metric_artifact_path(metric_file, "metric")
+        native_window_error = self._validate_native_window_bindings(abs_metric_file, bindings, metric_file)
+        if native_window_error is not None:
+            return native_window_error
         if self.osi_target_state.touched_metric_names:
             current_names = self.generation_tools.extract_osi_metric_names(abs_metric_file)
             metric_names, _ = self.osi_target_state.partition_touched_metrics(current_names)
@@ -845,6 +938,94 @@ class GenMetricsAgenticNode(AgenticNode):
         if metric_output_bindings is not None:
             publish_kwargs["metric_output_bindings"] = metric_output_bindings
         return self.generation_tools.publish_metrics(**publish_kwargs)
+
+    def _validate_native_window_bindings(
+        self,
+        abs_metric_file: str,
+        bindings: List[Dict[str, Any]],
+        reported_metric_file: str,
+    ) -> Optional[FuncToolResult]:
+        candidate_plan = self.sql_modeling_plan.candidate_plan if self.sql_modeling_plan is not None else {}
+        window_outputs = {
+            str(output.get("output_id") or "").strip(): output
+            for output in candidate_plan.get("outputs") or []
+            if isinstance(output, dict)
+            and str(output.get("output_id") or "").strip()
+            and isinstance(output.get("native_window"), dict)
+        }
+        relevant_bindings = [binding for binding in bindings if binding.get("output_id") in window_outputs]
+        if not relevant_bindings:
+            return None
+
+        model_names = self.generation_tools.extract_osi_model_names(abs_metric_file)
+        if len(model_names) != 1:
+            return FuncToolResult(
+                success=0,
+                error="Native window validation requires one OSI semantic model in the metric artifact.",
+                result={
+                    "code": "native_window_required",
+                    "stage": "native_window_binding",
+                    "metric_file": reported_metric_file,
+                },
+            )
+
+        from datus.tools.semantic_tools.osi_document import load_osi_document
+
+        try:
+            document = load_osi_document(abs_metric_file, model_names[0])
+        except ValueError as exc:
+            return FuncToolResult(
+                success=0,
+                error=str(exc),
+                result={
+                    "code": "native_window_required",
+                    "stage": "native_window_binding",
+                    "metric_file": reported_metric_file,
+                },
+            )
+        metrics = {metric.name: metric for metric in document.metrics}
+
+        for binding in relevant_bindings:
+            output_id = str(binding.get("output_id") or "").strip()
+            metric_name = str(binding.get("metric_name") or "").strip()
+            expected_hint = window_outputs[output_id]["native_window"]
+            expected_window = _normalized_native_window(expected_hint)
+            metric = metrics.get(metric_name)
+            actual_window = _normalized_native_window(metric.window if metric is not None else None)
+            expected_expression = _normalized_metric_expression(expected_hint.get("base_expression"))
+            actual_expression = _normalized_metric_expression(metric.expression if metric is not None else None)
+            expected_time_dimension = _normalized_field_reference(expected_hint.get("time_dimension"))
+            actual_time_dimension = _normalized_field_reference(metric.time_dimension if metric is not None else None)
+            expression_matches = not expected_expression or expected_expression == actual_expression
+            time_dimension_matches = not expected_time_dimension or expected_time_dimension == actual_time_dimension
+            if (
+                expected_window is not None
+                and expected_window == actual_window
+                and expression_matches
+                and time_dimension_matches
+            ):
+                continue
+            return FuncToolResult(
+                success=0,
+                error=(
+                    f"Metric {metric_name!r} must match the native Dosi window binding required by "
+                    f"SQL output {output_id!r}."
+                ),
+                result={
+                    "code": "native_window_required",
+                    "stage": "native_window_binding",
+                    "metric_file": reported_metric_file,
+                    "output_id": output_id,
+                    "metric_name": metric_name,
+                    "expected_window": expected_window,
+                    "actual_window": actual_window,
+                    "expected_base_expression": expected_hint.get("base_expression"),
+                    "actual_base_expression": metric.expression if metric is not None else None,
+                    "expected_time_dimension": expected_hint.get("time_dimension"),
+                    "actual_time_dimension": metric.time_dimension if metric is not None else None,
+                },
+            )
+        return None
 
     def _set_metric_queryability_contracts_from_input(self, user_input: Optional[SemanticNodeInput]) -> None:
         if not user_input:

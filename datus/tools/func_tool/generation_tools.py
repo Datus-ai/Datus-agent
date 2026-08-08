@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 from collections.abc import Iterable
+from copy import copy
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -1360,41 +1361,15 @@ class GenerationTools:
                     names.append(item["name"])
         return names
 
-    def _osi_document_root(self, metric_file: Optional[str] = None, semantic_model_file: Optional[str] = None) -> str:
-        """Resolve the datasource-scoped OSI directory used by the adapter."""
-        candidates: List[Path] = []
-        try:
-            datasource = getattr(self.agent_config, "current_datasource", "")
-            path_manager = getattr(self.agent_config, "path_manager", None)
-            if datasource and path_manager and hasattr(path_manager, "semantic_model_path"):
-                candidates.append(Path(path_manager.semantic_model_path(datasource)))
-        except Exception:
-            pass
-
-        for raw in (semantic_model_file, metric_file):
-            if not raw:
-                continue
-            path = Path(raw)
-            if path.is_file():
-                parent = path.parent
-                candidates.append(parent.parent if parent.name == "metrics" else parent)
-            elif path.is_dir():
-                candidates.append(path)
-
-        for candidate in candidates:
-            if candidate.exists():
-                return str(candidate)
-        return str(candidates[0]) if candidates else str(Path(metric_file or semantic_model_file or ".").parent)
-
     def _load_osi_document(
         self,
         metric_file: Optional[str] = None,
         semantic_model_file: Optional[str] = None,
     ):
-        from datus_semantic_osi.profile import load_osi_model
-
+        artifact_path = metric_file
         model_names = self.extract_osi_model_names(metric_file) if metric_file else []
         if not model_names and semantic_model_file:
+            artifact_path = semantic_model_file
             model_names = self.extract_osi_model_names(semantic_model_file)
         if len(model_names) != 1:
             candidates = ", ".join(model_names) or "<none>"
@@ -1404,10 +1379,11 @@ class GenerationTools:
                     f"Exactly one semantic model must be identifiable from the target artifact. Found: {candidates}."
                 ),
             )
-        return load_osi_model(
-            self._osi_document_root(metric_file, semantic_model_file),
+        from datus.tools.semantic_tools.osi_document import load_osi_document
+
+        return load_osi_document(
+            str(artifact_path),
             semantic_model_name=model_names[0],
-            normalize=True,
         )
 
     @staticmethod
@@ -1479,19 +1455,25 @@ class GenerationTools:
                 }
             )
 
-        for dim in getattr(dataset, "dimensions", []):
-            dim_name = getattr(dim, "name", "")
-            if not dim_name:
+        dimension_names = {
+            str(getattr(dimension, "name", ""))
+            for dimension in getattr(dataset, "dimensions", [])
+            if getattr(dimension, "name", "")
+        }
+        fields = getattr(dataset, "fields", None)
+        for field in fields if fields is not None else getattr(dataset, "dimensions", []):
+            field_name = str(getattr(field, "name", "") or "")
+            if not field_name or field_name in {column["name"] for column in columns}:
                 continue
             columns.append(
                 {
-                    "name": str(dim_name),
-                    "expr": getattr(dim, "expr", None) or str(dim_name),
-                    "role": "dimension",
-                    "type": str(getattr(dim, "type", "") or ""),
-                    "granularity": getattr(dim, "granularity", "") or "",
-                    "description": getattr(dim, "description", "") or "",
-                    "ai_context": getattr(dim, "ai_context", None),
+                    "name": field_name,
+                    "expr": getattr(field, "expr", None) or field_name,
+                    "role": "dimension" if field_name in dimension_names else "field",
+                    "type": str(getattr(field, "type", "") or ""),
+                    "granularity": getattr(field, "granularity", "") or "",
+                    "description": getattr(field, "description", "") or "",
+                    "ai_context": getattr(field, "ai_context", None),
                 }
             )
         return [{key: value for key, value in item.items() if value not in (None, "", [], {})} for item in columns]
@@ -1516,6 +1498,7 @@ class GenerationTools:
                     "to_columns": to_columns,
                     "role": "from" if from_dataset == dataset_name else "to",
                     "ai_context": getattr(relationship, "ai_context", None),
+                    "join_type": getattr(relationship, "join_type", None),
                 }
             )
         return [
@@ -1704,6 +1687,9 @@ class GenerationTools:
         dataset = getattr(metric, "dataset", None)
         if dataset:
             return [str(dataset)]
+        datasets = getattr(metric, "datasets", None) or []
+        if datasets:
+            return cls._dedupe_strings(datasets)
 
         metric_name = str(getattr(metric, "name", "") or "")
         seen_metrics = seen_metrics or set()
@@ -1931,23 +1917,29 @@ class GenerationTools:
                         )
                     )
 
-                for dim in getattr(dataset, "dimensions", []):
-                    dim_name = getattr(dim, "name", "")
-                    if not dim_name:
+                dimension_names = {
+                    str(getattr(dimension, "name", ""))
+                    for dimension in getattr(dataset, "dimensions", [])
+                    if getattr(dimension, "name", "")
+                }
+                fields = getattr(dataset, "fields", None)
+                for field in fields if fields is not None else getattr(dataset, "dimensions", []):
+                    field_name = str(getattr(field, "name", "") or "")
+                    if not field_name or field_name in {*primary_keys, getattr(time_dimension, "name", None)}:
                         continue
                     semantic_objects.append(
                         self._osi_column_object(
                             table_name=table_name,
                             table_fq_name=table_fq_name,
                             semantic_model_name=semantic_model_name,
-                            name=str(dim_name),
-                            description=getattr(dim, "description", "") or "",
-                            expr=getattr(dim, "expr", None) or str(dim_name),
-                            column_type=str(getattr(dim, "type", "") or ""),
+                            name=field_name,
+                            description=getattr(field, "description", "") or "",
+                            expr=getattr(field, "expr", None) or field_name,
+                            column_type=str(getattr(field, "type", "") or ""),
                             yaml_path=yaml_path,
                             db_parts=db_parts,
-                            is_dimension=True,
-                            time_granularity=getattr(dim, "granularity", "") or "",
+                            is_dimension=field_name in dimension_names,
+                            time_granularity=getattr(field, "granularity", "") or "",
                         )
                     )
 
@@ -2048,19 +2040,45 @@ class GenerationTools:
         target_metric_names: set[str],
         metric_sqls: Optional[Dict[str, str]] = None,
     ) -> List[dict]:
-        """Materialize metric rows without mutating storage."""
+        """Materialize metric rows from raw presentation and compiled semantics."""
 
         semantic_model_name = str(getattr(doc, "name", "") or "")
         db_parts = self._current_db_parts(self.agent_config)
+        compiled_catalog = self._compiled_metric_catalog(metric_file) if target_metric_names else None
+        if compiled_catalog is not None:
+            missing = target_metric_names.difference(compiled_catalog)
+            if missing:
+                raise ValueError(
+                    f"Configured semantic adapter did not compile target metric(s): {', '.join(sorted(missing))}"
+                )
         metric_objects: List[dict] = []
         for metric in getattr(doc, "metrics", []):
             metric_name = getattr(metric, "name", "")
             if not metric_name or metric_name not in target_metric_names:
                 continue
-            dimensions = self._metric_query_dimensions(doc, metric)
-            entities = self._metric_entities(doc, metric)
-            subject_path = self._metric_subject_path(metric)
+            compiled = compiled_catalog.get(metric_name) if compiled_catalog is not None else None
+            semantic_metric = copy(metric)
+            if compiled is not None:
+                metadata = getattr(compiled, "metadata", None) or {}
+                compiled_datasets = self._dedupe_strings(metadata.get("datasets") or [])
+                semantic_metric.datasets = compiled_datasets
+                semantic_metric.dataset = compiled_datasets[0] if len(compiled_datasets) == 1 else None
+
+            dimensions = (
+                self._dedupe_strings(getattr(compiled, "dimensions", None) or [])
+                if compiled is not None
+                else self._metric_query_dimensions(doc, semantic_metric)
+            )
+            entities = self._metric_entities(doc, semantic_metric)
+            subject_path = self._metric_subject_path(semantic_metric)
             measure_expr = self._metric_expression(metric)
+            native_window = getattr(metric, "window", None)
+            metric_type = getattr(compiled, "type", None) if compiled is not None else None
+            base_measures = (
+                self._dedupe_strings(getattr(compiled, "measures", None) or [])
+                if compiled is not None
+                else ([measure_expr] if measure_expr else [])
+            )
             metric_objects.append(
                 {
                     "name": metric_name,
@@ -2068,9 +2086,13 @@ class GenerationTools:
                     "semantic_model_name": semantic_model_name,
                     "id": build_metric_id(subject_path, metric_name),
                     "description": getattr(metric, "description", "") or "",
-                    "metric_type": getattr(metric, "kind", None) or "aggregate",
+                    "metric_type": (
+                        metric_type
+                        or ("window" if isinstance(native_window, dict) else getattr(metric, "kind", None))
+                        or "aggregate"
+                    ),
                     "measure_expr": measure_expr,
-                    "base_measures": [measure_expr] if measure_expr else [],
+                    "base_measures": base_measures,
                     "dimensions": dimensions,
                     "entities": entities,
                     "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -2081,6 +2103,69 @@ class GenerationTools:
                 }
             )
         return metric_objects
+
+    def _compiled_metric_catalog(self, metric_file: str) -> Optional[Dict[str, Any]]:
+        """Compile one publication artifact through the configured adapter.
+
+        ``None`` means this lightweight object was constructed without a real
+        ``AgentConfig`` (primarily isolated unit tests). A configured adapter is
+        authoritative: load or pagination failures abort publication instead of
+        silently falling back to guesses from raw YAML.
+        """
+
+        resolver = getattr(self.agent_config, "resolve_semantic_adapter", None)
+        builder = getattr(self.agent_config, "build_semantic_adapter_config", None)
+        if not callable(resolver) or not callable(builder):
+            return None
+        adapter_name = resolver(None)
+        if not isinstance(adapter_name, str) or not adapter_name.strip():
+            return None
+
+        from datus.tools.semantic_tools.config import SemanticAdapterConfig
+        from datus.tools.semantic_tools.registry import semantic_adapter_registry
+        from datus.utils.async_utils import run_async
+
+        adapter_name = adapter_name.strip().lower()
+        metadata = semantic_adapter_registry.get_metadata(adapter_name)
+        adapter_config = builder(adapter_name)
+        config_class = metadata.config_class if metadata and metadata.config_class else SemanticAdapterConfig
+        config_fields = getattr(config_class, "model_fields", {})
+        artifact_overrides: Dict[str, str] = {}
+        if "semantic_model_path" in config_fields:
+            artifact_overrides["semantic_model_path"] = metric_file
+        if "semantic_models_path" in config_fields:
+            artifact_overrides["semantic_models_path"] = str(Path(metric_file).parent)
+
+        if adapter_config is None:
+            adapter_config = config_class(**artifact_overrides)
+        elif isinstance(adapter_config, dict):
+            config_payload = {**adapter_config, **artifact_overrides}
+            adapter_config = config_class(**config_payload)
+        elif artifact_overrides:
+            model_copy = getattr(adapter_config, "model_copy", None)
+            if callable(model_copy):
+                adapter_config = model_copy(update=artifact_overrides)
+            else:
+                adapter_config = copy(adapter_config)
+                for key, value in artifact_overrides.items():
+                    setattr(adapter_config, key, value)
+
+        adapter = semantic_adapter_registry.create_adapter(adapter_name, adapter_config)
+        catalog: Dict[str, Any] = {}
+        page_size = 200
+        offset = 0
+        for _ in range(50):
+            page = list(run_async(adapter.list_metrics(limit=page_size, offset=offset)))
+            for metric in page:
+                name = str(getattr(metric, "name", "") or "").strip()
+                if name:
+                    catalog[name] = metric
+            if len(page) < page_size:
+                return catalog
+            offset += len(page)
+        if not list(run_async(adapter.list_metrics(limit=page_size, offset=offset))):
+            return catalog
+        raise ValueError("Semantic adapter metric catalog exceeds the 10,000 metric publication limit")
 
     @staticmethod
     def _preserve_existing_metric_sql(metric_objects: List[dict], existing_rows: Any) -> None:

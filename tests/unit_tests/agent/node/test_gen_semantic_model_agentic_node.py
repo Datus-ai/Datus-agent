@@ -750,6 +750,18 @@ class TestGetSystemPrompt:
         assert "`ac_code` in `COUNT(DISTINCT ac_code)` is a plain field" in prompt
         assert '<required_skill name="metricflow-semantic-authoring">' not in prompt
 
+    def test_dosi_authoring_adds_native_extension_profile(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "dosi")
+        node = _make_node(real_agent_config, mock_llm_create)
+
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(None))
+
+        assert '<required_skill name="dosi-native-authoring">' in prompt
+        assert '<required_skill name="osi-semantic-authoring">' not in prompt
+        assert '"v":"1.2"' in prompt
+        assert "D-JOIN" in prompt
+        assert node.filesystem_func_tool.semantic_adapter == "dosi"
+
     def test_metricflow_authoring_injects_metricflow_required_skill(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create)
 

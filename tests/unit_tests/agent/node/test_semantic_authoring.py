@@ -17,6 +17,7 @@ from datus.agent.node.semantic_authoring import (
     required_authoring_skills,
     resolve_authoring_format,
     resolve_semantic_adapter_type,
+    validate_osi_authoring_document,
     validate_osi_core_document,
 )
 from datus.utils.exceptions import DatusException, ErrorCode
@@ -77,6 +78,20 @@ def test_validate_osi_core_document_uses_canonical_validator(monkeypatch):
 
     profile_module.validate_osi_core_schema = reject
     assert validate_osi_core_document({"version": "invalid"}) == "schema mismatch"
+
+
+def test_validate_dosi_authoring_document_uses_native_validator(monkeypatch):
+    calls = []
+    package_module = ModuleType("datus_semantic_dosi")
+    package_module.__path__ = []
+    authoring_module = ModuleType("datus_semantic_dosi.authoring")
+    authoring_module.validate_dosi_document = calls.append
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi", package_module)
+    monkeypatch.setitem(sys.modules, "datus_semantic_dosi.authoring", authoring_module)
+
+    document = {"version": "0.2.0.dev0"}
+    assert validate_osi_authoring_document(document, semantic_adapter="dosi") is None
+    assert calls == [document]
 
 
 def test_legacy_node_config_fields_are_ignored():
@@ -347,8 +362,14 @@ def test_adapter_type_resolution_propagates_agent_config_errors():
             "sql-modeling-preflight,metricflow-semantic-authoring",
         ),
         ("gen_semantic_model", "osi", "sql-modeling-preflight,osi-semantic-authoring"),
+        (
+            "gen_semantic_model",
+            "dosi",
+            "sql-modeling-preflight,dosi-native-authoring",
+        ),
         ("gen_metrics", "metricflow", "sql-modeling-preflight,gen-metrics"),
         ("gen_metrics", "osi", "sql-modeling-preflight,osi-metrics-authoring"),
+        ("gen_metrics", "dosi", "sql-modeling-preflight,dosi-metrics-authoring"),
         ("unknown_node", "metricflow", ""),
     ],
 )
@@ -416,6 +437,10 @@ def test_node_skill_defaults_respect_explicit_config(monkeypatch):
     [
         ("metricflow", ["sql-modeling-preflight", "metricflow-semantic-authoring"]),
         ("osi", ["sql-modeling-preflight", "osi-semantic-authoring"]),
+        (
+            "dosi",
+            ["sql-modeling-preflight", "dosi-native-authoring"],
+        ),
     ],
 )
 def test_gen_semantic_model_required_skills(adapter, expected):
@@ -431,6 +456,7 @@ def test_gen_semantic_model_required_skills(adapter, expected):
     [
         ("metricflow", ["sql-modeling-preflight", "gen-metrics"]),
         ("osi", ["sql-modeling-preflight", "osi-metrics-authoring"]),
+        ("dosi", ["sql-modeling-preflight", "dosi-metrics-authoring"]),
     ],
 )
 def test_gen_metrics_required_skills(adapter, expected):

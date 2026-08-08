@@ -1082,6 +1082,19 @@ class TestGetSystemPrompt:
         assert "OSI core semantics only" in prompt
         assert '<required_skill name="gen-metrics">' not in prompt
 
+    def test_dosi_authoring_injects_native_window_skill(self, real_agent_config, mock_llm_create):
+        _set_global_semantic_adapter(real_agent_config, "dosi")
+        node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
+        node.input = SemanticNodeInput(user_message="Generate native Dosi metrics")
+
+        prompt = node._get_system_prompt(template_context=node._prepare_template_context(node.input))
+
+        assert '<required_skill name="dosi-metrics-authoring">' in prompt
+        assert '"type":"rolling"' in prompt
+        assert "exactly one plain base aggregate" in prompt
+        assert '<required_skill name="osi-metrics-authoring">' not in prompt
+        assert node.filesystem_func_tool.semantic_adapter == "dosi"
+
     def test_metricflow_authoring_injects_gen_metrics_required_skill(self, real_agent_config, mock_llm_create):
         node = _make_node(real_agent_config, mock_llm_create, execution_mode="workflow")
         node.input = SemanticNodeInput(user_message="Generate metrics")
@@ -1393,6 +1406,210 @@ class TestExecuteStreamGenMetricsError:
             "metric_file": "metrics/order_metrics.yml",
             "metrics": ["order_count"],
         }
+        node.generation_tools.publish_metrics.assert_not_called()
+
+    def test_publish_metrics_requires_planned_native_window(self, real_agent_config, mock_llm_create, tmp_path):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
+
+        target = tmp_path / "shop.yml"
+        target.write_text(
+            json.dumps(
+                {
+                    "version": "0.2.0.dev0",
+                    "semantic_model": [
+                        {
+                            "name": "shop",
+                            "datasets": [{"name": "orders", "source": "orders"}],
+                            "metrics": [
+                                {
+                                    "name": "order_count_delta",
+                                    "expression": {
+                                        "dialects": [
+                                            {
+                                                "dialect": "ANSI_SQL",
+                                                "expression": "COUNT(DISTINCT orders.order_id)",
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node._accept_sql_modeling_plan(
+            SqlModelingPlan(
+                source_fingerprint="source",
+                metric_catalog_fingerprint="catalog",
+                candidate_plan={
+                    "outputs": [
+                        {
+                            "output_id": "orders:output_1",
+                            "source_id": "orders",
+                            "name": "order_count_delta",
+                            "role": "metric",
+                            "native_window": {
+                                "type": "pop",
+                                "offset": "1 month",
+                                "calculation": "delta",
+                                "base_expression": "COUNT(DISTINCT order_id)",
+                                "time_dimension": "order_date",
+                                "time_grain": "month",
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+        node._resolve_metric_artifact_path = MagicMock(return_value=str(target))
+        node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+
+        result = node.publish_metrics(
+            "shop.yml",
+            metric_output_bindings=[{"output_id": "orders:output_1", "metric_name": "order_count_delta"}],
+        )
+
+        assert result.success == 0
+        assert result.result == {
+            "code": "native_window_required",
+            "stage": "native_window_binding",
+            "metric_file": "shop.yml",
+            "output_id": "orders:output_1",
+            "metric_name": "order_count_delta",
+            "expected_window": {
+                "type": "pop",
+                "offset": "1 month",
+                "calculation": "delta",
+            },
+            "actual_window": None,
+            "expected_base_expression": "COUNT(DISTINCT order_id)",
+            "actual_base_expression": "COUNT(DISTINCT orders.order_id)",
+            "expected_time_dimension": "order_date",
+            "actual_time_dimension": None,
+        }
+        node.generation_tools.publish_metrics.assert_not_called()
+
+    def test_publish_metrics_validates_complete_native_window_binding(
+        self, real_agent_config, mock_llm_create, tmp_path
+    ):
+        from datus.agent.node.gen_metrics_agentic_node import GenMetricsAgenticNode
+        from datus.tools.func_tool.base import FuncToolResult
+        from datus.tools.func_tool.sql_modeling_planner import SqlModelingPlan
+
+        target = tmp_path / "shop.yml"
+        target.write_text(
+            json.dumps(
+                {
+                    "version": "0.2.0.dev0",
+                    "semantic_model": [
+                        {
+                            "name": "shop",
+                            "datasets": [{"name": "orders", "source": "orders"}],
+                            "metrics": [
+                                {
+                                    "name": "order_count_delta",
+                                    "expression": {
+                                        "dialects": [
+                                            {
+                                                "dialect": "ANSI_SQL",
+                                                "expression": "COUNT(DISTINCT orders.order_id)",
+                                            }
+                                        ]
+                                    },
+                                    "custom_extensions": [
+                                        {
+                                            "vendor_name": "DATUS",
+                                            "data": json.dumps(
+                                                {
+                                                    "v": "1.2",
+                                                    "time_dimension": "orders.order_date",
+                                                    "window": {
+                                                        "offset": {"count": 1, "granularity": "month"},
+                                                        "calculation": "delta",
+                                                    },
+                                                }
+                                            ),
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        node = GenMetricsAgenticNode(agent_config=real_agent_config, execution_mode="workflow")
+        node._accept_sql_modeling_plan(
+            SqlModelingPlan(
+                source_fingerprint="source",
+                metric_catalog_fingerprint="catalog",
+                candidate_plan={
+                    "outputs": [
+                        {
+                            "output_id": "orders:output_1",
+                            "source_id": "orders",
+                            "name": "order_count_delta",
+                            "role": "metric",
+                            "native_window": {
+                                "type": "pop",
+                                "offset": "1 month",
+                                "calculation": "delta",
+                                "base_expression": "COUNT(DISTINCT order_id)",
+                                "time_dimension": "order_date",
+                                "time_grain": "month",
+                            },
+                        }
+                    ]
+                },
+            )
+        )
+        node._resolve_metric_artifact_path = MagicMock(return_value=str(target))
+        node.generation_tools.extract_osi_model_names = MagicMock(return_value=["shop"])
+        node.generation_tools._extract_metric_names_from_file = MagicMock(return_value=["order_count_delta"])
+        node.generation_tools._extract_metric_definitions_from_file = MagicMock(return_value={})
+        node.generation_tools._metric_names_requiring_dry_run = MagicMock(return_value=[])
+        node.generation_tools.publish_metrics = MagicMock(return_value=FuncToolResult(result={"message": "ok"}))
+        bindings = [{"output_id": "orders:output_1", "metric_name": "order_count_delta"}]
+
+        result = node.publish_metrics("shop.yml", metric_output_bindings=bindings)
+
+        assert result.success == 1
+        node.generation_tools.publish_metrics.assert_called_once_with(
+            metric_file=str(target),
+            metric_output_bindings=bindings,
+        )
+
+        document = json.loads(target.read_text(encoding="utf-8"))
+        metric = document["semantic_model"][0]["metrics"][0]
+        metric["expression"]["dialects"][0]["expression"] = "MAX(orders.precomputed_order_count_delta)"
+        target.write_text(json.dumps(document), encoding="utf-8")
+        node.generation_tools.publish_metrics.reset_mock()
+
+        result = node.publish_metrics("shop.yml", metric_output_bindings=bindings)
+
+        assert result.success == 0
+        assert result.result["expected_base_expression"] == "COUNT(DISTINCT order_id)"
+        assert result.result["actual_base_expression"] == "MAX(orders.precomputed_order_count_delta)"
+        node.generation_tools.publish_metrics.assert_not_called()
+
+        metric["expression"]["dialects"][0]["expression"] = "COUNT(DISTINCT orders.order_id)"
+        extension_data = json.loads(metric["custom_extensions"][0]["data"])
+        extension_data["time_dimension"] = "orders.created_at"
+        metric["custom_extensions"][0]["data"] = json.dumps(extension_data)
+        target.write_text(json.dumps(document), encoding="utf-8")
+
+        result = node.publish_metrics("shop.yml", metric_output_bindings=bindings)
+
+        assert result.success == 0
+        assert result.result["expected_time_dimension"] == "order_date"
+        assert result.result["actual_time_dimension"] == "orders.created_at"
         node.generation_tools.publish_metrics.assert_not_called()
 
     def test_final_metric_publish_accepts_grouped_source_sql_dry_run(self, real_agent_config, mock_llm_create):

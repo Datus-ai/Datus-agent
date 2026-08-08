@@ -115,6 +115,26 @@ class DatasourceService:
                 except OSError:
                     pass
 
+    @staticmethod
+    def _validate_dosi_semantic_yaml(yaml_content: str) -> tuple[bool, List[str]]:
+        try:
+            document = yaml.safe_load(yaml_content)
+        except yaml.YAMLError as exc:
+            return False, [str(exc)]
+        if not isinstance(document, dict):
+            return False, ["YAML document must be an object"]
+        try:
+            from datus_semantic_core.exceptions import SemanticCoreException
+            from datus_semantic_dosi.authoring import validate_dosi_document
+        except ImportError as exc:
+            return False, [f"datus-semantic-dosi is required to validate Dosi semantic YAML: {exc}"]
+
+        try:
+            validate_dosi_document(document)
+            return True, []
+        except SemanticCoreException as exc:
+            return False, [str(exc)]
+
     def _get_database_type(self, database_name: Optional[str] = None) -> tuple[str, str]:
         """
         Get database type from agent configuration.
@@ -635,7 +655,10 @@ class DatasourceService:
         """Validate submitted content without mutating the live artifact."""
 
         if self._is_osi_semantic_layer():
-            is_valid, errors = self._validate_osi_semantic_yaml(request.yaml, str(semantic_model_path))
+            if self._active_semantic_adapter() == "dosi":
+                is_valid, errors = self._validate_dosi_semantic_yaml(request.yaml)
+            else:
+                is_valid, errors = self._validate_osi_semantic_yaml(request.yaml, str(semantic_model_path))
             model_name, has_metrics, identity_error = self._osi_candidate_identity(request.yaml)
             if identity_error:
                 errors = [*errors, identity_error]

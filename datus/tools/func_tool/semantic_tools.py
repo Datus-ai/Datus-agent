@@ -976,7 +976,9 @@ class SemanticTools:
 
         Args:
             metrics: List of metric names to query
-            dimensions: Optional list of dimensions to group by (from get_dimensions)
+            dimensions: Optional list of dimensions to group by (from get_dimensions).
+                        With Dosi, use reserved `metric_time` for the selected metric's
+                        primary time axis and pass its grain via `time_granularity`.
             path: Optional subject tree path (from list_subject_tree)
             time_start: Optional inclusive start of an OSI half-open range (ISO format like '2024-01-01'
                         or relative like '-7d')
@@ -985,9 +987,11 @@ class SemanticTools:
             time_granularity: Optional time granularity for aggregation ('day', 'week', 'month', 'quarter', 'year')
             where: Optional SQL WHERE clause (without WHERE keyword)
             limit: Optional maximum number of rows
-            order_by: Optional list of columns to sort by. Use column name for ascending,
-                      prefix with '-' for descending. Examples: ['metric_time__day'] for ascending,
-                      ['-message_count'] for descending. Do NOT use 'asc'/'desc' keywords.
+            order_by: Optional list of result columns to sort by. Use column name for ascending,
+                      prefix with '-' for descending. A Dosi input dimension `metric_time` may
+                      produce a result/order key such as `metric_time__day`. Examples:
+                      ['metric_time__day'] for ascending, ['-message_count'] for descending.
+                      Do NOT use 'asc'/'desc' keywords.
             dry_run: If True, compile and return the query plan. Live OSI
                 backends also validate the compiled SQL with a warehouse dry-run.
 

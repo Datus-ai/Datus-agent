@@ -55,6 +55,19 @@ _REQUIRED_AUTHORING_SKILLS: Dict[str, Dict[str, str]] = {
     },
 }
 
+# Dosi consumes the OSI core document shape but has its own native DATUS
+# extension contract. Keep adapter-specific execution semantics out of the
+# shared authoring-format switch so the Python OSI and Rust Dosi backends do
+# not receive contradictory window instructions.
+_REQUIRED_ADAPTER_SKILLS: Dict[str, Dict[str, str]] = {
+    "gen_semantic_model": {
+        "dosi": "sql-modeling-preflight,dosi-native-authoring",
+    },
+    "gen_metrics": {
+        "dosi": "sql-modeling-preflight,dosi-metrics-authoring",
+    },
+}
+
 # Optional skills advertised in ``<available_skills>`` for LLM-initiated
 # loading, keyed the same way. These cover conditional workflows (profiling on
 # explicit request, semantic-model repair during metric authoring), so the LLM
@@ -256,6 +269,26 @@ def validate_osi_core_document(document: Any) -> Optional[str]:
     return None
 
 
+def validate_osi_authoring_document(document: Any, *, semantic_adapter: str) -> Optional[str]:
+    """Validate an OSI-shaped authoring document with its selected adapter."""
+
+    if str(semantic_adapter or "").strip().lower() != "dosi":
+        return validate_osi_core_document(document)
+    if not isinstance(document, dict):
+        return "YAML document must be an object"
+    try:
+        from datus_semantic_core.exceptions import SemanticCoreException
+        from datus_semantic_dosi.authoring import validate_dosi_document
+    except ImportError as exc:
+        return f"Dosi validator is unavailable: {exc}"
+
+    try:
+        validate_dosi_document(document)
+    except SemanticCoreException as exc:
+        return str(exc)
+    return None
+
+
 def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, Any]:
     """Inspect every YAML file in the active datasource semantic-model tree.
 
@@ -265,6 +298,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
     without weakening metric binding.
     """
     model_dir = _osi_semantic_model_dir(agent_config)
+    semantic_adapter = resolve_semantic_adapter_type(agent_config)
     if model_dir is None or not model_dir.is_dir():
         return {
             "models": [],
@@ -366,13 +400,20 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
             "absolute_path": str(absolute_path),
             "artifact_sha256": hashlib.sha256(content).hexdigest(),
         }
-        schema_error = validate_osi_core_document(document)
+        schema_error = validate_osi_authoring_document(document, semantic_adapter=semantic_adapter)
         if schema_error:
-            issue_code = (
-                "osi_schema_validator_unavailable"
-                if schema_error.startswith("OSI schema validator is unavailable:")
-                else "invalid_osi_core_schema"
-            )
+            if semantic_adapter == "dosi":
+                issue_code = (
+                    "dosi_validator_unavailable"
+                    if schema_error.startswith("Dosi validator is unavailable:")
+                    else "invalid_dosi_model"
+                )
+            else:
+                issue_code = (
+                    "osi_schema_validator_unavailable"
+                    if schema_error.startswith("OSI schema validator is unavailable:")
+                    else "invalid_osi_core_schema"
+                )
             issues.append(
                 {
                     "code": issue_code,
@@ -380,7 +421,7 @@ def inspect_osi_semantic_model_inventory(agent_config: Any = None) -> Dict[str, 
                     "error": schema_error,
                 }
             )
-            if issue_code == "invalid_osi_core_schema":
+            if issue_code in {"invalid_osi_core_schema", "invalid_dosi_model"}:
                 recoverable.append({**identity, "repair_required": True})
             continue
 
@@ -788,6 +829,10 @@ def required_authoring_skills(agent_config: Any, node_name: str) -> str:
     The result is a comma-separated pattern string in the same shape as
     ``AgenticNode.REQUIRED_SKILLS``, derived from the active authoring format.
     """
+    adapter = resolve_semantic_adapter_type(agent_config)
+    adapter_skills = _REQUIRED_ADAPTER_SKILLS.get(node_name, {}).get(adapter)
+    if adapter_skills is not None:
+        return adapter_skills
     authoring_format = resolve_authoring_format(agent_config)
     return _REQUIRED_AUTHORING_SKILLS.get(node_name, {}).get(authoring_format, "")
 

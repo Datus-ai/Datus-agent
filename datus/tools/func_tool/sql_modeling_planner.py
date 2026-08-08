@@ -381,6 +381,11 @@ class SqlModelingPlanTools:
         normalized_outputs = []
         seen_output_ids: set[str] = set()
         known_sources = {source.source_sql_name for source in self._plan.source_queries}
+        baseline_outputs = {
+            str(output.get("output_id") or "").strip(): output
+            for output in self._plan.candidate_plan.get("outputs") or []
+            if isinstance(output, dict) and str(output.get("output_id") or "").strip()
+        }
         for index, raw_output in enumerate(outputs):
             if not isinstance(raw_output, dict):
                 raise ValueError(f"candidate_plan.outputs[{index}] must be a JSON object.")
@@ -402,6 +407,9 @@ class SqlModelingPlanTools:
                 raise ValueError(f"Output {output_id!r} has unknown source_id {source_id!r}.")
             if source_id:
                 output["source_id"] = source_id
+            baseline_output = baseline_outputs.get(output_id)
+            if isinstance(baseline_output, dict) and isinstance(baseline_output.get("native_window"), dict):
+                output["native_window"] = copy.deepcopy(baseline_output["native_window"])
             normalized_outputs.append(output)
 
         revised = {
@@ -738,6 +746,9 @@ class SqlModelingPlanner:
                 ),
             }
 
+        native_window_hints = (
+            _native_window_hints(analysis) if _agent_config_semantic_adapter(self.agent_config) == "dosi" else {}
+        )
         outputs = []
         for contract in analysis.get("output_contracts") or []:
             if not isinstance(contract, dict):
@@ -745,15 +756,19 @@ class SqlModelingPlanner:
             output_id = str(contract.get("output_id") or "").strip()
             if not output_id:
                 continue
-            outputs.append(
-                {
-                    "output_id": output_id,
-                    "source_id": str(contract.get("source_sql_name") or "").strip(),
-                    "name": str(contract.get("output_name") or "").strip(),
-                    "expression": str(contract.get("expression") or "").strip(),
-                    "role": str(contract.get("output_role") or "metric").strip().lower(),
-                }
-            )
+            source_id = str(contract.get("source_sql_name") or "").strip()
+            output_name = str(contract.get("output_name") or "").strip()
+            output = {
+                "output_id": output_id,
+                "source_id": source_id,
+                "name": output_name,
+                "expression": str(contract.get("expression") or "").strip(),
+                "role": str(contract.get("output_role") or "metric").strip().lower(),
+            }
+            native_window = native_window_hints.get((source_id, _normalize_business_name(output_name)))
+            if native_window:
+                output["native_window"] = copy.deepcopy(native_window)
+            outputs.append(output)
 
         queryability_contracts = []
         contract_counts: Dict[str, int] = {}
@@ -921,3 +936,93 @@ def _agent_config_dialect(agent_config: "AgentConfig") -> str:
     value = getattr(current_db_config, "type", "")
     value = getattr(value, "value", value)
     return value if isinstance(value, str) and value.strip() else "snowflake"
+
+
+def _agent_config_semantic_adapter(agent_config: "AgentConfig") -> str:
+    resolver = getattr(agent_config, "resolve_semantic_adapter", None)
+    if not callable(resolver):
+        return ""
+    try:
+        value = resolver(None)
+    except Exception:
+        return ""
+    value = getattr(value, "value", value)
+    return str(value or "").strip().lower()
+
+
+def _native_window_hints(analysis: Dict[str, Any]) -> Dict[tuple[str, str], Dict[str, Any]]:
+    hints: Dict[tuple[str, str], Dict[str, Any]] = {}
+    for candidate in analysis.get("metric_candidates") or []:
+        if not isinstance(candidate, dict):
+            continue
+        hint = _native_window_hint(candidate)
+        name = str(candidate.get("name") or "").strip()
+        if not hint or not name:
+            continue
+        source_names = [item.strip() for item in str(candidate.get("source_sql_name") or "").split(",")]
+        for source_name in filter(None, source_names):
+            hints[(source_name, _normalize_business_name(name))] = hint
+    return hints
+
+
+def _native_window_hint(candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if candidate.get("candidate_classification") != "exact_metric" or candidate.get("requires_validation") is True:
+        return None
+
+    metric_type = str(candidate.get("metric_type") or "").strip().lower()
+    hint: Dict[str, Any]
+    if metric_type == "period_over_period":
+        period = candidate.get("period_over_period")
+        if not isinstance(period, dict):
+            return None
+        offset = _normalized_window_period(period.get("offset_window"))
+        calculation = str(period.get("calculation") or "").strip().lower()
+        calculation = "value" if calculation == "previous_value" else calculation
+        if not offset or calculation not in {"value", "delta", "percent_change", "ratio"}:
+            return None
+        hint = {"type": "pop", "offset": offset, "calculation": calculation}
+        time_grain = str(period.get("time_grain") or "").strip().lower()
+    elif metric_type == "cumulative":
+        function = str(candidate.get("window_aggregation") or "").strip().lower()
+        function = "count" if function == "row_count" else function
+        if function not in {"sum", "avg", "min", "max", "count"}:
+            return None
+        time_grain = str(candidate.get("time_grain") or "").strip().lower()
+        if candidate.get("window"):
+            period = _normalized_window_period(candidate.get("window"))
+            if not period:
+                return None
+            count, unit = period.split(" ", 1)
+            if time_grain and unit.rstrip("s") != time_grain:
+                return None
+            hint = {"type": "rolling", "function": function, "periods": int(count)}
+        elif candidate.get("grain_to_date"):
+            hint = {"type": "cumulative", "function": function}
+        else:
+            return None
+    else:
+        return None
+
+    base_expression = str(candidate.get("expression") or "").strip()
+    if not base_expression:
+        return None
+    hint["base_expression"] = base_expression
+    time_dimension = str(candidate.get("time_dimension") or "").strip()
+    if time_dimension:
+        hint["time_dimension"] = time_dimension
+    if time_grain:
+        hint["time_grain"] = time_grain
+    return hint
+
+
+def _normalized_window_period(value: Any) -> str:
+    match = re.fullmatch(
+        r"\s*([1-9]\d*)\s+(day|week|month|quarter|year)s?\s*",
+        str(value or ""),
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    count = int(match.group(1))
+    unit = match.group(2).lower()
+    return f"{count} {unit}{'' if count == 1 else 's'}"

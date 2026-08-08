@@ -4,8 +4,7 @@
 
 import hashlib
 import os
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -1605,6 +1604,72 @@ class TestSyncMetricToDb:
 
 
 class TestOsiSync:
+    def test_native_dosi_window_is_projected_as_window_metric(self, generation_tools):
+        metric = SimpleNamespace(
+            name="running_revenue",
+            description="Running revenue",
+            expression="SUM(orders.amount)",
+            dataset=None,
+            subject_path=["sales", "revenue", "running"],
+            kind="aggregate",
+            inputs=[],
+            measures=[],
+            window={"type": "cumulative", "function": "sum"},
+        )
+        doc = SimpleNamespace(name="shop", datasets=[], relationships=[], metrics=[metric])
+
+        (row,) = generation_tools._build_osi_metric_objects(
+            doc=doc,
+            metric_file="model.yml",
+            target_metric_names={"running_revenue"},
+        )
+
+        assert row["metric_type"] == "window"
+
+    def test_metric_rows_use_compiled_adapter_semantics(self, generation_tools):
+        metric = SimpleNamespace(
+            name="average_order_value",
+            description="Average order value",
+            expression="SUM(orders.amount) / COUNT(*)",
+            dataset="guessed_dataset",
+            datasets=["guessed_dataset"],
+            subject_path=["sales", "orders"],
+            kind=None,
+            inputs=[],
+            measures=[],
+            window=None,
+        )
+        orders = SimpleNamespace(
+            name="orders",
+            primary_key=["order_id"],
+            time_dimension=None,
+            dimensions=[SimpleNamespace(name="status")],
+        )
+        doc = SimpleNamespace(name="shop", datasets=[orders], relationships=[], metrics=[metric])
+        compiled = SimpleNamespace(
+            name="average_order_value",
+            type="expression",
+            dimensions=["orders.status", "orders.order_date"],
+            measures=["order_amount", "order_count"],
+            metadata={"datasets": ["orders"]},
+        )
+
+        with patch.object(
+            generation_tools,
+            "_compiled_metric_catalog",
+            return_value={"average_order_value": compiled},
+        ):
+            (row,) = generation_tools._build_osi_metric_objects(
+                doc=doc,
+                metric_file="model.yml",
+                target_metric_names={"average_order_value"},
+            )
+
+        assert row["metric_type"] == "expression"
+        assert row["dimensions"] == ["orders.status", "orders.order_date"]
+        assert row["entities"] == ["order_id"]
+        assert row["base_measures"] == ["order_amount", "order_count"]
+
     def test_preserve_existing_metric_sql_keeps_only_compatible_sql(self, generation_tools):
         metric_objects = [
             {"name": "revenue", "measure_expr": "SUM(revenue)", "sql": "SELECT fresh"},
@@ -2160,6 +2225,13 @@ class TestOsiSync:
             "        source: orders\n"
             "        primary_key: [order_id]\n"
         )
+        customer_segment = SimpleNamespace(
+            name="customer_segment",
+            expr="customer_segment",
+            type="categorical",
+            description="Customer segment",
+            granularity=None,
+        )
         dataset = SimpleNamespace(
             name="orders",
             description="Orders table",
@@ -2170,14 +2242,18 @@ class TestOsiSync:
             source=SimpleNamespace(table="orders"),
             primary_key="order_id",
             time_dimension=SimpleNamespace(name="order_date", granularity="day"),
-            dimensions=[
+            dimensions=[customer_segment],
+            fields=[
+                SimpleNamespace(name="order_id", expr="order_id", type="categorical"),
+                SimpleNamespace(name="order_date", expr="order_date", type="time"),
+                customer_segment,
                 SimpleNamespace(
-                    name="customer_segment",
-                    expr="customer_segment",
-                    type="categorical",
-                    description="Customer segment",
+                    name="amount",
+                    expr="amount",
+                    type="numeric",
+                    description="Order amount",
                     granularity=None,
-                )
+                ),
             ],
         )
         other_dataset = SimpleNamespace(
@@ -2211,10 +2287,14 @@ class TestOsiSync:
         generation_tools.semantic_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.semantic_rag.upsert_batch.assert_called_once()
         objects = generation_tools.semantic_rag.upsert_batch.call_args.args[0]
-        assert [obj["kind"] for obj in objects] == ["table", "column", "column", "column"]
+        assert [obj["kind"] for obj in objects] == ["table", "column", "column", "column", "column"]
         assert objects[0]["name"] == "orders"
         assert objects[1]["name"] == "order_id"
         assert objects[1]["is_entity_key"] is True
+        assert objects[3]["name"] == "customer_segment"
+        assert objects[3]["is_dimension"] is True
+        assert objects[4]["name"] == "amount"
+        assert objects[4]["is_dimension"] is False
         generation_tools.table_semantic_profile_rag.delete_artifact_rows.assert_not_called()
         generation_tools.table_semantic_profile_rag.delete_artifact_rows_except.assert_called_once()
         generation_tools.table_semantic_profile_rag.upsert_batch.assert_called_once()
@@ -2267,42 +2347,21 @@ class TestOsiSync:
             '            data: \'{"dataset":"budgets"}\'\n'
         )
 
-        calls = {}
         finance_doc = SimpleNamespace(
             name="finance",
             datasets=[SimpleNamespace(name="budgets")],
             metrics=[SimpleNamespace(name="budget_total")],
         )
-        profile_module = ModuleType("datus_semantic_osi.profile")
-
-        def load_osi_model(path, semantic_model_name, normalize):
-            calls.update(
-                path=path,
-                semantic_model_name=semantic_model_name,
-                normalize=normalize,
-            )
-            return finance_doc
-
-        profile_module.load_osi_model = load_osi_model
-        package_module = ModuleType("datus_semantic_osi")
-        package_module.__path__ = []
-        with patch.dict(
-            sys.modules,
-            {
-                "datus_semantic_osi": package_module,
-                "datus_semantic_osi.profile": profile_module,
-            },
-        ):
+        with patch(
+            "datus.tools.semantic_tools.osi_document.load_osi_document",
+            return_value=finance_doc,
+        ) as loader:
             doc = generation_tools._load_osi_document(metric_file=str(metric_file))
 
         assert doc.name == "finance"
         assert [dataset.name for dataset in doc.datasets] == ["budgets"]
         assert [metric.name for metric in doc.metrics] == ["budget_total"]
-        assert calls == {
-            "path": str(tmp_path),
-            "semantic_model_name": "finance",
-            "normalize": True,
-        }
+        loader.assert_called_once_with(str(metric_file), semantic_model_name="finance")
 
     def test__sync_osi_semantic_objects_to_db_distinguishes_same_named_tables_across_databases(
         self, generation_tools, tmp_path

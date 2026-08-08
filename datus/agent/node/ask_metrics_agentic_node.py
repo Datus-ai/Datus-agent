@@ -464,6 +464,7 @@ class AskMetricsAgenticNode(AgenticNode):
             "subject_tree_prompt": self.subject_tree_prompt,
             "subject_tree_prompt_limit": self.subject_tree_prompt_limit,
             "require_final_result_selection": self.require_final_result_selection,
+            "semantic_adapter_type": self._resolve_adapter_type(),
         }
 
         if self.agent_config:

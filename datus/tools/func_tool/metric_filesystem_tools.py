@@ -35,12 +35,16 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
         self,
         *args,
         authoring_format: str = "metricflow",
+        semantic_adapter: str = "",
         osi_target_state: Optional["OsiSemanticModelTargetState"] = None,
         generation_evidence: Optional["GenerationEvidence"] = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.authoring_format = (authoring_format or "metricflow").strip().lower()
+        self.semantic_adapter = (
+            (semantic_adapter or ("osi" if self.authoring_format == "osi" else "metricflow")).strip().lower()
+        )
         self.osi_target_state = osi_target_state
         self.generation_evidence = generation_evidence
 
@@ -654,11 +658,12 @@ class MetricFilesystemFuncTool(FilesystemFuncTool):
             state.record_metric_rollback(original_content)
         return True
 
-    @staticmethod
-    def _validate_osi_document(document: Dict[str, Any]) -> Optional[str]:
-        from datus.agent.node.semantic_authoring import validate_osi_core_document
+    def _validate_osi_document(self, document: Dict[str, Any]) -> Optional[str]:
+        from datus.agent.node.semantic_authoring import (
+            validate_osi_authoring_document,
+        )
 
-        return validate_osi_core_document(document)
+        return validate_osi_authoring_document(document, semantic_adapter=self.semantic_adapter)
 
     def write_file(self, path: str, content: str, file_type: str = "") -> FuncToolResult:  # type: ignore[override]
         resolved = self._classify(path)

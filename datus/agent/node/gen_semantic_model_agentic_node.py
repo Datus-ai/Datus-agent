@@ -313,6 +313,8 @@ class GenSemanticModelAgenticNode(AgenticNode):
             "mutation_callback",
             self.generation_evidence.record_artifact_mutation,
         )
+        from datus.agent.node.semantic_authoring import resolve_semantic_adapter_type
+
         return OsiSemanticModelFilesystemFuncTool(
             root_path=root_path,
             current_node=current_node,
@@ -321,6 +323,7 @@ class GenSemanticModelAgenticNode(AgenticNode):
             inherited_memory_node=inherited_memory_node,
             session_data_dir=session_data_dir,
             mutation_callback=mutation_callback,
+            semantic_adapter=resolve_semantic_adapter_type(self.agent_config),
             generation_evidence=self.generation_evidence,
             osi_target_state=self.osi_target_state,
             **kwargs,
@@ -461,21 +464,27 @@ class GenSemanticModelAgenticNode(AgenticNode):
         context["has_ask_user_tool"] = self.ask_user_tool is not None
         context.update(build_datasource_prompt_context(self.agent_config))
 
-        from datus.agent.node.semantic_authoring import resolve_authoring_format
+        from datus.agent.node.semantic_authoring import (
+            resolve_authoring_format,
+            resolve_semantic_adapter_type,
+        )
 
         context["authoring_format"] = resolve_authoring_format(self.agent_config)
         context["osi_authoring_spec"] = ""
         if context["authoring_format"] == "osi":
-            # The OSI core spec document ships with the adapter package so the
-            # contract the LLM is shown and the schema the adapter validates
-            # against cannot drift. The dialect placeholder is substituted at
-            # template render time from the active datasource's dialect map.
             try:
-                from datus_semantic_osi.authoring_spec import authoring_spec_text
+                if resolve_semantic_adapter_type(self.agent_config) == "dosi":
+                    from datus_semantic_dosi.authoring_spec import (
+                        authoring_spec_text,
+                    )
+                else:
+                    from datus_semantic_osi.authoring_spec import (
+                        authoring_spec_text,
+                    )
 
                 context["osi_authoring_spec"] = authoring_spec_text("__OSI_DIALECT__")
             except ImportError:
-                logger.debug("datus_semantic_osi.authoring_spec unavailable; skipping spec injection")
+                logger.debug("Semantic adapter authoring spec unavailable; skipping spec injection")
 
         logger.debug(f"Prepared template context: {context}")
         return context

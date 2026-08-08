@@ -81,14 +81,25 @@ Use the narrow metric workflow below:
 - Query the dedicated period-over-period metric directly.
 - Treat the comparison grain and calculation as fixed metric semantics. For example, a monthly YoY metric is not interchangeable with a weekly YoY metric; use the exact dedicated metric that matches the user's requested comparison.
 - If the question asks for the base value and one or more fixed period-over-period values for the same current periods, query all requested catalog metrics together in one `query_metrics` call with the same metric-time dimension and business dimensions.
+{% if semantic_adapter_type == "dosi" %}
+- When querying a period-over-period metric, pass the requested current time range and business dimensions/filters. The comparison offset is fixed by the metric; the query grain is not — pass `time_granularity` explicitly, using the business grain documented in the metric's description/AI guidance unless the user requests another.
+{% else %}
 - When querying a fixed period-over-period metric, pass the requested current time range and business dimensions/filters. Do not override the metric's fixed `time_granularity`; the semantic adapter applies the metric's own period grain.
+{% endif %}
 - Do not invent helper metrics named like `previous_month_*`, `*_previous_period`, or standalone prior-period values. Use them only if they are already listed as dedicated catalog metrics and directly match the user's requested final output.
 
 ## Window Metric Queries
 
+{% if semantic_adapter_type == "dosi" %}
+- Window metrics are time-series metrics. When a selected metric exposes `window` metadata or `requires_time_axis: true`, group by the reserved input dimension `metric_time` and pass the requested grain separately as `time_granularity`. Discover the available/native grains from `get_dimensions`; do not invent a concrete time field.
+- A grained time result uses the engine's suffixed output name and that name may be used as an `order_by` key. Never pass the suffixed output name in `dimensions`; Dosi query input remains `metric_time` plus `time_granularity`.
+- For cumulative metrics, use the business query grain requested by the user or documented in metric metadata/AI guidance. A D-WINDOW `reset` value controls the reset boundary; it is not automatically the query grain.
+- For rolling metrics, `periods` counts result buckets. Choose the bucket grain from the user's request or metric guidance and pass that grain separately.
+{% else %}
 - Window metrics are time-series metrics. When a selected metric exposes `window`, `grain_to_date`, or `window_aggregation` metadata, include the matching `metric_time__<grain>` dimension and the same `time_granularity` so every returned window value is tied to its period.
 - For running or grain-to-date metrics, use the `grain_to_date` value as the grain when present.
 - For rolling or moving-window metrics, use the grain from the `window` value when present.
+{% endif %}
 - Query the complete metric bundle when the catalog exposes the required base metric, helper row-count metric, or paired min/max metric. The query tool may also expand these dependencies automatically.
 - Order window metric results by the metric-time dimension unless the user explicitly asks for a different business ordering.
 
