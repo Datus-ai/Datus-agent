@@ -150,6 +150,8 @@ class ChatAgenticNode(AgenticNode):
         # Setup ask_user tool for clarification questions (interactive mode only)
         if self.execution_mode == "interactive":
             self._setup_ask_user_tool()
+        # No-op unless the request declared an orchestrator origin.
+        self._setup_task_result_tool()
         self._rebuild_tools()
         self._setup_platform_doc_tools()
 
@@ -272,6 +274,12 @@ class ChatAgenticNode(AgenticNode):
             self.tools.extend(self.sub_agent_task_tool.available_tools())
         if self.ask_user_tool:
             self.tools.extend(self.ask_user_tool.available_tools())
+        # None unless the request declared an orchestrator origin. Must be re-added
+        # here and not only in setup_tools: every rebuild (task-database switch,
+        # skill reload) clears the list, and dropping this one silently strips the
+        # dispatcher's only structured way to learn how the run ended.
+        if getattr(self, "task_result_tool", None):
+            self.tools.extend(self.task_result_tool.available_tools())
         # Plan-mode tools (confirm_plan + todo_*) for main agents; no-op for sub-agents.
         self._register_plan_mode_tools()
         # The rebuilt list holds fresh, unwrapped FunctionTool instances —

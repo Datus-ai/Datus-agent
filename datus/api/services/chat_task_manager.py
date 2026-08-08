@@ -368,6 +368,11 @@ class ChatTaskManager:
         # the literal "." for the SQL files root because the IDE owns its own
         # workspace path).
         agent_config._client_source = effective_source
+        # Who dispatched this run. Read by ``_setup_task_result_tool`` to decide
+        # whether the agent gets a way to declare a structured outcome. Stashed
+        # on the cloned config, like _client_source, so concurrent requests on
+        # the same project do not see each other's origin.
+        agent_config._request_origin = getattr(request, "origin", None)
         # Per-request response language override. Empty / None keeps the
         # yaml-level ``agent.language`` default intact.
         if request.language:
