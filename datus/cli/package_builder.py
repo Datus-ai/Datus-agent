@@ -25,7 +25,7 @@ surface lives in ``package_cli.py`` (same split as ``plugin_pack.py`` /
 ``PackageResult(ok=False, error=...)``.
 
 Note for future config sections: when a new ``agent.yml`` section carries a
-credential, add its path to ``_SECRET_PATH_TABLE`` below. Unknown sections
+credential, add its path to ``_sanitize_agent_tree`` below. Unknown sections
 pass through the generated YAML untouched, so a forgotten entry is only
 caught by the final content scan (which fails the build rather than leaks).
 """
@@ -597,6 +597,12 @@ def _stage_index_html(
     if CDN_BUNDLE_CSS not in html and CDN_BUNDLE_JS not in html:
         warnings.append(f"{arc}: no CDN bundle URLs found; staged as-is")
         return [StagedEntry(arcname=arc, source=index_html)]
+    missing = [name for name in (_DIST_CSS_NAME, _DIST_JS_NAME) if not (report_dist / name).is_file()]
+    if missing:
+        # The CLI validates the dist dir up front, but the builder API can be
+        # handed any path — never rewrite to assets we cannot actually ship.
+        warnings.append(f"{arc}: dist {report_dist} is missing {', '.join(missing)}; staged as-is (CDN URLs kept)")
+        return [StagedEntry(arcname=arc, source=index_html)]
     html = html.replace(CDN_BUNDLE_CSS, f"_assets/{_DIST_CSS_NAME}").replace(CDN_BUNDLE_JS, f"_assets/{_DIST_JS_NAME}")
     return [
         StagedEntry(arcname=arc, content=html.encode("utf-8")),
@@ -714,10 +720,12 @@ def _rewrite_uri_password(
             return
         placeholder = alloc.allocate(pwd, preferred_var, config_path)
         container[key] = f"{match.group('prefix')}{placeholder}{match.group('suffix')}"
-    else:
-        # Credential-looking but unparseable — placeholder the whole value
-        # rather than risk shipping an embedded secret.
+    elif re.search(r"://[^/@]+:[^@]+@", value):
+        # A password component IS present but the URI doesn't parse —
+        # placeholder the whole value rather than risk shipping the secret.
         _rewrite_secret_value(container, key, preferred_var, config_path, alloc)
+    # else: user-only URIs (``scheme://user@host/db``) carry no password —
+    # leave them intact so the receiver keeps host/port/database.
 
 
 def _rewrite_secret_named_keys(
@@ -923,9 +931,15 @@ def _sanitize_plugin_profiles(plugins: Dict[str, Any], alloc: _PlaceholderAlloca
             continue
         secret_fields: Optional[Set[str]] = None
         if plugin_config_schema is not None:
-            specs = plugin_config_schema(str(plugin_name))
-            if specs:
-                secret_fields = {spec["name"] for spec in specs if spec.get("secret")}
+            # A broken plugin manifest must degrade to "no schema" (all string
+            # leaves become placeholders), not crash the build.
+            try:
+                specs = plugin_config_schema(str(plugin_name))
+                if specs:
+                    secret_fields = {spec["name"] for spec in specs if isinstance(spec, dict) and spec.get("secret")}
+            except Exception as exc:
+                logger.warning("package: plugin_config_schema(%r) failed: %s", plugin_name, exc)
+                secret_fields = None
         for profile_name, profile in profiles.items():
             if not isinstance(profile, dict):
                 continue
@@ -1285,8 +1299,15 @@ def _scan_generated_config(arcname: str, text: str) -> List[SecretFinding]:
     return findings
 
 
-def scan_for_secrets(entries: Sequence[StagedEntry]) -> List[SecretFinding]:
+def scan_for_secrets(entries: Sequence[StagedEntry]) -> Tuple[List[SecretFinding], List[str]]:
+    """Return ``(findings, warnings)``; warnings flag partial coverage.
+
+    The scan reads at most ``_SCAN_READ_CAP_BYTES`` per file and skips
+    binary-sniffed content — both limits are surfaced as warnings so a
+    partial scan never silently reads as a full one.
+    """
     findings: List[SecretFinding] = []
+    warnings: List[str] = []
     generated_conf = {"conf/agent.yml", "conf/.mcp.json", PROJECT_CONFIG_REL}
     for entry in entries:
         try:
@@ -1294,6 +1315,11 @@ def scan_for_secrets(entries: Sequence[StagedEntry]) -> List[SecretFinding]:
         except OSError as exc:
             findings.append(SecretFinding(arcname=entry.arcname, locator=str(exc), kind="unreadable"))
             continue
+        if entry.size() > _SCAN_READ_CAP_BYTES:
+            warnings.append(
+                f"secret scan truncated for {entry.arcname}: only the first "
+                f"{_SCAN_READ_CAP_BYTES // (1024 * 1024)} MB of {entry.size()} bytes were scanned"
+            )
         if b"\x00" in head[:_BINARY_SNIFF_BYTES]:
             continue
         for kind, pattern in _SECRET_CONTENT_PATTERNS:
@@ -1302,15 +1328,18 @@ def scan_for_secrets(entries: Sequence[StagedEntry]) -> List[SecretFinding]:
                 findings.append(SecretFinding(arcname=entry.arcname, locator=f"offset {match.start()}", kind=kind))
         if entry.arcname in generated_conf and entry.content is not None:
             findings.extend(_scan_generated_config(entry.arcname, entry.content.decode("utf-8", errors="replace")))
-    return findings
+    return findings, warnings
 
 
 def write_zip(entries: Sequence[StagedEntry], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # One timestamp for every member: entries written seconds apart must not
+    # differ, so two runs over identical content diverge only by build time.
+    stamp = datetime.now(timezone.utc).timetuple()[:6]
     with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for entry in sorted(entries, key=lambda e: e.arcname):
             data = entry.read_bytes()
-            info = zipfile.ZipInfo(entry.arcname, date_time=datetime.now(timezone.utc).timetuple()[:6])
+            info = zipfile.ZipInfo(entry.arcname, date_time=stamp)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = (0o755 if entry.executable else 0o644) << 16
             zf.writestr(info, data)
@@ -1442,7 +1471,8 @@ def _build_package(options: PackageOptions) -> PackageResult:
     }
 
     staged = list(entries_by_arc.values())
-    findings = scan_for_secrets(staged)
+    findings, scan_warnings = scan_for_secrets(staged)
+    warnings.extend(scan_warnings)
     if findings:
         return PackageResult(
             ok=False,

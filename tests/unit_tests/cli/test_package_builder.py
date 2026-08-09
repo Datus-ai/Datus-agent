@@ -86,6 +86,8 @@ def project(tmp_path, monkeypatch):
     fake_home = tmp_path / "fakehome"
     root = tmp_path / "proj"
     monkeypatch.setenv("HOME", str(fake_home))
+    # ``Path.home()`` reads USERPROFILE on Windows — isolate both.
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
     monkeypatch.chdir(root_prepare(root, fake_home))
     monkeypatch.setattr(
         pb,
@@ -291,6 +293,20 @@ class TestAgentYmlGeneration:
         assert uri.startswith("postgresql://svc:${DATUS_DS_PG_MAIN_URI_PASSWORD}@db.example.com")
         assert agent["services"]["datasources"]["local_lite"]["uri"] == "sqlite:///data.db"
 
+    def test_passwordless_uri_left_untouched(self, project):
+        alloc = pb._PlaceholderAllocator()
+        container = {"uri": "postgresql://svc@db.example.com/warehouse"}
+        pb._rewrite_uri_password(container, "uri", "DATUS_DS_X_URI_PASSWORD", "x.uri", alloc)
+        # No password component -> host/port/database must survive verbatim.
+        assert container["uri"] == "postgresql://svc@db.example.com/warehouse"
+        assert alloc.bindings == []
+
+    def test_unparseable_uri_with_password_component_fully_replaced(self, project):
+        alloc = pb._PlaceholderAllocator()
+        container = {"uri": "weird-scheme://user:p4ss@[bad host/db"}
+        pb._rewrite_uri_password(container, "uri", "DATUS_DS_X_URI_PASSWORD", "x.uri", alloc)
+        assert "p4ss" not in container["uri"]
+
     def test_non_secret_extras_untouched(self, project):
         agent = self._generated(_build(project))
         assert agent["services"]["bi_platforms"]["superset"]["extra"]["provider"] == "db"
@@ -405,6 +421,23 @@ class TestSelectors:
         html = _member(result, "reports/daily_gmv/index.html").decode("utf-8")
         assert "_assets/index.css" in html and "_assets/index.umd.js" in html
         assert "unpkg.com" not in html
+
+    def test_report_dist_missing_asset_keeps_cdn_html(self, project, tmp_path):
+        from datus.agent.node.visual_artifact._artifact_html_renderer import CDN_BUNDLE_CSS, CDN_BUNDLE_JS
+
+        index = project / "reports" / "daily_gmv" / "index.html"
+        index.write_text(f'<link href="{CDN_BUNDLE_CSS}"><script src="{CDN_BUNDLE_JS}">', encoding="utf-8")
+        dist = tmp_path / "half-dist"
+        dist.mkdir()
+        (dist / "index.css").write_text("css", encoding="utf-8")  # index.umd.js missing
+
+        result = _build(project, report_dist=dist)
+        names = _namelist(result)
+        # Never rewrite to assets that cannot ship: html stays CDN, no _assets staged.
+        assert "reports/daily_gmv/_assets/index.umd.js" not in names
+        html = _member(result, "reports/daily_gmv/index.html").decode("utf-8")
+        assert "unpkg.com" in html and "_assets/" not in html
+        assert any("missing index.umd.js" in warning for warning in result.warnings)
 
     def test_index_html_kept_as_is_without_dist(self, project):
         index = project / "reports" / "daily_gmv" / "index.html"
@@ -527,6 +560,32 @@ class TestSecretScan:
     def test_clean_project_passes(self, project):
         result = _build(project)
         assert result.ok is True and result.secret_findings == [] and result.error is None
+
+    def test_scan_truncation_is_surfaced_as_warning(self, project, monkeypatch):
+        monkeypatch.setattr(pb, "_SCAN_READ_CAP_BYTES", 1024)
+        # Token sits PAST the cap: undetectable, so the truncation must be loud.
+        (project / "knowledge" / "big.md").write_text(
+            "x" * 2048 + "\nghp_abcdefghijklmnopqrstuv123456\n", encoding="utf-8"
+        )
+        result = _build(project)
+        assert result.ok is True  # the token past the cap is genuinely unseen
+        assert any("secret scan truncated" in warning and "big.md" in warning for warning in result.warnings)
+
+    def test_broken_plugin_schema_degrades_to_all_leaves(self, project, monkeypatch):
+        import datus.plugins.registry as registry
+
+        def boom(_name):
+            raise RuntimeError("broken manifest")
+
+        monkeypatch.setattr(registry, "plugin_config_schema", boom)
+        raw = {"plugins": {"alpha": {"prod": {"endpoint": "https://x", "note": "plain"}}}}
+        alloc = pb._PlaceholderAllocator()
+        warnings: list = []
+        pb._sanitize_plugin_profiles(raw["plugins"], alloc, warnings)
+        # Lookup failure == no schema: every string leaf becomes a placeholder.
+        assert raw["plugins"]["alpha"]["prod"]["endpoint"].startswith("${")
+        assert raw["plugins"]["alpha"]["prod"]["note"].startswith("${")
+        assert any("no config schema" in warning for warning in warnings)
 
 
 # --------------------------------------------------------------------------- #
