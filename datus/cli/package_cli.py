@@ -5,7 +5,7 @@
 """``datus package`` — interactive wizard for exporting a self-contained project zip.
 
 All parameters are collected interactively (per the design decision in
-``DatusPackage-review.md`` §三): the only flag is ``-y/--yes``, which skips
+``DatusPackage-review.md`` §3): the only flag is ``-y/--yes``, which skips
 the wizard and packages everything with defaults — the non-TTY / scripting
 escape hatch. Pure build logic lives in :mod:`datus.cli.package_builder`;
 this module owns argparse, the step flow, and console output only.
@@ -20,9 +20,13 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from types import ModuleType
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from datus.cli.package_builder import PackageOptions, PackageResult
 
 from datus.cli._cli_utils import confirm_prompt, prompt_input, select_choice, select_multi_choice
 from datus.cli.cli_styles import print_error, print_info, print_status, print_warning
@@ -87,7 +91,7 @@ def run_package_command(argv: List[str]) -> int:
 # --------------------------------------------------------------------------- #
 
 
-def _run_wizard(console: Console, pb, raw: Dict, root: Path):
+def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Optional["PackageOptions"]:
     """Linear step flow; returns ``PackageOptions`` or ``None`` on abort."""
     project_name = pb.resolve_effective_project_name(root, raw)
     print_info(console, f"Packaging project {project_name!r} from {root}")
@@ -152,7 +156,7 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
-def _step_output_path(console: Console, pb, root: Path, project_name: str) -> Optional[Path]:
+def _step_output_path(console: Console, pb: ModuleType, root: Path, project_name: str) -> Optional[Path]:
     default = str(pb.default_output_path(root, project_name))
     while True:
         answer = prompt_input(console, "Output zip path", default=default).strip()
@@ -242,7 +246,7 @@ def _step_report_dist(console: Console, raw: Dict) -> Optional[Path]:
         return resolved
 
 
-def _step_summary(console: Console, options, project_name: str) -> bool:
+def _step_summary(console: Console, options: "PackageOptions", project_name: str) -> bool:
     from datus.cli._render_utils import build_row_table
 
     def _fmt(values: Optional[Tuple[str, ...]]) -> str:
@@ -273,7 +277,7 @@ def _step_summary(console: Console, options, project_name: str) -> bool:
 # --------------------------------------------------------------------------- #
 
 
-def _report_result(console: Console, result) -> int:
+def _report_result(console: Console, result: "PackageResult") -> int:
     for warning in result.warnings:
         print_warning(console, warning)
     if not result.ok:

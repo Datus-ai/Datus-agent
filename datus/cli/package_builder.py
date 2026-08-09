@@ -13,7 +13,9 @@ Design contract (see ``DatusPackage-review.md``):
   never copied. Every secret-bearing field is overwritten with a ``${VAR}``
   placeholder (schema-driven — the raw YAML may hold plaintext and values
   alone cannot tell). A final content scan over the staged manifest fails
-  the build on any real-looking secret, with no bypass.
+  the build on any real-looking secret; there is no bypass flag, but the
+  scan is a safety net rather than an exhaustive guarantee — binary-sniffed
+  files are skipped and reads are capped at ``_SCAN_READ_CAP_BYTES``.
 * **Sources, not indexes**: metric/semantic YAML sources ship with a
   generated ``scripts/rebuild_kb.sh``; binary LanceDB indexes never do.
 
@@ -39,7 +41,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -51,7 +53,7 @@ from datus.configuration.agent_config import _normalize_project_name, _validate_
 from datus.configuration.agent_config_loader import parse_config_path
 from datus.configuration.project_config import PROJECT_CONFIG_REL, load_project_override
 from datus.schemas.artifact_manifest import ARTIFACT_SLUG_RE
-from datus.utils.exceptions import DatusException
+from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
 from datus.utils.path_manager import DatusPathManager
 
@@ -92,7 +94,7 @@ _PLACEHOLDER_ANY_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-[^}]*)?\}")
 
 # Key names treated as secret-bearing wherever they appear in config trees.
 # Base list mirrors ``observability.config.RedactConfig`` and is extended for
-# packaging (see DatusPackage-review.md §五).
+# packaging (see DatusPackage-review.md §5).
 _SECRET_KEY_NAMES = frozenset(
     {
         "api_key",
@@ -115,6 +117,8 @@ _SECRET_KEY_NAMES = frozenset(
 
 _SECRET_CONTENT_PATTERNS: Tuple[Tuple[str, "re.Pattern[bytes]"], ...] = (
     ("pem_private_key", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    # Fernet tokens are base64url starting with the 0x80 version byte.
+    ("fernet_token", re.compile(rb"\bgAAAAA[A-Za-z0-9_-]{20,}")),
     (
         "token_prefix",
         re.compile(
@@ -204,8 +208,17 @@ class PackageResult:
     error: Optional[str] = None
 
 
-class PackageError(Exception):
-    """Internal failure signal; converted to ``PackageResult`` at the boundary."""
+class PackageError(DatusException):
+    """Internal failure signal; converted to ``PackageResult`` at the boundary.
+
+    A coded :class:`DatusException` (``PACKAGE_BUILD_ERROR``) so anything
+    escaping the boundary keeps the repository's ``error_code=…`` contract,
+    while remaining catchable as ``PackageError`` for the builder's own
+    recoverable control flow (same shape as ``plugins.store.StoreError``).
+    """
+
+    def __init__(self, message: str):
+        super().__init__(ErrorCode.PACKAGE_BUILD_ERROR, message=message)
 
 
 # --------------------------------------------------------------------------- #
@@ -294,9 +307,17 @@ def list_metric_datasources(root: Path) -> List[str]:
     return sorted(p.name for p in base.iterdir() if p.is_dir())
 
 
+# kind → (top-level dir name, per-prefix walker allowlist). The single map
+# both slug listing and artifact staging branch on.
+_ARTIFACT_KIND_DIRS: Dict[str, Tuple[str, Dict[str, Tuple[Tuple[str, ...], bool]]]] = {
+    "report": ("reports", _REPORT_ARTIFACT_DIRS),
+    "dashboard": ("dashboards", _DASHBOARD_ARTIFACT_DIRS),
+}
+
+
 def list_artifact_slugs(root: Path, kind: str) -> List[str]:
     """Slugs with a ``manifest.json`` under ``reports/`` / ``dashboards/``."""
-    kind_dir = "reports" if kind == "report" else "dashboards"
+    kind_dir, _ = _ARTIFACT_KIND_DIRS[kind]
     base = root / kind_dir
     if not base.is_dir():
         return []
@@ -403,20 +424,23 @@ def collect_project_files(
 # --------------------------------------------------------------------------- #
 
 
+def _resolve_selection(available: Sequence[str], requested: Optional[Sequence[str]], label: str) -> List[str]:
+    """``None`` selects everything; explicit names must all exist."""
+    if requested is None:
+        return list(available)
+    unknown = [name for name in requested if name not in available]
+    if unknown:
+        raise PackageError(f"unknown {label}(s): {', '.join(unknown)}; available: {', '.join(available) or '-'}")
+    return list(requested)
+
+
 def select_subagents(
     raw: Dict[str, Any],
     requested: Optional[Sequence[str]],
     source_home: Path,
 ) -> Tuple[List[str], List[StagedEntry], List[str]]:
     """Pick agentic_nodes entries and stage their prompt templates."""
-    available = list_subagents(raw)
-    if requested is None:
-        kept = list(available)
-    else:
-        unknown = [name for name in requested if name not in available]
-        if unknown:
-            raise PackageError(f"unknown subagent(s): {', '.join(unknown)}; available: {', '.join(available) or '-'}")
-        kept = list(requested)
+    kept = _resolve_selection(list(list_subagents(raw)), requested, "subagent")
 
     entries: List[StagedEntry] = []
     warnings: List[str] = []
@@ -442,15 +466,7 @@ def select_skills(
 ) -> Tuple[List[str], List[StagedEntry]]:
     """Stage selected skills under ``.datus/skills/<name>/`` in the zip."""
     available = list_skills(root)
-    if requested is None:
-        kept = sorted(available)
-    else:
-        unknown = [name for name in requested if name not in available]
-        if unknown:
-            raise PackageError(
-                f"unknown skill(s): {', '.join(unknown)}; available: {', '.join(sorted(available)) or '-'}"
-            )
-        kept = list(requested)
+    kept = _resolve_selection(sorted(available), requested, "skill")
 
     entries: List[StagedEntry] = []
     for name in kept:
@@ -471,16 +487,7 @@ def select_metrics(
     Returns ``(kept, entries, per_ds)`` where ``per_ds`` maps datasource →
     ``(semantic_yaml_relpaths, metrics_yaml_relpaths)`` for the rebuild script.
     """
-    available = list_metric_datasources(root)
-    if requested is None:
-        kept = list(available)
-    else:
-        unknown = [ds for ds in requested if ds not in available]
-        if unknown:
-            raise PackageError(
-                f"unknown metric datasource(s): {', '.join(unknown)}; available: {', '.join(available) or '-'}"
-            )
-        kept = list(requested)
+    kept = _resolve_selection(list_metric_datasources(root), requested, "metric datasource")
 
     entries: List[StagedEntry] = []
     per_ds: Dict[str, Tuple[List[str], List[str]]] = {}
@@ -541,18 +548,8 @@ def select_artifacts(
     against the CDN are rewritten in memory to relative ``_assets/`` URLs
     and the two dist files are staged — the source project is never touched.
     """
-    kind_dir = "reports" if kind == "report" else "dashboards"
-    dirs_spec = _REPORT_ARTIFACT_DIRS if kind == "report" else _DASHBOARD_ARTIFACT_DIRS
-    available = list_artifact_slugs(root, kind)
-    if requested is None:
-        kept = list(available)
-    else:
-        unknown = [s for s in requested if s not in available]
-        if unknown:
-            raise PackageError(
-                f"unknown {kind} slug(s): {', '.join(unknown)}; available: {', '.join(available) or '-'}"
-            )
-        kept = list(requested)
+    kind_dir, dirs_spec = _ARTIFACT_KIND_DIRS[kind]
+    kept = _resolve_selection(list_artifact_slugs(root, kind), requested, f"{kind} slug")
 
     entries: List[StagedEntry] = []
     warnings: List[str] = []
@@ -635,7 +632,7 @@ class _PlaceholderAllocator:
         self.bindings: List[EnvVarBinding] = []
         self._by_value: Dict[str, str] = {}
         self._used: Dict[str, str] = {}
-        self._seen: set = set()
+        self._seen: Set[Tuple[str, str]] = set()
 
     def _record(self, var: str, config_path: str, preexisting: bool) -> None:
         key = (var, config_path)
@@ -664,6 +661,23 @@ class _PlaceholderAllocator:
         self._by_value[value] = var
         self._record(var, config_path, preexisting=False)
         return f"${{{var}}}"
+
+    def harvest(self, tree: Any, config_path: str) -> None:
+        """Record every ``${VAR}`` occurrence (whole-value or embedded) as a
+        preexisting binding — non-secret fields (host/port/base URLs, …)
+        never pass through the secret rewriters, but the receiver still has
+        to export them for the config to resolve."""
+        if isinstance(tree, dict):
+            for key, value in tree.items():
+                child = f"{config_path}.{key}" if config_path else str(key)
+                self.harvest(value, child)
+        elif isinstance(tree, list):
+            for idx, item in enumerate(tree):
+                self.harvest(item, f"{config_path}[{idx}]")
+        elif isinstance(tree, str):
+            for var in _PLACEHOLDER_ANY_RE.findall(tree):
+                if var not in self._used:
+                    self._record(var, config_path, preexisting=True)
 
 
 def _rewrite_secret_value(
@@ -907,7 +921,7 @@ def _sanitize_plugin_profiles(plugins: Dict[str, Any], alloc: _PlaceholderAlloca
     for plugin_name, profiles in plugins.items():
         if not isinstance(profiles, dict):
             continue
-        secret_fields: Optional[set] = None
+        secret_fields: Optional[Set[str]] = None
         if plugin_config_schema is not None:
             specs = plugin_config_schema(str(plugin_name))
             if specs:
@@ -969,28 +983,9 @@ def generate_agent_yml(
             data.pop("agentic_nodes", None)
 
     _sanitize_agent_tree(data, alloc, warnings)
-    # Non-secret fields also carry ``${VAR}`` placeholders (datasource host/
-    # port/database, base URLs, …). They never pass through the secret-path
-    # rewriters, but the receiver still has to export them — harvest every
-    # remaining placeholder so the README env table is complete.
-    _harvest_placeholders(data, "", alloc)
+    alloc.harvest(data, "")
     text = yaml.safe_dump({"agent": data}, allow_unicode=True, sort_keys=False)
     return text.encode("utf-8"), warnings
-
-
-def _harvest_placeholders(tree: Any, config_path: str, alloc: _PlaceholderAllocator) -> None:
-    """Record every ``${VAR}`` occurrence (whole-value or embedded) as a binding."""
-    if isinstance(tree, dict):
-        for key, value in tree.items():
-            child = f"{config_path}.{key}" if config_path else str(key)
-            _harvest_placeholders(value, child, alloc)
-    elif isinstance(tree, list):
-        for idx, item in enumerate(tree):
-            _harvest_placeholders(item, f"{config_path}[{idx}]", alloc)
-    elif isinstance(tree, str):
-        for var in _PLACEHOLDER_ANY_RE.findall(tree):
-            if var not in alloc._used:
-                alloc._record(var, config_path, preexisting=True)
 
 
 def generate_mcp_json(source_home: Path, alloc: _PlaceholderAllocator) -> Optional[bytes]:
@@ -1024,7 +1019,7 @@ def generate_mcp_json(source_home: Path, alloc: _PlaceholderAllocator) -> Option
             env = entry.get("env")
             if isinstance(env, dict):
                 _rewrite_secret_named_keys(env, f"{prefix}_ENV", f".mcp.json:{name}.env", alloc)
-    _harvest_placeholders(payload, ".mcp.json", alloc)
+    alloc.harvest(payload, ".mcp.json")
     return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
@@ -1235,7 +1230,14 @@ def build_package_manifest(
     editable_packages: Sequence[str],
 ) -> bytes:
     files = [
-        {"path": entry.arcname, "sha256": hashlib.sha256(entry.read_bytes()).hexdigest(), "size": entry.size()}
+        {
+            "path": entry.arcname,
+            "sha256": hashlib.sha256(entry.read_bytes()).hexdigest(),
+            "size": entry.size(),
+            # Per-file provenance: generated at pack time vs copied from the
+            # source project tree.
+            "source": "generated" if entry.content is not None else "project",
+        }
         for entry in sorted(entries, key=lambda e: e.arcname)
     ]
     manifest = {
@@ -1388,13 +1390,20 @@ def _build_package(options: PackageOptions) -> PackageResult:
 
     packages = enumerate_datus_packages()
     requirements, editable = generate_requirements(packages)
-    if editable and not options.assume_yes:
-        message = (
-            f"editable/source installs detected ({', '.join(editable)}) — the PyPI wheel "
-            "for the pinned version may differ from your source tree; continue?"
+    if editable:
+        # Always surface editables as a warning — even under --yes, where
+        # the confirmation is skipped but the caveat must not vanish.
+        warnings.append(
+            f"editable/source installs pinned as-is: {', '.join(editable)} — the PyPI "
+            "wheel for the pinned version may differ from your source tree"
         )
-        if not options.confirm_cb(message):
-            raise PackageError("aborted: editable installs not confirmed")
+        if not options.assume_yes:
+            message = (
+                f"editable/source installs detected ({', '.join(editable)}) — the PyPI wheel "
+                "for the pinned version may differ from your source tree; continue?"
+            )
+            if not options.confirm_cb(message):
+                raise PackageError("aborted: editable installs not confirmed")
     _add([StagedEntry(arcname="requirements.txt", content=requirements)])
 
     rebuild = generate_rebuild_kb_script(per_ds)

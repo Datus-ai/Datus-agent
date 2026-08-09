@@ -444,6 +444,8 @@ class TestGeneratedFiles:
             pb.PackageOptions(root=project, assume_yes=True, confirm_cb=lambda _msg: pytest.fail("must not prompt"))
         )
         assert result.ok is True and result.error is None
+        # --yes skips the confirmation but must NOT swallow the caveat.
+        assert any("editable/source installs pinned as-is" in warning for warning in result.warnings)
 
     def test_install_plugins_script(self, project, monkeypatch):
         (project / ".datus" / "config.yml").write_text(
@@ -495,6 +497,7 @@ class TestSecretScan:
             pytest.param("aws AKIAIOSFODNN7EXAMPLE key", id="aws_key_id"),
             pytest.param("-----BEGIN RSA PRIVATE KEY-----\nabc\n", id="pem"),
             pytest.param("slack xoxb-123456789012-abcdef token", id="slack_token"),
+            pytest.param("fernet gAAAAABkX3q7abcdefghijklmnopqrstuv payload", id="fernet_token"),
         ],
     )
     def test_secret_material_in_project_file_fails_build(self, project, payload):
@@ -550,6 +553,11 @@ class TestEndToEnd:
         by_path = {entry["path"]: entry["sha256"] for entry in manifest["files"]}
         body = _member(result, "conf/agent.yml")
         assert hashlib.sha256(body).hexdigest() == by_path["conf/agent.yml"]
+
+        # Per-file provenance distinguishes pack-time products from copies.
+        source_by_path = {entry["path"]: entry["source"] for entry in manifest["files"]}
+        assert source_by_path["conf/agent.yml"] == "generated"
+        assert source_by_path["knowledge/notes.md"] == "project"
 
         # The unzipped tree parses as a valid agent config shape.
         extract = tmp_path / "unpacked"
