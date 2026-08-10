@@ -171,6 +171,33 @@ class TestWizard:
         # No reports selected → the dist step is skipped entirely.
         assert options.report_dist is None
 
+    def test_subject_screen_is_a_tree_no_other_screen_is(self, raw_config, captured_build, monkeypatch):
+        """Subject paths nest, so that screen (and only that screen) gets the
+        parent/child map that makes the checkboxes cascade."""
+        self._patch_enumerations(monkeypatch)
+        monkeypatch.setattr(
+            pb,
+            "list_subject_paths",
+            lambda root, raw, project: {"sales": "sales", "sales/orders": "  └ orders", "ops": "ops"},
+        )
+        hierarchies = []
+
+        def fake_multi(console, choices, default_selected=None, hierarchy=None, **_kwargs):
+            hierarchies.append(hierarchy)
+            return list(choices)
+
+        _patch_prompts(
+            monkeypatch,
+            select_multi_choice=fake_multi,
+            confirm_prompt=_side_effects([True, True]),
+            select_choice=_side_effects(["cdn"]),
+            prompt_input=_side_effects([""]),
+        )
+        assert package_cli.run_package_command([]) == 0
+        # Only "sales/orders" nests; "ops" has no children and "sales" is a root.
+        assert {"sales/orders": "sales"} in hierarchies
+        assert [h for h in hierarchies if h] == [{"sales/orders": "sales"}]
+
     def test_summary_decline_aborts_without_building(self, raw_config, captured_build, monkeypatch):
         self._patch_enumerations(monkeypatch)
         _patch_prompts(

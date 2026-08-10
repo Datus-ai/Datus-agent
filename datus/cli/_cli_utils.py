@@ -341,12 +341,97 @@ def select_choice(
         return default
 
 
+class MultiSelectState:
+    """Checkbox state for :func:`select_multi_choice`, with optional cascade.
+
+    Flat by default. When ``hierarchy`` maps a child key to its parent key,
+    the two directions of a tree checkbox hold:
+
+    * toggling a parent applies the same state to all of its children;
+    * a parent is checked exactly when every one of its children is.
+
+    A parent with only some children checked reads as partial — it is not
+    part of the returned selection, but the display can mark it.
+    """
+
+    def __init__(
+        self,
+        keys: List[str],
+        initial: Optional[List[str]] = None,
+        hierarchy: Optional[Dict[str, str]] = None,
+    ) -> None:
+        self._keys = list(keys)
+        known = set(self._keys)
+        self._children: Dict[str, List[str]] = {}
+        self._parent_of: Dict[str, str] = {}
+        for child, parent in (hierarchy or {}).items():
+            if child in known and parent in known and child != parent:
+                self._children.setdefault(parent, []).append(child)
+                self._parent_of[child] = parent
+        self._checked = {k for k in (initial or []) if k in known}
+        # A caller pre-selecting a parent means "the whole subtree", so push
+        # down before rolling up — otherwise the roll-up would immediately
+        # clear a parent whose children were never listed.
+        for parent in sorted(self._children, key=self._depth):
+            if parent in self._checked:
+                self._apply(parent, True)
+        self._sync_parents()
+
+    def is_checked(self, key: str) -> bool:
+        return key in self._checked
+
+    def is_partial(self, key: str) -> bool:
+        kids = self._children.get(key)
+        return bool(kids) and key not in self._checked and any(k in self._checked for k in kids)
+
+    def toggle(self, key: str) -> None:
+        self._apply(key, key not in self._checked)
+        self._sync_parents()
+
+    def toggle_all(self) -> None:
+        if all(k in self._checked for k in self._keys):
+            self._checked.clear()
+        else:
+            self._checked.update(self._keys)
+
+    def selected(self) -> List[str]:
+        """Checked keys in menu order."""
+        return [k for k in self._keys if k in self._checked]
+
+    def _apply(self, key: str, on: bool) -> None:
+        if on:
+            self._checked.add(key)
+        else:
+            self._checked.discard(key)
+        for child in self._children.get(key, ()):
+            self._apply(child, on)
+
+    def _depth(self, key: str) -> int:
+        depth, seen = 0, {key}
+        while key in self._parent_of:
+            key = self._parent_of[key]
+            if key in seen:  # malformed hierarchy — stop instead of looping
+                break
+            seen.add(key)
+            depth += 1
+        return depth
+
+    def _sync_parents(self) -> None:
+        # Deepest first, so a grandparent sees its children's fresh state.
+        for parent in sorted(self._children, key=self._depth, reverse=True):
+            if all(child in self._checked for child in self._children[parent]):
+                self._checked.add(parent)
+            else:
+                self._checked.discard(parent)
+
+
 def select_multi_choice(
     console: Console,
     choices: Dict[str, str],
     default_selected: Optional[List[str]] = None,
     allow_free_text: bool = False,
     cancellable: bool = False,
+    hierarchy: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """Interactive multi-select with arrow-key navigation and Space to toggle.
 
@@ -361,6 +446,10 @@ def select_multi_choice(
         choices: Ordered dict of {key: display_text}
         default_selected: List of keys that should be pre-selected
         allow_free_text: When True, append a free-text option and allow ``/`` shortcut.
+        hierarchy: Optional {child_key: parent_key} map turning the list into a
+            tree — toggling a parent toggles its children, and a parent is
+            checked exactly when all of its children are. See
+            :class:`MultiSelectState`.
 
     Returns:
         List of selected choice keys, or a single-element list with user's free-text input.
@@ -383,7 +472,12 @@ def select_multi_choice(
         keys = list(display_choices.keys())
         total = len(keys)
         cursor = [0]
-        checked = {k for k in (default_selected or []) if k in keys and k != _FREE_TEXT_SENTINEL}
+        toggleable = [k for k in keys if k != _FREE_TEXT_SENTINEL]
+        state = MultiSelectState(
+            toggleable,
+            [k for k in (default_selected or []) if k != _FREE_TEXT_SENTINEL],
+            hierarchy,
+        )
 
         # Scroll window: reserve 4 lines for scroll header + footer hint + safety.
         term_height = shutil.get_terminal_size((120, 40)).lines
@@ -433,24 +527,16 @@ def select_multi_choice(
         @kb.add("space")
         def _toggle(event):
             key = keys[cursor[0]]
-            if key == _FREE_TEXT_SENTINEL:
-                return
-            if key in checked:
-                checked.discard(key)
-            else:
-                checked.add(key)
+            if key != _FREE_TEXT_SENTINEL:
+                state.toggle(key)
 
         @kb.add("a")
         def _toggle_all(event):
-            real_keys = [k for k in keys if k != _FREE_TEXT_SENTINEL]
-            if all(k in checked for k in real_keys):
-                checked.clear()
-            else:
-                checked.update(real_keys)
+            state.toggle_all()
 
         @kb.add("enter")
         def _confirm(event):
-            _finish([k for k in keys if k in checked])
+            _finish(state.selected())
 
         @kb.add("c-c")
         def _cancel(event):
@@ -475,7 +561,9 @@ def select_multi_choice(
                 if key == _FREE_TEXT_SENTINEL:
                     label = f"  [/] {display}"
                 else:
-                    mark = "\u2713" if key in checked else " "
+                    # "-" marks a parent whose children are only partly
+                    # selected \u2014 otherwise it would read as "nothing here".
+                    mark = "\u2713" if state.is_checked(key) else ("-" if state.is_partial(key) else " ")
                     label = f"  [{mark}] {display}"
                 if is_cur:
                     lines.append((CLR_CURSOR, f"    {label}\n"))

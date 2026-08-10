@@ -145,7 +145,8 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
     )
     # One subject-tree step gates both metric docs and reference-SQL
     # summaries — they are indexed under the same tree in the vector store.
-    subjects = _step_multi(console, "Subject areas", pb.list_subject_paths(root, raw, project_name))
+    subject_paths = pb.list_subject_paths(root, raw, project_name)
+    subjects = _step_multi(console, "Subject areas", subject_paths, hierarchy=_subject_hierarchy(subject_paths))
     plugins = _step_multi(console, "Plugins", pb.list_packageable_plugins(root))
     reports = _step_multi(
         console,
@@ -226,19 +227,32 @@ def _prompt_patterns(console: Console, message: str) -> List[str]:
         return patterns
 
 
-def _step_multi(console: Console, label: str, choices: Dict[str, str]) -> List[str]:
+def _subject_hierarchy(choices: Dict[str, str]) -> Dict[str, str]:
+    """{"a/b": "a"} for every child whose parent is also on the menu."""
+    return {path: path.rsplit("/", 1)[0] for path in choices if path.rsplit("/", 1)[0] in choices and "/" in path}
+
+
+def _step_multi(
+    console: Console,
+    label: str,
+    choices: Dict[str, str],
+    hierarchy: Optional[Dict[str, str]] = None,
+) -> List[str]:
     """One multi-select screen.
 
     Empty categories are skipped silently. An empty selection (which is
     also what Ctrl+C produces) gets an explicit confirmation so a stray
     interrupt can't silently drop a whole category; declining re-runs
-    the step.
+    the step. ``hierarchy`` turns the screen into a tree (see
+    :class:`~datus.cli._cli_utils.MultiSelectState`).
     """
     if not choices:
         return []
     while True:
         print_info(console, f"{label}: Space toggles, 'a' toggles all, Enter confirms")
-        selected = select_multi_choice(console, choices, default_selected=list(choices), cancellable=True)
+        selected = select_multi_choice(
+            console, choices, default_selected=list(choices), cancellable=True, hierarchy=hierarchy
+        )
         if selected:
             return selected
         if confirm_prompt(console, f"Package no {label.lower()} at all — continue?", default=False, cancellable=True):
