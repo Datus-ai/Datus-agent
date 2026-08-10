@@ -284,6 +284,22 @@ def _step_summary(console: Console, options: "PackageOptions", project_name: str
 # --------------------------------------------------------------------------- #
 
 
+def _selection_summary_lines(selections: Dict) -> List[str]:
+    """Human-readable "what went in" lines for the build result."""
+    if not selections:
+        return []
+    lines: List[str] = []
+    subjects = selections.get("subjects")
+    if subjects is not None:
+        shown = ", ".join(subjects) if subjects else "(none)"
+        lines.append(f"Subject areas: {shown} → {selections.get('reference_sql_entries', 0)} reference-SQL summaries")
+    for key, label in (("subagents", "Subagents"), ("skills", "Skills"), ("metrics", "Metric datasources")):
+        values = selections.get(key)
+        if values is not None:
+            lines.append(f"{label}: {', '.join(values) if values else '(none)'}")
+    return lines
+
+
 def _report_result(console: Console, result: "PackageResult") -> int:
     for warning in result.warnings:
         print_warning(console, warning)
@@ -304,6 +320,11 @@ def _report_result(console: Console, result: "PackageResult") -> int:
 
     print_status(console, f"Package built: {result.zip_path}", ok=True)
     print_info(console, f"{result.file_count} files, {result.total_bytes / (1024 * 1024):.1f} MB uncompressed")
+    # Spell out what the selection actually produced — counting zip entries by
+    # hand is easy to get wrong (``unzip -l`` wraps long/CJK names onto several
+    # lines), so a filtered package can look unfiltered.
+    for line in _selection_summary_lines(result.selections):
+        print_info(console, line)
     env_vars = sorted({binding.var for binding in result.env_vars})
     if env_vars:
         print_info(console, "Receiver must export: " + ", ".join(env_vars))

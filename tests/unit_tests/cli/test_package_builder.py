@@ -495,6 +495,16 @@ class TestSelectors:
         assert "migrations/001_init.sql" in names
         assert not any(name.startswith("subject/sql_summaries/") for name in names)
 
+    def test_result_reports_what_the_selection_produced(self, project):
+        """Counting zip entries by hand is error-prone (``unzip -l`` wraps
+        long/CJK names), so the result must state the outcome itself."""
+        result = _build(project, subjects=("sales",))
+        assert result.selections["subjects"] == ["sales"]
+        assert result.selections["reference_sql_entries"] == 1
+        assert result.selections["reference_sql_entries"] == sum(
+            1 for name in _namelist(result) if name.startswith("subject/sql_summaries/")
+        )
+
     def test_untagged_summary_ships_with_a_warning(self, project):
         """A summary carrying no subject_tree matches no selection — it must
         still travel (with a warning) instead of vanishing from every package."""

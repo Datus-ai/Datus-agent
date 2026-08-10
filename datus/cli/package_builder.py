@@ -250,6 +250,9 @@ class PackageResult:
     env_vars: List[EnvVarBinding] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     secret_findings: List[SecretFinding] = field(default_factory=list)
+    # What the selection actually resolved to — mirrors package_manifest.json
+    # so the CLI can report it without reopening the zip.
+    selections: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None
 
 
@@ -1822,6 +1825,7 @@ def _build_package(options: PackageOptions) -> PackageResult:
         total_bytes=total,
         env_vars=alloc.bindings,
         warnings=warnings,
+        selections=selections,
     )
 
 
