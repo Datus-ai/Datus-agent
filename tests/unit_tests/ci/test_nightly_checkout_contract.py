@@ -93,6 +93,7 @@ set -u
 set -o pipefail
 test_exit_code=0
 uv() {{
+  printf 'uv_args=%s\n' "$*"
   echo "simulated Doris readiness failure"
   return 23
 }}
@@ -115,4 +116,5 @@ printf 'readiness_status=%s test_exit_code=%s\n' "$readiness_status" "$test_exit
     )
 
     assert "readiness_status=23 test_exit_code=23" in result.stdout
+    assert "--timeout 17" in result.stdout
     assert "simulated Doris readiness failure" in log_file.read_text(encoding="utf-8")
