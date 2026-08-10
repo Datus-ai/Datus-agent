@@ -39,9 +39,7 @@ def _make_model_config(model="deepseek/deepseek-chat", api_key=None, base_url=No
 
 class TestOrcaRouterModel:
     def test_uses_configured_api_key_and_base_url(self):
-        model = OrcaRouterModel(
-            _make_model_config(api_key="sk-orca-test", base_url="https://custom.example/v1")
-        )
+        model = OrcaRouterModel(_make_model_config(api_key="sk-orca-test", base_url="https://custom.example/v1"))
         assert model.api_key == "sk-orca-test"
         assert model.base_url == "https://custom.example/v1"
 
