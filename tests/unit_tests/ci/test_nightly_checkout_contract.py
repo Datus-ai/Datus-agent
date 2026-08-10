@@ -1,8 +1,17 @@
+import os
+import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "run-nightly.yml"
 NIGHTLY_SCRIPT = REPO_ROOT / "ci" / "run-nightly-tests.sh"
+
+
+def _bash_function_source(name: str) -> str:
+    script = NIGHTLY_SCRIPT.read_text(encoding="utf-8")
+    start = script.index(f"{name}() {{")
+    end = script.index("\n}\n", start) + len("\n}\n")
+    return script[start:end]
 
 
 def test_nightly_preserves_checkout_packages_after_locked_sync():
@@ -70,4 +79,40 @@ def test_nightly_runs_doris_agent_contract_from_checkout():
     assert 'echo "DORIS_HTTP_HOST_PORT=28031" >> $GITHUB_ENV' in workflow
     assert 'DORIS_COMPOSE="${DORIS_COMPOSE:-${DB_ADAPTERS_ROOT}/datus-doris/docker-compose.yml}"' in script
     assert 'run_compose_suite "Doris Adapter Tests"' in script
+    assert 'uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-doris/scripts/wait_for_doris.py"' in script
+    assert 'wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"' in script
+    assert 'wait_for_tcp_readiness "Doris"' not in script
     assert "tests/integration/adapters/test_doris.py" in script
+
+
+def test_doris_readiness_failure_is_logged_and_propagated(tmp_path):
+    log_file = tmp_path / "nightly.log"
+    function_source = _bash_function_source("wait_for_doris_client_readiness")
+    harness = f"""
+set -u
+set -o pipefail
+test_exit_code=0
+uv() {{
+  echo "simulated Doris readiness failure"
+  return 23
+}}
+{function_source}
+wait_for_doris_client_readiness 17
+readiness_status=$?
+printf 'readiness_status=%s test_exit_code=%s\n' "$readiness_status" "$test_exit_code"
+"""
+
+    result = subprocess.run(
+        ["bash", "-c", harness],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "DB_ADAPTERS_ROOT": str(tmp_path / "db-adapters"),
+            "LOG_FILE": str(log_file),
+        },
+    )
+
+    assert "readiness_status=23 test_exit_code=23" in result.stdout
+    assert "simulated Doris readiness failure" in log_file.read_text(encoding="utf-8")
