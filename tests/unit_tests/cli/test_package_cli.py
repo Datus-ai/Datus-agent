@@ -99,6 +99,8 @@ class TestWizard:
         monkeypatch.setattr(pb, "list_subagents", lambda raw: {"helper": "Helper"})
         monkeypatch.setattr(pb, "list_skills", lambda root: {"sql-skill": Path("/global/sql-skill")})
         monkeypatch.setattr(pb, "list_metric_datasources", lambda root: ["ds1"])
+        monkeypatch.setattr(pb, "list_reference_sql_dirs", lambda root: ["reference_sql"])
+        monkeypatch.setattr(pb, "list_packageable_plugins", lambda root: {"alpha": "alpha — activated"})
         monkeypatch.setattr(
             pb,
             "list_artifact_slugs",
@@ -128,21 +130,25 @@ class TestWizard:
         assert options.subagents == ("helper",)
         assert options.skills == ("sql-skill",)
         assert options.metrics == ("ds1",)
+        assert options.reference_sql == ("reference_sql",)
+        assert options.plugins == ("alpha",)
         assert options.reports == ("r1",)
         assert options.dashboards == ()  # empty category skipped silently
         assert options.include == () and options.exclude == ()
         assert options.output == Path.cwd() / "proj.zip"
         assert options.report_dist is None
         assert options.assume_yes is False
-        # Four populated categories → four multi-select screens.
-        assert len(multi_calls) == 4
+        # Six populated categories → six multi-select screens.
+        assert len(multi_calls) == 6
 
     def test_empty_selection_needs_confirmation_then_retries(self, raw_config, captured_build, monkeypatch):
         self._patch_enumerations(monkeypatch)
         _patch_prompts(
             monkeypatch,
             # 1st subagent screen: empty → decline "package none" → retry → select.
-            select_multi_choice=_side_effects([[], ["helper"], ["sql-skill"], ["ds1"], ["r1"]]),
+            select_multi_choice=_side_effects(
+                [[], ["helper"], ["sql-skill"], ["ds1"], ["reference_sql"], ["alpha"], ["r1"]]
+            ),
             # all-files yes; "no subagents?" no; build-now yes
             confirm_prompt=_side_effects([True, False, True]),
             select_choice=_side_effects(["cdn"]),
@@ -155,7 +161,7 @@ class TestWizard:
         self._patch_enumerations(monkeypatch)
         _patch_prompts(
             monkeypatch,
-            select_multi_choice=_side_effects([[], ["sql-skill"], ["ds1"], []]),
+            select_multi_choice=_side_effects([[], ["sql-skill"], ["ds1"], ["reference_sql"], ["alpha"], []]),
             # all-files yes; "no subagents?" yes; "no reports?" yes; build-now yes
             confirm_prompt=_side_effects([True, True, True, True]),
             prompt_input=_side_effects([""]),

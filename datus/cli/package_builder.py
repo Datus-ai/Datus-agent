@@ -190,6 +190,8 @@ class PackageOptions:
     subagents: Optional[Tuple[str, ...]] = None
     skills: Optional[Tuple[str, ...]] = None
     metrics: Optional[Tuple[str, ...]] = None
+    reference_sql: Optional[Tuple[str, ...]] = None
+    plugins: Optional[Tuple[str, ...]] = None
     reports: Optional[Tuple[str, ...]] = None
     dashboards: Optional[Tuple[str, ...]] = None
     report_dist: Optional[Path] = None
@@ -339,6 +341,83 @@ def list_skills(root: Path) -> Dict[str, Path]:
             if entry.is_dir() and (entry / "SKILL.md").is_file():
                 out[entry.name] = entry
     return out
+
+
+# Directory names that conventionally hold a reference-SQL corpus. Only these
+# are rebuilt by default: a ``*.sql`` directory can just as easily be DDL or
+# migrations, and bootstrapping those as reference queries pollutes the KB.
+_REFERENCE_SQL_CONVENTIONAL_DIRS = frozenset({"reference_sql", "reference_sqls", "ref_sql", "ref_sqls"})
+
+
+def list_reference_sql_dirs(root: Path) -> List[str]:
+    """Top-level directories holding ``*.sql`` files — reference-SQL candidates.
+
+    ``bootstrap-kb --components reference_sql`` takes a ``--sql_dir`` and there
+    is no canonical location, so candidates are discovered by content. Being a
+    candidate only makes a directory *offerable*: selection decides which
+    corpora the receiver bootstraps (see :func:`select_reference_sql`).
+    """
+    skip = _TOP_LEVEL_EXCLUDED_DIRS | _SELECTOR_OWNED_TOP_DIRS | _ANY_DEPTH_EXCLUDED_DIRS | {"subject", "conf"}
+    out: List[str] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir() or entry.is_symlink() or entry.name in skip or entry.name.startswith("output"):
+            continue
+        if any(p.is_file() and p.suffix.lower() == ".sql" for p in entry.rglob("*")):
+            out.append(entry.name)
+    return out
+
+
+def list_packageable_plugins(root: Path) -> Dict[str, str]:
+    """``{plugin_name: label}`` — plugins this project can ship install lines for.
+
+    The candidate set is the union of the project's activation list
+    (``.datus/config.yml`` ``plugins:``) and what is actually installed in the
+    managed store, so a project that never wrote an activation list can still
+    select from its installed plugins.
+    """
+    labels: Dict[str, str] = {}
+    installed = _installed_plugin_versions()
+    override = load_project_override(cwd=str(root))
+    activated = {name for name, act in (override.plugins or {}).items() if act.enabled} if override else set()
+
+    for name in sorted(activated | set(installed)):
+        distribution, version = installed.get(name, (name, ""))
+        marks = []
+        if name in activated:
+            marks.append("activated")
+        marks.append(f"{distribution}=={version}" if version else f"{distribution} (version unknown)")
+        labels[name] = f"{name} — {', '.join(marks)}"
+    return labels
+
+
+def _installed_plugin_versions() -> Dict[str, Tuple[str, str]]:
+    """``{name: (distribution, version)}`` from the managed plugin store."""
+    versions: Dict[str, Tuple[str, str]] = {}
+    try:
+        from datus.plugins import store
+
+        for meta in store.iter_installed():
+            name = str(meta.get("name") or "")
+            if name:
+                versions[name] = (str(meta.get("distribution") or name), str(meta.get("version") or ""))
+    except Exception as exc:  # pragma: no cover - store errors must not kill packaging
+        logger.warning("package: cannot read installed plugin metadata: %s", exc)
+    return versions
+
+
+def resolve_default_datasource(root: Path, raw: Dict[str, Any]) -> Optional[str]:
+    """Datasource the reference-SQL rebuild runs against: project pin, then
+    the ``default: true`` entry, then a single-datasource shortcut."""
+    override = load_project_override(cwd=str(root))
+    if override is not None and override.default_datasource:
+        return override.default_datasource
+    datasources = ((raw.get("services") or {}).get("datasources")) or {}
+    if not isinstance(datasources, dict) or not datasources:
+        return None
+    for name, entry in datasources.items():
+        if isinstance(entry, dict) and entry.get("default"):
+            return str(name)
+    return str(next(iter(datasources))) if len(datasources) == 1 else None
 
 
 def list_metric_datasources(root: Path) -> List[str]:
@@ -552,6 +631,24 @@ def select_metrics(
                     semantic_files.append(rel)
         per_ds[ds] = (semantic_files, metrics_files)
     return kept, entries, per_ds
+
+
+def select_reference_sql(root: Path, requested: Optional[Sequence[str]]) -> List[str]:
+    """Reference-SQL corpora the receiver should bootstrap into its KB.
+
+    Unlike the other selectors this one does NOT gate staging — every ``.sql``
+    directory travels as ordinary project content via the generic walk, so a
+    deselected corpus is never lost, it simply gets no rebuild line. Use
+    ``--exclude`` to keep a directory out of the zip entirely.
+
+    The default (``requested is None``) is the conventionally-named subset:
+    auto-bootstrapping a ``migrations/`` or ``init/`` directory full of DDL
+    would poison the reference-SQL store.
+    """
+    available = list_reference_sql_dirs(root)
+    if requested is None:
+        return [name for name in available if name in _REFERENCE_SQL_CONVENTIONAL_DIRS]
+    return _resolve_selection(available, requested, "reference SQL directory")
 
 
 def _artifact_walk(artifact_dir: Path, dirs_spec: Dict[str, Tuple[Tuple[str, ...], bool]]) -> List[Path]:
@@ -1107,7 +1204,11 @@ def generate_requirements(packages: Sequence[DatusPackage]) -> Tuple[bytes, List
     return ("\n".join(lines) + "\n").encode("utf-8"), editable
 
 
-def generate_rebuild_kb_script(per_ds: Dict[str, Tuple[List[str], List[str]]]) -> Optional[bytes]:
+def generate_rebuild_kb_script(
+    per_ds: Dict[str, Tuple[List[str], List[str]]],
+    reference_sql_dirs: Sequence[str] = (),
+    reference_sql_datasource: Optional[str] = None,
+) -> Optional[bytes]:
     """Per-file bootstrap-kb loop: semantic models first, then metrics.
 
     ``--semantic_yaml`` accepts exactly one file, and the ``metrics``
@@ -1136,17 +1237,48 @@ def generate_rebuild_kb_script(per_ds: Dict[str, Tuple[List[str], List[str]]]) -
                 f"datus-agent bootstrap-kb --datasource {ds} --components metrics "
                 f'--semantic_yaml "{rel}" --kb_update_strategy incremental -y'
             )
+
+    notes: List[str] = []
+    if reference_sql_dirs:
+        if reference_sql_datasource:
+            # reference_sql keeps its own store, so its first call overwrites
+            # independently of the semantic/metric calls above.
+            for idx, sql_dir in enumerate(reference_sql_dirs):
+                strategy = "overwrite" if idx == 0 else "incremental"
+                commands.append(
+                    f"datus-agent bootstrap-kb --datasource {reference_sql_datasource} "
+                    f'--components reference_sql --sql_dir "{sql_dir}" '
+                    f"--kb_update_strategy {strategy} -y"
+                )
+            notes += [
+                "# NOTE: the reference_sql step re-generates one SQL summary per",
+                "# statement through the LLM — expect it to take a while and to",
+                "# consume API credits. The shipped subject/sql_summaries/ files are",
+                "# the source project's copies; they are not reused by the rebuild.",
+            ]
+        else:
+            notes += [
+                "# NOTE: reference SQL shipped but no default datasource could be",
+                "# resolved at pack time. Rebuild it manually with:",
+                *[
+                    f'#   datus-agent bootstrap-kb --datasource <ds> --components reference_sql --sql_dir "{d}" -y'
+                    for d in reference_sql_dirs
+                ],
+            ]
+
     if not commands:
         return None
     script = "\n".join(
         [
             "#!/usr/bin/env bash",
-            "# Generated by `datus package` — rebuilds the local metric/semantic KB",
-            "# from the YAML sources in subject/. Run from anywhere; it cd's to the",
-            "# package root so the datasource paths resolve.",
+            "# Generated by `datus package` — rebuilds the local KB from the",
+            "# sources in this package. Run from anywhere; it cd's to the package",
+            "# root so the relative paths resolve.",
             "set -euo pipefail",
             'cd "$(dirname "$0")/.."',
             "",
+            *notes,
+            *([""] if notes else []),
             *commands,
             "",
         ]
@@ -1154,29 +1286,31 @@ def generate_rebuild_kb_script(per_ds: Dict[str, Tuple[List[str], List[str]]]) -
     return script.encode("utf-8")
 
 
-def generate_install_plugins_script(root: Path) -> Tuple[Optional[bytes], List[str]]:
-    """One ``datus plugin install`` line per enabled plugin in the activation list."""
-    override = load_project_override(cwd=str(root))
-    if override is None or not override.plugins:
-        return None, []
-    enabled = [name for name, activation in override.plugins.items() if activation.enabled]
-    if not enabled:
-        return None, []
+def generate_install_plugins_script(
+    root: Path,
+    requested: Optional[Sequence[str]] = None,
+) -> Tuple[Optional[bytes], List[str], List[str]]:
+    """One ``datus plugin install`` line per selected plugin.
+
+    Returns ``(script_or_None, kept_names, warnings)``. ``requested is None``
+    keeps the project's activated plugins (falling back to everything
+    installed when no activation list exists); an explicit selection wins.
+    """
+    available = list_packageable_plugins(root)
+    if requested is None:
+        override = load_project_override(cwd=str(root))
+        activated = [name for name, act in (override.plugins or {}).items() if act.enabled] if override else []
+        kept = sorted(activated) if activated else sorted(available)
+    else:
+        kept = _resolve_selection(sorted(available), requested, "plugin")
+    if not kept:
+        return None, [], []
 
     warnings: List[str] = []
-    versions: Dict[str, Tuple[str, str]] = {}
-    try:
-        from datus.plugins import store
-
-        for meta in store.iter_installed():
-            name = str(meta.get("name") or "")
-            if name:
-                versions[name] = (str(meta.get("distribution") or name), str(meta.get("version") or ""))
-    except Exception as exc:  # pragma: no cover - store errors must not kill packaging
-        warnings.append(f"could not read installed plugin metadata: {exc}")
+    versions = _installed_plugin_versions()
 
     commands = []
-    for name in sorted(enabled):
+    for name in sorted(kept):
         distribution, version = versions.get(name, (name, ""))
         spec = f"{distribution}=={version}" if version else distribution
         if not version:
@@ -1193,7 +1327,7 @@ def generate_install_plugins_script(root: Path) -> Tuple[Optional[bytes], List[s
             "",
         ]
     )
-    return script.encode("utf-8"), warnings
+    return script.encode("utf-8"), kept, warnings
 
 
 def generate_readme(
@@ -1440,6 +1574,8 @@ def _build_package(options: PackageOptions) -> PackageResult:
     kept_metrics, metric_entries, per_ds = select_metrics(root, options.metrics)
     _add(metric_entries)
 
+    kept_reference_sql = select_reference_sql(root, options.reference_sql)
+
     kept_reports, report_entries, report_warnings = select_artifacts(
         root, "report", options.reports, options.report_dist
     )
@@ -1471,11 +1607,11 @@ def _build_package(options: PackageOptions) -> PackageResult:
         )
     _add([StagedEntry(arcname="requirements.txt", content=requirements)])
 
-    rebuild = generate_rebuild_kb_script(per_ds)
+    rebuild = generate_rebuild_kb_script(per_ds, kept_reference_sql, resolve_default_datasource(root, raw))
     if rebuild is not None:
         _add([StagedEntry(arcname="scripts/rebuild_kb.sh", content=rebuild, executable=True)])
 
-    plugin_script, plugin_warnings = generate_install_plugins_script(root)
+    plugin_script, kept_plugins, plugin_warnings = generate_install_plugins_script(root, options.plugins)
     warnings.extend(plugin_warnings)
     if plugin_script is not None:
         _add([StagedEntry(arcname="scripts/install_plugins.sh", content=plugin_script, executable=True)])
@@ -1509,6 +1645,8 @@ def _build_package(options: PackageOptions) -> PackageResult:
         "subagents": kept_subagents,
         "skills": kept_skills,
         "metrics": kept_metrics,
+        "reference_sql": kept_reference_sql,
+        "plugins": kept_plugins,
         "reports": kept_reports,
         "dashboards": kept_dashboards,
         "include": list(options.include),
@@ -1554,6 +1692,8 @@ __all__ = [
     "default_output_path",
     "list_artifact_slugs",
     "list_metric_datasources",
+    "list_packageable_plugins",
+    "list_reference_sql_dirs",
     "list_skills",
     "list_subagents",
     "load_raw_agent_config",

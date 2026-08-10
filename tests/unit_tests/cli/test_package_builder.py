@@ -101,7 +101,9 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     (root / "conf").mkdir(parents=True)
     (root / "conf" / "agent.yml").write_text(yaml.safe_dump(_agent_yaml(fake_home), sort_keys=False), encoding="utf-8")
     (root / ".datus").mkdir()
-    (root / ".datus" / "config.yml").write_text("project_name: fixture_proj\n", encoding="utf-8")
+    (root / ".datus" / "config.yml").write_text(
+        "project_name: fixture_proj\ndefault_datasource: sales_db\n", encoding="utf-8"
+    )
 
     # Generic project files.
     (root / "knowledge").mkdir()
@@ -158,6 +160,13 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
         (ds_dir / "metrics" / "orders_metrics.yml").write_text("metric:\n  name: gmv\n", encoding="utf-8")
     (root / "subject" / "sql_summaries").mkdir(parents=True)
     (root / "subject" / "sql_summaries" / "summary.md").write_text("sql summary", encoding="utf-8")
+
+    # Two reference-SQL corpora, discovered by content (*.sql).
+    (root / "reference_sql").mkdir()
+    (root / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
+    (root / "reference_sql" / "README.md").write_text("corpus notes", encoding="utf-8")
+    (root / "migrations").mkdir()
+    (root / "migrations" / "001_init.sql").write_text("CREATE TABLE t(a INT);", encoding="utf-8")
 
     # One report + one dashboard artifact.
     for kind_dir, slug in (("reports", "daily_gmv"), ("dashboards", "ops_view")):
@@ -392,7 +401,8 @@ class TestSelectors:
         assert not result.ok and "unknown skill" in result.error
 
     def test_metrics_selection_and_rebuild_script(self, project):
-        result = _build(project, metrics=("sales_db",))
+        # reference_sql=() keeps this focused on the metric/semantic lines.
+        result = _build(project, metrics=("sales_db",), reference_sql=())
         names = _namelist(result)
         assert "subject/semantic_models/sales_db/orders.yml" in names
         assert "subject/semantic_models/pg_main/orders.yml" not in names
@@ -413,10 +423,10 @@ class TestSelectors:
         assert "--kb_update_strategy incremental" in metrics_line
 
     def test_rebuild_script_multi_datasource_truncates_once(self, project):
-        result = _build(project)  # both datasources selected by default
+        result = _build(project, reference_sql=())  # both metric datasources by default
         script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
-        # Only ONE overwrite across the whole script — a second one would
-        # wipe the first datasource's freshly built entries.
+        # Only ONE overwrite across the semantic/metric calls — a second one
+        # would wipe the first datasource's freshly built entries.
         assert script.count("--kb_update_strategy overwrite") == 1
         assert script.count("--kb_update_strategy incremental") == 3  # 1 semantic + 2 metrics
 
@@ -437,9 +447,61 @@ class TestSelectors:
         assert "._orders" not in script
 
     def test_no_metrics_no_rebuild_script(self, project):
-        names = _namelist(_build(project, metrics=()))
+        names = _namelist(_build(project, metrics=(), reference_sql=()))
         assert "scripts/rebuild_kb.sh" not in names
         assert not any(name.startswith("subject/semantic_models/") for name in names)
+
+    def test_reference_sql_discovered_by_content(self, project):
+        assert pb.list_reference_sql_dirs(project) == ["migrations", "reference_sql"]
+
+    def test_reference_sql_default_is_conventional_dirs_only(self, project):
+        """A migrations/DDL directory must never be bootstrapped as reference
+        SQL just because it holds .sql files — that would poison the store."""
+        assert pb.select_reference_sql(project, None) == ["reference_sql"]
+
+        script = _member(_build(project), "scripts/rebuild_kb.sh").decode("utf-8")
+        runnable = [line for line in script.splitlines() if line and not line.startswith("#")]
+        assert any('--sql_dir "reference_sql"' in line for line in runnable)
+        assert not any("migrations" in line for line in runnable)
+
+    def test_reference_sql_files_ship_regardless_of_selection(self, project):
+        """Selection drives the KB rebuild, not staging: deselecting a corpus
+        must never silently drop the user's SQL files from the package."""
+        names = _namelist(_build(project, reference_sql=()))
+        assert "reference_sql/queries.sql" in names
+        assert "reference_sql/README.md" in names
+        assert "migrations/001_init.sql" in names
+
+    def test_reference_sql_rebuild_lines_use_default_datasource(self, project):
+        result = _build(project, reference_sql=("reference_sql",))
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        line = next(line for line in script.splitlines() if "--components reference_sql" in line)
+        # sales_db is the fixture's default datasource pin.
+        assert '--sql_dir "reference_sql"' in line and "--kb_update_strategy overwrite" in line
+        assert "--datasource sales_db" in line
+        # Reference SQL runs after the semantic/metric steps.
+        assert script.index("--components semantic_model") < script.index("--components reference_sql")
+        assert "re-generates one SQL summary per" in script
+
+    def test_reference_sql_without_default_datasource_emits_manual_note(self, project):
+        (project / ".datus" / "config.yml").write_text("project_name: fixture_proj\n", encoding="utf-8")
+        result = _build(project, reference_sql=("reference_sql",))
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        # Ambiguous datasource -> the corpus ships, but no executable line is
+        # emitted; the receiver gets a commented manual command instead.
+        runnable = [line for line in script.splitlines() if line.strip() and not line.strip().startswith("#")]
+        assert not any("--components reference_sql" in line for line in runnable)
+        assert "no default datasource could be" in script
+        assert any("--components reference_sql" in line for line in script.splitlines() if line.startswith("#"))
+
+    def test_no_reference_sql_selected_emits_no_rebuild_line(self, project):
+        script = _member(_build(project, reference_sql=()), "scripts/rebuild_kb.sh").decode("utf-8")
+        assert "--components reference_sql" not in script
+
+    def test_explicitly_selected_unconventional_dir_is_rebuilt(self, project):
+        script = _member(_build(project, reference_sql=("migrations",)), "scripts/rebuild_kb.sh").decode("utf-8")
+        runnable = [line for line in script.splitlines() if line and not line.startswith("#")]
+        assert any('--sql_dir "migrations"' in line for line in runnable)
 
     def test_artifact_allowlist_filters_stray_files(self, project):
         names = _namelist(_build(project))
@@ -539,6 +601,39 @@ class TestGeneratedFiles:
 
     def test_no_plugins_no_script(self, project):
         names = _namelist(_build(project))
+        assert "scripts/install_plugins.sh" not in names
+
+    def test_plugins_selectable_without_activation_list(self, project, monkeypatch):
+        """A project with no ``plugins:`` key can still ship install lines for
+        what is installed — previously no script was generated at all."""
+        import datus.plugins.store as store
+
+        monkeypatch.setattr(
+            store,
+            "iter_installed",
+            lambda: [
+                {"name": "alpha", "distribution": "datus-alpha", "version": "1.2.3"},
+                {"name": "beta", "distribution": "datus-beta", "version": "0.4.0"},
+            ],
+        )
+        assert set(pb.list_packageable_plugins(project)) == {"alpha", "beta"}
+
+        result = _build(project, plugins=("beta",))
+        script = _member(result, "scripts/install_plugins.sh").decode("utf-8")
+        assert "datus plugin install datus-beta==0.4.0" in script
+        assert "alpha" not in script
+
+    def test_plugin_selection_rejects_unknown_name(self, project):
+        result = _build(project, plugins=("ghost-plugin",))
+        assert not result.ok and "unknown plugin" in result.error
+
+    def test_empty_plugin_selection_drops_script(self, project, monkeypatch):
+        import datus.plugins.store as store
+
+        monkeypatch.setattr(
+            store, "iter_installed", lambda: [{"name": "alpha", "distribution": "datus-alpha", "version": "1.2.3"}]
+        )
+        names = _namelist(_build(project, plugins=()))
         assert "scripts/install_plugins.sh" not in names
 
     def test_project_config_pins_name(self, project):

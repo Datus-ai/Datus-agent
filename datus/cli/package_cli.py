@@ -118,6 +118,18 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
         "Metric datasources",
         {ds: f"subject/semantic_models/{ds}" for ds in pb.list_metric_datasources(root)},
     )
+    # Reference SQL: selection drives the receiver's KB rebuild, not staging —
+    # every .sql directory ships either way. Preselect only the conventional
+    # corpora so a migrations/init directory isn't bootstrapped by accident.
+    reference_sql_dirs = pb.list_reference_sql_dirs(root)
+    reference_sql = _step_multi(
+        console,
+        "Reference SQL to rebuild into the receiver's KB",
+        {name: f"{name}/ (files ship regardless; selecting adds a bootstrap-kb step)" for name in reference_sql_dirs},
+        default_selected=pb.select_reference_sql(root, None),
+        allow_empty=True,
+    )
+    plugins = _step_multi(console, "Plugins", pb.list_packageable_plugins(root))
     reports = _step_multi(
         console,
         "Reports",
@@ -138,6 +150,8 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
         subagents=tuple(subagents),
         skills=tuple(skills),
         metrics=tuple(metrics),
+        reference_sql=tuple(reference_sql),
+        plugins=tuple(plugins),
         reports=tuple(reports),
         dashboards=tuple(dashboards),
         report_dist=report_dist,
@@ -193,20 +207,29 @@ def _prompt_patterns(console: Console, message: str) -> List[str]:
         return patterns
 
 
-def _step_multi(console: Console, label: str, choices: Dict[str, str]) -> List[str]:
+def _step_multi(
+    console: Console,
+    label: str,
+    choices: Dict[str, str],
+    *,
+    default_selected: Optional[List[str]] = None,
+    allow_empty: bool = False,
+) -> List[str]:
     """One multi-select screen.
 
     Empty categories are skipped silently. An empty selection (which is
     also what Ctrl+C produces) gets an explicit confirmation so a stray
     interrupt can't silently drop a whole category; declining re-runs
-    the step.
+    the step. ``allow_empty`` suppresses that guard for steps where
+    selecting nothing is a normal, lossless choice.
     """
     if not choices:
         return []
+    preselected = list(choices) if default_selected is None else [c for c in choices if c in default_selected]
     while True:
         print_info(console, f"{label}: Space toggles, 'a' toggles all, Enter confirms")
-        selected = select_multi_choice(console, choices, default_selected=list(choices))
-        if selected:
+        selected = select_multi_choice(console, choices, default_selected=preselected)
+        if selected or allow_empty:
             return selected
         if confirm_prompt(console, f"Package no {label.lower()} at all — continue?", default=False):
             return []
@@ -261,6 +284,8 @@ def _step_summary(console: Console, options: "PackageOptions", project_name: str
         {"item": "Subagents", "value": _fmt(options.subagents)},
         {"item": "Skills", "value": _fmt(options.skills)},
         {"item": "Metric datasources", "value": _fmt(options.metrics)},
+        {"item": "Reference SQL", "value": _fmt(options.reference_sql)},
+        {"item": "Plugins", "value": _fmt(options.plugins)},
         {"item": "Reports", "value": _fmt(options.reports)},
         {"item": "Dashboards", "value": _fmt(options.dashboards)},
         {"item": "Report dist", "value": str(options.report_dist) if options.report_dist else "CDN (not bundled)"},
