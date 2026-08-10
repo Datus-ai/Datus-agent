@@ -505,6 +505,20 @@ class TestSelectors:
             1 for name in _namelist(result) if name.startswith("subject/sql_summaries/")
         )
 
+    def test_untagged_metrics_ship_with_a_warning(self, project):
+        """An untagged metric file matches no subject and would drop out of
+        every filtered package — taking its rebuild line with it."""
+        untagged = project / "subject" / "semantic_models" / "sales_db" / "metrics" / "legacy_metrics.yml"
+        untagged.write_text("metric:\n  name: legacy_gmv\n", encoding="utf-8")
+
+        result = _build(project, subjects=("ops",))  # sales subjects deselected
+        names = _namelist(result)
+        assert "subject/semantic_models/sales_db/metrics/legacy_metrics.yml" in names
+        assert any("no subject_tree tag" in warning for warning in result.warnings)
+        # And it still gets a rebuild line, so the receiver can index it.
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        assert "legacy_metrics.yml" in script
+
     def test_untagged_summary_ships_with_a_warning(self, project):
         """A summary carrying no subject_tree matches no selection — it must
         still travel (with a warning) instead of vanishing from every package."""

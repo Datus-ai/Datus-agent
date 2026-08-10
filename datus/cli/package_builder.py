@@ -728,18 +728,20 @@ def select_metrics(
     root: Path,
     requested: Optional[Sequence[str]],
     selected_subjects: Optional[Sequence[str]] = None,
-) -> Tuple[List[str], List[StagedEntry], Dict[str, Tuple[List[str], List[str]]]]:
+) -> Tuple[List[str], List[StagedEntry], Dict[str, Tuple[List[str], List[str]]], List[str]]:
     """Stage ``subject/semantic_models/{ds}/**`` for the selected datasources.
 
     ``selected_subjects`` (``None`` = no subject filtering) narrows the metric
     documents to the chosen subject-tree roots; semantic-model documents are
     table definitions and always travel with their datasource.
 
-    Returns ``(kept, entries, per_ds)`` where ``per_ds`` maps datasource →
-    ``(semantic_yaml_relpaths, metrics_yaml_relpaths)`` for the rebuild script.
+    Returns ``(kept, entries, per_ds, warnings)`` where ``per_ds`` maps
+    datasource → ``(semantic_yaml_relpaths, metrics_yaml_relpaths)`` for the
+    rebuild script.
     """
     kept = _resolve_selection(list_metric_datasources(root), requested, "metric datasource")
 
+    warnings: List[str] = []
     entries: List[StagedEntry] = []
     per_ds: Dict[str, Tuple[List[str], List[str]]] = {}
     for ds in kept:
@@ -756,7 +758,13 @@ def select_metrics(
                 # a file travels when at least one of its metrics falls under
                 # a selected subject root. Semantic-model docs are table
                 # definitions, not subject-scoped, so they always travel.
-                if not (set(_metric_doc_subject_roots(path)) & set(selected_subjects)):
+                doc_subjects = _metric_doc_subject_roots(path)
+                if not doc_subjects:
+                    # Untagged metrics belong to no subject area and would
+                    # match no selection — ship them (with a warning) rather
+                    # than dropping them from every filtered package.
+                    warnings.append(f"{rel}: no subject_tree tag — packaged regardless of the subject selection")
+                elif not (set(doc_subjects) & set(selected_subjects)):
                     continue
             entries.append(StagedEntry(arcname=rel, source=path))
             if path.suffix.lower() in (".yml", ".yaml"):
@@ -767,7 +775,7 @@ def select_metrics(
                 else:
                     semantic_files.append(rel)
         per_ds[ds] = (semantic_files, metrics_files)
-    return kept, entries, per_ds
+    return kept, entries, per_ds, warnings
 
 
 def select_reference_sql(root: Path, selected_subjects: Sequence[str]) -> Tuple[List[StagedEntry], int, List[str]]:
@@ -1713,9 +1721,10 @@ def _build_package(options: PackageOptions) -> PackageResult:
     available_subjects = list(list_subject_roots(root, raw, project_name))
     kept_subjects = _resolve_selection(available_subjects, options.subjects, "subject")
 
-    kept_metrics, metric_entries, per_ds = select_metrics(
+    kept_metrics, metric_entries, per_ds, metric_warnings = select_metrics(
         root, options.metrics, None if options.subjects is None else kept_subjects
     )
+    warnings.extend(metric_warnings)
     _add(metric_entries)
 
     reference_sql_entries, reference_sql_count, summary_warnings = select_reference_sql(root, kept_subjects)
