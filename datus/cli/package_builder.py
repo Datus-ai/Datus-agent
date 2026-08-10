@@ -70,9 +70,7 @@ _TOP_LEVEL_EXCLUDED_DIRS = frozenset(
 )
 # Directories owned by the component selectors — removed from the generic walk
 # so the default full-tree include cannot bypass an explicit selection.
-_SELECTOR_OWNED_TOP_DIRS = frozenset(
-    {"reports", "dashboards", "template", "reference_sql", "reference_sqls", "ref_sql"}
-)
+_SELECTOR_OWNED_TOP_DIRS = frozenset({"reports", "dashboards", "template"})
 # Files that live at the ``home`` root and are runtime state under ``home: .``:
 # ``history`` is the REPL command history — user activity, possibly sensitive
 # queries. Top-level only, so a project's own ``docs/history`` still ships.
@@ -192,7 +190,9 @@ class PackageOptions:
     subagents: Optional[Tuple[str, ...]] = None
     skills: Optional[Tuple[str, ...]] = None
     metrics: Optional[Tuple[str, ...]] = None
-    reference_sql: Optional[Tuple[str, ...]] = None
+    # Subject-tree roots gating metric docs and reference-SQL summaries.
+    # ``None`` = every subject area.
+    subjects: Optional[Tuple[str, ...]] = None
     plugins: Optional[Tuple[str, ...]] = None
     reports: Optional[Tuple[str, ...]] = None
     dashboards: Optional[Tuple[str, ...]] = None
@@ -345,62 +345,146 @@ def list_skills(root: Path) -> Dict[str, Path]:
     return out
 
 
-# Canonical project-root directory holding the reference-SQL corpus, in
-# priority order. Only this tree is treated as reference SQL — the same
-# "canonical path" property that lets the metric selector trust
-# ``subject/semantic_models/``. Any other ``*.sql`` directory (migrations,
-# DDL, fixtures) is ordinary project content and ships via the generic walk.
-_REFERENCE_SQL_ROOT_NAMES = ("reference_sql", "reference_sqls", "ref_sql")
+_SQL_SUMMARIES_REL = "subject/sql_summaries"
+# ``tags: ["subject_tree: a/b/c", ...]`` — how a metric doc records its
+# subject assignment (see datus/storage/metric/subject_path.py).
+_SUBJECT_TAG_PREFIX = "subject_tree:"
 
 
-@dataclass(frozen=True)
-class ReferenceSqlUnit:
-    """One selectable reference-SQL corpus, mirroring a metric datasource.
+def _subject_root_of(path_expr: Any) -> str:
+    """First segment of a ``a/b/c`` subject path, or ``""``."""
+    parts = [part.strip() for part in str(path_expr or "").split("/") if part.strip()]
+    return parts[0] if parts else ""
 
-    Layout, in priority order:
 
-    * ``reference_sql/<datasource>/`` — one unit per datasource, exactly like
-      ``subject/semantic_models/<datasource>/``; ``name`` is the datasource.
-    * ``reference_sql/*.sql`` (flat) — a single unit bound to the project's
-      default datasource. ``datasource`` is ``None`` when it can't be
-      resolved, in which case the rebuild step is emitted as a manual note.
+def _summary_subject_roots(root: Path) -> Dict[str, int]:
+    """``{subject_root: entry_count}`` derived from the committed summaries."""
+    counts: Dict[str, int] = {}
+    base = root / _SQL_SUMMARIES_REL
+    if not base.is_dir():
+        return counts
+    for path in sorted(base.rglob("*.y*ml")):
+        subject_root = _subject_root_of(_read_yaml_mapping(path).get("subject_tree"))
+        if subject_root:
+            counts[subject_root] = counts.get(subject_root, 0) + 1
+    return counts
+
+
+def _metric_subject_roots(root: Path) -> Dict[str, int]:
+    """``{subject_root: metric_count}`` derived from the metric YAML tags."""
+    counts: Dict[str, int] = {}
+    for path in _metric_yaml_files(root):
+        for subject_root in _metric_doc_subject_roots(path):
+            counts[subject_root] = counts.get(subject_root, 0) + 1
+    return counts
+
+
+def _metric_yaml_files(root: Path) -> List[Path]:
+    base = root / "subject" / "semantic_models"
+    if not base.is_dir():
+        return []
+    return sorted(p for p in base.rglob("*.y*ml") if p.is_file() and "metrics" in p.relative_to(base).parts[:-1])
+
+
+def _metric_doc_subject_roots(path: Path) -> List[str]:
+    """Subject roots tagged on the metric documents inside one YAML file."""
+    roots: List[str] = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            docs = list(yaml.safe_load_all(fh))
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("package: unreadable metric yaml %s: %s", path, exc)
+        return roots
+    for doc in docs:
+        metric = (doc or {}).get("metric") if isinstance(doc, dict) else None
+        tags = metric.get("tags") if isinstance(metric, dict) else None
+        for tag in tags or []:
+            if isinstance(tag, str) and tag.strip().startswith(_SUBJECT_TAG_PREFIX):
+                subject_root = _subject_root_of(tag.split(_SUBJECT_TAG_PREFIX, 1)[1])
+                if subject_root:
+                    roots.append(subject_root)
+    return roots
+
+
+def _read_yaml_mapping(path: Path) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("package: unreadable yaml %s: %s", path, exc)
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _vector_db_subject_roots(root: Path, raw: Dict[str, Any], project_name: str) -> Dict[str, str]:
+    """``{root_name: description}`` read from the project's subject tree store.
+
+    The subject tree is the KB's own registry of subject areas (one tree per
+    datasource under ``{home}/data/{project}/``), so it — not the artifacts —
+    is the authoritative menu. Reading it needs the source project's path
+    manager, which is installed and restored around the read. Any failure
+    (KB never built, backend unavailable) degrades to an empty mapping and
+    the caller falls back to artifact-derived roots.
     """
+    from datus.utils.path_manager import get_path_manager, set_current_path_manager
 
-    name: str
-    rel_dir: str
-    datasource: Optional[str]
+    datasources = list(((raw.get("services") or {}).get("datasources")) or {})
+    if not datasources:
+        return {}
+    try:
+        previous = get_path_manager()
+    except Exception:  # pragma: no cover - no context installed yet
+        previous = None
+
+    roots: Dict[str, str] = {}
+    try:
+        set_current_path_manager(
+            DatusPathManager(datus_home=resolve_source_home(raw, root), project_name=project_name, project_root=root)
+        )
+        from datus.storage.subject_tree.store import SubjectTreeStore
+
+        for datasource in datasources:
+            try:
+                store = SubjectTreeStore(project=project_name, datasource_id=str(datasource))
+                for node in store.get_children(None) or []:
+                    name = str(node.get("name") or "").strip()
+                    if name:
+                        roots.setdefault(name, str(node.get("description") or ""))
+            except Exception as exc:
+                logger.debug("package: subject tree unavailable for %s: %s", datasource, exc)
+    except Exception as exc:
+        logger.warning("package: cannot read the subject tree from the vector store: %s", exc)
+    finally:
+        if previous is not None:
+            set_current_path_manager(previous)
+    return roots
 
 
-def _reference_sql_root(root: Path) -> Optional[Path]:
-    for name in _REFERENCE_SQL_ROOT_NAMES:
-        candidate = root / name
-        if candidate.is_dir() and not candidate.is_symlink():
-            return candidate
-    return None
+def list_subject_roots(root: Path, raw: Dict[str, Any], project_name: str) -> Dict[str, str]:
+    """``{subject_root: label}`` — the selectable subject areas.
 
+    Menu source of truth is the vector store's subject tree; the counts come
+    from the artifacts that would actually travel, so the label says what
+    selecting a root costs. Roots present only in the artifacts (KB not built
+    on this machine) are still offered.
+    """
+    tree_roots = _vector_db_subject_roots(root, raw, project_name)
+    sql_counts = _summary_subject_roots(root)
+    metric_counts = _metric_subject_roots(root)
 
-def list_reference_sql_units(root: Path, raw: Optional[Dict[str, Any]] = None) -> List[ReferenceSqlUnit]:
-    """Selectable reference-SQL corpora under the canonical directory."""
-    base = _reference_sql_root(root)
-    if base is None:
-        return []
-    rel_base = base.relative_to(root).as_posix()
-
-    def _has_sql(directory: Path) -> bool:
-        return any(p.is_file() and p.suffix.lower() == ".sql" for p in directory.rglob("*"))
-
-    per_ds = [
-        entry
-        for entry in sorted(base.iterdir())
-        if entry.is_dir() and not entry.is_symlink() and not _is_junk_path(Path(entry.name)) and _has_sql(entry)
-    ]
-    if per_ds:
-        return [ReferenceSqlUnit(name=d.name, rel_dir=f"{rel_base}/{d.name}", datasource=d.name) for d in per_ds]
-
-    if not _has_sql(base):
-        return []
-    datasource = resolve_default_datasource(root, raw or {})
-    return [ReferenceSqlUnit(name=datasource or rel_base, rel_dir=rel_base, datasource=datasource)]
+    labels: Dict[str, str] = {}
+    for name in sorted(set(tree_roots) | set(sql_counts) | set(metric_counts)):
+        parts = []
+        if metric_counts.get(name):
+            parts.append(f"{metric_counts[name]} metrics")
+        if sql_counts.get(name):
+            parts.append(f"{sql_counts[name]} reference SQL")
+        if not parts:
+            parts.append("no packaged entries")
+        description = tree_roots.get(name) or ""
+        suffix = f" — {description}" if description else ""
+        labels[name] = f"{name} ({', '.join(parts)}){suffix}"
+    return labels
 
 
 def list_packageable_plugins(root: Path) -> Dict[str, str]:
@@ -532,8 +616,9 @@ def collect_project_files(
                 top in _TOP_LEVEL_EXCLUDED_DIRS or top in _SELECTOR_OWNED_TOP_DIRS or top.startswith("output")
             ):
                 pruned.append(d)
-            elif child_parts[:2] == ("subject", "semantic_models"):
-                # Selector-owned: metric selection stages this subtree.
+            elif child_parts[:2] in (("subject", "semantic_models"), ("subject", "sql_summaries")):
+                # Selector-owned: metric / reference-SQL selection stages
+                # these subtrees, filtered by the chosen subject roots.
                 pruned.append(d)
             elif (Path(dirpath) / d).is_symlink():
                 warnings.append(f"skipped symlinked directory: {(rel_dir / d).as_posix()}")
@@ -639,8 +724,13 @@ def select_skills(
 def select_metrics(
     root: Path,
     requested: Optional[Sequence[str]],
+    selected_subjects: Optional[Sequence[str]] = None,
 ) -> Tuple[List[str], List[StagedEntry], Dict[str, Tuple[List[str], List[str]]]]:
     """Stage ``subject/semantic_models/{ds}/**`` for the selected datasources.
+
+    ``selected_subjects`` (``None`` = no subject filtering) narrows the metric
+    documents to the chosen subject-tree roots; semantic-model documents are
+    table definitions and always travel with their datasource.
 
     Returns ``(kept, entries, per_ds)`` where ``per_ds`` maps datasource →
     ``(semantic_yaml_relpaths, metrics_yaml_relpaths)`` for the rebuild script.
@@ -657,11 +747,19 @@ def select_metrics(
             if not path.is_file() or _is_junk_path(path.relative_to(ds_dir)):
                 continue
             rel = path.relative_to(root).as_posix()
+            is_metric_file = "metrics" in path.relative_to(ds_dir).parts[:-1]
+            if is_metric_file and selected_subjects is not None:
+                # Metric docs carry their subject as a ``subject_tree:`` tag;
+                # a file travels when at least one of its metrics falls under
+                # a selected subject root. Semantic-model docs are table
+                # definitions, not subject-scoped, so they always travel.
+                if not (set(_metric_doc_subject_roots(path)) & set(selected_subjects)):
+                    continue
             entries.append(StagedEntry(arcname=rel, source=path))
             if path.suffix.lower() in (".yml", ".yaml"):
                 # ``metrics/*_metrics.yml`` feeds --components metrics; the
                 # rest are semantic-model documents.
-                if "metrics" in path.relative_to(ds_dir).parts[:-1]:
+                if is_metric_file:
                     metrics_files.append(rel)
                 else:
                     semantic_files.append(rel)
@@ -669,30 +767,25 @@ def select_metrics(
     return kept, entries, per_ds
 
 
-def select_reference_sql(
-    root: Path,
-    requested: Optional[Sequence[str]],
-    raw: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[str], List[StagedEntry], List[ReferenceSqlUnit]]:
-    """Stage the selected reference-SQL corpora — the metric selector's shape.
+def select_reference_sql(root: Path, selected_subjects: Sequence[str]) -> Tuple[List[StagedEntry], int]:
+    """Stage the summary YAML under the selected subject roots.
 
-    Returns ``(kept, entries, units)``: selected corpora ship and get a
-    rebuild line; unselected ones are dropped from the zip, exactly like an
-    unselected metric datasource.
+    ``subject/sql_summaries/*.yaml`` is what the receiver re-indexes (see
+    ``bootstrap-kb --from_summaries``), so the summaries — not the raw
+    ``.sql`` corpus — are what the subject selection gates. The raw corpus
+    ships as ordinary project content via the generic walk.
     """
-    units = {unit.name: unit for unit in list_reference_sql_units(root, raw)}
-    kept = _resolve_selection(list(units), requested, "reference SQL corpus")
-
+    base = root / _SQL_SUMMARIES_REL
+    if not base.is_dir():
+        return [], 0
+    wanted = set(selected_subjects)
     entries: List[StagedEntry] = []
-    kept_units: List[ReferenceSqlUnit] = []
-    for name in kept:
-        unit = units[name]
-        kept_units.append(unit)
-        unit_dir = root / unit.rel_dir
-        for path in sorted(unit_dir.rglob("*")):
-            if path.is_file() and not _is_junk_path(path.relative_to(unit_dir)):
-                entries.append(StagedEntry(arcname=path.relative_to(root).as_posix(), source=path))
-    return kept, entries, kept_units
+    for path in sorted(base.rglob("*.y*ml")):
+        if not path.is_file() or _is_junk_path(path.relative_to(base)):
+            continue
+        if _subject_root_of(_read_yaml_mapping(path).get("subject_tree")) in wanted:
+            entries.append(StagedEntry(arcname=path.relative_to(root).as_posix(), source=path))
+    return entries, len(entries)
 
 
 def _artifact_walk(artifact_dir: Path, dirs_spec: Dict[str, Tuple[Tuple[str, ...], bool]]) -> List[Path]:
@@ -1250,7 +1343,8 @@ def generate_requirements(packages: Sequence[DatusPackage]) -> Tuple[bytes, List
 
 def generate_rebuild_kb_script(
     per_ds: Dict[str, Tuple[List[str], List[str]]],
-    reference_sql_units: Sequence[ReferenceSqlUnit] = (),
+    reference_sql_count: int = 0,
+    reference_sql_datasource: Optional[str] = None,
 ) -> Optional[bytes]:
     """Per-file bootstrap-kb loop: semantic models first, then metrics.
 
@@ -1282,32 +1376,22 @@ def generate_rebuild_kb_script(
             )
 
     notes: List[str] = []
-    if reference_sql_units:
-        # reference_sql keeps its own store, so its first call overwrites
-        # independently of the semantic/metric calls above.
-        emitted = False
-        for unit in reference_sql_units:
-            if unit.datasource is None:
-                notes += [
-                    "# NOTE: reference SQL shipped but its datasource could not be",
-                    "# resolved at pack time. Rebuild it manually with:",
-                    f"#   datus-agent bootstrap-kb --datasource <ds> --components reference_sql "
-                    f'--sql_dir "{unit.rel_dir}" -y',
-                ]
-                continue
-            strategy = "incremental" if emitted else "overwrite"
-            emitted = True
+    if reference_sql_count:
+        if reference_sql_datasource:
+            # --from_summaries re-indexes the packaged YAML verbatim: no LLM
+            # call, no API spend, and the receiver's rows match the source
+            # project's reviewed summaries exactly.
             commands.append(
-                f"datus-agent bootstrap-kb --datasource {unit.datasource} "
-                f'--components reference_sql --sql_dir "{unit.rel_dir}" '
-                f"--kb_update_strategy {strategy} -y"
+                f"datus-agent bootstrap-kb --datasource {reference_sql_datasource} "
+                f"--components reference_sql --from_summaries --kb_update_strategy overwrite -y"
             )
-        notes += [
-            "# NOTE: the reference_sql step re-generates one SQL summary per",
-            "# statement through the LLM — expect it to take a while and to",
-            "# consume API credits. The shipped subject/sql_summaries/ files are",
-            "# the source project's copies; they are not reused by the rebuild.",
-        ]
+        else:
+            notes += [
+                "# NOTE: reference SQL shipped but no default datasource could be",
+                "# resolved at pack time. Re-index the summaries manually with:",
+                "#   datus-agent bootstrap-kb --datasource <ds> --components reference_sql "
+                "--from_summaries --kb_update_strategy overwrite -y",
+            ]
 
     if not commands:
         return None
@@ -1614,12 +1698,15 @@ def _build_package(options: PackageOptions) -> PackageResult:
     kept_skills, skill_entries = select_skills(root, options.skills)
     _add(skill_entries)
 
-    kept_metrics, metric_entries, per_ds = select_metrics(root, options.metrics)
+    available_subjects = list(list_subject_roots(root, raw, project_name))
+    kept_subjects = _resolve_selection(available_subjects, options.subjects, "subject")
+
+    kept_metrics, metric_entries, per_ds = select_metrics(
+        root, options.metrics, None if options.subjects is None else kept_subjects
+    )
     _add(metric_entries)
 
-    kept_reference_sql, reference_sql_entries, reference_sql_units = select_reference_sql(
-        root, options.reference_sql, raw
-    )
+    reference_sql_entries, reference_sql_count = select_reference_sql(root, kept_subjects)
     _add(reference_sql_entries)
 
     kept_reports, report_entries, report_warnings = select_artifacts(
@@ -1653,7 +1740,7 @@ def _build_package(options: PackageOptions) -> PackageResult:
         )
     _add([StagedEntry(arcname="requirements.txt", content=requirements)])
 
-    rebuild = generate_rebuild_kb_script(per_ds, reference_sql_units)
+    rebuild = generate_rebuild_kb_script(per_ds, reference_sql_count, resolve_default_datasource(root, raw))
     if rebuild is not None:
         _add([StagedEntry(arcname="scripts/rebuild_kb.sh", content=rebuild, executable=True)])
 
@@ -1691,7 +1778,8 @@ def _build_package(options: PackageOptions) -> PackageResult:
         "subagents": kept_subagents,
         "skills": kept_skills,
         "metrics": kept_metrics,
-        "reference_sql": kept_reference_sql,
+        "subjects": kept_subjects,
+        "reference_sql_entries": reference_sql_count,
         "plugins": kept_plugins,
         "reports": kept_reports,
         "dashboards": kept_dashboards,
@@ -1739,7 +1827,7 @@ __all__ = [
     "list_artifact_slugs",
     "list_metric_datasources",
     "list_packageable_plugins",
-    "list_reference_sql_units",
+    "list_subject_roots",
     "list_skills",
     "list_subagents",
     "load_raw_agent_config",

@@ -55,7 +55,7 @@ class TestNonInteractivePaths:
         options = captured_build["options"]
         assert options.assume_yes is True
         assert options.subagents is None and options.skills is None
-        assert options.metrics is None and options.reports is None and options.dashboards is None
+        assert options.metrics is None and options.subjects is None and options.reports is None
         assert options.output is None and options.report_dist is None
 
     def test_non_tty_without_yes_exits_2(self, raw_config, captured_build, monkeypatch):
@@ -99,11 +99,7 @@ class TestWizard:
         monkeypatch.setattr(pb, "list_subagents", lambda raw: {"helper": "Helper"})
         monkeypatch.setattr(pb, "list_skills", lambda root: {"sql-skill": Path("/global/sql-skill")})
         monkeypatch.setattr(pb, "list_metric_datasources", lambda root: ["ds1"])
-        monkeypatch.setattr(
-            pb,
-            "list_reference_sql_units",
-            lambda root, raw=None: [pb.ReferenceSqlUnit(name="ds1", rel_dir="reference_sql/ds1", datasource="ds1")],
-        )
+        monkeypatch.setattr(pb, "list_subject_roots", lambda root, raw, project: {"sales": "sales (1 metrics)"})
         monkeypatch.setattr(pb, "list_packageable_plugins", lambda root: {"alpha": "alpha — activated"})
         monkeypatch.setattr(
             pb,
@@ -134,7 +130,7 @@ class TestWizard:
         assert options.subagents == ("helper",)
         assert options.skills == ("sql-skill",)
         assert options.metrics == ("ds1",)
-        assert options.reference_sql == ("ds1",)
+        assert options.subjects == ("sales",)
         assert options.plugins == ("alpha",)
         assert options.reports == ("r1",)
         assert options.dashboards == ()  # empty category skipped silently
@@ -150,7 +146,7 @@ class TestWizard:
         _patch_prompts(
             monkeypatch,
             # 1st subagent screen: empty → decline "package none" → retry → select.
-            select_multi_choice=_side_effects([[], ["helper"], ["sql-skill"], ["ds1"], ["ds1"], ["alpha"], ["r1"]]),
+            select_multi_choice=_side_effects([[], ["helper"], ["sql-skill"], ["ds1"], ["sales"], ["alpha"], ["r1"]]),
             # all-files yes; "no subagents?" no; build-now yes
             confirm_prompt=_side_effects([True, False, True]),
             select_choice=_side_effects(["cdn"]),
@@ -163,7 +159,7 @@ class TestWizard:
         self._patch_enumerations(monkeypatch)
         _patch_prompts(
             monkeypatch,
-            select_multi_choice=_side_effects([[], ["sql-skill"], ["ds1"], ["ds1"], ["alpha"], []]),
+            select_multi_choice=_side_effects([[], ["sql-skill"], ["ds1"], ["sales"], ["alpha"], []]),
             # all-files yes; "no subagents?" yes; "no reports?" yes; build-now yes
             confirm_prompt=_side_effects([True, True, True, True]),
             prompt_input=_side_effects([""]),

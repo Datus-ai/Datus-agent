@@ -152,21 +152,30 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     template_dir.mkdir(parents=True)
     (template_dir / "sales_helper_system_1.0.j2").write_text("prompt {{x}}", encoding="utf-8")
 
-    # Metrics for two datasources.
-    for ds in ("sales_db", "pg_main"):
+    # Metrics for two datasources. Metric docs carry their subject as a
+    # ``subject_tree:`` tag — the same shape gen-metrics writes.
+    for ds, subject in (("sales_db", "sales"), ("pg_main", "ops")):
         ds_dir = root / "subject" / "semantic_models" / ds
         (ds_dir / "metrics").mkdir(parents=True)
         (ds_dir / "orders.yml").write_text("data_source:\n  name: orders\n", encoding="utf-8")
-        (ds_dir / "metrics" / "orders_metrics.yml").write_text("metric:\n  name: gmv\n", encoding="utf-8")
-    (root / "subject" / "sql_summaries").mkdir(parents=True)
-    (root / "subject" / "sql_summaries" / "summary.md").write_text("sql summary", encoding="utf-8")
+        (ds_dir / "metrics" / "orders_metrics.yml").write_text(
+            f'metric:\n  name: gmv_{ds}\n  tags:\n    - "subject_tree: {subject}/revenue"\n',
+            encoding="utf-8",
+        )
+    # Reference-SQL summaries: what the receiver re-indexes, each tagged with
+    # the subject tree it belongs to.
+    summaries = root / "subject" / "sql_summaries"
+    summaries.mkdir(parents=True)
+    for name, subject in (("q_sales", "sales/orders"), ("q_ops", "ops/pipeline")):
+        (summaries / f"{name}.yaml").write_text(
+            f'id: {name}\nname: "{name}"\nsql: "SELECT 1"\nsummary: "s"\n'
+            f'search_text: "t"\nsubject_tree: "{subject}"\ntags: ""\n',
+            encoding="utf-8",
+        )
 
-    # Reference SQL, per-datasource layout mirroring subject/semantic_models/.
-    for ds in ("sales_db", "pg_main"):
-        (root / "reference_sql" / ds).mkdir(parents=True)
-        (root / "reference_sql" / ds / "queries.sql").write_text(f"SELECT 1; -- {ds}", encoding="utf-8")
-    (root / "reference_sql" / "sales_db" / "README.md").write_text("corpus notes", encoding="utf-8")
-    # DDL living outside the canonical dir must never be treated as reference SQL.
+    # Raw corpus + DDL: ordinary project content, shipped by the generic walk.
+    (root / "reference_sql").mkdir()
+    (root / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
     (root / "migrations").mkdir()
     (root / "migrations" / "001_init.sql").write_text("CREATE TABLE t(a INT);", encoding="utf-8")
 
@@ -403,18 +412,15 @@ class TestSelectors:
         assert not result.ok and "unknown skill" in result.error
 
     def test_metrics_selection_and_rebuild_script(self, project):
-        # reference_sql=() keeps this focused on the metric/semantic lines.
-        result = _build(project, metrics=("sales_db",), reference_sql=())
+        result = _build(project, metrics=("sales_db",))
         names = _namelist(result)
         assert "subject/semantic_models/sales_db/orders.yml" in names
         assert "subject/semantic_models/pg_main/orders.yml" not in names
-        assert "subject/sql_summaries/summary.md" in names
         script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
         semantic_pos = script.index("--components semantic_model")
         metrics_pos = script.index("--components metrics")
         assert semantic_pos < metrics_pos
         assert '--semantic_yaml "subject/semantic_models/sales_db/metrics/orders_metrics.yml"' in script
-        assert script.count("bootstrap-kb") == 2
         assert "-y" in script and "--datasource sales_db" in script
         # The default ``check`` strategy ingests nothing — the script must
         # pin strategies: first semantic call overwrites (fresh store),
@@ -425,12 +431,23 @@ class TestSelectors:
         assert "--kb_update_strategy incremental" in metrics_line
 
     def test_rebuild_script_multi_datasource_truncates_once(self, project):
-        result = _build(project, reference_sql=())  # both metric datasources by default
-        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        script = _member(_build(project), "scripts/rebuild_kb.sh").decode("utf-8")
+        semantic_metric = [
+            line
+            for line in script.splitlines()
+            if "--components semantic_model" in line or "--components metrics" in line
+        ]
         # Only ONE overwrite across the semantic/metric calls — a second one
         # would wipe the first datasource's freshly built entries.
-        assert script.count("--kb_update_strategy overwrite") == 1
-        assert script.count("--kb_update_strategy incremental") == 3  # 1 semantic + 2 metrics
+        assert sum("--kb_update_strategy overwrite" in line for line in semantic_metric) == 1
+        assert sum("--kb_update_strategy incremental" in line for line in semantic_metric) == 3
+
+    def test_reference_sql_rebuild_uses_summaries_not_the_llm(self, project):
+        script = _member(_build(project), "scripts/rebuild_kb.sh").decode("utf-8")
+        line = next(line for line in script.splitlines() if "--components reference_sql" in line)
+        # Re-index the packaged summaries verbatim: no --sql_dir, no LLM spend.
+        assert "--from_summaries" in line and "--sql_dir" not in line
+        assert "--datasource sales_db" in line  # the project's default pin
 
     def test_appledouble_sidecars_never_reach_selectors(self, project):
         """AppleDouble ``._*`` files (macOS xattr sidecars on SMB/FAT
@@ -449,83 +466,38 @@ class TestSelectors:
         assert "._orders" not in script
 
     def test_no_metrics_no_rebuild_script(self, project):
-        names = _namelist(_build(project, metrics=(), reference_sql=()))
+        names = _namelist(_build(project, metrics=(), subjects=()))
         assert "scripts/rebuild_kb.sh" not in names
         assert not any(name.startswith("subject/semantic_models/") for name in names)
 
-    def test_reference_sql_units_are_datasources(self, project):
-        """``reference_sql/<ds>/`` mirrors ``subject/semantic_models/<ds>/``:
-        one selectable unit per datasource, named after it."""
-        units = pb.list_reference_sql_units(project)
-        assert [(u.name, u.rel_dir, u.datasource) for u in units] == [
-            ("pg_main", "reference_sql/pg_main", "pg_main"),
-            ("sales_db", "reference_sql/sales_db", "sales_db"),
-        ]
+    def test_subject_roots_come_from_tree_and_artifacts(self, project):
+        """The menu is the subject tree; the counts say what each root costs."""
+        roots = pb.list_subject_roots(project, pb.load_raw_agent_config() or {}, "fixture_proj")
+        assert set(roots) == {"sales", "ops"}
+        assert "1 metrics" in roots["sales"] and "1 reference SQL" in roots["sales"]
 
-    def test_reference_sql_selection_gates_packaging_like_metrics(self, project):
-        result = _build(project, reference_sql=("sales_db",))
+    def test_subject_selection_gates_metrics_and_summaries(self, project):
+        result = _build(project, subjects=("sales",))
         names = _namelist(result)
-        assert "reference_sql/sales_db/queries.sql" in names
-        assert "reference_sql/sales_db/README.md" in names  # whole corpus travels
-        assert "reference_sql/pg_main/queries.sql" not in names
+        # sales side travels; ops side does not.
+        assert "subject/sql_summaries/q_sales.yaml" in names
+        assert "subject/sql_summaries/q_ops.yaml" not in names
+        assert "subject/semantic_models/sales_db/metrics/orders_metrics.yml" in names
+        assert "subject/semantic_models/pg_main/metrics/orders_metrics.yml" not in names
+        # Semantic-model docs are table definitions, never subject-scoped.
+        assert "subject/semantic_models/pg_main/orders.yml" in names
 
-    def test_ddl_outside_the_canonical_dir_is_never_reference_sql(self, project):
-        """A migrations/ tree full of DDL must ship as ordinary project content
-        and never be bootstrapped — poisoning the reference-SQL store."""
-        result = _build(project)
-        assert "migrations/001_init.sql" in _namelist(result)
-        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
-        assert "migrations" not in script
+    def test_raw_corpus_and_ddl_ship_as_project_content(self, project):
+        """Only the summaries are subject-gated; the .sql sources travel as
+        ordinary files so nothing is silently dropped."""
+        names = _namelist(_build(project, subjects=()))
+        assert "reference_sql/queries.sql" in names
+        assert "migrations/001_init.sql" in names
+        assert not any(name.startswith("subject/sql_summaries/") for name in names)
 
-    def test_flat_reference_sql_binds_to_default_datasource(self, project):
-        import shutil
-
-        shutil.rmtree(project / "reference_sql")
-        (project / "reference_sql").mkdir()
-        (project / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
-
-        units = pb.list_reference_sql_units(project)
-        assert [(u.name, u.rel_dir, u.datasource) for u in units] == [
-            ("sales_db", "reference_sql", "sales_db")  # sales_db is the project pin
-        ]
-
-    def test_reference_sql_rebuild_lines_are_per_datasource(self, project):
-        script = _member(_build(project), "scripts/rebuild_kb.sh").decode("utf-8")
-        lines = [line for line in script.splitlines() if "--components reference_sql" in line]
-        assert len(lines) == 2
-        assert any("--datasource pg_main" in ln and '--sql_dir "reference_sql/pg_main"' in ln for ln in lines)
-        assert any("--datasource sales_db" in ln and '--sql_dir "reference_sql/sales_db"' in ln for ln in lines)
-        # Its own store: exactly one overwrite, the rest incremental.
-        assert sum("overwrite" in ln for ln in lines) == 1
-        # Reference SQL runs after the semantic/metric steps.
-        assert script.index("--components semantic_model") < script.index("--components reference_sql")
-        assert "re-generates one SQL summary per" in script
-
-    def test_flat_reference_sql_without_datasource_emits_manual_note(self, project):
-        import shutil
-
-        shutil.rmtree(project / "reference_sql")
-        (project / "reference_sql").mkdir()
-        (project / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
-        # Drop the project pin: 3 datasources, none flagged default -> ambiguous.
-        (project / ".datus" / "config.yml").write_text("project_name: fixture_proj\n", encoding="utf-8")
-
-        result = _build(project)
-        assert "reference_sql/queries.sql" in _namelist(result)  # corpus still ships
-        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
-        runnable = [line for line in script.splitlines() if line.strip() and not line.strip().startswith("#")]
-        assert not any("--components reference_sql" in line for line in runnable)
-        assert "datasource could not be" in script
-
-    def test_no_reference_sql_selected_ships_none(self, project):
-        result = _build(project, reference_sql=())
-        assert not any(name.startswith("reference_sql/") for name in _namelist(result))
-        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
-        assert "--components reference_sql" not in script
-
-    def test_unknown_reference_sql_corpus_fails(self, project):
-        result = _build(project, reference_sql=("ghost_ds",))
-        assert not result.ok and "unknown reference SQL corpus" in result.error
+    def test_unknown_subject_fails(self, project):
+        result = _build(project, subjects=("ghost",))
+        assert not result.ok and "unknown subject" in result.error
 
     def test_artifact_allowlist_filters_stray_files(self, project):
         names = _namelist(_build(project))

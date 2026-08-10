@@ -118,14 +118,9 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
         "Metric datasources",
         {ds: f"subject/semantic_models/{ds}" for ds in pb.list_metric_datasources(root)},
     )
-    reference_sql = _step_multi(
-        console,
-        "Reference SQL",
-        {
-            unit.name: f"{unit.rel_dir}" + ("" if unit.datasource else " (datasource unresolved — manual rebuild)")
-            for unit in pb.list_reference_sql_units(root, raw)
-        },
-    )
+    # One subject-tree step gates both metric docs and reference-SQL
+    # summaries — they are indexed under the same tree in the vector store.
+    subjects = _step_multi(console, "Subject areas", pb.list_subject_roots(root, raw, project_name))
     plugins = _step_multi(console, "Plugins", pb.list_packageable_plugins(root))
     reports = _step_multi(
         console,
@@ -147,7 +142,7 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
         subagents=tuple(subagents),
         skills=tuple(skills),
         metrics=tuple(metrics),
-        reference_sql=tuple(reference_sql),
+        subjects=tuple(subjects),
         plugins=tuple(plugins),
         reports=tuple(reports),
         dashboards=tuple(dashboards),
@@ -272,7 +267,7 @@ def _step_summary(console: Console, options: "PackageOptions", project_name: str
         {"item": "Subagents", "value": _fmt(options.subagents)},
         {"item": "Skills", "value": _fmt(options.skills)},
         {"item": "Metric datasources", "value": _fmt(options.metrics)},
-        {"item": "Reference SQL", "value": _fmt(options.reference_sql)},
+        {"item": "Subject areas", "value": _fmt(options.subjects)},
         {"item": "Plugins", "value": _fmt(options.plugins)},
         {"item": "Reports", "value": _fmt(options.reports)},
         {"item": "Dashboards", "value": _fmt(options.dashboards)},
