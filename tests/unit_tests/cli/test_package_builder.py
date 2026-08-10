@@ -127,6 +127,10 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     (root / "knowledge" / "._notes.md").write_bytes(b"\x00\x05\x16\x07AppleDouble")
     (root / "__MACOSX").mkdir()
     (root / "__MACOSX" / "junk.txt").write_text("litter", encoding="utf-8")
+    # REPL command history lands at {home}/history under home: . — user
+    # activity that must never ship. A nested file named "history" is fine.
+    (root / "history").write_text("# 2026-08-07\n+select * from secret_table\n", encoding="utf-8")
+    (root / "docs" / "history").write_text("legit project doc", encoding="utf-8")
     (root / ".datus" / "memory").mkdir()
     (root / ".datus" / "memory" / "private.md").write_text("private memory", encoding="utf-8")
     (root / ".datus" / "plans").mkdir()
@@ -211,12 +215,15 @@ class TestCollection:
             ".DS_Store",
             "knowledge/._notes.md",
             "__MACOSX/junk.txt",
+            "history",
             ".datus/memory/private.md",
             ".datus/plans/draft.md",
         ):
             assert banned not in names, banned
         assert "knowledge/notes.md" in names
         assert "docs/guides/internal/deep.md" in names
+        # Exclusion is top-level only — a project doc named "history" ships.
+        assert "docs/history" in names
         # Generated files present; the source agent.yml was never copied.
         assert {
             "conf/agent.yml",

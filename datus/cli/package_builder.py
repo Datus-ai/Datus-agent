@@ -71,6 +71,10 @@ _TOP_LEVEL_EXCLUDED_DIRS = frozenset(
 # Directories owned by the component selectors — removed from the generic walk
 # so the default full-tree include cannot bypass an explicit selection.
 _SELECTOR_OWNED_TOP_DIRS = frozenset({"reports", "dashboards", "template"})
+# Files that live at the ``home`` root and are runtime state under ``home: .``:
+# ``history`` is the REPL command history — user activity, possibly sensitive
+# queries. Top-level only, so a project's own ``docs/history`` still ships.
+_TOP_LEVEL_EXCLUDED_FILES = frozenset({"history"})
 # Excluded at any depth. ``__MACOSX`` is Archive-Utility litter from a prior
 # unzip; ``.Spotlight-V100``/``.Trashes``/``.fseventsd``/… appear when the
 # project sits at the root of an external volume.
@@ -427,6 +431,8 @@ def collect_project_files(
             fpath = Path(dirpath) / fname
             rel = (rel_dir / fname).as_posix() if depth_parts else fname
             if _is_junk_path(Path(fname)):
+                continue
+            if not depth_parts and fname in _TOP_LEVEL_EXCLUDED_FILES:
                 continue
             if rel in _GENERATED_CONF_RELPATHS or rel == PROJECT_CONFIG_REL:
                 continue
