@@ -99,7 +99,7 @@ class TestWizard:
         monkeypatch.setattr(pb, "list_subagents", lambda raw: {"helper": "Helper"})
         monkeypatch.setattr(pb, "list_skills", lambda root: {"sql-skill": Path("/global/sql-skill")})
         monkeypatch.setattr(pb, "list_metric_datasources", lambda root: ["ds1"])
-        monkeypatch.setattr(pb, "list_subject_roots", lambda root, raw, project: {"sales": "sales (1 metrics)"})
+        monkeypatch.setattr(pb, "list_subject_paths", lambda root, raw, project: {"sales": "sales (1 metrics)"})
         monkeypatch.setattr(pb, "list_packageable_plugins", lambda root: {"alpha": "alpha — activated"})
         monkeypatch.setattr(
             pb,

@@ -190,8 +190,8 @@ class PackageOptions:
     subagents: Optional[Tuple[str, ...]] = None
     skills: Optional[Tuple[str, ...]] = None
     metrics: Optional[Tuple[str, ...]] = None
-    # Subject-tree roots gating metric docs and reference-SQL summaries.
-    # ``None`` = every subject area.
+    # Subject-tree paths (one or two levels) gating metric docs and
+    # reference-SQL summaries. ``None`` = every subject area.
     subjects: Optional[Tuple[str, ...]] = None
     plugins: Optional[Tuple[str, ...]] = None
     reports: Optional[Tuple[str, ...]] = None
@@ -354,32 +354,59 @@ _SQL_SUMMARIES_REL = "subject/sql_summaries"
 _SUBJECT_TAG_PREFIX = "subject_tree:"
 
 
-def _subject_root_of(path_expr: Any) -> str:
-    """First segment of a ``a/b/c`` subject path, or ``""``."""
-    parts = [part.strip() for part in str(path_expr or "").split("/") if part.strip()]
-    return parts[0] if parts else ""
+SUBJECT_MENU_MAX_DEPTH = 2
 
 
-def _summary_subject_roots(root: Path) -> Dict[str, int]:
-    """``{subject_root: entry_count}`` derived from the committed summaries."""
+def _subject_segments(path_expr: Any) -> List[str]:
+    """``"a/b/c"`` → ``["a", "b", "c"]``."""
+    return [part.strip() for part in str(path_expr or "").split("/") if part.strip()]
+
+
+def _subject_prefixes(path_expr: Any, max_depth: int = SUBJECT_MENU_MAX_DEPTH) -> List[str]:
+    """Selectable ancestors of a subject path, shallowest first.
+
+    ``运营/活动/SR`` with ``max_depth=2`` yields ``["运营", "运营/活动"]`` — the
+    paths a user can pick in order to include that entry. The menu stops at
+    two levels: deeper trees produce a screen too long to scan, and a
+    second-level node is already a coherent subject area.
+    """
+    segments = _subject_segments(path_expr)[:max_depth]
+    return ["/".join(segments[: depth + 1]) for depth in range(len(segments))]
+
+
+def _subject_matches(path_expr: Any, selected: Set[str]) -> bool:
+    """True when any ancestor of ``path_expr`` was selected.
+
+    Picking a parent takes its whole subtree, so a depth-3 entry is kept by
+    a depth-1 or depth-2 selection.
+    """
+    segments = _subject_segments(path_expr)
+    return any("/".join(segments[: depth + 1]) in selected for depth in range(len(segments)))
+
+
+def _count_by_subject_prefix(values: Sequence[Any]) -> Dict[str, int]:
+    """``{selectable_path: entries beneath it}`` — a parent counts its subtree."""
     counts: Dict[str, int] = {}
+    for value in values:
+        for prefix in _subject_prefixes(value):
+            counts[prefix] = counts.get(prefix, 0) + 1
+    return counts
+
+
+def _summary_subject_values(root: Path) -> List[str]:
+    """``subject_tree`` of every committed reference-SQL summary."""
     base = root / _SQL_SUMMARIES_REL
     if not base.is_dir():
-        return counts
-    for path in sorted(base.rglob("*.y*ml")):
-        subject_root = _subject_root_of(_read_yaml_mapping(path).get("subject_tree"))
-        if subject_root:
-            counts[subject_root] = counts.get(subject_root, 0) + 1
-    return counts
+        return []
+    return [str(_read_yaml_mapping(path).get("subject_tree") or "") for path in sorted(base.rglob("*.y*ml"))]
 
 
-def _metric_subject_roots(root: Path) -> Dict[str, int]:
-    """``{subject_root: metric_count}`` derived from the metric YAML tags."""
-    counts: Dict[str, int] = {}
+def _metric_subject_values(root: Path) -> List[str]:
+    """``subject_tree`` tag of every metric document in the project."""
+    values: List[str] = []
     for path in _metric_yaml_files(root):
-        for subject_root in _metric_doc_subject_roots(path):
-            counts[subject_root] = counts.get(subject_root, 0) + 1
-    return counts
+        values.extend(_metric_doc_subjects(path))
+    return values
 
 
 def _metric_yaml_files(root: Path) -> List[Path]:
@@ -389,8 +416,47 @@ def _metric_yaml_files(root: Path) -> List[Path]:
     return sorted(p for p in base.rglob("*.y*ml") if p.is_file() and "metrics" in p.relative_to(base).parts[:-1])
 
 
-def _metric_doc_subject_roots(path: Path) -> List[str]:
-    """Subject roots tagged on the metric documents inside one YAML file."""
+def _metric_subject_path(doc: Any) -> str:
+    """Full subject path of one ``metric:`` document, or ``""`` when untagged.
+
+    ``gen_metrics`` writes the tag under ``metric.locked_metadata.tags``;
+    ``metric.tags`` is accepted too since hand-authored files use the
+    shorter form.
+    """
+    metric = doc.get("metric") if isinstance(doc, dict) else None
+    if not isinstance(metric, dict):
+        return ""
+    locked = metric.get("locked_metadata")
+    tag_lists = [metric.get("tags"), locked.get("tags") if isinstance(locked, dict) else None]
+    for tags in tag_lists:
+        for tag in tags or []:
+            if isinstance(tag, str) and tag.strip().startswith(_SUBJECT_TAG_PREFIX):
+                path = "/".join(_subject_segments(tag.split(_SUBJECT_TAG_PREFIX, 1)[1]))
+                if path:
+                    return path
+    return ""
+
+
+def _split_yaml_documents(text: str) -> List[str]:
+    """Split a multi-document YAML file on ``---``, keeping each chunk verbatim.
+
+    Text-level so the packaged file keeps its original formatting, comments
+    and key order — a reserialize through PyYAML would rewrite all three.
+    """
+    chunks: List[str] = []
+    current: List[str] = []
+    for line in text.splitlines():
+        if line.strip() == "---":
+            chunks.append("\n".join(current))
+            current = []
+        else:
+            current.append(line)
+    chunks.append("\n".join(current))
+    return [chunk for chunk in chunks if chunk.strip()]
+
+
+def _metric_doc_subjects(path: Path) -> List[str]:
+    """Subject paths tagged on the metric documents inside one YAML file."""
     roots: List[str] = []
     try:
         with open(path, "r", encoding="utf-8") as fh:
@@ -399,14 +465,44 @@ def _metric_doc_subject_roots(path: Path) -> List[str]:
         logger.warning("package: unreadable metric yaml %s: %s", path, exc)
         return roots
     for doc in docs:
-        metric = (doc or {}).get("metric") if isinstance(doc, dict) else None
-        tags = metric.get("tags") if isinstance(metric, dict) else None
-        for tag in tags or []:
-            if isinstance(tag, str) and tag.strip().startswith(_SUBJECT_TAG_PREFIX):
-                subject_root = _subject_root_of(tag.split(_SUBJECT_TAG_PREFIX, 1)[1])
-                if subject_root:
-                    roots.append(subject_root)
+        subject_path = _metric_subject_path(doc)
+        if subject_path:
+            roots.append(subject_path)
     return roots
+
+
+def filter_metric_yaml(path: Path, selected_subjects: Sequence[str]) -> Optional[bytes]:
+    """Keep only the metric documents under the selected subject roots.
+
+    A metric file holds one document per metric, and a table's metrics
+    routinely span several subject areas (baisheng: 22 metrics across 4).
+    Filtering whole files would therefore be all-or-nothing, which is what
+    "selecting a subject" is supposed to avoid. Returns ``None`` when every
+    document is kept, so the caller can ship the file untouched.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("package: unreadable metric yaml %s: %s", path, exc)
+        return None
+
+    wanted = set(selected_subjects)
+    chunks = _split_yaml_documents(text)
+    kept: List[str] = []
+    for chunk in chunks:
+        try:
+            doc = yaml.safe_load(chunk)
+        except yaml.YAMLError:
+            kept.append(chunk)  # unparseable: keep rather than silently drop
+            continue
+        subject_path = _metric_subject_path(doc)
+        # Untagged metrics belong to no subject and would match no selection;
+        # keep them rather than dropping them from every filtered package.
+        if not subject_path or _subject_matches(subject_path, wanted):
+            kept.append(chunk)
+    if len(kept) == len(chunks):
+        return None
+    return ("\n---\n".join(kept) + "\n").encode("utf-8")
 
 
 def _read_yaml_mapping(path: Path) -> Dict[str, Any]:
@@ -451,8 +547,15 @@ def _vector_db_subject_roots(root: Path, raw: Dict[str, Any], project_name: str)
                 store = SubjectTreeStore(project=project_name, datasource_id=str(datasource))
                 for node in store.get_children(None) or []:
                     name = str(node.get("name") or "").strip()
-                    if name:
-                        roots.setdefault(name, str(node.get("description") or ""))
+                    if not name:
+                        continue
+                    roots.setdefault(name, str(node.get("description") or ""))
+                    # Second level: a root alone is usually too coarse to be a
+                    # useful selection (baisheng keeps all 22 metrics under one).
+                    for child in store.get_children(node.get("node_id")) or []:
+                        child_name = str(child.get("name") or "").strip()
+                        if child_name:
+                            roots.setdefault(f"{name}/{child_name}", str(child.get("description") or ""))
             except Exception as exc:
                 logger.debug("package: subject tree unavailable for %s: %s", datasource, exc)
     except Exception as exc:
@@ -463,30 +566,43 @@ def _vector_db_subject_roots(root: Path, raw: Dict[str, Any], project_name: str)
     return roots
 
 
-def list_subject_roots(root: Path, raw: Dict[str, Any], project_name: str) -> Dict[str, str]:
-    """``{subject_root: label}`` — the selectable subject areas.
+def list_subject_paths(root: Path, raw: Dict[str, Any], project_name: str) -> Dict[str, str]:
+    """``{subject_path: label}`` — the selectable subject areas, two levels deep.
 
-    Menu source of truth is the vector store's subject tree; the counts come
-    from the artifacts that would actually travel, so the label says what
-    selecting a root costs. Roots present only in the artifacts (KB not built
-    on this machine) are still offered.
+    Rendered as a tree: a root line followed by its indented children. Picking
+    a root takes its whole subtree, picking a child narrows to that branch.
+    The menu stops at :data:`SUBJECT_MENU_MAX_DEPTH` because deeper trees make
+    the screen unscannable while a second-level node is already a coherent
+    area (``运营/活动``, ``数据分析/指标统计``).
+
+    The vector store's subject tree is the authoritative menu; counts come
+    from the artifacts that would actually travel, so a label says what
+    picking that node costs. Paths present only in the artifacts (KB never
+    built on this machine) are still offered.
     """
-    tree_roots = _vector_db_subject_roots(root, raw, project_name)
-    sql_counts = _summary_subject_roots(root)
-    metric_counts = _metric_subject_roots(root)
+    tree_nodes = _vector_db_subject_roots(root, raw, project_name)
+    sql_counts = _count_by_subject_prefix(_summary_subject_values(root))
+    metric_counts = _count_by_subject_prefix(_metric_subject_values(root))
+
+    paths = {p for p in set(tree_nodes) | set(sql_counts) | set(metric_counts) if p}
+    # Parents of any offered child are offered too, so the tree is connected.
+    paths |= {path.split("/", 1)[0] for path in paths}
 
     labels: Dict[str, str] = {}
-    for name in sorted(set(tree_roots) | set(sql_counts) | set(metric_counts)):
+    for path in sorted(paths, key=lambda value: (value.split("/")[0], value.count("/"), value)):
+        depth = path.count("/")
+        leaf = path.split("/")[-1]
         parts = []
-        if metric_counts.get(name):
-            parts.append(f"{metric_counts[name]} metrics")
-        if sql_counts.get(name):
-            parts.append(f"{sql_counts[name]} reference SQL")
+        if metric_counts.get(path):
+            parts.append(f"{metric_counts[path]} metrics")
+        if sql_counts.get(path):
+            parts.append(f"{sql_counts[path]} reference SQL")
         if not parts:
             parts.append("no packaged entries")
-        description = tree_roots.get(name) or ""
+        description = tree_nodes.get(path) or ""
         suffix = f" — {description}" if description else ""
-        labels[name] = f"{name} ({', '.join(parts)}){suffix}"
+        indent = "  └ " if depth else ""
+        labels[path] = f"{indent}{leaf} ({', '.join(parts)}){suffix}"
     return labels
 
 
@@ -758,14 +874,22 @@ def select_metrics(
                 # a file travels when at least one of its metrics falls under
                 # a selected subject root. Semantic-model docs are table
                 # definitions, not subject-scoped, so they always travel.
-                doc_subjects = _metric_doc_subject_roots(path)
+                doc_subjects = _metric_doc_subjects(path)
                 if not doc_subjects:
                     # Untagged metrics belong to no subject area and would
                     # match no selection — ship them (with a warning) rather
                     # than dropping them from every filtered package.
                     warnings.append(f"{rel}: no subject_tree tag — packaged regardless of the subject selection")
-                elif not (set(doc_subjects) & set(selected_subjects)):
+                elif not any(_subject_matches(s, set(selected_subjects)) for s in doc_subjects):
                     continue
+                else:
+                    # One file spans several subjects, so drop the documents
+                    # outside the selection instead of shipping the lot.
+                    filtered = filter_metric_yaml(path, selected_subjects)
+                    if filtered is not None:
+                        entries.append(StagedEntry(arcname=rel, content=filtered))
+                        metrics_files.append(rel)
+                        continue
             entries.append(StagedEntry(arcname=rel, source=path))
             if path.suffix.lower() in (".yml", ".yaml"):
                 # ``metrics/*_metrics.yml`` feeds --components metrics; the
@@ -799,10 +923,10 @@ def select_reference_sql(root: Path, selected_subjects: Sequence[str]) -> Tuple[
     for path in sorted(base.rglob("*.y*ml")):
         if not path.is_file() or _is_junk_path(path.relative_to(base)):
             continue
-        subject_root = _subject_root_of(_read_yaml_mapping(path).get("subject_tree"))
-        if not subject_root:
+        subject_path = str(_read_yaml_mapping(path).get("subject_tree") or "")
+        if not _subject_segments(subject_path):
             warnings.append(f"{path.name}: no subject_tree — packaged regardless of the subject selection")
-        elif subject_root not in wanted:
+        elif not _subject_matches(subject_path, wanted):
             continue
         entries.append(StagedEntry(arcname=path.relative_to(root).as_posix(), source=path))
     return entries, len(entries), warnings
@@ -1789,7 +1913,7 @@ def _build_package(options: PackageOptions) -> PackageResult:
     kept_skills, skill_entries = select_skills(root, options.skills)
     _add(skill_entries)
 
-    available_subjects = list(list_subject_roots(root, raw, project_name))
+    available_subjects = list(list_subject_paths(root, raw, project_name))
     kept_subjects = _resolve_selection(available_subjects, options.subjects, "subject")
 
     kept_metrics, metric_entries, per_ds, metric_warnings = select_metrics(
@@ -1931,7 +2055,7 @@ __all__ = [
     "list_artifact_slugs",
     "list_metric_datasources",
     "list_packageable_plugins",
-    "list_subject_roots",
+    "list_subject_paths",
     "list_skills",
     "list_subagents",
     "load_raw_agent_config",

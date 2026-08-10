@@ -145,7 +145,7 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
     )
     # One subject-tree step gates both metric docs and reference-SQL
     # summaries — they are indexed under the same tree in the vector store.
-    subjects = _step_multi(console, "Subject areas", pb.list_subject_roots(root, raw, project_name))
+    subjects = _step_multi(console, "Subject areas", pb.list_subject_paths(root, raw, project_name))
     plugins = _step_multi(console, "Plugins", pb.list_packageable_plugins(root))
     reports = _step_multi(
         console,

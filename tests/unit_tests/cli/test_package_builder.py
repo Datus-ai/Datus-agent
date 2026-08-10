@@ -158,8 +158,13 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
         ds_dir = root / "subject" / "semantic_models" / ds
         (ds_dir / "metrics").mkdir(parents=True)
         (ds_dir / "orders.yml").write_text("data_source:\n  name: orders\n", encoding="utf-8")
+        # Two docs per file, in different subject areas, with the tag under
+        # ``locked_metadata`` — the shape gen_metrics actually writes.
         (ds_dir / "metrics" / "orders_metrics.yml").write_text(
-            f'metric:\n  name: gmv_{ds}\n  tags:\n    - "subject_tree: {subject}/revenue"\n',
+            f"metric:\n  name: gmv_{ds}\n  locked_metadata:\n    tags:\n"
+            f"    - 'subject_tree: {subject}/revenue'\n"
+            f"---\nmetric:\n  name: shared_{ds}\n  locked_metadata:\n    tags:\n"
+            f"    - 'subject_tree: shared/misc'\n",
             encoding="utf-8",
         )
     # Reference-SQL summaries: what the receiver re-indexes, each tagged with
@@ -470,11 +475,36 @@ class TestSelectors:
         assert "scripts/rebuild_kb.sh" not in names
         assert not any(name.startswith("subject/semantic_models/") for name in names)
 
-    def test_subject_roots_come_from_tree_and_artifacts(self, project):
-        """The menu is the subject tree; the counts say what each root costs."""
-        roots = pb.list_subject_roots(project, pb.load_raw_agent_config() or {}, "fixture_proj")
-        assert set(roots) == {"sales", "ops"}
-        assert "1 metrics" in roots["sales"] and "1 reference SQL" in roots["sales"]
+    def test_subject_menu_is_a_two_level_tree(self, project):
+        """The menu is the subject tree down to two levels — root-only choices
+        select far too much (baisheng: 61 paths under 3 roots). Deeper levels
+        are folded into their depth-2 parent so the menu stays readable."""
+        paths = pb.list_subject_paths(project, pb.load_raw_agent_config() or {}, "fixture_proj")
+        # 'shared' comes from the second metric doc in each metrics file.
+        assert set(paths) == {
+            "sales",
+            "sales/revenue",
+            "sales/orders",
+            "ops",
+            "ops/revenue",
+            "ops/pipeline",
+            "shared",
+            "shared/misc",
+        }
+        # Roots stay in the menu so the tree is connected; children are indented.
+        assert not paths["sales"].startswith(" ")
+        assert paths["sales/revenue"].strip().startswith("└ revenue")
+        # Counts roll up: a root carries everything beneath it.
+        assert "1 metrics" in paths["sales"] and "1 reference SQL" in paths["sales"]
+        assert "1 metrics" in paths["sales/revenue"] and "reference SQL" not in paths["sales/revenue"]
+
+    def test_second_level_selection_narrows_further_than_the_root(self, project):
+        """The whole point of the two-level menu: 'sales' takes both the
+        revenue metric and the orders summary, 'sales/revenue' takes only
+        the metric."""
+        names = _namelist(_build(project, subjects=("sales/revenue",)))
+        assert "subject/semantic_models/sales_db/metrics/orders_metrics.yml" in names
+        assert "subject/sql_summaries/q_sales.yaml" not in names  # tagged sales/orders
 
     def test_subject_selection_gates_metrics_and_summaries(self, project):
         result = _build(project, subjects=("sales",))
@@ -504,6 +534,24 @@ class TestSelectors:
         assert result.selections["reference_sql_entries"] == sum(
             1 for name in _namelist(result) if name.startswith("subject/sql_summaries/")
         )
+
+    def test_metric_filtering_is_per_document_not_per_file(self, project):
+        """One metric file spans several subject areas (baisheng: 22 metrics
+        across 4), so file-level filtering would be all-or-nothing — exactly
+        what selecting a subject is meant to avoid."""
+        result = _build(project, subjects=("sales",))
+        body = _member(result, "subject/semantic_models/sales_db/metrics/orders_metrics.yml").decode("utf-8")
+        assert "gmv_sales_db" in body  # under the selected subject
+        assert "shared_sales_db" not in body  # under an unselected one
+        # The pg_main file has no document under 'sales' at all — whole file out.
+        assert "subject/semantic_models/pg_main/metrics/orders_metrics.yml" not in _namelist(result)
+
+    def test_metric_tag_read_from_locked_metadata(self, project):
+        """gen_metrics writes the tag under metric.locked_metadata.tags; reading
+        only metric.tags made every generated metric look untagged, which
+        disabled subject filtering entirely."""
+        path = project / "subject" / "semantic_models" / "sales_db" / "metrics" / "orders_metrics.yml"
+        assert set(pb._metric_doc_subjects(path)) == {"sales/revenue", "shared/misc"}
 
     def test_untagged_metrics_ship_with_a_warning(self, project):
         """An untagged metric file matches no subject and would drop out of
