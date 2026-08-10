@@ -3,12 +3,17 @@
 </p>
 
 <p align="center">
-  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/license-Apache%202.0-blueviolet?style=for-the-badge" alt="License"></a>
-  <a href="https://datus.ai"><img src="https://img.shields.io/badge/Website-5A0FC8?style=for-the-badge" alt="Website"></a>
-  <a href="https://docs.datus.ai/"><img src="https://img.shields.io/badge/Docs-654FF0?style=for-the-badge" alt="Docs"></a>
-  <a href="https://docs.datus.ai/zh/latest/getting_started/Quickstart/"><img src="https://img.shields.io/badge/Quick%20Start-3423A6?style=for-the-badge" alt="Quick Start"></a>
-  <a href="https://docs.datus.ai/zh/latest/release_notes/"><img src="https://img.shields.io/badge/Release%20Notes-092540?style=for-the-badge" alt="Release Notes"></a>
-  <a href="https://join.slack.com/t/datus-ai/shared_invite/zt-3g6h4fsdg-iOl5uNoz6A4GOc4xKKWUYg"><img src="https://img.shields.io/badge/Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white" alt="Slack"></a>
+  <a href="https://www.apache.org/licenses/LICENSE-2.0"><img src="https://img.shields.io/badge/License-Apache%202.0-D22128?logo=apache&logoColor=white" alt="License: Apache 2.0"></a>
+  <a href="https://pypi.org/project/datus-agent/"><img src="https://img.shields.io/pypi/v/datus-agent?logo=pypi&logoColor=white&color=654FF0" alt="PyPI version"></a>
+  <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
+  <a href="https://join.slack.com/t/datus-ai/shared_invite/zt-3g6h4fsdg-iOl5uNoz6A4GOc4xKKWUYg"><img src="https://img.shields.io/badge/Slack-join%20chat-4A154B?logo=slack&logoColor=white" alt="Slack"></a>
+</p>
+
+<p align="center">
+  <a href="https://datus.ai">官网</a> ·
+  <a href="https://docs.datus.ai/zh/latest/">文档</a> ·
+  <a href="https://docs.datus.ai/zh/latest/getting_started/Quickstart/">快速开始</a> ·
+  <a href="https://docs.datus.ai/zh/latest/release_notes/">发布日志</a>
 </p>
 
 <p align="center">
