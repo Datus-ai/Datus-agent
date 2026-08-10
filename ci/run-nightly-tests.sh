@@ -1409,6 +1409,19 @@ PY
   return 1
 }
 
+wait_for_doris_client_readiness() {
+  local timeout_seconds="${1:-600}"
+
+  uv run --no-sync python "$DB_ADAPTERS_ROOT/datus-doris/scripts/wait_for_doris.py" \
+    --timeout "$timeout_seconds" 2>&1 | tee -a "$LOG_FILE"
+  local status=${PIPESTATUS[0]}
+  if [ "$status" -ne 0 ]; then
+    test_exit_code="$status"
+    return "$status"
+  fi
+  return 0
+}
+
 wait_for_compose_client_readiness() {
   local group_name="$1"
   local airflow_base
@@ -1438,7 +1451,7 @@ wait_for_compose_client_readiness() {
       wait_for_starrocks_client_readiness 300
       ;;
     "Doris Adapter Tests")
-      wait_for_tcp_readiness "Doris" "${DORIS_HOST:-127.0.0.1}" "${DORIS_PORT:-9030}" 600
+      wait_for_doris_client_readiness "${DORIS_READY_TIMEOUT:-600}"
       ;;
     "Trino Adapter Tests")
       wait_for_http_readiness "Trino" "http://${TRINO_HOST:-127.0.0.1}:${TRINO_PORT:-8080}/v1/info" 300
