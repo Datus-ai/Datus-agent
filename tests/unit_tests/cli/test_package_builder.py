@@ -122,6 +122,11 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     (root / "conf" / ".agent.yml.swp").write_bytes(b"vim swap")
     (root / "knowledge" / "notes.md~").write_text("backup", encoding="utf-8")
     (root / ".DS_Store").write_bytes(b"\x00\x01")
+    # macOS litter: AppleDouble xattr sidecars (non-APFS volumes) and
+    # Archive-Utility leftovers from a previous unzip.
+    (root / "knowledge" / "._notes.md").write_bytes(b"\x00\x05\x16\x07AppleDouble")
+    (root / "__MACOSX").mkdir()
+    (root / "__MACOSX" / "junk.txt").write_text("litter", encoding="utf-8")
     (root / ".datus" / "memory").mkdir()
     (root / ".datus" / "memory" / "private.md").write_text("private memory", encoding="utf-8")
     (root / ".datus" / "plans").mkdir()
@@ -204,6 +209,8 @@ class TestCollection:
             "conf/.agent.yml.swp",
             "knowledge/notes.md~",
             ".DS_Store",
+            "knowledge/._notes.md",
+            "__MACOSX/junk.txt",
             ".datus/memory/private.md",
             ".datus/plans/draft.md",
         ):
@@ -405,6 +412,22 @@ class TestSelectors:
         # wipe the first datasource's freshly built entries.
         assert script.count("--kb_update_strategy overwrite") == 1
         assert script.count("--kb_update_strategy incremental") == 3  # 1 semantic + 2 metrics
+
+    def test_appledouble_sidecars_never_reach_selectors(self, project):
+        """AppleDouble ``._*`` files (macOS xattr sidecars on SMB/FAT
+        volumes) must be invisible to every selector — the metrics rglob
+        would otherwise classify ``._orders.yml`` as a semantic-model file
+        and write it into rebuild_kb.sh."""
+        ds_dir = project / "subject" / "semantic_models" / "sales_db"
+        (ds_dir / "._orders.yml").write_bytes(b"\x00\x05\x16\x07AppleDouble")
+        (project / ".datus" / "skills" / "shared-skill" / "._SKILL.md").write_bytes(b"\x00\x05")
+        (project / "reports" / "daily_gmv" / "render" / "._app.jsx").write_bytes(b"\x00\x05")
+
+        result = _build(project)
+        names = _namelist(result)
+        assert not any("._" in name for name in names), [n for n in names if "._" in n]
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
+        assert "._orders" not in script
 
     def test_no_metrics_no_rebuild_script(self, project):
         names = _namelist(_build(project, metrics=()))

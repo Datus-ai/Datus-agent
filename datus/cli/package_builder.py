@@ -71,12 +71,46 @@ _TOP_LEVEL_EXCLUDED_DIRS = frozenset(
 # Directories owned by the component selectors — removed from the generic walk
 # so the default full-tree include cannot bypass an explicit selection.
 _SELECTOR_OWNED_TOP_DIRS = frozenset({"reports", "dashboards", "template"})
-# Excluded at any depth.
-_ANY_DEPTH_EXCLUDED_DIRS = frozenset({"__pycache__", ".venv", ".git"})
+# Excluded at any depth. ``__MACOSX`` is Archive-Utility litter from a prior
+# unzip; ``.Spotlight-V100``/``.Trashes``/``.fseventsd``/… appear when the
+# project sits at the root of an external volume.
+_ANY_DEPTH_EXCLUDED_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".venv",
+        ".git",
+        "__MACOSX",
+        ".Spotlight-V100",
+        ".Trashes",
+        ".fseventsd",
+        ".TemporaryItems",
+        ".DocumentRevisions-V100",
+    }
+)
 _ANY_DEPTH_EXCLUDED_FILES = frozenset({".env", ".DS_Store"})
 # ``*.sw?``/``*~`` are editor swap/backup files — transient by nature, they
 # routinely vanish between collection and zip write.
 _EXCLUDED_FILE_SUFFIXES = (".duckdb.wal", ".swp", ".swo", ".swx", "~")
+
+
+def _is_junk_path(path: Path) -> bool:
+    """OS/editor litter that must never ship, wherever it is found.
+
+    Applied by the generic walk AND by every component selector — the
+    selectors rglob their own subtrees and bypass the walk's pruning, so a
+    macOS AppleDouble sidecar (``._orders.yml`` written next to real files
+    on SMB/FAT volumes to carry xattrs) would otherwise be staged as a
+    semantic-model/render file and even end up in ``rebuild_kb.sh``.
+    """
+    name = path.name
+    return (
+        name in _ANY_DEPTH_EXCLUDED_FILES
+        or name.endswith(_EXCLUDED_FILE_SUFFIXES)
+        or name.startswith("._")
+        or any(part in _ANY_DEPTH_EXCLUDED_DIRS for part in path.parts)
+    )
+
+
 # Generated files replace these — never copy the originals.
 _GENERATED_CONF_RELPATHS = frozenset({"conf/agent.yml", "conf/.mcp.json"})
 
@@ -392,7 +426,7 @@ def collect_project_files(
         for fname in sorted(filenames):
             fpath = Path(dirpath) / fname
             rel = (rel_dir / fname).as_posix() if depth_parts else fname
-            if fname in _ANY_DEPTH_EXCLUDED_FILES or fname.endswith(_EXCLUDED_FILE_SUFFIXES):
+            if _is_junk_path(Path(fname)):
                 continue
             if rel in _GENERATED_CONF_RELPATHS or rel == PROJECT_CONFIG_REL:
                 continue
@@ -475,7 +509,7 @@ def select_skills(
     for name in kept:
         skill_dir = available[name]
         for path in sorted(skill_dir.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not _is_junk_path(path.relative_to(skill_dir)):
                 rel = path.relative_to(skill_dir).as_posix()
                 entries.append(StagedEntry(arcname=f".datus/skills/{name}/{rel}", source=path))
     return kept, entries
@@ -499,7 +533,7 @@ def select_metrics(
         semantic_files: List[str] = []
         metrics_files: List[str] = []
         for path in sorted(ds_dir.rglob("*")):
-            if not path.is_file():
+            if not path.is_file() or _is_junk_path(path.relative_to(ds_dir)):
                 continue
             rel = path.relative_to(root).as_posix()
             entries.append(StagedEntry(arcname=rel, source=path))
@@ -524,7 +558,7 @@ def _artifact_walk(artifact_dir: Path, dirs_spec: Dict[str, Tuple[Tuple[str, ...
             continue
         iterator = base.rglob("*") if recursive else base.iterdir()
         for path in iterator:
-            if not path.is_file():
+            if not path.is_file() or _is_junk_path(path.relative_to(base)):
                 continue
             name_lower = path.name.lower()
             if not any(name_lower.endswith(sfx) for sfx in suffixes):
