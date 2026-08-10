@@ -70,7 +70,9 @@ _TOP_LEVEL_EXCLUDED_DIRS = frozenset(
 )
 # Directories owned by the component selectors — removed from the generic walk
 # so the default full-tree include cannot bypass an explicit selection.
-_SELECTOR_OWNED_TOP_DIRS = frozenset({"reports", "dashboards", "template"})
+_SELECTOR_OWNED_TOP_DIRS = frozenset(
+    {"reports", "dashboards", "template", "reference_sql", "reference_sqls", "ref_sql"}
+)
 # Files that live at the ``home`` root and are runtime state under ``home: .``:
 # ``history`` is the REPL command history — user activity, possibly sensitive
 # queries. Top-level only, so a project's own ``docs/history`` still ships.
@@ -343,28 +345,62 @@ def list_skills(root: Path) -> Dict[str, Path]:
     return out
 
 
-# Directory names that conventionally hold a reference-SQL corpus. Only these
-# are rebuilt by default: a ``*.sql`` directory can just as easily be DDL or
-# migrations, and bootstrapping those as reference queries pollutes the KB.
-_REFERENCE_SQL_CONVENTIONAL_DIRS = frozenset({"reference_sql", "reference_sqls", "ref_sql", "ref_sqls"})
+# Canonical project-root directory holding the reference-SQL corpus, in
+# priority order. Only this tree is treated as reference SQL — the same
+# "canonical path" property that lets the metric selector trust
+# ``subject/semantic_models/``. Any other ``*.sql`` directory (migrations,
+# DDL, fixtures) is ordinary project content and ships via the generic walk.
+_REFERENCE_SQL_ROOT_NAMES = ("reference_sql", "reference_sqls", "ref_sql")
 
 
-def list_reference_sql_dirs(root: Path) -> List[str]:
-    """Top-level directories holding ``*.sql`` files — reference-SQL candidates.
+@dataclass(frozen=True)
+class ReferenceSqlUnit:
+    """One selectable reference-SQL corpus, mirroring a metric datasource.
 
-    ``bootstrap-kb --components reference_sql`` takes a ``--sql_dir`` and there
-    is no canonical location, so candidates are discovered by content. Being a
-    candidate only makes a directory *offerable*: selection decides which
-    corpora the receiver bootstraps (see :func:`select_reference_sql`).
+    Layout, in priority order:
+
+    * ``reference_sql/<datasource>/`` — one unit per datasource, exactly like
+      ``subject/semantic_models/<datasource>/``; ``name`` is the datasource.
+    * ``reference_sql/*.sql`` (flat) — a single unit bound to the project's
+      default datasource. ``datasource`` is ``None`` when it can't be
+      resolved, in which case the rebuild step is emitted as a manual note.
     """
-    skip = _TOP_LEVEL_EXCLUDED_DIRS | _SELECTOR_OWNED_TOP_DIRS | _ANY_DEPTH_EXCLUDED_DIRS | {"subject", "conf"}
-    out: List[str] = []
-    for entry in sorted(root.iterdir()):
-        if not entry.is_dir() or entry.is_symlink() or entry.name in skip or entry.name.startswith("output"):
-            continue
-        if any(p.is_file() and p.suffix.lower() == ".sql" for p in entry.rglob("*")):
-            out.append(entry.name)
-    return out
+
+    name: str
+    rel_dir: str
+    datasource: Optional[str]
+
+
+def _reference_sql_root(root: Path) -> Optional[Path]:
+    for name in _REFERENCE_SQL_ROOT_NAMES:
+        candidate = root / name
+        if candidate.is_dir() and not candidate.is_symlink():
+            return candidate
+    return None
+
+
+def list_reference_sql_units(root: Path, raw: Optional[Dict[str, Any]] = None) -> List[ReferenceSqlUnit]:
+    """Selectable reference-SQL corpora under the canonical directory."""
+    base = _reference_sql_root(root)
+    if base is None:
+        return []
+    rel_base = base.relative_to(root).as_posix()
+
+    def _has_sql(directory: Path) -> bool:
+        return any(p.is_file() and p.suffix.lower() == ".sql" for p in directory.rglob("*"))
+
+    per_ds = [
+        entry
+        for entry in sorted(base.iterdir())
+        if entry.is_dir() and not entry.is_symlink() and not _is_junk_path(Path(entry.name)) and _has_sql(entry)
+    ]
+    if per_ds:
+        return [ReferenceSqlUnit(name=d.name, rel_dir=f"{rel_base}/{d.name}", datasource=d.name) for d in per_ds]
+
+    if not _has_sql(base):
+        return []
+    datasource = resolve_default_datasource(root, raw or {})
+    return [ReferenceSqlUnit(name=datasource or rel_base, rel_dir=rel_base, datasource=datasource)]
 
 
 def list_packageable_plugins(root: Path) -> Dict[str, str]:
@@ -633,22 +669,30 @@ def select_metrics(
     return kept, entries, per_ds
 
 
-def select_reference_sql(root: Path, requested: Optional[Sequence[str]]) -> List[str]:
-    """Reference-SQL corpora the receiver should bootstrap into its KB.
+def select_reference_sql(
+    root: Path,
+    requested: Optional[Sequence[str]],
+    raw: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[str], List[StagedEntry], List[ReferenceSqlUnit]]:
+    """Stage the selected reference-SQL corpora — the metric selector's shape.
 
-    Unlike the other selectors this one does NOT gate staging — every ``.sql``
-    directory travels as ordinary project content via the generic walk, so a
-    deselected corpus is never lost, it simply gets no rebuild line. Use
-    ``--exclude`` to keep a directory out of the zip entirely.
-
-    The default (``requested is None``) is the conventionally-named subset:
-    auto-bootstrapping a ``migrations/`` or ``init/`` directory full of DDL
-    would poison the reference-SQL store.
+    Returns ``(kept, entries, units)``: selected corpora ship and get a
+    rebuild line; unselected ones are dropped from the zip, exactly like an
+    unselected metric datasource.
     """
-    available = list_reference_sql_dirs(root)
-    if requested is None:
-        return [name for name in available if name in _REFERENCE_SQL_CONVENTIONAL_DIRS]
-    return _resolve_selection(available, requested, "reference SQL directory")
+    units = {unit.name: unit for unit in list_reference_sql_units(root, raw)}
+    kept = _resolve_selection(list(units), requested, "reference SQL corpus")
+
+    entries: List[StagedEntry] = []
+    kept_units: List[ReferenceSqlUnit] = []
+    for name in kept:
+        unit = units[name]
+        kept_units.append(unit)
+        unit_dir = root / unit.rel_dir
+        for path in sorted(unit_dir.rglob("*")):
+            if path.is_file() and not _is_junk_path(path.relative_to(unit_dir)):
+                entries.append(StagedEntry(arcname=path.relative_to(root).as_posix(), source=path))
+    return kept, entries, kept_units
 
 
 def _artifact_walk(artifact_dir: Path, dirs_spec: Dict[str, Tuple[Tuple[str, ...], bool]]) -> List[Path]:
@@ -1206,8 +1250,7 @@ def generate_requirements(packages: Sequence[DatusPackage]) -> Tuple[bytes, List
 
 def generate_rebuild_kb_script(
     per_ds: Dict[str, Tuple[List[str], List[str]]],
-    reference_sql_dirs: Sequence[str] = (),
-    reference_sql_datasource: Optional[str] = None,
+    reference_sql_units: Sequence[ReferenceSqlUnit] = (),
 ) -> Optional[bytes]:
     """Per-file bootstrap-kb loop: semantic models first, then metrics.
 
@@ -1239,32 +1282,32 @@ def generate_rebuild_kb_script(
             )
 
     notes: List[str] = []
-    if reference_sql_dirs:
-        if reference_sql_datasource:
-            # reference_sql keeps its own store, so its first call overwrites
-            # independently of the semantic/metric calls above.
-            for idx, sql_dir in enumerate(reference_sql_dirs):
-                strategy = "overwrite" if idx == 0 else "incremental"
-                commands.append(
-                    f"datus-agent bootstrap-kb --datasource {reference_sql_datasource} "
-                    f'--components reference_sql --sql_dir "{sql_dir}" '
-                    f"--kb_update_strategy {strategy} -y"
-                )
-            notes += [
-                "# NOTE: the reference_sql step re-generates one SQL summary per",
-                "# statement through the LLM — expect it to take a while and to",
-                "# consume API credits. The shipped subject/sql_summaries/ files are",
-                "# the source project's copies; they are not reused by the rebuild.",
-            ]
-        else:
-            notes += [
-                "# NOTE: reference SQL shipped but no default datasource could be",
-                "# resolved at pack time. Rebuild it manually with:",
-                *[
-                    f'#   datus-agent bootstrap-kb --datasource <ds> --components reference_sql --sql_dir "{d}" -y'
-                    for d in reference_sql_dirs
-                ],
-            ]
+    if reference_sql_units:
+        # reference_sql keeps its own store, so its first call overwrites
+        # independently of the semantic/metric calls above.
+        emitted = False
+        for unit in reference_sql_units:
+            if unit.datasource is None:
+                notes += [
+                    "# NOTE: reference SQL shipped but its datasource could not be",
+                    "# resolved at pack time. Rebuild it manually with:",
+                    f"#   datus-agent bootstrap-kb --datasource <ds> --components reference_sql "
+                    f'--sql_dir "{unit.rel_dir}" -y',
+                ]
+                continue
+            strategy = "incremental" if emitted else "overwrite"
+            emitted = True
+            commands.append(
+                f"datus-agent bootstrap-kb --datasource {unit.datasource} "
+                f'--components reference_sql --sql_dir "{unit.rel_dir}" '
+                f"--kb_update_strategy {strategy} -y"
+            )
+        notes += [
+            "# NOTE: the reference_sql step re-generates one SQL summary per",
+            "# statement through the LLM — expect it to take a while and to",
+            "# consume API credits. The shipped subject/sql_summaries/ files are",
+            "# the source project's copies; they are not reused by the rebuild.",
+        ]
 
     if not commands:
         return None
@@ -1574,7 +1617,10 @@ def _build_package(options: PackageOptions) -> PackageResult:
     kept_metrics, metric_entries, per_ds = select_metrics(root, options.metrics)
     _add(metric_entries)
 
-    kept_reference_sql = select_reference_sql(root, options.reference_sql)
+    kept_reference_sql, reference_sql_entries, reference_sql_units = select_reference_sql(
+        root, options.reference_sql, raw
+    )
+    _add(reference_sql_entries)
 
     kept_reports, report_entries, report_warnings = select_artifacts(
         root, "report", options.reports, options.report_dist
@@ -1607,7 +1653,7 @@ def _build_package(options: PackageOptions) -> PackageResult:
         )
     _add([StagedEntry(arcname="requirements.txt", content=requirements)])
 
-    rebuild = generate_rebuild_kb_script(per_ds, kept_reference_sql, resolve_default_datasource(root, raw))
+    rebuild = generate_rebuild_kb_script(per_ds, reference_sql_units)
     if rebuild is not None:
         _add([StagedEntry(arcname="scripts/rebuild_kb.sh", content=rebuild, executable=True)])
 
@@ -1693,7 +1739,7 @@ __all__ = [
     "list_artifact_slugs",
     "list_metric_datasources",
     "list_packageable_plugins",
-    "list_reference_sql_dirs",
+    "list_reference_sql_units",
     "list_skills",
     "list_subagents",
     "load_raw_agent_config",

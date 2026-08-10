@@ -161,10 +161,12 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     (root / "subject" / "sql_summaries").mkdir(parents=True)
     (root / "subject" / "sql_summaries" / "summary.md").write_text("sql summary", encoding="utf-8")
 
-    # Two reference-SQL corpora, discovered by content (*.sql).
-    (root / "reference_sql").mkdir()
-    (root / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
-    (root / "reference_sql" / "README.md").write_text("corpus notes", encoding="utf-8")
+    # Reference SQL, per-datasource layout mirroring subject/semantic_models/.
+    for ds in ("sales_db", "pg_main"):
+        (root / "reference_sql" / ds).mkdir(parents=True)
+        (root / "reference_sql" / ds / "queries.sql").write_text(f"SELECT 1; -- {ds}", encoding="utf-8")
+    (root / "reference_sql" / "sales_db" / "README.md").write_text("corpus notes", encoding="utf-8")
+    # DDL living outside the canonical dir must never be treated as reference SQL.
     (root / "migrations").mkdir()
     (root / "migrations" / "001_init.sql").write_text("CREATE TABLE t(a INT);", encoding="utf-8")
 
@@ -451,57 +453,79 @@ class TestSelectors:
         assert "scripts/rebuild_kb.sh" not in names
         assert not any(name.startswith("subject/semantic_models/") for name in names)
 
-    def test_reference_sql_discovered_by_content(self, project):
-        assert pb.list_reference_sql_dirs(project) == ["migrations", "reference_sql"]
+    def test_reference_sql_units_are_datasources(self, project):
+        """``reference_sql/<ds>/`` mirrors ``subject/semantic_models/<ds>/``:
+        one selectable unit per datasource, named after it."""
+        units = pb.list_reference_sql_units(project)
+        assert [(u.name, u.rel_dir, u.datasource) for u in units] == [
+            ("pg_main", "reference_sql/pg_main", "pg_main"),
+            ("sales_db", "reference_sql/sales_db", "sales_db"),
+        ]
 
-    def test_reference_sql_default_is_conventional_dirs_only(self, project):
-        """A migrations/DDL directory must never be bootstrapped as reference
-        SQL just because it holds .sql files — that would poison the store."""
-        assert pb.select_reference_sql(project, None) == ["reference_sql"]
+    def test_reference_sql_selection_gates_packaging_like_metrics(self, project):
+        result = _build(project, reference_sql=("sales_db",))
+        names = _namelist(result)
+        assert "reference_sql/sales_db/queries.sql" in names
+        assert "reference_sql/sales_db/README.md" in names  # whole corpus travels
+        assert "reference_sql/pg_main/queries.sql" not in names
 
-        script = _member(_build(project), "scripts/rebuild_kb.sh").decode("utf-8")
-        runnable = [line for line in script.splitlines() if line and not line.startswith("#")]
-        assert any('--sql_dir "reference_sql"' in line for line in runnable)
-        assert not any("migrations" in line for line in runnable)
-
-    def test_reference_sql_files_ship_regardless_of_selection(self, project):
-        """Selection drives the KB rebuild, not staging: deselecting a corpus
-        must never silently drop the user's SQL files from the package."""
-        names = _namelist(_build(project, reference_sql=()))
-        assert "reference_sql/queries.sql" in names
-        assert "reference_sql/README.md" in names
-        assert "migrations/001_init.sql" in names
-
-    def test_reference_sql_rebuild_lines_use_default_datasource(self, project):
-        result = _build(project, reference_sql=("reference_sql",))
+    def test_ddl_outside_the_canonical_dir_is_never_reference_sql(self, project):
+        """A migrations/ tree full of DDL must ship as ordinary project content
+        and never be bootstrapped — poisoning the reference-SQL store."""
+        result = _build(project)
+        assert "migrations/001_init.sql" in _namelist(result)
         script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
-        line = next(line for line in script.splitlines() if "--components reference_sql" in line)
-        # sales_db is the fixture's default datasource pin.
-        assert '--sql_dir "reference_sql"' in line and "--kb_update_strategy overwrite" in line
-        assert "--datasource sales_db" in line
+        assert "migrations" not in script
+
+    def test_flat_reference_sql_binds_to_default_datasource(self, project):
+        import shutil
+
+        shutil.rmtree(project / "reference_sql")
+        (project / "reference_sql").mkdir()
+        (project / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
+
+        units = pb.list_reference_sql_units(project)
+        assert [(u.name, u.rel_dir, u.datasource) for u in units] == [
+            ("sales_db", "reference_sql", "sales_db")  # sales_db is the project pin
+        ]
+
+    def test_reference_sql_rebuild_lines_are_per_datasource(self, project):
+        script = _member(_build(project), "scripts/rebuild_kb.sh").decode("utf-8")
+        lines = [line for line in script.splitlines() if "--components reference_sql" in line]
+        assert len(lines) == 2
+        assert any("--datasource pg_main" in ln and '--sql_dir "reference_sql/pg_main"' in ln for ln in lines)
+        assert any("--datasource sales_db" in ln and '--sql_dir "reference_sql/sales_db"' in ln for ln in lines)
+        # Its own store: exactly one overwrite, the rest incremental.
+        assert sum("overwrite" in ln for ln in lines) == 1
         # Reference SQL runs after the semantic/metric steps.
         assert script.index("--components semantic_model") < script.index("--components reference_sql")
         assert "re-generates one SQL summary per" in script
 
-    def test_reference_sql_without_default_datasource_emits_manual_note(self, project):
+    def test_flat_reference_sql_without_datasource_emits_manual_note(self, project):
+        import shutil
+
+        shutil.rmtree(project / "reference_sql")
+        (project / "reference_sql").mkdir()
+        (project / "reference_sql" / "queries.sql").write_text("SELECT 1;", encoding="utf-8")
+        # Drop the project pin: 3 datasources, none flagged default -> ambiguous.
         (project / ".datus" / "config.yml").write_text("project_name: fixture_proj\n", encoding="utf-8")
-        result = _build(project, reference_sql=("reference_sql",))
+
+        result = _build(project)
+        assert "reference_sql/queries.sql" in _namelist(result)  # corpus still ships
         script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
-        # Ambiguous datasource -> the corpus ships, but no executable line is
-        # emitted; the receiver gets a commented manual command instead.
         runnable = [line for line in script.splitlines() if line.strip() and not line.strip().startswith("#")]
         assert not any("--components reference_sql" in line for line in runnable)
-        assert "no default datasource could be" in script
-        assert any("--components reference_sql" in line for line in script.splitlines() if line.startswith("#"))
+        assert "datasource could not be" in script
 
-    def test_no_reference_sql_selected_emits_no_rebuild_line(self, project):
-        script = _member(_build(project, reference_sql=()), "scripts/rebuild_kb.sh").decode("utf-8")
+    def test_no_reference_sql_selected_ships_none(self, project):
+        result = _build(project, reference_sql=())
+        assert not any(name.startswith("reference_sql/") for name in _namelist(result))
+        script = _member(result, "scripts/rebuild_kb.sh").decode("utf-8")
         assert "--components reference_sql" not in script
 
-    def test_explicitly_selected_unconventional_dir_is_rebuilt(self, project):
-        script = _member(_build(project, reference_sql=("migrations",)), "scripts/rebuild_kb.sh").decode("utf-8")
-        runnable = [line for line in script.splitlines() if line and not line.startswith("#")]
-        assert any('--sql_dir "migrations"' in line for line in runnable)
+    def test_unknown_reference_sql_corpus_fails(self, project):
+        result = _build(project, reference_sql=("ghost_ds",))
+        assert not result.ok and "unknown reference SQL corpus" in result.error
 
     def test_artifact_allowlist_filters_stray_files(self, project):
         names = _namelist(_build(project))
