@@ -399,22 +399,55 @@ class SubAgentTaskTool:
         """
         # Builtin system subagents have non-standard constructors
         if subagent_type in SYS_SUB_AGENTS:
-            return self._create_builtin_node(subagent_type, session_id=session_id)
+            node = self._create_builtin_node(subagent_type, session_id=session_id)
+        else:
+            node_type, node_name = self._resolve_node_type(subagent_type)
+            node_id = f"task_{subagent_type}_{uuid.uuid4().hex[:8]}"
+            description = f"SubAgent task: {subagent_type}"
 
-        node_type, node_name = self._resolve_node_type(subagent_type)
-        node_id = f"task_{subagent_type}_{uuid.uuid4().hex[:8]}"
-        description = f"SubAgent task: {subagent_type}"
+            from datus.agent.node.node import Node
 
-        from datus.agent.node.node import Node
+            node = Node.new_instance(
+                node_id=node_id,
+                description=description,
+                node_type=node_type,
+                agent_config=self.agent_config,
+                node_name=node_name,
+                is_subagent=True,
+                session_id=session_id,
+            )
 
-        return Node.new_instance(
-            node_id=node_id,
-            description=description,
-            node_type=node_type,
-            agent_config=self.agent_config,
-            node_name=node_name,
-            is_subagent=True,
-            session_id=session_id,
+        self._inherit_permission_profile(node)
+        return node
+
+    def _inherit_permission_profile(self, node: Any) -> None:
+        """Run the child under the profile the parent is actually running under.
+
+        A per-request ``permission_mode`` is applied to the top-level node's
+        ``PermissionManager`` only — ``AgentConfig`` is shared across
+        concurrent requests, so the override deliberately never touches it.
+        The child is built from that same shared config, so without this it
+        falls back to the server default: a user who asked for ``dangerous``
+        gets permission prompts as soon as the work lands in a subagent.
+
+        Workflow children are left alone — they force ``dangerous`` by design
+        (see ``AgenticNode._setup_permission_manager``), and copying an
+        interactive parent's profile down would narrow that.
+        """
+        if getattr(node, "execution_mode", None) == "workflow":
+            return
+
+        parent_manager = getattr(self._parent_node, "permission_manager", None)
+        if parent_manager is None:
+            return
+
+        from datus.tools.permission.profile_override import apply_profile_override
+
+        apply_profile_override(
+            getattr(node, "permission_manager", None),
+            self.agent_config,
+            getattr(parent_manager, "active_profile", None),
+            subject=f"subagent node={getattr(node, 'node_id', None)}",
         )
 
     def _resolve_execution_mode(self) -> Literal["interactive", "workflow"]:

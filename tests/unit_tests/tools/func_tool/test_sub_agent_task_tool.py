@@ -735,6 +735,88 @@ class TestNodeCreation:
         assert node2 is node_b
 
 
+# ── permission profile inheritance ─────────────────────────────────
+
+
+def _child(execution_mode="interactive", profile="normal"):
+    node = Mock(name="child")
+    node.execution_mode = execution_mode
+    node.node_id = "task_explore_abc"
+    manager = MagicMock()
+    manager.active_profile = profile
+    node.permission_manager = manager
+    return node
+
+
+def _parent(profile="dangerous"):
+    node = Mock(name="parent")
+    manager = MagicMock()
+    manager.active_profile = profile
+    node.permission_manager = manager
+    return node
+
+
+class TestSubagentInheritsPermissionProfile:
+    """A per-request permission_mode lives on the parent node's manager only.
+
+    The child is built from the shared AgentConfig, so without an explicit
+    copy it starts on the server default — and a user who asked for
+    ``dangerous`` gets permission prompts the moment the work moves into a
+    subagent.
+    """
+
+    def test_child_runs_under_the_parent_profile(self, task_tool):
+        child = _child(profile="normal")
+        task_tool.set_parent_node(_parent(profile="dangerous"))
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_called_once()
+        assert child.permission_manager.switch_profile.call_args[0][0] == "dangerous"
+
+    def test_nothing_to_copy_without_a_parent(self, task_tool):
+        child = _child(profile="normal")
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_not_called()
+
+    def test_leaves_a_workflow_child_alone(self, task_tool):
+        """Workflow nodes force ``dangerous`` by design — narrowing them here
+        would quietly change what unattended flows are allowed to do."""
+        child = _child(execution_mode="workflow", profile="dangerous")
+        task_tool.set_parent_node(_parent(profile="normal"))
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_not_called()
+
+    def test_skips_a_child_already_on_that_profile(self, task_tool):
+        child = _child(profile="dangerous")
+        task_tool.set_parent_node(_parent(profile="dangerous"))
+
+        with patch("datus.agent.node.node.Node.new_instance", return_value=child):
+            task_tool._create_node("explore")
+
+        child.permission_manager.switch_profile.assert_not_called()
+
+    def test_builtin_subagents_inherit_too(self, task_tool):
+        # gen_table-style builtins take the non-standard constructor path,
+        # which is the one the DDL confirmation card came out of.
+        child = _child(profile="normal")
+        task_tool.set_parent_node(_parent(profile="dangerous"))
+
+        with patch.object(task_tool, "_create_builtin_node", return_value=child):
+            node = task_tool._create_node(next(iter(SYS_SUB_AGENTS)))
+
+        assert node is child
+        child.permission_manager.switch_profile.assert_called_once()
+        assert child.permission_manager.switch_profile.call_args[0][0] == "dangerous"
+
+
 # ── _build_node_input ──────────────────────────────────────────────
 
 
