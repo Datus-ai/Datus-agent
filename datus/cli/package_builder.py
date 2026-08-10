@@ -41,7 +41,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -73,8 +73,10 @@ _TOP_LEVEL_EXCLUDED_DIRS = frozenset(
 _SELECTOR_OWNED_TOP_DIRS = frozenset({"reports", "dashboards", "template"})
 # Excluded at any depth.
 _ANY_DEPTH_EXCLUDED_DIRS = frozenset({"__pycache__", ".venv", ".git"})
-_ANY_DEPTH_EXCLUDED_FILES = frozenset({".env"})
-_EXCLUDED_FILE_SUFFIXES = (".duckdb.wal",)
+_ANY_DEPTH_EXCLUDED_FILES = frozenset({".env", ".DS_Store"})
+# ``*.sw?``/``*~`` are editor swap/backup files — transient by nature, they
+# routinely vanish between collection and zip write.
+_EXCLUDED_FILE_SUFFIXES = (".duckdb.wal", ".swp", ".swo", ".swx", "~")
 # Generated files replace these — never copy the originals.
 _GENERATED_CONF_RELPATHS = frozenset({"conf/agent.yml", "conf/.mcp.json"})
 
@@ -153,8 +155,9 @@ class PackageOptions:
     reports: Optional[Tuple[str, ...]] = None
     dashboards: Optional[Tuple[str, ...]] = None
     report_dist: Optional[Path] = None
+    # Non-interactive marker (--yes). No prompt currently reads it — editable
+    # installs only warn — but it records how the options were collected.
     assume_yes: bool = False
-    confirm_cb: Callable[[str], bool] = lambda _msg: True
 
 
 @dataclass
@@ -1420,19 +1423,12 @@ def _build_package(options: PackageOptions) -> PackageResult:
     packages = enumerate_datus_packages()
     requirements, editable = generate_requirements(packages)
     if editable:
-        # Always surface editables as a warning — even under --yes, where
-        # the confirmation is skipped but the caveat must not vanish.
+        # Editable installs never block the build — surface the caveat as a
+        # warning and pin the reported version as-is.
         warnings.append(
             f"editable/source installs pinned as-is: {', '.join(editable)} — the PyPI "
             "wheel for the pinned version may differ from your source tree"
         )
-        if not options.assume_yes:
-            message = (
-                f"editable/source installs detected ({', '.join(editable)}) — the PyPI wheel "
-                "for the pinned version may differ from your source tree; continue?"
-            )
-            if not options.confirm_cb(message):
-                raise PackageError("aborted: editable installs not confirmed")
     _add([StagedEntry(arcname="requirements.txt", content=requirements)])
 
     rebuild = generate_rebuild_kb_script(per_ds)
@@ -1455,7 +1451,17 @@ def _build_package(options: PackageOptions) -> PackageResult:
     )
     _add([StagedEntry(arcname="README.md", content=readme)])
 
+    # Disk-backed entries can vanish between collection and finalize (editor
+    # swap files, concurrent cleanups). Drop them with a warning instead of
+    # failing the whole build on a FileNotFoundError deep in scan/zip.
+    staged = []
     for entry in entries_by_arc.values():
+        if entry.source is not None and not entry.source.is_file():
+            warnings.append(f"skipped {entry.arcname}: file vanished during packaging")
+            continue
+        staged.append(entry)
+
+    for entry in staged:
         if entry.source is not None and entry.size() > _LARGE_FILE_WARN_BYTES:
             warnings.append(f"large file packaged: {entry.arcname} ({entry.size() // (1024 * 1024)} MB)")
 
@@ -1470,7 +1476,6 @@ def _build_package(options: PackageOptions) -> PackageResult:
         "report_dist": str(options.report_dist) if options.report_dist else None,
     }
 
-    staged = list(entries_by_arc.values())
     findings, scan_warnings = scan_for_secrets(staged)
     warnings.extend(scan_warnings)
     if findings:

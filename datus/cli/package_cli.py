@@ -141,7 +141,6 @@ def _run_wizard(console: Console, pb: ModuleType, raw: Dict, root: Path) -> Opti
         reports=tuple(reports),
         dashboards=tuple(dashboards),
         report_dist=report_dist,
-        confirm_cb=lambda message: confirm_prompt(console, message, default=False),
     )
     if not _step_summary(console, options, project_name):
         return None

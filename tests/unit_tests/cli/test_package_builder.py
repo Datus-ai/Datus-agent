@@ -118,6 +118,10 @@ def root_prepare(root: Path, fake_home: Path) -> Path:
     (root / "__pycache__" / "m.pyc").write_text("x", encoding="utf-8")
     (root / ".env").write_text("SECRET=leak", encoding="utf-8")
     (root / "db.duckdb.wal").write_text("wal", encoding="utf-8")
+    # Editor swap/backup junk — transient files that vanish mid-build.
+    (root / "conf" / ".agent.yml.swp").write_bytes(b"vim swap")
+    (root / "knowledge" / "notes.md~").write_text("backup", encoding="utf-8")
+    (root / ".DS_Store").write_bytes(b"\x00\x01")
     (root / ".datus" / "memory").mkdir()
     (root / ".datus" / "memory" / "private.md").write_text("private memory", encoding="utf-8")
     (root / ".datus" / "plans").mkdir()
@@ -197,6 +201,9 @@ class TestCollection:
             "__pycache__/m.pyc",
             ".env",
             "db.duckdb.wal",
+            "conf/.agent.yml.swp",
+            "knowledge/notes.md~",
+            ".DS_Store",
             ".datus/memory/private.md",
             ".datus/plans/draft.md",
         ):
@@ -236,6 +243,22 @@ class TestCollection:
         second = _build(project)
         names = _namelist(second)
         assert not any(name.endswith(".zip") for name in names)
+
+    def test_file_vanishing_mid_build_is_skipped_with_warning(self, project, monkeypatch):
+        """A file collected by the walk but deleted before finalize (editor
+        swap files, concurrent cleanup) must not fail the whole build."""
+        original = pb.collect_project_files
+
+        def with_ghost(*args, **kwargs):
+            entries, warns = original(*args, **kwargs)
+            entries.append(pb.StagedEntry(arcname="ghost.txt", source=project / "nonexistent.txt"))
+            return entries, warns
+
+        monkeypatch.setattr(pb, "collect_project_files", with_ghost)
+        result = _build(project)
+        assert result.ok is True, result.error
+        assert "ghost.txt" not in _namelist(result)
+        assert any("ghost.txt" in warning and "vanished" in warning for warning in result.warnings)
 
     def test_symlink_escaping_root_dropped(self, project, tmp_path):
         outside = tmp_path / "outside.txt"
@@ -456,28 +479,17 @@ class TestGeneratedFiles:
         result = _build(project)
         assert _member(result, "requirements.txt").decode("utf-8") == "datus-agent==0.9.9\n"
 
-    def test_editable_requires_confirmation(self, project, monkeypatch):
+    @pytest.mark.parametrize("assume_yes", [True, False])
+    def test_editable_installs_warn_but_never_block(self, project, monkeypatch, assume_yes):
+        """Editable installs are pinned as-is with a warning — no
+        confirmation gate in either interactive or --yes mode."""
         monkeypatch.setattr(
             pb,
             "enumerate_datus_packages",
             lambda: [pb.DatusPackage(name="datus-agent", version="0.9.9", editable=True)],
         )
-        declined = pb.build_package(pb.PackageOptions(root=project, assume_yes=False, confirm_cb=lambda _msg: False))
-        assert not declined.ok and "aborted" in declined.error
-        accepted = pb.build_package(pb.PackageOptions(root=project, assume_yes=False, confirm_cb=lambda _msg: True))
-        assert accepted.ok is True and accepted.error is None
-
-    def test_assume_yes_skips_editable_confirmation(self, project, monkeypatch):
-        monkeypatch.setattr(
-            pb,
-            "enumerate_datus_packages",
-            lambda: [pb.DatusPackage(name="datus-agent", version="0.9.9", editable=True)],
-        )
-        result = pb.build_package(
-            pb.PackageOptions(root=project, assume_yes=True, confirm_cb=lambda _msg: pytest.fail("must not prompt"))
-        )
+        result = pb.build_package(pb.PackageOptions(root=project, assume_yes=assume_yes))
         assert result.ok is True and result.error is None
-        # --yes skips the confirmation but must NOT swallow the caveat.
         assert any("editable/source installs pinned as-is" in warning for warning in result.warnings)
 
     def test_install_plugins_script(self, project, monkeypatch):
