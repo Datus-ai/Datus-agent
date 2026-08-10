@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Datus — 开源数据工程 Agent</strong>
+  <strong>Datus · 开源数据工程 Agent</strong>
 </p>
 
 <p align="center">
@@ -19,11 +19,11 @@
 
 ## Datus 是什么?
 
-**Datus** 是面向现代数据栈的开源数据工程 Agent —— 用一个 Agent 连接你的数据仓库、目录、语义层和 BI,底座是一个由你的团队自己拥有的**可演进上下文引擎(evolvable context engine)**。
+**Datus** 是面向现代数据栈的开源数据工程 Agent:用一个 Agent 连接你的数据仓库、目录、语义层和 BI,底座是由你的团队自己拥有的**可演进上下文引擎(evolvable context engine)**。
 
-Copilot 只回答问题,Datus 端到端地执行数据工作:规划、编写并验证 SQL,编写语义模型与指标,生成管道、报告和看板 —— 一切都以上下文为根基:它记录你的 schema、参考 SQL 和业务规则,并随每次交互持续改进。没有可演进上下文的 Agent,每周一都是个陌生人;Datus 记得团队教过它的一切。
+Copilot 只回答问题,Datus 端到端地执行数据工作:规划、编写并验证 SQL,编写语义模型与指标,生成管道、报告和看板。这一切都以上下文为根基,它记录你的 schema、参考 SQL 和业务规则,并随每次交互持续改进。没有可演进上下文的 Agent,每周一都是个陌生人;Datus 记得团队教过它的一切。
 
-这条路径是具体的:在类 Claude Code 的 CLI 中**探索**数据,将知识沉淀为**上下文**(知识库 + 语义层),把成熟领域**打包**为有边界的 **Subagent**,再通过 Web 聊天、REST API、MCP、Slack/飞书或 VS Code **交付**给分析师。
+这条路径是具体的:在类 Claude Code 的 CLI 中探索数据,将知识沉淀为上下文(知识库 + 语义层),把成熟领域打包为有边界的 Subagent,再通过 Web 聊天、REST API、MCP、Slack/飞书或 VS Code 交付给分析师。
 
 ![Datus 架构](docs/assets/datus_architecture.svg)
 
@@ -31,38 +31,38 @@ Copilot 只回答问题,Datus 端到端地执行数据工作:规划、编写并�
 
 ### 可演进的上下文引擎,而非静态管道
 
-NL2SQL 工具会幻觉出不存在的 join 和指标,因为它们对你的数据库一无所知。Datus 构建一个**上下文引擎**,把树状业务域结构与向量检索结合 —— 将 schema 元数据、参考 SQL、参数化 SQL 模板、语义模型、指标和领域知识统一为一个由团队自己拥有的上下文层。`/init` 扫描项目生成 `AGENTS.md` 清单及文件型知识/记忆存储;`/build-kb` 在其上构建向量索引知识库,可按文件、表、数据源或业务域圈定范围。正是这些上下文让 Agent 生成的 SQL 准确可信,而每一次查询、修正和业务规则都会回流沉淀。→ [Contextual Data Engineering](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/)
+NL2SQL 工具会幻觉出不存在的 join 和指标,因为它们对你的数据库一无所知。Datus 构建一个**上下文引擎**,把树状业务域结构与向量检索结合,将 schema 元数据、参考 SQL、参数化 SQL 模板、语义模型、指标和领域知识统一进一个由团队自己拥有的上下文层。`/init` 扫描项目生成 `AGENTS.md` 清单及文件型知识/记忆存储;`/build-kb` 在其上构建向量索引知识库,可按文件、表、数据源或业务域圈定范围。正是这些上下文让 Agent 生成的 SQL 准确可信,而每一次查询、修正和业务规则都会回流沉淀。→ [Contextual Data Engineering](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/)
 
-### 指标与语义层 —— MetricFlow 与 OSI
+### 指标与语义层:MetricFlow 与 OSI
 
-通过可插拔的**语义适配器**超越裸 SQL。业务指标可用 [MetricFlow](https://docs.datus.ai/zh/latest/metricflow/introduction/) YAML 或 [OSI(Open Semantic Interchange)](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 规范文档编写 —— 由 MetricFlow 或原生 Rust 引擎 [Dosi](docs/adapters/dosi_semantic_adapter.zh.md) 执行 —— 并可从 schema 和 SQL 历史自动生成,涵盖累计、滚动窗口、环比等高级时间指标。**AskMetrics** subagent 直接基于指标层回答 KPI、趋势和归因问题,[Dashboard Copilot](https://docs.datus.ai/zh/latest/getting_started/dashboard_copilot/) 则把现有 BI 看板变成对话式分析。→ [语义适配器文档](https://docs.datus.ai/zh/latest/adapters/semantic_adapters/)
+通过可插拔的语义适配器超越裸 SQL。业务指标可用 [MetricFlow](https://docs.datus.ai/zh/latest/metricflow/introduction/) YAML 或 [OSI(Open Semantic Interchange)](https://docs.datus.ai/zh/latest/adapters/osi_semantic_adapter/) 规范文档编写,由 MetricFlow 或原生 Rust 引擎 [Dosi](docs/adapters/dosi_semantic_adapter.zh.md) 执行;Datus 还能从 schema 和 SQL 历史自动生成指标,涵盖累计、滚动窗口、环比等高级时间指标。AskMetrics subagent 直接基于指标层回答 KPI、趋势和归因问题,[Dashboard Copilot](https://docs.datus.ai/zh/latest/getting_started/dashboard_copilot/) 则把现有 BI 看板变成对话式分析。→ [语义适配器文档](https://docs.datus.ai/zh/latest/adapters/semantic_adapters/)
 
 ### 从探索到领域专属 Subagent
 
-垂直 Agent 的胜负手是吃透领域上下文,而不是套一个更大的模型。从交互式 CLI 开始:与数据库对话,用 `@table` / `@file` 引用锚定上下文,按 `Tab` 在 chat / SQL / bash 三种输入模式间切换(或用 `!` 直接执行 agent 工具和插件 CLI),用 [Plan Mode](https://docs.datus.ai/zh/latest/cli/plan_mode/) 先审后行,自动会话压缩、记忆和 `/resume` 让长期工作保持连贯。当某个领域成熟后,打开 `/agent` 管理器将其打包为 **Subagent** —— 带精选上下文、工具和业务规则的领域聊天机器人 —— 再通过 Web、API、MCP 或 IM 交付,让分析师在 Slack 里拿到的数字与管理层在看板上看到的一致。→ [Subagent 文档](https://docs.datus.ai/zh/latest/subagent/introduction/)
+垂直 Agent 的胜负手是吃透领域上下文,而不是套一个更大的模型。从交互式 CLI 开始:与数据库对话,用 `@table` / `@file` 引用锚定上下文,按 `Tab` 在 chat / SQL / bash 三种输入模式间切换(或用 `!` 直接执行 agent 工具和插件 CLI),用 [Plan Mode](https://docs.datus.ai/zh/latest/cli/plan_mode/) 先审后行,自动会话压缩、记忆和 `/resume` 让长期工作保持连贯。当某个领域成熟后,打开 `/agent` 管理器将其打包为 **Subagent**:带精选上下文、工具和业务规则的领域聊天机器人,再通过 Web、API、MCP 或 IM 交付,让分析师在 Slack 里拿到的数字与管理层在看板上看到的一致。→ [Subagent 文档](https://docs.datus.ai/zh/latest/subagent/introduction/)
 
 ### 数据工程自动化
 
-内置 subagent 覆盖 SQL 之外的工程工作:**跨库迁移**与 **ETL/作业生成**、由 JOIN SQL 生成**宽表**、通过 Airflow 适配器进行**调度编排**。Superset 与 Grafana 的 BI 适配器让 Agent 能读写真实看板。→ [内置 subagent](https://docs.datus.ai/zh/latest/subagent/builtin_subagents/) · [调度适配器](https://docs.datus.ai/zh/latest/adapters/scheduler_adapters/) · [BI 适配器](https://docs.datus.ai/zh/latest/adapters/bi_adapters/)
+内置 subagent 覆盖 SQL 之外的工程工作:跨库迁移、ETL/作业生成、由 JOIN SQL 生成宽表、通过 Airflow 适配器进行调度编排。Superset 与 Grafana 的 BI 适配器让 Agent 能读写真实看板。→ [内置 subagent](https://docs.datus.ai/zh/latest/subagent/builtin_subagents/) · [调度适配器](https://docs.datus.ai/zh/latest/adapters/scheduler_adapters/) · [BI 适配器](https://docs.datus.ai/zh/latest/adapters/bi_adapters/)
 
 ### 可视化报告与看板
 
-从对话直接生成自包含的 **HTML 报告**(KPI 卡片、图表、表格、叙述)和**可交互看板**。看板筛选器通过本地 Web 服务实时回查数据库 —— 无需 SaaS 后端 —— 所有产物支持按区块逐步精修。→ [可视化报告](https://docs.datus.ai/zh/latest/subagent/gen_visual_report/) · [可视化看板](https://docs.datus.ai/zh/latest/subagent/gen_visual_dashboard/)
+从对话直接生成自包含的 HTML 报告(KPI 卡片、图表、表格、叙述)和可交互看板。看板筛选器通过本地 Web 服务实时回查数据库,无需 SaaS 后端;所有产物支持按区块逐步精修。→ [可视化报告](https://docs.datus.ai/zh/latest/subagent/gen_visual_report/) · [可视化看板](https://docs.datus.ai/zh/latest/subagent/gen_visual_dashboard/)
 
 ### 企业级治理
 
-权限三档(`normal` / `auto` / `dangerous`,可按请求切换)、按 SQL 语句类型细分的权限、命令级 bash 允许/拒绝规则 + OS 级沙箱、请求级 **SQL policy 框架**(行级改写)、只读多租户配置模式,以及可配置的 **tracing**(Langfuse、LangSmith、Datadog、Braintrust 或任意 OTLP collector)。→ [SQL Policy](https://docs.datus.ai/zh/latest/configuration/sql_policy/) · [可观测性](https://docs.datus.ai/zh/latest/develop/observability/)
+Datus 内置权限三档(`normal` / `auto` / `dangerous`,可按请求切换)、按 SQL 语句类型细分的权限、命令级 bash 允许/拒绝规则与 OS 级沙箱、请求级 SQL policy 框架(行级改写)、只读多租户配置模式,以及可配置的 tracing(Langfuse、LangSmith、Datadog、Braintrust 或任意 OTLP collector)。→ [SQL Policy](https://docs.datus.ai/zh/latest/configuration/sql_policy/) · [可观测性](https://docs.datus.ai/zh/latest/develop/observability/)
 
 ### 开放平台
 
-- **10+ LLM 提供商**(OpenAI、Claude、Gemini、DeepSeek、Qwen、Kimi、OpenRouter 等),支持订阅认证(Claude 订阅、OpenAI Codex OAuth)与 coding-plan 提供商 —— 按节点分配模型,单个工作流内可混用
-- **13 种数据库** —— 内置 SQLite 和 DuckDB,插件式适配 PostgreSQL、MySQL、Snowflake、StarRocks、ClickHouse、Doris 等
-- **MCP 协议** —— 既是 MCP 服务端(向 Claude Desktop、Cursor 等暴露 Datus 工具),也是 MCP 客户端(CLI 中通过 `/mcp` 消费外部工具)。→ [MCP 文档](https://docs.datus.ai/zh/latest/integration/mcp/)
-- **Skills 与插件** —— 以 [agentskills.io](https://agentskills.io) 风格的打包技能扩展 Datus(支持 marketplace),或以声明式 `datus-plugin.yml` 清单 + install/pack/export CLI 交付完整**插件**。→ [Skills 文档](https://docs.datus.ai/zh/latest/skills/introduction/) · [插件文档](https://docs.datus.ai/zh/latest/plugin/introduction/)
+- **10+ LLM 提供商**:OpenAI、Claude、Gemini、DeepSeek、Qwen、Kimi、OpenRouter 等,支持订阅认证(Claude 订阅、OpenAI Codex OAuth)与 coding-plan 提供商;按节点分配模型,单个工作流内可混用。
+- **13 种数据库**:内置 SQLite 和 DuckDB,插件式适配 PostgreSQL、MySQL、Snowflake、StarRocks、ClickHouse、Doris 等。
+- **MCP 协议**:既是 MCP 服务端(向 Claude Desktop、Cursor 等暴露 Datus 工具),也是 MCP 客户端(CLI 中通过 `/mcp` 消费外部工具)。→ [MCP 文档](https://docs.datus.ai/zh/latest/integration/mcp/)
+- **Skills 与插件**:以 [agentskills.io](https://agentskills.io) 风格的打包技能扩展 Datus(支持 marketplace),或以声明式 `datus-plugin.yml` 清单 + install/pack/export CLI 交付完整插件。→ [Skills 文档](https://docs.datus.ai/zh/latest/skills/introduction/) · [插件文档](https://docs.datus.ai/zh/latest/plugin/introduction/)
 
 ### 度量与改进
 
-内置评测框架,支持 **BIRD** 与 **Spider 2.0-Snow** 数据集。为你的 Agent 测 SQL 准确率、对比配置,并随上下文演进跟踪提升。→ [Benchmark 文档](https://docs.datus.ai/zh/latest/benchmark/benchmark_manual/)
+Datus 内置面向 BIRD 与 Spider 2.0-Snow 数据集的评测框架。为你的 Agent 测 SQL 准确率、对比配置,并随上下文演进跟踪提升。→ [Benchmark 文档](https://docs.datus.ai/zh/latest/benchmark/benchmark_manual/)
 
 ## 快速开始
 
@@ -78,7 +78,7 @@ NL2SQL 工具会幻觉出不存在的 join 和指标,因为它们对你的数据
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-脚本会在 `~/.datus/venv` 创建专用 venv,从 PyPI 安装 `datus-agent`,并在 `~/.local/bin` 写入 `datus`、`datus-cli`、`datus-api`、`datus-mcp`、`datus-agent`、`datus-gateway`、`datus-pip` 等 shim。打开新终端(或 `source ~/.zshrc`)使 PATH 生效后,运行 `datus` 启动 REPL —— 用 `/model` 配置 LLM,`/datasource` 添加数据源,(可选)`/init` 为当前项目生成 `AGENTS.md`。
+脚本会在 `~/.datus/venv` 创建专用 venv,从 PyPI 安装 `datus-agent`,并在 `~/.local/bin` 写入 `datus`、`datus-cli`、`datus-api`、`datus-mcp`、`datus-agent`、`datus-gateway`、`datus-pip` 等 shim。打开新终端(或 `source ~/.zshrc`)使 PATH 生效后,运行 `datus` 启动 REPL:用 `/model` 配置 LLM,`/datasource` 添加数据源,(可选)`/init` 为当前项目生成 `AGENTS.md`。
 
 后续向全局 venv 安装额外 Python 包用 `datus-pip install <package>`;升级 Datus 本体用 `datus upgrade`(`datus upgrade --check` 只查不装)。
 
@@ -109,7 +109,7 @@ REPL 启动后,运行 `/model` 配置 LLM、`/datasource` 添加数据源、(可
 
 ### 接入方式
 
-以下示例使用名为 `demo` 的数据源 —— 请先在 REPL 中用 `/datasource` 创建(内置 DuckDB 示例库会作为默认选项提供)。
+以下示例使用名为 `demo` 的数据源,请先在 REPL 中用 `/datasource` 创建(内置 DuckDB 示例库会作为默认选项提供)。
 
 | 接入方式 | 命令 | 适用场景 |
 |-----------|---------|----------|
@@ -126,14 +126,14 @@ REPL 启动后,运行 `/model` 配置 LLM、`/datasource` 添加数据源、(可
 
 ![How It Works](docs/assets/how_it_works.svg)
 
-**探索** —— 与数据库对话、测试查询,用 `@table` 或 `@file` 引用锚定上下文。
+**探索**:与数据库对话、测试查询,用 `@table` 或 `@file` 引用锚定上下文。
 
 ```bash
 datus --datasource demo
 Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 ```
 
-**构建上下文** —— 扫描项目、生成语义模型与指标、索引 SQL 历史。每一份沉淀都成为后续查询的可复用上下文。
+**构建上下文**:扫描项目、生成语义模型与指标、索引 SQL 历史。每一份沉淀都成为后续查询的可复用上下文。
 
 ```bash
 /init            # 项目清单(AGENTS.md)+ 知识与记忆存储
@@ -141,17 +141,17 @@ Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 /build-kb        # 构建向量知识库,可按文件/表/业务域圈定范围
 ```
 
-**创建 Subagent** —— 打开统一 agent 管理器,把成熟上下文打包为带精选工具和业务规则的领域聊天机器人。
+**创建 Subagent**:打开统一 agent 管理器,把成熟上下文打包为带精选工具和业务规则的领域聊天机器人。
 
 ```bash
 /agent           # 在 TUI 中创建和管理 subagent
 ```
 
-**交付** —— 通过 Web(`localhost:8501/?subagent=mychatbot`)、REST API、MCP 或 Slack/飞书把 subagent 交付给分析师 —— 内置反馈收集(点赞、问题上报)。
+**交付**:通过 Web(`localhost:8501/?subagent=mychatbot`)、REST API、MCP 或 Slack/飞书把 subagent 交付给分析师,内置反馈收集(点赞、问题上报)。
 
-**度量** —— 用 BIRD 或 Spider 2.0-Snow 基准测试跟踪 SQL 准确率随上下文演进的变化。
+**度量**:用 BIRD 或 Spider 2.0-Snow 基准测试跟踪 SQL 准确率随上下文演进的变化。
 
-**迭代** —— 分析师反馈回流:工程师修正 SQL、补充规则、精修语义模型,并用 Skills、插件或 MCP 工具扩展。Agent 随时间越来越准。
+**迭代**:分析师反馈回流。工程师修正 SQL、补充规则、精修语义模型,并用 Skills、插件或 MCP 工具扩展。Agent 随时间越来越准。
 
 → [端到端教程](https://docs.datus.ai/zh/latest/getting_started/contextual_data_engineering/) · [CLI 文档](https://docs.datus.ai/zh/latest/cli/introduction/) · [知识库文档](https://docs.datus.ai/zh/latest/knowledge_base/introduction/) · [Subagent 文档](https://docs.datus.ai/zh/latest/subagent/introduction/)
 
@@ -159,7 +159,7 @@ Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 
 ### 工作流引擎
 
-在 agentic 对话层之下,Datus 使用可配置的**节点式工作流引擎** —— benchmark 与批量运行直接使用它,也可组合出串行、并行、子工作流的自定义执行计划:
+在 agentic 对话层之下,Datus 使用可配置的**节点式工作流引擎**。benchmark 与批量运行直接使用它,也可组合出串行、并行、子工作流的自定义执行计划:
 
 ```yaml
 workflow:
@@ -186,12 +186,12 @@ workflow:
 
 知识库默认由 **LanceDB** 驱动,支持可插拔的向量与关系型后端(含 PostgreSQL 存储)及可选的元数据全文检索。上下文分为多层:
 
-- **Schema 元数据** —— 表和列的描述、关联关系
-- **参考 SQL** —— 精选查询示例及摘要
-- **参考模板** —— 参数化 Jinja2 SQL 模板,稳定可复用
-- **语义模型** —— 业务逻辑与指标定义(MetricFlow 或 OSI)
-- **指标** —— 通过语义层集成的可执行业务指标
-- **平台文档** —— 从 GitHub 仓库、网站或本地文件摄取
+- **Schema 元数据**:表和列的描述、关联关系
+- **参考 SQL**:精选查询示例及摘要
+- **参考模板**:参数化 Jinja2 SQL 模板,稳定可复用
+- **语义模型**:业务逻辑与指标定义(MetricFlow 或 OSI)
+- **指标**:通过语义层集成的可执行业务指标
+- **平台文档**:从 GitHub 仓库、网站或本地文件摄取
 
 交互式构建用 `/bootstrap` 和 `/build-kb`,批量构建:
 

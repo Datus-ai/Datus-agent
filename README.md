@@ -1,5 +1,5 @@
 <p align="center">
-  <strong>Datus — Open-Source Data Engineering Agent</strong>
+  <strong>Datus · Open-Source Data Engineering Agent</strong>
 </p>
 
 <p align="center">
@@ -19,11 +19,11 @@
 
 ## What is Datus?
 
-**Datus** is the open-source data engineering agent for the modern data stack — one agent that connects your warehouse, catalog, semantic layer, and BI, grounded in an **evolvable context engine** your team owns.
+**Datus** is the open-source data engineering agent for the modern data stack: one agent that connects your warehouse, catalog, semantic layer, and BI, grounded in an **evolvable context engine** your team owns.
 
-Copilots answer questions; Datus executes data work end to end. It plans, writes, and validates SQL; authors semantic models and metrics; generates pipelines, reports, and dashboards — all grounded in context that captures your schemas, reference SQL, and business rules, and improves with every interaction. An agent without evolvable context is a stranger every Monday; Datus remembers what your team taught it.
+Copilots answer questions; Datus executes data work end to end. It plans and writes SQL, validates the results, authors semantic models and metrics, and generates pipelines, reports, and dashboards. All of it runs on context the agent keeps: your schemas, reference SQL, and business rules, refined with every interaction. An agent without evolvable context is a stranger every Monday. Datus remembers what your team taught it.
 
-The journey is concrete: **explore** your data in a Claude-Code-like CLI, **build context** into a living knowledge base and semantic layer, **package** mature domains into scoped **subagents**, and **deliver** them to analysts through the web chatbot, REST API, MCP, Slack/Feishu, or VS Code.
+The journey is concrete: explore your data in a Claude-Code-like CLI, build context into a living knowledge base and semantic layer, package mature domains into scoped subagents, and deliver them to analysts through the web chatbot, REST API, MCP, Slack/Feishu, or VS Code.
 
 ![Datus Architecture](docs/assets/datus_architecture.svg)
 
@@ -31,38 +31,38 @@ The journey is concrete: **explore** your data in a Claude-Code-like CLI, **buil
 
 ### An Evolvable Context Engine, Not Static Pipelines
 
-NL2SQL tools hallucinate joins and metrics because they see your database cold. Datus builds a **context engine** that combines tree-structured business domains with vector retrieval — capturing schema metadata, reference SQL, parameterized SQL templates, semantic models, metrics, and domain knowledge into a unified layer your team owns. `/init` scans your project into an `AGENTS.md` inventory with file-based knowledge and memory stores; `/build-kb` builds the vector-indexed knowledge base on top, scoped by file, table, datasource, or business domain. This context is what makes agent-generated SQL accurate and trustworthy, and every query, correction, and domain rule feeds it back. → [Contextual Data Engineering](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/)
+NL2SQL tools hallucinate joins and metrics because they see your database cold. Datus builds a **context engine** that combines tree-structured business domains with vector retrieval. It captures schema metadata, reference SQL, parameterized SQL templates, semantic models, metrics, and domain knowledge in one layer your team owns. `/init` scans your project into an `AGENTS.md` inventory with file-based knowledge and memory stores; `/build-kb` builds the vector-indexed knowledge base on top, scoped by file, table, datasource, or business domain. This context is what makes agent-generated SQL accurate and trustworthy, and every query, correction, and domain rule feeds it back. → [Contextual Data Engineering](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/)
 
-### Metrics and Semantic Layer — MetricFlow and OSI
+### Metrics and Semantic Layer: MetricFlow and OSI
 
-Go beyond raw SQL with pluggable **semantic adapters**. Author business metrics in [MetricFlow](https://docs.datus.ai/latest/metricflow/introduction/) YAML or in [OSI (Open Semantic Interchange)](https://docs.datus.ai/latest/adapters/osi_semantic_adapter/) spec-aligned documents — executed through MetricFlow or the native Rust-based [Dosi engine](docs/adapters/dosi_semantic_adapter.md) — generated from your schema and SQL history, including cumulative, rolling-window, and period-over-period time metrics. The **AskMetrics** subagent answers KPI, trend, and attribution questions directly from the metric layer instead of raw SQL, and [Dashboard Copilot](https://docs.datus.ai/latest/getting_started/dashboard_copilot/) turns existing BI dashboards into conversational analytics. → [Semantic Adapters docs](https://docs.datus.ai/latest/adapters/semantic_adapters/)
+Go beyond raw SQL with pluggable semantic adapters. Author business metrics in [MetricFlow](https://docs.datus.ai/latest/metricflow/introduction/) YAML or as [OSI (Open Semantic Interchange)](https://docs.datus.ai/latest/adapters/osi_semantic_adapter/) spec-aligned documents, executed through MetricFlow or the native Rust-based [Dosi engine](docs/adapters/dosi_semantic_adapter.md). Datus generates them from your schema and SQL history, including cumulative, rolling-window, and period-over-period time metrics. The AskMetrics subagent answers KPI, trend, and attribution questions directly from the metric layer instead of raw SQL, and [Dashboard Copilot](https://docs.datus.ai/latest/getting_started/dashboard_copilot/) turns existing BI dashboards into conversational analytics. → [Semantic Adapters docs](https://docs.datus.ai/latest/adapters/semantic_adapters/)
 
 ### From Exploration to Domain-Specific Subagents
 
-Vertical agents win by mastering a domain's context, not by wrapping a bigger model. Start in the interactive CLI: chat with your database, ground prompts with `@table` / `@file` references, press `Tab` to cycle between chat, SQL, and bash input modes (or run agent tools and plugin CLIs directly with `!`), review multi-step work with [Plan Mode](https://docs.datus.ai/latest/cli/plan_mode/) before executing, and let automatic session compaction, memory, and `/resume` keep long engagements coherent. When a domain matures, open the `/agent` manager and package it into a **subagent** — a scoped chatbot with curated context, tools, and business rules — then deliver it via web, API, MCP, or IM, so the numbers analysts get in Slack match what leadership sees in dashboards. → [Subagent docs](https://docs.datus.ai/latest/subagent/introduction/)
+Vertical agents win by mastering a domain's context, not by wrapping a bigger model. Start in the interactive CLI: chat with your database, ground prompts with `@table` / `@file` references, press `Tab` to cycle between chat, SQL, and bash input modes (or run agent tools and plugin CLIs directly with `!`), review multi-step work with [Plan Mode](https://docs.datus.ai/latest/cli/plan_mode/) before executing, and let automatic session compaction, memory, and `/resume` keep long engagements coherent. When a domain matures, open the `/agent` manager and package it into a **subagent**: a scoped chatbot with curated context, tools, and business rules. Deliver it via web, API, MCP, or IM, so the numbers analysts get in Slack match what leadership sees in dashboards. → [Subagent docs](https://docs.datus.ai/latest/subagent/introduction/)
 
 ### Data Engineering Automation
 
-Built-in subagents cover the engineering work around the SQL: **cross-database migration** and **ETL/job generation**, **wide-table generation** from JOIN SQL, and **scheduler orchestration** through the Airflow adapter. BI adapters for **Superset** and **Grafana** let the agent read and write real dashboards. → [Built-in subagents](https://docs.datus.ai/latest/subagent/builtin_subagents/) · [Scheduler adapters](https://docs.datus.ai/latest/adapters/scheduler_adapters/) · [BI adapters](https://docs.datus.ai/latest/adapters/bi_adapters/)
+Built-in subagents cover the engineering work around the SQL: cross-database migration, ETL and job generation, wide-table generation from JOIN SQL, and scheduler orchestration through the Airflow adapter. BI adapters for Superset and Grafana let the agent read and write real dashboards. → [Built-in subagents](https://docs.datus.ai/latest/subagent/builtin_subagents/) · [Scheduler adapters](https://docs.datus.ai/latest/adapters/scheduler_adapters/) · [BI adapters](https://docs.datus.ai/latest/adapters/bi_adapters/)
 
 ### Visual Reports and Dashboards
 
-Generate self-contained **HTML reports** (KPI cards, charts, tables, narrative) and **interactive dashboards** straight from chat. Dashboard filters re-run live against your database through the local web server — no SaaS backend required — and every artifact supports section-by-section refinement. → [Visual report](https://docs.datus.ai/latest/subagent/gen_visual_report/) · [Visual dashboard](https://docs.datus.ai/latest/subagent/gen_visual_dashboard/)
+Generate self-contained HTML reports (KPI cards, charts, tables, narrative) and interactive dashboards straight from chat. Dashboard filters re-run live against your database through the local web server, without a SaaS backend, and every artifact supports section-by-section refinement. → [Visual report](https://docs.datus.ai/latest/subagent/gen_visual_report/) · [Visual dashboard](https://docs.datus.ai/latest/subagent/gen_visual_dashboard/)
 
 ### Enterprise-Ready Governance
 
-Permission profiles (`normal` / `auto` / `dangerous`, switchable per request), fine-grained SQL permissions by statement class, command-level bash allow/deny rules with an OS-level sandbox, a request-scoped **SQL policy framework** for row-level rewriting, read-only multi-tenant configuration mode, and configurable **tracing** to Langfuse, LangSmith, Datadog, Braintrust, or any OTLP collector. → [SQL policy](https://docs.datus.ai/latest/configuration/sql_policy/) · [Observability](https://docs.datus.ai/latest/develop/observability/)
+Datus ships with permission profiles (`normal` / `auto` / `dangerous`, switchable per request), fine-grained SQL permissions by statement class, command-level bash allow/deny rules backed by an OS-level sandbox, a request-scoped SQL policy framework for row-level rewriting, a read-only multi-tenant configuration mode, and configurable tracing to Langfuse, LangSmith, Datadog, Braintrust, or any OTLP collector. → [SQL policy](https://docs.datus.ai/latest/configuration/sql_policy/) · [Observability](https://docs.datus.ai/latest/develop/observability/)
 
 ### Open Platform
 
-- **10+ LLM providers** (OpenAI, Claude, Gemini, DeepSeek, Qwen, Kimi, OpenRouter, and more), plus subscription auth (Claude subscription, OpenAI Codex OAuth) and coding-plan providers — with per-node model assignment to mix models within a single workflow
-- **13 databases** — built-in SQLite & DuckDB plus pluggable adapters for PostgreSQL, MySQL, Snowflake, StarRocks, ClickHouse, Doris, and more
-- **MCP protocol** — both an MCP server (exposing Datus tools to Claude Desktop, Cursor, etc.) and an MCP client (consuming external tools via `/mcp` in the CLI). → [MCP docs](https://docs.datus.ai/latest/integration/mcp/)
-- **Skills and plugins** — extend Datus with [agentskills.io](https://agentskills.io)-style packaged skills and marketplace support, or ship a full extension as a **plugin** with a declarative `datus-plugin.yml` manifest and install/pack/export CLI. → [Skills docs](https://docs.datus.ai/latest/skills/introduction/) · [Plugin docs](https://docs.datus.ai/latest/plugin/introduction/)
+- **10+ LLM providers**: OpenAI, Claude, Gemini, DeepSeek, Qwen, Kimi, OpenRouter, and more, plus subscription auth (Claude subscription, OpenAI Codex OAuth) and coding-plan providers. Per-node model assignment mixes models within a single workflow.
+- **13 databases**: built-in SQLite & DuckDB plus pluggable adapters for PostgreSQL, MySQL, Snowflake, StarRocks, ClickHouse, Doris, and more.
+- **MCP protocol**: both an MCP server (exposing Datus tools to Claude Desktop, Cursor, etc.) and an MCP client (consuming external tools via `/mcp` in the CLI). → [MCP docs](https://docs.datus.ai/latest/integration/mcp/)
+- **Skills and plugins**: extend Datus with [agentskills.io](https://agentskills.io)-style packaged skills and marketplace support, or ship a full extension as a plugin with a declarative `datus-plugin.yml` manifest and install/pack/export CLI. → [Skills docs](https://docs.datus.ai/latest/skills/introduction/) · [Plugin docs](https://docs.datus.ai/latest/plugin/introduction/)
 
 ### Measure and Improve
 
-Built-in evaluation framework supporting **BIRD** and **Spider 2.0-Snow** datasets. Benchmark your agent's SQL accuracy, compare configurations, and track improvements as context evolves. → [Benchmark docs](https://docs.datus.ai/latest/benchmark/benchmark_manual/)
+Datus ships an evaluation framework for the BIRD and Spider 2.0-Snow datasets. Benchmark your agent's SQL accuracy, compare configurations, and track improvements as context evolves. → [Benchmark docs](https://docs.datus.ai/latest/benchmark/benchmark_manual/)
 
 ## Getting Started
 
@@ -78,7 +78,7 @@ Stable install from PyPI:
 curl -fsSL https://raw.githubusercontent.com/datus-ai/datus-agent/main/install.sh | sh
 ```
 
-This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from PyPI into it, and drops `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) to pick up PATH, then run `datus` to launch the REPL — use `/model` to configure an LLM, `/datasource` to add a datasource, and (optionally) `/init` to generate `AGENTS.md` for the current project.
+This creates a dedicated venv at `~/.datus/venv`, installs `datus-agent` from PyPI into it, and drops `datus`, `datus-cli`, `datus-api`, `datus-mcp`, `datus-agent`, `datus-gateway`, and `datus-pip` shims into `~/.local/bin`. Open a new shell (or `source ~/.zshrc`) to pick up PATH, then run `datus` to launch the REPL: use `/model` to configure an LLM, `/datasource` to add a datasource, and (optionally) `/init` to generate `AGENTS.md` for the current project.
 
 To install additional Python packages into the global venv later, use `datus-pip install <package>`. To upgrade Datus itself, run `datus upgrade` (or `datus upgrade --check` to look without installing).
 
@@ -109,7 +109,7 @@ After the REPL starts, run `/model` to configure an LLM, `/datasource` to add a 
 
 ### Interfaces
 
-The examples below use a datasource named `demo` — create one first with `/datasource` in the REPL (the built-in DuckDB sample database is offered as a default).
+The examples below use a datasource named `demo`. Create one first with `/datasource` in the REPL; the built-in DuckDB sample database is offered as a default.
 
 | Interface | Command | Use Case |
 |-----------|---------|----------|
@@ -126,14 +126,14 @@ The examples below use a datasource named `demo` — create one first with `/dat
 
 ![How It Works](docs/assets/how_it_works.svg)
 
-**Explore** — Chat with your database, test queries, and ground prompts with `@table` or `@file` references.
+**Explore**: chat with your database, test queries, and ground prompts with `@table` or `@file` references.
 
 ```bash
 datus --datasource demo
 Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 ```
 
-**Build Context** — Scan the project, generate semantic models and metrics, and index SQL history. Each piece becomes reusable context for future queries.
+**Build Context**: scan the project, generate semantic models and metrics, and index SQL history. Each piece becomes reusable context for future queries.
 
 ```bash
 /init            # Project inventory (AGENTS.md) + knowledge & memory stores
@@ -141,17 +141,17 @@ Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 /build-kb        # Build the vector knowledge base, optionally scoped to files/tables/domains
 ```
 
-**Create a Subagent** — Open the unified agent manager and package mature context into a scoped, domain-aware chatbot with curated tools and business rules.
+**Create a Subagent**: open the unified agent manager and package mature context into a scoped, domain-aware chatbot with curated tools and business rules.
 
 ```bash
 /agent           # Create and manage subagents in the TUI
 ```
 
-**Deliver** — Serve the subagent to analysts via web (`localhost:8501/?subagent=mychatbot`), REST API, MCP, or Slack/Feishu — with feedback collection (upvotes, issue reports) built in.
+**Deliver**: serve the subagent to analysts via web (`localhost:8501/?subagent=mychatbot`), REST API, MCP, or Slack/Feishu, with feedback collection (upvotes, issue reports) built in.
 
-**Measure** — Run benchmarks against BIRD or Spider 2.0-Snow to track SQL accuracy as context evolves.
+**Measure**: run benchmarks against BIRD or Spider 2.0-Snow to track SQL accuracy as context evolves.
 
-**Iterate** — Analyst feedback loops back: engineers fix SQL, add rules, refine semantic models, and extend with Skills, plugins, or MCP tools. The agent gets more accurate over time.
+**Iterate**: analyst feedback loops back. Engineers fix SQL, add rules, refine semantic models, and extend with Skills, plugins, or MCP tools. The agent gets more accurate over time.
 
 → [End-to-end tutorial](https://docs.datus.ai/latest/getting_started/contextual_data_engineering/#part-2--hands-on-tutorial-california-schools) · [CLI docs](https://docs.datus.ai/latest/cli/introduction/) · [Knowledge Base docs](https://docs.datus.ai/latest/knowledge_base/introduction/) · [Subagent docs](https://docs.datus.ai/latest/subagent/introduction/)
 
@@ -159,7 +159,7 @@ Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 
 ### Workflow Engine
 
-Under the agentic chat surface, Datus uses a configurable **node-based workflow engine** — used directly by benchmark and batch runs, and composable into custom plans with sequential, parallel, and sub-workflow steps:
+Under the agentic chat surface, Datus uses a configurable **node-based workflow engine**. Benchmark and batch runs use it directly, and you can compose custom plans with sequential, parallel, and sub-workflow steps:
 
 ```yaml
 workflow:
@@ -184,14 +184,14 @@ workflow:
 
 ### RAG Knowledge Base
 
-The knowledge base is powered by **LanceDB** by default, with pluggable vector and relational backends (including PostgreSQL-backed storage) and optional full-text search for metadata retrieval. Context is organized into multiple layers:
+The knowledge base runs on **LanceDB** by default, with pluggable vector and relational backends (including PostgreSQL-backed storage) and optional full-text search for metadata retrieval. It organizes context in layers:
 
-- **Schema Metadata** — Table and column descriptions, relationships
-- **Reference SQL** — Curated query examples with summaries
-- **Reference Templates** — Parameterized Jinja2 SQL templates for stable, reusable queries
-- **Semantic Models** — Business logic and metric definitions (MetricFlow or OSI)
-- **Metrics** — Executable business metrics via semantic layer integration
-- **Platform Docs** — Ingested from GitHub repos, websites, or local files
+- **Schema Metadata**: table and column descriptions, relationships
+- **Reference SQL**: curated query examples with summaries
+- **Reference Templates**: parameterized Jinja2 SQL templates for stable, reusable queries
+- **Semantic Models**: business logic and metric definitions (MetricFlow or OSI)
+- **Metrics**: executable business metrics via semantic layer integration
+- **Platform Docs**: ingested from GitHub repos, websites, or local files
 
 Build it interactively with `/bootstrap` and `/build-kb`, or in batch:
 
