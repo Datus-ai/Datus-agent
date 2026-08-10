@@ -30,6 +30,26 @@ class TestSubjectTreeStore:
         assert datetime.strptime(node["created_at"], "%Y-%m-%d %H:%M:%S") <= datetime.now()
         assert node["updated_at"] == node["created_at"]
 
+    @pytest.mark.parametrize(
+        "variant",
+        ["marketing", "MARKETING", " Marketing ", "market_ing", "Market-ing", "Marketing."],
+    )
+    def test_equivalent_names_reuse_one_node(self, store, variant):
+        """Subject paths are written by an LLM one entry at a time; without
+        normalized matching a single area fragments into near-duplicate
+        siblings and its content splits across them."""
+        original = store.create_node(None, "Marketing", "")
+        assert store.find_or_create_path([variant]) == original["node_id"]
+        assert [node["name"] for node in store.get_children(None)] == ["Marketing"]
+
+    def test_genuinely_different_names_stay_separate(self, store):
+        """Normalization only merges spelling variants — distinct wording is
+        a real distinction the store must not silently collapse."""
+        store.create_node(None, "Marketing", "")
+        other = store.find_or_create_path(["Marketing Analytics"])
+        assert other != store.get_children(None)[0]["node_id"]
+        assert len(store.get_children(None)) == 2
+
     def test_create_child_node(self, store):
         """Test creating child node."""
         root = store.create_node(None, "Finance", "Finance domain")

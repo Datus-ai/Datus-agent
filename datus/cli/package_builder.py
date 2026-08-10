@@ -767,25 +767,34 @@ def select_metrics(
     return kept, entries, per_ds
 
 
-def select_reference_sql(root: Path, selected_subjects: Sequence[str]) -> Tuple[List[StagedEntry], int]:
+def select_reference_sql(root: Path, selected_subjects: Sequence[str]) -> Tuple[List[StagedEntry], int, List[str]]:
     """Stage the summary YAML under the selected subject roots.
 
     ``subject/sql_summaries/*.yaml`` is what the receiver re-indexes (see
     ``bootstrap-kb --from_summaries``), so the summaries — not the raw
     ``.sql`` corpus — are what the subject selection gates. The raw corpus
     ships as ordinary project content via the generic walk.
+
+    A summary with no ``subject_tree`` belongs to no subject area and would
+    match no selection; it ships anyway (with a warning) rather than
+    disappearing from every package.
     """
     base = root / _SQL_SUMMARIES_REL
     if not base.is_dir():
-        return [], 0
+        return [], 0, []
     wanted = set(selected_subjects)
     entries: List[StagedEntry] = []
+    warnings: List[str] = []
     for path in sorted(base.rglob("*.y*ml")):
         if not path.is_file() or _is_junk_path(path.relative_to(base)):
             continue
-        if _subject_root_of(_read_yaml_mapping(path).get("subject_tree")) in wanted:
-            entries.append(StagedEntry(arcname=path.relative_to(root).as_posix(), source=path))
-    return entries, len(entries)
+        subject_root = _subject_root_of(_read_yaml_mapping(path).get("subject_tree"))
+        if not subject_root:
+            warnings.append(f"{path.name}: no subject_tree — packaged regardless of the subject selection")
+        elif subject_root not in wanted:
+            continue
+        entries.append(StagedEntry(arcname=path.relative_to(root).as_posix(), source=path))
+    return entries, len(entries), warnings
 
 
 def _artifact_walk(artifact_dir: Path, dirs_spec: Dict[str, Tuple[Tuple[str, ...], bool]]) -> List[Path]:
@@ -1706,7 +1715,8 @@ def _build_package(options: PackageOptions) -> PackageResult:
     )
     _add(metric_entries)
 
-    reference_sql_entries, reference_sql_count = select_reference_sql(root, kept_subjects)
+    reference_sql_entries, reference_sql_count, summary_warnings = select_reference_sql(root, kept_subjects)
+    warnings.extend(summary_warnings)
     _add(reference_sql_entries)
 
     kept_reports, report_entries, report_warnings = select_artifacts(

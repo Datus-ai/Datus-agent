@@ -495,6 +495,17 @@ class TestSelectors:
         assert "migrations/001_init.sql" in names
         assert not any(name.startswith("subject/sql_summaries/") for name in names)
 
+    def test_untagged_summary_ships_with_a_warning(self, project):
+        """A summary carrying no subject_tree matches no selection — it must
+        still travel (with a warning) instead of vanishing from every package."""
+        (project / "subject" / "sql_summaries" / "q_orphan.yaml").write_text(
+            'id: q_orphan\nname: "q_orphan"\nsql: "SELECT 2"\nsummary: "s"\nsearch_text: "t"\n',
+            encoding="utf-8",
+        )
+        result = _build(project, subjects=("sales",))
+        assert "subject/sql_summaries/q_orphan.yaml" in _namelist(result)
+        assert any("no subject_tree" in warning for warning in result.warnings)
+
     def test_unknown_subject_fails(self, project):
         result = _build(project, subjects=("ghost",))
         assert not result.ok and "unknown subject" in result.error

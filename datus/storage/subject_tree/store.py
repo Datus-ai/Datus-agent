@@ -5,6 +5,7 @@ using the pluggable RDB backend abstraction.
 """
 
 import fnmatch
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -30,6 +31,23 @@ SUBJECT_PATH_COLUMN_NAME = "subject_path"
 NAME_COLUMN_NAME = "name"
 CREATED_AT_COLUMN_NAME = "created_at"
 ROOT_PARENT_ID = -1  # Used instead of NULL to ensure UNIQUE constraint works for root nodes
+
+# Characters that carry no meaning in a subject node name — two names that
+# differ only by these (or by case) denote the same subject area.
+_NODE_NAME_NOISE_RE = re.compile(r"[\s_\-/\\.·、,，]+")
+
+
+def normalize_subject_node_name(name: str) -> str:
+    """Comparison key for subject node names.
+
+    Case-folded with separators/punctuation removed, so ``Marketing``,
+    ``marketing``, ``market_ing`` and ``Marketing `` all collapse onto one
+    node instead of fragmenting a subject area into near-duplicate siblings.
+    Genuinely different names (``营销`` vs ``营销分析``) still stay distinct —
+    merging those needs a curated tree (``bootstrap-kb --subject_tree``).
+    """
+    return _NODE_NAME_NOISE_RE.sub("", str(name or "").strip()).casefold()
+
 
 _SUBJECT_NODES_TABLE = TableDefinition(
     table_name="subject_nodes",
@@ -548,15 +566,39 @@ class SubjectTreeStore:
         return parent_id
 
     def _find_child_by_name(self, parent_id: Optional[int], name: str) -> Optional[Dict[str, Any]]:
-        """Find a child node by name under a specific parent."""
+        """Find a child node by name under a specific parent.
+
+        Matching is exact first, then normalized (case-folded, separators and
+        surrounding whitespace ignored). Subject paths are largely written by
+        an LLM one entry at a time, so without the normalized pass a single
+        area accumulates siblings like ``Marketing`` / ``marketing`` /
+        ``marketing_`` — each splitting the same content into its own subtree.
+        """
         db_parent_id = ROOT_PARENT_ID if parent_id is None else parent_id
-        where = {"parent_id": db_parent_id, "name": name, "datasource_id": self.datasource_id}
         rows = self._table.query(
             SubjectNodeRecord,
-            where=where,
+            where={"parent_id": db_parent_id, "name": name, "datasource_id": self.datasource_id},
         )
         if rows:
             return _node_to_dict(rows[0])
+
+        target = normalize_subject_node_name(name)
+        if not target:
+            return None
+        siblings = self._table.query(
+            SubjectNodeRecord,
+            where={"parent_id": db_parent_id, "datasource_id": self.datasource_id},
+        )
+        for row in siblings or []:
+            node = _node_to_dict(row)
+            if normalize_subject_node_name(node.get("name", "")) == target:
+                logger.info(
+                    "Reusing subject node %r for equivalent name %r (parent=%s)",
+                    node.get("name"),
+                    name,
+                    parent_id,
+                )
+                return node
         return None
 
     def rename(self, old_path: List[str], new_path: List[str]) -> bool:
