@@ -218,13 +218,14 @@ def _prompt_patterns(console: Console, message: str) -> List[str]:
         if not answer:
             return []
         patterns = [part.strip() for part in answer.split(",") if part.strip()]
-        try:
-            for pattern in patterns:
+        for pattern in patterns:
+            try:
                 re.compile(pattern)
-        except re.error as exc:
-            print_warning(console, f"Invalid regex {pattern!r}: {exc}")
-            continue
-        return patterns
+            except re.error as exc:
+                print_warning(console, f"Invalid regex {pattern!r}: {exc}")
+                break  # re-ask; the for/else below only returns a clean list
+        else:
+            return patterns
 
 
 def _subject_hierarchy(choices: Dict[str, str]) -> Dict[str, str]:

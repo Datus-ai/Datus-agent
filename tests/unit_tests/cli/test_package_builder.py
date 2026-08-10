@@ -11,8 +11,10 @@ built on disk and results are verified by re-opening the produced zip
 """
 
 import json
+import os
 import zipfile
 from pathlib import Path
+from typing import Never
 
 import pytest
 import yaml
@@ -299,6 +301,7 @@ class TestCollection:
         assert "ghost.txt" not in _namelist(result)
         assert any("ghost.txt" in warning and "vanished" in warning for warning in result.warnings)
 
+    @pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs Developer Mode or admin on Windows")
     def test_symlink_escaping_root_dropped(self, project, tmp_path):
         outside = tmp_path / "outside.txt"
         outside.write_text("outside", encoding="utf-8")
@@ -367,7 +370,10 @@ class TestAgentYmlGeneration:
         alloc = pb._PlaceholderAllocator()
         container = {"uri": "weird-scheme://user:p4ss@[bad host/db"}
         pb._rewrite_uri_password(container, "uri", "DATUS_DS_X_URI_PASSWORD", "x.uri", alloc)
-        assert "p4ss" not in container["uri"]
+        # The whole value goes, not just the password: a partial redaction of an
+        # unparseable URI could still carry the secret in what it left behind.
+        assert container["uri"] == "${DATUS_DS_X_URI_PASSWORD}"
+        assert [b.var for b in alloc.bindings] == ["DATUS_DS_X_URI_PASSWORD"]
 
     def test_non_secret_extras_untouched(self, project):
         agent = self._generated(_build(project))
@@ -620,7 +626,8 @@ class TestSelectors:
         from datus.agent.node.visual_artifact._artifact_html_renderer import CDN_BUNDLE_CSS, CDN_BUNDLE_JS
 
         index = project / "reports" / "daily_gmv" / "index.html"
-        index.write_text(f'<link href="{CDN_BUNDLE_CSS}"><script src="{CDN_BUNDLE_JS}">', encoding="utf-8")
+        original = f'<link href="{CDN_BUNDLE_CSS}"><script src="{CDN_BUNDLE_JS}">'
+        index.write_text(original, encoding="utf-8")
         dist = tmp_path / "half-dist"
         dist.mkdir()
         (dist / "index.css").write_text("css", encoding="utf-8")  # index.umd.js missing
@@ -629,8 +636,9 @@ class TestSelectors:
         names = _namelist(result)
         # Never rewrite to assets that cannot ship: html stays CDN, no _assets staged.
         assert "reports/daily_gmv/_assets/index.umd.js" not in names
-        html = _member(result, "reports/daily_gmv/index.html").decode("utf-8")
-        assert "unpkg.com" in html and "_assets/" not in html
+        # Byte-identical, not merely "still mentions the CDN" — a half-rewrite
+        # that swapped only the CSS would leave the page unloadable.
+        assert _member(result, "reports/daily_gmv/index.html").decode("utf-8") == original
         assert any("missing index.umd.js" in warning for warning in result.warnings)
 
     def test_index_html_kept_as_is_without_dist(self, project):
@@ -835,13 +843,13 @@ class TestSecretScan:
     def test_broken_plugin_schema_degrades_to_all_leaves(self, project, monkeypatch):
         import datus.plugins.registry as registry
 
-        def boom(_name):
+        def boom(_name: str) -> Never:
             raise RuntimeError("broken manifest")
 
         monkeypatch.setattr(registry, "plugin_config_schema", boom)
         raw = {"plugins": {"alpha": {"prod": {"endpoint": "https://x", "note": "plain"}}}}
         alloc = pb._PlaceholderAllocator()
-        warnings: list = []
+        warnings: list[str] = []
         pb._sanitize_plugin_profiles(raw["plugins"], alloc, warnings)
         # Lookup failure == no schema: every string leaf becomes a placeholder.
         assert raw["plugins"]["alpha"]["prod"]["endpoint"].startswith("${")
@@ -879,7 +887,10 @@ class TestEndToEnd:
         assert source_by_path["conf/agent.yml"] == "generated"
         assert source_by_path["knowledge/notes.md"] == "project"
 
-        # The unzipped tree parses as a valid agent config shape.
+        # The unzipped tree parses as a valid agent config shape. Blanket
+        # extractall is safe *here only*: this archive is the one build_package
+        # just wrote, and the member paths were asserted traversal-free above.
+        # Code reading an archive from elsewhere must extract member by member.
         extract = tmp_path / "unpacked"
         with zipfile.ZipFile(result.zip_path) as zf:
             zf.extractall(extract)

@@ -1373,7 +1373,9 @@ def _sanitize_plugin_profiles(plugins: Dict[str, Any], alloc: _PlaceholderAlloca
                 )
                 _rewrite_secret_named_keys(profile, prefix, path, alloc, all_string_leaves=True)
             else:
-                for dotted in secret_fields:
+                # Sorted: allocation order decides collision suffixes (_2, _3),
+                # so set order would rename variables between builds.
+                for dotted in sorted(secret_fields):
                     container: Any = profile
                     parts = dotted.split(".")
                     for part in parts[:-1]:
