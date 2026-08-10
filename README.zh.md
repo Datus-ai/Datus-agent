@@ -130,7 +130,7 @@ REPL 启动后,运行 `/model` 配置 LLM、`/datasource` 添加数据源、(可
 
 ```bash
 datus --datasource demo
-/Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
+Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 ```
 
 **构建上下文** —— 扫描项目、生成语义模型与指标、索引 SQL 历史。每一份沉淀都成为后续查询的可复用上下文。

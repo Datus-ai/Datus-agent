@@ -130,7 +130,7 @@ The examples below use a datasource named `demo` — create one first with `/dat
 
 ```bash
 datus --datasource demo
-/Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
+Check the top 10 banks by assets lost @table duckdb-demo.main.bank_failures
 ```
 
 **Build Context** — Scan the project, generate semantic models and metrics, and index SQL history. Each piece becomes reusable context for future queries.
