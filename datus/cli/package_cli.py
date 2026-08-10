@@ -10,8 +10,15 @@ the wizard and packages everything with defaults — the non-TTY / scripting
 escape hatch. Pure build logic lives in :mod:`datus.cli.package_builder`;
 this module owns argparse, the step flow, and console output only.
 
-Exit codes: ``0`` success, ``1`` build failure or user abort, ``2`` usage
-error or non-interactive terminal without ``--yes``, ``3`` no agent config.
+Exit codes: ``0`` success, ``1`` build failure, ``2`` usage error or
+non-interactive terminal without ``--yes``, ``3`` no agent config, ``130``
+cancelled with Ctrl+C (the shell convention for SIGINT).
+
+Ctrl+C aborts at any point. That needs the ``cancellable=True`` opt-in on
+the shared prompts: by default they swallow the interrupt and return a
+plausible answer — the multi-select returns ``[]`` (identical to
+"deselect everything") and the single-select returns its default, so
+Ctrl+C on "Build the package now?" would have started the build.
 """
 
 from __future__ import annotations
@@ -76,14 +83,32 @@ def run_package_command(argv: List[str]) -> int:
         try:
             options = _run_wizard(console, pb, raw, root)
         except KeyboardInterrupt:
-            print_warning(console, "Aborted.")
-            return 1
+            print_warning(console, "\nAborted — nothing was written.")
+            return 130
         if options is None:
-            print_warning(console, "Aborted.")
-            return 1
+            print_warning(console, "Aborted — nothing was written.")
+            return 130
 
-    result = pb.build_package(options)
+    try:
+        result = pb.build_package(options)
+    except KeyboardInterrupt:
+        # Ctrl+C during zip assembly leaves a truncated archive behind; a
+        # half-written package that looks complete is worse than none.
+        _discard_partial_zip(console, options, pb)
+        print_warning(console, "\nAborted during build.")
+        return 130
     return _report_result(console, result)
+
+
+def _discard_partial_zip(console: Console, options: "PackageOptions", pb: ModuleType) -> None:
+    target = options.output or pb.default_output_path(options.root, pb.resolve_effective_project_name(options.root, {}))
+    try:
+        path = Path(target)
+        if path.is_file():
+            path.unlink()
+            print_warning(console, f"Removed the partially written {path}")
+    except OSError as exc:
+        print_warning(console, f"Could not remove the partially written {target}: {exc}")
 
 
 # --------------------------------------------------------------------------- #
@@ -164,20 +189,22 @@ def _is_under(path: Path, root: Path) -> bool:
 def _step_output_path(console: Console, pb: ModuleType, root: Path, project_name: str) -> Optional[Path]:
     default = str(pb.default_output_path(root, project_name))
     while True:
-        answer = prompt_input(console, "Output zip path", default=default).strip()
+        answer = prompt_input(console, "Output zip path", default=default, allow_interrupt=True).strip()
         if not answer:
             answer = default
         candidate = Path(answer).expanduser()
         if candidate.suffix != ".zip":
             print_warning(console, "Output path must end with .zip")
             continue
-        if candidate.exists() and not confirm_prompt(console, f"{candidate} exists — overwrite?", default=False):
+        if candidate.exists() and not confirm_prompt(
+            console, f"{candidate} exists — overwrite?", default=False, cancellable=True
+        ):
             continue
         return candidate
 
 
 def _step_file_scope(console: Console) -> Tuple[List[str], List[str]]:
-    if confirm_prompt(console, "Package all project files (recommended)?", default=True):
+    if confirm_prompt(console, "Package all project files (recommended)?", default=True, cancellable=True):
         return [], []
     include = _prompt_patterns(console, "Include regex patterns (comma-separated, empty = all)")
     exclude = _prompt_patterns(console, "Exclude regex patterns (comma-separated, empty = none)")
@@ -186,7 +213,7 @@ def _step_file_scope(console: Console) -> Tuple[List[str], List[str]]:
 
 def _prompt_patterns(console: Console, message: str) -> List[str]:
     while True:
-        answer = prompt_input(console, message, default="").strip()
+        answer = prompt_input(console, message, default="", allow_interrupt=True).strip()
         if not answer:
             return []
         patterns = [part.strip() for part in answer.split(",") if part.strip()]
@@ -211,10 +238,10 @@ def _step_multi(console: Console, label: str, choices: Dict[str, str]) -> List[s
         return []
     while True:
         print_info(console, f"{label}: Space toggles, 'a' toggles all, Enter confirms")
-        selected = select_multi_choice(console, choices, default_selected=list(choices))
+        selected = select_multi_choice(console, choices, default_selected=list(choices), cancellable=True)
         if selected:
             return selected
-        if confirm_prompt(console, f"Package no {label.lower()} at all — continue?", default=False):
+        if confirm_prompt(console, f"Package no {label.lower()} at all — continue?", default=False, cancellable=True):
             return []
 
 
@@ -226,6 +253,7 @@ def _step_report_dist(console: Console, raw: Dict) -> Optional[Path]:
             "dist": "Bundle the web-artifact-render dist so index.html opens via file://",
         },
         default="cdn",
+        cancellable=True,
     )
     if choice != "dist":
         return None
@@ -239,7 +267,10 @@ def _step_report_dist(console: Console, raw: Dict) -> Optional[Path]:
             configured = gen_report["report_dist"]
     while True:
         answer = prompt_input(
-            console, "Path to the web-artifact-render dist directory (empty = skip)", default=configured
+            console,
+            "Path to the web-artifact-render dist directory (empty = skip)",
+            default=configured,
+            allow_interrupt=True,
         ).strip()
         if not answer:
             print_info(console, "Skipping the local dist; reports will use the CDN.")
@@ -276,7 +307,7 @@ def _step_summary(console: Console, options: "PackageOptions", project_name: str
     table = build_row_table(rows, title="Package summary", columns=[("item", "Item"), ("value", "Value")])
     if table is not None:
         console.print(table)
-    return confirm_prompt(console, "Build the package now?", default=True)
+    return confirm_prompt(console, "Build the package now?", default=True, cancellable=True)
 
 
 # --------------------------------------------------------------------------- #

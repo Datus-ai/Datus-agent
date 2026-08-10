@@ -23,6 +23,25 @@ _FREE_TEXT_SENTINEL = "__free_text__"
 BACK_SENTINEL = "__back__"
 
 
+# Returned by the interactive helpers when the user pressed Ctrl+C and the
+# caller opted into ``cancellable=True``. Without it, cancellation is
+# indistinguishable from a real answer: the multi-select returns ``[]``
+# (same as "deselect everything") and the single-select returns the default
+# (so Ctrl+C on a "proceed?" prompt would proceed).
+_CANCELLED = object()
+
+
+def _cancel_or(value, cancellable: bool):
+    """Value to hand back when the user cancels."""
+    return _CANCELLED if cancellable else value
+
+
+def _raise_if_cancelled(result):
+    if result is _CANCELLED:
+        raise KeyboardInterrupt
+    return result
+
+
 def prompt_with_back(label: str, default: str = "", password: bool = False) -> str:
     """Prompt with ESC to go back. Uses prompt_toolkit for key handling.
 
@@ -121,6 +140,7 @@ def select_choice(
     default: str = "",
     allow_free_text: bool = False,
     current: str = "",
+    cancellable: bool = False,
 ) -> str:
     """Interactive choice selector with arrow-key navigation.
 
@@ -226,7 +246,7 @@ def select_choice(
 
         @kb.add("c-c")
         def _cancel(event):
-            _finish(default)
+            _finish(_cancel_or(default, cancellable))
 
         # Direct shortcut keys (press y/a/n to pick immediately)
         # Only register single-character keys; multi-char keys (e.g. "10") are
@@ -308,10 +328,12 @@ def select_choice(
             console.print()
             console.print("[dim](Paste supported. Enter to submit)[/]")
             return prompt_input(console, message="Your input", multiline=True)
-        return result
+        return _raise_if_cancelled(result)
 
     except (KeyboardInterrupt, EOFError):
         print_warning(console, "\nInput cancelled")
+        if cancellable:
+            raise KeyboardInterrupt from None
         return default
     except Exception as e:
         logger.error(f"Interactive select error: {e}")
@@ -324,6 +346,7 @@ def select_multi_choice(
     choices: Dict[str, str],
     default_selected: Optional[List[str]] = None,
     allow_free_text: bool = False,
+    cancellable: bool = False,
 ) -> List[str]:
     """Interactive multi-select with arrow-key navigation and Space to toggle.
 
@@ -431,7 +454,7 @@ def select_multi_choice(
 
         @kb.add("c-c")
         def _cancel(event):
-            _finish([])
+            _finish(_cancel_or([], cancellable))
 
         if allow_free_text:
 
@@ -501,10 +524,12 @@ def select_multi_choice(
             text = prompt_input(console, message="Your input", multiline=True)
             return [text] if text else []
 
-        return result
+        return _raise_if_cancelled(result)
 
     except (KeyboardInterrupt, EOFError):
         print_warning(console, "\nInput cancelled")
+        if cancellable:
+            raise KeyboardInterrupt from None
         return []
     except Exception as e:
         logger.error(f"Interactive multi-select error: {e}")
@@ -792,7 +817,7 @@ def prompt_input(
         return default
 
 
-def confirm_prompt(console: Console, message: str, default: bool = False) -> bool:
+def confirm_prompt(console: Console, message: str, default: bool = False, cancellable: bool = False) -> bool:
     """Yes/No prompt built on :func:`select_choice` — TUI worker-thread safe.
 
     Replaces ``rich.prompt.Confirm.ask`` for callers that run inside the
@@ -804,5 +829,5 @@ def confirm_prompt(console: Console, message: str, default: bool = False) -> boo
     console.print(f"[bold]{message}[/bold]")
     choices = {"y": "Yes", "n": "No"}
     default_key = "y" if default else "n"
-    result = select_choice(console, choices, default=default_key)
+    result = select_choice(console, choices, default=default_key, cancellable=cancellable)
     return result == "y"

@@ -180,8 +180,50 @@ class TestWizard:
             select_choice=_side_effects(["cdn"]),
             prompt_input=_side_effects([""]),
         )
-        assert package_cli.run_package_command([]) == 1
+        # Declining the summary is a cancellation, not a failure — 130 is the
+        # shell convention for "interrupted", same as Ctrl+C.
+        assert package_cli.run_package_command([]) == 130
         assert "options" not in captured_build
+
+    def test_ctrl_c_in_a_wizard_step_aborts_without_building(self, raw_config, captured_build, monkeypatch):
+        """Prompts opt into ``cancellable=True`` so Ctrl+C raises instead of
+        returning a plausible answer (``[]`` reads as "deselect everything",
+        and a default "yes" would have started the build)."""
+        self._patch_enumerations(monkeypatch)
+
+        def interrupt(*_args, **_kwargs):
+            raise KeyboardInterrupt
+
+        _patch_prompts(
+            monkeypatch,
+            select_multi_choice=interrupt,
+            confirm_prompt=_side_effects([True]),
+            prompt_input=_side_effects([""]),
+        )
+        assert package_cli.run_package_command([]) == 130
+        assert "options" not in captured_build
+
+    def test_ctrl_c_during_build_discards_the_partial_zip(self, raw_config, monkeypatch, tmp_path, capsys):
+        """A truncated archive that looks complete is worse than none."""
+        partial = tmp_path / "half.zip"
+        partial.write_bytes(b"PK\x03\x04 truncated")
+
+        def interrupted_build(_options):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(pb, "build_package", interrupted_build)
+        self._patch_enumerations(monkeypatch)
+        _patch_prompts(
+            monkeypatch,
+            select_multi_choice=lambda console, choices, default_selected=None, **_: list(choices),
+            # overwrite the existing file? / all files? / build now?
+            confirm_prompt=_side_effects([True, True, True]),
+            select_choice=_side_effects(["cdn"]),
+            prompt_input=_side_effects([str(partial)]),
+        )
+        assert package_cli.run_package_command([]) == 130
+        assert not partial.exists()
+        assert "partially written" in capsys.readouterr().out
 
     def test_output_path_validation_reprompts(self, raw_config, captured_build, monkeypatch):
         self._patch_enumerations(monkeypatch)
