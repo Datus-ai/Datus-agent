@@ -237,12 +237,15 @@ class TestApplyPermissionModeOverride:
             _explode,
         )
 
-        with pytest.raises(RuntimeError, match="permission_mode='auto'"):
+        from datus.utils.exceptions import DatusException, ErrorCode
+
+        with pytest.raises(DatusException, match="permission_mode='auto'") as excinfo:
             manager._apply_permission_mode_override(
                 node,
                 self._make_agent_config({"rules": [{"bad": "shape"}]}),
                 "auto",
             )
+        assert excinfo.value.code == ErrorCode.COMMON_CONFIG_ERROR
         node.permission_manager.switch_profile.assert_not_called()
 
     def test_swallows_switch_profile_failure(self):

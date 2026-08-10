@@ -1086,63 +1086,21 @@ class ChatTaskManager:
         ``/profile`` flow can still mutate the global field because it
         owns the process exclusively; this API path cannot.
 
-        No-ops when ``permission_mode`` is falsy, the node has no
-        ``permission_manager`` (e.g. workflow nodes that skip the skill
-        setup), or the requested profile already matches the active one.
-        Failure handling is split deliberately:
+        Because the override lives on the node, a subagent built later from
+        the same shared config does not see it — ``SubAgentTaskTool`` copies
+        it down explicitly.
 
-        * Building ``user_overrides`` from ``agent.yml`` fails closed —
-          raises so the outer ``_run_loop`` aborts the turn and emits an
-          SSE error. Silently dropping malformed user rules would apply
-          the bare profile base, which can be **broader** than the
-          operator-configured posture (e.g. yaml had an explicit DENY
-          we'd lose), so the safe move is to refuse the switch loudly.
-        * ``switch_profile`` failures (unknown profile, malformed merge
-          result) are logged and swallowed because at that point the
-          node still has its original, server-default profile installed.
+        See :func:`apply_profile_override` for the no-op and failure rules;
+        a raise from there aborts the turn in ``_run_loop`` and emits an SSE
+        error, which is the intended fail-closed behaviour.
         """
-        if not permission_mode:
-            return
-        permission_manager = getattr(node, "permission_manager", None)
-        if permission_manager is None:
-            return
-        if getattr(permission_manager, "active_profile", None) == permission_mode:
-            return
+        from datus.tools.permission.profile_override import apply_profile_override
 
-        from datus.tools.permission.profiles import build_user_overrides
-
-        raw_permissions = getattr(agent_config, "_raw_permissions", {}) or {}
-        raw_user = {k: v for k, v in raw_permissions.items() if k != "profile"}
-        try:
-            user_overrides = build_user_overrides(permission_mode, raw_user)
-        except Exception as exc:
-            logger.error(
-                "Cannot build user overrides for permission_mode=%r from agent.yml: %s; "
-                "refusing to switch profile to avoid broadening permissions beyond the "
-                "operator-configured rules",
-                permission_mode,
-                exc,
-                exc_info=True,
-            )
-            raise RuntimeError(
-                f"Failed to apply permission_mode={permission_mode!r}: agent.yml permissions.rules is malformed ({exc})"
-            ) from exc
-
-        try:
-            permission_manager.switch_profile(permission_mode, user_overrides=user_overrides)
-        except Exception as e:
-            logger.error(
-                "Failed to switch permission profile to %r for session=%s: %s",
-                permission_mode,
-                getattr(node, "session_id", None),
-                e,
-            )
-            return
-
-        logger.info(
-            "Applied per-request permission profile %r for session=%s",
+        apply_profile_override(
+            getattr(node, "permission_manager", None),
+            agent_config,
             permission_mode,
-            getattr(node, "session_id", None),
+            subject=f"session={getattr(node, 'session_id', None)}",
         )
 
     # ------------------------------------------------------------------
