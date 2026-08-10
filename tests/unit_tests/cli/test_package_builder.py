@@ -630,6 +630,51 @@ class TestGeneratedFiles:
         assert "datus plugin install datus-alpha==1.2.3" in script
         assert "beta" not in script
 
+    def test_init_script_orders_the_setup_steps(self, project, monkeypatch):
+        import datus.plugins.store as store
+
+        monkeypatch.setattr(
+            store, "iter_installed", lambda: [{"name": "alpha", "distribution": "datus-alpha", "version": "1.2.3"}]
+        )
+        result = _build(project)
+        init = _member(result, "scripts/init.sh").decode("utf-8")
+        # dependencies -> plugins -> knowledge base, in that order.
+        assert (
+            init.index("-m pip install -r requirements.txt")
+            < init.index("scripts/install_plugins.sh")
+            < init.index("scripts/rebuild_kb.sh")
+        )
+        # Bound to the active interpreter: a bare ``pip`` can belong to a
+        # different Python than the venv that will run datus.
+        assert "uv pip install --python" in init and '"$PYTHON" -m pip install' in init
+        assert "set -euo pipefail" in init
+        # No backticks on an executable line: inside a double-quoted echo they
+        # are command substitution, so a line naming the datus command would
+        # launch the REPL instead of printing its name.
+        runnable = [line for line in init.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+        assert not [line for line in runnable if "`" in line]
+        # Missing env vars are a warning, not a hard stop: the dependency
+        # step needs none and the config carries ${VAR:-default} fallbacks.
+        assert "WARNING: unset environment variables" in init and "OPENAI_API_KEY" in init
+        with zipfile.ZipFile(result.zip_path) as zf:
+            assert (zf.getinfo("scripts/init.sh").external_attr >> 16) & 0o111
+
+    def test_init_script_skips_absent_steps(self, project):
+        init = _member(_build(project, metrics=(), subjects=()), "scripts/init.sh").decode("utf-8")
+        assert "-m pip install -r requirements.txt" in init
+        assert "rebuild_kb.sh" not in init  # nothing to rebuild
+        assert "install_plugins.sh" not in init  # no plugins activated/installed
+
+    def test_plugin_install_lines_are_rerunnable(self, project, monkeypatch):
+        import datus.plugins.store as store
+
+        monkeypatch.setattr(
+            store, "iter_installed", lambda: [{"name": "alpha", "distribution": "datus-alpha", "version": "1.2.3"}]
+        )
+        script = _member(_build(project), "scripts/install_plugins.sh").decode("utf-8")
+        # Without --force a second run fails on the already-installed plugin.
+        assert "datus plugin install datus-alpha==1.2.3 --force" in script
+
     def test_no_plugins_no_script(self, project):
         names = _namelist(_build(project))
         assert "scripts/install_plugins.sh" not in names
