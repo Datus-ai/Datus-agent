@@ -2212,6 +2212,13 @@ class TestProviderConfigurationDispatch:
                     "default_model": "anthropic/claude-sonnet-4",
                     "models": ["anthropic/claude-sonnet-4", "openai/gpt-4o"],
                 },
+                "orcarouter": {
+                    "type": "orcarouter",
+                    "base_url": "https://api.orcarouter.ai/v1",
+                    "api_key_env": "ORCAROUTER_API_KEY",
+                    "default_model": "deepseek/deepseek-chat",
+                    "models": ["deepseek/deepseek-chat", "openai/gpt-5.5"],
+                },
             },
             "model_overrides": {
                 "kimi-k2.5": {"temperature": 1.0, "top_p": 0.95},
@@ -2279,6 +2286,22 @@ class TestProviderConfigurationDispatch:
         assert active.api_key == "sk-or-test"
         assert active.model == "openai/gpt-4o"
         assert active.base_url == "https://openrouter.ai/api/v1"
+
+    def test_orcarouter_provider_synthesizes_orcarouter_model_config(self, tmp_path):
+        """A provider whose catalog ``type`` is ``orcarouter`` resolves to an
+        orcarouter ModelConfig that drives ``OrcaRouterModel`` via MODEL_TYPE_MAP,
+        keeping the full ``vendor/slug`` model name and the gateway base URL."""
+        cfg = self._make(
+            tmp_path,
+            providers={"orcarouter": {"api_key": "sk-orca-test"}},
+            target_provider="orcarouter",
+            target_model="deepseek/deepseek-chat",
+        )
+        active = cfg.active_model()
+        assert active.type == "orcarouter"
+        assert active.api_key == "sk-orca-test"
+        assert active.model == "deepseek/deepseek-chat"
+        assert active.base_url == "https://api.orcarouter.ai/v1"
 
     def test_model_overrides_applied_when_synthesizing(self, tmp_path):
         cfg = self._make(

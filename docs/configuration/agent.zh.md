@@ -128,11 +128,18 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 | `minimax` | `MiniMax-M2.7`、`MiniMax-M2.5` | `minimax` | API Key |
 | `glm` | `glm-5`、`glm-4.7` | `glm` | API Key |
 | `openrouter` | `anthropic/claude-sonnet-4`、`openai/gpt-4o` | `openrouter` | API Key |
+| `orcarouter` | `deepseek/deepseek-chat`、`openai/gpt-5.5` | `orcarouter` | API Key |
 
 !!! tip "OpenRouter —— 一把 Key，300+ 模型"
     `openrouter` 是统一网关：一个 `OPENROUTER_API_KEY` 即可路由到任意厂商。
     其模型名采用 `vendor/slug` 形式（如 `google/gemini-2.5-pro`）。`/model`
     选择器会拉取 OpenRouter 的完整在线目录，并支持输入关键字过滤。
+
+!!! tip "OrcaRouter —— 一把 Key，150+ 模型"
+    `orcarouter` 是统一网关：一个 `ORCAROUTER_API_KEY` 即可路由到任意厂商。
+    其模型名同样采用 `vendor/slug` 形式（如 `deepseek/deepseek-chat`、
+    `orcarouter/auto`）。Key 以 `sk-orca-` 开头，可在
+    https://www.orcarouter.ai/console 获取。
 
 ### 特殊认证 provider
 
@@ -166,7 +173,7 @@ ssl_verify（agent.yml）  →  SSL_VERIFY 环境变量  →  SSL_CERT_FILE 环�
 api_key: ${OPENAI_API_KEY}
 ```
 
-对于 OpenAI、DeepSeek、Claude、Kimi、Qwen、Gemini、OpenRouter，配置向导会自动提示对应环境变量（如 `${OPENROUTER_API_KEY}`）。对于 `minimax`、`glm` 和各类 `*_coding` provider，你也可以在输入 API Key 时直接填入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
+对于 OpenAI、DeepSeek、Claude、Kimi、Qwen、Gemini、OpenRouter、OrcaRouter，配置向导会自动提示对应环境变量（如 `${OPENROUTER_API_KEY}`）。对于 `minimax`、`glm` 和各类 `*_coding` provider，你也可以在输入 API Key 时直接填入 `${MINIMAX_API_KEY}`、`${GLM_API_KEY}`、`${KIMI_API_KEY}`、`${DASHSCOPE_API_KEY}` 这类环境变量引用。
 
 另外，当前实现会对少数模型自动补充固定参数覆盖：
 
@@ -236,6 +243,15 @@ openrouter:
   base_url: https://openrouter.ai/api/v1
   api_key: ${OPENROUTER_API_KEY}
   model: anthropic/claude-sonnet-4   # vendor/slug 形式
+```
+
+=== "OrcaRouter"
+```yaml
+orcarouter:
+  type: orcarouter
+  base_url: https://api.orcarouter.ai/v1
+  api_key: ${ORCAROUTER_API_KEY}
+  model: deepseek/deepseek-chat      # vendor/slug 形式
 ```
 
 === "Alibaba Coding Plan"

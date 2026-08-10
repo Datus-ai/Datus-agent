@@ -32,6 +32,7 @@ class LLMProvider(StrEnum):
     GPT = "gpt"  # Alternative name for OpenAI
     CODEX = "codex"  # OpenAI Codex (ChatGPT subscription, OAuth authentication)
     OPENROUTER = "openrouter"  # OpenRouter unified AI gateway
+    ORCAROUTER = "orcarouter"  # OrcaRouter unified AI gateway
 
 
 class EmbeddingProvider(StrEnum):
