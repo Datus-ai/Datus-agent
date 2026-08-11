@@ -46,10 +46,21 @@ class PlanItem(BaseModel):
 
 
 class TaskArtifact(BaseModel):
-    """Something produced during the run that the caller can link to."""
+    """Something produced during the run that the caller can link to.
+
+    ``slug`` was ``ref``, described as "identifier or path" — and the vaguer
+    word got the vaguer answer: runs reported ``reports/<slug>/`` when the slug
+    alone is what opens the artifact. Nothing downstream resolves a path, so a
+    caller wanting to link to the report had to strip the decoration back off.
+    """
 
     kind: str = Field(description="csv | report | dashboard | metric | table | file")
-    ref: str = Field(description="Identifier or path the caller can resolve.")
+    slug: str = Field(
+        description=(
+            "The artifact's own slug, exactly as it was created — e.g. "
+            "'store_anomaly_root_cause_2026_06'. Not a path, a URL or a filename."
+        )
+    )
     title: Optional[str] = Field(default=None, description="Human-readable label.")
 
 
@@ -148,7 +159,9 @@ class TaskResultTool:
             summary: A few sentences the caller reads instead of your full transcript.
                 Include the grain and definitions you settled on — you are the only one
                 who knows what you had to decide along the way.
-            artifacts: Anything produced that the caller can link to.
+            artifacts: Anything produced that the caller can link to. Identify each
+                one by its ``slug`` alone — the caller opens it by slug, and a path
+                around it only has to be stripped back off.
             gap_reasons: Concretely what is missing. Required for ``needs_development``
                 and ``blocked``.
             plan_items: What to build, for ``needs_development``.
