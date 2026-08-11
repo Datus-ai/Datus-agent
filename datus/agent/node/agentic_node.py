@@ -2572,10 +2572,36 @@ class AgenticNode(Node):
             self.task_result_tool = TaskResultTool()
             if self.tools is not None:
                 self.tools.extend(self.task_result_tool.available_tools())
+            self._allow_task_result_tool()
             logger.debug("Setup submit_task_result tool")
         except Exception as e:
             logger.error(f"Failed to setup task result tool: {e}")
             self.task_result_tool = None
+
+    def _allow_task_result_tool(self):
+        """Exempt ``submit_task_result`` from the permission prompt.
+
+        Same reasoning as ``ask_user``: this is the channel the run reports
+        through, not a resource it touches. Under ``normal`` / ``auto`` it
+        matches no ALLOW rule and lands on ``default=ASK``, so a finished
+        dispatch stopped to ask permission to say it had finished — and the
+        card sat in the thread waiting for a human.
+
+        Declared here rather than in ``profiles.py`` because the tool itself is
+        injected here, only for orchestrator origins. A rule in the shared
+        profiles would outlive the tool and name it for every other caller.
+        ``add_persistent_rule`` so a later ``/profile`` switch, which rebuilds
+        ``global_config``, does not drop it.
+        """
+        if self.permission_manager is None:
+            return
+
+        from datus.tools.permission.permission_config import PermissionLevel, PermissionRule
+
+        category = getattr(self.task_result_tool, "permission_category", "tools")
+        self.permission_manager.add_persistent_rule(
+            PermissionRule(tool=category, pattern="submit_task_result", permission=PermissionLevel.ALLOW)
+        )
 
     def _setup_sub_agent_task_tool(self):
         """Setup SubAgentTaskTool based on subagents config or node default.

@@ -22,7 +22,9 @@ from datus.api.services.chat_task_manager import (
     _coalesce_deltas,
     _fill_database_context,
     _is_thinking_delta,
+    _remember_assistant_message,
     _should_include_final_response,
+    _should_skip_duplicate_assistant_message,
 )
 
 
@@ -2401,3 +2403,71 @@ class TestResolveMetricSqlPaths:
         mgr = ChatTaskManager()
         assert mgr._resolve_metric_paths(MagicMock(), []) == ([], [])
         assert mgr._resolve_sql_paths(MagicMock(), None) == ([], [])
+
+
+# ---------------------------------------------------------------------------
+# Duplicate assistant-message suppression
+# ---------------------------------------------------------------------------
+
+
+def _make_assistant_message(text: str, message_id: str, data_type):
+    return SSEEvent(
+        id=1,
+        event="message",
+        data=SSEMessageData(
+            type=data_type,
+            payload=SSEMessagePayload(
+                message_id=message_id,
+                role="assistant",
+                content=[IMessageContent(type="markdown", payload={"content": text})],
+            ),
+        ),
+        timestamp="2025-01-01T00:00:00Z",
+    )
+
+
+def _response_action():
+    from datus.schemas.action_history import ActionRole, ActionStatus
+
+    return SimpleNamespace(role=ActionRole.ASSISTANT, status=ActionStatus.SUCCESS, action_type="response")
+
+
+class TestDuplicateAssistantMessage:
+    """One turn's text must reach the client once, whatever frame carries it."""
+
+    def test_repeated_create_is_skipped(self):
+        seen: dict[str, str] = {}
+        first = _make_assistant_message("same prose", "m1", SSEDataType.CREATE_MESSAGE)
+        _remember_assistant_message(first, seen)
+
+        again = _make_assistant_message("same prose", "m2", SSEDataType.CREATE_MESSAGE)
+        assert _should_skip_duplicate_assistant_message(_response_action(), again, seen) is True
+
+    def test_update_from_another_message_is_skipped(self):
+        """The reported bug: text + N parallel tool calls opens N streams that
+        each close with an UPDATE carrying the same prose."""
+        seen: dict[str, str] = {}
+        first = _make_assistant_message("parallel prose", "thinking_stream_a", SSEDataType.UPDATE_MESSAGE)
+        assert _should_skip_duplicate_assistant_message(_response_action(), first, seen) is False
+        _remember_assistant_message(first, seen)
+
+        for other in ("thinking_stream_b", "thinking_stream_c", "thinking_stream_d"):
+            twin = _make_assistant_message("parallel prose", other, SSEDataType.UPDATE_MESSAGE)
+            assert _should_skip_duplicate_assistant_message(_response_action(), twin, seen) is True
+
+    def test_update_on_its_own_message_passes(self):
+        """Overwriting one's own bubble is the legitimate UPDATE path — streamed
+        deltas replaced by the finished response, finalize_progress stages."""
+        seen: dict[str, str] = {}
+        first = _make_assistant_message("stage text", "m1", SSEDataType.CREATE_MESSAGE)
+        _remember_assistant_message(first, seen)
+
+        overwrite = _make_assistant_message("stage text", "m1", SSEDataType.UPDATE_MESSAGE)
+        assert _should_skip_duplicate_assistant_message(_response_action(), overwrite, seen) is False
+
+    def test_distinct_text_passes(self):
+        seen: dict[str, str] = {}
+        _remember_assistant_message(_make_assistant_message("first", "m1", SSEDataType.CREATE_MESSAGE), seen)
+
+        other = _make_assistant_message("second", "m2", SSEDataType.UPDATE_MESSAGE)
+        assert _should_skip_duplicate_assistant_message(_response_action(), other, seen) is False
