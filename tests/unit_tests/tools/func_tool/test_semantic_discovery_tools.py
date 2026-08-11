@@ -22,6 +22,7 @@ def _make_db_tool(agent_config=None, sub_agent_name="test_agent"):
     db_tool = MagicMock()
     db_tool.agent_config = agent_config or MagicMock()
     db_tool.sub_agent_name = sub_agent_name
+    db_tool.dialect_operations.return_value = None
     return db_tool
 
 
@@ -916,6 +917,66 @@ class TestProfileSemanticModelEvidence:
 
         assert "top_values_sql" in profile
         assert "top_values" not in profile
+
+    def test_profiles_use_registered_dialect_operations(self):
+        db_tool = _make_db_tool()
+        operations = SimpleNamespace(
+            quote_identifier=lambda name: f'"{name.upper()}"',
+            render_limit=lambda sql, limit: f"{sql} FETCH FIRST {limit} ROWS ONLY",
+        )
+        db_tool.dialect_operations.return_value = operations
+        db_tool.read_query.side_effect = [
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,row_count,non_null_count,distinct_count\n0,2,2,2\n"},
+            ),
+            FuncToolResult(
+                success=1,
+                result={"compressed_data": "index,value,count\n0,open,1\n1,closed,1\n"},
+            ),
+        ]
+        tools = _make_tools(db_tool)
+
+        profile = tools._profile_single_column(
+            table_ref='"ORDERS"',
+            column_name="status",
+            column_type="VARCHAR2",
+            kind="categorical",
+            database="oracle_prod",
+            top_n=2,
+        )
+
+        assert 'COUNT("STATUS")' in profile["stats_sql"]
+        assert profile["top_values_sql"].endswith("FETCH FIRST 2 ROWS ONLY")
+        assert " LIMIT " not in profile["top_values_sql"]
+        db_tool.dialect_operations.assert_called_with(database="oracle_prod")
+
+    def test_duration_profile_uses_registered_limit_syntax(self):
+        db_tool = _make_db_tool()
+        db_tool.dialect_operations.return_value = SimpleNamespace(
+            quote_identifier=lambda name: f'"{name.upper()}"',
+            render_limit=lambda sql, limit: f"{sql} FETCH FIRST {limit} ROWS ONLY",
+        )
+        db_tool.read_query.return_value = FuncToolResult(
+            success=1,
+            result={"compressed_data": ("index,left_value,right_value\n0,2025-01-01,2025-01-03\n")},
+        )
+        tools = _make_tools(db_tool)
+
+        profiles = tools._profile_date_duration_pairs(
+            table_ref='"EVENTS"',
+            columns=[
+                {"name": "opened_at", "type": "DATE"},
+                {"name": "closed_at", "type": "DATE"},
+            ],
+            database="oracle_prod",
+        )
+
+        assert profiles[0]["delta_days"]["max"] == 2
+        sql = db_tool.read_query.call_args.args[0]
+        assert '"OPENED_AT"' in sql
+        assert sql.endswith("FETCH FIRST 1000 ROWS ONLY")
+        assert " LIMIT " not in sql
 
     def test_deep_profiles_explicit_table_without_sql_evidence(self):
         db_tool = _make_db_tool()

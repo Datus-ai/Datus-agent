@@ -24,7 +24,11 @@ from datus.storage.schema_metadata import create_metadata_rag
 from datus.storage.schema_metadata.store import SchemaWithValueRAG
 from datus.storage.semantic_model.store import SemanticModelRAG
 from datus.storage.table_semantic_profile.store import TableSemanticProfileRAG
-from datus.tools.db_tools.capabilities import get_effective_capabilities, supports_namespace
+from datus.tools.db_tools.capabilities import (
+    get_dialect_operations,
+    get_effective_capabilities,
+    supports_namespace,
+)
 from datus.tools.db_tools.db_manager import DBManager, db_manager_instance
 from datus.tools.func_tool.base import FuncToolResult, trans_to_function_tool
 from datus.utils.compress_utils import DataCompressor
@@ -2126,6 +2130,7 @@ class DBFuncTool:
             )
 
         dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+        operations = get_dialect_operations(connector=target_conn)
         seen_columns = set()
         column_defs = []
         try:
@@ -2137,10 +2142,17 @@ class DBFuncTool:
                         error=f"Cannot create target table because source query returned duplicate column '{column}'",
                     )
                 seen_columns.add(column_key)
-                column_defs.append(
-                    f"  {self._quote_column_identifier(column, dialect)} "
-                    f"{self._infer_transfer_column_type(df[column], dialect)}"
+                quoted_column = (
+                    operations.quote_identifier(column)
+                    if operations is not None
+                    else self._quote_column_identifier(column, dialect)
                 )
+                column_type = (
+                    operations.infer_transfer_type(df[column])
+                    if operations is not None
+                    else self._infer_transfer_column_type(df[column], dialect)
+                )
+                column_defs.append(f"  {quoted_column} {column_type}")
         except Exception as e:
             return FuncToolResult(success=0, error=f"Failed to infer target table schema: {str(e)}")
 
@@ -2241,6 +2253,9 @@ class DBFuncTool:
                 "Do NOT fall back to a different target datasource — STOP and report this error to the user.",
             )
 
+        source_operations = get_dialect_operations(connector=source_conn)
+        target_operations = get_dialect_operations(connector=target_conn)
+
         # Authoritative source row count — wrap the user's source_sql in a COUNT
         # subquery so reconciliation does not need to re-run anything later.
         # One extra query is cheap on OLTP engines and still acceptable on
@@ -2248,7 +2263,11 @@ class DBFuncTool:
         source_row_count: Optional[int] = None
         try:
             if hasattr(source_conn, "execute_query"):
-                count_sql = f"SELECT COUNT(*) AS __datus_count FROM ({cleaned_sql}) AS __datus_src"
+                count_sql = (
+                    source_operations.render_count(cleaned_sql, "__datus_src")
+                    if source_operations is not None
+                    else f"SELECT COUNT(*) AS __datus_count FROM ({cleaned_sql}) AS __datus_src"
+                )
                 count_result = source_conn.execute_query(count_sql)
                 if count_result.success and count_result.sql_return:
                     # execute_query returns a list of rows; first row, first col is the count
@@ -2362,47 +2381,53 @@ class DBFuncTool:
         # Also convert numpy types to native Python types
         df = df.astype(object).where(df.notna(), other=None)
 
-        # Batch INSERT using connector's execute_insert (adapter-agnostic)
-        # Quote column names to handle reserved words (e.g., status, order, select).
-        # Use dialect-appropriate quoting: backticks for MySQL/StarRocks, double quotes for others.
-        columns = list(df.columns)
-        dialect = str(getattr(target_conn, "dialect", "") or "").lower()
-        col_names = ", ".join(self._quote_column_identifier(c, dialect) for c in columns)
-
         rows_written = 0
         try:
-            for batch_start in range(0, row_count, batch_size):
-                batch_end = min(batch_start + batch_size, row_count)
-                batch_df = df.iloc[batch_start:batch_end]
-
-                # Build batch INSERT statement with inline values
-                value_rows = []
-                for _, row in batch_df.iterrows():
-                    values = []
-                    for val in row:
-                        if val is None:
-                            values.append("NULL")
-                        elif isinstance(val, bool):
-                            values.append("TRUE" if val else "FALSE")
-                        elif isinstance(val, (int, float)):
-                            values.append(str(val))
-                        else:
-                            escaped = str(val).replace("'", "''")
-                            values.append(f"'{escaped}'")
-                    value_rows.append(f"({', '.join(values)})")
-
-                insert_sql = f"INSERT INTO {target_table} ({col_names}) VALUES {', '.join(value_rows)}"
-                result = target_conn.execute_insert(insert_sql)
-                if not result.success:
-                    return FuncToolResult(
-                        success=0,
-                        error=f"Transfer failed after writing {rows_written} rows: {result.error}",
+            if target_operations is not None:
+                rows_written = int(
+                    target_operations.write_dataframe(
+                        target_conn,
+                        target_table,
+                        df,
+                        batch_size,
                     )
-                rows_written += len(batch_df)
+                )
+            else:
+                # Legacy adapters keep the existing inline multi-row INSERT path.
+                columns = list(df.columns)
+                dialect = str(getattr(target_conn, "dialect", "") or "").lower()
+                col_names = ", ".join(self._quote_column_identifier(c, dialect) for c in columns)
+                for batch_start in range(0, row_count, batch_size):
+                    batch_end = min(batch_start + batch_size, row_count)
+                    batch_df = df.iloc[batch_start:batch_end]
 
-            # Commit the transaction to release locks (critical for SQLAlchemy-based connectors)
-            if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):
-                target_conn.connection.commit()
+                    value_rows = []
+                    for _, row in batch_df.iterrows():
+                        values = []
+                        for val in row:
+                            if val is None:
+                                values.append("NULL")
+                            elif isinstance(val, bool):
+                                values.append("TRUE" if val else "FALSE")
+                            elif isinstance(val, (int, float)):
+                                values.append(str(val))
+                            else:
+                                escaped = str(val).replace("'", "''")
+                                values.append(f"'{escaped}'")
+                        value_rows.append(f"({', '.join(values)})")
+
+                    insert_sql = f"INSERT INTO {target_table} ({col_names}) VALUES {', '.join(value_rows)}"
+                    result = target_conn.execute_insert(insert_sql)
+                    if not result.success:
+                        return FuncToolResult(
+                            success=0,
+                            error=f"Transfer failed after writing {rows_written} rows: {result.error}",
+                        )
+                    rows_written += len(batch_df)
+
+                # Commit the transaction to release locks (critical for SQLAlchemy-based connectors)
+                if hasattr(target_conn, "connection") and hasattr(target_conn.connection, "commit"):
+                    target_conn.connection.commit()
 
         except Exception as e:
             return FuncToolResult(

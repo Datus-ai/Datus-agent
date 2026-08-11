@@ -1265,6 +1265,57 @@ class TestTransferQueryResult:
         assert '"is_open" BOOLEAN' in ddl_calls[1]
         assert "INSERT INTO tgt.users" in target.execute_insert.call_args.args[0]
 
+    def test_transfer_dispatches_registered_dialect_operations(self):
+        import pandas as pd
+
+        df = pd.DataFrame({"id": [1, 2], "is_open": [True, False]})
+        source = self._make_source_connector(df)
+        source.execute_query.return_value = Mock(success=True, sql_return=[(2,)])
+        target, _ = self._make_target_connector()
+        target.execute_ddl.side_effect = [
+            Mock(success=False, error="ORA-00942: table or view does not exist"),
+            Mock(success=True),
+        ]
+
+        source_operations = Mock()
+        source_operations.render_count.return_value = (
+            "SELECT COUNT(*) AS __datus_count FROM (SELECT id, is_open FROM users) __datus_src"
+        )
+        target_operations = Mock()
+        target_operations.quote_identifier.side_effect = lambda name: f'"{name.upper()}"'
+        target_operations.infer_transfer_type.side_effect = lambda _series: "NUMBER"
+        target_operations.write_dataframe.return_value = 2
+
+        def resolve_operations(*, connector=None, dialect=""):
+            del dialect
+            return source_operations if connector is source else target_operations
+
+        tool = self._make_multi_tool(source, target)
+        with patch("datus.tools.func_tool.database.get_dialect_operations", side_effect=resolve_operations):
+            result = tool.transfer_query_result(
+                source_sql="SELECT id, is_open FROM users",
+                source_datasource="source_db",
+                target_table="tgt.users",
+                target_datasource="target_db",
+                mode="replace",
+                batch_size=100,
+            )
+
+        assert result.success == 1
+        source_operations.render_count.assert_called_once_with(
+            "SELECT id, is_open FROM users",
+            "__datus_src",
+        )
+        source.execute_query.assert_called_once_with(source_operations.render_count.return_value)
+        create_sql = target.execute_ddl.call_args_list[1].args[0]
+        assert '"ID" NUMBER' in create_sql
+        assert '"IS_OPEN" NUMBER' in create_sql
+        target_operations.write_dataframe.assert_called_once()
+        assert target_operations.write_dataframe.call_args.args[0] is target
+        assert target_operations.write_dataframe.call_args.args[1] == "tgt.users"
+        assert target_operations.write_dataframe.call_args.args[3] == 100
+        target.execute_insert.assert_not_called()
+
     def test_transfer_replace_creates_missing_target_table_for_mysql_contraction(self):
         import pandas as pd
 

@@ -444,7 +444,7 @@ class SemanticDiscoveryTools:
             database=database,
             schema_name=schema_name,
         )
-        column_refs = [self._quote_sql_identifier(column) for column in normalized_columns]
+        column_refs = [self._quote_sql_identifier(column, database) for column in normalized_columns]
         null_predicate = " OR ".join(f"{column_ref} IS NULL" for column_ref in column_refs)
         non_null_predicate = " AND ".join(f"{column_ref} IS NOT NULL" for column_ref in column_refs)
         grouped_columns = ", ".join(column_refs)
@@ -1681,7 +1681,7 @@ class SemanticDiscoveryTools:
         database: str,
         top_n: int,
     ) -> Dict[str, Any]:
-        column_ref = self._quote_sql_identifier(column_name)
+        column_ref = self._quote_sql_identifier(column_name, database)
         stats_exprs = [
             "COUNT(*) AS row_count",
             f"COUNT({column_ref}) AS non_null_count",
@@ -1714,10 +1714,12 @@ class SemanticDiscoveryTools:
                     profile["temporal_summary"] = temporal_summary
 
         if kind in {"categorical", "boolean"} and top_n > 0:
-            top_sql = (
+            top_sql = self._render_profile_limit(
                 f"SELECT {column_ref} AS value, COUNT(*) AS count "
                 f"FROM {table_ref} WHERE {column_ref} IS NOT NULL "
-                f"GROUP BY {column_ref} ORDER BY count DESC LIMIT {max(top_n, 1)}"
+                f"GROUP BY {column_ref} ORDER BY count DESC",
+                max(top_n, 1),
+                database,
             )
             top_values = self._run_profile_rows_query(top_sql, database)
             top_values = [row for row in top_values if isinstance(row, dict) and not row.get("error")]
@@ -1806,11 +1808,13 @@ class SemanticDiscoveryTools:
                 break
             left_column = pair["left_column"]
             right_column = pair["right_column"]
-            left_ref = self._quote_sql_identifier(left_column)
-            right_ref = self._quote_sql_identifier(right_column)
-            sql = (
+            left_ref = self._quote_sql_identifier(left_column, database)
+            right_ref = self._quote_sql_identifier(right_column, database)
+            sql = self._render_profile_limit(
                 f"SELECT {left_ref} AS left_value, {right_ref} AS right_value "
-                f"FROM {table_ref} WHERE {left_ref} IS NOT NULL AND {right_ref} IS NOT NULL LIMIT 1000"
+                f"FROM {table_ref} WHERE {left_ref} IS NOT NULL AND {right_ref} IS NOT NULL",
+                1000,
+                database,
             )
             rows = self._run_profile_rows_query(sql, database)
             deltas = []
@@ -1950,8 +1954,8 @@ class SemanticDiscoveryTools:
             seen.add(key)
             source_ref = self._profile_table_reference(source_table, catalog, database, schema_name)
             target_ref = self._profile_table_reference(target_table, catalog, database, schema_name)
-            source_col_refs = [self._quote_sql_identifier(column) for column in source_columns]
-            target_col_refs = [self._quote_sql_identifier(column) for column in target_columns]
+            source_col_refs = [self._quote_sql_identifier(column, database) for column in source_columns]
+            target_col_refs = [self._quote_sql_identifier(column, database) for column in target_columns]
             join_condition = " AND ".join(
                 f"src.{source_column} = tgt.{target_column}"
                 for source_column, target_column in zip(source_col_refs, target_col_refs)
@@ -2075,7 +2079,7 @@ class SemanticDiscoveryTools:
         if "." in table_name:
             return table_name
         parts = [part for part in (catalog, database, schema_name, table_name) if part]
-        return ".".join(self._quote_sql_identifier(part) for part in parts)
+        return ".".join(self._quote_sql_identifier(part, database) for part in parts)
 
     def _validate_key_candidate_columns(self, columns: List[str]) -> List[str]:
         if not isinstance(columns, list) or not columns:
@@ -2106,7 +2110,7 @@ class SemanticDiscoveryTools:
             ]
         if not parts or any(not part for part in parts):
             raise ValueError("table_name contains an empty qualified-name component")
-        return ".".join(self._quote_sql_identifier(part) for part in parts)
+        return ".".join(self._quote_sql_identifier(part, database) for part in parts)
 
     def _required_profile_count(self, stats: Dict[str, Any], key: str) -> int:
         value = self._profile_number(self._profile_stat_value(stats, key))
@@ -2131,7 +2135,20 @@ class SemanticDiscoveryTools:
                 return value
         return None
 
-    def _quote_sql_identifier(self, value: str) -> str:
+    def _dialect_operations(self, database: str = "") -> Optional[Any]:
+        resolver = getattr(self.db_tool, "dialect_operations", None)
+        return resolver(database=database) if callable(resolver) else None
+
+    def _render_profile_limit(self, sql: str, limit: int, database: str) -> str:
+        operations = self._dialect_operations(database)
+        if operations is not None:
+            return operations.render_limit(sql, limit)
+        return f"{sql} LIMIT {int(limit)}"
+
+    def _quote_sql_identifier(self, value: str, database: str = "") -> str:
+        operations = self._dialect_operations(database)
+        if operations is not None:
+            return operations.quote_identifier(value)
         value = str(value).strip().strip('"`[]')
         if value and value.replace("_", "").isalnum() and not value[0].isdigit():
             return value

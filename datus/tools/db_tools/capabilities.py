@@ -34,3 +34,16 @@ def get_effective_capabilities(connector: Optional[Any] = None, dialect: str = "
 
 def supports_namespace(namespace: str, connector: Optional[Any] = None, dialect: str = "") -> bool:
     return namespace in get_effective_capabilities(connector=connector, dialect=dialect)
+
+
+def get_dialect_operations(connector: Optional[Any] = None, dialect: str = "") -> Optional[Any]:
+    """Return adapter-provided deterministic SQL operations when available.
+
+    ``datus-db-core`` added this optional registry hook after Agent 0.3.9. Use
+    ``getattr`` so an Agent environment that still has the older core keeps its
+    existing behavior until an adapter requiring the new capability upgrades it.
+    """
+    if connector is not None:
+        dialect = dialect or getattr(connector, "dialect", "")
+    getter = getattr(connector_registry, "get_dialect_operations", None)
+    return getter(str(dialect or "").strip().lower()) if callable(getter) else None

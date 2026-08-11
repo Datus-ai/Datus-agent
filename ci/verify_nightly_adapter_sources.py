@@ -23,6 +23,7 @@ EXPECTED_LOCAL_PACKAGES = {
     "datus-starrocks": "datus-db-adapters/datus-starrocks",
     "datus-doris": "datus-db-adapters/datus-doris",
     "datus-hologres": "datus-db-adapters/datus-hologres",
+    "datus-oracle": "datus-db-adapters/datus-oracle",
     "datus-trino": "datus-db-adapters/datus-trino",
     "datus-greenplum": "datus-db-adapters/datus-greenplum",
     "datus-hive": "datus-db-adapters/datus-hive",
@@ -49,6 +50,7 @@ class DatabaseAdapterContract(BaseModel):
     db_type: str
     parser_dialect: str | None = None
     required_hooks: tuple[str, ...] = ()
+    dialect_operation_methods: tuple[str, ...] = ()
 
 
 DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
@@ -57,6 +59,18 @@ DATABASE_ADAPTER_CONTRACTS: dict[str, DatabaseAdapterContract] = {
         db_type="hologres",
         parser_dialect="postgres",
         required_hooks=("get_identifier_parser", "get_sql_generation_notes"),
+    ),
+    "datus_oracle": DatabaseAdapterContract(
+        db_type="oracle",
+        parser_dialect="oracle",
+        required_hooks=("get_sql_generation_notes", "get_dialect_operations"),
+        dialect_operation_methods=(
+            "render_limit",
+            "render_count",
+            "quote_identifier",
+            "infer_transfer_type",
+            "write_dataframe",
+        ),
     ),
 }
 
@@ -157,10 +171,24 @@ def verify_database_adapter_imports() -> list[str]:
         if expected_parser and registry.get_parser_dialect(db_type) != expected_parser:
             errors.append(f"{module_name} parser dialect is not {expected_parser}")
 
+        registered_hooks = {}
         for hook_name in contract.required_hooks:
             getter = getattr(registry, hook_name, None)
-            if not callable(getter) or not getter(db_type):
+            hook = getter(db_type) if callable(getter) else None
+            if not hook:
                 errors.append(f"{module_name} did not register {hook_name}")
+            else:
+                registered_hooks[hook_name] = hook
+
+        operations = registered_hooks.get("get_dialect_operations")
+        if operations is not None:
+            missing_methods = [
+                name for name in contract.dialect_operation_methods if not callable(getattr(operations, name, None))
+            ]
+            if missing_methods:
+                errors.append(
+                    f"{module_name} dialect operations are missing callable methods: {', '.join(missing_methods)}"
+                )
 
     return errors
 
