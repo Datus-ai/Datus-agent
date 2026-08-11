@@ -253,6 +253,68 @@ def test_plugin_name_for_dir_none_when_entry_points_vanish(home, tmp_path, monke
     assert store.plugin_name_for_dir(target) is None
 
 
+def test_manifest_for_dir_reads_via_dist_info(home, tmp_path):
+    """A path-mounted tree resolves its manifest with no entry point on sys.path."""
+    target = _write_target(tmp_path / "ext", manifest="manifest_version: 1\ndescription: mounted\n")
+    manifest = store.manifest_for_dir(target, "demo")
+    assert (manifest.name, manifest.description) == ("demo", "mounted")
+    assert manifest.package_dir == target / "datus_demo_plugin"
+
+
+def test_manifest_for_dir_prefers_managed_meta_entry_point(home, tmp_path):
+    """A managed install records its entry point, so no dist-info scan is needed."""
+    target = _write_target(tmp_path / "ext", group=None)
+    store.write_meta(target, {"name": "demo", "entry_point": "datus_demo_plugin"})
+    manifest = store.manifest_for_dir(target, "demo")
+    assert manifest.name == "demo"
+    assert manifest.package_dir == target / "datus_demo_plugin"
+
+
+@pytest.mark.parametrize(
+    "meta,group",
+    [
+        # A legacy object-targeting entry point yields no importable package ref,
+        # in the recorded metadata and in the dist-info alike.
+        ({"name": "demo", "entry_point": "datus_demo_plugin:Plugin"}, None),
+        ({"name": "demo", "entry_point": "   "}, None),
+        (None, None),
+    ],
+)
+def test_manifest_for_dir_none_without_usable_package_ref(home, tmp_path, meta, group):
+    target = _write_target(tmp_path / "ext", group=group)
+    if meta is not None:
+        store.write_meta(target, meta)
+    assert store.manifest_for_dir(target, "demo") is None
+
+
+def test_manifest_for_dir_none_for_legacy_dist_info_entry(home, tmp_path):
+    target = _write_target(tmp_path / "ext", entry="datus_demo_plugin:Plugin")
+    assert store.manifest_for_dir(target, "demo") is None
+
+
+def test_manifest_for_dir_none_when_manifest_missing(home, tmp_path):
+    """The package ref resolves but the tree bundles no manifest."""
+    target = _write_target(tmp_path / "ext", manifest=None)
+    assert store.manifest_for_dir(target, "demo") is None
+
+
+def test_manifest_for_dir_none_when_entry_points_unreadable(home, tmp_path, monkeypatch):
+    target = _write_target(tmp_path / "ext")
+    dist_info = next(target.glob("*.dist-info"))
+    monkeypatch.setattr(store, "_find_plugin_dist_info", lambda d: dist_info)
+    (dist_info / "entry_points.txt").unlink()
+    assert store.manifest_for_dir(target, "demo") is None
+
+
+def test_manifest_for_dir_none_when_group_is_empty(home, tmp_path, monkeypatch):
+    """An empty ``datus.plugins`` group names no entry point to read."""
+    target = _write_target(tmp_path / "ext")
+    dist_info = next(target.glob("*.dist-info"))
+    (dist_info / "entry_points.txt").write_text("[datus.plugins]\n", encoding="utf-8")
+    monkeypatch.setattr(store, "_find_plugin_dist_info", lambda d: dist_info)
+    assert store.manifest_for_dir(target, "demo") is None
+
+
 def test_iter_extra_plugin_dirs_skips_bad_entries(home, tmp_path, caplog):
     first = _write_target(tmp_path / "one")
     _write_target(tmp_path / "two")  # same entry-point name → duplicate
