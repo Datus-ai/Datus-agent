@@ -22,7 +22,7 @@ import re
 import weakref
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agents.lifecycle import AgentHooks
 
@@ -41,6 +41,7 @@ from datus.utils.constants import SQLType
 from datus.utils.json_utils import to_pretty_str
 
 if TYPE_CHECKING:
+    from datus.tools.permission.auto_reviewer import AutoReviewer, AutoReviewVerdict
     from datus.tools.permission.bash_classifier import BashCommandClassifier
     from datus.tools.permission.permission_manager import PermissionManager
 
@@ -274,6 +275,8 @@ class PermissionHooks(AgentHooks):
         project_root: Optional[str] = None,
         config_mutable: bool = True,
         bash_classifier: Optional["BashCommandClassifier"] = None,
+        auto_reviewer: Optional["AutoReviewer"] = None,
+        review_context_provider: Optional[Callable[[], Dict[str, Any]]] = None,
     ):
         """Initialize the permission hooks.
 
@@ -321,6 +324,11 @@ class PermissionHooks(AgentHooks):
                 static bash rules yield ASK with ``safety_forced=False``; a
                 high-confidence ALLOW verdict auto-approves, anything else
                 falls through to the normal confirmation prompt (fail closed).
+            auto_reviewer: Shared, structured reviewer for bash/SQL actions
+                that remain ASK after static rules and explicit grants.
+            review_context_provider: Optional callback supplying bounded user
+                messages, prior planned bash/SQL arguments, and environment
+                metadata. Assistant prose and tool outputs must be excluded.
         """
         self.broker = broker
         self.permission_manager = permission_manager
@@ -332,6 +340,84 @@ class PermissionHooks(AgentHooks):
         self.project_root = project_root
         self.config_mutable = bool(config_mutable)
         self.bash_classifier = bash_classifier
+        self.auto_reviewer = auto_reviewer
+        self.review_context_provider = review_context_provider
+
+    def _auto_review_config(self, action_type: str, effective: Any, bash_rules: Any = None) -> Any:
+        """Resolve the current profile's reviewer config plus legacy bash overrides."""
+        from datus.tools.permission.permission_config import AutoReviewConfig
+
+        config = getattr(effective, "auto_review", None) or AutoReviewConfig()
+        if action_type != "bash" or bash_rules is None or "classifier" not in bash_rules.model_fields_set:
+            return config
+
+        # ``bash_commands.classifier`` was published as a reserved seam before
+        # the shared reviewer existed. Keep it as a deprecated bash-only
+        # override so existing configurations start working rather than break.
+        legacy = bash_rules.classifier
+        values = config.model_dump()
+        for field_name in legacy.model_fields_set:
+            if field_name in {"enabled", "model", "confidence_threshold"}:
+                values[field_name] = getattr(legacy, field_name)
+        return AutoReviewConfig(**values)
+
+    def _review_evidence(self) -> Dict[str, Any]:
+        if self.review_context_provider is None:
+            return {}
+        try:
+            evidence = self.review_context_provider()
+            return evidence if isinstance(evidence, dict) else {}
+        except Exception as exc:
+            logger.warning("Failed to collect auto-review context; continuing with planned action only: %s", exc)
+            return {}
+
+    async def _review_ask_action(
+        self,
+        *,
+        context: Any,
+        action_type: str,
+        action: Dict[str, Any],
+        static_assessment: Dict[str, Any],
+        effective: Any,
+        bash_rules: Any = None,
+    ) -> Tuple[Optional["AutoReviewVerdict"], Any]:
+        """Run one review when enabled; callers apply the fail-closed fallback."""
+        config = self._auto_review_config(action_type, effective, bash_rules)
+        if not config.enabled or self.auto_reviewer is None:
+            return None, config
+
+        from datus.tools.permission.auto_reviewer import AutoReviewRequest
+
+        evidence = self._review_evidence()
+        environment = {
+            "cwd": self.project_root or ".",
+            "project_root": self.project_root or ".",
+            "node_name": self.node_name,
+            "profile": getattr(self.permission_manager, "active_profile", None) or "unknown",
+            "non_interactive": self.non_interactive,
+            **(evidence.get("environment") if isinstance(evidence.get("environment"), dict) else {}),
+        }
+        request = AutoReviewRequest(
+            action_type=action_type,
+            action=action,
+            environment=environment,
+            static_assessment=static_assessment,
+            trusted_user_messages=evidence.get("trusted_user_messages", []),
+            prior_actions=evidence.get("prior_actions", []),
+            direct_user_invocation=bool(getattr(context, "direct_user_invocation", False)),
+        )
+        return await self.auto_reviewer.review(request, config), config
+
+    @staticmethod
+    def _review_denial_detail(verdict: Optional["AutoReviewVerdict"], *, enabled: bool) -> str:
+        if not enabled:
+            return ""
+        if verdict is None:
+            return "AI review was unavailable or inconclusive"
+        return (
+            f"AI review classified the action as {verdict.risk_level.value} risk "
+            f"with {verdict.user_authorization.value} user authorization: {verdict.rationale}"
+        )
 
     # Plan-mode tooling is always allowed regardless of permission profile:
     # ``confirm_plan`` already runs its own user interaction, and ``todo_*``
@@ -889,11 +975,6 @@ class PermissionHooks(AgentHooks):
             logger.debug("execute_sql %s bypassed by project grant", kind)
             return True
 
-        # Non-interactive flows must not prompt — defer so the main flow
-        # raises the standardized non-interactive PermissionDeniedException.
-        if self.non_interactive:
-            return False
-
         # Bucket the session approval by the concrete kind so an "always
         # allow" only ever covers that one kind (e.g. approving a DROP never
         # green-lights a later TRUNCATE). Broad keys still honor a deliberate
@@ -908,6 +989,47 @@ class PermissionHooks(AgentHooks):
             logger.debug("execute_sql %s already approved for session", kind)
             return True
 
+        # Only actions that still need approval reach the reviewer. Explicit
+        # project/session grants are checked first because they are stronger
+        # authorization evidence and should not incur another model call.
+        verdict, review_config = await self._review_ask_action(
+            context=context,
+            action_type="sql",
+            action={
+                "sql": sql,
+                "datasource": args.get("datasource", ""),
+                "database": args.get("database", ""),
+                "min_rows": args.get("min_rows"),
+                "max_rows": args.get("max_rows"),
+                "statement_kind": kind,
+                "statement_class": sql_class,
+            },
+            static_assessment={"level": "ask", "statement_kind": kind, "statement_class": sql_class},
+            effective=self.permission_manager.get_effective_config(self.node_name),
+        )
+        if verdict is not None and verdict.can_auto_allow(review_config):
+            logger.info(
+                "execute_sql %s auto-allowed by AI reviewer (risk=%s confidence=%.2f)",
+                kind,
+                verdict.risk_level.value,
+                verdict.confidence,
+            )
+            return True
+
+        if self.non_interactive:
+            profile = getattr(self.permission_manager, "active_profile", None) or "auto"
+            detail = self._review_denial_detail(verdict, enabled=review_config.enabled)
+            review_suffix = f" {detail}." if detail else ""
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: SQL statement kind '{kind}' requires confirmation under "
+                    f"the '{profile}' profile, but this flow is non-interactive.{review_suffix} "
+                    "STOP retrying — surface the failure to the caller."
+                ),
+                tool_category="db_tools",
+                tool_name="execute_sql",
+            )
+
         async with _get_permission_prompt_lock(self.broker):
             if _session_approved():
                 return True
@@ -916,7 +1038,14 @@ class PermissionHooks(AgentHooks):
             # but never for ``unknown``: persisting a grant that auto-allows
             # every future unparseable statement would be a blank cheque.
             offer_project = self.config_mutable and kind != SQLType.UNKNOWN.value
-            choice = await self._request_sql_confirmation(sql, kind, sql_class, offer_project=offer_project)
+            choice = await self._request_sql_confirmation(
+                sql,
+                kind,
+                sql_class,
+                offer_project=offer_project,
+                review_verdict=verdict,
+                review_enabled=review_config.enabled,
+            )
             if choice == "y":
                 logger.info("User approved execute_sql (%s, once)", kind)
                 return True
@@ -994,6 +1123,8 @@ class PermissionHooks(AgentHooks):
         sql_class: str,
         *,
         offer_project: bool,
+        review_verdict: Optional["AutoReviewVerdict"] = None,
+        review_enabled: bool = False,
     ) -> str:
         """Prompt for a SQL statement; returns the raw choice key ('' on cancel).
 
@@ -1008,6 +1139,14 @@ class PermissionHooks(AgentHooks):
             f"**Statement:** `{kind}` (class: {sql_class})\n"
             f"**Reason:** '{sql_class}' statements require confirmation under the '{profile}' profile\n"
         )
+        if review_verdict is not None:
+            content += (
+                f"**AI review:** `{review_verdict.risk_level.value}` risk, "
+                f"`{review_verdict.user_authorization.value}` authorization — "
+                f"{review_verdict.rationale}\n"
+            )
+        elif review_enabled:
+            content += "**AI review:** unavailable or inconclusive — manual confirmation required\n"
         choices = {
             "y": "Allow (once)",
             "a": f"Allow '{kind}' (session)",
@@ -1047,9 +1186,10 @@ class PermissionHooks(AgentHooks):
         * ALLOW match → bypass (no prompt).
         * ASK → an ask-rule hit whose matched pattern carries an exact
           project grant (``.datus/config.yml`` ``bash_allow``) bypasses;
-          otherwise non-interactive raises; otherwise consult the optional
-          LLM classifier (reserved seam — never for ``safety_forced``
-          decisions), then the per-bucket session cache, then prompt with up
+          otherwise the shared AI reviewer may auto-allow a confident
+          low/medium-risk verdict. High/critical or inconclusive reviews
+          require confirmation interactively and deny non-interactively.
+          The per-bucket session cache is checked before review, then prompts offer up
           to four choices: allow once / allow (session) / allow (project) /
           deny. The project choice persists the bucket pattern to
           ``.datus/config.yml`` and is offered for plain unmatched commands
@@ -1147,39 +1287,6 @@ class PermissionHooks(AgentHooks):
                 )
                 return True
 
-        # ASK. Non-interactive flows must raise here rather than defer: under a
-        # permissive coarse rule (or dangerous profile overrides) the main flow
-        # could silently allow what the command-level rules said to confirm.
-        if self.non_interactive:
-            profile = getattr(self.permission_manager, "active_profile", None) or "auto"
-            raise PermissionDeniedException(
-                (
-                    f"PERMISSION_DENIED: Bash command requires user confirmation "
-                    f"({decision.reason}) but this flow runs non-interactively under "
-                    f"the '{profile}' profile. STOP retrying — surface the failure "
-                    f"to the caller."
-                ),
-                tool_category="bash_tools",
-                tool_name="bash",
-            )
-
-        # Reserved LLM-classifier seam: only for non-safety asks, fail closed.
-        if self.bash_classifier is not None and not decision.safety_forced:
-            try:
-                verdict = await self.bash_classifier.classify(
-                    command,
-                    BashClassifierContext(cwd=self.project_root or ".", node_name=self.node_name),
-                )
-                if (
-                    verdict is not None
-                    and PermissionLevel(verdict.permission) == PermissionLevel.ALLOW
-                    and verdict.confidence >= rules.classifier.confidence_threshold
-                ):
-                    logger.info("Bash command auto-allowed by classifier (%.2f): %s", verdict.confidence, command)
-                    return True
-            except Exception as e:
-                logger.warning("Bash classifier failed (%s); falling back to confirmation prompt", e)
-
         # Session cache: the prompt's "always allow" writes ONLY the bucketed
         # key so one approval never cascades past its command prefix; broad
         # keys still honor a deliberate wide approval (e.g. legacy grants).
@@ -1191,6 +1298,74 @@ class PermissionHooks(AgentHooks):
         if _session_approved():
             logger.debug("Bash bucket %r already approved for session", decision.bucket)
             return True
+
+        # Unlike the old reserved classifier seam, the shared reviewer can
+        # inspect complete wrapper/metacharacter commands. Only genuinely
+        # unparseable input is kept behind direct user confirmation.
+        review_verdict = None
+        review_config = None
+        if decision.source != BashDecisionSource.UNPARSEABLE:
+            review_verdict, review_config = await self._review_ask_action(
+                context=context,
+                action_type="bash",
+                action={"command": command, "timeout": args.get("timeout")},
+                static_assessment={
+                    "level": "ask",
+                    "source": decision.source.value,
+                    "matched_pattern": decision.matched_pattern,
+                    "reason": decision.reason,
+                    "safety_forced": decision.safety_forced,
+                },
+                effective=effective,
+                bash_rules=rules,
+            )
+            if review_verdict is not None and review_verdict.can_auto_allow(review_config):
+                logger.info(
+                    "Bash command auto-allowed by AI reviewer (risk=%s confidence=%.2f): %s",
+                    review_verdict.risk_level.value,
+                    review_verdict.confidence,
+                    command,
+                )
+                return True
+
+        # Backwards-compatible injection seam used by existing embedders and
+        # tests. Production construction now uses the shared reviewer above.
+        if self.bash_classifier is not None and not self.non_interactive and not decision.safety_forced:
+            try:
+                legacy_verdict = await self.bash_classifier.classify(
+                    command,
+                    BashClassifierContext(cwd=self.project_root or ".", node_name=self.node_name),
+                )
+                if (
+                    legacy_verdict is not None
+                    and PermissionLevel(legacy_verdict.permission) == PermissionLevel.ALLOW
+                    and legacy_verdict.confidence >= rules.classifier.confidence_threshold
+                ):
+                    logger.info(
+                        "Bash command auto-allowed by legacy classifier (%.2f): %s",
+                        legacy_verdict.confidence,
+                        command,
+                    )
+                    return True
+            except Exception as e:
+                logger.warning("Bash classifier failed (%s); falling back to confirmation prompt", e)
+
+        if self.non_interactive:
+            profile = getattr(self.permission_manager, "active_profile", None) or "auto"
+            detail = self._review_denial_detail(
+                review_verdict,
+                enabled=bool(review_config and review_config.enabled),
+            )
+            review_suffix = f" {detail}." if detail else ""
+            raise PermissionDeniedException(
+                (
+                    f"PERMISSION_DENIED: Bash command requires confirmation ({decision.reason}) "
+                    f"but this flow runs non-interactively under the '{profile}' profile."
+                    f"{review_suffix} STOP retrying — surface the failure to the caller."
+                ),
+                tool_category="bash_tools",
+                tool_name="bash",
+            )
 
         async with _get_permission_prompt_lock(self.broker):
             if _session_approved():
@@ -1211,7 +1386,13 @@ class PermissionHooks(AgentHooks):
                     )
                 )
             )
-            choice = await self._request_bash_confirmation(command, decision, offer_project=offer_project)
+            choice = await self._request_bash_confirmation(
+                command,
+                decision,
+                offer_project=offer_project,
+                review_verdict=review_verdict,
+                review_enabled=bool(review_config and review_config.enabled),
+            )
             if choice == "y":
                 logger.info("User approved bash command (once): %s", command)
                 return True
@@ -1262,6 +1443,8 @@ class PermissionHooks(AgentHooks):
         decision: BashRuleDecision,
         *,
         offer_project: bool,
+        review_verdict: Optional["AutoReviewVerdict"] = None,
+        review_enabled: bool = False,
     ) -> str:
         """Prompt for a bash command; returns the raw choice key ('' on cancel).
 
@@ -1269,6 +1452,14 @@ class PermissionHooks(AgentHooks):
         choice to distinguish session from project grants.
         """
         content = f"### Bash Command Permission\n\n```bash\n{command}\n```\n\n**Reason:** {decision.reason}\n"
+        if review_verdict is not None:
+            content += (
+                f"**AI review:** `{review_verdict.risk_level.value}` risk, "
+                f"`{review_verdict.user_authorization.value}` authorization — "
+                f"{review_verdict.rationale}\n"
+            )
+        elif review_enabled:
+            content += "**AI review:** unavailable or inconclusive — manual confirmation required\n"
         allow_pattern = self._bucket_to_allow_pattern(decision.bucket)
         choices = {
             "y": "Allow (once)",

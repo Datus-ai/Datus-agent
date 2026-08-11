@@ -80,6 +80,7 @@ class TestShimContract:
     def test_context_shim_is_json_encoded(self):
         shim = _BashContextShim("echo hi")
         assert json.loads(shim.tool_arguments) == {"command": "echo hi"}
+        assert shim.direct_user_invocation is True
 
     def test_tool_stub_exposes_bash_name(self):
         """``on_tool_start`` resolves the tool via ``getattr(tool, "name")``."""

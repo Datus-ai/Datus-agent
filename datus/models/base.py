@@ -73,12 +73,10 @@ class LLMBaseModel(ABC):  # Changed from BaseModel to LLMBaseModel
         and bounded to ``_MODEL_CACHE_MAXSIZE`` entries so it is safe to
         hold across long-running sessions.
         """
-        if not model_name or model_name == "default":
-            target_config = agent_config.active_model()
-        elif model_name in agent_config.models:
-            target_config = agent_config.model_config(model_name)
-        else:
-            raise KeyError(f"Model {model_name} not found in agent_config")
+        try:
+            target_config = agent_config.resolve_model_ref(model_name)
+        except (ValueError, KeyError) as exc:
+            raise KeyError(f"Model {model_name} not found in agent_config") from exc
 
         model_type = target_config.type
 

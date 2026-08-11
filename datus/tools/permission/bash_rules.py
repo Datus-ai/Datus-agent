@@ -48,8 +48,8 @@ asymmetry of aggressive deny / conservative allow):
 5. allow rules                -> ALLOW (anchored only, never unanchored)
 6. rules.default              -> usually ASK
 
-The ``classifier`` config block is a reserved seam for a future LLM-based
-classifier (see ``bash_classifier.py``); it carries configuration only.
+The legacy ``classifier`` config block is retained as a deprecated bash-only
+override for the shared automatic reviewer settings.
 """
 
 import fnmatch
@@ -239,16 +239,21 @@ def _normalize_datus_plugin_argv(argv: List[str]) -> List[str]:
 
 
 class BashClassifierConfig(BaseModel):
-    """Reserved configuration for the future LLM command classifier.
+    """Deprecated bash-only configuration alias for the shared AI reviewer.
 
-    Parsed and carried through the config pipeline today; consumed only by
-    ``bash_classifier.create_bash_classifier`` which returns ``None`` until a
-    real implementation lands. See ``bash_classifier.py`` for the contract.
+    ``PermissionHooks`` maps explicitly configured fields onto
+    ``permissions.auto_review`` for bash actions. The separate classifier
+    interface remains only as a test/embedder compatibility seam.
     """
 
-    enabled: bool = Field(default=False, description="Enable the LLM classifier (no implementation yet)")
-    model: Optional[str] = Field(default=None, description="Model name for LLMBaseModel.create_model")
-    confidence_threshold: float = Field(default=0.8, description="Minimum confidence for a verdict to act")
+    enabled: bool = Field(default=False, description="Enable AI review for bash ASK actions")
+    model: Optional[str] = Field(default=None, description="Reviewer model reference")
+    confidence_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence for a verdict to act",
+    )
 
 
 class BashCommandRules(BaseModel):

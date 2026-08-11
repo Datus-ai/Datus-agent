@@ -83,7 +83,10 @@ agent:
   # Profiles:
   #   normal    — Read-only allowed; all writes prompt; named destructive deny
   #   auto      — Normal + workspace writes auto + SQL non-destructive writes
-  #               auto; destructive SQL (UPDATE/DELETE/DROP/...) prompts (not deny)
+  #               auto; remaining bash/SQL prompts receive a single-shot AI
+  #               review. Confident low/medium-risk actions auto-run; high or
+  #               critical risk still requires confirmation (and is denied in
+  #               non-interactive runs).
   #   dangerous — Nearly everything auto (writes outside workspace still prompt)
   #
   # User rules in ``rules:`` are evaluated after the profile base, so they
@@ -93,6 +96,16 @@ agent:
   # ---------------------------------------------------------------------------
   # permissions:
   #   profile: normal
+  #   # AI review is enabled by default only for the ``auto`` profile. Static
+  #   # deny rules always win. Omit ``model`` (or use ``default``) to follow
+  #   # the active model; use ``provider/model`` or ``custom/alias`` to give
+  #   # the reviewer a separate model. An explicit model failure fails closed
+  #   # and never falls back to another model.
+  #   # auto_review:
+  #   #   enabled: true
+  #   #   model: openai/gpt-5-mini
+  #   #   timeout_seconds: 20
+  #   #   confidence_threshold: 0.8
   #   # rules:
   #   #   - tool: db_tools
   #   #     pattern: execute_ddl
@@ -118,7 +131,7 @@ agent:
   #   #     - "git push:*"            # deny always beats allow
   #   #   ask:
   #   #     - "docker:*"              # confirm every call (session approval per bucket)
-  #   #   classifier:                 # reserved: LLM classifier (not implemented)
+  #   #   classifier:                 # deprecated bash-only compatibility override
   #   #     enabled: false
   #   #
   #   # Installed plugins may declare bash rules for their own ``datus <plugin>``

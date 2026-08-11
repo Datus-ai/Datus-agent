@@ -165,6 +165,7 @@ class PermissionManager:
             # bleed into the shared profile singletons in profiles.py.
             bash_commands=config.bash_commands.model_copy(deep=True) if config.bash_commands else None,
             sql_statements=config.sql_statements.model_copy(deep=True) if config.sql_statements else None,
+            auto_review=config.auto_review.model_copy(deep=True),
         )
 
     def set_permission_callback(self, callback: Callable[[str, str, Dict[str, Any]], Awaitable[bool]]) -> None:

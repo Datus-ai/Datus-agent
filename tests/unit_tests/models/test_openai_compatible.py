@@ -611,6 +611,12 @@ class TestGenerateWithJsonOutput:
         call_kwargs = mock_gen.call_args[1]
         assert call_kwargs.get("response_format") == {"type": "json_object"}
 
+    def test_output_schema_is_not_forwarded_as_litellm_parameter(self):
+        model = _make_model()
+        with patch.object(model, "generate", return_value="{}") as mock_gen:
+            model.generate_with_json_output("prompt", output_schema={"type": "object"})
+        assert "output_schema" not in mock_gen.call_args.kwargs
+
     def test_enable_thinking_passed_through(self):
         model = _make_model()
         with patch.object(model, "generate", return_value='{"a": 1}') as mock_gen:
@@ -2092,7 +2098,6 @@ class TestBuildRunConfigInputFilter:
         with trace_context(ctx, replace=True):
             rc = model._build_run_config(pending_input_queue=None, agent_name="gen_sql")
 
-        assert rc is not None
         assert rc.workflow_name == "benchmark/baisheng/semantic_model/task-1/gen_sql"
         assert rc.group_id == "benchmark:semantic_model_20260520_054027"
         assert rc.trace_metadata["task_id"] == "1"

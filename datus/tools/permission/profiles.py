@@ -49,6 +49,7 @@ from typing import Optional
 
 from datus.tools.permission.bash_rules import BashCommandRules
 from datus.tools.permission.permission_config import (
+    AutoReviewConfig,
     PermissionConfig,
     PermissionLevel,
     PermissionRule,
@@ -282,6 +283,7 @@ NORMAL = PermissionConfig(
     # execute_sql statement classes: reads auto-allow, everything else ASK
     # (the SqlStatementRules defaults are exactly normal's posture).
     sql_statements=SqlStatementRules(),
+    auto_review=AutoReviewConfig(enabled=False),
 )
 
 # --- Auto --------------------------------------------------------------------
@@ -334,6 +336,7 @@ AUTO = PermissionConfig(
     # CREATE/benign DDL/USE) auto-allow; destructive statements (UPDATE/DELETE/
     # MERGE/DROP/TRUNCATE/ALTER/REPLACE) and unparseable SQL still ASK.
     sql_statements=SqlStatementRules(write=PermissionLevel.ALLOW),
+    auto_review=AutoReviewConfig(enabled=True),
 )
 
 # --- Dangerous ---------------------------------------------------------------
@@ -346,6 +349,7 @@ AUTO = PermissionConfig(
 DANGEROUS = PermissionConfig(
     default_permission=PermissionLevel.ALLOW,
     rules=[],
+    auto_review=AutoReviewConfig(enabled=False),
 )
 
 
@@ -448,6 +452,7 @@ def build_effective_config(
             rules=list(base.rules),
             bash_commands=base.bash_commands.merge_with(plugin_bash_rules),
             sql_statements=base.sql_statements,
+            auto_review=base.auto_review,
         )
     if not user_raw:
         return base

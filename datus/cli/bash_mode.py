@@ -51,6 +51,7 @@ class _BashContextShim:
 
     def __init__(self, command: str) -> None:
         self.tool_arguments = json.dumps({"command": command})
+        self.direct_user_invocation = True
 
 
 class _BashToolStub:
@@ -64,6 +65,7 @@ class _SqlContextShim:
 
     def __init__(self, sql: str) -> None:
         self.tool_arguments = json.dumps({"sql": sql})
+        self.direct_user_invocation = True
 
 
 class _SqlToolStub:
@@ -80,6 +82,7 @@ class _ToolContextShim:
 
     def __init__(self, args: Dict[str, Any]) -> None:
         self.tool_arguments = json.dumps(args)
+        self.direct_user_invocation = True
 
 
 class _ToolStub:
@@ -268,11 +271,12 @@ def _build_permission_hooks(cli: "DatusCLI", broker: InteractionBroker) -> "Perm
     session approvals still persist because they live on the shared
     ``PermissionManager``.
     """
-    from datus.tools.permission.bash_classifier import create_bash_classifier
+    from datus.tools.permission.auto_reviewer import create_auto_reviewer
     from datus.tools.permission.permission_hooks import PermissionHooks
 
     pm, node_name, registry = _resolve_permission_components(cli)
-    bash_rules = getattr(cli.agent_config.permissions_config, "bash_commands", None)
+    node = getattr(getattr(cli, "chat_commands", None), "current_node", None)
+    context_provider = getattr(node, "_build_permission_review_context", None)
     return PermissionHooks(
         broker=broker,
         permission_manager=pm,
@@ -281,7 +285,8 @@ def _build_permission_hooks(cli: "DatusCLI", broker: InteractionBroker) -> "Perm
         non_interactive=False,
         project_root=getattr(cli.agent_config, "project_root", None),
         config_mutable=bool(getattr(cli.agent_config, "config_mutable", True)),
-        bash_classifier=create_bash_classifier(bash_rules, cli.agent_config),
+        auto_reviewer=create_auto_reviewer(cli.agent_config),
+        review_context_provider=context_provider,
     )
 
 

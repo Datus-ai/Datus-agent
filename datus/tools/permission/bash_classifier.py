@@ -2,12 +2,11 @@
 # Licensed under the Apache License, Version 2.0.
 # See http://www.apache.org/licenses/LICENSE-2.0 for details.
 
-"""LLM-based bash command classifier — interface seam only, no implementation.
+"""Deprecated standalone bash-classifier interface for compatibility.
 
-Reserved extension point for auto-resolving bash permission prompts with an
-LLM judgment (analogous to Claude Code's bash prompt-rule classifier). The
-static rules in ``bash_rules.py`` decide first; the classifier is a second
-opinion that may upgrade an ASK to an auto-allow.
+Production hooks use the shared structured reviewer in ``auto_reviewer.py``.
+This interface remains for tests and embedders that inject a classifier
+directly; ``create_bash_classifier`` intentionally remains a no-op factory.
 
 Consultation contract (enforced by ``PermissionHooks._handle_bash_permission``):
 
@@ -20,14 +19,6 @@ Consultation contract (enforced by ``PermissionHooks._handle_bash_permission``):
   every invocation is judged on its own).
 - Anything else — ``None``, low confidence, a DENY/ASK verdict, or an
   exception — falls through to the normal confirmation prompt. Fail closed.
-
-Future implementation sketch (TODO(llm-classifier)):
-
-    model = LLMBaseModel.create_model(agent_config, model_name=config.model)
-    verdict_json = model.generate_with_json_output(prompt)  # datus/models/base.py
-
-with a prompt built from the command, cwd, and the natural-language rule
-descriptions in ``BashClassifierContext.rule_descriptions``.
 """
 
 from abc import ABC, abstractmethod
