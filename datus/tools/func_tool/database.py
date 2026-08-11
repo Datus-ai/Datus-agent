@@ -351,10 +351,6 @@ class DBFuncTool:
         """Get the primary/default connector (for backward compatibility)."""
         return self._primary_connector
 
-    def dialect_operations(self, datasource: Optional[str] = "", database: str = "") -> Optional[Any]:
-        """Resolve optional deterministic SQL operations for a routed connector."""
-        return get_dialect_operations(connector=self._get_connector(datasource, database))
-
     def _get_connector(self, datasource: Optional[str] = None, database: str = "") -> BaseSqlConnector:
         """
         Get connector for the specified (datasource, database).
