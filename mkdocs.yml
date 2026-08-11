@@ -18,6 +18,7 @@ nav:
       - MCP Extensions: cli/mcp_extensions.md
       - SQL Execution: cli/sql_execution.md
       - Skill Command: cli/skill_command.md
+      - Package Command: cli/package_command.md
       - Reference: cli/reference.md
       - Plan Mode: cli/plan_mode.md
       - Other Commands: cli/other_commands.md
@@ -141,6 +142,7 @@ plugins:
             MCP Extensions: MCP 扩展
             SQL Execution: SQL 执行
             Skill Command: 技能命令
+            Package Command: 打包命令
             Reference: 参考
             Plan Mode: 计划模式
             Other Commands: 其他命令
