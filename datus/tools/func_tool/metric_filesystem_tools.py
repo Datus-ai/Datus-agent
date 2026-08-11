@@ -1174,8 +1174,6 @@ class OsiSemanticModelFilesystemFuncTool(MetricFilesystemFuncTool):
                 return FuncToolResult(success=0, error=f"File not found: {resolved.display}")
             if not target_path.is_file():
                 return FuncToolResult(success=0, error=f"Path is not a file: {resolved.display}")
-            if not self._is_allowed_file(target_path):
-                return FuncToolResult(success=0, error=f"File type not allowed: {resolved.display}")
             try:
                 content = target_path.read_text(encoding="utf-8")
                 new_content, error = apply_single_replacement(content, old_string, new_string)
