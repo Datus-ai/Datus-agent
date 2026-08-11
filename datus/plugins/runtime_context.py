@@ -40,6 +40,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from datus.utils.loggings import get_logger
+
+logger = get_logger(__name__)
+
 RUNTIME_CONTEXT_ENV = "DATUS_PLUGIN_RUNTIME_CONTEXT"
 RUNTIME_CONTEXT_VERSION = 1
 RUNTIME_CONTEXT_PREFIX = "v1."
@@ -265,10 +269,34 @@ def load_runtime_context_from_env(*, expected_plugin: Optional[str] = None) -> O
     return context
 
 
+def _load_manifest_for_invocation(plugin_name: str, plugin_path: Optional[Path]) -> Any:
+    """Read the manifest of the plugin copy this invocation will actually run.
+
+    ``plugin_path`` is the directory the normal store / ``agent.plugin_paths``
+    precedence already selected, so the manifest is read from there. Falling
+    back to the ``sys.path`` entry-point registry would be wrong in the two
+    deployments that matter most: a plugin mounted through
+    ``agent.plugin_paths`` (multi-tenant sandboxes) is not on the host
+    process's ``sys.path`` at all, and a host that never activated the managed
+    store sees a stale, empty registry. Both cases would silently yield "no
+    manifest" and drop every declared delegation.
+
+    ``plugin_path is None`` means the plugin lives in this interpreter's
+    site-packages, where the entry-point registry is the correct source.
+    """
+    from datus.plugins import store
+    from datus.plugins.registry import load_plugin_manifest
+
+    if plugin_path is None:
+        return load_plugin_manifest(plugin_name)
+    return store.manifest_for_dir(plugin_path, plugin_name)
+
+
 def _resolve_profile_delegates(
     agent_config: Any,
     plugin_name: str,
     profile: Dict[str, Any],
+    plugin_path: Optional[Path] = None,
 ) -> Dict[str, PluginRuntimeTarget]:
     """Resolve manifest-declared, one-hop plugin profile references.
 
@@ -280,10 +308,20 @@ def _resolve_profile_delegates(
     the authoritative AuthProvider AgentConfig.
     """
     from datus.plugins import store
-    from datus.plugins.registry import load_plugin_manifest
 
-    manifest = load_plugin_manifest(plugin_name)
-    schema = manifest.config_schema if manifest is not None else None
+    manifest = _load_manifest_for_invocation(plugin_name, plugin_path)
+    if manifest is None:
+        # Never silent: without a manifest no delegation can be declared, and
+        # the failure would otherwise only surface as the delegate subprocess
+        # rejecting its runtime context.
+        logger.warning(
+            "Plugin `%s` manifest could not be read from %s; any declared plugin profile "
+            "references are ignored for this invocation.",
+            plugin_name,
+            plugin_path or "the current Python environment",
+        )
+        return {}
+    schema = manifest.config_schema
     properties = schema.get("properties") if isinstance(schema, dict) else None
     if not isinstance(properties, dict):
         return {}
@@ -433,7 +471,7 @@ def prepare_plugin_invocation(command: str, agent_config: Any) -> Optional[Prepa
 
     plugin_path = _resolve_plugin_path(agent_config, plugin_name)
     profile = agent_config.get_plugin_profile(plugin_name, profile_name)
-    delegates = _resolve_profile_delegates(agent_config, plugin_name, profile)
+    delegates = _resolve_profile_delegates(agent_config, plugin_name, profile, plugin_path)
     runtime = PluginRuntimeContext(
         plugin_name=plugin_name,
         profile=profile,

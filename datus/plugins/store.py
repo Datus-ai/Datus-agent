@@ -42,7 +42,7 @@ from email.parser import Parser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from datus.plugins.base import MANIFEST_FILENAME, read_manifest_file
+from datus.plugins.base import MANIFEST_FILENAME, PluginManifest, read_manifest_file
 from datus.plugins.registry import _SAFE_PLUGIN_NAME_RE, PLUGIN_ENTRY_POINT_GROUP, invalidate_plugin_cache
 from datus.utils.exceptions import DatusException, ErrorCode
 from datus.utils.loggings import get_logger
@@ -186,6 +186,54 @@ def plugin_name_for_dir(directory: Path) -> Optional[str]:
     except (OSError, configparser.Error):
         return None
     return next(iter(parser[PLUGIN_ENTRY_POINT_GROUP]), None)
+
+
+def _module_ref_for_dir(directory: Path) -> Optional[str]:
+    """Dotted package ref the plugin tree in ``directory`` registers, or ``None``."""
+    meta = read_meta(directory)
+    if meta is not None:
+        entry_point = meta.get("entry_point")
+        if isinstance(entry_point, str) and entry_point.strip():
+            module_ref, _, attr = entry_point.partition(":")
+            if not attr.strip() and module_ref.strip():
+                return module_ref.strip()
+    dist_info = _find_plugin_dist_info(directory)
+    if dist_info is None:
+        return None
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    try:
+        parser.read_string((dist_info / "entry_points.txt").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, configparser.Error):
+        return None
+    section = parser[PLUGIN_ENTRY_POINT_GROUP]
+    name = next(iter(section), None)
+    if name is None:
+        return None
+    module_ref, _, attr = section[name].strip().partition(":")
+    if attr.strip() or not module_ref.strip():
+        return None
+    return module_ref.strip()
+
+
+def manifest_for_dir(directory: Path, name: str) -> Optional["PluginManifest"]:
+    """Parse the manifest bundled in ONE plugin directory, without importing it.
+
+    Mirrors :func:`plugin_name_for_dir`, and exists because
+    :func:`datus.plugins.registry.load_plugin_manifest` resolves through
+    ``sys.path`` entry points: a plugin mounted via ``agent.plugin_paths`` (or
+    a managed store the host process never activated) is invisible to it even
+    though the directory was selected successfully. Callers that already know
+    which directory will execute must read the manifest from THAT directory,
+    so the schema they act on always belongs to the code that will run.
+
+    Returns ``None`` — never raises — when the tree declares no usable package
+    ref or bundles no valid manifest.
+    """
+    module_ref = _module_ref_for_dir(directory)
+    if module_ref is None:
+        return None
+    return read_manifest_file(directory.joinpath(*module_ref.split(".")), name)
 
 
 def iter_extra_plugin_dirs(extra_paths: Optional[List[str]]) -> List[tuple]:
@@ -430,6 +478,7 @@ __all__ = [
     "write_meta",
     "iter_installed",
     "plugin_name_for_dir",
+    "manifest_for_dir",
     "iter_extra_plugin_dirs",
     "introspect_target",
     "activate",

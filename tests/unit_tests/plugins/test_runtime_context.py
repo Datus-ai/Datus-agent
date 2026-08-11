@@ -9,6 +9,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+import yaml
 
 from datus.plugins import runtime_context
 from datus.plugins.base import PluginManifest
@@ -149,6 +150,40 @@ def test_prepare_plain_command_resolves_explicit_profile(monkeypatch, tmp_path):
     assert "tenant-secret" not in prepared.command
 
 
+def _write_plugin_tree(root, name, package, schema=None):
+    """Materialise a real ``pip install --target`` plugin tree under ``root``.
+
+    Mirrors the on-disk layout of both a managed install and an
+    ``agent.plugin_paths`` mount, so manifest discovery is exercised the way it
+    happens in a deployment instead of being stubbed out.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    dist_info = root / f"datus_{name}_plugin-0.1.0.dist-info"
+    dist_info.mkdir()
+    (dist_info / "entry_points.txt").write_text(f"[datus.plugins]\n{name} = {package}\n", encoding="utf-8")
+    package_dir = root / package
+    package_dir.mkdir()
+    manifest = {"manifest_version": 1, "cli": f"{package}.cli:main"}
+    if schema is not None:
+        manifest["config_schema"] = schema
+    (package_dir / "datus-plugin.yml").write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    return root
+
+
+_PROVIDER_REF_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "provider": {
+            "type": "string",
+            "x-plugin-profile-ref": {
+                "profile_field": "provider_profile",
+                "default_profile": "same-name",
+            },
+        }
+    },
+}
+
+
 @pytest.mark.parametrize(
     "provider_profile,expected_profile",
     [(None, "dev"), ("cluster-a", "cluster-a")],
@@ -159,23 +194,18 @@ def test_prepare_resolves_manifest_declared_provider_profile(
     provider_profile,
     expected_profile,
 ):
-    plugin_dirs = {name: tmp_path / name for name in ("k8s", "eks")}
-    for directory in plugin_dirs.values():
-        directory.mkdir()
-    schema = {
-        "type": "object",
-        "properties": {
-            "provider": {
-                "type": "string",
-                "x-plugin-profile-ref": {
-                    "profile_field": "provider_profile",
-                    "default_profile": "same-name",
-                },
-            }
-        },
+    # Real trees on disk: the manifest must be found through the selected
+    # directory, never through this interpreter's entry points. A deployment
+    # that mounts plugins via ``agent.plugin_paths`` has no entry point for
+    # them at all, so a registry-based lookup silently drops every delegation.
+    plugin_dirs = {
+        "k8s": _write_plugin_tree(tmp_path / "k8s", "k8s", "datus_plugin_k8s", _PROVIDER_REF_SCHEMA),
+        "eks": _write_plugin_tree(tmp_path / "eks", "eks", "datus_plugin_eks"),
     }
-    manifest = PluginManifest(name="k8s", package_dir=plugin_dirs["k8s"], config_schema=schema)
-    monkeypatch.setattr("datus.plugins.registry.load_plugin_manifest", lambda name: manifest if name == "k8s" else None)
+    monkeypatch.setattr(
+        "datus.plugins.registry.load_plugin_manifest",
+        lambda name: pytest.fail(f"entry-point registry must not be consulted for {name!r}"),
+    )
     monkeypatch.setattr(runtime_context, "_resolve_plugin_path", lambda config, name: plugin_dirs[name])
 
     class Config:
@@ -211,6 +241,54 @@ def test_prepare_resolves_manifest_declared_provider_profile(
         "region": "us-east-1",
         "tenant_secret": "secret",
     }
+
+
+def test_prepare_resolves_delegates_for_plugin_paths_mounted_plugins(monkeypatch, tmp_path):
+    """Delegation must survive a deployment with no entry points on ``sys.path``.
+
+    Multi-tenant sandboxes mount plugins through ``agent.plugin_paths`` under a
+    tenant directory and never create the managed store, so
+    ``importlib.metadata`` sees zero ``datus.plugins`` entry points. Only the
+    managed store is stubbed (to an empty dir, as in such a deployment); the
+    real ``iter_extra_plugin_dirs`` precedence and manifest discovery run.
+    """
+    monkeypatch.setattr("datus.plugins.store.plugins_root", lambda: tmp_path / "no-managed-store")
+    tenant = tmp_path / "tenants" / "acme" / "plugins"
+    k8s_dir = _write_plugin_tree(tenant / "datus-k8s-plugin" / "0.0.4", "k8s", "datus_plugin_k8s", _PROVIDER_REF_SCHEMA)
+    eks_dir = _write_plugin_tree(tenant / "datus-eks-plugin" / "0.0.1", "eks", "datus_plugin_eks")
+
+    class Config:
+        plugins_enabled = True
+        plugin_paths = [str(k8s_dir), str(eks_dir)]
+
+        def plugin_active(self, name):
+            return True
+
+        def get_plugin_profile(self, name, profile=None):
+            if name == "k8s":
+                return {"name": "default", "provider": "eks", "namespace": "acme"}
+            return {"name": profile, "region": "us-east-1", "tenant_secret": "acme-secret"}
+
+    prepared = runtime_context.prepare_plugin_invocation("datus k8s get pods", Config())
+
+    assert isinstance(prepared, runtime_context.PreparedPluginInvocation)
+    delegate = runtime_context.PluginRuntimeContext.decode(prepared.env[_CTX], expected_plugin="eks")
+    assert delegate.profile == {"name": "default", "region": "us-east-1", "tenant_secret": "acme-secret"}
+    assert prepared.sandbox_read_dirs == [str(k8s_dir), str(eks_dir)]
+
+
+def test_prepare_warns_when_manifest_is_unreadable(caplog, monkeypatch, tmp_path):
+    """A manifest that cannot be read must say so, not drop delegations silently."""
+    empty = tmp_path / "k8s"
+    empty.mkdir()
+    monkeypatch.setattr(runtime_context, "_resolve_plugin_path", lambda config, name: empty)
+
+    with caplog.at_level("WARNING"):
+        prepared = runtime_context.prepare_plugin_invocation("datus k8s get pods", _Config())
+
+    context = runtime_context.PluginRuntimeContext.decode(prepared.env[_CTX], expected_plugin="k8s")
+    assert context.delegates == {}
+    assert "manifest could not be read" in caplog.text
 
 
 def test_prepare_rejects_inactive_or_self_delegate(monkeypatch, tmp_path):
