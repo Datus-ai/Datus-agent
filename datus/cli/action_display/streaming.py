@@ -23,6 +23,7 @@ from datus.cli.action_display.renderers import (
     is_task_anchor_input,
     parse_task_tool_input,
     render_assistant_response_markdown,
+    resolve_assistant_body,
 )
 from datus.schemas.action_history import (
     INTERRUPTED_ACTION_TYPE,
@@ -710,16 +711,26 @@ class InlineStreamingContext:
                         ):
                             continue
                         if a.action_type.endswith("_response") and a.action_type != "response":
-                            wrapper = a
-                            break
+                            if wrapper is None:
+                                wrapper = a
+                            continue
                         if a.action_type == "response" and plain is None:
                             plain = a
-                    chosen = wrapper or plain
-                    if chosen is not None:
-                        self.display.renderer.print_renderables(
-                            self.display.console,
-                            self.display.renderer.render_main_action(chosen, verbose=verbose),
-                        )
+                    # Pick the first candidate that actually carries a body.
+                    # A wrapper whose node result has no text body would
+                    # otherwise render its boilerplate ``messages`` ("chat
+                    # interaction completed successfully") in place of the
+                    # turn's answer, since ``render_action_history`` already
+                    # dropped the plain ``response`` that holds the real text.
+                    body = ""
+                    for candidate in (wrapper, plain):
+                        if candidate is None:
+                            continue
+                        body = resolve_assistant_body(candidate)
+                        if body:
+                            break
+                    if body:
+                        self.display.console.print(render_assistant_response_markdown(body))
 
                 self.display.render_multi_turn_history(
                     self._history_turns, verbose=verbose, per_turn_callback=_render_turn_response

@@ -19,6 +19,7 @@ from datus.cli.action_display.renderers import (
     _get_assistant_content,
     is_task_anchor_input,
     parse_task_tool_input,
+    resolve_assistant_body,
 )
 from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
 from datus.utils.text_utils import LITELLM_EMPTY_PLACEHOLDER
@@ -1290,3 +1291,61 @@ class TestGetAssistantContentPlaceholderFiltering:
             output_data={"raw_output": "SELECT * FROM users"},
         )
         assert _get_assistant_content(action) == "SELECT * FROM users"
+
+
+@pytest.mark.ci
+class TestResolveAssistantBody:
+    """``resolve_assistant_body`` never falls back to boilerplate ``messages``."""
+
+    def test_prefers_raw_output_over_response(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="boilerplate",
+            output_data={"raw_output": "streamed text", "response": "node result"},
+        )
+        assert resolve_assistant_body(action) == "streamed text"
+
+    def test_falls_back_to_response_key(self):
+        """Node wrapper results (``ChatNodeResult``) carry no ``raw_output``."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="chat_response",
+            messages="chat interaction completed successfully",
+            output_data={"success": True, "response": "The orders table has 42 rows."},
+        )
+        assert resolve_assistant_body(action) == "The orders table has 42 rows."
+
+    def test_returns_empty_when_no_body_keys(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            action_type="chat_response",
+            messages="chat interaction completed successfully",
+            output_data={"success": True, "response": "   ", "tokens_used": 12},
+        )
+        assert resolve_assistant_body(action) == ""
+
+    def test_returns_empty_when_output_not_dict(self):
+        action = _make_action(ActionRole.ASSISTANT, ActionStatus.SUCCESS, messages="only messages")
+        action.output = "string output"
+        assert resolve_assistant_body(action) == ""
+
+    def test_skips_non_string_body_values(self):
+        """Structured tool-shaped payloads are not renderable markdown bodies."""
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            output_data={"raw_output": {"success": True, "result": "x"}, "response": "plain text"},
+        )
+        assert resolve_assistant_body(action) == "plain text"
+
+    def test_strips_litellm_placeholder_body(self):
+        action = _make_action(
+            ActionRole.ASSISTANT,
+            ActionStatus.SUCCESS,
+            messages="boilerplate",
+            output_data={"raw_output": LITELLM_EMPTY_PLACEHOLDER, "response": "real body"},
+        )
+        assert resolve_assistant_body(action) == "real body"
