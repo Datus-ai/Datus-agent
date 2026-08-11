@@ -2578,7 +2578,7 @@ class AgenticNode(Node):
             logger.error(f"Failed to setup task result tool: {e}")
             self.task_result_tool = None
 
-    def _allow_task_result_tool(self):
+    def _allow_task_result_tool(self) -> None:
         """Exempt ``submit_task_result`` from the permission prompt.
 
         Same reasoning as ``ask_user``: this is the channel the run reports

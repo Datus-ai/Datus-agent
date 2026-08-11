@@ -540,6 +540,81 @@ class TestChatTaskManagerBehavior:
         # Both passes' replies reach the client despite identical text.
         assert len(assistant_events) == 2
 
+    @pytest.mark.asyncio
+    async def test_run_loop_emits_parallel_tool_call_prose_once(self, real_agent_config):
+        """One turn's text reaches the client once, however many streams carry it.
+
+        An assistant turn with text plus N parallel tool calls opens N
+        ``thinking_stream_*`` messages that each stream the same prose and each
+        close with an UPDATE. De-dup used to look at CREATE only, so all N went
+        through and the thread showed the paragraph N times.
+
+        Driven through ``_run_loop`` rather than the helpers: what makes the
+        UPDATE path reachable at all is the loop's own ``is_update`` bookkeeping,
+        and the skip has to happen before ``_push_event`` for the first frame to
+        be the one remembered.
+        """
+        from datus.api.models.cli_models import StreamChatInput
+        from datus.schemas.action_history import ActionHistory, ActionRole, ActionStatus
+
+        prose = "让我先探索数据和指标定义。"
+
+        class FakeNode:
+            session_id = "s-parallel"
+
+            def __init__(self):
+                self.pending_input_queue = None
+                self.input = None
+
+            def get_node_name(self):
+                return "chat"
+
+            async def execute_stream_with_interactions(self, action_history_manager):
+                # Two streams, same prose. Each streams a delta first, which is
+                # what turns its own closing `response` into an UPDATE.
+                for action_id in ("thinking_stream_a", "thinking_stream_b"):
+                    yield ActionHistory(
+                        action_id=action_id,
+                        role=ActionRole.ASSISTANT,
+                        action_type="thinking_delta",
+                        messages="",
+                        input={},
+                        output={"delta": prose},
+                        status=ActionStatus.SUCCESS,
+                    )
+                    yield ActionHistory(
+                        action_id=action_id,
+                        role=ActionRole.ASSISTANT,
+                        action_type="response",
+                        messages=prose,
+                        input={},
+                        output={"response": prose, "is_thinking": False},
+                        status=ActionStatus.SUCCESS,
+                    )
+
+            async def get_last_turn_usage(self):
+                return None
+
+        manager = ChatTaskManager()
+        manager._create_node = lambda *args, **kwargs: FakeNode()  # type: ignore[method-assign]
+        manager._create_node_input = lambda **kwargs: SimpleNamespace(**kwargs)  # type: ignore[method-assign]
+        task = ChatTask(session_id="s-parallel", asyncio_task=MagicMock())
+
+        await manager._run_loop(
+            task,
+            real_agent_config,
+            StreamChatInput(message="analyse", session_id="s-parallel", stream_response=True),
+        )
+
+        rendered = [
+            item
+            for event in task.events
+            if event.event == "message" and isinstance(event.data, SSEMessageData)
+            for item in event.data.payload.content
+            if item.type == "markdown" and item.payload.get("content") == prose
+        ]
+        assert len(rendered) == 1
+
     def test_drain_pending_for_continuation_variants(self):
         """Covers all branches of the drain helper: no queue, empty, interrupted
         (cleared), and a normal FIFO drain."""
